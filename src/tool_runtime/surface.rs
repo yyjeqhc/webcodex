@@ -97,7 +97,7 @@ impl ToolRuntime {
             "features": options.features,
             "limit": if bounded_request { Some(effective_limit) } else { None },
             "categories": if bounded_request {
-                build_manifest_categories(&all_summary_tools)
+                build_manifest_categories(&specs)
             } else {
                 self.tool_categories()
             },
@@ -177,35 +177,33 @@ impl ToolRuntime {
             .as_ref()
             .and_then(|categories| (categories.len() == 1).then(|| categories[0].clone()));
 
-        // Build compact tool entries from metadata without long schemas or
-        // descriptions. This keeps GPT Action discovery payloads bounded.
-        let all_tools: Vec<Value> = specs.iter().map(compact_manifest_tool_entry).collect();
-
         // Build the categories map from the full tool set so the caller can
         // always see valid categories even when filtering.
-        let categories = build_manifest_categories(&all_tools);
+        let categories = build_manifest_categories(&specs);
 
         // Apply the optional category filter and startup limit.
-        let filtered_tools: Vec<Value> = match &categories_requested {
-            Some(requested) => all_tools
+        let filtered_specs: Vec<&ToolSpec> = match &categories_requested {
+            Some(requested) => specs
                 .iter()
-                .filter(|t| {
-                    t["category"].as_str().is_some_and(|category| {
-                        requested.iter().any(|requested| requested == category)
-                    })
+                .filter(|spec| {
+                    let category = runtime_tool_category(spec.name.as_str());
+                    requested.iter().any(|requested| requested == category)
                 })
-                .cloned()
                 .collect(),
-            None => all_tools,
+            None => specs.iter().collect(),
         };
-        let filtered_count = filtered_tools.len();
+        let filtered_count = filtered_specs.len();
         let limit = limit.map(|limit| limit.clamp(1, 100));
         let truncated = limit.is_some_and(|limit| filtered_count > limit);
-        let tools: Vec<Value> = match limit {
-            Some(limit) => filtered_tools.into_iter().take(limit).collect(),
-            None => filtered_tools,
+        let returned_specs: Vec<&ToolSpec> = match limit {
+            Some(limit) => filtered_specs.into_iter().take(limit).collect(),
+            None => filtered_specs,
         };
-        let risk_summary = include_risk_summary.then(|| build_risk_summary(&tools));
+        let risk_summary = include_risk_summary.then(|| build_risk_summary(&returned_specs));
+        let tools: Vec<Value> = returned_specs
+            .iter()
+            .map(|spec| compact_manifest_tool_entry(spec))
+            .collect();
 
         let mut output = json!({
             "schema_version": 1,
@@ -358,13 +356,13 @@ pub(super) fn path_hint_str(hint: ToolPathHint) -> &'static str {
     }
 }
 
-/// Build the categories map from the compact tool entries. Each category
+/// Build the categories map from runtime tool specs. Each category
 /// maps to a sorted list of tool names.
-pub(super) fn build_manifest_categories(tools: &[Value]) -> Value {
+pub(super) fn build_manifest_categories(specs: &[ToolSpec]) -> Value {
     let mut map: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    for tool in tools {
-        let name = tool["name"].as_str().unwrap_or("");
-        let category = tool["category"].as_str().unwrap_or("other");
+    for spec in specs {
+        let name = spec.name.as_str();
+        let category = runtime_tool_category(name);
         map.entry(category).or_default().push(name.to_string());
     }
     let result: serde_json::Map<String, Value> = map
@@ -379,11 +377,13 @@ pub(super) fn build_manifest_categories(tools: &[Value]) -> Value {
     Value::Object(result)
 }
 
-/// Build the risk summary map from the compact tool entries.
-pub(super) fn build_risk_summary(tools: &[Value]) -> Value {
+/// Build the risk summary map from the returned compact manifest specs.
+pub(super) fn build_risk_summary(specs: &[&ToolSpec]) -> Value {
     let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
-    for tool in tools {
-        let risk = tool["risk"].as_str().unwrap_or("unknown");
+    for spec in specs {
+        let risk = runtime_tool_metadata(spec.name.as_str())
+            .risk
+            .session_risk_class();
         *counts.entry(risk).or_insert(0) += 1;
     }
     let result: serde_json::Map<String, Value> = counts

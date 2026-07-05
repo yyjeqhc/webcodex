@@ -11,6 +11,7 @@ mod checkpoints;
 mod current_sessions;
 mod discovery;
 mod files;
+mod git;
 mod hygiene;
 mod jobs;
 mod sessions;
@@ -176,6 +177,8 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     discovery::DEFINITIONS,
     jobs::EXECUTION_DEFINITIONS,
     files::SEARCH_DEFINITIONS,
+    git::SUMMARY_DEFINITIONS,
+    jobs::LISTING_DEFINITIONS,
     TOOL_DEFINITION_TAIL,
 ];
 
@@ -194,58 +197,6 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
 )];
 
 const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
-    def(
-        "git_diff_summary",
-        ModelVisible,
-        "git",
-        Some(GitOrShell),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "show_changes",
-        ModelVisible,
-        "git",
-        Some(GitOrShell),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "list_jobs",
-        ModelVisible,
-        "job",
-        None,
-        "native",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "job_tail",
-        ModelVisible,
-        "job",
-        None,
-        "native",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
     def(
         "read_file",
         ModelVisible,

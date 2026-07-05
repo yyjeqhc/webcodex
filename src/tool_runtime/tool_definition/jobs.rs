@@ -87,3 +87,32 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         false,
     ),
 ];
+
+pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
+    def(
+        "list_jobs",
+        ModelVisible,
+        "job",
+        None,
+        "native",
+        ReadOnly,
+        Some(RUNTIME_READ),
+        false,
+        NoPath,
+        false,
+        false,
+    ),
+    def(
+        "job_tail",
+        ModelVisible,
+        "job",
+        None,
+        "native",
+        ReadOnly,
+        Some(RUNTIME_READ),
+        false,
+        NoPath,
+        false,
+        false,
+    ),
+];

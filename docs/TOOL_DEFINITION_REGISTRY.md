@@ -314,42 +314,53 @@ OAuth scope, visibility, destructive behavior, redaction, or OpenAPI exposure.
 
 When adding a runtime tool today, expect to update or verify:
 
-- `src/tool_runtime/tool_call.rs`: add the `ToolCall` variant, parser handling,
-  `tool_name()`, `session_id()`, and `project()` behavior.
-- `src/tool_runtime/mod.rs` or a domain module under `src/tool_runtime/`: add
-  runtime handler logic and any `tool_manifest` category/recommended-flow
-  changes.
-- `src/tool_runtime/dispatch.rs`: wire the `ToolCall` variant to the runtime
-  handler while preserving session recording, current-session fallback, guard
-  denial, permission, and authorization behavior.
-- `src/tool_runtime/surface.rs`: update recommended-flow, bounded `list_tools`,
-  and flattened-argument discovery behavior when applicable.
-- `src/tool_runtime/tool_definition.rs`: add `ToolMetadata` risk, OAuth scope,
-  project requirement, path hint, read-only/destructive/shell-like
-  classification, manifest category, visibility, and agent capability.
-- `src/tool_runtime/tool_catalog.rs`: add or update discovery group and
-  recommended-flow placement when the tool should appear in those model-facing
-  summaries.
-- `src/tool_runtime/metadata.rs`: update only for non-runtime compatibility
-  route metadata such as legacy dedicated HTTP routes.
-- `src/tool_runtime/registry/input_schemas.rs`: add or extend input schema
-  helpers.
-- `src/tool_runtime/registry/output_schemas.rs`: add output schema if the tool
-  is discoverable or needs structured output documentation.
-- `src/tool_runtime/registry/annotations.rs`: ensure MCP annotations match
-  metadata.
-- `src/tool_runtime/registry/tool_specs.rs`: add or intentionally hide the
-  `ToolSpec`; keep `run_codex`-style hidden behavior explicit.
-- `src/auth/scopes.rs`: verify OAuth runtime tool policy still resolves from
-  the metadata facade and fails closed for unknown tools.
-- `src/openapi.rs`: update dedicated GPT Action operations or
-  `ToolCallRequest` accepted-name/flattened-field descriptions when applicable.
-- `src/mcp.rs`: verify `tools/list` and `tools/call` behavior needs no protocol
-  special case.
-- Tests under `src/tool_runtime/tests/`, `src/auth/scopes.rs`, `src/openapi.rs`,
-  and MCP/openapi/metadata test lanes: add consistency coverage for name,
-  metadata, schema, visibility, OAuth scope, session behavior, and hidden-tool
-  behavior.
+- `ToolCall`: add the `ToolCall` variant, parser handling, `tool_name()`,
+  `session_id()`, `project()`, sample args, and unknown-field behavior. The
+  JSON shape is the execution contract; do not rely on metadata fallback for
+  parser acceptance.
+- Runtime handler and dispatch: add the domain handler, dispatch arm, agent
+  capability checks, session recording behavior, guard denial behavior,
+  permission decision path, and authorization behavior.
+- `ToolDefinition`: add the canonical name, model-facing visibility, category,
+  risk, OAuth scope, project requirement, path hint,
+  read-only/write-like/destructive/shell-like classification, agent capability,
+  disabled state if any, permission risk, and session policy flags.
+- `ToolSpec`: add or intentionally omit the public model-facing row. Every
+  model-visible `ToolDefinition` needs one public `ToolSpec`; hidden tools such
+  as `run_codex` must stay intentionally absent.
+- Input schema: add or update the registry input schema, required fields,
+  `additionalProperties`, common testing metadata, and parser/deserialization
+  tests.
+- Output schema: add an explicit output schema, or add a narrow documented
+  allowlist entry with a TODO reason while coverage is converging.
+- OpenAPI accepted-name text: ensure `ToolCallRequest.tool` lists only
+  model-visible accepted runtime names and does not advertise hidden or legacy
+  metadata-only names.
+- Flattened args: when GPT Actions need top-level fields for `callRuntimeTool`,
+  expose every required field explicitly in `ToolCallRequest.properties` and in
+  tool_manifest `accepted_flattened_args`; do not loosen
+  `additionalProperties`.
+- MCP annotations: verify annotations derive from the tool metadata and match
+  read-only, destructive, idempotent, and open-world behavior.
+- `tool_manifest` category: add the `ToolDefinition` category and any
+  `tool_catalog` discovery group or recommended-flow placement needed for
+  model-facing discovery.
+- Tests: update schema, metadata, OpenAPI, MCP, OAuth/scope, parser, dispatch,
+  session, and domain tests as appropriate. Include visibility, hidden-tool,
+  output schema, flattened-argument, category, and recommended-flow drift
+  checks.
+- Visibility: decide whether the tool is model-visible, hidden, runtime-only, or
+  forbidden; prove hidden/runtime-only exposure with tests when applicable.
+- Permission risk: verify OAuth scope, dev permission risk label,
+  read-only/write/shell/destructive behavior, and any cross-project session
+  escape requirement.
+- Session behavior: verify business `session_id`, recorder metadata
+  `recording_session_id`, current-session fallback eligibility, session project
+  mismatch handling, read-only guard behavior, and session summary/handoff
+  effects.
+- Legacy metadata: update `src/tool_runtime/metadata.rs` only for non-runtime
+  compatibility route metadata such as legacy dedicated HTTP routes. New runtime
+  tools must not extend metadata fallback.
 
 Reviewers should ask these questions for every new tool:
 

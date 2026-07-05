@@ -71,6 +71,43 @@ fn tool_definitions_cover_known_names_and_public_specs() {
 }
 
 #[test]
+fn model_visible_tool_definitions_have_public_tool_specs() {
+    use crate::tool_runtime::tool_definition::model_visible_tool_definitions;
+
+    let spec_names = registered_tool_specs()
+        .iter()
+        .map(|spec| spec.name.clone())
+        .collect::<BTreeSet<_>>();
+    for definition in model_visible_tool_definitions() {
+        assert!(
+            spec_names.contains(definition.name),
+            "{} is model-visible but missing a public ToolSpec row",
+            definition.name
+        );
+    }
+}
+
+#[test]
+fn public_tool_specs_are_model_visible_tool_definitions() {
+    use crate::tool_runtime::tool_definition::{
+        lookup_tool_definition, model_visible_tool_definitions,
+    };
+
+    let visible_definition_names = model_visible_tool_definitions()
+        .map(|definition| definition.name)
+        .collect::<BTreeSet<_>>();
+    for spec in registered_tool_specs() {
+        let definition = lookup_tool_definition(&spec.name)
+            .unwrap_or_else(|| panic!("{} public ToolSpec is missing ToolDefinition", spec.name));
+        assert!(
+            visible_definition_names.contains(definition.name),
+            "{} public ToolSpec must be model-visible in ToolDefinition",
+            spec.name
+        );
+    }
+}
+
+#[test]
 fn tool_definitions_drive_metadata_visibility_and_categories() {
     use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::tool_definitions;
@@ -105,6 +142,98 @@ fn tool_definitions_drive_metadata_visibility_and_categories() {
             definition.name
         );
     }
+}
+
+#[test]
+fn hidden_run_codex_surface_contract_is_explicit() {
+    use crate::tool_runtime::tool_definition::{
+        lookup_tool_definition, model_hidden_tool_names, tool_definitions,
+    };
+
+    assert_eq!(tool_definitions().count(), 67, "ToolDefinition count");
+    assert!(
+        lookup_tool_definition("run_codex").is_some(),
+        "run_codex must keep an explicit hidden ToolDefinition"
+    );
+    assert_eq!(
+        model_hidden_tool_names().collect::<Vec<_>>(),
+        vec!["run_codex"],
+        "run_codex must remain the only model-hidden ToolDefinition"
+    );
+
+    let model_visible_names = registered_tool_names();
+    assert_eq!(model_visible_names.len(), 66, "tools.count");
+    assert!(
+        !model_visible_names.iter().any(|name| name == "run_codex"),
+        "tools.count/model-facing names must not include run_codex"
+    );
+
+    let openapi = crate::openapi::build_openapi_spec();
+    let tool_description = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
+        [TOOL_CALL_TOOL_FIELD]["description"]
+        .as_str()
+        .expect("ToolCallRequest.tool description");
+    assert!(
+        !tool_description.contains("run_codex"),
+        "callRuntimeTool accepted-name text must not advertise run_codex"
+    );
+    let operation_ids = openapi["paths"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|methods| methods.as_object().unwrap().values())
+        .map(|operation| operation["operationId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        !operation_ids
+            .iter()
+            .any(|operation_id| operation_id.contains("runCodex")
+                || operation_id.contains("RunCodex")),
+        "run_codex must not gain a dedicated OpenAPI operation: {operation_ids:?}"
+    );
+}
+
+#[test]
+fn delete_files_remains_legacy_metadata_only_not_runtime_tool() {
+    use crate::tool_runtime::metadata::lookup_tool_metadata;
+    use crate::tool_runtime::tool_definition::lookup_tool_definition;
+
+    assert!(
+        lookup_tool_metadata("delete_files").is_some(),
+        "delete_files legacy dedicated route metadata must remain explicit"
+    );
+    assert!(
+        lookup_tool_definition("delete_files").is_none(),
+        "delete_files must not become a ToolDefinition"
+    );
+    assert!(
+        !is_known_tool_name("delete_files"),
+        "delete_files must not become a known runtime tool"
+    );
+    assert!(
+        ToolCall::from_tool_name(
+            "delete_files",
+            json!({"project": SAMPLE_PROJECT, "paths": []})
+        )
+        .is_err(),
+        "delete_files must not be accepted by ToolCall"
+    );
+    assert!(
+        !registered_tool_specs()
+            .iter()
+            .any(|spec| spec.name == "delete_files"),
+        "delete_files must not become a public ToolSpec"
+    );
+
+    let openapi = crate::openapi::build_openapi_spec();
+    let tool_description = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
+        [TOOL_CALL_TOOL_FIELD]["description"]
+        .as_str()
+        .expect("ToolCallRequest.tool description");
+    assert!(
+        !tool_description.contains("delete_files"),
+        "callRuntimeTool accepted-name text must not advertise legacy delete_files"
+    );
 }
 
 #[test]

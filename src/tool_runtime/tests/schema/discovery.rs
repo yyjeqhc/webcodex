@@ -261,6 +261,77 @@ fn tool_recommended_flows_reference_visible_defined_tools() {
 }
 
 #[test]
+fn tool_manifest_categories_cover_every_model_visible_definition() {
+    use crate::tool_runtime::tool_definition::model_visible_tool_definitions;
+
+    let runtime = test_runtime();
+    let manifest = runtime.compact_tool_manifest_payload();
+    assert_eq!(
+        manifest["tool_count"],
+        registered_tool_specs().len() as i64,
+        "tool_manifest tool_count must mirror model-facing ToolSpec count"
+    );
+    let categories = manifest["categories"]
+        .as_object()
+        .expect("tool_manifest categories");
+
+    for definition in model_visible_tool_definitions() {
+        let members = categories
+            .get(definition.category)
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("missing tool_manifest category {}", definition.category));
+        assert!(
+            members.iter().any(|member| member == definition.name),
+            "{} ToolDefinition category {} must include the tool in tool_manifest",
+            definition.name,
+            definition.category
+        );
+    }
+}
+
+#[test]
+fn tool_manifest_recommended_flows_reference_visible_defined_tools() {
+    use crate::tool_runtime::tool_definition::{
+        is_model_visible_tool_name, lookup_tool_definition, TOOL_RECOMMENDED_FLOWS,
+    };
+
+    let runtime = test_runtime();
+    let manifest = runtime.compact_tool_manifest_payload();
+    let flows = manifest["recommended_flows"]
+        .as_array()
+        .expect("tool_manifest recommended_flows");
+    assert_eq!(flows.len(), TOOL_RECOMMENDED_FLOWS.len());
+
+    for (actual, expected) in flows.iter().zip(TOOL_RECOMMENDED_FLOWS) {
+        assert_eq!(actual["name"], expected.name);
+        assert_eq!(actual["purpose"], expected.manifest_purpose);
+        let tools = actual["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{} recommended flow tools", expected.name));
+        assert_eq!(tools.len(), expected.tools.len());
+        for (actual_tool, expected_tool) in tools.iter().zip(expected.tools) {
+            assert_eq!(actual_tool, expected_tool);
+            let definition = lookup_tool_definition(expected_tool).unwrap_or_else(|| {
+                panic!(
+                    "{} recommended flow references unknown tool {expected_tool}",
+                    expected.name
+                )
+            });
+            assert!(
+                definition.visibility.is_model_visible(),
+                "{} recommended flow references hidden tool {expected_tool}",
+                expected.name
+            );
+            assert!(
+                is_model_visible_tool_name(expected_tool),
+                "{} recommended flow references non-visible tool {expected_tool}",
+                expected.name
+            );
+        }
+    }
+}
+
+#[test]
 fn tool_categories_and_recommended_flows_are_well_formed() {
     use crate::tool_runtime::tool_definition::{
         TOOL_DISCOVERY_GROUP_CHECKPOINT, TOOL_DISCOVERY_GROUP_CLEANUP, TOOL_DISCOVERY_GROUP_EDIT,

@@ -55,3 +55,27 @@ fn accepted_flattened_args_appends_recorder_field_once() {
         "accepted_flattened_args must not duplicate recorder metadata: {accepted:?}"
     );
 }
+
+#[test]
+fn critical_call_runtime_tool_flattened_args_remain_accepted() {
+    let mut accepted_fields = BTreeSet::new();
+    for spec in registered_tool_specs() {
+        accepted_fields
+            .extend(crate::tool_runtime::registry::accepted_flattened_args_for_spec(&spec));
+    }
+
+    for field in [
+        "expected_failure",
+        "expected_failure_kind",
+        "test_expect_failure_kind",
+        "assertion_name",
+        "summary_only",
+        "include_command_preview",
+        "compact_startup",
+    ] {
+        assert!(
+            accepted_fields.contains(field),
+            "critical callRuntimeTool flattened arg {field} must remain accepted"
+        );
+    }
+}

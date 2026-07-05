@@ -1,5 +1,79 @@
 use super::*;
 
+struct DefaultOutputSchemaAllowance {
+    name: &'static str,
+    reason: &'static str,
+}
+
+// TODO(tool-definition): remove entries as these tools gain explicit output
+// schema fields, or move the allowlist to a generated definition-backed
+// declaration once output_schema is part of ToolDefinition.
+const MODEL_VISIBLE_TOOLS_ALLOWED_TO_USE_DEFAULT_OUTPUT_SCHEMA: &[DefaultOutputSchemaAllowance] = &[
+    DefaultOutputSchemaAllowance {
+        name: "register_project",
+        reason: "project onboarding response still uses the generic wrapper while schema coverage converges",
+    },
+    DefaultOutputSchemaAllowance {
+        name: "create_project",
+        reason: "project onboarding response still uses the generic wrapper while schema coverage converges",
+    },
+    DefaultOutputSchemaAllowance {
+        name: "list_project_files",
+        reason: "bounded file-list payload is covered by behavior tests while output schema is pending",
+    },
+    DefaultOutputSchemaAllowance {
+        name: "list_jobs",
+        reason: "bounded job summary payload is covered by behavior tests while output schema is pending",
+    },
+    DefaultOutputSchemaAllowance {
+        name: "job_tail",
+        reason: "bounded log-tail payload is covered by behavior tests while output schema is pending",
+    },
+    DefaultOutputSchemaAllowance {
+        name: "git_restore_paths",
+        reason: "cleanup write result is covered by behavior tests while output schema is pending",
+    },
+    DefaultOutputSchemaAllowance {
+        name: "discard_untracked",
+        reason: "cleanup write result is covered by behavior tests while output schema is pending",
+    },
+    DefaultOutputSchemaAllowance {
+        name: "replace_in_file",
+        reason: "compatibility edit result is covered by behavior tests while output schema is pending",
+    },
+    DefaultOutputSchemaAllowance {
+        name: "write_project_file",
+        reason: "compatibility whole-file write result is covered by behavior tests while output schema is pending",
+    },
+];
+
+#[test]
+fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
+    let specs = registered_tool_specs();
+    let default_fields = default_output_schema_field_names();
+    let default_schema_names = specs
+        .iter()
+        .filter(|spec| output_schema_field_names(spec) == default_fields)
+        .map(|spec| spec.name.as_str())
+        .collect::<Vec<_>>();
+    let allowed_names = MODEL_VISIBLE_TOOLS_ALLOWED_TO_USE_DEFAULT_OUTPUT_SCHEMA
+        .iter()
+        .map(|allowance| {
+            assert!(
+                !allowance.reason.trim().is_empty(),
+                "{} default output schema allowance must explain the drift risk",
+                allowance.name
+            );
+            allowance.name
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        default_schema_names, allowed_names,
+        "model-visible tools may use the default output schema only with an explicit allowance"
+    );
+}
+
 #[test]
 fn key_tool_output_schemas_include_expected_fields() {
     let specs = registered_tool_specs();
@@ -219,6 +293,25 @@ fn key_tool_output_schemas_include_expected_fields() {
             "list_projects missing {field}"
         );
     }
+}
+
+fn default_output_schema_field_names() -> BTreeSet<&'static str> {
+    BTreeSet::from([
+        "session_recorded",
+        "session_id",
+        "session_event_id",
+        "session_hint",
+        "permission",
+    ])
+}
+
+fn output_schema_field_names(spec: &ToolSpec) -> BTreeSet<&str> {
+    spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{} output schema properties", spec.name))
+        .keys()
+        .map(String::as_str)
+        .collect()
 }
 
 #[test]

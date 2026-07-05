@@ -69,9 +69,9 @@ impl AgentCapability {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::OwnerOnly => "owner boundary",
-            Self::Shell => "shell",
-            Self::FileRead => "file_read",
-            Self::FileWrite => "file_write",
+            Self::Shell => SHELL_CLIENT_CAPABILITY_SHELL,
+            Self::FileRead => SHELL_CLIENT_CAPABILITY_FILE_READ,
+            Self::FileWrite => SHELL_CLIENT_CAPABILITY_FILE_WRITE,
             Self::GitOrShell => "shell or git",
             Self::AsyncJobs => "async shell jobs",
         }

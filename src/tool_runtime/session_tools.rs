@@ -5,11 +5,80 @@ use super::session_context::{
     unknown_session_result,
 };
 use super::tool_inputs::SessionMode;
-use super::{sessions, ToolResult, ToolRuntime};
+use super::{sessions, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use serde_json::json;
 
 impl ToolRuntime {
+    pub(crate) async fn dispatch_session_tool(
+        &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+    ) -> ToolResult {
+        match call {
+            ToolCall::StartSession {
+                project,
+                title,
+                mode,
+                deny_write_tools,
+                deny_shell_tools,
+            } => {
+                self.start_session_tool(
+                    project,
+                    title,
+                    mode,
+                    deny_write_tools,
+                    deny_shell_tools,
+                    auth,
+                )
+                .await
+            }
+            ToolCall::SessionSummary { session_id, limit } => {
+                self.session_summary_tool(session_id, limit)
+            }
+            ToolCall::PostSessionMessage {
+                session_id,
+                kind,
+                message,
+                tags,
+                reply_to,
+                priority,
+            } => {
+                self.post_session_message_tool(session_id, kind, message, tags, reply_to, priority)
+            }
+            ToolCall::ListSessionMessages {
+                session_id,
+                kind,
+                status,
+                limit,
+            } => self.list_session_messages_tool(session_id, kind, status, limit),
+            ToolCall::ResolveSessionMessage {
+                session_id,
+                message_id,
+                resolution,
+            } => self.resolve_session_message_tool(session_id, message_id, resolution),
+            ToolCall::SessionDiscussionSummary { session_id, limit } => {
+                self.session_discussion_summary_tool(session_id, limit)
+            }
+            ToolCall::BindCurrentSession {
+                project,
+                session_id,
+            } => {
+                self.bind_current_session_tool(project, session_id, auth, transport)
+                    .await
+            }
+            ToolCall::CurrentSession { project } => {
+                self.current_session_tool(project, auth, transport).await
+            }
+            ToolCall::UnbindCurrentSession { project } => {
+                self.unbind_current_session_tool(project, auth, transport)
+                    .await
+            }
+            _ => unreachable!("non-session tool routed to session dispatcher"),
+        }
+    }
+
     pub(crate) async fn start_session_tool(
         &self,
         project: Option<String>,

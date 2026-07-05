@@ -260,58 +260,20 @@ impl ToolRuntime {
             | ToolCall::RuntimeStatus
             | ToolCall::ToolManifest { .. }) => self.dispatch_discovery_tool(call, auth).await,
 
-            ToolCall::StartSession {
-                project,
-                title,
-                mode,
-                deny_write_tools,
-                deny_shell_tools,
-            } => {
-                self.start_session_tool(
-                    project,
-                    title,
-                    mode,
-                    deny_write_tools,
-                    deny_shell_tools,
-                    auth,
-                )
-                .await
+            call @ (ToolCall::StartSession { .. }
+            | ToolCall::SessionSummary { .. }
+            | ToolCall::PostSessionMessage { .. }
+            | ToolCall::ListSessionMessages { .. }
+            | ToolCall::ResolveSessionMessage { .. }
+            | ToolCall::SessionDiscussionSummary { .. }
+            | ToolCall::BindCurrentSession { .. }
+            | ToolCall::CurrentSession { .. }
+            | ToolCall::UnbindCurrentSession { .. }) => {
+                self.dispatch_session_tool(call, auth, transport).await
             }
 
             call @ (ToolCall::StartCodingTask { .. } | ToolCall::FinishCodingTask { .. }) => {
                 self.dispatch_coding_task_tool(call, auth, transport).await
-            }
-
-            ToolCall::SessionSummary { session_id, limit } => {
-                self.session_summary_tool(session_id, limit)
-            }
-
-            ToolCall::PostSessionMessage {
-                session_id,
-                kind,
-                message,
-                tags,
-                reply_to,
-                priority,
-            } => {
-                self.post_session_message_tool(session_id, kind, message, tags, reply_to, priority)
-            }
-
-            ToolCall::ListSessionMessages {
-                session_id,
-                kind,
-                status,
-                limit,
-            } => self.list_session_messages_tool(session_id, kind, status, limit),
-
-            ToolCall::ResolveSessionMessage {
-                session_id,
-                message_id,
-                resolution,
-            } => self.resolve_session_message_tool(session_id, message_id, resolution),
-
-            ToolCall::SessionDiscussionSummary { session_id, limit } => {
-                self.session_discussion_summary_tool(session_id, limit)
             }
 
             ToolCall::SessionHandoffSummary {
@@ -334,23 +296,6 @@ impl ToolRuntime {
                     auth,
                 )
                 .await
-            }
-
-            ToolCall::BindCurrentSession {
-                project,
-                session_id,
-            } => {
-                self.bind_current_session_tool(project, session_id, auth, transport)
-                    .await
-            }
-
-            ToolCall::CurrentSession { project } => {
-                self.current_session_tool(project, auth, transport).await
-            }
-
-            ToolCall::UnbindCurrentSession { project } => {
-                self.unbind_current_session_tool(project, auth, transport)
-                    .await
             }
 
             call @ (ToolCall::WorkspaceCheckpointCreate { .. }

@@ -276,26 +276,8 @@ impl ToolRuntime {
                 self.dispatch_coding_task_tool(call, auth, transport).await
             }
 
-            ToolCall::SessionHandoffSummary {
-                session_id,
-                project,
-                include_workspace,
-                include_checkpoints,
-                include_validation,
-                summary_only,
-                limit,
-            } => {
-                self.session_handoff_summary(
-                    session_id,
-                    project,
-                    include_workspace,
-                    include_checkpoints,
-                    include_validation,
-                    summary_only,
-                    limit,
-                    auth,
-                )
-                .await
+            call @ ToolCall::SessionHandoffSummary { .. } => {
+                self.dispatch_handoff_tool(call, auth).await
             }
 
             call @ (ToolCall::WorkspaceCheckpointCreate { .. }

@@ -39,6 +39,7 @@ mod session_context;
 mod session_tools;
 pub(crate) mod sessions;
 mod shell;
+mod shell_tools;
 mod surface;
 mod tool_audit;
 mod tool_call;

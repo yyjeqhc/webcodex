@@ -292,13 +292,7 @@ impl ToolRuntime {
             | ToolCall::RegisterProject { .. }
             | ToolCall::CreateProject { .. }) => self.dispatch_project_tool(call, auth).await,
 
-            ToolCall::RunShell {
-                project,
-                command,
-                session_id: _,
-                timeout_secs,
-                cwd,
-            } => self.run_shell(project, command, timeout_secs, cwd).await,
+            call @ ToolCall::RunShell { .. } => self.dispatch_shell_tool(call).await,
 
             call @ (ToolCall::ApplyPatch { .. }
             | ToolCall::ApplyPatchChecked { .. }

@@ -2007,14 +2007,9 @@ mod tests {
     use super::*;
     use crate::tool_runtime::TOOL_CALL_WRAPPER_FIELDS;
 
-    fn test_tool_runtime() -> crate::tool_runtime::ToolRuntime {
-        crate::tool_runtime::ToolRuntime::new_for_tests()
-    }
-
     fn runtime_accepted_flattened_action_fields() -> std::collections::BTreeSet<String> {
-        let runtime = test_tool_runtime();
         let mut fields = std::collections::BTreeSet::new();
-        for spec in runtime.tool_specs() {
+        for spec in crate::tool_runtime::ToolRuntime::registered_tool_specs() {
             if let Some(properties) = spec.input_schema["properties"].as_object() {
                 fields.extend(properties.keys().cloned());
             }

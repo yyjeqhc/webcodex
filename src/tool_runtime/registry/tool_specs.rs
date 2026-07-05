@@ -23,6 +23,10 @@ use std::collections::BTreeMap;
 
 impl ToolRuntime {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
+        Self::registered_tool_specs()
+    }
+
+    pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
         let mut declarations_by_name = tool_spec_declarations_by_name();
         let specs = model_visible_tool_definitions()
             .map(|definition| {
@@ -105,10 +109,6 @@ mod tests {
     use crate::tool_runtime::tool_definition::is_model_visible_tool_name;
     use std::collections::BTreeSet;
 
-    fn test_runtime() -> ToolRuntime {
-        ToolRuntime::new_for_tests()
-    }
-
     #[test]
     fn tool_spec_declarations_are_unique_and_model_visible() {
         let declarations = tool_spec_declarations();
@@ -129,8 +129,7 @@ mod tests {
 
     #[test]
     fn tool_specs_patch_fields_reject_codex_wrapper() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
+        let specs = ToolRuntime::registered_tool_specs();
         for tool in ["apply_patch", "apply_patch_checked", "validate_patch"] {
             let spec = specs
                 .iter()

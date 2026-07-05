@@ -7,6 +7,9 @@
 
 #![allow(dead_code)]
 
+mod checkpoints;
+mod current_sessions;
+mod hygiene;
 mod sessions;
 
 use super::metadata::{
@@ -150,7 +153,7 @@ const fn def(
     }
 }
 
-use AgentCapability::{AsyncJobs, FileRead, FileWrite, GitOrShell, OwnerOnly, Shell};
+use AgentCapability::{AsyncJobs, FileRead, FileWrite, GitOrShell, Shell};
 use ToolPathHint::{Artifact, None as NoPath, Patch, PathList, SinglePath};
 use ToolRisk::{JobRun, ProjectWrite, ReadOnly};
 use ToolVisibility::{ModelHidden, ModelVisible};
@@ -164,6 +167,9 @@ pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition
 const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     TOOL_DEFINITION_HEAD,
     sessions::DEFINITIONS,
+    hygiene::DEFINITIONS,
+    current_sessions::DEFINITIONS,
+    checkpoints::DEFINITIONS,
     TOOL_DEFINITION_TAIL,
 ];
 
@@ -182,123 +188,6 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
 )];
 
 const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
-    def(
-        "workspace_hygiene_check",
-        ModelVisible,
-        "cleanup",
-        Some(GitOrShell),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "bind_current_session",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "current_session",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "unbind_current_session",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "workspace_checkpoint_create",
-        ModelVisible,
-        "checkpoint",
-        Some(FileRead),
-        "native",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "workspace_checkpoint_list",
-        ModelVisible,
-        "checkpoint",
-        Some(OwnerOnly),
-        "native",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "workspace_checkpoint_show",
-        ModelVisible,
-        "checkpoint",
-        Some(OwnerOnly),
-        "native",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "workspace_checkpoint_restore",
-        ModelVisible,
-        "checkpoint",
-        Some(FileWrite),
-        "native",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        Patch,
-        false,
-        false,
-    ),
-    def(
-        "workspace_checkpoint_delete",
-        ModelVisible,
-        "checkpoint",
-        Some(OwnerOnly),
-        "native",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        NoPath,
-        true,
-        false,
-    ),
     def(
         "list_projects",
         ModelVisible,

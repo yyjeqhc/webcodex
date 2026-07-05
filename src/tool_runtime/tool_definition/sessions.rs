@@ -1,12 +1,12 @@
 use super::AgentCapability::GitOrShell;
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition};
+use super::{creates_or_binds_session, def, requires_explicit_business_session, ToolDefinition};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::ReadOnly, RUNTIME_READ,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    def(
+    creates_or_binds_session(def(
         "start_session",
         ModelVisible,
         "session",
@@ -18,8 +18,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    creates_or_binds_session(def(
         "start_coding_task",
         ModelVisible,
         "workflow",
@@ -31,8 +31,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_explicit_business_session(def(
         "finish_coding_task",
         ModelVisible,
         "workflow",
@@ -44,8 +44,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_explicit_business_session(def(
         "session_summary",
         ModelVisible,
         "session",
@@ -57,8 +57,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_explicit_business_session(def(
         "post_session_message",
         ModelVisible,
         "session",
@@ -70,8 +70,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_explicit_business_session(def(
         "list_session_messages",
         ModelVisible,
         "session",
@@ -83,8 +83,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_explicit_business_session(def(
         "resolve_session_message",
         ModelVisible,
         "session",
@@ -96,8 +96,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_explicit_business_session(def(
         "session_discussion_summary",
         ModelVisible,
         "session",
@@ -109,8 +109,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_explicit_business_session(def(
         "session_handoff_summary",
         ModelVisible,
         "session",
@@ -122,5 +122,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
+    )),
 ];

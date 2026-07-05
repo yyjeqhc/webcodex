@@ -48,23 +48,11 @@ impl ToolDefinition {
     }
 
     pub(crate) fn requires_explicit_business_session(self) -> bool {
-        matches!(
-            self.name,
-            "finish_coding_task"
-                | "session_summary"
-                | "post_session_message"
-                | "list_session_messages"
-                | "resolve_session_message"
-                | "session_discussion_summary"
-                | "session_handoff_summary"
-        )
+        self.policy.requires_explicit_business_session
     }
 
     pub(crate) fn creates_or_binds_session(self) -> bool {
-        matches!(
-            self.name,
-            "start_session" | "start_coding_task" | "bind_current_session"
-        )
+        self.policy.creates_or_binds_session
     }
 
     pub(crate) fn allows_current_session_fallback(self) -> bool {

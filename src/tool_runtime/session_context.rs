@@ -7,6 +7,7 @@ use crate::auth::AuthContext;
 use serde_json::{json, Value};
 
 pub(crate) const SESSION_PROJECT_MISMATCH_KIND: &str = "session_project_mismatch";
+pub(crate) const ALLOW_CROSS_PROJECT_SESSION_FIELD: &str = "allow_cross_project_session";
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionProjectMismatch {

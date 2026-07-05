@@ -6,7 +6,8 @@ use crate::tool_runtime::sessions::{
     TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
 };
 use crate::tool_runtime::{
-    TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+    ALLOW_CROSS_PROJECT_SESSION_FIELD, TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD,
+    TOOL_CALL_TOOL_FIELD,
 };
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
@@ -970,7 +971,7 @@ fn schemas() -> Value {
             "required": [TOOL_CALL_TOOL_FIELD],
             "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for GPT Action top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
             "properties": {
-                "allow_cross_project_session": {
+                ALLOW_CROSS_PROJECT_SESSION_FIELD: {
                     "type": "boolean",
                     "description": "Advanced/debug escape hatch for callRuntimeTool. When true, allow recording a project tool call into a session whose associated project differs from the request project; session_project_mismatch warning metadata is still returned. Used only when `params` and `arguments` are absent, or inside params/arguments for non-Action clients."
                 },
@@ -3052,7 +3053,7 @@ mod tests {
             "title",
             "session_id",
             TOOL_CALL_RECORDING_SESSION_ID_FIELD,
-            "allow_cross_project_session",
+            ALLOW_CROSS_PROJECT_SESSION_FIELD,
             TOOL_EXPECTED_FAILURE_FIELD,
             TOOL_EXPECTED_FAILURE_KIND_FIELD,
             TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
@@ -3120,7 +3121,10 @@ mod tests {
 
         assert!(properties.contains_key(TOOL_CALL_PARAMS_FIELD));
         assert!(properties.contains_key(TOOL_CALL_ARGUMENTS_FIELD));
-        assert_eq!(properties["allow_cross_project_session"]["type"], "boolean");
+        assert_eq!(
+            properties[ALLOW_CROSS_PROJECT_SESSION_FIELD]["type"],
+            "boolean"
+        );
         assert_eq!(properties[TOOL_EXPECTED_FAILURE_FIELD]["type"], "boolean");
         assert_eq!(
             properties[TOOL_EXPECTED_FAILURE_KIND_FIELD]["type"],

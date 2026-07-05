@@ -86,7 +86,7 @@ pub(crate) use project_resolution::{ProjectResolverError, ProjectResolverErrorKi
 #[allow(unused_imports)]
 pub(crate) use session_context::{
     add_session_telemetry_hint, current_session_key, current_session_principal,
-    session_guard_denied_result, unknown_session_result,
+    session_guard_denied_result, unknown_session_result, ALLOW_CROSS_PROJECT_SESSION_FIELD,
 };
 
 pub(crate) const RUN_CODEX_DISABLED_MESSAGE: &str =

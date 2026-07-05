@@ -1055,7 +1055,7 @@ fn project_tool_schemas_include_optional_session_id() {
         );
         assert!(
             spec.input_schema["properties"]
-                .get("allow_cross_project_session")
+                .get(ALLOW_CROSS_PROJECT_SESSION_FIELD)
                 .is_some(),
             "{name} schema missing allow_cross_project_session"
         );
@@ -1072,7 +1072,7 @@ fn project_tool_schemas_include_optional_session_id() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|field| field == "allow_cross_project_session"),
+                .any(|field| field == ALLOW_CROSS_PROJECT_SESSION_FIELD),
             "{name} schema must not require allow_cross_project_session"
         );
     }

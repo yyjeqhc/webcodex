@@ -4,6 +4,7 @@ use super::super::super::tool_spec::ToolSpec;
 use super::common::object_schema;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::tool_definition::runtime_tool_extra_accepted_flattened_args;
+use crate::tool_runtime::ALLOW_CROSS_PROJECT_SESSION_FIELD;
 
 pub(crate) fn list_tools_input_schema() -> Value {
     json!({
@@ -84,7 +85,7 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
         "limit",
         "allow_missing",
         "upload_id",
-        "allow_cross_project_session",
+        ALLOW_CROSS_PROJECT_SESSION_FIELD,
         "offset",
         "content_base64",
         "expected_bytes",

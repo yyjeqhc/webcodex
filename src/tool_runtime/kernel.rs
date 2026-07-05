@@ -4,7 +4,7 @@ use super::sessions::{
 use super::tool_audit::session_log_arguments_for_tool_request;
 use super::{
     session_context, session_guard_denied_result, tool_disabled_result_from_definition,
-    unknown_session_result, ToolCall, ToolResult, ToolRuntime,
+    unknown_session_result, ToolCall, ToolResult, ToolRuntime, ALLOW_CROSS_PROJECT_SESSION_FIELD,
 };
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
@@ -103,7 +103,7 @@ impl ToolRuntime {
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&request.arguments);
         let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
         let allow_cross_project_session =
-            extract_bool_arg(&concrete_arguments, "allow_cross_project_session");
+            extract_bool_arg(&concrete_arguments, ALLOW_CROSS_PROJECT_SESSION_FIELD);
         if let Some(session_id) = context.session_id {
             if !self.sessions.contains_session(session_id) {
                 return ToolCallOutcome {

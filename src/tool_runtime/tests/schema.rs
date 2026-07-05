@@ -44,8 +44,7 @@ fn tool_definitions_cover_known_names_and_public_specs() {
         "hidden-name iterator must match ToolDefinition visibility"
     );
 
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec_names = specs
         .iter()
         .map(|spec| spec.name.as_str())
@@ -70,7 +69,7 @@ fn tool_definitions_cover_known_names_and_public_specs() {
         "canonical ToolDefinition order must preserve public ToolSpec order"
     );
     assert_eq!(
-        runtime.tool_names(),
+        registered_tool_names(),
         visible_definition_order,
         "public tool_names must derive from canonical model-visible ToolDefinition order"
     );
@@ -85,9 +84,8 @@ fn accepted_flattened_arg_preferred_order_is_unique_and_declared() {
         assert!(seen.insert(*field), "duplicate preferred field {field}");
     }
 
-    let runtime = test_runtime();
     let mut schema_fields = BTreeSet::new();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         let Some(properties) = spec.input_schema["properties"].as_object() else {
             continue;
         };
@@ -541,8 +539,7 @@ fn tool_discovery_groups_drive_tool_categories() {
         is_model_visible_tool_name, lookup_tool_definition, TOOL_DISCOVERY_GROUPS,
     };
 
-    let runtime = test_runtime();
-    let categories = runtime.tool_categories();
+    let categories = registered_tool_categories();
     let category_map = categories.as_object().expect("categories object");
 
     for group in TOOL_DISCOVERY_GROUPS {
@@ -1853,10 +1850,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         TOOL_DISCOVERY_GROUP_SHELL, TOOL_DISCOVERY_GROUP_VALIDATION,
     };
 
-    let runtime = test_runtime();
-    let categories = runtime.tool_categories();
+    let categories = registered_tool_categories();
     // Every declared category is a non-empty array of known tool names.
-    let names = runtime.tool_names();
+    let names = registered_tool_names();
     for (cat, members) in categories.as_object().unwrap() {
         let arr = members.as_array().unwrap();
         assert!(!arr.is_empty(), "category '{}' must not be empty", cat);
@@ -2413,8 +2409,7 @@ fn tool_specs_include_anchor_edit_tools() {
 fn tool_categories_include_edit_group() {
     use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_EDIT;
 
-    let runtime = test_runtime();
-    let cats = runtime.tool_categories();
+    let cats = registered_tool_categories();
     let edit = cats[TOOL_DISCOVERY_GROUP_EDIT]
         .as_array()
         .expect("edit category present");
@@ -2430,8 +2425,7 @@ fn tool_categories_include_edit_group() {
 fn tool_categories_include_projects_with_management_tools() {
     use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_PROJECTS;
 
-    let runtime = test_runtime();
-    let cats = runtime.tool_categories();
+    let cats = registered_tool_categories();
     let projects = cats[TOOL_DISCOVERY_GROUP_PROJECTS]
         .as_array()
         .expect("projects category present");
@@ -2449,13 +2443,12 @@ fn tool_categories_include_projects_with_management_tools() {
 fn apply_text_edits_metadata_mcp_openapi_consistency() {
     use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_EDIT;
 
-    let runtime = test_runtime();
     // Known name + spec + metadata coverage. tool_specs() backs both the
     // list_tools runtime tool and MCP tools/list (parity is enforced by
     // mcp_tools_list_parity_with_rest_tools_list), so checking specs covers
     // both surfaces.
     assert!(is_known_tool_name("apply_text_edits"));
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     assert!(
         specs.iter().any(|s| s.name == "apply_text_edits"),
         "apply_text_edits must appear in tool_specs (list_tools + MCP tools/list)"
@@ -2473,7 +2466,7 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
     );
     assert!(crate::tool_runtime::metadata::lookup_tool_metadata("apply_text_edits").is_some());
     // The edit category includes the new tool.
-    let cats = runtime.tool_categories();
+    let cats = registered_tool_categories();
     let edit = cats[TOOL_DISCOVERY_GROUP_EDIT]
         .as_array()
         .expect("edit category present");

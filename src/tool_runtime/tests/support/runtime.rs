@@ -19,8 +19,23 @@ pub(in crate::tool_runtime::tests) fn test_runtime() -> ToolRuntime {
     ToolRuntime::new_for_tests()
 }
 
+pub(in crate::tool_runtime::tests) fn registered_tool_specs() -> Vec<ToolSpec> {
+    ToolRuntime::registered_tool_specs()
+}
+
+pub(in crate::tool_runtime::tests) fn registered_tool_categories() -> Value {
+    ToolRuntime::registered_tool_categories()
+}
+
+pub(in crate::tool_runtime::tests) fn registered_tool_names() -> Vec<String> {
+    registered_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect()
+}
+
 pub(in crate::tool_runtime::tests) fn sample_tool_args(name: &str) -> Value {
-    let spec = ToolRuntime::registered_tool_specs()
+    let spec = registered_tool_specs()
         .into_iter()
         .find(|spec| spec.name == name)
         .unwrap_or_else(|| panic!("missing tool spec for {name}"));

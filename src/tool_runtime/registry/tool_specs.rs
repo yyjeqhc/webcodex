@@ -47,14 +47,6 @@ impl ToolRuntime {
         }
         specs
     }
-
-    /// The sorted list of accepted runtime tool names (mirrors `tool_specs`).
-    #[cfg(test)]
-    pub fn tool_names(&self) -> Vec<String> {
-        model_visible_tool_definitions()
-            .map(|definition| definition.name.to_string())
-            .collect()
-    }
 }
 
 fn tool_spec_declarations() -> Vec<ToolSpec> {

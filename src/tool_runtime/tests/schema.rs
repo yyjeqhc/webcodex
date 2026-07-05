@@ -103,6 +103,37 @@ fn accepted_flattened_arg_preferred_order_is_unique_and_declared() {
 }
 
 #[test]
+fn accepted_flattened_args_appends_recorder_field_once() {
+    use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
+
+    let spec = ToolSpec {
+        name: "synthetic_tool".to_string(),
+        description: "Synthetic test tool".to_string(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                TOOL_CALL_RECORDING_SESSION_ID_FIELD: {"type": "string"}
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        output_schema: json!({"type": "object", "additionalProperties": true}),
+        annotations: json!({}),
+    };
+
+    let accepted = super::super::registry::accepted_flattened_args_for_spec(&spec);
+    let recorder_count = accepted
+        .iter()
+        .filter(|field| field.as_str() == TOOL_CALL_RECORDING_SESSION_ID_FIELD)
+        .count();
+    assert_eq!(
+        recorder_count, 1,
+        "accepted_flattened_args must not duplicate recorder metadata: {accepted:?}"
+    );
+}
+
+#[test]
 fn tool_definitions_drive_metadata_visibility_and_categories() {
     use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::tool_definitions;

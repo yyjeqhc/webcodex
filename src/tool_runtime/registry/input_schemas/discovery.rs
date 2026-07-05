@@ -111,10 +111,14 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
     remaining.sort_unstable();
     names.extend(remaining.into_iter().map(str::to_string));
     for field in runtime_tool_extra_accepted_flattened_args(&spec.name) {
-        if !names.iter().any(|name| name == field) {
-            names.push((*field).to_string());
-        }
+        push_unique_flattened_arg(&mut names, field);
     }
-    names.push(TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string());
+    push_unique_flattened_arg(&mut names, TOOL_CALL_RECORDING_SESSION_ID_FIELD);
     names
+}
+
+fn push_unique_flattened_arg(names: &mut Vec<String>, field: &str) {
+    if !names.iter().any(|name| name == field) {
+        names.push(field.to_string());
+    }
 }

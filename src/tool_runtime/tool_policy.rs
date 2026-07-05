@@ -69,8 +69,8 @@ impl ToolDefinition {
         if self.captures_validation_output() {
             return "validation";
         }
-        if matches!(self.name, "run_job" | "stop_job" | "run_codex") {
-            return "job";
+        if let Some(permission_risk) = self.policy.permission_risk {
+            return permission_risk;
         }
         if self.metadata.shell_like {
             return "shell";

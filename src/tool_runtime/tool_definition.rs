@@ -123,6 +123,7 @@ pub(crate) struct ToolDefinitionPolicy {
     pub(crate) current_session_control: bool,
     pub(crate) creates_or_binds_session: bool,
     pub(crate) git_like: bool,
+    pub(crate) permission_risk: Option<&'static str>,
     pub(crate) requires_explicit_business_session: bool,
 }
 
@@ -133,6 +134,7 @@ impl ToolDefinitionPolicy {
         current_session_control: false,
         creates_or_binds_session: false,
         git_like: false,
+        permission_risk: None,
         requires_explicit_business_session: false,
     };
 }
@@ -227,6 +229,19 @@ const fn creates_or_binds_session(definition: ToolDefinition) -> ToolDefinition 
     ToolDefinition {
         policy: ToolDefinitionPolicy {
             creates_or_binds_session: true,
+            ..definition.policy
+        },
+        ..definition
+    }
+}
+
+const fn permission_risk(
+    definition: ToolDefinition,
+    permission_risk: &'static str,
+) -> ToolDefinition {
+    ToolDefinition {
+        policy: ToolDefinitionPolicy {
+            permission_risk: Some(permission_risk),
             ..definition.policy
         },
         ..definition

@@ -5,8 +5,6 @@
 //! capability. Non-runtime route metadata fallbacks remain in `metadata.rs`
 //! while the registry migration proceeds in small steps.
 
-#![allow(dead_code)]
-
 mod artifacts;
 mod checkpoints;
 mod current_sessions;
@@ -32,18 +30,24 @@ pub(crate) use super::tool_catalog::{
     TOOL_DISCOVERY_GROUP_PATCH, TOOL_DISCOVERY_GROUP_PROJECTS, TOOL_DISCOVERY_GROUP_REVIEW,
     TOOL_DISCOVERY_GROUP_RUNTIME, TOOL_DISCOVERY_GROUP_SHELL, TOOL_DISCOVERY_GROUP_VALIDATION,
 };
+#[cfg(test)]
 pub use super::tool_policy::is_known_tool_name;
+#[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use super::tool_policy::{
-    is_model_hidden_tool_name, is_model_visible_tool_name, known_tool_names,
-    lookup_tool_definition, model_hidden_tool_names, model_visible_tool_definitions,
+    is_model_hidden_tool_name, known_tool_names, model_hidden_tool_names,
+    runtime_tool_creates_or_binds_session, runtime_tool_is_current_session_control,
+    runtime_tool_requires_explicit_business_session,
+};
+#[allow(unused_imports)]
+pub(crate) use super::tool_policy::{
+    is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
     model_visible_tool_names_csv, runtime_tool_agent_capability,
     runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
-    runtime_tool_category, runtime_tool_creates_or_binds_session, runtime_tool_disabled_message,
+    runtime_tool_category, runtime_tool_disabled_message,
     runtime_tool_extra_accepted_flattened_args, runtime_tool_is_change_summary_like,
-    runtime_tool_is_current_session_control, runtime_tool_is_git_like, runtime_tool_is_read_like,
-    runtime_tool_is_shell_like, runtime_tool_is_write_like, runtime_tool_metadata,
-    runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
+    runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+    runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
     runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
     runtime_tool_session_risk_class,
 };
@@ -111,6 +115,7 @@ pub(crate) enum ToolVisibility {
 }
 
 impl ToolVisibility {
+    #[cfg(test)]
     pub(crate) fn is_model_hidden(self) -> bool {
         matches!(self, Self::ModelHidden)
     }

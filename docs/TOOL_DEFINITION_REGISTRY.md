@@ -91,12 +91,10 @@ explicit non-runtime `delete_files` compatibility metadata. These fallbacks are 
 migration bridge, not the long-term design. Runtime tool metadata should be added
 to `ToolDefinition`, not to `metadata.rs`.
 
-The `#![allow(dead_code)]` on `tool_definition.rs` is also migration residue.
-The definition layer intentionally exposes helper methods and constants ahead of
-each call site moving over, and some of those helpers are used only by specific
-test configurations or future registry generation steps. The goal is to narrow
-or remove that module-wide allowance once the remaining helper surface is either
-used by production code, kept behind `#[cfg(test)]`, or deleted.
+The former module-wide `#![allow(dead_code)]` on `tool_definition.rs` has been
+removed. Inventory-only helper facades are now kept behind `#[cfg(test)]`, and
+any future dead-code allowance in this layer should be item-scoped with a
+migration reason.
 
 ## Current problems
 
@@ -110,9 +108,9 @@ used by production code, kept behind `#[cfg(test)]`, or deleted.
 - Legacy metadata fallback remains as an explicit migration bridge for
   non-runtime route metadata and unknown-name safety. New runtime tools should
   not extend that fallback.
-- `allow(dead_code)` still exists on a few runtime migration modules, including
-  the ToolDefinition layer, and should be narrowed as soon as helper usage is
-  clear.
+- Dead-code residue may still exist in other runtime migration modules, but the
+  ToolDefinition layer should not reintroduce a module-wide allowance. New
+  residue should be item-scoped and documented.
 - Session id behavior and project resolution behavior are encoded in variant
   helpers such as `session_id()` and `project()`, plus call-site logic.
 - Guard denial, session recording, and redaction/logging rules depend on broad

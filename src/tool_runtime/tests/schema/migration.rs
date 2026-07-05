@@ -1036,6 +1036,56 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         .sum();
     assert_eq!(openapi_operation_count, 25, "OpenAPI operation count");
 
+    let operation_ids = openapi["paths"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|methods| methods.as_object().unwrap().values())
+        .map(|operation| operation["operationId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    for forbidden in [
+        "runCodex",
+        "RunCodex",
+        "sessionHandoffSummary",
+        "SessionHandoff",
+        "applyTextEdits",
+        "ApplyTextEdits",
+        "artifactUpload",
+        "ArtifactUpload",
+    ] {
+        assert!(
+            !operation_ids
+                .iter()
+                .any(|operation_id| operation_id.contains(forbidden)),
+            "{forbidden} must remain hidden/runtime-only and not become a dedicated GPT Action: {operation_ids:?}"
+        );
+    }
+
+    let tool_call_properties = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
+        .as_object()
+        .expect("ToolCallRequest properties");
+    for field in [
+        "expected_failure",
+        "expected_failure_kind",
+        "test_expect_failure_kind",
+        "assertion_name",
+        "summary_only",
+        "include_command_preview",
+        "compact_startup",
+    ] {
+        assert!(
+            tool_call_properties.contains_key(field),
+            "callRuntimeTool must keep flattened GPT Action field {field}"
+        );
+    }
+    let tool_description = tool_call_properties["tool"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(
+        !tool_description.contains("run_codex"),
+        "callRuntimeTool model-facing accepted-name description must not advertise run_codex"
+    );
+
     let model_facing_names = registered_tool_names();
     assert_eq!(
         model_facing_names.len(),
@@ -1051,6 +1101,28 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         model_facing_names.len() + 1,
         "ToolDefinition includes only one hidden runtime tool"
     );
+}
+
+#[test]
+fn tool_definition_dead_code_residue_is_narrow_and_documented() {
+    let source = include_str!("../../tool_definition.rs");
+    assert!(
+        !source.contains("#![allow(dead_code)]"),
+        "tool_definition.rs must not use a module-wide dead_code allowance"
+    );
+
+    let docs = include_str!("../../../../docs/TOOL_DEFINITION_REGISTRY.md");
+    for phrase in [
+        "module-wide `#![allow(dead_code)]`",
+        "removed",
+        "#[cfg(test)]",
+        "item-scoped",
+    ] {
+        assert!(
+            docs.contains(phrase),
+            "ToolDefinition migration docs should explain dead_code residue: missing {phrase}"
+        );
+    }
 }
 
 impl ExpectedToolPolicy {

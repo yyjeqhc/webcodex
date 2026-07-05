@@ -72,14 +72,17 @@ pub(crate) use tool_call::{
     TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
     TOOL_CALL_WRAPPER_FIELDS,
 };
+#[cfg(test)]
 #[allow(unused_imports)]
 pub use tool_definition::is_known_tool_name;
+#[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use tool_definition::is_model_hidden_tool_name;
 #[allow(unused_imports)]
 pub(crate) use tool_definition::runtime_tool_category as tool_manifest_category;
 #[allow(unused_imports)]
 pub(crate) use tool_definition::AgentCapability;
+#[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use tool_definition::{known_tool_names, model_hidden_tool_names};
 #[allow(unused_imports)]

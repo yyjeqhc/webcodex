@@ -133,12 +133,13 @@ pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefiniti
     tool_definitions().find(|definition| definition.name == name)
 }
 
-/// Returns `true` if `name` is a recognized runtime tool name. Public so the
-/// HTTP/MCP adapters can decide whether to emit the rich "unknown tool" error.
+/// Returns `true` if `name` is a recognized runtime tool name.
+#[cfg(test)]
 pub fn is_known_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some()
 }
 
+#[cfg(test)]
 pub(crate) fn known_tool_names() -> impl Iterator<Item = &'static str> {
     tool_definitions().map(|definition| definition.name)
 }
@@ -200,15 +201,18 @@ pub(crate) fn runtime_tool_captures_validation_output(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.captures_validation_output())
 }
 
+#[cfg(test)]
 pub(crate) fn runtime_tool_is_current_session_control(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.is_current_session_control())
 }
 
+#[cfg(test)]
 pub(crate) fn runtime_tool_requires_explicit_business_session(name: &str) -> bool {
     lookup_tool_definition(name)
         .is_some_and(|definition| definition.requires_explicit_business_session())
 }
 
+#[cfg(test)]
 pub(crate) fn runtime_tool_creates_or_binds_session(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.creates_or_binds_session())
 }
@@ -252,10 +256,12 @@ pub(crate) fn is_model_visible_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_visible())
 }
 
+#[cfg(test)]
 pub(crate) fn is_model_hidden_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_hidden())
 }
 
+#[cfg(test)]
 pub(crate) fn model_hidden_tool_names() -> impl Iterator<Item = &'static str> {
     tool_definitions()
         .filter(|definition| definition.visibility.is_model_hidden())

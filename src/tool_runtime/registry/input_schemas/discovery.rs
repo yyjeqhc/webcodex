@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 
 use super::super::super::tool_spec::ToolSpec;
 use super::common::object_schema;
+use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 
 pub(crate) fn list_tools_input_schema() -> Value {
     json!({
@@ -92,7 +93,7 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
     ];
 
     let Some(properties) = spec.input_schema["properties"].as_object() else {
-        return vec!["recording_session_id".to_string()];
+        return vec![TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string()];
     };
     let mut names = Vec::new();
     for field in PREFERRED_ORDER {
@@ -110,6 +111,6 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
     if spec.name == "start_coding_task" && !names.iter().any(|field| field == "session_id") {
         names.push("session_id".to_string());
     }
-    names.push("recording_session_id".to_string());
+    names.push(TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string());
     names
 }

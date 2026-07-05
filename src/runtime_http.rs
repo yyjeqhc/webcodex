@@ -3,6 +3,7 @@ use crate::json_error;
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
+use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{ListToolsOptions, ToolCall, ToolRuntime};
 use salvo::prelude::*;
 use serde::Deserialize;
@@ -226,7 +227,7 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     } else {
         let mut flattened = serde_json::Map::new();
         for (key, value) in obj {
-            if key != "tool" && key != "recording_session_id" {
+            if key != "tool" && key != TOOL_CALL_RECORDING_SESSION_ID_FIELD {
                 flattened.insert(key.clone(), value.clone());
             }
         }
@@ -241,7 +242,7 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
 
 fn extract_recording_session_id(body: &Value) -> Option<String> {
     body.as_object()
-        .and_then(|obj| obj.get("recording_session_id"))
+        .and_then(|obj| obj.get(TOOL_CALL_RECORDING_SESSION_ID_FIELD))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())

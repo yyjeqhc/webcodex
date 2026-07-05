@@ -7,6 +7,9 @@ use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
     ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest,
 };
+use crate::tool_runtime::sessions::{
+    TOOL_CALL_EXPECTATION_METADATA_FIELDS, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
+};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -1001,7 +1004,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "category",
         "include_recommended_flows",
         "include_risk_summary",
-        "recording_session_id",
+        TOOL_CALL_RECORDING_SESSION_ID_FIELD,
     ] {
         assert!(accepted("tool_manifest").contains(&field.to_string()));
     }
@@ -1015,12 +1018,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "finish_coding_task",
     ] {
         let accepted = accepted(tool);
-        for field in [
-            "expected_failure",
-            "expected_failure_kind",
-            "test_expect_failure_kind",
-            "assertion_name",
-        ] {
+        for &field in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
             assert!(
                 accepted.contains(&field.to_string()),
                 "{tool} missing testing metadata flattened arg {field}: {accepted:?}"
@@ -1039,7 +1037,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "tool_manifest_categories",
         "tool_manifest_limit",
         "session_id",
-        "recording_session_id",
+        TOOL_CALL_RECORDING_SESSION_ID_FIELD,
     ] {
         assert!(accepted("start_coding_task").contains(&field.to_string()));
     }

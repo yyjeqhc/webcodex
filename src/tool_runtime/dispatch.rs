@@ -339,16 +339,7 @@ impl ToolRuntime {
             | ToolCall::ListJobs { .. }
             | ToolCall::JobTail { .. }) => self.dispatch_job_tool(call, auth).await,
 
-            ToolCall::RunCodex {
-                project: _,
-                prompt: _,
-                session_id: _,
-                approval_mode: _,
-                timeout_secs: _,
-                cwd: _,
-                extra_args: _,
-            } => tool_disabled_result_from_definition("run_codex")
-                .expect("run_codex must be disabled by ToolDefinition policy"),
+            call @ ToolCall::RunCodex { .. } => self.dispatch_codex_tool(call).await,
 
             call @ ToolCall::WorkspaceHygieneCheck { .. } => self.dispatch_hygiene_tool(call).await,
         }

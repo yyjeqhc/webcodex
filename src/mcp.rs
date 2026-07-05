@@ -194,7 +194,7 @@ async fn handle_mcp_request(
         "tools/list" => rpc_result(
             id,
             json!({
-                "tools": runtime.tool_specs()
+                "tools": ToolRuntime::registered_tool_specs()
             }),
         ),
         "tools/call" => {
@@ -413,8 +413,7 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
-        let runtime_names: Vec<String> = runtime
-            .tool_specs()
+        let runtime_names: Vec<String> = ToolRuntime::registered_tool_specs()
             .iter()
             .map(|s| s.name.clone())
             .collect();
@@ -431,7 +430,7 @@ mod tests {
     #[tokio::test]
     async fn session_tools_exposed_in_registry_and_mcp() {
         let runtime = test_runtime();
-        let specs = runtime.tool_specs();
+        let specs = ToolRuntime::registered_tool_specs();
         let registry_names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
         assert!(registry_names.contains(&"start_session"));
         assert!(registry_names.contains(&"session_summary"));
@@ -939,8 +938,7 @@ mod tests {
             "MCP tools/list must not include run_codex: {:?}",
             mcp_names
         );
-        let rest_names: Vec<String> = runtime
-            .tool_specs()
+        let rest_names: Vec<String> = ToolRuntime::registered_tool_specs()
             .iter()
             .map(|s| s.name.clone())
             .collect();

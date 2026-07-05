@@ -22,6 +22,7 @@ use super::{output_schema_for_tool, tool_annotations};
 use std::collections::BTreeMap;
 
 impl ToolRuntime {
+    #[cfg(test)]
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
         Self::registered_tool_specs()
     }

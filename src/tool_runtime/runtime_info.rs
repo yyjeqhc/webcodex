@@ -244,7 +244,7 @@ impl ToolRuntime {
         });
 
         // -- tools summary ----------------------------------------------------
-        let specs = self.tool_specs();
+        let specs = Self::registered_tool_specs();
         let tools_count = specs.len();
         let tools_names: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
         let tools = json!({

@@ -7,6 +7,8 @@
 
 #![allow(dead_code)]
 
+mod sessions;
+
 use super::metadata::{
     metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, JOB_RUN, PROJECT_READ,
     PROJECT_WRITE, RUNTIME_READ,
@@ -154,140 +156,32 @@ use ToolRisk::{JobRun, ProjectWrite, ReadOnly};
 use ToolVisibility::{ModelHidden, ModelVisible};
 
 pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
-    TOOL_DEFINITIONS.iter()
+    TOOL_DEFINITION_GROUPS
+        .iter()
+        .flat_map(|definitions| definitions.iter())
 }
 
-pub(crate) const TOOL_DEFINITIONS: &[ToolDefinition] = &[
-    def(
-        "list_tools",
-        ModelVisible,
-        "runtime",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "start_session",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "start_coding_task",
-        ModelVisible,
-        "workflow",
-        Some(GitOrShell),
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "finish_coding_task",
-        ModelVisible,
-        "workflow",
-        Some(GitOrShell),
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "session_summary",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "post_session_message",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "list_session_messages",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "resolve_session_message",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "session_discussion_summary",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "session_handoff_summary",
-        ModelVisible,
-        "session",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
+const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
+    TOOL_DEFINITION_HEAD,
+    sessions::DEFINITIONS,
+    TOOL_DEFINITION_TAIL,
+];
+
+const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
+    "list_tools",
+    ModelVisible,
+    "runtime",
+    None,
+    "control",
+    ReadOnly,
+    Some(RUNTIME_READ),
+    false,
+    NoPath,
+    false,
+    false,
+)];
+
+const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
     def(
         "workspace_hygiene_check",
         ModelVisible,

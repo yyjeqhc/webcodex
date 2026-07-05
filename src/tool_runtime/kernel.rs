@@ -2,10 +2,9 @@ use super::sessions::{
     strip_tool_call_expectation_metadata, SessionTransport, ToolCallRecorderMetadata,
 };
 use super::tool_audit::session_log_arguments_for_tool_request;
-use super::tool_definition::runtime_tool_disabled_message;
 use super::{
-    session_context, session_guard_denied_result, tool_disabled_result, unknown_session_result,
-    ToolCall, ToolResult, ToolRuntime,
+    session_context, session_guard_denied_result, tool_disabled_result_from_definition,
+    unknown_session_result, ToolCall, ToolResult, ToolRuntime,
 };
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
@@ -171,8 +170,7 @@ impl ToolRuntime {
                 };
             }
         }
-        if let Some(disabled_message) = runtime_tool_disabled_message(&request.tool_name) {
-            let mut result = tool_disabled_result(&request.tool_name, disabled_message);
+        if let Some(mut result) = tool_disabled_result_from_definition(&request.tool_name) {
             if let Some(session_id) = context.session_id {
                 let session_event = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),

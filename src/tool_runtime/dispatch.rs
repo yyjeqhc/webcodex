@@ -6,11 +6,10 @@ use super::session_context::{
     session_message_error_result, session_project_mismatch_requires_escape,
     session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
 };
-use super::tool_definition::runtime_tool_disabled_message;
 use super::tool_inputs::ListToolsOptions;
 use super::{
-    permissions, run_codex_disabled_result, session_context, sessions, tool_disabled_result,
-    ToolCall, ToolResult, ToolRuntime,
+    permissions, session_context, sessions, tool_disabled_result_from_definition, ToolCall,
+    ToolResult, ToolRuntime,
 };
 use crate::auth::AuthContext;
 use serde_json::json;
@@ -148,8 +147,7 @@ impl ToolRuntime {
                 return result;
             }
         }
-        if let Some(disabled_message) = runtime_tool_disabled_message(call.tool_name()) {
-            let mut result = tool_disabled_result(call.tool_name(), disabled_message);
+        if let Some(mut result) = tool_disabled_result_from_definition(call.tool_name()) {
             if let Some(session_id) = session_id.as_deref() {
                 let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
@@ -891,7 +889,8 @@ impl ToolRuntime {
                 timeout_secs: _,
                 cwd: _,
                 extra_args: _,
-            } => run_codex_disabled_result(),
+            } => tool_disabled_result_from_definition("run_codex")
+                .expect("run_codex must be disabled by ToolDefinition policy"),
 
             ToolCall::JobStatus {
                 job_id,

@@ -99,8 +99,9 @@ pub(crate) fn tool_disabled_result(tool_name: &str, message: &'static str) -> To
     )
 }
 
-pub(crate) fn run_codex_disabled_result() -> ToolResult {
-    tool_disabled_result("run_codex", RUN_CODEX_DISABLED_MESSAGE)
+pub(crate) fn tool_disabled_result_from_definition(tool_name: &str) -> Option<ToolResult> {
+    tool_definition::runtime_tool_disabled_message(tool_name)
+        .map(|message| tool_disabled_result(tool_name, message))
 }
 
 #[cfg(test)]

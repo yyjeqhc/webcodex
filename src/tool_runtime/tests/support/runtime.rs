@@ -20,9 +20,7 @@ pub(in crate::tool_runtime::tests) fn test_runtime() -> ToolRuntime {
 }
 
 pub(in crate::tool_runtime::tests) fn sample_tool_args(name: &str) -> Value {
-    let runtime = test_runtime();
-    let spec = runtime
-        .tool_specs()
+    let spec = ToolRuntime::registered_tool_specs()
         .into_iter()
         .find(|spec| spec.name == name)
         .unwrap_or_else(|| panic!("missing tool spec for {name}"));

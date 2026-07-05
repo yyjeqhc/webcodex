@@ -627,13 +627,14 @@ impl SessionStore {
         tool_name: &str,
     ) -> Option<SessionGuardDenial> {
         let (mode, guards) = self.guard_state(session_id)?;
-        if guards.deny_write_tools && is_write_like_tool(tool_name) {
+        let classification = SessionToolClassification::for_tool(tool_name);
+        if guards.deny_write_tools && classification.write_like {
             return Some(SessionGuardDenial {
                 mode,
                 guard: "deny_write_tools",
             });
         }
-        if guards.deny_shell_tools && is_shell_like_tool(tool_name) {
+        if guards.deny_shell_tools && classification.shell_like {
             return Some(SessionGuardDenial {
                 mode,
                 guard: "deny_shell_tools",
@@ -690,12 +691,8 @@ impl SessionStore {
         let now = now_ts();
         let event_id = format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let project = extract_project(arguments);
-        let risk_class = risk_class_for_tool(tool_name).to_string();
-        let read_like = is_read_like_tool(tool_name);
-        let write_like = is_write_like_tool(tool_name);
-        let shell_like = is_shell_like_tool(tool_name);
-        let git_like = is_git_like_tool(tool_name);
-        let change_summary_like = is_change_summary_like_tool(tool_name);
+        let classification = SessionToolClassification::for_tool(tool_name);
+        let risk_class = classification.risk_class.to_string();
         let changed_paths = changed_paths_for_tool(tool_name, arguments);
         let input_summary = Some(redact_and_bound_value(arguments));
         let expectation = metadata.expectation;
@@ -707,11 +704,11 @@ impl SessionStore {
             project: project.clone(),
             resolved_project: resolved_project.clone(),
             risk_class: risk_class.clone(),
-            read_like,
-            write_like,
-            shell_like,
-            git_like,
-            change_summary_like,
+            read_like: classification.read_like,
+            write_like: classification.write_like,
+            shell_like: classification.shell_like,
+            git_like: classification.git_like,
+            change_summary_like: classification.change_summary_like,
             changed_paths: changed_paths.clone(),
             started_at: now,
             started_instant: Instant::now(),
@@ -728,11 +725,11 @@ impl SessionStore {
             project,
             resolved_project,
             risk_class,
-            read_like,
-            write_like,
-            shell_like,
-            git_like,
-            change_summary_like,
+            read_like: classification.read_like,
+            write_like: classification.write_like,
+            shell_like: classification.shell_like,
+            git_like: classification.git_like,
+            change_summary_like: classification.change_summary_like,
             started_at: Some(now),
             finished_at: None,
             duration_ms: None,
@@ -1834,28 +1831,27 @@ fn tool_failure_event_summary(event: &SessionEvent) -> Value {
     })
 }
 
-pub(crate) fn risk_class_for_tool(tool_name: &str) -> &'static str {
-    runtime_tool_session_risk_class(tool_name)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionToolClassification {
+    risk_class: &'static str,
+    read_like: bool,
+    write_like: bool,
+    shell_like: bool,
+    git_like: bool,
+    change_summary_like: bool,
 }
 
-fn is_read_like_tool(tool_name: &str) -> bool {
-    runtime_tool_is_read_like(tool_name)
-}
-
-fn is_write_like_tool(tool_name: &str) -> bool {
-    runtime_tool_is_write_like(tool_name)
-}
-
-fn is_shell_like_tool(tool_name: &str) -> bool {
-    runtime_tool_is_shell_like(tool_name)
-}
-
-fn is_git_like_tool(tool_name: &str) -> bool {
-    runtime_tool_is_git_like(tool_name)
-}
-
-fn is_change_summary_like_tool(tool_name: &str) -> bool {
-    runtime_tool_is_change_summary_like(tool_name)
+impl SessionToolClassification {
+    fn for_tool(tool_name: &str) -> Self {
+        Self {
+            risk_class: runtime_tool_session_risk_class(tool_name),
+            read_like: runtime_tool_is_read_like(tool_name),
+            write_like: runtime_tool_is_write_like(tool_name),
+            shell_like: runtime_tool_is_shell_like(tool_name),
+            git_like: runtime_tool_is_git_like(tool_name),
+            change_summary_like: runtime_tool_is_change_summary_like(tool_name),
+        }
+    }
 }
 
 pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<String> {
@@ -2163,7 +2159,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_risk_class_uses_metadata() {
+    fn session_tool_classification_uses_definition_policy() {
         for (tool, risk_class) in [
             ("show_changes", "read_only"),
             ("start_session", "read_only"),
@@ -2173,7 +2169,11 @@ mod tests {
             ("cargo_test", "job_run"),
             ("definitely_not_a_tool", "unknown"),
         ] {
-            assert_eq!(risk_class_for_tool(tool), risk_class, "{tool}");
+            assert_eq!(
+                SessionToolClassification::for_tool(tool).risk_class,
+                risk_class,
+                "{tool}"
+            );
         }
     }
 

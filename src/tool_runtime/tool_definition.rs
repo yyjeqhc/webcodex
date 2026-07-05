@@ -7,9 +7,11 @@
 
 #![allow(dead_code)]
 
+mod artifacts;
 mod checkpoints;
 mod current_sessions;
 mod discovery;
+mod edits;
 mod files;
 mod git;
 mod hygiene;
@@ -19,8 +21,7 @@ mod sessions;
 mod testing;
 
 use super::metadata::{
-    metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, PROJECT_READ,
-    PROJECT_WRITE, RUNTIME_READ,
+    metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, RUNTIME_READ,
 };
 pub(crate) use super::tool_catalog::{TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS};
 pub use super::tool_policy::is_known_tool_name;
@@ -159,9 +160,8 @@ const fn def(
     }
 }
 
-use AgentCapability::{FileRead, FileWrite};
-use ToolPathHint::{Artifact, None as NoPath, SinglePath};
-use ToolRisk::{ProjectWrite, ReadOnly};
+use ToolPathHint::None as NoPath;
+use ToolRisk::ReadOnly;
 use ToolVisibility::ModelVisible;
 
 pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
@@ -187,7 +187,9 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     patches::APPLY_DEFINITIONS,
     hygiene::CLEANUP_DEFINITIONS,
     patches::VALIDATION_DEFINITIONS,
-    TOOL_DEFINITION_TAIL,
+    edits::COMPATIBILITY_DEFINITIONS,
+    artifacts::DEFINITIONS,
+    edits::LINE_DEFINITIONS,
 ];
 
 const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
@@ -203,214 +205,3 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
     false,
     false,
 )];
-
-const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
-    def(
-        "replace_in_file",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "replace_exact_block",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "insert_before_pattern",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "insert_after_pattern",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "write_project_file",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "save_project_artifact",
-        ModelVisible,
-        "artifact",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        Artifact,
-        false,
-        false,
-    ),
-    def(
-        "read_project_artifact_metadata",
-        ModelVisible,
-        "artifact",
-        Some(FileRead),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        Artifact,
-        false,
-        false,
-    ),
-    def(
-        "read_project_artifact",
-        ModelVisible,
-        "artifact",
-        Some(FileRead),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        Artifact,
-        false,
-        false,
-    ),
-    def(
-        "artifact_upload_begin",
-        ModelVisible,
-        "artifact",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        Artifact,
-        false,
-        false,
-    ),
-    def(
-        "artifact_upload_chunk",
-        ModelVisible,
-        "artifact",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        Artifact,
-        false,
-        false,
-    ),
-    def(
-        "artifact_upload_finish",
-        ModelVisible,
-        "artifact",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        Artifact,
-        false,
-        false,
-    ),
-    def(
-        "artifact_upload_abort",
-        ModelVisible,
-        "artifact",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        Artifact,
-        false,
-        false,
-    ),
-    def(
-        "replace_line_range",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "insert_at_line",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "delete_line_range",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "apply_text_edits",
-        ModelVisible,
-        "edit",
-        Some(FileWrite),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-];

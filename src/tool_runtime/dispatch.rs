@@ -350,15 +350,7 @@ impl ToolRuntime {
             } => tool_disabled_result_from_definition("run_codex")
                 .expect("run_codex must be disabled by ToolDefinition policy"),
 
-            ToolCall::WorkspaceHygieneCheck {
-                project,
-                max_findings,
-                include_tracked,
-                session_id,
-            } => {
-                self.workspace_hygiene_check(project, max_findings, include_tracked, session_id)
-                    .await
-            }
+            call @ ToolCall::WorkspaceHygieneCheck { .. } => self.dispatch_hygiene_tool(call).await,
         }
     }
 }

@@ -5,6 +5,9 @@ a product architecture narrative. Its purpose is to keep new code inside the
 right boundary and prevent recently split root files from becoming large mixed
 responsibility files again.
 
+For the strategic UI, MCP client/server, and LSP direction, see
+[UI_MCP_LSP_ROADMAP.md](UI_MCP_LSP_ROADMAP.md).
+
 ## Maintenance Rules
 
 - Root files should stay thin. A root may own route wiring, public re-exports,

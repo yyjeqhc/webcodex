@@ -176,6 +176,20 @@ webcodex-agent reconnect attempt scheduled transport=websocket delay=1s
 
 `runtime_status` and `listAgents` show the actual connected transport label, not merely the preferred setting.
 
+### Foreground polling failures
+
+When `webcodex-agent` is run in the foreground with polling as the active
+transport, server-unavailable poll failures are terminal. HTTP 502, 503, and
+504 responses from `/api/shell/agent/poll`, including proxy HTML error pages,
+cause the agent to print a concise status summary and exit with a non-zero
+status instead of retrying forever. The proxy HTML body is not dumped to the
+terminal.
+
+HTTP 401 and 403 poll responses are also terminal; check the agent token and
+config without printing token values. Service deployments should rely on the
+service manager restart policy, such as systemd `Restart=...`, to bring the
+agent back after the server or upstream is restored.
+
 ## Failure table
 
 | Symptom | Likely cause / next step |

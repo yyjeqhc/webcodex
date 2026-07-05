@@ -12,7 +12,10 @@ use crate::{
 use reqwest::blocking::Client;
 use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 /// WebSocket outgoing envelope channel capacity.
@@ -42,6 +45,8 @@ const WS_WRITER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const JOB_SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// Bounded wait for Tokio blocking tasks when the transport runtime exits.
 const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+/// Granularity for signal-aware sleeps in the blocking polling loop.
+const POLLING_SHUTDOWN_SLEEP_SLICE: Duration = Duration::from_millis(50);
 
 async fn stop_jobs_for_shutdown(jobs: &JobManager, poll_interval_ms: u64) {
     jobs.stop_all();
@@ -54,6 +59,54 @@ async fn stop_jobs_for_shutdown(jobs: &JobManager, poll_interval_ms: u64) {
     if jobs.has_work() {
         eprintln!("webcodex-agent shutdown: active jobs did not stop within 2s; exiting");
     }
+}
+
+fn stop_jobs_for_polling_shutdown(jobs: &JobManager, poll_interval_ms: u64) {
+    jobs.stop_all();
+    let start = Instant::now();
+    let sleep = Duration::from_millis(poll_interval_ms.clamp(50, 250));
+    while jobs.has_work() && start.elapsed() < JOB_SHUTDOWN_DRAIN_TIMEOUT {
+        let remaining = JOB_SHUTDOWN_DRAIN_TIMEOUT.saturating_sub(start.elapsed());
+        std::thread::sleep(sleep.min(remaining));
+    }
+    if jobs.has_work() {
+        eprintln!("webcodex-agent shutdown: active jobs did not stop within 2s; exiting");
+    }
+}
+
+fn sleep_or_shutdown(delay: Duration, shutdown: &AtomicBool) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < delay {
+        if shutdown.load(Ordering::SeqCst) {
+            return true;
+        }
+        let remaining = delay.saturating_sub(start.elapsed());
+        std::thread::sleep(remaining.min(POLLING_SHUTDOWN_SLEEP_SLICE));
+    }
+    shutdown.load(Ordering::SeqCst)
+}
+
+fn install_polling_shutdown_flag() -> Arc<AtomicBool> {
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let listener_flag = Arc::clone(&shutdown);
+    let _ = std::thread::Builder::new()
+        .name("webcodex-agent-shutdown".to_string())
+        .spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            rt.block_on(shutdown_signal());
+            listener_flag.store(true, Ordering::SeqCst);
+        });
+    shutdown
+}
+
+fn finish_polling_shutdown(jobs: &JobManager, poll_interval_ms: u64) {
+    eprintln!("webcodex-agent received process shutdown signal; exiting");
+    stop_jobs_for_polling_shutdown(jobs, poll_interval_ms);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,23 +366,7 @@ where
     T: serde::Serialize + ?Sized,
     R: serde::de::DeserializeOwned,
 {
-    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
-    let mut req = client.post(url);
-    if !token.trim().is_empty() {
-        req = req.bearer_auth(token.trim());
-    }
-    let resp = req
-        .json(body)
-        .send()
-        .map_err(|e| format!("request {} failed: {}", path, e))?;
-    let status = resp.status();
-    let text = resp
-        .text()
-        .map_err(|e| format!("failed to read response {}: {}", path, e))?;
-    if !status.is_success() {
-        return Err(format!("{} returned {}: {}", path, status, text));
-    }
-    serde_json::from_str(&text).map_err(|e| format!("failed to parse response {}: {}", path, e))
+    crate::post_json_with_auth(client, server_url, token, path, body).map_err(|e| e.to_string())
 }
 
 pub(crate) fn non_empty_token(token: &str) -> Option<String> {
@@ -527,12 +564,25 @@ fn run_auto_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
 }
 
 fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Result<(), String> {
+    let shutdown = install_polling_shutdown_flag();
+    run_polling_agent_with_shutdown(cfg, once, agent_instance_id, shutdown)
+}
+
+fn run_polling_agent_with_shutdown(
+    cfg: AgentConfig,
+    once: bool,
+    agent_instance_id: &str,
+    shutdown: Arc<AtomicBool>,
+) -> Result<(), String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("failed to create http client: {}", e))?;
     let jobs = JobManager::new(max_concurrent_jobs(&cfg));
     let mut project_cache = AgentProjectCache::default();
+    if shutdown.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     register(
         &client,
         &cfg,
@@ -547,24 +597,48 @@ fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> R
         effective_transport(&cfg)
     );
     loop {
+        if shutdown.load(Ordering::SeqCst) {
+            finish_polling_shutdown(&jobs, cfg.poll_interval_ms);
+            return Ok(());
+        }
         match handle_one_poll(&client, &cfg, &jobs, &mut project_cache, agent_instance_id) {
             Ok(ran_request) => {
                 if once {
                     while jobs.has_work() {
-                        std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
+                        if sleep_or_shutdown(
+                            Duration::from_millis(cfg.poll_interval_ms),
+                            shutdown.as_ref(),
+                        ) {
+                            finish_polling_shutdown(&jobs, cfg.poll_interval_ms);
+                            return Ok(());
+                        }
                     }
                     return Ok(());
                 }
                 if !ran_request {
-                    std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
+                    if sleep_or_shutdown(
+                        Duration::from_millis(cfg.poll_interval_ms),
+                        shutdown.as_ref(),
+                    ) {
+                        finish_polling_shutdown(&jobs, cfg.poll_interval_ms);
+                        return Ok(());
+                    }
                 }
             }
             Err(e) => {
-                eprintln!("webcodex-agent poll error: {}", e);
-                if once {
-                    return Err(e);
+                let terminal = e.is_terminal();
+                let message = e.into_message();
+                if terminal || once {
+                    return Err(message);
                 }
-                std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
+                eprintln!("webcodex-agent poll retryable error: {}", message);
+                if sleep_or_shutdown(
+                    Duration::from_millis(cfg.poll_interval_ms),
+                    shutdown.as_ref(),
+                ) {
+                    finish_polling_shutdown(&jobs, cfg.poll_interval_ms);
+                    return Ok(());
+                }
                 let _ = register(
                     &client,
                     &cfg,
@@ -1476,7 +1550,11 @@ mod tests {
         ShellAgentShellRequest, ShellClientCapabilities, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
     };
     use futures_util::{SinkExt, StreamExt};
-    use std::path::Path;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener as StdTcpListener, TcpStream};
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::AtomicUsize;
+    use std::thread;
     use tokio::net::TcpListener;
     use tokio::sync::{mpsc, oneshot};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -1503,6 +1581,13 @@ mod tests {
         }
     }
 
+    fn polling_agent_config(server_url: String, projects_dir: PathBuf) -> AgentConfig {
+        let mut cfg = test_agent_config(server_url);
+        cfg.transport = Some(TRANSPORT_POLLING.to_string());
+        cfg.projects_dir = Some(projects_dir);
+        cfg
+    }
+
     fn test_project(id: &str) -> ShellAgentProjectSummary {
         ShellAgentProjectSummary {
             id: id.to_string(),
@@ -1519,6 +1604,119 @@ mod tests {
             updated_at: 123,
             shell_profile: None,
         }
+    }
+
+    fn header_end(buf: &[u8]) -> Option<usize> {
+        buf.windows(4).position(|window| window == b"\r\n\r\n")
+    }
+
+    fn content_length(headers: &str) -> usize {
+        headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                if name.eq_ignore_ascii_case("content-length") {
+                    value.trim().parse::<usize>().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut buf = Vec::new();
+        loop {
+            let mut chunk = [0u8; 1024];
+            let n = stream.read(&mut chunk).expect("read request");
+            assert!(n > 0, "client closed before sending a complete request");
+            buf.extend_from_slice(&chunk[..n]);
+            let Some(end) = header_end(&buf) else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&buf[..end]);
+            let expected = end + 4 + content_length(&headers);
+            if buf.len() >= expected {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn request_path(request: &str) -> &str {
+        request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("")
+    }
+
+    fn write_http_response(stream: &mut TcpStream, status: &str, content_type: &str, body: &str) {
+        write!(
+            stream,
+            "HTTP/1.1 {}\r\ncontent-type: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            status,
+            content_type,
+            body.as_bytes().len(),
+            body
+        )
+        .unwrap();
+    }
+
+    fn start_polling_http_server(
+        poll_status: &str,
+        poll_content_type: &str,
+        poll_body: &str,
+    ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+        let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let poll_count = Arc::new(AtomicUsize::new(0));
+        let server_poll_count = Arc::clone(&poll_count);
+        let poll_status = poll_status.to_string();
+        let poll_content_type = poll_content_type.to_string();
+        let poll_body = poll_body.to_string();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert_eq!(request_path(&request), "/api/shell/agent/register");
+            write_http_response(
+                &mut stream,
+                "200 OK",
+                "application/json",
+                r#"{"success":true,"client":null,"error":null}"#,
+            );
+
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert_eq!(request_path(&request), "/api/shell/agent/poll");
+            server_poll_count.fetch_add(1, Ordering::SeqCst);
+            write_http_response(&mut stream, &poll_status, &poll_content_type, &poll_body);
+        });
+        (format!("http://{}", addr), poll_count, server)
+    }
+
+    fn run_polling_agent_against_server(
+        poll_status: &str,
+        poll_content_type: &str,
+        poll_body: &str,
+        once: bool,
+    ) -> (Result<(), String>, usize) {
+        let (server_url, poll_count, server) =
+            start_polling_http_server(poll_status, poll_content_type, poll_body);
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = polling_agent_config(server_url, tmp.path().join("projects.d"));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let failsafe = Arc::clone(&shutdown);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(2));
+            failsafe.store(true, Ordering::SeqCst);
+        });
+        let result = run_polling_agent_with_shutdown(cfg, once, "inst-poll-test", shutdown);
+        server.join().unwrap();
+        (result, poll_count.load(Ordering::SeqCst))
     }
 
     async fn read_register(
@@ -1612,6 +1810,107 @@ mod tests {
             "quic connect failed: certificate verify failed; check server_name",
         );
         assert!(fatal.is_fatal(), "{fatal}");
+    }
+
+    #[test]
+    fn polling_502_html_is_terminal_server_unavailable_and_sanitized() {
+        let nginx_html = "<html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx/1.31.1</center>\n</body>\n</html>";
+        let (result, poll_count) =
+            run_polling_agent_against_server("502 Bad Gateway", "text/html", nginx_html, false);
+        let error = result.expect_err("502 poll response must stop the foreground agent");
+
+        assert_eq!(poll_count, 1);
+        assert!(
+            error.contains(
+                "server unavailable while polling /api/shell/agent/poll: HTTP 502 Bad Gateway"
+            ),
+            "{error}"
+        );
+        assert!(!error.contains("<html"), "{error}");
+        assert!(!error.contains("nginx/1.31.1"), "{error}");
+        assert!(!error.contains("<center><h1>502 Bad Gateway</h1></center>"));
+    }
+
+    #[test]
+    fn polling_503_and_504_are_terminal_server_unavailable() {
+        for (status, expected) in [
+            (
+                "503 Service Unavailable",
+                "server unavailable while polling /api/shell/agent/poll: HTTP 503 Service Unavailable",
+            ),
+            (
+                "504 Gateway Timeout",
+                "server unavailable while polling /api/shell/agent/poll: HTTP 504 Gateway Timeout",
+            ),
+        ] {
+            let (result, poll_count) = run_polling_agent_against_server(
+                status,
+                "text/plain",
+                "proxy unavailable",
+                false,
+            );
+            let error = result.expect_err("gateway poll response must stop the foreground agent");
+
+            assert_eq!(poll_count, 1);
+            assert!(error.contains(expected), "{error}");
+            assert!(!error.contains("proxy unavailable"), "{error}");
+        }
+    }
+
+    #[test]
+    fn polling_401_and_403_are_terminal_auth_errors() {
+        for (status, expected) in [
+            (
+                "401 Unauthorized",
+                "authentication failed while polling /api/shell/agent/poll: HTTP 401 Unauthorized; check agent token/config",
+            ),
+            (
+                "403 Forbidden",
+                "authentication failed while polling /api/shell/agent/poll: HTTP 403 Forbidden; check agent token/config",
+            ),
+        ] {
+            let (result, poll_count) = run_polling_agent_against_server(
+                status,
+                "application/json",
+                r#"{"error":"unauthorized"}"#,
+                false,
+            );
+            let error = result.expect_err("auth poll response must stop the foreground agent");
+
+            assert_eq!(poll_count, 1);
+            assert!(error.contains(expected), "{error}");
+            assert!(!error.contains("unauthorized\""), "{error}");
+        }
+    }
+
+    #[test]
+    fn polling_idle_empty_response_remains_successful_once() {
+        let (result, poll_count) = run_polling_agent_against_server(
+            "200 OK",
+            "application/json",
+            r#"{"success":true,"request":null,"error":null}"#,
+            true,
+        );
+
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(poll_count, 1);
+    }
+
+    #[test]
+    fn polling_shutdown_interrupts_retry_sleep() {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let trigger = Arc::clone(&shutdown);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            trigger.store(true, Ordering::SeqCst);
+        });
+
+        let started = Instant::now();
+        assert!(sleep_or_shutdown(Duration::from_secs(5), shutdown.as_ref()));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "shutdown-aware polling sleep did not return promptly"
+        );
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 use reqwest::blocking::Client;
 use std::collections::{HashMap, VecDeque};
+use std::error::Error as StdError;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -76,6 +77,8 @@ use webcodex_agent::{
 };
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
+const AGENT_REGISTER_PATH: &str = "/api/shell/agent/register";
+const AGENT_POLL_PATH: &str = "/api/shell/agent/poll";
 
 #[derive(Debug, Clone)]
 struct JobManager {
@@ -325,31 +328,359 @@ fn parse_agent_init_args(args: &[String]) -> Result<AgentInitOptions, String> {
     Ok(opts)
 }
 
-fn endpoint(cfg: &AgentConfig, path: &str) -> String {
-    format!("{}{}", cfg.server_url.trim_end_matches('/'), path)
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AgentHttpErrorKind {
+    ServerUnavailable,
+    Auth,
+    NotFound,
+    Status,
+    RequestTimeout,
+    Request,
+    Decode,
 }
 
-fn post_json<T, R>(client: &Client, cfg: &AgentConfig, path: &str, body: &T) -> Result<R, String>
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentHttpError {
+    kind: AgentHttpErrorKind,
+    path: String,
+    summary: String,
+}
+
+impl AgentHttpError {
+    fn status(path: &str, status: reqwest::StatusCode, body: &str) -> Self {
+        let kind = match status.as_u16() {
+            401 | 403 => AgentHttpErrorKind::Auth,
+            404 => AgentHttpErrorKind::NotFound,
+            502 | 503 | 504 => AgentHttpErrorKind::ServerUnavailable,
+            _ if looks_like_proxy_html_error(body) => AgentHttpErrorKind::ServerUnavailable,
+            _ => AgentHttpErrorKind::Status,
+        };
+        Self {
+            kind,
+            path: path.to_string(),
+            summary: http_status_summary(status),
+        }
+    }
+
+    fn request(path: &str, error: reqwest::Error) -> Self {
+        let chain = error_chain_text(&error);
+        let kind = if looks_like_server_down_request(&error, &chain) {
+            AgentHttpErrorKind::ServerUnavailable
+        } else if error.is_timeout() {
+            AgentHttpErrorKind::RequestTimeout
+        } else {
+            AgentHttpErrorKind::Request
+        };
+        Self {
+            kind,
+            path: path.to_string(),
+            summary: request_error_summary(error, &chain),
+        }
+    }
+
+    fn decode(path: &str, error: serde_json::Error) -> Self {
+        Self {
+            kind: AgentHttpErrorKind::Decode,
+            path: path.to_string(),
+            summary: format!(
+                "invalid JSON response: {}",
+                bounded_single_line(&error.to_string())
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for AgentHttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            AgentHttpErrorKind::ServerUnavailable => {
+                write!(f, "server unavailable for {}: {}", self.path, self.summary)
+            }
+            AgentHttpErrorKind::Auth => write!(
+                f,
+                "authentication failed for {}: {}; check agent token/config",
+                self.path, self.summary
+            ),
+            AgentHttpErrorKind::NotFound => write!(
+                f,
+                "endpoint missing or incompatible server for {}: {}",
+                self.path, self.summary
+            ),
+            AgentHttpErrorKind::Status
+            | AgentHttpErrorKind::RequestTimeout
+            | AgentHttpErrorKind::Request
+            | AgentHttpErrorKind::Decode => {
+                write!(f, "{} request failed: {}", self.path, self.summary)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PollErrorKind {
+    ServerUnavailable,
+    Auth,
+    EndpointMissing,
+    Retryable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PollError {
+    kind: PollErrorKind,
+    terminal: bool,
+    message: String,
+}
+
+impl PollError {
+    fn terminal(kind: PollErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            terminal: true,
+            message: message.into(),
+        }
+    }
+
+    fn retryable(message: impl Into<String>) -> Self {
+        Self {
+            kind: PollErrorKind::Retryable,
+            terminal: false,
+            message: message.into(),
+        }
+    }
+
+    fn from_http(error: AgentHttpError) -> Self {
+        match error.kind {
+            AgentHttpErrorKind::ServerUnavailable => Self::terminal(
+                PollErrorKind::ServerUnavailable,
+                format!(
+                    "server unavailable while polling {}: {}",
+                    error.path, error.summary
+                ),
+            ),
+            AgentHttpErrorKind::Auth => Self::terminal(
+                PollErrorKind::Auth,
+                format!(
+                    "authentication failed while polling {}: {}; check agent token/config",
+                    error.path, error.summary
+                ),
+            ),
+            AgentHttpErrorKind::NotFound => Self::terminal(
+                PollErrorKind::EndpointMissing,
+                format!(
+                    "poll endpoint missing or incompatible server while polling {}: {}",
+                    error.path, error.summary
+                ),
+            ),
+            AgentHttpErrorKind::RequestTimeout => Self::retryable(format!(
+                "poll request timed out while polling {}: {}",
+                error.path, error.summary
+            )),
+            AgentHttpErrorKind::Status
+            | AgentHttpErrorKind::Request
+            | AgentHttpErrorKind::Decode => Self::retryable(format!(
+                "poll request failed while polling {}: {}",
+                error.path, error.summary
+            )),
+        }
+    }
+
+    fn from_response_error(error: Option<String>) -> Self {
+        let message = error.unwrap_or_else(|| "poll failed without error".to_string());
+        let summary = bounded_single_line(&message);
+        if looks_like_auth_failure_message(&summary) {
+            Self::terminal(
+                PollErrorKind::Auth,
+                format!(
+                    "authentication failed while polling {}: {}; check agent token/config",
+                    AGENT_POLL_PATH, summary
+                ),
+            )
+        } else {
+            Self::retryable(summary)
+        }
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.terminal
+    }
+
+    fn into_message(self) -> String {
+        self.message
+    }
+}
+
+impl std::fmt::Display for PollError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+fn http_status_summary(status: reqwest::StatusCode) -> String {
+    match status.canonical_reason() {
+        Some(reason) => format!("HTTP {} {}", status.as_u16(), reason),
+        None => format!("HTTP {}", status.as_u16()),
+    }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn looks_like_proxy_html_error(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("<html")
+        && contains_any(
+            &lower,
+            &[
+                "bad gateway",
+                "service unavailable",
+                "gateway timeout",
+                "nginx",
+                "upstream",
+            ],
+        )
+}
+
+fn looks_like_server_down_request(error: &reqwest::Error, chain: &str) -> bool {
+    if error.is_connect() {
+        return true;
+    }
+    let lower = chain.to_ascii_lowercase();
+    contains_any(
+        &lower,
+        &[
+            "connection refused",
+            "connection reset",
+            "connection aborted",
+            "connection closed",
+            "early eof",
+            "unexpected eof",
+            "incomplete message",
+            "broken pipe",
+        ],
+    )
+}
+
+fn looks_like_auth_failure_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    contains_any(
+        &lower,
+        &[
+            "unauthorized",
+            "forbidden",
+            "invalid token",
+            "bad token",
+            "auth failed",
+            "authentication",
+        ],
+    )
+}
+
+fn error_chain_text(error: &reqwest::Error) -> String {
+    let mut parts = vec![error.to_string()];
+    let mut source = StdError::source(error);
+    while let Some(err) = source {
+        parts.push(err.to_string());
+        source = err.source();
+    }
+    parts.join(": ")
+}
+
+fn request_error_summary(error: reqwest::Error, chain: &str) -> String {
+    let lower = chain.to_ascii_lowercase();
+    if lower.contains("connection refused") {
+        "connection refused".to_string()
+    } else if lower.contains("connection reset") {
+        "connection reset".to_string()
+    } else if lower.contains("connection aborted") {
+        "connection aborted".to_string()
+    } else if lower.contains("broken pipe") {
+        "broken pipe".to_string()
+    } else if contains_any(
+        &lower,
+        &[
+            "connection closed",
+            "early eof",
+            "unexpected eof",
+            "incomplete message",
+        ],
+    ) {
+        "connection closed before response completed".to_string()
+    } else if error.is_connect() {
+        "connection failed".to_string()
+    } else if error.is_timeout() {
+        "request timed out".to_string()
+    } else {
+        bounded_single_line(&error.without_url().to_string())
+    }
+}
+
+fn bounded_single_line(text: &str) -> String {
+    const MAX_CHARS: usize = 160;
+    let mut out = String::new();
+    let mut last_space = false;
+    for ch in text.chars() {
+        let ch = if ch.is_whitespace() || ch.is_control() {
+            ' '
+        } else {
+            ch
+        };
+        if ch == ' ' {
+            if last_space {
+                continue;
+            }
+            last_space = true;
+        } else {
+            last_space = false;
+        }
+        out.push(ch);
+        if out.chars().count() >= MAX_CHARS {
+            out.push_str("...");
+            break;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn post_json<T, R>(
+    client: &Client,
+    cfg: &AgentConfig,
+    path: &str,
+    body: &T,
+) -> Result<R, AgentHttpError>
 where
     T: serde::Serialize + ?Sized,
     R: serde::de::DeserializeOwned,
 {
-    let mut req = client.post(endpoint(cfg, path));
-    if !cfg.token.trim().is_empty() {
-        req = req.bearer_auth(cfg.token.trim());
+    post_json_with_auth(client, &cfg.server_url, &cfg.token, path, body)
+}
+
+fn post_json_with_auth<T, R>(
+    client: &Client,
+    server_url: &str,
+    token: &str,
+    path: &str,
+    body: &T,
+) -> Result<R, AgentHttpError>
+where
+    T: serde::Serialize + ?Sized,
+    R: serde::de::DeserializeOwned,
+{
+    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
+    let mut req = client.post(url);
+    if !token.trim().is_empty() {
+        req = req.bearer_auth(token.trim());
     }
     let resp = req
         .json(body)
         .send()
-        .map_err(|e| format!("request {} failed: {}", path, e))?;
+        .map_err(|e| AgentHttpError::request(path, e))?;
     let status = resp.status();
-    let text = resp
-        .text()
-        .map_err(|e| format!("failed to read response {}: {}", path, e))?;
+    let text = resp.text().map_err(|e| AgentHttpError::request(path, e))?;
     if !status.is_success() {
-        return Err(format!("{} returned {}: {}", path, status, text));
+        return Err(AgentHttpError::status(path, status, &text));
     }
-    serde_json::from_str(&text).map_err(|e| format!("failed to parse response {}: {}", path, e))
+    serde_json::from_str(&text).map_err(|e| AgentHttpError::decode(path, e))
 }
 
 fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
@@ -453,7 +784,7 @@ fn register(
         prepared_cache_count,
     );
     let response: ShellClientRegisterResponse =
-        post_json(client, cfg, "/api/shell/agent/register", &body)?;
+        post_json(client, cfg, AGENT_REGISTER_PATH, &body).map_err(|e| e.to_string())?;
     if response.success {
         Ok(())
     } else {
@@ -1047,17 +1378,16 @@ fn handle_one_poll(
     jobs: &JobManager,
     project_cache: &mut AgentProjectCache,
     agent_instance_id: &str,
-) -> Result<bool, String> {
+) -> Result<bool, PollError> {
     let poll = ShellAgentPollRequest {
         client_id: cfg.client_id.clone(),
         agent_instance_id: agent_instance_id.to_string(),
         projects: Some(project_cache.get(cfg)),
     };
-    let response: ShellAgentPollResponse = post_json(client, cfg, "/api/shell/agent/poll", &poll)?;
+    let response: ShellAgentPollResponse =
+        post_json(client, cfg, AGENT_POLL_PATH, &poll).map_err(PollError::from_http)?;
     if !response.success {
-        return Err(response
-            .error
-            .unwrap_or_else(|| "poll failed without error".to_string()));
+        return Err(PollError::from_response_error(response.error));
     }
     let Some(request) = response.request else {
         return Ok(false);
@@ -1081,7 +1411,7 @@ fn handle_one_poll(
     if project_op && result.is_ok() {
         project_cache.invalidate();
     }
-    result
+    result.map_err(PollError::retryable)
 }
 
 fn main() {

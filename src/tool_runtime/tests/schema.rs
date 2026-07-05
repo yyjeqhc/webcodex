@@ -8,6 +8,7 @@ mod descriptions;
 mod discovery;
 mod edits;
 mod flattened_args;
+mod migration;
 mod outputs;
 mod policy;
 mod sessions;

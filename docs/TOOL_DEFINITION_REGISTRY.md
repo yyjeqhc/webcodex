@@ -59,6 +59,45 @@ eligibility is also definition-backed: control tools, tools with required
 business `session_id`, and tools that create/bind sessions do not implicitly use
 the caller's current-session binding.
 
+### Current three-layer relationship
+
+WebCodex is intentionally in a middle state with three related layers:
+
+- `ToolCall` enum: still the typed execution IR and JSON parser boundary.
+  A runtime call is only accepted when its name resolves to a `ToolDefinition`;
+  unknown names and legacy metadata-only names do not silently deserialize into a
+  runtime call.
+- `ToolDefinition` registry: the canonical runtime tool declaration layer for
+  known names, ordering, model-facing visibility, manifest category, runtime
+  metadata, session/permission policy facades, and agent capability. The current
+  registry has 67 runtime definitions: 66 model-facing tools plus hidden
+  disabled `run_codex`.
+- Legacy metadata fallback: `metadata.rs` still owns the `ToolMetadata` value
+  type, the safe unknown-name fallback, and a small explicit compatibility
+  allowlist for non-runtime route metadata. At this point the only metadata-only
+  compatibility entry is `delete_files`, retained for legacy dedicated HTTP route
+  metadata and intentionally not accepted by `ToolCall`.
+
+Definition-backed paths today include known-tool checks, parser acceptance,
+model-hidden and model-visible discovery, public `ToolSpec` ordering, MCP
+annotations, tool manifest categories, recommended-flow summaries,
+session-ledger classification, current-session fallback eligibility,
+permission-risk labels, and agent capability dispatch checks.
+
+Fallback-backed paths remain deliberately narrow. `runtime_tool_metadata()` and
+the metadata facade can still return a safe `Unknown` metadata record for names
+outside the runtime registry, and `lookup_tool_metadata()` can return the
+explicit non-runtime `delete_files` compatibility metadata. These fallbacks are a
+migration bridge, not the long-term design. Runtime tool metadata should be added
+to `ToolDefinition`, not to `metadata.rs`.
+
+The `#![allow(dead_code)]` on `tool_definition.rs` is also migration residue.
+The definition layer intentionally exposes helper methods and constants ahead of
+each call site moving over, and some of those helpers are used only by specific
+test configurations or future registry generation steps. The goal is to narrow
+or remove that module-wide allowance once the remaining helper surface is either
+used by production code, kept behind `#[cfg(test)]`, or deleted.
+
 ## Current problems
 
 - Tool names are still repeated in `ToolCall`, `tool_name()`, parser paths,
@@ -68,6 +107,12 @@ the caller's current-session binding.
 - `ToolMetadata`, registry `ToolSpec`, OAuth runtime scope policy, OpenAPI
   accepted names, MCP annotations, and `tool_manifest` visibility/category data
   can drift when a new tool is added or an existing tool changes.
+- Legacy metadata fallback remains as an explicit migration bridge for
+  non-runtime route metadata and unknown-name safety. New runtime tools should
+  not extend that fallback.
+- `allow(dead_code)` still exists on a few runtime migration modules, including
+  the ToolDefinition layer, and should be narrowed as soon as helper usage is
+  clear.
 - Session id behavior and project resolution behavior are encoded in variant
   helpers such as `session_id()` and `project()`, plus call-site logic.
 - Guard denial, session recording, and redaction/logging rules depend on broad

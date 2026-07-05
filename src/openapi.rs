@@ -964,7 +964,10 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, stop_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits, replace_in_file, write_project_file. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging."
+                    "description": format!(
+                        "Runtime tool name. Accepted values: {}. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging.",
+                        crate::tool_runtime::tool_definition::model_visible_tool_names_csv()
+                    )
                 },
                 "recording_session_id": {
                     "type": "string",
@@ -2558,32 +2561,15 @@ mod tests {
 
     #[test]
     fn openapi_call_runtime_tool_lists_accepted_tool_names() {
+        use crate::tool_runtime::tool_definition::model_visible_tool_definitions;
+
         let spec = build_openapi_spec();
         let tool_desc = &spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
             ["description"]
             .as_str()
             .unwrap();
-        for name in [
-            "git_status",
-            "bind_current_session",
-            "current_session",
-            "unbind_current_session",
-            "read_file",
-            "git_diff_hunks",
-            "git_log",
-            "show_changes",
-            "workspace_hygiene_check",
-            "workspace_checkpoint_create",
-            "workspace_checkpoint_list",
-            "workspace_checkpoint_show",
-            "workspace_checkpoint_restore",
-            "workspace_checkpoint_delete",
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "job_status",
-            "job_log",
-        ] {
+        for definition in model_visible_tool_definitions() {
+            let name = definition.name;
             assert!(
                 tool_desc.contains(name),
                 "ToolCallRequest.tool description should list accepted tool name '{}'",

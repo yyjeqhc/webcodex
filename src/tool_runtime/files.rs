@@ -1334,6 +1334,37 @@ fn edit_match_error(index: usize, kind: ApplyTextEditKind, msg: &str) -> String 
     )
 }
 
+fn validate_anchor_edit_common(path: &str, text: &str) -> Result<(), String> {
+    validate_edit_file_path(path)?;
+    if text.contains('\0') {
+        return Err("text cannot contain NUL bytes".to_string());
+    }
+    if text.len() > MAX_WRITE_CONTENT_BYTES {
+        return Err(format!(
+            "text too large; maximum is {} bytes",
+            MAX_WRITE_CONTENT_BYTES
+        ));
+    }
+    Ok(())
+}
+
+fn parse_anchor_edit_stdout(op: &str, stdout: Option<String>) -> Result<Value, String> {
+    let stdout = stdout.unwrap_or_default();
+    let stdout = stdout.trim();
+    if stdout.is_empty() {
+        return Err(format!(
+            "agent anchor edit returned empty stdout for {op}; connected agent may not support this file op or transport dispatch may have routed it incorrectly"
+        ));
+    }
+    serde_json::from_str(stdout).map_err(|e| {
+        format!(
+            "agent anchor edit returned invalid JSON: {} (got: {})",
+            e,
+            &stdout[..stdout.len().min(200)]
+        )
+    })
+}
+
 impl ToolRuntime {
     pub(crate) async fn delete_project_files(
         &self,
@@ -2155,37 +2186,6 @@ impl ToolRuntime {
         ToolResult::ok(obj)
     }
 
-    fn validate_anchor_edit_common(path: &str, text: &str) -> Result<(), String> {
-        validate_edit_file_path(path)?;
-        if text.contains('\0') {
-            return Err("text cannot contain NUL bytes".to_string());
-        }
-        if text.len() > MAX_WRITE_CONTENT_BYTES {
-            return Err(format!(
-                "text too large; maximum is {} bytes",
-                MAX_WRITE_CONTENT_BYTES
-            ));
-        }
-        Ok(())
-    }
-
-    fn parse_anchor_edit_stdout(op: &str, stdout: Option<String>) -> Result<Value, String> {
-        let stdout = stdout.unwrap_or_default();
-        let stdout = stdout.trim();
-        if stdout.is_empty() {
-            return Err(format!(
-                "agent anchor edit returned empty stdout for {op}; connected agent may not support this file op or transport dispatch may have routed it incorrectly"
-            ));
-        }
-        serde_json::from_str(stdout).map_err(|e| {
-            format!(
-                "agent anchor edit returned invalid JSON: {} (got: {})",
-                e,
-                &stdout[..stdout.len().min(200)]
-            )
-        })
-    }
-
     async fn run_anchor_edit(
         &self,
         project: String,
@@ -2257,7 +2257,7 @@ impl ToolRuntime {
                 || format!("agent anchor edit failed with code {:?}", resp.exit_code),
             )));
         }
-        let obj = match Self::parse_anchor_edit_stdout(op, resp.stdout) {
+        let obj = match parse_anchor_edit_stdout(op, resp.stdout) {
             Ok(v) => v,
             Err(e) => return ToolResult::err(e),
         };
@@ -2286,7 +2286,7 @@ impl ToolRuntime {
         if let Err(e) = validate_edit_file_path(&path) {
             return super::permissions::edit_path_policy_rejected_result(&path, e);
         }
-        if let Err(e) = Self::validate_anchor_edit_common(&path, &new_text) {
+        if let Err(e) = validate_anchor_edit_common(&path, &new_text) {
             return ToolResult::err(e);
         }
         if old_text.is_empty() {
@@ -2331,7 +2331,7 @@ impl ToolRuntime {
         if let Err(e) = validate_edit_file_path(&path) {
             return super::permissions::edit_path_policy_rejected_result(&path, e);
         }
-        if let Err(e) = Self::validate_anchor_edit_common(&path, &text) {
+        if let Err(e) = validate_anchor_edit_common(&path, &text) {
             return ToolResult::err(e);
         }
         if pattern.is_empty() {
@@ -3437,7 +3437,7 @@ mod tests {
 
     #[test]
     fn parse_anchor_edit_stdout_rejects_empty_stdout_with_dispatch_hint() {
-        let err = ToolRuntime::parse_anchor_edit_stdout("replace_exact_block", Some(String::new()))
+        let err = parse_anchor_edit_stdout("replace_exact_block", Some(String::new()))
             .expect_err("empty stdout should be rejected before JSON parsing");
         assert!(err.contains("empty stdout"), "{err}");
         assert!(err.contains("replace_exact_block"), "{err}");

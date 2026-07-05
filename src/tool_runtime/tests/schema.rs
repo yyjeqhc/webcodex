@@ -623,8 +623,7 @@ fn tool_recommended_flows_reference_visible_defined_tools() {
 
 #[test]
 fn tool_specs_and_metadata_are_synchronized() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec_names = specs
         .iter()
         .map(|spec| spec.name.as_str())
@@ -839,8 +838,7 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ),
     ];
 
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let expected_project_tools = specs
         .iter()
         .filter_map(|spec| {
@@ -872,8 +870,7 @@ fn required_agent_capability_matches_metadata_risk_table() {
 
 #[test]
 fn tool_specs_names_are_unique() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let mut names = specs.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
     names.sort();
     let mut deduped = names.clone();
@@ -883,8 +880,7 @@ fn tool_specs_names_are_unique() {
 
 #[test]
 fn tool_specs_names_are_snake_case() {
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         assert!(
             !spec.name.contains('-'),
             "tool name '{}' should use snake_case (no hyphens)",
@@ -902,8 +898,7 @@ fn tool_specs_names_are_snake_case() {
 
 #[test]
 fn tool_specs_derive_contract_fields_from_name() {
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         assert_eq!(
             spec.output_schema,
             crate::tool_runtime::registry::output_schema_for_tool(&spec.name),
@@ -921,8 +916,7 @@ fn tool_specs_derive_contract_fields_from_name() {
 
 #[test]
 fn tool_specs_input_schemas_are_objects() {
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         let schema = &spec.input_schema;
         assert_eq!(
             schema["type"].as_str(),
@@ -947,8 +941,7 @@ fn tool_specs_input_schemas_are_objects() {
 fn tool_specs_expose_common_testing_metadata() {
     use crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS;
 
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         let props = spec.input_schema["properties"]
             .as_object()
             .unwrap_or_else(|| panic!("{} input schema properties", spec.name));
@@ -978,8 +971,7 @@ fn tool_specs_expose_common_testing_metadata() {
 
 #[test]
 fn list_tools_schema_exposes_bounded_discovery_fields() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "list_tools");
     let props = spec.input_schema["properties"].as_object().unwrap();
     for field in ["category", "features", "summary_only", "limit"] {
@@ -1008,8 +1000,7 @@ fn list_tools_schema_exposes_bounded_discovery_fields() {
 
 #[test]
 fn tool_manifest_schema_exposes_compact_discovery_fields() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "tool_manifest");
     let props = spec.input_schema["properties"].as_object().unwrap();
     for field in [
@@ -1052,7 +1043,7 @@ fn discovery_output_schemas_cover_runtime_payload_keys() {
     use crate::tool_runtime::tool_definition::TOOL_CATEGORY_GIT;
 
     let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
 
     let list_tools_spec = spec_named(&specs, "list_tools");
     let list_tools_payload = runtime.list_tools_payload(ListToolsOptions {
@@ -1101,8 +1092,7 @@ fn assert_payload_keys_declared(
 
 #[test]
 fn read_project_artifact_metadata_schema_exposes_allow_missing() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "read_project_artifact_metadata");
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert!(
@@ -1119,8 +1109,7 @@ fn read_project_artifact_metadata_schema_exposes_allow_missing() {
 
 #[test]
 fn artifact_upload_followup_descriptions_explain_required_path_binding() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     for name in [
         "artifact_upload_chunk",
         "artifact_upload_finish",
@@ -1148,8 +1137,7 @@ fn artifact_upload_followup_descriptions_explain_required_path_binding() {
 
 #[test]
 fn tool_specs_output_schemas_are_objects() {
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         let schema = &spec.output_schema;
         assert_eq!(
             schema["type"].as_str(),
@@ -1174,8 +1162,7 @@ fn tool_specs_output_schemas_are_objects() {
 
 #[test]
 fn key_tool_output_schemas_include_expected_fields() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let has_output_field = |name: &str, field: &str| {
         let spec = spec_named(&specs, name);
         spec.output_schema["properties"]["output"]["properties"]
@@ -1399,8 +1386,7 @@ fn tool_specs_required_fields_match_deserialization() {
     // For every tool spec, building arguments with only the required
     // fields must deserialize successfully, and omitting any required
     // field must fail.
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         let required: Vec<String> = spec.input_schema["required"]
             .as_array()
             .unwrap()
@@ -1452,8 +1438,7 @@ fn tool_specs_required_fields_match_deserialization() {
 
 #[test]
 fn apply_text_edits_input_schema_matches_runtime_edit_objects() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "apply_text_edits");
     let edits = &spec.input_schema["properties"]["edits"];
 
@@ -1507,8 +1492,7 @@ fn apply_text_edits_input_schema_matches_runtime_edit_objects() {
 #[test]
 fn tool_specs_optional_fields_are_not_required() {
     // Optional fields (e.g. timeout_secs, cwd) must not appear in required.
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let run_shell = specs.iter().find(|s| s.name == "run_shell").unwrap();
     let required: Vec<String> = run_shell.input_schema["required"]
         .as_array()
@@ -1540,12 +1524,7 @@ fn tool_specs_optional_fields_are_not_required() {
 
 #[test]
 fn tool_specs_covers_expected_tool_set() {
-    let runtime = test_runtime();
-    let names: Vec<String> = runtime
-        .tool_specs()
-        .iter()
-        .map(|s| s.name.clone())
-        .collect();
+    let names = registered_tool_names();
     assert_eq!(
         names.len(),
         66,
@@ -1621,8 +1600,7 @@ fn tool_specs_covers_expected_tool_set() {
 
 #[test]
 fn tool_specs_descriptions_fit_gpt_action_limit() {
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         assert!(
             spec.description.chars().count() <= 300,
             "{} description is too long: {} chars",
@@ -1649,8 +1627,7 @@ fn tool_specs_schema_spot_checks() {
         ),
         ("git_diff_summary", vec!["project"], vec![]),
     ];
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     for (name, expected_required, expected_forbidden) in &cases {
         let spec = spec_named(&specs, name);
         let required = required_fields(spec);
@@ -1678,8 +1655,7 @@ fn tool_specs_schema_spot_checks() {
 
 #[test]
 fn tool_specs_git_log_schema() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "git_log");
     let required = required_fields(spec);
     assert_eq!(required, vec!["project".to_string()]);
@@ -1698,8 +1674,7 @@ fn tool_specs_git_log_schema() {
 
 #[test]
 fn tool_specs_show_changes_schema() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "show_changes");
     let required = required_fields(spec);
     assert_eq!(required, vec!["project".to_string()]);
@@ -1738,8 +1713,7 @@ fn tool_specs_show_changes_schema() {
 
 #[test]
 fn tool_specs_cargo_tools_schema_and_output() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
         let spec = spec_named(&specs, name);
         let required = required_fields(spec);
@@ -1800,8 +1774,7 @@ fn tool_specs_schema_spot_checks_extended() {
         ),
         ("job_tail", vec!["job_id"], vec!["tail_lines"]),
     ];
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     for (name, expected_required, expected_forbidden) in &cases {
         let spec = spec_named(&specs, name);
         let required = required_fields(spec);
@@ -1993,8 +1966,7 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
 
 #[test]
 fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "session_handoff_summary");
     let input_props = spec.input_schema["properties"].as_object().unwrap();
     assert!(
@@ -2087,8 +2059,7 @@ fn assert_job_lifecycle_summary_schema_fields(schema: &Value) {
 
 #[test]
 fn session_tool_specs_describe_ledger_vs_current_binding() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
 
     let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
 
@@ -2157,8 +2128,7 @@ fn session_tool_specs_describe_ledger_vs_current_binding() {
 
 #[test]
 fn tool_specs_describe_default_coding_loop_preferences() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
 
     let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
 
@@ -2302,8 +2272,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
 #[test]
 fn tool_specs_annotations_cover_safety_hints() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     for spec in &specs {
         let annotations = spec
             .annotations
@@ -2362,8 +2331,7 @@ fn tool_specs_annotations_cover_safety_hints() {
 
 #[test]
 fn mcp_tool_annotations_use_metadata_for_read_write_tools() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     for name in [
         "show_changes",
         "write_project_file",
@@ -2385,8 +2353,7 @@ fn mcp_tool_annotations_use_metadata_for_read_write_tools() {
 
 #[test]
 fn tool_specs_include_anchor_edit_tools() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     for required in [
         "replace_exact_block",
         "insert_before_pattern",

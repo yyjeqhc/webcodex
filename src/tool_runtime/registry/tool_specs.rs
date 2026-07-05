@@ -22,11 +22,6 @@ use super::{output_schema_for_tool, tool_annotations};
 use std::collections::BTreeMap;
 
 impl ToolRuntime {
-    #[cfg(test)]
-    pub fn tool_specs(&self) -> Vec<ToolSpec> {
-        Self::registered_tool_specs()
-    }
-
     pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
         let mut declarations_by_name = tool_spec_declarations_by_name();
         let specs = model_visible_tool_definitions()

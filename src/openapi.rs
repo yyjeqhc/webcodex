@@ -6,8 +6,8 @@ use crate::tool_runtime::sessions::{
     TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
 };
 use crate::tool_runtime::{
-    registered_tool_specs, ALLOW_CROSS_PROJECT_SESSION_FIELD, TOOL_CALL_ARGUMENTS_FIELD,
-    TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+    accepted_flattened_args_for_spec, registered_tool_specs, ALLOW_CROSS_PROJECT_SESSION_FIELD,
+    TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
 };
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
@@ -1871,24 +1871,18 @@ fn insert_tool_call_request_flattened_arg_properties(schemas: &mut Value) {
     };
 
     for spec in registered_tool_specs() {
-        if let Some(input_properties) = spec.input_schema["properties"].as_object() {
-            for (field, input_schema) in input_properties {
-                if properties.contains_key(field) {
-                    continue;
-                }
-                if let Some(schema) = flattened_tool_arg_schema_from_input(input_schema) {
-                    properties.insert(field.clone(), schema);
-                }
+        let input_properties = spec.input_schema["properties"].as_object();
+        for field in accepted_flattened_args_for_spec(&spec) {
+            if properties.contains_key(&field) {
+                continue;
             }
-        }
-        for field in
-            crate::tool_runtime::tool_definition::runtime_tool_extra_accepted_flattened_args(
-                &spec.name,
-            )
-        {
-            properties
-                .entry((*field).to_string())
-                .or_insert_with(|| flattened_tool_arg_schema("string"));
+            if let Some(input_schema) = input_properties.and_then(|props| props.get(&field)) {
+                if let Some(schema) = flattened_tool_arg_schema_from_input(input_schema) {
+                    properties.insert(field, schema);
+                }
+            } else {
+                properties.insert(field, flattened_tool_arg_schema("string"));
+            }
         }
     }
 }
@@ -1971,18 +1965,8 @@ mod tests {
     fn runtime_accepted_flattened_action_fields() -> std::collections::BTreeSet<String> {
         let mut fields = std::collections::BTreeSet::new();
         for spec in registered_tool_specs() {
-            if let Some(properties) = spec.input_schema["properties"].as_object() {
-                fields.extend(properties.keys().cloned());
-            }
-            for field in
-                crate::tool_runtime::tool_definition::runtime_tool_extra_accepted_flattened_args(
-                    &spec.name,
-                )
-            {
-                fields.insert((*field).to_string());
-            }
+            fields.extend(accepted_flattened_args_for_spec(&spec));
         }
-        fields.insert(TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string());
         fields
     }
 

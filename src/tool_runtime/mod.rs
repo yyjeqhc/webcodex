@@ -87,7 +87,7 @@ pub(crate) use crate::config::CodexConfig;
 pub(crate) use project_resolution::{
     agent_project_runtime_id, ProjectResolverError, ProjectResolverErrorKind,
 };
-pub(crate) use registry::registered_tool_specs;
+pub(crate) use registry::{accepted_flattened_args_for_spec, registered_tool_specs};
 #[allow(unused_imports)]
 pub(crate) use session_context::{
     add_session_telemetry_hint, current_session_key, current_session_principal,

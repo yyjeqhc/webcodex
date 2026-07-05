@@ -914,9 +914,7 @@ async fn run_codex_is_disabled_before_project_resolution() {
 
 #[test]
 fn runtime_status_is_in_tool_specs() {
-    let runtime = test_runtime();
-    let names: Vec<String> = runtime
-        .tool_specs()
+    let names: Vec<String> = registered_tool_specs()
         .iter()
         .map(|s| s.name.clone())
         .collect();

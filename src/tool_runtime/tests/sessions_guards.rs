@@ -1005,8 +1005,7 @@ async fn deny_shell_only_allows_write_tools() {
 
 #[test]
 fn project_tool_schemas_include_optional_session_id() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let start_session = spec_named(&specs, "start_session");
     assert_eq!(
         start_session.input_schema["properties"]["mode"]["enum"],

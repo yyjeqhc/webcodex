@@ -8,8 +8,7 @@ use std::fs;
 
 #[test]
 fn coding_task_tools_are_registered_in_metadata_and_openapi() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
 
     for name in ["start_coding_task", "finish_coding_task"] {

@@ -17,8 +17,7 @@ use serde_json::{json, Value};
 #[tokio::test]
 async fn session_handoff_summary_is_known_and_in_specs() {
     assert!(is_known_tool_name("session_handoff_summary"));
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     assert!(
         specs.iter().any(|s| s.name == "session_handoff_summary"),
         "session_handoff_summary must appear in tool_specs"
@@ -31,6 +30,7 @@ async fn session_handoff_summary_is_known_and_in_specs() {
         crate::tool_runtime::metadata::lookup_tool_metadata("session_handoff_summary").is_some()
     );
     // tool_manifest session category must include the new tool.
+    let runtime = test_runtime();
     let manifest = runtime
         .dispatch(ToolCall::ToolManifest {
             category: Some("session".to_string()),
@@ -1737,11 +1737,8 @@ async fn session_handoff_summary_output_is_bounded() {
 
 #[test]
 fn session_handoff_summary_metadata_mcp_openapi_consistency() {
-    let runtime = test_runtime();
-
     // readOnlyHint must be true.
-    let spec = runtime
-        .tool_specs()
+    let spec = registered_tool_specs()
         .into_iter()
         .find(|s| s.name == "session_handoff_summary")
         .expect("session_handoff_summary spec");

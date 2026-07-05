@@ -29,8 +29,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
             if project == "agent:oe:webcodex"
     ));
 
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "git_diff_hunks");
     let props = spec.input_schema["properties"].as_object().unwrap();
     for field in ["project", "paths", "max_hunks", "max_hunk_lines", "cached"] {

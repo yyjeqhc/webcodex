@@ -81,8 +81,7 @@ async fn setup_clean_git_repo(
 fn workspace_hygiene_check_is_known_and_in_specs() {
     assert!(is_known_tool_name("workspace_hygiene_check"));
 
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     let spec = spec_named(&specs, "workspace_hygiene_check");
 
     // Input schema: project is required, others optional.

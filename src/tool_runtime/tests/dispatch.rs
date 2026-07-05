@@ -1017,8 +1017,7 @@ fn cleanup_paths_reject_sensitive_and_project_root() {
 
 #[test]
 fn project_management_tools_require_expected_fields() {
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         if spec.name == "register_project" || spec.name == "create_project" {
             let required = spec.input_schema["required"]
                 .as_array()

@@ -16,32 +16,29 @@ use super::super::tool_definition::{
     is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
 };
 use super::super::tool_spec::ToolSpec;
-use super::super::ToolRuntime;
 use super::input_schemas::with_common_testing_metadata;
 use super::{output_schema_for_tool, tool_annotations};
 use std::collections::BTreeMap;
 
-impl ToolRuntime {
-    pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
-        let mut declarations_by_name = tool_spec_declarations_by_name();
-        let specs = model_visible_tool_definitions()
-            .map(|definition| {
-                declarations_by_name
-                    .remove(definition.name)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "{} public ToolDefinition is missing a ToolSpec declaration",
-                            definition.name
-                        )
-                    })
-            })
-            .map(with_common_testing_metadata)
-            .collect::<Vec<_>>();
-        if let Some(extra_name) = declarations_by_name.keys().next() {
-            panic!("{extra_name} ToolSpec declaration has no model-visible ToolDefinition");
-        }
-        specs
+pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
+    let mut declarations_by_name = tool_spec_declarations_by_name();
+    let specs = model_visible_tool_definitions()
+        .map(|definition| {
+            declarations_by_name
+                .remove(definition.name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} public ToolDefinition is missing a ToolSpec declaration",
+                        definition.name
+                    )
+                })
+        })
+        .map(with_common_testing_metadata)
+        .collect::<Vec<_>>();
+    if let Some(extra_name) = declarations_by_name.keys().next() {
+        panic!("{extra_name} ToolSpec declaration has no model-visible ToolDefinition");
     }
+    specs
 }
 
 fn tool_spec_declarations() -> Vec<ToolSpec> {
@@ -117,7 +114,7 @@ mod tests {
 
     #[test]
     fn tool_specs_patch_fields_reject_codex_wrapper() {
-        let specs = ToolRuntime::registered_tool_specs();
+        let specs = registered_tool_specs();
         for tool in ["apply_patch", "apply_patch_checked", "validate_patch"] {
             let spec = specs
                 .iter()

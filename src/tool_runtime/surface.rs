@@ -4,7 +4,7 @@
 //! manifests, and bounded `list_tools` filtering close together while leaving
 //! dispatch and authorization flow in `mod.rs`.
 
-use super::registry::accepted_flattened_args_for_spec;
+use super::registry::{accepted_flattened_args_for_spec, registered_tool_specs};
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
     is_model_visible_tool_name, runtime_tool_category, runtime_tool_metadata,
@@ -18,22 +18,22 @@ use super::tool_spec::ToolSpec;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+pub(crate) fn registered_tool_categories() -> Value {
+    let mut categories = serde_json::Map::new();
+    for group in TOOL_DISCOVERY_GROUPS {
+        let tools = group
+            .tools
+            .iter()
+            .filter(|name| is_model_visible_tool_name(name))
+            .map(|name| Value::String((*name).to_string()))
+            .collect::<Vec<_>>();
+        categories.insert(group.name.to_string(), Value::Array(tools));
+    }
+    Value::Object(categories)
+}
+
 impl ToolRuntime {
     pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 100;
-
-    pub(crate) fn registered_tool_categories() -> Value {
-        let mut categories = serde_json::Map::new();
-        for group in TOOL_DISCOVERY_GROUPS {
-            let tools = group
-                .tools
-                .iter()
-                .filter(|name| is_model_visible_tool_name(name))
-                .map(|name| Value::String((*name).to_string()))
-                .collect::<Vec<_>>();
-            categories.insert(group.name.to_string(), Value::Array(tools));
-        }
-        Value::Object(categories)
-    }
 
     /// Short, GPT-facing flow hints. Each entry is well under the 300-char
     /// ToolSpec/operation description budget.
@@ -45,7 +45,7 @@ impl ToolRuntime {
     }
 
     pub(crate) fn list_tools_payload(&self, options: ListToolsOptions) -> Value {
-        let specs = Self::registered_tool_specs();
+        let specs = registered_tool_specs();
         let total_count = specs.len();
         let filtered_indexes = list_tools_filtered_indexes(&specs, &options);
         let filtered_count = filtered_indexes.len();
@@ -97,7 +97,7 @@ impl ToolRuntime {
             "categories": if bounded_request {
                 build_manifest_categories(&specs)
             } else {
-                Self::registered_tool_categories()
+                registered_tool_categories()
             },
             "recommended_flows": ToolRuntime::recommended_flows(),
             "recommended_next": "For daily GPT Action discovery, call callRuntimeTool with tool=tool_manifest. Use full listRuntimeTools only when debugging schemas.",
@@ -168,7 +168,7 @@ impl ToolRuntime {
         include_recommended_flows: bool,
         include_risk_summary: bool,
     ) -> Value {
-        let specs = Self::registered_tool_specs();
+        let specs = registered_tool_specs();
         let tool_count = specs.len();
         let categories_requested = normalize_tool_manifest_categories(categories);
         let category = categories_requested

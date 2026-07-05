@@ -83,11 +83,14 @@ use serde_json::json;
 pub(crate) use crate::config::CodexConfig;
 #[allow(unused_imports)]
 pub(crate) use project_resolution::{ProjectResolverError, ProjectResolverErrorKind};
+pub(crate) use registry::registered_tool_specs;
 #[allow(unused_imports)]
 pub(crate) use session_context::{
     add_session_telemetry_hint, current_session_key, current_session_principal,
     session_guard_denied_result, unknown_session_result, ALLOW_CROSS_PROJECT_SESSION_FIELD,
 };
+#[cfg(test)]
+pub(crate) use surface::registered_tool_categories;
 
 pub(crate) const RUN_CODEX_DISABLED_MESSAGE: &str =
     "run_codex is currently disabled on model-facing surfaces; use run_job or external local Codex manually.";

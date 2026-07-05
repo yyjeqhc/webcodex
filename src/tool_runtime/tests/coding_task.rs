@@ -2,7 +2,7 @@ use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 use crate::tool_runtime::validation_parser::VALIDATION_OUTPUT_METADATA_ABSENT_REASON;
-use crate::tool_runtime::{is_known_tool_name, SessionMode, ToolCall};
+use crate::tool_runtime::{is_known_tool_name, registered_tool_specs, SessionMode, ToolCall};
 use serde_json::{json, Value};
 use std::fs;
 

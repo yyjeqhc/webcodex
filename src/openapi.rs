@@ -6,8 +6,8 @@ use crate::tool_runtime::sessions::{
     TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
 };
 use crate::tool_runtime::{
-    ALLOW_CROSS_PROJECT_SESSION_FIELD, TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD,
-    TOOL_CALL_TOOL_FIELD,
+    registered_tool_specs, ALLOW_CROSS_PROJECT_SESSION_FIELD, TOOL_CALL_ARGUMENTS_FIELD,
+    TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
 };
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
@@ -1870,7 +1870,7 @@ fn insert_tool_call_request_flattened_arg_properties(schemas: &mut Value) {
         return;
     };
 
-    for spec in crate::tool_runtime::ToolRuntime::registered_tool_specs() {
+    for spec in registered_tool_specs() {
         if let Some(input_properties) = spec.input_schema["properties"].as_object() {
             for (field, input_schema) in input_properties {
                 if properties.contains_key(field) {
@@ -1970,7 +1970,7 @@ mod tests {
 
     fn runtime_accepted_flattened_action_fields() -> std::collections::BTreeSet<String> {
         let mut fields = std::collections::BTreeSet::new();
-        for spec in crate::tool_runtime::ToolRuntime::registered_tool_specs() {
+        for spec in registered_tool_specs() {
             if let Some(properties) = spec.input_schema["properties"].as_object() {
                 fields.extend(properties.keys().cloned());
             }

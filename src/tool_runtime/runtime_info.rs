@@ -2,6 +2,7 @@
 
 use super::helpers::normalize_local_status;
 use super::local_jobs::ACTIVE_JOB_STATUSES;
+use super::registry::registered_tool_specs;
 use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
@@ -244,7 +245,7 @@ impl ToolRuntime {
         });
 
         // -- tools summary ----------------------------------------------------
-        let specs = Self::registered_tool_specs();
+        let specs = registered_tool_specs();
         let tools_count = specs.len();
         let tools_names: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
         let tools = json!({

@@ -413,13 +413,14 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
 
 ## 6. Runtime notes
 
-- For coding tasks, prefer `start_coding_task`, then inspect with `read_file`,
-  `search_project_text`, and `show_changes`; edit with `replace_line_range`,
-  `insert_at_line`, `delete_line_range`, `apply_text_edits`, or
-  `apply_patch_checked`; validate with `cargo_fmt`, `cargo_check`,
-  `cargo_test`, `validate_patch`, or `apply_patch_checked`; review with
-  `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`; finish with
-  `finish_coding_task` or `session_handoff_summary`.
+- For coding tasks, prefer this loop: `start_coding_task` -> inspect with
+  `read_file`, `search_project_text`, and `show_changes` -> edit with
+  `replace_line_range`, `insert_at_line`, `delete_line_range`,
+  `apply_text_edits`, or `apply_patch_checked` -> validate with `cargo_fmt`,
+  `cargo_check`, `cargo_test`, `validate_patch`, or `apply_patch_checked` ->
+  review with `show_changes`, `git_diff_hunks`, and
+  `workspace_hygiene_check` -> hand off with `session_handoff_summary` when
+  needed -> close out with `finish_coding_task`.
 - For lightweight GPT Action or MCP sanity, call `start_coding_task` with
   `include_runtime_status=true`, `compact_startup=true`,
   `include_tool_manifest=true`, and a small `tool_manifest_limit`. Limit-driven
@@ -433,11 +434,18 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
   and `include_validation_summary=true`. Read `verdict.status`, `blocking`, and
   `blocking_reasons` first; detailed fields remain the audit source. The verdict
   is additive UX only and does not change safety or expected-failure semantics.
-- PASS means clean workspace, no blocking jobs, no unexpected tool failures, no
-  expected-failure mismatches or unexpected successes, and clean hygiene. WARN
-  covers validation not run, matched expected failures only, and explicit bounded
-  truncation. FAIL covers dirty workspace, blocking jobs, unexpected failures,
-  expectation mismatches, unexpected successes, or hygiene failure.
+- PASS means clean workspace, clean hygiene, no blocking jobs, no unexpected
+  tool failures, no expected-failure mismatches or unexpected successes, and
+  successful or intentionally skipped validation context. WARN covers validation
+  not run, matched expected failures only, non-git/git-unavailable review
+  context, terminal-pending nonblocking jobs, and explicit bounded truncation.
+  FAIL covers dirty workspace, hygiene failure, blocking jobs, unexpected
+  failures, expectation mismatches, unexpected successes, or failed validation.
+- During review, read `show_changes.clean`, `warnings`, `hunks_truncated`, and
+  `suggested_next_actions`, then read `workspace_hygiene_check.clean`,
+  `findings`, `warnings`, and `suggested_next_actions`. The finish/handoff
+  compact verdict is the closeout aggregate; review-tool verdicts, when present,
+  use the same additive UX convention and do not change safety semantics.
 - `start_session` creates a session record but does not automatically bind future
   calls. For reliable handoff, keep and pass explicit `session_id` or
   `recording_session_id` values. Current-session binding is process-local

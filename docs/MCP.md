@@ -127,14 +127,18 @@ structured line edit tools when you already know the target line range, and
 `apply_text_edits` for coordinated exact edits in one UTF-8 file. Use
 `validate_patch` and `apply_patch_checked` for broader multi-file changes.
 Validate with `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
-`apply_patch_checked` before falling back to bounded command/job tools. Treat
+`apply_patch_checked` before falling back to bounded command/job tools. Review
+with `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`; for
+closeout, read `show_changes.clean`, warnings, truncation flags, and next
+actions, then read `workspace_hygiene_check.clean`, findings, warnings, and
+next actions before `session_handoff_summary` or `finish_coding_task`. Treat
 `run_shell` and `run_job` as diagnostics/build/test fallbacks, not as the first
 source-editing path or the default validation source. Use `stop_job` only to
 stop bounded WebCodex jobs returned by `run_job`; it requires `confirm=true`,
 obeys project/session boundaries, returns no stdout/stderr, and preserves the
 legacy `stopped` field while models should prefer `stop_effect`, `terminal`,
-and `terminal_pending`. Finish with
-`finish_coding_task`, or use `session_handoff_summary` for multi-step handoff.
+and `terminal_pending`. Finish with `finish_coding_task`, or use
+`session_handoff_summary` for multi-step handoff.
 
 Job lifecycle summaries keep `active_count` for compatibility but split it into
 `blocking_active_count` and `nonblocking_active_count`. `queued`, `running`,
@@ -179,6 +183,16 @@ check for untracked smoke/tmp/test files, review `git diff --stat`, request
 optional bounded hunks with `include_diff=true`, and optionally include session
 activity with `session_id`. It is read-only, requires `project:read`, and never
 cleans, stages, commits, or restores files.
+
+Closeout verdicts are additive UX summaries. PASS means clean workspace and
+hygiene, no blocking jobs, no unexpected tool failures, no expectation
+mismatches, no unexpected expected-failure successes, and no failed validation.
+WARN covers validation not run, matched expected failures, non-git review
+context, terminal-pending nonblocking jobs, or explicit limit truncation. FAIL
+covers dirty workspace, hygiene failure, blocking active jobs, unexpected tool
+failures, expectation mismatches, unexpected successes, or failed validation.
+Detailed review fields remain the auditable source and verdicts do not change
+authorization, guards, direct MCP error behavior, or job lifecycle semantics.
 
 `start_session`, `start_coding_task`, `finish_coding_task`, `session_summary`,
 and `session_handoff_summary` are the current task tracking foundation. They

@@ -204,7 +204,10 @@ calling `callRuntimeTool`.
    stdout/stderr. Treat `stopped` as a compatibility field; prefer
    `stop_effect`, `terminal`, and `terminal_pending`.
 7. Review with `callRuntimeTool` using `show_changes`, `git_diff_hunks`, and
-   `workspace_hygiene_check`.
+   `workspace_hygiene_check`. Read `show_changes.clean`, `warnings`,
+   `hunks_truncated`, and `suggested_next_actions`, then
+   `workspace_hygiene_check.clean`, `findings`, `warnings`, and
+   `suggested_next_actions`.
 8. Finish with `callRuntimeTool` using `finish_coding_task`; for cross-client or
    multi-step handoff, call `session_handoff_summary` with the explicit
    `session_id`. Pass flattened `summary_only=true` for compact smoke verdicts
@@ -232,6 +235,14 @@ binding, failure classification, or MCP direct error behavior. PASS requires
 `truncated=true` with `truncation_reason="limit"`. FAIL covers dirty workspace,
 blocking jobs, unexpected tool failures, expectation mismatches, unexpected
 successes, or hygiene failure.
+
+The intended closeout order is `start_coding_task` -> inspect/search/read ->
+edit -> validate -> `show_changes` -> `workspace_hygiene_check` ->
+`session_handoff_summary` when a handoff is useful -> `finish_coding_task`.
+`show_changes` and `workspace_hygiene_check` are the auditable review evidence;
+handoff/finish verdicts are the final compact PASS/WARN/FAIL aggregate. If a
+review tool exposes its own verdict, treat it as the same additive UX summary
+over the detailed review fields, not as a new guard or permission decision.
 
 For non-coding tracking, `start_session` remains available through
 `callRuntimeTool`. It creates a session record but does not automatically bind

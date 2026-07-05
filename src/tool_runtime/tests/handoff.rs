@@ -1085,6 +1085,7 @@ async fn session_handoff_summary_only_is_compact() {
     assert!(result.output["warnings"].is_array());
     assert!(result.output["suggested_next_actions"].is_array());
     let verdict = &result.output["verdict"];
+    assert_workflow_verdict_shape(verdict);
     assert_eq!(verdict["status"], "warn");
     assert_eq!(verdict["blocking"], false);
     assert_reason_list_contains(verdict, "warning_reasons", "expected_failures_matched");
@@ -1574,6 +1575,7 @@ async fn session_handoff_summary_only_verdict_allows_clean_workspace_without_fai
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
     assert_ne!(result.output["verdict"]["status"], "fail");
     assert_eq!(result.output["verdict"]["blocking"], false);
+    assert_workflow_verdict_shape(&result.output["verdict"]);
     assert_compact_verdict_safe(&result.output["verdict"], "clean handoff verdict");
 }
 
@@ -2296,6 +2298,22 @@ fn assert_reason_list_contains(verdict: &Value, key: &str, reason: &str) {
         reasons.iter().any(|value| value.as_str() == Some(reason)),
         "{key} should contain {reason}: {verdict}"
     );
+}
+
+fn assert_workflow_verdict_shape(verdict: &Value) {
+    let status = verdict["status"].as_str().expect("status string");
+    assert!(
+        matches!(status, "pass" | "warn" | "fail"),
+        "unexpected verdict status {status}: {verdict}"
+    );
+    assert!(verdict["blocking"].is_boolean(), "blocking bool: {verdict}");
+    for key in [
+        "blocking_reasons",
+        "warning_reasons",
+        "suggested_next_actions",
+    ] {
+        assert!(verdict[key].is_array(), "{key} array: {verdict}");
+    }
 }
 
 fn assert_compact_verdict_safe(value: &Value, context: &str) {

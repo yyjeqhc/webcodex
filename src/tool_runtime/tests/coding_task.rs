@@ -484,6 +484,7 @@ async fn start_coding_task_compact_startup_returns_sanitized_runtime_summary() {
     assert!(summary["projects"]["server_static"]["severity"].is_string());
     assert!(summary["projects"]["server_static"]["status"].is_string());
     let verdict = &result.output["startup_verdict"];
+    assert_startup_verdict_shape(verdict);
     assert_ne!(verdict["status"], "fail");
     assert_eq!(verdict["blocking"], false);
     assert_check_reason(verdict, "workspace", "workspace_not_checked");
@@ -553,6 +554,7 @@ async fn start_coding_task_compact_startup_verdict_accepts_clean_workspace() {
 
     assert!(result.success, "{:?}", result.error);
     let verdict = &result.output["startup_verdict"];
+    assert_startup_verdict_shape(verdict);
     assert_eq!(verdict["status"], "pass");
     assert_eq!(verdict["blocking"], false);
     assert_check_status(verdict, "runtime_status", "pass");
@@ -613,6 +615,7 @@ async fn start_coding_task_filters_compact_tool_manifest_by_categories() {
         .iter()
         .all(|tool| tool["accepted_flattened_args"].is_array()));
     let verdict = &result.output["startup_verdict"];
+    assert_startup_verdict_shape(verdict);
     assert_eq!(verdict["status"], "warn");
     assert_check_reason(verdict, "runtime_status", "runtime_status_not_requested");
     assert_check_reason(verdict, "workspace", "workspace_not_checked");
@@ -670,6 +673,7 @@ async fn start_coding_task_manifest_limit_truncates_filtered_entries() {
         .iter()
         .all(|tool| tool["category"] == "session"));
     let verdict = &result.output["startup_verdict"];
+    assert_startup_verdict_shape(verdict);
     assert_ne!(verdict["status"], "fail");
     assert_check_reason(verdict, "tool_manifest", "truncated_by_limit");
 }
@@ -871,6 +875,7 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     assert!(result.output["warnings"].as_array().unwrap().is_empty());
     assert!(result.output["suggested_next_actions"].is_array());
     let verdict = &result.output["verdict"];
+    assert_workflow_verdict_shape(verdict);
     assert_eq!(verdict["status"], "warn");
     assert_eq!(verdict["blocking"], false);
     assert_reason_list_contains(verdict, "warning_reasons", "validation_not_run");
@@ -941,6 +946,7 @@ async fn finish_coding_task_summary_only_verdict_fails_for_dirty_workspace() {
     assert_eq!(result.output["workspace_clean"], false);
     assert_eq!(result.output["verdict"]["status"], "fail");
     assert_eq!(result.output["verdict"]["blocking"], true);
+    assert_workflow_verdict_shape(&result.output["verdict"]);
     assert_reason_list_contains(
         &result.output["verdict"],
         "blocking_reasons",
@@ -1248,6 +1254,47 @@ fn assert_reason_list_contains(verdict: &Value, key: &str, reason: &str) {
     assert!(
         reasons.iter().any(|value| value.as_str() == Some(reason)),
         "{key} should contain {reason}: {verdict}"
+    );
+}
+
+fn assert_startup_verdict_shape(verdict: &Value) {
+    assert_status_string(verdict);
+    assert!(verdict["blocking"].is_boolean(), "blocking bool: {verdict}");
+    let checks = verdict["checks"].as_array().expect("startup checks array");
+    assert!(!checks.is_empty(), "startup checks should not be empty");
+    for check in checks {
+        assert!(
+            check["name"].is_string(),
+            "startup check name should be present: {check}"
+        );
+        assert_status_string(check);
+        if let Some(reason) = check.get("reason") {
+            assert!(reason.is_string(), "reason must be a string: {check}");
+        }
+    }
+    assert!(
+        verdict["suggested_next_actions"].is_array(),
+        "suggested_next_actions array: {verdict}"
+    );
+}
+
+fn assert_workflow_verdict_shape(verdict: &Value) {
+    assert_status_string(verdict);
+    assert!(verdict["blocking"].is_boolean(), "blocking bool: {verdict}");
+    for key in [
+        "blocking_reasons",
+        "warning_reasons",
+        "suggested_next_actions",
+    ] {
+        assert!(verdict[key].is_array(), "{key} array: {verdict}");
+    }
+}
+
+fn assert_status_string(value: &Value) {
+    let status = value["status"].as_str().expect("status string");
+    assert!(
+        matches!(status, "pass" | "warn" | "fail"),
+        "unexpected verdict status {status}: {value}"
     );
 }
 

@@ -489,6 +489,14 @@ should prefer `stop_effect`, `terminal`, `terminal_pending`, and `final_status`.
 }
 ```
 
+Review order for coding closeout is deterministic: call `show_changes`, inspect
+`clean`, `warnings`, `hunks_truncated`, and `suggested_next_actions`; then call
+`workspace_hygiene_check`, inspect `clean`, `findings`, `warnings`, and
+`suggested_next_actions`; then use `session_handoff_summary` or
+`finish_coding_task` with `summary_only=true` for the compact aggregate verdict.
+If `show_changes` or `workspace_hygiene_check` expose a top-level `verdict`,
+read it first, but keep the detailed fields as the auditable basis.
+
 ### 6. Finish or hand off
 
 ```json
@@ -535,11 +543,12 @@ Compact handoff/finish verdict rules:
   `tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`.
 - WARN: `validation.status=not_run`, matched expected failures are present
   (`expected_count>0` while unexpected/mismatch/unexpected-success counts are
-  all zero), or bounded startup/manifest output was truncated only because of an
-  explicit limit.
+  all zero), non-git/git-unavailable review context, terminal-pending
+  nonblocking jobs, or bounded startup/manifest/review output was truncated only
+  because of an explicit limit.
 - FAIL: workspace is dirty, blocking jobs are active, unexpected tool failures
   exist, expected-failure mismatches exist, expected-failure calls unexpectedly
-  succeeded, or hygiene failed.
+  succeeded, hygiene failed, or validation failed.
 
 For a read-only handoff without finish aggregation:
 

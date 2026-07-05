@@ -3,6 +3,7 @@ use serde_json::Value;
 mod checkpoints;
 mod coding_tasks;
 mod discovery;
+mod hygiene;
 mod jobs;
 mod sessions;
 
@@ -14,17 +15,15 @@ use super::input_schemas::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
-    delete_line_range_input_schema, delete_project_files_input_schema,
-    discard_untracked_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
-    git_diff_summary_input_schema, git_log_input_schema, git_restore_paths_input_schema,
-    git_status_input_schema, insert_after_pattern_input_schema, insert_at_line_input_schema,
+    delete_line_range_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
+    git_diff_summary_input_schema, git_log_input_schema, git_status_input_schema,
+    insert_after_pattern_input_schema, insert_at_line_input_schema,
     insert_before_pattern_input_schema, list_project_files_input_schema, read_file_input_schema,
     read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
     replace_exact_block_input_schema, replace_in_file_input_schema,
     replace_line_range_input_schema, save_project_artifact_input_schema,
     search_project_text_input_schema, show_changes_input_schema, validate_patch_input_schema,
-    with_common_testing_metadata, workspace_hygiene_check_input_schema,
-    write_project_file_input_schema,
+    with_common_testing_metadata, write_project_file_input_schema,
 };
 use super::{output_schema_for_tool, tool_annotations};
 
@@ -35,12 +34,8 @@ impl ToolRuntime {
         declarations.extend(jobs::tool_specs());
         declarations.extend(checkpoints::tool_specs());
         declarations.extend(coding_tasks::tool_specs());
+        declarations.extend(hygiene::tool_specs());
         declarations.extend(vec![
-            tool_spec(
-                "workspace_hygiene_check",
-                "Default pre-final workspace hygiene review; read-only. Detects dirty worktree, untracked temp/smoke files, cache dirs, secret-like names, and large untracked files before validation or handoff. Never reads file contents.",
-                workspace_hygiene_check_input_schema(),
-            ),
             tool_spec(
                 "list_project_files",
                 "List files in an agent-registered project directory (bounded, "
@@ -117,21 +112,6 @@ impl ToolRuntime {
                 "apply_patch_checked",
                 "Validated unified-diff edit tool for broad or multi-file patches. Returns a diff summary; for local line edits prefer replace_line_range, insert_at_line, delete_line_range, or apply_text_edits.",
                 apply_patch_checked_input_schema(),
-            ),
-            tool_spec(
-                "delete_project_files",
-                "Delete selected project-relative files only; safer than arbitrary rm for cleanup.",
-                delete_project_files_input_schema(),
-            ),
-            tool_spec(
-                "git_restore_paths",
-                "Restore selected tracked paths with git restore; does not remove untracked files.",
-                git_restore_paths_input_schema(),
-            ),
-            tool_spec(
-                "discard_untracked",
-                "Discard selected untracked files with git clean -f -- <paths>.",
-                discard_untracked_input_schema(),
             ),
             tool_spec(
                 "validate_patch",

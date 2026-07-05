@@ -422,57 +422,9 @@ impl ToolRuntime {
                 self.dispatch_workspace_checkpoint_tool(call).await
             }
 
-            ToolCall::ListProjects => self.list_projects(auth).await,
-
-            ToolCall::RegisterProject {
-                client_id,
-                id,
-                name,
-                path,
-                description,
-                allow_patch,
-                overwrite,
-            } => {
-                self.register_project(
-                    client_id,
-                    id,
-                    name,
-                    path,
-                    description,
-                    allow_patch,
-                    overwrite,
-                    auth,
-                )
-                .await
-            }
-
-            ToolCall::CreateProject {
-                client_id,
-                id,
-                name,
-                path,
-                description,
-                allow_patch,
-                template,
-                git_init,
-                allow_existing_empty,
-                overwrite,
-            } => {
-                self.create_project(
-                    client_id,
-                    id,
-                    name,
-                    path,
-                    description,
-                    allow_patch,
-                    template,
-                    git_init,
-                    allow_existing_empty,
-                    overwrite,
-                    auth,
-                )
-                .await
-            }
+            call @ (ToolCall::ListProjects
+            | ToolCall::RegisterProject { .. }
+            | ToolCall::CreateProject { .. }) => self.dispatch_project_tool(call, auth).await,
 
             ToolCall::ListAgents => self.list_agents(auth).await,
 

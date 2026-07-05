@@ -26,6 +26,7 @@ mod patch;
 mod permissions;
 pub(crate) mod project_instructions;
 mod project_resolution;
+mod project_tools;
 mod projects;
 mod registry;
 mod runtime;

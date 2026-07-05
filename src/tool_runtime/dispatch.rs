@@ -6,7 +6,6 @@ use super::session_context::{
     session_project_mismatch_requires_escape, session_project_mismatch_result,
     unknown_session_result, SessionProjectMismatch,
 };
-use super::tool_inputs::ListToolsOptions;
 use super::{
     permissions, session_context, sessions, tool_disabled_result_from_definition, ToolCall,
     ToolResult, ToolRuntime,
@@ -256,17 +255,10 @@ impl ToolRuntime {
         transport: sessions::SessionTransport,
     ) -> ToolResult {
         match call {
-            ToolCall::ListTools {
-                category,
-                features,
-                summary_only,
-                limit,
-            } => ToolResult::ok(self.list_tools_payload(ListToolsOptions {
-                category,
-                features,
-                summary_only,
-                limit,
-            })),
+            call @ (ToolCall::ListTools { .. }
+            | ToolCall::ListAgents
+            | ToolCall::RuntimeStatus
+            | ToolCall::ToolManifest { .. }) => self.dispatch_discovery_tool(call, auth).await,
 
             ToolCall::StartSession {
                 project,
@@ -425,19 +417,6 @@ impl ToolRuntime {
             call @ (ToolCall::ListProjects
             | ToolCall::RegisterProject { .. }
             | ToolCall::CreateProject { .. }) => self.dispatch_project_tool(call, auth).await,
-
-            ToolCall::ListAgents => self.list_agents(auth).await,
-
-            ToolCall::RuntimeStatus => self.runtime_status(auth).await,
-
-            ToolCall::ToolManifest {
-                category,
-                include_recommended_flows,
-                include_risk_summary,
-            } => {
-                self.tool_manifest(category, include_recommended_flows, include_risk_summary)
-                    .await
-            }
 
             ToolCall::RunShell {
                 project,

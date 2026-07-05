@@ -9,6 +9,7 @@ mod cargo_tools;
 mod checkpoint;
 mod codex;
 mod coding_task;
+mod discovery_tools;
 mod dispatch;
 mod file_tools;
 pub(crate) mod files;

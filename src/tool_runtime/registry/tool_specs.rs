@@ -17,6 +17,7 @@ use super::super::tool_spec::ToolSpec;
 use super::super::ToolRuntime;
 use super::input_schemas::with_common_testing_metadata;
 use super::{output_schema_for_tool, tool_annotations};
+use std::collections::BTreeMap;
 
 impl ToolRuntime {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
@@ -27,18 +28,20 @@ impl ToolRuntime {
                 .all(|spec| super::super::tool_definition::is_model_visible_tool_name(&spec.name)),
             "ToolSpec declarations must only include model-visible tools"
         );
+        let mut declarations_by_name = declarations
+            .into_iter()
+            .map(|spec| (spec.name.clone(), spec))
+            .collect::<BTreeMap<_, _>>();
         model_visible_tool_definitions()
             .map(|definition| {
-                declarations
-                    .iter()
-                    .find(|spec| spec.name == definition.name)
+                declarations_by_name
+                    .remove(definition.name)
                     .unwrap_or_else(|| {
                         panic!(
                             "{} public ToolDefinition is missing a ToolSpec declaration",
                             definition.name
                         )
                     })
-                    .clone()
             })
             .map(with_common_testing_metadata)
             .collect()

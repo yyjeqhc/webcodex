@@ -1324,6 +1324,8 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
     assert!(out["projects"]["load_error"].is_string());
     assert_eq!(out["projects"]["server_static"]["configured"], false);
     assert_eq!(out["projects"]["server_static"]["count"], 0);
+    assert_eq!(out["projects"]["server_static"]["status"], "not_configured");
+    assert_eq!(out["projects"]["server_static"]["severity"], "warning");
     assert_eq!(
         out["projects"]["server_static"]["warning"],
         "projects.toml not configured"
@@ -1360,6 +1362,13 @@ async fn runtime_status_uses_agent_projects_as_effective_when_server_config_miss
     let projects = &result.output["projects"];
     assert_eq!(projects["server_static"]["configured"], false);
     assert_eq!(projects["server_static"]["count"], 0);
+    assert_eq!(projects["server_static"]["status"], "not_configured");
+    assert_eq!(projects["server_static"]["severity"], "info");
+    assert!(projects["server_static"]["warning"].is_null());
+    assert_eq!(
+        projects["server_static"]["message"],
+        "projects.toml not configured; using agent-registered projects"
+    );
     assert_eq!(projects["agent_registered"]["count"], 1);
     assert_eq!(projects["agent_registered"]["online_count"], 1);
     assert_eq!(projects["effective"]["count"], 1);
@@ -1588,6 +1597,9 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     assert_eq!(agents["online_count"], 1);
     assert_eq!(agents["offline_count"], 0);
     assert_eq!(agents["stale_count"], 0);
+    assert_eq!(agents["summary"]["online"], 1);
+    assert_eq!(agents["summary"]["offline"], 0);
+    assert_eq!(agents["summary"]["stale"], 0);
     let clients = agents["clients"].as_array().unwrap();
     assert_eq!(clients.len(), 1);
     assert_eq!(clients[0]["client_id"], "agent-1");
@@ -1596,6 +1608,17 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     assert_eq!(clients[0]["connected"], true);
     assert!(clients[0]["capabilities"].is_object());
     assert_eq!(clients[0]["projects_count"], 0);
+    assert!(clients[0]["last_seen_age_secs"].is_i64());
+    assert_eq!(clients[0]["pending_requests"], 0);
+    assert_eq!(clients[0]["active_jobs"], 0);
+    let health_clients = agents["summary"]["clients"].as_array().unwrap();
+    assert_eq!(health_clients.len(), 1);
+    assert_eq!(health_clients[0]["client_id"], "agent-1");
+    assert_eq!(health_clients[0]["status"], "online");
+    assert_eq!(health_clients[0]["transport"], "polling");
+    assert_eq!(health_clients[0]["projects_count"], 0);
+    assert_eq!(health_clients[0]["pending_requests"], 0);
+    assert_eq!(health_clients[0]["active_jobs"], 0);
     // last_seen must be present as an integer unix timestamp (seconds).
     assert!(
         clients[0]["last_seen"].is_i64(),
@@ -1724,8 +1747,21 @@ async fn list_agents_includes_sanitized_policy_summary() {
     );
     let result = runtime.dispatch(ToolCall::ListAgents).await;
     assert!(result.success);
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["summary"]["online"], 1);
+    assert_eq!(result.output["summary"]["offline"], 0);
+    assert_eq!(result.output["summary"]["stale"], 0);
+    let health_clients = result.output["summary"]["clients"].as_array().unwrap();
+    assert_eq!(health_clients.len(), 1);
+    assert_eq!(health_clients[0]["client_id"], "list-policy-agent");
+    assert_eq!(health_clients[0]["transport"], "polling");
+    assert_eq!(health_clients[0]["pending_requests"], 0);
+    assert_eq!(health_clients[0]["active_jobs"], 0);
     let agents = result.output["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["projects_count"], 0);
+    assert!(agents[0]["last_seen_age_secs"].is_i64());
+    assert_eq!(agents[0]["active_jobs"], 0);
     let policy = &agents[0]["policy"];
     assert_eq!(policy["allow_raw_shell"], false);
     assert_eq!(policy["allow_cwd_anywhere"], true);

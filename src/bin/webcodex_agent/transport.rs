@@ -198,6 +198,70 @@ fn classify_session_error(message: impl Into<String>) -> AgentTransportError {
     }
 }
 
+fn concise_log_error(message: &str, token: &str) -> String {
+    let mut sanitized = message.replace(['\r', '\n'], " ");
+    let token = token.trim();
+    if !token.is_empty() {
+        sanitized = sanitized.replace(token, "[redacted]");
+    }
+    const MAX_CHARS: usize = 180;
+    if sanitized.chars().count() > MAX_CHARS {
+        let mut out = sanitized.chars().take(MAX_CHARS).collect::<String>();
+        out.push_str("...");
+        out
+    } else {
+        sanitized
+    }
+}
+
+fn server_log_label(server_url: &str) -> String {
+    match url::Url::parse(server_url) {
+        Ok(parsed) => {
+            let Some(host) = parsed.host_str() else {
+                return parsed.scheme().to_string();
+            };
+            let host = if host.contains(':') && !host.starts_with('[') {
+                format!("[{}]", host)
+            } else {
+                host.to_string()
+            };
+            match parsed.port() {
+                Some(port) => format!("{}://{}:{}", parsed.scheme(), host, port),
+                None => format!("{}://{}", parsed.scheme(), host),
+            }
+        }
+        Err(_) => server_url
+            .split('?')
+            .next()
+            .unwrap_or(server_url)
+            .trim_end_matches('/')
+            .to_string(),
+    }
+}
+
+fn enabled_projects_count(projects: &[ShellAgentProjectSummary]) -> usize {
+    projects.iter().filter(|project| !project.disabled).count()
+}
+
+fn registered_log_line(cfg: &AgentConfig, actual_transport: &str, projects_count: usize) -> String {
+    format!(
+        "webcodex-agent registered client_id={} server={} preferred_transport={} actual_transport={} projects={}",
+        cfg.client_id,
+        server_log_label(&cfg.server_url),
+        effective_transport(cfg),
+        actual_transport,
+        projects_count
+    )
+}
+
+fn auto_quic_not_configured_log_line() -> &'static str {
+    "webcodex-agent transport auto: quic not configured; skipping"
+}
+
+fn auto_trying_log_line(transport: &str) -> String {
+    format!("webcodex-agent transport auto: {} trying", transport)
+}
+
 #[cfg(unix)]
 async fn shutdown_signal() {
     let mut sigterm =
@@ -477,10 +541,13 @@ fn reset_backoff_after_stable_session(backoff: &mut ReconnectBackoff, started_at
 fn run_auto_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Result<(), String> {
     let mut backoff = ReconnectBackoff::new();
     'supervisor: loop {
+        if cfg.quic.is_none() {
+            eprintln!("{}", auto_quic_not_configured_log_line());
+        }
         for transport in auto_transport_plan(&cfg) {
             match transport {
                 TRANSPORT_QUIC => {
-                    eprintln!("webcodex-agent transport auto: trying quic");
+                    eprintln!("{}", auto_trying_log_line(TRANSPORT_QUIC));
                     let session_started = Instant::now();
                     match run_quic_agent_single_session(&cfg, once, agent_instance_id) {
                         Ok(AgentSessionExit::Shutdown) => return Ok(()),
@@ -498,26 +565,21 @@ fn run_auto_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
                             if e.is_fatal() {
                                 return Err(e.into_message());
                             }
+                            let log_error = concise_log_error(&e.to_string(), &cfg.token);
                             eprintln!(
-                                "webcodex-agent transport auto: quic failed: {}; trying websocket",
-                                e
+                                "webcodex-agent transport auto: quic unavailable: {}; trying websocket",
+                                log_error
                             );
                             tracing::debug!(
                                 transport = "quic",
-                                error = %e,
+                                error = %log_error,
                                 "webcodex-agent auto transport attempt failed"
                             );
                         }
                     }
                 }
                 TRANSPORT_WEBSOCKET => {
-                    if cfg.quic.is_none() {
-                        eprintln!(
-                            "webcodex-agent transport auto: [quic] not configured; trying websocket"
-                        );
-                    } else {
-                        eprintln!("webcodex-agent transport auto: trying websocket");
-                    }
+                    eprintln!("{}", auto_trying_log_line(TRANSPORT_WEBSOCKET));
                     let session_started = Instant::now();
                     match run_websocket_agent_single_session(&cfg, agent_instance_id) {
                         Ok(AgentSessionExit::Shutdown) => return Ok(()),
@@ -541,20 +603,21 @@ fn run_auto_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
                             if e.is_fatal() {
                                 return Err(e.into_message());
                             }
+                            let log_error = concise_log_error(&e.to_string(), &cfg.token);
                             eprintln!(
                                 "webcodex-agent transport auto: websocket failed: {}; falling back to polling",
-                                e
+                                log_error
                             );
                             tracing::debug!(
                                 transport = "websocket",
-                                error = %e,
+                                error = %log_error,
                                 "webcodex-agent auto transport attempt failed"
                             );
                         }
                     }
                 }
                 TRANSPORT_POLLING => {
-                    eprintln!("webcodex-agent transport auto: trying polling");
+                    eprintln!("{}", auto_trying_log_line(TRANSPORT_POLLING));
                     return run_polling_agent(cfg, once, agent_instance_id);
                 }
                 _ => {}
@@ -583,7 +646,7 @@ fn run_polling_agent_with_shutdown(
     if shutdown.load(Ordering::SeqCst) {
         return Ok(());
     }
-    register(
+    let projects_count = register(
         &client,
         &cfg,
         &mut project_cache,
@@ -591,10 +654,8 @@ fn run_polling_agent_with_shutdown(
         jobs.prepared_profiles.len(),
     )?;
     eprintln!(
-        "webcodex-agent registered client_id={} server={} preferred_transport={} actual_transport=polling transport=polling",
-        cfg.client_id,
-        cfg.server_url,
-        effective_transport(&cfg)
+        "{}",
+        registered_log_line(&cfg, TRANSPORT_POLLING, projects_count)
     );
     loop {
         if shutdown.load(Ordering::SeqCst) {
@@ -935,6 +996,7 @@ async fn quic_session(
 
     // Register. The token is carried in `auth_token`; the server authenticates
     // it exactly like the websocket/polling paths. It is never logged.
+    let projects_count = enabled_projects_count(&projects);
     let register_payload = build_register_request(
         cfg,
         projects,
@@ -972,10 +1034,8 @@ async fn quic_session(
         other => return Err(format!("expected registered ack, got {}", other.kind())),
     }
     eprintln!(
-        "webcodex-agent registered client_id={} server={} preferred_transport={} actual_transport=quic transport=quic",
-        cfg.client_id,
-        quic.server_addr,
-        effective_transport(cfg)
+        "{}",
+        registered_log_line(cfg, TRANSPORT_QUIC, projects_count)
     );
 
     if once {
@@ -1164,7 +1224,7 @@ pub(crate) fn server_url_to_ws(server_url: &str, path: &str) -> Result<String, S
     } else {
         return Err(format!(
             "server_url must be http(s)://... for websocket transport; got {}",
-            server_url
+            server_log_label(server_url)
         ));
     };
     Ok(ws)
@@ -1178,9 +1238,13 @@ pub(crate) fn build_ws_request(
     token: &str,
 ) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, String> {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    let mut request = ws_url
-        .into_client_request()
-        .map_err(|e| format!("invalid websocket url: {}", e))?;
+    let mut request = ws_url.into_client_request().map_err(|e| {
+        format!(
+            "invalid websocket url for {}: {}",
+            server_log_label(ws_url),
+            e
+        )
+    })?;
     if let Some(token) = non_empty_token(token) {
         let value = format!("Bearer {}", token);
         let header_value = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&value)
@@ -1295,13 +1359,23 @@ where
 
     let ws_url = server_url_to_ws(&cfg.server_url, "/api/agents/ws")?;
     let request = build_ws_request(&ws_url, &cfg.token)?;
-    let (mut ws_stream, _resp) = tokio_tungstenite::connect_async(request)
-        .await
-        .map_err(|e| format!("websocket connect failed: {}", e))?;
+    let (mut ws_stream, _resp) = tokio::time::timeout(
+        Duration::from_secs(cfg.websocket_connect_timeout_secs),
+        tokio_tungstenite::connect_async(request),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "websocket connect timed out after {}s",
+            cfg.websocket_connect_timeout_secs
+        )
+    })?
+    .map_err(|e| format!("websocket connect failed: {}", e))?;
 
     // Register over the socket. The prepared-profile cache is empty at
     // registration time (snapshots are prepared lazily on first use), so
     // `prepared_cache_count` is reported as 0 here.
+    let projects_count = enabled_projects_count(&projects);
     let register_payload = build_register_request(
         cfg,
         projects,
@@ -1348,10 +1422,8 @@ where
         other => return Err(format!("expected registered ack, got {}", other.kind())),
     }
     eprintln!(
-        "webcodex-agent registered client_id={} server={} preferred_transport={} actual_transport=websocket transport=websocket",
-        cfg.client_id,
-        cfg.server_url,
-        effective_transport(cfg)
+        "{}",
+        registered_log_line(cfg, TRANSPORT_WEBSOCKET, projects_count)
     );
 
     // Split socket into writer (drains outgoing envelopes) and reader.
@@ -1576,6 +1648,8 @@ mod tests {
             max_concurrent_jobs: Some(1),
             policy: AgentPolicy::default(),
             transport: Some(TRANSPORT_WEBSOCKET.to_string()),
+            websocket_connect_timeout_secs:
+                crate::webcodex_agent::default_websocket_connect_timeout_secs(),
             quic: None,
             shell: ShellConfig::default(),
         }
@@ -1679,6 +1753,48 @@ mod tests {
         let poll_content_type = poll_content_type.to_string();
         let poll_body = poll_body.to_string();
         let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert_eq!(request_path(&request), "/api/shell/agent/register");
+            write_http_response(
+                &mut stream,
+                "200 OK",
+                "application/json",
+                r#"{"success":true,"client":null,"error":null}"#,
+            );
+
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert_eq!(request_path(&request), "/api/shell/agent/poll");
+            server_poll_count.fetch_add(1, Ordering::SeqCst);
+            write_http_response(&mut stream, &poll_status, &poll_content_type, &poll_body);
+        });
+        (format!("http://{}", addr), poll_count, server)
+    }
+
+    fn start_auto_fallback_http_server(
+        poll_status: &str,
+        poll_content_type: &str,
+        poll_body: &str,
+    ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+        let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let poll_count = Arc::new(AtomicUsize::new(0));
+        let server_poll_count = Arc::clone(&poll_count);
+        let poll_status = poll_status.to_string();
+        let poll_content_type = poll_content_type.to_string();
+        let poll_body = poll_body.to_string();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert_eq!(request_path(&request), "/api/agents/ws");
+            write_http_response(
+                &mut stream,
+                "503 Service Unavailable",
+                "text/plain",
+                "websocket unavailable",
+            );
+
             let (mut stream, _) = listener.accept().unwrap();
             let request = read_http_request(&mut stream);
             assert_eq!(request_path(&request), "/api/shell/agent/register");
@@ -1810,6 +1926,77 @@ mod tests {
             "quic connect failed: certificate verify failed; check server_name",
         );
         assert!(fatal.is_fatal(), "{fatal}");
+    }
+
+    #[test]
+    fn auto_log_lines_are_concise_and_redacted() {
+        assert_eq!(
+            auto_quic_not_configured_log_line(),
+            "webcodex-agent transport auto: quic not configured; skipping"
+        );
+        assert_eq!(
+            auto_trying_log_line(TRANSPORT_WEBSOCKET),
+            "webcodex-agent transport auto: websocket trying"
+        );
+        assert_eq!(
+            auto_trying_log_line(TRANSPORT_POLLING),
+            "webcodex-agent transport auto: polling trying"
+        );
+
+        let token = "DO_NOT_LEAK_THIS_TOKEN";
+        let concise = concise_log_error(
+            "websocket connect failed: token=DO_NOT_LEAK_THIS_TOKEN\nwhile connecting",
+            token,
+        );
+        assert!(!concise.contains(token), "{concise}");
+        assert!(!concise.contains('\n'), "{concise}");
+    }
+
+    #[test]
+    fn registered_log_includes_actual_transport_without_url_query_or_token() {
+        let token = "DO_NOT_LEAK_THIS_TOKEN";
+        let mut cfg = test_agent_config(format!(
+            "https://webcodex.example.test/agent/path?token={}",
+            token
+        ));
+        cfg.token = token.to_string();
+        cfg.transport = Some(TRANSPORT_AUTO.to_string());
+
+        let line = registered_log_line(&cfg, TRANSPORT_POLLING, 11);
+        assert!(line.contains("client_id=oe"), "{line}");
+        assert!(
+            line.contains("server=https://webcodex.example.test"),
+            "{line}"
+        );
+        assert!(line.contains("preferred_transport=auto"), "{line}");
+        assert!(line.contains("actual_transport=polling"), "{line}");
+        assert!(line.contains("projects=11"), "{line}");
+        assert!(!line.contains(token), "{line}");
+        assert!(!line.contains("/agent/path"), "{line}");
+        assert!(!line.contains("?token="), "{line}");
+    }
+
+    #[test]
+    fn auto_websocket_failure_falls_back_to_polling() {
+        let (server_url, poll_count, server) = start_auto_fallback_http_server(
+            "502 Bad Gateway",
+            "text/html",
+            "<html>bad gateway</html>",
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_agent_config(server_url);
+        cfg.transport = Some(TRANSPORT_AUTO.to_string());
+        cfg.projects_dir = Some(tmp.path().join("projects.d"));
+        cfg.websocket_connect_timeout_secs = 1;
+
+        let err = run_auto_agent(cfg, false, "inst-auto-fallback")
+            .expect_err("polling 502 should be returned after fallback");
+        server.join().unwrap();
+        assert_eq!(poll_count.load(Ordering::SeqCst), 1);
+        assert!(
+            err.contains("server unavailable while polling /api/shell/agent/poll"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -56,8 +56,9 @@ use webcodex_agent::QuicClientConfig;
 #[cfg(test)]
 use webcodex_agent::{
     agent_project_summary, auto_transport_plan, build_ws_request, default_quic_alpn,
-    default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs, effective_transport,
-    handle_project_op, load_agent_project_summaries_from_dir, max_concurrent_jobs, non_empty_token,
+    default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs,
+    default_websocket_connect_timeout_secs, effective_transport, handle_project_op,
+    load_agent_project_summaries_from_dir, max_concurrent_jobs, non_empty_token,
     parse_agent_project_toml, quic_client_bind_addr_for, resolve_quic_config,
     resolve_quic_server_addrs, run_shell, run_shell_with_profiles, server_url_to_ws,
     sha256_hex_bytes, validate_project_path_policy, websocket_session, ShellProfileConfig,
@@ -775,10 +776,12 @@ fn register(
     project_cache: &mut AgentProjectCache,
     agent_instance_id: &str,
     prepared_cache_count: usize,
-) -> Result<(), String> {
+) -> Result<usize, String> {
+    let projects = project_cache.get(cfg);
+    let projects_count = projects.iter().filter(|project| !project.disabled).count();
     let body = build_register_request(
         cfg,
-        project_cache.get(cfg),
+        projects,
         AGENT_PROTOCOL_VERSION_POLLING_V1,
         agent_instance_id,
         prepared_cache_count,
@@ -786,7 +789,7 @@ fn register(
     let response: ShellClientRegisterResponse =
         post_json(client, cfg, AGENT_REGISTER_PATH, &body).map_err(|e| e.to_string())?;
     if response.success {
-        Ok(())
+        Ok(projects_count)
     } else {
         Err(response
             .error
@@ -1494,6 +1497,7 @@ mod tests {
             policy: AgentPolicy::default(),
             shell: ShellConfig::default(),
             transport: None,
+            websocket_connect_timeout_secs: default_websocket_connect_timeout_secs(),
             quic: None,
         }
     }
@@ -1539,8 +1543,34 @@ client_id = "oe"
         assert!(cfg.quic.is_none());
         assert_eq!(effective_transport(&cfg), TRANSPORT_WEBSOCKET);
         assert_eq!(
+            cfg.websocket_connect_timeout_secs,
+            default_websocket_connect_timeout_secs()
+        );
+        assert_eq!(
             auto_transport_plan(&cfg),
             vec![TRANSPORT_WEBSOCKET, TRANSPORT_POLLING]
+        );
+    }
+
+    #[test]
+    fn agent_config_rejects_zero_websocket_connect_timeout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        std::fs::write(
+            &path,
+            r#"
+server_url = "http://127.0.0.1:8000"
+token = "t"
+client_id = "oe"
+websocket_connect_timeout_secs = 0
+"#,
+        )
+        .unwrap();
+
+        let err = load_config(&path).unwrap_err();
+        assert!(
+            err.contains("websocket_connect_timeout_secs must be > 0"),
+            "{err}"
         );
     }
 

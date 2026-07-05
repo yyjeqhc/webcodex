@@ -64,6 +64,7 @@ Recommended production config:
 
 ```toml
 transport = "auto"
+websocket_connect_timeout_secs = 5
 
 [quic]
 server_addr = "your-domain.example:8443"
@@ -73,7 +74,7 @@ connect_timeout_secs = 10
 keepalive_interval_secs = 20
 ```
 
-`auto` attempts QUIC first when `[quic]` is present. If QUIC cannot connect, it tries WebSocket, then polling.
+`auto` attempts QUIC first when `[quic]` is present. If QUIC cannot connect, it tries WebSocket, then polling. When `[quic]` is absent, the agent logs that QUIC is not configured and starts with WebSocket. `websocket_connect_timeout_secs` bounds only the WebSocket connect attempt; timeout fallback to polling is normal in networks that block WebSocket.
 
 Use strict QUIC when you want connection failures to stay failures instead of falling back:
 
@@ -161,20 +162,24 @@ Strict transport values mean exactly one transport:
 - `transport = "websocket"`: WebSocket only.
 - `transport = "polling"`: polling only.
 
-`transport = "auto"` is the recommended production setting when QUIC is configured. It tries QUIC first, then WebSocket, then polling. If `[quic]` is missing, it starts at WebSocket. After a WebSocket connection has been established, ordinary socket close/EOF/read errors are treated as transport disconnects and the agent reconnects instead of exiting.
+`transport = "auto"` is the recommended production setting when QUIC is configured. It tries QUIC first, then WebSocket, then polling. If `[quic]` is missing, it logs that QUIC is not configured and starts at WebSocket. After a WebSocket connection has been established, ordinary socket close/EOF/read errors are treated as transport disconnects and the agent reconnects instead of exiting.
 
 Auto startup logs show the decision path, for example:
 
 ```text
-webcodex-agent transport auto: trying quic
-webcodex-agent transport auto: quic failed: <reason>; trying websocket
+webcodex-agent transport auto: quic trying
+webcodex-agent transport auto: quic unavailable: <reason>; trying websocket
+webcodex-agent transport auto: websocket trying
 webcodex-agent transport auto: websocket failed: <reason>; falling back to polling
-webcodex-agent registered client_id=... server=... preferred_transport=auto actual_transport=websocket transport=websocket
-webcodex-agent websocket connection closed; reconnecting
-webcodex-agent reconnect attempt scheduled transport=websocket delay=1s
+webcodex-agent transport auto: polling trying
+webcodex-agent registered client_id=... server=https://your-domain.example preferred_transport=auto actual_transport=polling projects=11
 ```
 
-`runtime_status` and `listAgents` show the actual connected transport label, not merely the preferred setting.
+The registered line prints the final `actual_transport` and a server label with only scheme, host, and port. It does not print tokens, headers, query strings, or the full agent config.
+
+`runtime_status` and `listAgents` show the actual connected transport label, not merely the preferred setting. Both include compact agent health fields for quick checks: online/stale/offline counts plus per-client `client_id`, `status`, `transport`, `last_seen_age_secs`, `projects_count`, `pending_requests`, and `active_jobs`.
+
+Agent-only deployments may intentionally have no server-side `projects.toml`. In that case, if agent-registered projects are online and `projects.effective.status = "ok"`, `runtime_status.projects.server_static` reports `status = "not_configured"` with `severity = "info"` instead of treating the missing file as an unhealthy effective project state.
 
 ### Foreground polling failures
 

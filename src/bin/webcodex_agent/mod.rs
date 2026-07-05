@@ -18,8 +18,8 @@ pub(crate) use config::{
 #[cfg(test)]
 pub(crate) use config::{
     default_quic_alpn, default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs,
-    max_concurrent_jobs, QuicClientConfig, ShellProfileConfig, CLIENT_PROFILE_ERROR,
-    DEFAULT_MAX_CONCURRENT_JOBS,
+    default_websocket_connect_timeout_secs, max_concurrent_jobs, QuicClientConfig,
+    ShellProfileConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS,
 };
 pub(super) use dispatch::{dispatch_request, is_project_op};
 #[cfg(test)]

@@ -6,6 +6,7 @@ use super::local_jobs::ACTIVE_JOB_STATUSES;
 use super::registry::registered_tool_specs;
 use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
+use crate::shell_protocol::{ShellClientView, ShellJobInfo};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -56,6 +57,8 @@ impl RuntimeInfo {
 impl ToolRuntime {
     pub(crate) async fn list_agents(&self, auth: Option<&AuthContext>) -> ToolResult {
         let clients = self.shell_clients.list_clients_for_auth(auth).await;
+        let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, None).await;
+        let now = chrono::Utc::now().timestamp();
         let agents: Vec<Value> = clients
             .iter()
             .map(|c| {
@@ -70,7 +73,10 @@ impl ToolRuntime {
                     "agent_protocol_version": c.agent_protocol_version,
                     "transport": c.transport,
                     "last_seen": c.last_seen,
+                    "last_seen_age_secs": last_seen_age_secs(c, now),
                     "pending_requests": c.pending_requests,
+                    "projects_count": enabled_projects_count(c),
+                    "active_jobs": active_jobs_for_client(&agent_jobs, &c.client_id),
                     "capabilities": c.capabilities,
                     "projects": c.projects,
                     "policy": sanitized_policy_summary(c.policy.as_ref()),
@@ -80,7 +86,12 @@ impl ToolRuntime {
                 })
             })
             .collect();
-        ToolResult::ok(json!({ "agents": agents }))
+        ToolResult::ok(json!({
+            "agents": agents,
+            "clients": agent_health_clients(&clients, &agent_jobs, now),
+            "summary": agent_health_summary(&clients, &agent_jobs, now),
+            "count": clients.len(),
+        }))
     }
 
     /// Build the runtime observability summary. Read-only; never exposes
@@ -134,14 +145,47 @@ impl ToolRuntime {
         } else {
             "no_projects"
         };
-        let server_warning = (!projects_configured).then_some("projects.toml not configured");
+        let server_static_not_configured = !projects_configured
+            && projects_load_error
+                .as_deref()
+                .map(is_projects_not_configured_error)
+                .unwrap_or(true);
+        let agent_only_effective_ok = server_static_not_configured
+            && agent_registered_online_count > 0
+            && effective_status == "ok";
+        let server_static_status = if projects_configured {
+            "ok"
+        } else if server_static_not_configured {
+            "not_configured"
+        } else {
+            "error"
+        };
+        let server_static_severity = if projects_configured || agent_only_effective_ok {
+            "info"
+        } else if server_static_not_configured {
+            "warning"
+        } else {
+            "error"
+        };
+        let server_warning = if projects_configured || agent_only_effective_ok {
+            None
+        } else if server_static_not_configured {
+            Some("projects.toml not configured")
+        } else {
+            Some("projects.toml load error")
+        };
+        let server_static_message = agent_only_effective_ok
+            .then_some("projects.toml not configured; using agent-registered projects");
         let projects = json!({
             "server_static": {
                 "configured": projects_configured,
                 "count": projects_count,
                 "config_path": self.projects.config_path,
                 "load_error": projects_load_error.clone(),
+                "status": server_static_status,
+                "severity": server_static_severity,
                 "warning": server_warning,
+                "message": server_static_message,
             },
             "agent_registered": {
                 "count": agent_registered_count,
@@ -156,6 +200,9 @@ impl ToolRuntime {
             "config_path": self.projects.config_path,
             "load_error": projects_load_error,
         });
+
+        let now = chrono::Utc::now().timestamp();
+        let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, None).await;
 
         // -- agents summary ---------------------------------------------------
         // Build a trimmed client list so the summary never leaks per-request
@@ -186,9 +233,11 @@ impl ToolRuntime {
                     "agent_protocol_version": c.agent_protocol_version,
                     "transport": c.transport,
                     "last_seen": c.last_seen,
+                    "last_seen_age_secs": last_seen_age_secs(c, now),
                     "pending_requests": c.pending_requests,
+                    "active_jobs": active_jobs_for_client(&agent_jobs, &c.client_id),
                     "capabilities": c.capabilities,
-                    "projects_count": c.projects.len(),
+                    "projects_count": enabled_projects_count(c),
                     "policy": sanitized_policy_summary(c.policy.as_ref()),
                     "shell_profiles": sanitized_shell_profiles_summary(
                         c.policy.as_ref().and_then(|p| p.shell_profiles.as_ref())
@@ -202,12 +251,12 @@ impl ToolRuntime {
             "stale_count": stale_count,
             "offline_count": offline_count,
             "clients": clients_summary,
+            "summary": agent_health_summary(&clients, &agent_jobs, now),
         });
 
         // -- jobs summary -----------------------------------------------------
         // Agent-known jobs come from the registry; local jobs come from the
         // in-memory map. Active = running/queued/agent_queued/stop_requested.
-        let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, None).await;
         let agent_known_count = agent_jobs.len();
         let local_job_dirs: Vec<PathBuf> = if local_jobs_visible_to_auth(auth) {
             let local_jobs_map = self.local_jobs.lock().await;
@@ -269,7 +318,7 @@ impl ToolRuntime {
             "service": "webcodex",
             "version": env!("CARGO_PKG_VERSION"),
             "build": crate::build_info::runtime_build_info(),
-            "server_time": chrono::Utc::now().timestamp(),
+            "server_time": now,
             "pid": std::process::id(),
             "auth_enabled": self.runtime_info.auth_enabled,
             "configured_public_url": self.runtime_info.configured_public_url,
@@ -285,6 +334,73 @@ impl ToolRuntime {
         }
         ToolResult::ok(output)
     }
+}
+
+fn is_projects_not_configured_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("not configured") || lower.contains("not found")
+}
+
+fn enabled_projects_count(client: &ShellClientView) -> usize {
+    client
+        .projects
+        .iter()
+        .filter(|project| !project.disabled)
+        .count()
+}
+
+fn last_seen_age_secs(client: &ShellClientView, now: i64) -> i64 {
+    now.saturating_sub(client.last_seen)
+}
+
+fn active_jobs_for_client(agent_jobs: &[ShellJobInfo], client_id: &str) -> usize {
+    agent_jobs
+        .iter()
+        .filter(|job| {
+            job.client_id == client_id && ACTIVE_JOB_STATUSES.contains(&job.status.as_str())
+        })
+        .count()
+}
+
+fn agent_health_clients(
+    clients: &[ShellClientView],
+    agent_jobs: &[ShellJobInfo],
+    now: i64,
+) -> Vec<Value> {
+    clients
+        .iter()
+        .map(|client| {
+            json!({
+                "client_id": client.client_id,
+                "status": client.status,
+                "transport": client.transport,
+                "last_seen_age_secs": last_seen_age_secs(client, now),
+                "projects_count": enabled_projects_count(client),
+                "pending_requests": client.pending_requests,
+                "active_jobs": active_jobs_for_client(agent_jobs, &client.client_id),
+            })
+        })
+        .collect()
+}
+
+fn agent_health_summary(
+    clients: &[ShellClientView],
+    agent_jobs: &[ShellJobInfo],
+    now: i64,
+) -> Value {
+    let online = clients.iter().filter(|client| client.connected).count();
+    let stale = clients
+        .iter()
+        .filter(|client| client.status == "stale")
+        .count();
+    let offline = clients.len().saturating_sub(online);
+    json!({
+        "count": clients.len(),
+        "online": online,
+        "offline": offline,
+        "stale": stale,
+        "clients": agent_health_clients(clients, agent_jobs, now),
+    })
 }
 
 /// Build the sanitized policy summary JSON exposed in `runtime_status` and

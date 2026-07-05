@@ -12,6 +12,7 @@ const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
 pub(crate) const CLIENT_PROFILE_ERROR: &str =
     "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
 pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 2;
+pub(crate) const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct AgentConfig {
@@ -38,6 +39,10 @@ pub(crate) struct AgentConfig {
     /// or explicit `"auto"` fallback mode.
     #[serde(default)]
     pub(crate) transport: Option<String>,
+    /// WebSocket connect timeout in seconds. This bounds foreground auto
+    /// fallback latency when WebSocket is blocked or unreachable.
+    #[serde(default = "default_websocket_connect_timeout_secs")]
+    pub(crate) websocket_connect_timeout_secs: u64,
     /// Experimental custom QUIC agent transport config. Used by strict
     /// `transport = "quic"` and by explicit `transport = "auto"`.
     #[serde(default)]
@@ -78,6 +83,9 @@ pub(crate) fn default_quic_connect_timeout_secs() -> u64 {
 }
 pub(crate) fn default_quic_keepalive_interval_secs() -> u64 {
     20
+}
+pub(crate) fn default_websocket_connect_timeout_secs() -> u64 {
+    DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_SECS
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -471,6 +479,9 @@ pub(crate) fn load_config(path: &Path) -> Result<AgentConfig, String> {
     }
     if cfg.poll_interval_ms == 0 {
         return Err("poll_interval_ms must be > 0".to_string());
+    }
+    if cfg.websocket_connect_timeout_secs == 0 {
+        return Err("websocket_connect_timeout_secs must be > 0".to_string());
     }
     if let Some(transport) = cfg.transport.as_deref().map(str::trim) {
         if !transport.is_empty()

@@ -27,6 +27,7 @@ mod registry;
 mod runtime;
 mod runtime_info;
 mod session_context;
+mod session_tools;
 pub(crate) mod sessions;
 mod shell;
 mod surface;

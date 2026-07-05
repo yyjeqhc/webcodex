@@ -32,17 +32,17 @@ pub(crate) fn registered_tool_categories() -> Value {
     Value::Object(categories)
 }
 
+/// Short, GPT-facing flow hints. Each entry is well under the 300-char
+/// ToolSpec/operation description budget.
+pub(crate) fn recommended_flows() -> Vec<&'static str> {
+    TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .map(|flow| flow.summary)
+        .collect()
+}
+
 impl ToolRuntime {
     pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 100;
-
-    /// Short, GPT-facing flow hints. Each entry is well under the 300-char
-    /// ToolSpec/operation description budget.
-    pub fn recommended_flows() -> Vec<&'static str> {
-        TOOL_RECOMMENDED_FLOWS
-            .iter()
-            .map(|flow| flow.summary)
-            .collect()
-    }
 
     pub(crate) fn list_tools_payload(&self, options: ListToolsOptions) -> Value {
         let specs = registered_tool_specs();
@@ -99,7 +99,7 @@ impl ToolRuntime {
             } else {
                 registered_tool_categories()
             },
-            "recommended_flows": ToolRuntime::recommended_flows(),
+            "recommended_flows": recommended_flows(),
             "recommended_next": "For daily GPT Action discovery, call callRuntimeTool with tool=tool_manifest. Use full listRuntimeTools only when debugging schemas.",
             "hint": "Full listRuntimeTools responses include schemas and may be large. Use summary_only=true with category, features, or limit for focused discovery.",
         });

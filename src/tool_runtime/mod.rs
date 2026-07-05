@@ -90,7 +90,7 @@ pub(crate) use session_context::{
     session_guard_denied_result, unknown_session_result, ALLOW_CROSS_PROJECT_SESSION_FIELD,
 };
 #[cfg(test)]
-pub(crate) use surface::registered_tool_categories;
+pub(crate) use surface::{recommended_flows, registered_tool_categories};
 
 pub(crate) const RUN_CODEX_DISABLED_MESSAGE: &str =
     "run_codex is currently disabled on model-facing surfaces; use run_job or external local Codex manually.";

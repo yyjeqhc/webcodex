@@ -618,7 +618,7 @@ fn tool_recommended_flows_reference_visible_defined_tools() {
             flow.summary
         })
         .collect::<Vec<_>>();
-    assert_eq!(ToolRuntime::recommended_flows(), expected_summaries);
+    assert_eq!(recommended_flows(), expected_summaries);
 }
 
 #[test]
@@ -1899,7 +1899,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "preferred edit tools should lead the edit category"
     );
     // recommended_flows are short and non-empty.
-    let flows = ToolRuntime::recommended_flows();
+    let flows = recommended_flows();
     assert!(!flows.is_empty());
     for flow in &flows {
         assert!(flow.chars().count() <= 300, "flow too long: {}", flow);

@@ -1,10 +1,10 @@
 use super::AgentCapability::Shell;
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition};
+use super::{captures_validation_output, def, ToolDefinition};
 use crate::tool_runtime::metadata::{ToolPathHint::None as NoPath, ToolRisk::JobRun, JOB_RUN};
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    def(
+    captures_validation_output(def(
         "cargo_fmt",
         ModelVisible,
         "validation",
@@ -16,8 +16,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    captures_validation_output(def(
         "cargo_check",
         ModelVisible,
         "validation",
@@ -29,8 +29,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    captures_validation_output(def(
         "cargo_test",
         ModelVisible,
         "validation",
@@ -42,5 +42,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
+    )),
 ];

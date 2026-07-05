@@ -109,10 +109,22 @@ pub(crate) struct ToolDefinition {
     pub(crate) visibility: ToolVisibility,
     pub(crate) category: &'static str,
     pub(crate) metadata: ToolMetadata,
+    pub(crate) policy: ToolDefinitionPolicy,
     /// Agent capability required before dispatch reaches an agent-backed
     /// project. `None` means the tool is not agent-dispatched or enforces its
     /// ownership boundary inside a specialized handler.
     pub(crate) agent_capability: Option<AgentCapability>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolDefinitionPolicy {
+    pub(crate) captures_validation_output: bool,
+}
+
+impl ToolDefinitionPolicy {
+    const DEFAULT: Self = Self {
+        captures_validation_output: false,
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +168,18 @@ const fn def(
             destructive,
             shell_like,
         ),
+        policy: ToolDefinitionPolicy::DEFAULT,
         agent_capability,
+    }
+}
+
+const fn captures_validation_output(definition: ToolDefinition) -> ToolDefinition {
+    ToolDefinition {
+        policy: ToolDefinitionPolicy {
+            captures_validation_output: true,
+            ..definition.policy
+        },
+        ..definition
     }
 }
 

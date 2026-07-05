@@ -40,7 +40,7 @@ impl ToolDefinition {
     }
 
     pub(crate) fn captures_validation_output(self) -> bool {
-        matches!(self.name, "cargo_fmt" | "cargo_check" | "cargo_test")
+        self.policy.captures_validation_output
     }
 
     pub(crate) fn is_current_session_control(self) -> bool {

@@ -66,6 +66,16 @@ pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
+#[cfg(test)]
+pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
+    SHELL_CLIENT_CAPABILITY_SHELL,
+    SHELL_CLIENT_CAPABILITY_FILE_READ,
+    SHELL_CLIENT_CAPABILITY_FILE_WRITE,
+    SHELL_CLIENT_CAPABILITY_GIT,
+    SHELL_CLIENT_CAPABILITY_JOBS,
+    SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
+    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {

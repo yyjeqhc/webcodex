@@ -4,7 +4,8 @@ use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentPollRequest, ShellAgentProjectSummary,
     ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest, ShellClientView,
     ShellJobCodexMetadata, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
-    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_SHELL,
+    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_NAMES,
+    SHELL_CLIENT_CAPABILITY_SHELL,
 };
 use crate::shell_protocol::{
     ShellClientJobLogRequest, ShellClientJobLogResponse, ShellClientJobStatusRequest,
@@ -1978,6 +1979,40 @@ mod tests {
         assert!(err.contains("unknown shell client"));
         let err = registry.get_client_capabilities("ghost").await.unwrap_err();
         assert!(err.contains("unknown shell client"));
+    }
+
+    #[tokio::test]
+    async fn client_supports_recognizes_all_protocol_capability_names() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "all".to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    file_read: true,
+                    file_write: true,
+                    git: true,
+                    jobs: true,
+                    async_jobs: true,
+                    async_shell_jobs: true,
+                }),
+                projects: None,
+                agent_protocol_version: None,
+                policy: None,
+            })
+            .await
+            .unwrap();
+
+        for capability in SHELL_CLIENT_CAPABILITY_NAMES {
+            assert!(
+                registry.client_supports("all", capability).await.unwrap(),
+                "shell client matcher must recognize protocol capability {capability}"
+            );
+        }
     }
 
     #[tokio::test]

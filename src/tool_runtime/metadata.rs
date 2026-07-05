@@ -42,10 +42,10 @@ pub(crate) struct ToolMetadata {
     pub(crate) shell_like: bool,
 }
 
-pub(crate) const RUNTIME_READ: &str = "runtime:read";
-pub(crate) const PROJECT_READ: &str = "project:read";
-pub(crate) const PROJECT_WRITE: &str = "project:write";
-pub(crate) const JOB_RUN: &str = "job:run";
+pub(crate) const RUNTIME_READ: &str = crate::auth::SCOPE_RUNTIME_READ;
+pub(crate) const PROJECT_READ: &str = crate::auth::SCOPE_PROJECT_READ;
+pub(crate) const PROJECT_WRITE: &str = crate::auth::SCOPE_PROJECT_WRITE;
+pub(crate) const JOB_RUN: &str = crate::auth::SCOPE_JOB_RUN;
 
 pub(crate) const TOOL_PROVIDER_AGENT: &str = "agent";
 pub(crate) const TOOL_PROVIDER_CONTROL: &str = "control";

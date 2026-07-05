@@ -788,7 +788,7 @@ mod tests {
             "tool": "git_status",
             "project": "agent:oe:webcodex",
             "session_id": "wc_sess_tool_arg",
-            "recording_session_id": "wc_sess_recorder",
+            TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_recorder",
         }))
         .unwrap();
 
@@ -798,7 +798,9 @@ mod tests {
             json!({"project": "agent:oe:webcodex", "session_id": "wc_sess_tool_arg"})
         );
         assert_eq!(
-            extract_recording_session_id(&json!({"recording_session_id": "wc_sess_recorder"})),
+            extract_recording_session_id(
+                &json!({TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_recorder"})
+            ),
             Some("wc_sess_recorder".to_string())
         );
     }
@@ -813,7 +815,7 @@ mod tests {
             "include_workspace": true,
             "include_checkpoints": true,
             "limit": 20,
-            "recording_session_id": "wc_sess_recorder"
+            TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_recorder"
         });
         let (tool, params) = extract_tool_call(&body).unwrap();
 
@@ -832,7 +834,7 @@ mod tests {
         assert!(
             params
                 .as_object()
-                .is_some_and(|m| !m.contains_key("recording_session_id")),
+                .is_some_and(|m| !m.contains_key(TOOL_CALL_RECORDING_SESSION_ID_FIELD)),
             "recording_session_id must not leak into concrete params"
         );
         assert_eq!(
@@ -895,7 +897,7 @@ mod tests {
             "project": "agent:special:test",
             "checkpoint_id": "wc_ckpt_abc",
             "confirm": true,
-            "recording_session_id": "wc_sess_record"
+            TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_record"
         });
         let (tool, params) = extract_tool_call(&body).unwrap();
 
@@ -906,7 +908,7 @@ mod tests {
         assert!(
             params
                 .as_object()
-                .is_some_and(|m| !m.contains_key("recording_session_id")),
+                .is_some_and(|m| !m.contains_key(TOOL_CALL_RECORDING_SESSION_ID_FIELD)),
             "recording_session_id must not leak into concrete params"
         );
         assert_eq!(
@@ -1220,7 +1222,7 @@ mod tests {
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "list_projects",
-                "recording_session_id": session_id,
+                TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_id,
                 "params": {}
             }))
             .send(&service)
@@ -1263,7 +1265,7 @@ mod tests {
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "read_file",
-                "recording_session_id": session_id,
+                TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_id,
                 "params": {"project": "demo", "path": "missing.txt"}
             }))
             .send(&service)
@@ -1310,7 +1312,7 @@ mod tests {
             .json(&json!({
                 "tool": "session_summary",
                 "session_id": business_session_id,
-                "recording_session_id": tracking_session_id
+                TOOL_CALL_RECORDING_SESSION_ID_FIELD: tracking_session_id
             }))
             .send(&service)
             .await;
@@ -1364,7 +1366,7 @@ mod tests {
             .json(&json!({
                 "tool": "post_session_message",
                 "session_id": business_session_id,
-                "recording_session_id": tracking_session_id,
+                TOOL_CALL_RECORDING_SESSION_ID_FIELD: tracking_session_id,
                 "kind": "guidance",
                 "message": "Keep this behind callRuntimeTool.",
                 "tags": ["openapi", "constraint"],
@@ -1481,7 +1483,7 @@ mod tests {
                 .bearer_auth("secret")
                 .json(&json!({
                     "tool": "list_projects",
-                    "recording_session_id": session_id,
+                    TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_id,
                     "params": {}
                 }))
                 .send(&service)

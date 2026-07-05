@@ -670,7 +670,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                             "value": {
                                 "tool": "git_status",
                                 "project": "webcodex",
-                                "recording_session_id": "wc_sess_example"
+                                TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_example"
                             }
                         },
                         "sessionSummary": {
@@ -686,7 +686,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                             "value": {
                                 "tool": "post_session_message",
                                 "session_id": "wc_sess_business",
-                                "recording_session_id": "wc_sess_recorder",
+                                TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_recorder",
                                 "kind": "guidance",
                                 "message": "Keep new capabilities behind callRuntimeTool; do not add dedicated OpenAPI operations.",
                                 "tags": ["openapi", "constraint"],
@@ -727,7 +727,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "project": "webcodex",
                                 "checkpoint_id": "wc_ckpt_abc",
                                 "confirm": true,
-                                "recording_session_id": "wc_sess_record"
+                                TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_record"
                             }
                         },
                         "applyTextEdits": {

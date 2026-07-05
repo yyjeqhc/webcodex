@@ -17,7 +17,7 @@ use super::session_context::{
     session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
 };
 use super::sessions::tool_failure_summary_from_events;
-use super::sessions::{self, SessionTransport};
+use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIELD};
 use super::tool_inputs::SessionMode;
 use super::tool_result::ToolResult;
 use super::validation_events::{skipped_validation_summary, validation_summary_for_session};
@@ -163,7 +163,7 @@ impl ToolRuntime {
                 "explicit_session_id_recommended": true,
                 "explicit_session_id_fields": {
                     "tool_business_input": "session_id",
-                    "generic_wrapper_recorder": "recording_session_id"
+                    "generic_wrapper_recorder": TOOL_CALL_RECORDING_SESSION_ID_FIELD
                 },
                 "current_binding": current_binding,
             },

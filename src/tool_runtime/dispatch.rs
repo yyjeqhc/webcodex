@@ -532,17 +532,14 @@ impl ToolRuntime {
             | ToolCall::DeleteLineRange { .. }
             | ToolCall::ApplyTextEdits { .. }) => self.dispatch_file_tool(call).await,
 
-            ToolCall::GitRestorePaths {
-                project,
-                paths,
-                session_id: _,
-            } => self.git_restore_paths(project, paths).await,
-
-            ToolCall::DiscardUntracked {
-                project,
-                paths,
-                session_id: _,
-            } => self.discard_untracked(project, paths).await,
+            call @ (ToolCall::GitRestorePaths { .. }
+            | ToolCall::DiscardUntracked { .. }
+            | ToolCall::GitStatus { .. }
+            | ToolCall::GitDiff { .. }
+            | ToolCall::GitDiffHunks { .. }
+            | ToolCall::GitLog { .. }
+            | ToolCall::GitDiffSummary { .. }
+            | ToolCall::ShowChanges { .. }) => self.dispatch_git_tool(call).await,
 
             ToolCall::ValidatePatch {
                 project,
@@ -553,36 +550,6 @@ impl ToolRuntime {
                 self.validate_patch(project, patch, deny_sensitive_paths)
                     .await
             }
-
-            ToolCall::GitStatus {
-                project,
-                session_id: _,
-            } => self.git_status(project).await,
-
-            ToolCall::GitDiff {
-                project,
-                session_id: _,
-                args,
-            } => self.git_diff(project, args).await,
-
-            ToolCall::GitDiffHunks {
-                project,
-                session_id: _,
-                paths,
-                max_hunks,
-                max_hunk_lines,
-                cached,
-            } => {
-                self.git_diff_hunks(project, paths, max_hunks, max_hunk_lines, cached)
-                    .await
-            }
-
-            ToolCall::GitLog {
-                project,
-                limit,
-                skip,
-                session_id: _,
-            } => self.git_log(project, limit, skip).await,
 
             ToolCall::CargoFmt {
                 project,
@@ -661,30 +628,6 @@ impl ToolRuntime {
                 extra_args: _,
             } => tool_disabled_result_from_definition("run_codex")
                 .expect("run_codex must be disabled by ToolDefinition policy"),
-
-            ToolCall::GitDiffSummary {
-                project,
-                session_id: _,
-            } => self.git_diff_summary(project).await,
-
-            ToolCall::ShowChanges {
-                project,
-                session_id,
-                include_diff,
-                max_hunks,
-                max_hunk_lines,
-                session_event_limit,
-            } => {
-                self.show_changes(
-                    project,
-                    session_id,
-                    include_diff,
-                    max_hunks,
-                    max_hunk_lines,
-                    session_event_limit,
-                )
-                .await
-            }
 
             ToolCall::WorkspaceHygieneCheck {
                 project,

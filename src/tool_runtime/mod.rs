@@ -12,6 +12,7 @@ mod dispatch;
 mod file_tools;
 pub(crate) mod files;
 mod git;
+mod git_tools;
 mod handoff;
 mod helpers;
 mod hygiene;

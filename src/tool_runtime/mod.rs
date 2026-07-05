@@ -88,15 +88,19 @@ pub(crate) use session_context::{
 pub(crate) const RUN_CODEX_DISABLED_MESSAGE: &str =
     "run_codex is currently disabled on model-facing surfaces; use run_job or external local Codex manually.";
 
-pub(crate) fn run_codex_disabled_result() -> ToolResult {
+pub(crate) fn tool_disabled_result(tool_name: &str, message: &'static str) -> ToolResult {
     ToolResult::err_with_output(
-        RUN_CODEX_DISABLED_MESSAGE,
+        message,
         json!({
-            "code": "run_codex_disabled",
-            "tool": "run_codex",
-            "message": RUN_CODEX_DISABLED_MESSAGE,
+            "code": format!("{tool_name}_disabled"),
+            "tool": tool_name,
+            "message": message,
         }),
     )
+}
+
+pub(crate) fn run_codex_disabled_result() -> ToolResult {
+    tool_disabled_result("run_codex", RUN_CODEX_DISABLED_MESSAGE)
 }
 
 #[cfg(test)]

@@ -118,12 +118,13 @@ fn tool_definitions_drive_session_and_permission_policy() {
     use crate::tool_runtime::metadata::ToolRisk;
     use crate::tool_runtime::tool_definition::{
         runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
-        runtime_tool_creates_or_binds_session, runtime_tool_is_change_summary_like,
-        runtime_tool_is_current_session_control, runtime_tool_is_git_like,
-        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
-        runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
-        runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
-        runtime_tool_session_risk_class, tool_definitions, TOOL_DISCOVERY_GROUPS,
+        runtime_tool_creates_or_binds_session, runtime_tool_disabled_message,
+        runtime_tool_is_change_summary_like, runtime_tool_is_current_session_control,
+        runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+        runtime_tool_is_write_like, runtime_tool_permission_risk,
+        runtime_tool_requires_explicit_business_session, runtime_tool_requires_permission,
+        runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
+        tool_definitions, TOOL_DISCOVERY_GROUPS,
     };
 
     let git_group = TOOL_DISCOVERY_GROUPS
@@ -240,6 +241,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
             definition.name
         );
         assert_eq!(
+            runtime_tool_disabled_message(definition.name),
+            definition.disabled_message(),
+            "{} disabled facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
             runtime_tool_allows_current_session_fallback(definition.name),
             definition.allows_current_session_fallback(),
             "{} current-session fallback facade must use ToolDefinition",
@@ -321,6 +328,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
         creates_or_binds_session_tools,
         vec!["start_session", "start_coding_task", "bind_current_session"]
     );
+
+    let disabled_tools = tool_definitions()
+        .filter(|definition| definition.disabled_message().is_some())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(disabled_tools, vec!["run_codex"]);
 
     let unit_argument_tools = tool_definitions()
         .filter(|definition| definition.uses_unit_arguments())

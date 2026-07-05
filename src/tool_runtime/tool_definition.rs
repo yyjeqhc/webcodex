@@ -31,7 +31,7 @@ pub(crate) use super::tool_policy::{
     lookup_tool_definition, model_hidden_tool_names, model_visible_tool_definitions,
     model_visible_tool_names_csv, runtime_tool_agent_capability,
     runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
-    runtime_tool_category, runtime_tool_creates_or_binds_session,
+    runtime_tool_category, runtime_tool_creates_or_binds_session, runtime_tool_disabled_message,
     runtime_tool_is_change_summary_like, runtime_tool_is_current_session_control,
     runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
     runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
@@ -122,6 +122,7 @@ pub(crate) struct ToolDefinitionPolicy {
     pub(crate) captures_validation_output: bool,
     pub(crate) current_session_control: bool,
     pub(crate) creates_or_binds_session: bool,
+    pub(crate) disabled_message: Option<&'static str>,
     pub(crate) git_like: bool,
     pub(crate) permission_risk: Option<&'static str>,
     pub(crate) requires_artifact_upload_path_binding: bool,
@@ -135,6 +136,7 @@ impl ToolDefinitionPolicy {
         captures_validation_output: false,
         current_session_control: false,
         creates_or_binds_session: false,
+        disabled_message: None,
         git_like: false,
         permission_risk: None,
         requires_artifact_upload_path_binding: false,
@@ -233,6 +235,16 @@ const fn creates_or_binds_session(definition: ToolDefinition) -> ToolDefinition 
     ToolDefinition {
         policy: ToolDefinitionPolicy {
             creates_or_binds_session: true,
+            ..definition.policy
+        },
+        ..definition
+    }
+}
+
+const fn disabled(definition: ToolDefinition, message: &'static str) -> ToolDefinition {
+    ToolDefinition {
+        policy: ToolDefinitionPolicy {
+            disabled_message: Some(message),
             ..definition.policy
         },
         ..definition

@@ -50,6 +50,10 @@ impl ToolDefinition {
         self.policy.creates_or_binds_session
     }
 
+    pub(crate) fn disabled_message(self) -> Option<&'static str> {
+        self.policy.disabled_message
+    }
+
     pub(crate) fn uses_unit_arguments(self) -> bool {
         self.policy.unit_arguments
     }
@@ -195,6 +199,10 @@ pub(crate) fn runtime_tool_requires_explicit_business_session(name: &str) -> boo
 
 pub(crate) fn runtime_tool_creates_or_binds_session(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.creates_or_binds_session())
+}
+
+pub(crate) fn runtime_tool_disabled_message(name: &str) -> Option<&'static str> {
+    lookup_tool_definition(name).and_then(|definition| definition.disabled_message())
 }
 
 pub(crate) fn runtime_tool_allows_current_session_fallback(name: &str) -> bool {

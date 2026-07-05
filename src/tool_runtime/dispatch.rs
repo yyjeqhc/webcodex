@@ -6,10 +6,11 @@ use super::session_context::{
     session_message_error_result, session_project_mismatch_requires_escape,
     session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
 };
+use super::tool_definition::runtime_tool_disabled_message;
 use super::tool_inputs::ListToolsOptions;
 use super::{
-    permissions, run_codex_disabled_result, session_context, sessions, ToolCall, ToolResult,
-    ToolRuntime,
+    permissions, run_codex_disabled_result, session_context, sessions, tool_disabled_result,
+    ToolCall, ToolResult, ToolRuntime,
 };
 use crate::auth::AuthContext;
 use serde_json::json;
@@ -147,8 +148,8 @@ impl ToolRuntime {
                 return result;
             }
         }
-        if matches!(&call, ToolCall::RunCodex { .. }) {
-            let mut result = run_codex_disabled_result();
+        if let Some(disabled_message) = runtime_tool_disabled_message(call.tool_name()) {
+            let mut result = tool_disabled_result(call.tool_name(), disabled_message);
             if let Some(session_id) = session_id.as_deref() {
                 let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),

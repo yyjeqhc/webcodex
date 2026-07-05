@@ -9,6 +9,7 @@ mod checkpoint;
 mod codex;
 mod coding_task;
 mod dispatch;
+mod file_tools;
 pub(crate) mod files;
 mod git;
 mod handoff;

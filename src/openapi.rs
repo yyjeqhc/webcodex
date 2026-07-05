@@ -5,6 +5,9 @@ use crate::tool_runtime::sessions::{
     TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_EXPECTED_FAILURE_FIELD,
     TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
 };
+use crate::tool_runtime::{
+    TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+};
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, records this dedicated action in the session ledger and wins over any current-session binding.";
@@ -964,16 +967,9 @@ fn schemas() -> Value {
         "ToolCallRequest": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["tool"],
+            "required": [TOOL_CALL_TOOL_FIELD],
             "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for GPT Action top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
             "properties": {
-                "tool": {
-                    "type": "string",
-                    "description": format!(
-                        "Runtime tool name. Accepted values: {}. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging.",
-                        crate::tool_runtime::tool_definition::model_visible_tool_names_csv()
-                    )
-                },
                 "allow_cross_project_session": {
                     "type": "boolean",
                     "description": "Advanced/debug escape hatch for callRuntimeTool. When true, allow recording a project tool call into a session whose associated project differs from the request project; session_project_mismatch warning metadata is still returned. Used only when `params` and `arguments` are absent, or inside params/arguments for non-Action clients."
@@ -1105,18 +1101,6 @@ fn schemas() -> Value {
                 "resolution": {
                     "type": "string",
                     "description": "Flattened resolve_session_message resolution note. Used only when `params` and `arguments` are absent."
-                },
-                "params": {
-                    "type": "object",
-                    "description": "Tool-specific arguments object for non-Action clients. Takes precedence over `arguments` when both are present. GPT Actions should prefer flattened top-level fields.",
-                    "nullable": true,
-                    "additionalProperties": true
-                },
-                "arguments": {
-                    "type": "object",
-                    "description": "Compatibility alias for `params`. Used only when `params` is absent; ignored otherwise.",
-                    "nullable": true,
-                    "additionalProperties": true
                 },
                 "project": {
                     "type": "string",
@@ -2095,11 +2079,11 @@ fn schemas() -> Value {
             }
         }
     });
-    insert_tool_call_request_metadata_properties(&mut schemas);
+    insert_tool_call_request_reserved_properties(&mut schemas);
     schemas
 }
 
-fn insert_tool_call_request_metadata_properties(schemas: &mut Value) {
+fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
     let Some(properties) = schemas
         .pointer_mut("/ToolCallRequest/properties")
         .and_then(Value::as_object_mut)
@@ -2107,6 +2091,34 @@ fn insert_tool_call_request_metadata_properties(schemas: &mut Value) {
         return;
     };
 
+    properties.insert(
+        TOOL_CALL_TOOL_FIELD.to_string(),
+        json!({
+            "type": "string",
+            "description": format!(
+                "Runtime tool name. Accepted values: {}. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging.",
+                crate::tool_runtime::tool_definition::model_visible_tool_names_csv()
+            )
+        }),
+    );
+    properties.insert(
+        TOOL_CALL_PARAMS_FIELD.to_string(),
+        json!({
+            "type": "object",
+            "description": "Tool-specific arguments object for non-Action clients. Takes precedence over `arguments` when both are present. GPT Actions should prefer flattened top-level fields.",
+            "nullable": true,
+            "additionalProperties": true
+        }),
+    );
+    properties.insert(
+        TOOL_CALL_ARGUMENTS_FIELD.to_string(),
+        json!({
+            "type": "object",
+            "description": "Compatibility alias for `params`. Used only when `params` is absent; ignored otherwise.",
+            "nullable": true,
+            "additionalProperties": true
+        }),
+    );
     properties.insert(
         TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string(),
         json!({
@@ -2546,8 +2558,8 @@ mod tests {
             !serialized.contains("CodexRunRequest"),
             "Codex delegation request schema must stay hidden from OpenAPI"
         );
-        let tool_desc = spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
-            ["description"]
+        let tool_desc = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+            [TOOL_CALL_TOOL_FIELD]["description"]
             .as_str()
             .unwrap();
         assert!(
@@ -2583,8 +2595,8 @@ mod tests {
         use crate::tool_runtime::tool_definition::model_visible_tool_definitions;
 
         let spec = build_openapi_spec();
-        let tool_desc = &spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
-            ["description"]
+        let tool_desc = &spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+            [TOOL_CALL_TOOL_FIELD]["description"]
             .as_str()
             .unwrap();
         for definition in model_visible_tool_definitions() {
@@ -2947,10 +2959,10 @@ mod tests {
         let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
         let properties = tool_call["properties"].as_object().unwrap();
         assert!(
-            properties.contains_key("params"),
+            properties.contains_key(TOOL_CALL_PARAMS_FIELD),
             "ToolCallRequest must declare a `params` property"
         );
-        let params = &properties["params"];
+        let params = &properties[TOOL_CALL_PARAMS_FIELD];
         assert_eq!(params["type"], "object", "params must be type object");
         assert_eq!(params["nullable"], true, "params must allow null");
         assert_eq!(
@@ -2997,7 +3009,9 @@ mod tests {
         // `tool` remains required; `params` is optional (advanced callers may
         // omit it for argument-less tools).
         let required = tool_call["required"].as_array().unwrap();
-        assert!(required.iter().any(|v| v == "tool"));
+        assert!(required
+            .iter()
+            .any(|v| v.as_str() == Some(TOOL_CALL_TOOL_FIELD)));
     }
 
     #[test]
@@ -3009,10 +3023,10 @@ mod tests {
             .as_object()
             .unwrap();
         assert!(
-            properties.contains_key("arguments"),
+            properties.contains_key(TOOL_CALL_ARGUMENTS_FIELD),
             "ToolCallRequest must declare an `arguments` alias property"
         );
-        let arguments = &properties["arguments"];
+        let arguments = &properties[TOOL_CALL_ARGUMENTS_FIELD];
         assert_eq!(arguments["type"], "object", "arguments must be type object");
         assert_eq!(arguments["nullable"], true, "arguments must allow null");
         assert_eq!(
@@ -3104,8 +3118,8 @@ mod tests {
             );
         }
 
-        assert!(properties.contains_key("params"));
-        assert!(properties.contains_key("arguments"));
+        assert!(properties.contains_key(TOOL_CALL_PARAMS_FIELD));
+        assert!(properties.contains_key(TOOL_CALL_ARGUMENTS_FIELD));
         assert_eq!(properties["allow_cross_project_session"]["type"], "boolean");
         assert_eq!(properties[TOOL_EXPECTED_FAILURE_FIELD]["type"], "boolean");
         assert_eq!(
@@ -3114,7 +3128,7 @@ mod tests {
         );
         assert_eq!(properties[TOOL_ASSERTION_NAME_FIELD]["type"], "string");
         let required = tool_call["required"].as_array().unwrap();
-        assert_eq!(required, &vec![json!("tool")]);
+        assert_eq!(required, &vec![json!(TOOL_CALL_TOOL_FIELD)]);
         assert_eq!(tool_call["additionalProperties"], false);
 
         let desc_blob = serde_json::to_string(tool_call).unwrap();
@@ -3390,7 +3404,7 @@ mod tests {
         assert!(count <= 30, "GPT Actions operation count must stay <= 30");
 
         let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
-        let tool_desc = tool_call["properties"]["tool"]["description"]
+        let tool_desc = tool_call["properties"][TOOL_CALL_TOOL_FIELD]["description"]
             .as_str()
             .unwrap();
         for tool in [
@@ -3482,8 +3496,8 @@ mod tests {
             !LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/run_job"),
             "run_job must not be in the forbidden guard now that it is a dedicated action"
         );
-        let tool_desc = spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
-            ["description"]
+        let tool_desc = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+            [TOOL_CALL_TOOL_FIELD]["description"]
             .as_str()
             .unwrap();
         for tool in ["write_project_file", "replace_in_file"] {

@@ -4,7 +4,10 @@ use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
-use crate::tool_runtime::{ListToolsOptions, ToolCall, ToolRuntime};
+use crate::tool_runtime::{
+    ListToolsOptions, ToolCall, ToolRuntime, TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD,
+    TOOL_CALL_TOOL_FIELD, TOOL_CALL_WRAPPER_FIELDS,
+};
 use salvo::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -207,27 +210,35 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     let obj = body
         .as_object()
         .ok_or_else(|| "request body must be a JSON object".to_string())?;
-    let tool = match obj.get("tool") {
+    let tool = match obj.get(TOOL_CALL_TOOL_FIELD) {
         Some(v) => match v.as_str() {
             Some(s) if !s.is_empty() => s.to_string(),
             _ => {
-                return Err("field 'tool' must be a non-empty string".to_string());
+                return Err(format!(
+                    "field '{TOOL_CALL_TOOL_FIELD}' must be a non-empty string"
+                ));
             }
         },
         None => {
-            return Err("missing required field 'tool'".to_string());
+            return Err(format!("missing required field '{TOOL_CALL_TOOL_FIELD}'"));
         }
     };
     // params takes precedence over the `arguments` alias; flattened GPT Action
     // fields are collected only when neither object wrapper is present.
-    let params = if obj.contains_key("params") {
-        obj.get("params").cloned().unwrap_or(Value::Null)
-    } else if obj.contains_key("arguments") {
-        obj.get("arguments").cloned().unwrap_or(Value::Null)
+    let params = if obj.contains_key(TOOL_CALL_PARAMS_FIELD) {
+        obj.get(TOOL_CALL_PARAMS_FIELD)
+            .cloned()
+            .unwrap_or(Value::Null)
+    } else if obj.contains_key(TOOL_CALL_ARGUMENTS_FIELD) {
+        obj.get(TOOL_CALL_ARGUMENTS_FIELD)
+            .cloned()
+            .unwrap_or(Value::Null)
     } else {
         let mut flattened = serde_json::Map::new();
         for (key, value) in obj {
-            if key != "tool" && key != TOOL_CALL_RECORDING_SESSION_ID_FIELD {
+            if !TOOL_CALL_WRAPPER_FIELDS.contains(&key.as_str())
+                && key != TOOL_CALL_RECORDING_SESSION_ID_FIELD
+            {
                 flattened.insert(key.clone(), value.clone());
             }
         }

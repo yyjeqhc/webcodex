@@ -53,6 +53,10 @@ pub use runtime::ToolRuntime;
 pub use runtime_info::RuntimeInfo;
 #[allow(unused_imports)]
 pub use tool_call::ToolCall;
+pub(crate) use tool_call::{
+    TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
+    TOOL_CALL_WRAPPER_FIELDS,
+};
 #[allow(unused_imports)]
 pub use tool_definition::is_known_tool_name;
 #[allow(unused_imports)]

@@ -10,6 +10,7 @@ use crate::shell_protocol::{
 use crate::tool_runtime::sessions::{
     TOOL_CALL_EXPECTATION_METADATA_FIELDS, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
 };
+use crate::tool_runtime::TOOL_CALL_WRAPPER_FIELDS;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -1154,7 +1155,7 @@ async fn tool_manifest_flattened_args_are_declared_in_action_schema() {
     }
 
     for field in properties.keys() {
-        if matches!(field.as_str(), "tool" | "params" | "arguments") {
+        if TOOL_CALL_WRAPPER_FIELDS.contains(&field.as_str()) {
             continue;
         }
         assert!(

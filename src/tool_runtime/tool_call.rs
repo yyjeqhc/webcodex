@@ -15,6 +15,15 @@ use super::tool_inputs::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub(crate) const TOOL_CALL_TOOL_FIELD: &str = "tool";
+pub(crate) const TOOL_CALL_PARAMS_FIELD: &str = "params";
+pub(crate) const TOOL_CALL_ARGUMENTS_FIELD: &str = "arguments";
+pub(crate) const TOOL_CALL_WRAPPER_FIELDS: &[&str] = &[
+    TOOL_CALL_TOOL_FIELD,
+    TOOL_CALL_PARAMS_FIELD,
+    TOOL_CALL_ARGUMENTS_FIELD,
+];
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "params", rename_all = "snake_case")]
 pub enum ToolCall {
@@ -900,7 +909,10 @@ impl ToolCall {
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         let mut wrapped = serde_json::Map::new();
-        wrapped.insert("tool".to_string(), Value::String(name.to_string()));
+        wrapped.insert(
+            TOOL_CALL_TOOL_FIELD.to_string(),
+            Value::String(name.to_string()),
+        );
         if definition.requires_artifact_upload_path_binding() {
             let missing_path = arguments
                 .as_object()
@@ -927,7 +939,7 @@ impl ToolCall {
             } else {
                 arguments
             };
-            wrapped.insert("params".to_string(), params);
+            wrapped.insert(TOOL_CALL_PARAMS_FIELD.to_string(), params);
         }
         let call = serde_json::from_value(Value::Object(wrapped))
             .map_err(|e| format!("invalid arguments for tool '{}': {}", name, e))?;

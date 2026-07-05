@@ -368,7 +368,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
 const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
     "list_tools",
     ModelVisible,
-    "runtime",
+    TOOL_CATEGORY_RUNTIME,
     None,
     TOOL_PROVIDER_CONTROL,
     ReadOnly,

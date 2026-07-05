@@ -656,7 +656,7 @@ fn tool_specs_and_metadata_are_synchronized() {
 
 #[test]
 fn required_agent_capability_matches_metadata_risk_table() {
-    use crate::tool_runtime::metadata::{lookup_tool_metadata, ToolRisk};
+    use crate::tool_runtime::metadata::{lookup_tool_metadata, ToolRisk, TOOL_PROVIDER_AGENT};
 
     let cases = [
         ("run_shell", ToolRisk::JobRun, AgentCapability::Shell),
@@ -842,7 +842,8 @@ fn required_agent_capability_matches_metadata_risk_table() {
         .iter()
         .filter_map(|spec| {
             let metadata = lookup_tool_metadata(&spec.name).unwrap();
-            ((metadata.provider_id == "agent" || spec.name.starts_with("workspace_checkpoint_"))
+            ((metadata.provider_id == TOOL_PROVIDER_AGENT
+                || spec.name.starts_with("workspace_checkpoint_"))
                 && metadata.requires_project)
                 .then_some(spec.name.as_str())
         })

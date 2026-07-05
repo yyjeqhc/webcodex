@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+const MCP_RESERVED_SESSION_ID_FIELD: &str = "_session_id";
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -285,7 +286,7 @@ fn require_mcp_oauth_scope(auth: Option<&AuthContext>, scope: &'static str) -> O
 fn strip_reserved_session_id(arguments: &mut Value) -> Option<String> {
     arguments
         .as_object_mut()
-        .and_then(|obj| obj.remove("_session_id"))
+        .and_then(|obj| obj.remove(MCP_RESERVED_SESSION_ID_FIELD))
         .and_then(|value| value.as_str().map(str::to_string))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -594,7 +595,7 @@ mod tests {
                 json!({
                     "name": "list_projects",
                     "arguments": {
-                        "_session_id": &session.session_id
+                        MCP_RESERVED_SESSION_ID_FIELD: &session.session_id
                     }
                 }),
             ),
@@ -620,7 +621,7 @@ mod tests {
         assert!(
             !serde_json::to_string(&started.input_summary)
                 .unwrap()
-                .contains("_session_id"),
+                .contains(MCP_RESERVED_SESSION_ID_FIELD),
             "_session_id must be stripped before recording/dispatch"
         );
     }
@@ -637,7 +638,7 @@ mod tests {
                 json!({
                     "name": "list_projects",
                     "arguments": {
-                        "_session_id": &session.session_id
+                        MCP_RESERVED_SESSION_ID_FIELD: &session.session_id
                     }
                 }),
             ),
@@ -742,7 +743,7 @@ mod tests {
                 json!({
                     "name": "show_changes",
                     "arguments": {
-                        "_session_id": &tracking_session.session_id,
+                        MCP_RESERVED_SESSION_ID_FIELD: &tracking_session.session_id,
                         "project": project,
                         "session_id": &query_session.session_id,
                         "include_diff": false

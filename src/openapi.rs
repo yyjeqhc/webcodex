@@ -1,6 +1,11 @@
 use salvo::prelude::*;
 use serde_json::{json, Value};
 
+use crate::tool_runtime::sessions::{
+    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_EXPECTED_FAILURE_FIELD,
+    TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
+};
+
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, records this dedicated action in the session ledger and wins over any current-session binding.";
 
@@ -883,7 +888,7 @@ fn is_consequential_operation(operation_id: &str) -> bool {
 }
 
 fn schemas() -> Value {
-    json!({
+    let mut schemas = json!({
         "EmptyRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -969,29 +974,9 @@ fn schemas() -> Value {
                         crate::tool_runtime::tool_definition::model_visible_tool_names_csv()
                     )
                 },
-                "recording_session_id": {
-                    "type": "string",
-                    "description": "Optional recorder metadata for the generic wrapper call. Pass an explicit wc_sess_* id from start_session to record this call in the session ledger and enforce that recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id or post_session_message.session_id."
-                },
                 "allow_cross_project_session": {
                     "type": "boolean",
                     "description": "Advanced/debug escape hatch for callRuntimeTool. When true, allow recording a project tool call into a session whose associated project differs from the request project; session_project_mismatch warning metadata is still returned. Used only when `params` and `arguments` are absent, or inside params/arguments for non-Action clients."
-                },
-                "expected_failure": {
-                    "type": "boolean",
-                    "description": "Flattened testing/smoke metadata only. When true, a failed runtime tool call is classified as an expected failure in session_handoff_summary/finish_coding_task. Does not change authorization, permission decisions, execution, hard guards, command_started, or the immediate success/error result."
-                },
-                "expected_failure_kind": {
-                    "type": "string",
-                    "description": "Flattened testing/smoke metadata only. Expected structured failure_kind or error_kind when expected_failure=true. Mismatches are surfaced in handoff/finish summaries and do not change tool behavior."
-                },
-                "test_expect_failure_kind": {
-                    "type": "string",
-                    "description": "Flattened testing/smoke alias for expected_failure_kind. Matches structured failure_kind or error_kind and does not change authorization, permissions, execution, or immediate output."
-                },
-                "assertion_name": {
-                    "type": "string",
-                    "description": "Flattened testing/smoke assertion label recorded in the session ledger. Does not change tool behavior or safety decisions."
                 },
                 "session_id": {
                     "type": "string",
@@ -2109,7 +2094,54 @@ fn schemas() -> Value {
                 "overwrite": {"type": "boolean", "description": "Overwrite an existing project config file (default false)."}
             }
         }
-    })
+    });
+    insert_tool_call_request_metadata_properties(&mut schemas);
+    schemas
+}
+
+fn insert_tool_call_request_metadata_properties(schemas: &mut Value) {
+    let Some(properties) = schemas
+        .pointer_mut("/ToolCallRequest/properties")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+
+    properties.insert(
+        TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string(),
+        json!({
+            "type": "string",
+            "description": "Optional recorder metadata for the generic wrapper call. Pass an explicit wc_sess_* id from start_session to record this call in the session ledger and enforce that recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id or post_session_message.session_id."
+        }),
+    );
+    properties.insert(
+        TOOL_EXPECTED_FAILURE_FIELD.to_string(),
+        json!({
+            "type": "boolean",
+            "description": "Flattened testing/smoke metadata only. When true, a failed runtime tool call is classified as an expected failure in session_handoff_summary/finish_coding_task. Does not change authorization, permission decisions, execution, hard guards, command_started, or the immediate success/error result."
+        }),
+    );
+    properties.insert(
+        TOOL_EXPECTED_FAILURE_KIND_FIELD.to_string(),
+        json!({
+            "type": "string",
+            "description": "Flattened testing/smoke metadata only. Expected structured failure_kind or error_kind when expected_failure=true. Mismatches are surfaced in handoff/finish summaries and do not change tool behavior."
+        }),
+    );
+    properties.insert(
+        TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD.to_string(),
+        json!({
+            "type": "string",
+            "description": "Flattened testing/smoke alias for expected_failure_kind. Matches structured failure_kind or error_kind and does not change authorization, permissions, execution, or immediate output."
+        }),
+    );
+    properties.insert(
+        TOOL_ASSERTION_NAME_FIELD.to_string(),
+        json!({
+            "type": "string",
+            "description": "Flattened testing/smoke assertion label recorded in the session ledger. Does not change tool behavior or safety decisions."
+        }),
+    );
 }
 
 #[cfg(test)]
@@ -2927,7 +2959,7 @@ mod tests {
         );
         let description = tool_call["description"].as_str().unwrap_or("");
         assert!(
-            description.contains("recording_session_id")
+            description.contains(TOOL_CALL_RECORDING_SESSION_ID_FIELD)
                 && description.contains("flattened top-level fields"),
             "ToolCallRequest should document GPT Action flattened fields and recorder metadata: {description}"
         );
@@ -2943,7 +2975,7 @@ mod tests {
             );
         }
         let properties = tool_call["properties"].as_object().unwrap();
-        let recording_desc = properties["recording_session_id"]["description"]
+        let recording_desc = properties[TOOL_CALL_RECORDING_SESSION_ID_FIELD]["description"]
             .as_str()
             .unwrap_or("");
         assert!(
@@ -3005,12 +3037,12 @@ mod tests {
             "project",
             "title",
             "session_id",
-            "recording_session_id",
+            TOOL_CALL_RECORDING_SESSION_ID_FIELD,
             "allow_cross_project_session",
-            "expected_failure",
-            "expected_failure_kind",
-            "test_expect_failure_kind",
-            "assertion_name",
+            TOOL_EXPECTED_FAILURE_FIELD,
+            TOOL_EXPECTED_FAILURE_KIND_FIELD,
+            TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
+            TOOL_ASSERTION_NAME_FIELD,
             "mode",
             "deny_write_tools",
             "deny_shell_tools",
@@ -3075,9 +3107,12 @@ mod tests {
         assert!(properties.contains_key("params"));
         assert!(properties.contains_key("arguments"));
         assert_eq!(properties["allow_cross_project_session"]["type"], "boolean");
-        assert_eq!(properties["expected_failure"]["type"], "boolean");
-        assert_eq!(properties["expected_failure_kind"]["type"], "string");
-        assert_eq!(properties["assertion_name"]["type"], "string");
+        assert_eq!(properties[TOOL_EXPECTED_FAILURE_FIELD]["type"], "boolean");
+        assert_eq!(
+            properties[TOOL_EXPECTED_FAILURE_KIND_FIELD]["type"],
+            "string"
+        );
+        assert_eq!(properties[TOOL_ASSERTION_NAME_FIELD]["type"], "string");
         let required = tool_call["required"].as_array().unwrap();
         assert_eq!(required, &vec![json!("tool")]);
         assert_eq!(tool_call["additionalProperties"], false);

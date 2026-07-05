@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::common::{
     array_schema, nullable_schema, open_object_schema, permission_profile_schema, schema_type,
@@ -93,6 +93,29 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "truncated",
                 schema_type("boolean", "Whether limit truncated the matching tools."),
             ),
+            (
+                "category",
+                nullable_schema("string", "Requested category filter, or null."),
+            ),
+            (
+                "features",
+                nullable_schema("string", "Requested loose feature filter, or null."),
+            ),
+            (
+                "limit",
+                nullable_schema("integer", "Effective focused discovery limit, or null."),
+            ),
+            (
+                "categories",
+                open_object_schema("Map of discovery category name to visible tool names."),
+            ),
+            (
+                "recommended_flows",
+                array_schema(
+                    schema_type("string", "Short recommended tool flow summary."),
+                    "Short GPT-facing recommended flow summaries.",
+                ),
+            ),
             ("hint", schema_type("string", "Focused discovery guidance.")),
             (
                 "recommended_next",
@@ -127,6 +150,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             (
+                "filtered",
+                schema_type(
+                    "boolean",
+                    "True when category filtering or limit was applied.",
+                ),
+            ),
+            (
+                "categories_requested",
+                nullable_string_array_schema(
+                    "Normalized requested category filters, or null when unfiltered.",
+                ),
+            ),
+            (
+                "limit",
+                nullable_schema("integer", "Effective manifest limit, or null."),
+            ),
+            (
+                "truncated",
+                schema_type("boolean", "Whether the limit truncated matching tools."),
+            ),
+            (
                 "categories",
                 open_object_schema(
                     "Map of category name to the list of tool names in that category.",
@@ -157,4 +201,21 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         _ => None,
     }
+}
+
+fn nullable_string_array_schema(description: &str) -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            },
+            {
+                "type": "null"
+            }
+        ],
+        "description": description,
+    })
 }

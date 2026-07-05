@@ -992,6 +992,21 @@ fn list_tools_schema_exposes_bounded_discovery_fields() {
         );
     }
     assert!(spec.input_schema["required"].as_array().unwrap().is_empty());
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    for field in [
+        "category",
+        "features",
+        "limit",
+        "categories",
+        "recommended_flows",
+    ] {
+        assert!(
+            output.contains_key(field),
+            "list_tools output schema must expose {field}"
+        );
+    }
 }
 
 #[test]
@@ -1018,8 +1033,15 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
         "count",
         "tool_count",
         "filtered_count",
+        "category",
+        "filtered",
+        "categories_requested",
+        "limit",
+        "truncated",
         "categories",
         "tools",
+        "risk_summary",
+        "recommended_flows",
     ] {
         assert!(
             output.contains_key(field),

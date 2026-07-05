@@ -8,6 +8,7 @@ use crate::shell_protocol::{
     ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest,
 };
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1135,6 +1136,7 @@ async fn tool_manifest_flattened_args_are_declared_in_action_schema() {
     let tools = result.output["tools"]
         .as_array()
         .expect("tool_manifest tools");
+    let mut accepted_fields = BTreeSet::new();
 
     for tool in tools {
         let tool_name = tool["name"].as_str().expect("tool name");
@@ -1145,11 +1147,22 @@ async fn tool_manifest_flattened_args_are_declared_in_action_schema() {
             let field = field
                 .as_str()
                 .unwrap_or_else(|| panic!("{tool_name} accepted field"));
+            accepted_fields.insert(field.to_string());
             assert!(
                 properties.contains_key(field),
                 "{tool_name} advertises flattened arg {field}, but ToolCallRequest.properties does not declare it"
             );
         }
+    }
+
+    for field in properties.keys() {
+        if matches!(field.as_str(), "tool" | "params" | "arguments") {
+            continue;
+        }
+        assert!(
+            accepted_fields.contains(field),
+            "ToolCallRequest.properties declares flattened field {field}, but no tool_manifest entry accepts it"
+        );
     }
 }
 

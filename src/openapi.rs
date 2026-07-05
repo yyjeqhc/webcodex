@@ -1465,19 +1465,6 @@ fn schemas() -> Value {
                     "type": "integer",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
-                "prompt": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "approval_mode": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "extra_args": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
                 "client_id": {
                     "type": "string",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."

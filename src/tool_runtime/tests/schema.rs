@@ -9,21 +9,18 @@ use std::collections::BTreeSet;
 fn tool_definitions_cover_known_names_and_public_specs() {
     use crate::tool_runtime::tool_definition::{
         lookup_tool_definition, model_hidden_tool_names, model_visible_tool_definitions,
-        TOOL_DEFINITIONS,
+        tool_definitions,
     };
 
-    let definition_names = TOOL_DEFINITIONS
-        .iter()
+    let definition_names = tool_definitions()
         .map(|definition| definition.name)
         .collect::<BTreeSet<_>>();
-    let definition_order = TOOL_DEFINITIONS
-        .iter()
+    let definition_order = tool_definitions()
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
     let known_names = known_tool_names().collect::<BTreeSet<_>>();
     let hidden_names = model_hidden_tool_names().collect::<BTreeSet<_>>();
-    let definition_hidden_names = TOOL_DEFINITIONS
-        .iter()
+    let definition_hidden_names = tool_definitions()
         .filter(|definition| definition.visibility.is_model_hidden())
         .map(|definition| definition.name)
         .collect::<BTreeSet<_>>();
@@ -82,9 +79,9 @@ fn tool_definitions_cover_known_names_and_public_specs() {
 #[test]
 fn tool_definitions_drive_metadata_visibility_and_categories() {
     use crate::tool_runtime::metadata::lookup_tool_metadata;
-    use crate::tool_runtime::tool_definition::TOOL_DEFINITIONS;
+    use crate::tool_runtime::tool_definition::tool_definitions;
 
-    for definition in TOOL_DEFINITIONS {
+    for definition in tool_definitions() {
         let metadata = definition.metadata();
         let facade_metadata = lookup_tool_metadata(definition.name)
             .copied()
@@ -126,7 +123,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
         runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
         runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
-        runtime_tool_session_risk_class, TOOL_DEFINITIONS, TOOL_DISCOVERY_GROUPS,
+        runtime_tool_session_risk_class, tool_definitions, TOOL_DISCOVERY_GROUPS,
     };
 
     let git_group = TOOL_DISCOVERY_GROUPS
@@ -138,7 +135,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .copied()
         .collect::<BTreeSet<_>>();
 
-    for definition in TOOL_DEFINITIONS {
+    for definition in tool_definitions() {
         let metadata = definition.metadata();
         assert_eq!(
             definition.session_risk_class(),
@@ -268,8 +265,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         );
     }
 
-    let change_summary_tools = TOOL_DEFINITIONS
-        .iter()
+    let change_summary_tools = tool_definitions()
         .filter(|definition| definition.is_change_summary_like())
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
@@ -278,8 +274,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         vec!["git_diff_summary", "show_changes", "git_diff_hunks"]
     );
 
-    let validation_output_tools = TOOL_DEFINITIONS
-        .iter()
+    let validation_output_tools = tool_definitions()
         .filter(|definition| definition.captures_validation_output())
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
@@ -288,8 +283,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         vec!["cargo_fmt", "cargo_check", "cargo_test"]
     );
 
-    let current_session_control_tools = TOOL_DEFINITIONS
-        .iter()
+    let current_session_control_tools = tool_definitions()
         .filter(|definition| definition.is_current_session_control())
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
@@ -302,8 +296,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ]
     );
 
-    let explicit_business_session_tools = TOOL_DEFINITIONS
-        .iter()
+    let explicit_business_session_tools = tool_definitions()
         .filter(|definition| definition.requires_explicit_business_session())
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
@@ -320,8 +313,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ]
     );
 
-    let creates_or_binds_session_tools = TOOL_DEFINITIONS
-        .iter()
+    let creates_or_binds_session_tools = tool_definitions()
         .filter(|definition| definition.creates_or_binds_session())
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
@@ -330,8 +322,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         vec!["start_session", "start_coding_task", "bind_current_session"]
     );
 
-    let current_session_fallback_tools = TOOL_DEFINITIONS
-        .iter()
+    let current_session_fallback_tools = tool_definitions()
         .filter(|definition| definition.allows_current_session_fallback())
         .map(|definition| definition.name)
         .collect::<BTreeSet<_>>();
@@ -392,9 +383,9 @@ fn tool_definitions_drive_session_and_permission_policy() {
 
 #[test]
 fn tool_definitions_match_agent_capability_dispatch_helper() {
-    use crate::tool_runtime::tool_definition::TOOL_DEFINITIONS;
+    use crate::tool_runtime::tool_definition::tool_definitions;
 
-    for definition in TOOL_DEFINITIONS {
+    for definition in tool_definitions() {
         let args = if definition.name == "run_codex" {
             json!({
                 "project": SAMPLE_PROJECT,

@@ -93,8 +93,7 @@ pub(crate) fn lookup_tool_metadata(name: &str) -> Option<&'static ToolMetadata> 
 
 #[cfg(test)]
 pub(crate) fn iter_tool_metadata() -> impl Iterator<Item = ToolMetadata> {
-    super::tool_definition::TOOL_DEFINITIONS
-        .iter()
+    super::tool_definition::tool_definitions()
         .map(|definition| definition.metadata())
         .chain(LEGACY_ROUTE_METADATA.iter().copied())
 }

@@ -153,6 +153,10 @@ use ToolPathHint::{Artifact, None as NoPath, Patch, PathList, SinglePath};
 use ToolRisk::{JobRun, ProjectWrite, ReadOnly};
 use ToolVisibility::{ModelHidden, ModelVisible};
 
+pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
+    TOOL_DEFINITIONS.iter()
+}
+
 pub(crate) const TOOL_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "list_tools",

@@ -4,7 +4,7 @@ use super::metadata::{
     tool_metadata as fallback_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk,
 };
 use super::tool_definition::{
-    AgentCapability, ToolDefinition, TOOL_DEFINITIONS, TOOL_DISCOVERY_GROUPS,
+    tool_definitions, AgentCapability, ToolDefinition, TOOL_DISCOVERY_GROUPS,
 };
 
 impl ToolDefinition {
@@ -115,9 +115,7 @@ impl ToolDefinition {
 }
 
 pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefinition> {
-    TOOL_DEFINITIONS
-        .iter()
-        .find(|definition| definition.name == name)
+    tool_definitions().find(|definition| definition.name == name)
 }
 
 /// Returns `true` if `name` is a recognized runtime tool name. Public so the
@@ -127,7 +125,7 @@ pub fn is_known_tool_name(name: &str) -> bool {
 }
 
 pub(crate) fn known_tool_names() -> impl Iterator<Item = &'static str> {
-    TOOL_DEFINITIONS.iter().map(|definition| definition.name)
+    tool_definitions().map(|definition| definition.name)
 }
 
 pub(crate) fn runtime_tool_metadata(name: &str) -> ToolMetadata {
@@ -259,16 +257,13 @@ pub(crate) fn is_model_hidden_tool_name(name: &str) -> bool {
 }
 
 pub(crate) fn model_hidden_tool_names() -> impl Iterator<Item = &'static str> {
-    TOOL_DEFINITIONS
-        .iter()
+    tool_definitions()
         .filter(|definition| definition.visibility.is_model_hidden())
         .map(|definition| definition.name)
 }
 
 pub(crate) fn model_visible_tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
-    TOOL_DEFINITIONS
-        .iter()
-        .filter(|definition| definition.visibility.is_model_visible())
+    tool_definitions().filter(|definition| definition.visibility.is_model_visible())
 }
 
 pub(crate) fn model_visible_tool_names_csv() -> String {

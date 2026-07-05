@@ -11,6 +11,7 @@ mod checkpoints;
 mod current_sessions;
 mod discovery;
 mod hygiene;
+mod jobs;
 mod sessions;
 
 use super::metadata::{
@@ -154,10 +155,10 @@ const fn def(
     }
 }
 
-use AgentCapability::{AsyncJobs, FileRead, FileWrite, GitOrShell, Shell};
+use AgentCapability::{FileRead, FileWrite, GitOrShell, Shell};
 use ToolPathHint::{Artifact, None as NoPath, Patch, PathList, SinglePath};
 use ToolRisk::{JobRun, ProjectWrite, ReadOnly};
-use ToolVisibility::{ModelHidden, ModelVisible};
+use ToolVisibility::ModelVisible;
 
 pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
     TOOL_DEFINITION_GROUPS
@@ -172,6 +173,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     current_sessions::DEFINITIONS,
     checkpoints::DEFINITIONS,
     discovery::DEFINITIONS,
+    jobs::EXECUTION_DEFINITIONS,
     TOOL_DEFINITION_TAIL,
 ];
 
@@ -190,84 +192,6 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
 )];
 
 const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
-    def(
-        "run_shell",
-        ModelVisible,
-        "job",
-        Some(Shell),
-        "agent",
-        JobRun,
-        Some(JOB_RUN),
-        true,
-        NoPath,
-        true,
-        true,
-    ),
-    def(
-        "run_job",
-        ModelVisible,
-        "job",
-        Some(AsyncJobs),
-        "agent",
-        JobRun,
-        Some(JOB_RUN),
-        true,
-        NoPath,
-        true,
-        true,
-    ),
-    def(
-        "stop_job",
-        ModelVisible,
-        "job",
-        None,
-        "native",
-        JobRun,
-        Some(JOB_RUN),
-        true,
-        NoPath,
-        true,
-        false,
-    ),
-    def(
-        "run_codex",
-        ModelHidden,
-        "codex",
-        Some(AsyncJobs),
-        "agent",
-        JobRun,
-        Some(JOB_RUN),
-        true,
-        NoPath,
-        true,
-        true,
-    ),
-    def(
-        "job_status",
-        ModelVisible,
-        "job",
-        None,
-        "native",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "job_log",
-        ModelVisible,
-        "job",
-        None,
-        "native",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
     def(
         "list_project_files",
         ModelVisible,

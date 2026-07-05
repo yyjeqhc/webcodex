@@ -14,70 +14,6 @@ const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not in
 const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, records this dedicated action in the session ledger and wins over any current-session binding.";
 const FLATTENED_TOOL_ARG_DESCRIPTION: &str =
     "Flattened tool-specific argument. Used only when `params` and `arguments` are absent.";
-const SIMPLE_FLATTENED_TOOL_ARG_FIELDS: &[(&str, &str)] = &[
-    ("project", "string"),
-    ("title", "string"),
-    ("mode", "string"),
-    ("deny_write_tools", "boolean"),
-    ("deny_shell_tools", "boolean"),
-    ("command", "string"),
-    ("cwd", "string"),
-    ("timeout_secs", "integer"),
-    ("pattern", "string"),
-    ("limit", "integer"),
-    ("include_diff", "boolean"),
-    ("max_hunks", "integer"),
-    ("max_hunk_lines", "integer"),
-    ("session_event_limit", "integer"),
-    ("cached", "boolean"),
-    ("check", "boolean"),
-    ("all_targets", "boolean"),
-    ("all_features", "boolean"),
-    ("no_default_features", "boolean"),
-    ("package", "string"),
-    ("filter", "string"),
-    ("no_run", "boolean"),
-    ("start_line", "integer"),
-    ("context_before", "integer"),
-    ("context_after", "integer"),
-    ("with_line_numbers", "boolean"),
-    ("end_line", "integer"),
-    ("line", "integer"),
-    ("text", "string"),
-    ("old_text", "string"),
-    ("new_text", "string"),
-    ("expected_old_sha256", "string"),
-    ("expected_old_prefix", "string"),
-    ("expected_anchor_sha256", "string"),
-    ("expected_anchor_prefix", "string"),
-    ("content", "string"),
-    ("content_base64", "string"),
-    ("mime_type", "string"),
-    ("encoding", "string"),
-    ("max_bytes", "integer"),
-    ("overwrite", "boolean"),
-    ("expected_sha256", "string"),
-    ("expected_content_prefix", "string"),
-    ("old", "string"),
-    ("new", "string"),
-    ("expected_replacements", "integer"),
-    ("allow_multiple", "boolean"),
-    ("patch", "string"),
-    ("deny_sensitive_paths", "boolean"),
-    ("job_id", "string"),
-    ("tail_lines", "integer"),
-    ("offset", "integer"),
-    ("length", "integer"),
-    ("client_id", "string"),
-    ("id", "string"),
-    ("name", "string"),
-    ("description", "string"),
-    ("allow_patch", "boolean"),
-    ("template", "string"),
-    ("git_init", "boolean"),
-    ("allow_existing_empty", "boolean"),
-];
-const STRING_ARRAY_FLATTENED_TOOL_ARG_FIELDS: &[&str] = &["args", "paths"];
 
 fn flattened_tool_arg_schema(schema_type: &str) -> Value {
     json!({
@@ -92,6 +28,20 @@ fn flattened_string_array_tool_arg_schema() -> Value {
         "items": {"type": "string"},
         "description": FLATTENED_TOOL_ARG_DESCRIPTION
     })
+}
+
+fn flattened_tool_arg_schema_from_input(input_schema: &Value) -> Option<Value> {
+    match input_schema.get("type").and_then(Value::as_str) {
+        Some("array")
+            if input_schema.pointer("/items/type").and_then(Value::as_str) == Some("string") =>
+        {
+            Some(flattened_string_array_tool_arg_schema())
+        }
+        Some(schema_type @ ("string" | "boolean" | "integer" | "number")) => {
+            Some(flattened_tool_arg_schema(schema_type))
+        }
+        _ => None,
+    }
 }
 
 fn public_url() -> String {
@@ -1920,15 +1870,26 @@ fn insert_tool_call_request_flattened_arg_properties(schemas: &mut Value) {
         return;
     };
 
-    for (field, schema_type) in SIMPLE_FLATTENED_TOOL_ARG_FIELDS {
-        properties
-            .entry((*field).to_string())
-            .or_insert_with(|| flattened_tool_arg_schema(schema_type));
-    }
-    for field in STRING_ARRAY_FLATTENED_TOOL_ARG_FIELDS {
-        properties
-            .entry((*field).to_string())
-            .or_insert_with(flattened_string_array_tool_arg_schema);
+    for spec in crate::tool_runtime::ToolRuntime::registered_tool_specs() {
+        if let Some(input_properties) = spec.input_schema["properties"].as_object() {
+            for (field, input_schema) in input_properties {
+                if properties.contains_key(field) {
+                    continue;
+                }
+                if let Some(schema) = flattened_tool_arg_schema_from_input(input_schema) {
+                    properties.insert(field.clone(), schema);
+                }
+            }
+        }
+        for field in
+            crate::tool_runtime::tool_definition::runtime_tool_extra_accepted_flattened_args(
+                &spec.name,
+            )
+        {
+            properties
+                .entry((*field).to_string())
+                .or_insert_with(|| flattened_tool_arg_schema("string"));
+        }
     }
 }
 

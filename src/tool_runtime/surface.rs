@@ -4,7 +4,6 @@
 //! manifests, and bounded `list_tools` filtering close together while leaving
 //! dispatch and authorization flow in `mod.rs`.
 
-use super::metadata::ToolPathHint;
 use super::registry::accepted_flattened_args_for_spec;
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
@@ -302,7 +301,7 @@ pub(super) fn compact_manifest_tool_entry(spec: &ToolSpec) -> Value {
         "risk": m.risk.session_risk_class(),
         "read_only": m.read_only,
         "requires_project": m.requires_project,
-        "path_hint": path_hint_str(m.path_hint),
+        "path_hint": m.path_hint.manifest_label(),
         "destructive": m.destructive,
         "shell_like": m.shell_like,
         "oauth_scope": m.oauth_scope,
@@ -344,17 +343,6 @@ fn list_tool_matches_feature(name: &str, feature: &str) -> bool {
         "validation" => category == TOOL_CATEGORY_VALIDATION,
         "runtime" => category == TOOL_CATEGORY_RUNTIME,
         other => name.contains(other),
-    }
-}
-
-/// String representation of a `ToolPathHint` for the compact manifest.
-pub(super) fn path_hint_str(hint: ToolPathHint) -> &'static str {
-    match hint {
-        ToolPathHint::None => "none",
-        ToolPathHint::SinglePath => "single_path",
-        ToolPathHint::PathList => "path_list",
-        ToolPathHint::Patch => "patch",
-        ToolPathHint::Artifact => "artifact",
     }
 }
 

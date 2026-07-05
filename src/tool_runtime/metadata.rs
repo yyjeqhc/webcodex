@@ -29,6 +29,18 @@ pub(crate) enum ToolPathHint {
     Artifact,
 }
 
+impl ToolPathHint {
+    pub(crate) fn manifest_label(self) -> &'static str {
+        match self {
+            ToolPathHint::None => "none",
+            ToolPathHint::SinglePath => "single_path",
+            ToolPathHint::PathList => "path_list",
+            ToolPathHint::Patch => "patch",
+            ToolPathHint::Artifact => "artifact",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolMetadata {
     pub(crate) name: &'static str,

@@ -141,6 +141,13 @@ full input/output schemas. `tool_manifest` itself accepts flattened top-level
 `list_tools` accepts flattened `summary_only`, `category`, `features`, and
 `limit`.
 
+When `tool_manifest_limit` or `limit` is supplied, `truncated=true` means the
+caller asked WebCodex to bound the response. That is normal bounded output, not
+`ResponseTooLarge`. Smoke and acceptance scripts should check whether a limit
+was explicit, compare `returned_count` with `total_count`, and prefer
+`truncation_reason` / `limit_applied` when those fields are present. Do not fail
+only because `truncated=true`.
+
 `runtime_status` exposes the current permission profile in `output.permissions`.
 The self-hosted development default is `policy="dev_auto_approve"`,
 `auto_approve=true`, and `human_approval_required=false`. This only auto-approves
@@ -168,7 +175,10 @@ calling `callRuntimeTool`.
    `include_recent_commits`, `include_rules`, `bind_current`,
    `tool_manifest_categories`, and `tool_manifest_limit`. For startup, prefer
    bounded manifest categories such as `workflow`, `session`, `git`, `edit`,
-   `artifact`, and `cleanup` instead of sending all tools into context.
+   `artifact`, and `cleanup` instead of sending all tools into context. For
+   MCP direct and GPT Action lightweight sanity, use a compact startup/sanity
+   mode when the runtime exposes one. If no compact mode is available, a small
+   `tool_manifest_limit` is still a reasonable bounded discovery shape.
 2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
    with `show_changes`.
 3. For scoped source edits with known line numbers, call `replace_line_range`,
@@ -335,6 +345,24 @@ not change authorization, permission decisions, hard guards, execution,
 while keeping unexpected failures, expectation mismatches, and unexpected
 successes visible in `tool_failures` and `suggested_next_actions`.
 
+In GPT Actions, an expected negative path through `callRuntimeTool` may still
+appear as an outer `tool_error`. This usually happens because REST
+`/api/tools/call` returns HTTP 400 when the concrete runtime result has
+`ToolResult.success=false`. That outer Action UX is not, by itself, a transport
+failure or a session classifier failure. For smoke calls marked
+`expected_failure=true`, judge the final result from the immediate payload
+`failure_kind` / `error_kind`, from
+`session_handoff_summary(summary_only=true).tool_failures`, and from
+`finish_coding_task(summary_only=true).tool_failures`.
+
+The `tool_failures` classifier reports separate counts for `expected_count`,
+`unexpected_count`, `expectation_mismatch_count`, and
+`unexpected_success_count`. Matched expected negative paths should increment the
+expected bucket, not be rewritten into success. Auth failures, schema failures,
+invalid JSON, unknown tools, `session_project_mismatch`,
+`confirmation_required`, and other real guard or transport errors must keep
+their failure semantics.
+
 For tools that are not read-only, are destructive, or are shell/job-like, the
 session ledger records bounded permission decision metadata after hard safety
 checks pass. Under `dev_auto_approve`, those entries have
@@ -376,6 +404,13 @@ agent-registered projects are available; prefer `projects.effective.status` and
 - `max_output_bytes`
 
 They must not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell `init_script` values.
+
+`start_coding_task(include_runtime_status=true)` can include non-secret
+observability metadata such as the public URL, tool names, agent policy summary,
+and allowed roots. Those fields are useful for deep troubleshooting, but they
+increase GPT Action response size. For lightweight sanity, prefer a compact
+runtime summary when available; otherwise keep manifest categories and limits
+small and reserve full `runtime_status` for investigation.
 
 ## Compatibility notes
 

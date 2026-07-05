@@ -379,7 +379,18 @@ input/output schemas; set `include_tool_manifest=false` to omit it.
 For bounded startup context, keep `include_tool_manifest=true` but pass
 `tool_manifest_categories` such as `["workflow","session","git","edit",
 "artifact","cleanup"]` and optionally `tool_manifest_limit`; the runtime clamps
-the limit to 1..100 and reports whether the compact manifest was truncated.
+the limit to 1..100 and reports whether the compact manifest was truncated. A
+limit-driven `truncated=true` is expected bounded output, not `ResponseTooLarge`;
+acceptance scripts should inspect the explicit limit and returned/total counts,
+plus `truncation_reason` or `limit_applied` when present.
+
+For lightweight MCP direct or GPT Action sanity, prefer compact startup/sanity
+output when the runtime exposes it. If compact output is not available, use a
+small `tool_manifest_limit` instead of requesting the full manifest. Full
+`include_runtime_status=true` can include non-secret observability details such
+as the public URL, tool names, agent policy summary, and allowed roots, so keep
+it for deeper troubleshooting when a compact runtime summary is enough for
+sanity.
 
 The response also includes `output.permissions`. The current self-hosted
 development profile is `policy=dev_auto_approve`, `auto_approve=true`, and
@@ -531,6 +542,18 @@ mismatches, or unexpected successes should trigger "review failed tool calls"
 style next actions; matched expected failures may produce an informational
 `expected failure assertions matched` action.
 
+In GPT Actions, that same expected negative path may still show an outer
+`tool_error` because `/api/tools/call` returns HTTP 400 for a concrete runtime
+`ToolResult.success=false`. Do not treat the outer GPT Action label alone as a
+transport failure. Judge intentional negative-path smoke from the immediate
+`failure_kind` / `error_kind` and from
+`session_handoff_summary(summary_only=true).tool_failures` or
+`finish_coding_task(summary_only=true).tool_failures`. The classifier separates
+`expected_count`, `unexpected_count`, `expectation_mismatch_count`, and
+`unexpected_success_count`; expected failures must not bypass auth, permission,
+guards, `session_project_mismatch`, confirmation requirements, schema checks,
+invalid JSON handling, or unknown-tool failure semantics.
+
 `finish_coding_task.validation` and `session_handoff_summary.validation` are
 ledger-derived summaries. They do not expose raw stdout/stderr, excerpt fields,
 or `validation_output_summary`; the parser extracts only stable facts from safe
@@ -620,10 +643,13 @@ After deploying a new server, agent, or runtime build:
 1. Refresh the GPT Action or MCP schema if runtime tool schemas changed.
 2. Run `tool_manifest` or focused `list_tools` with `summary_only=true` plus
    `category`, `features`, or `limit`; avoid full `listRuntimeTools` in GPT
-   Actions unless debugging schemas.
+   Actions unless debugging schemas. If `truncated=true` is caused by the
+   caller-supplied limit, treat it as a bounded response rather than
+   `ResponseTooLarge`.
 3. Run `runtime_status`; prefer `projects.effective.status/count` over legacy
    `projects.count` when `projects.toml` is not configured but agent projects
-   are registered.
+   are registered. For lightweight sanity, use compact runtime observability
+   when available and reserve full runtime status for deeper troubleshooting.
 4. Confirm `start_coding_task` and `finish_coding_task` are available through
    the generic runtime tool path.
 5. Confirm `session_handoff_summary` exposes `validation` when

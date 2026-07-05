@@ -189,12 +189,14 @@ automatically bind future calls. `start_coding_task` defaults
 `include_tool_manifest=false`; subsequent MCP calls should pass the returned
 explicit `session_id`. To keep startup context bounded, pass
 `tool_manifest_categories` such as `workflow`, `session`, `git`, `edit`,
-`artifact`, and `cleanup`, plus `tool_manifest_limit` when useful. For
-lightweight MCP sanity, pass `include_runtime_status=true` and
-`compact_startup=true`; this returns compact runtime observability with build,
-tool count, active job count, agent health, and project status while omitting
-tool names, full agent policy, allowed roots, shell profile internals, command
-text, stdout/stderr, env values, tokens, and secrets. When session
+`artifact`, and `cleanup`, plus a small `tool_manifest_limit` when useful. For
+lightweight MCP sanity, pass `include_runtime_status=true`,
+`compact_startup=true`, and `include_tool_manifest=true`; this returns compact
+runtime observability with build, tool count, active job count, agent health,
+and project status while omitting tool names, full agent policy, allowed roots,
+shell profile internals, command text, stdout/stderr, env values, tokens, and
+secrets. Treat `tool_manifest.truncated=true` with
+`truncation_reason="limit"` as normal bounded output. When session
 persistence is configured, session records,
 events, and messages may be persisted and restored through the `sessions.json`
 ledger.
@@ -247,12 +249,14 @@ For `show_changes`, distinguish two session fields:
 They can be the same id or different ids.
 
 `session_handoff_summary` requires explicit `arguments.session_id`; it does not
-implicitly use the current-session binding. Pass `summary_only=true` for compact
-smoke verdict output containing `workspace_clean`, `hygiene_clean`, compact
-`jobs`, `permissions`, `tool_failures`, `validation`, `warnings`, and
-`suggested_next_actions` only. Full mode keeps bounded handoff detail. Its
-`jobs` section reports bounded active job counts, recent metadata, and warnings
-without stdout/stderr, tails, excerpts, or command text. Its `validation`
+implicitly use the current-session binding. Pass `summary_only=true`,
+`include_workspace=true`, and `include_validation=true` for compact smoke output
+containing `workspace_clean`, `hygiene_clean`, compact `jobs`, `permissions`,
+`tool_failures`, `validation`, `warnings`, and `suggested_next_actions` only.
+Use `finish_coding_task(summary_only=true)` with `include_hygiene=true` and
+`include_validation_summary=true` for closeout. Full mode keeps bounded handoff
+detail. Its `jobs` section reports bounded active job counts, recent metadata,
+and warnings without stdout/stderr, tails, excerpts, or command text. Its `validation`
 section is ledger-derived from validation-like tools (`cargo_fmt`,
 `cargo_check`, `cargo_test`, `validate_patch`, and `apply_patch_checked`). It
 does not expose raw stdout/stderr, excerpt fields, or
@@ -262,6 +266,14 @@ LSP/tree-sitter, or LLM summarization.
 Validation includes `status` and `reason`: no validation events yields
 `not_run` with `no_validation_tool_invoked`; all-success/all-failure/mixed
 ledgers yield `passed`, `failed`, or `mixed`.
+
+For manual sanity today, PASS means `workspace_clean=true`,
+`jobs.blocking_active_count=0`, no unexpected failures, no expectation
+mismatches, no unexpected successes, and `hygiene_clean=true`. WARN means
+validation has not run, expected failures matched exactly, or startup/manifest
+output was bounded by an explicit limit. FAIL means dirty workspace, blocking
+jobs, unexpected tool failures, expectation mismatches, unexpected successes, or
+hygiene failure.
 
 The session ledger also stores minimal permission decision metadata for
 high-risk tools: `required=true`, policy, request id, `status=auto_approved`,

@@ -385,15 +385,27 @@ acceptance scripts should inspect the explicit limit and returned/total counts,
 plus `truncation_reason="limit"`, `limit_applied=true`, `requested_limit`,
 `returned_count`, and `total_count`.
 
-For lightweight MCP direct or GPT Action sanity, pass
-`include_runtime_status=true` and `compact_startup=true`. Compact startup returns
-build version/commit/dirty state, `tools.count`, `jobs.active_count`,
+For lightweight MCP direct or GPT Action sanity, call startup with
+`include_runtime_status=true`, `compact_startup=true`,
+`include_tool_manifest=true`, and a small `tool_manifest_limit`. Compact startup
+returns build version/commit/dirty state, `tools.count`, `jobs.active_count`,
 `agents.summary`, and effective/agent/server project status without `tools.names`,
 full agent policy, `allowed_roots`, shell profile internals, command text,
 stdout/stderr, env values, tokens, secrets, or full config values. Full
 `include_runtime_status=true` without `compact_startup` remains available for
 deeper troubleshooting and can include non-secret observability details such as
 the public URL, tool names, agent policy summary, and allowed roots.
+
+Manual lightweight sanity from current startup fields:
+
+- PASS: compact runtime status is present, `tools.count` is nonzero,
+  `jobs.active_count=0`, an agent is online when the task depends on an agent
+  project, and requested git/workspace status is clean.
+- WARN: runtime status or git/workspace was not requested, validation has not
+  run yet, or `tool_manifest.truncated=true` with
+  `truncation_reason="limit"`.
+- FAIL: runtime status failed, blocking jobs are active, requested git/workspace
+  status is dirty, or tool manifest generation failed.
 
 The response also includes `output.permissions`. The current self-hosted
 development profile is `policy=dev_auto_approve`, `auto_approve=true`, and
@@ -489,6 +501,12 @@ should prefer `stop_effect`, `terminal`, `terminal_pending`, and `final_status`.
 }
 ```
 
+`finish_coding_task` and `session_handoff_summary` should be used with
+`summary_only=true` for compact handoff and closeout checks. For handoff, also
+pass `include_workspace=true` and `include_validation=true`. For finish, pass
+`include_hygiene=true`, `include_validation_summary=true`, and keep
+`include_handoff=true` when a handoff aggregate is useful.
+
 `finish_coding_task` and `session_handoff_summary` include a bounded `jobs`
 section. `active_count` remains a compatibility broad active count. New fields
 split it into `blocking_active_count` and `nonblocking_active_count`, with
@@ -500,6 +518,20 @@ nonblocking terminal-pending state and produces `jobs_terminal_pending` with
 itself. The jobs summary includes only metadata such as `job_id`, `kind`,
 `status`, `project`, and timestamps; it does not include raw stdout/stderr,
 tails, excerpts, or command text.
+
+Manual compact sanity from current handoff/finish fields:
+
+- PASS: `workspace_clean=true`, `jobs.blocking_active_count=0`,
+  `tool_failures.unexpected_count=0`,
+  `tool_failures.expectation_mismatch_count=0`,
+  `tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`.
+- WARN: `validation.status=not_run`, matched expected failures are present
+  (`expected_count>0` while unexpected/mismatch/unexpected-success counts are
+  all zero), or bounded startup/manifest output was truncated only because of an
+  explicit limit.
+- FAIL: workspace is dirty, blocking jobs are active, unexpected tool failures
+  exist, expected-failure mismatches exist, expected-failure calls unexpectedly
+  succeeded, or hygiene failed.
 
 For a read-only handoff without finish aggregation:
 

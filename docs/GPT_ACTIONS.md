@@ -177,10 +177,12 @@ calling `callRuntimeTool`.
    bounded manifest categories such as `workflow`, `session`, `git`, `edit`,
    `artifact`, and `cleanup` instead of sending all tools into context. For
    MCP direct and GPT Action lightweight sanity, pass
-   `include_runtime_status=true` with `compact_startup=true` to receive compact
-   runtime observability instead of the full `runtime_status` payload. If
-   compact startup is not available on an older runtime, a small
-   `tool_manifest_limit` is still a reasonable bounded discovery shape.
+   `include_runtime_status=true`, `compact_startup=true`,
+   `include_tool_manifest=true`, and a small `tool_manifest_limit` to receive
+   compact runtime observability plus bounded workflow discovery instead of the
+   full `runtime_status` payload. If compact startup is not available on an
+   older runtime, a small `tool_manifest_limit` is still a reasonable bounded
+   discovery shape.
 2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
    with `show_changes`.
 3. For scoped source edits with known line numbers, call `replace_line_range`,
@@ -205,6 +207,8 @@ calling `callRuntimeTool`.
    multi-step handoff, call `session_handoff_summary` with the explicit
    `session_id`. Pass flattened `summary_only=true` for compact smoke verdicts
    that omit recent events, command text, stdout/stderr, tails, and excerpts.
+   For handoff, also pass `include_workspace=true` and `include_validation=true`.
+   For finish, pass `include_hygiene=true` and `include_validation_summary=true`.
 
 `finish_coding_task` and `session_handoff_summary` keep `active_count` for
 compatibility and also return `blocking_active_count`,
@@ -212,6 +216,16 @@ compatibility and also return `blocking_active_count`,
 `terminal_pending_count`. Only blocking active jobs produce
 `active_jobs_present`; stop-requested jobs produce nonblocking
 `jobs_terminal_pending`.
+
+Until an aggregate verdict is present, judge compact workflow sanity from the
+existing fields. PASS requires `workspace_clean=true`,
+`jobs.blocking_active_count=0`, `tool_failures.unexpected_count=0`,
+`tool_failures.expectation_mismatch_count=0`,
+`tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`. WARN covers
+`validation.status=not_run`, matched expected failures only, and bounded
+`truncated=true` with `truncation_reason="limit"`. FAIL covers dirty workspace,
+blocking jobs, unexpected tool failures, expectation mismatches, unexpected
+successes, or hygiene failure.
 
 For non-coding tracking, `start_session` remains available through
 `callRuntimeTool`. It creates a session record but does not automatically bind

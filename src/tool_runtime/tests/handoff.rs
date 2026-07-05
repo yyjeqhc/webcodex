@@ -1041,15 +1041,27 @@ async fn session_handoff_summary_only_is_compact() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["summary_only"], true);
     assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(result.output["jobs"]["active_count"], 0);
     assert_eq!(result.output["jobs"]["blocking_active_count"], 0);
+    assert_eq!(result.output["jobs"]["nonblocking_active_count"], 0);
+    assert_eq!(result.output["jobs"]["terminal_pending_count"], 0);
     assert_eq!(result.output["permissions"]["total_approved_count"], 0);
     assert_eq!(result.output["tool_failures"]["expected_count"], 1);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
+    assert!(result.output["tool_failures"]
+        .get("expectation_mismatch_count")
+        .is_some());
+    assert!(result.output["tool_failures"]
+        .get("unexpected_success_count")
+        .is_some());
     assert_eq!(result.output["validation"]["status"], "not_run");
     assert_eq!(
         result.output["validation"]["reason"],
         "no_validation_tool_invoked"
     );
+    assert!(result.output["warnings"].is_array());
+    assert!(result.output["suggested_next_actions"].is_array());
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in [
         "recent_events",

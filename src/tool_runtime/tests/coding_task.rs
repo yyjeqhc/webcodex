@@ -204,6 +204,21 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
         result.output["session"]["current_binding"]["process_local_in_memory"],
         true
     );
+    for field in [
+        "session",
+        "runtime_status",
+        "permissions",
+        "rules",
+        "git",
+        "recommended_flow",
+        "warnings",
+        "tool_manifest",
+    ] {
+        assert!(
+            result.output.get(field).is_some(),
+            "start_coding_task output should include {field}"
+        );
+    }
     assert_eq!(result.output["permissions"]["policy"], "dev_auto_approve");
     assert_eq!(result.output["permissions"]["auto_approve"], true);
     assert_eq!(
@@ -406,6 +421,22 @@ async fn start_coding_task_compact_startup_returns_sanitized_runtime_summary() {
     assert!(result.success, "{:?}", result.error);
     let summary = &result.output["runtime_status"];
     assert_eq!(summary["compact"], true);
+    for pointer in [
+        "/build/version",
+        "/build/git_commit",
+        "/build/git_dirty",
+        "/tools/count",
+        "/jobs/active_count",
+        "/agents/summary/online",
+        "/projects/effective/status",
+        "/projects/agent_registered/online_count",
+        "/projects/server_static/status",
+    ] {
+        assert!(
+            summary.pointer(pointer).is_some(),
+            "compact startup runtime_status should include {pointer}"
+        );
+    }
     assert_eq!(summary["build"]["version"], env!("CARGO_PKG_VERSION"));
     assert!(summary["build"].get("git_commit").is_some());
     assert!(summary["build"].get("git_dirty").is_some());
@@ -745,12 +776,19 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     assert_eq!(result.output["permissions"]["total_approved_count"], 0);
     assert_eq!(result.output["tool_failures"]["expected_count"], 0);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
+    assert!(result.output["tool_failures"]
+        .get("expectation_mismatch_count")
+        .is_some());
+    assert!(result.output["tool_failures"]
+        .get("unexpected_success_count")
+        .is_some());
     assert_eq!(result.output["validation"]["status"], "not_run");
     assert_eq!(
         result.output["validation"]["reason"],
         "no_validation_tool_invoked"
     );
     assert!(result.output["warnings"].as_array().unwrap().is_empty());
+    assert!(result.output["suggested_next_actions"].is_array());
 
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in [

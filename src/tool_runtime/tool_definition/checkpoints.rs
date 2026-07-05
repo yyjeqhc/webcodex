@@ -1,6 +1,6 @@
 use super::AgentCapability::{FileRead, FileWrite, OwnerOnly};
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition};
+use super::{def, git_like, ToolDefinition};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, Patch},
     ToolRisk::{ProjectWrite, ReadOnly},
@@ -8,7 +8,7 @@ use crate::tool_runtime::metadata::{
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    def(
+    git_like(def(
         "workspace_checkpoint_create",
         ModelVisible,
         "checkpoint",
@@ -20,7 +20,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
+    )),
     def(
         "workspace_checkpoint_list",
         ModelVisible,
@@ -47,7 +47,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
     ),
-    def(
+    git_like(def(
         "workspace_checkpoint_restore",
         ModelVisible,
         "checkpoint",
@@ -59,7 +59,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         Patch,
         false,
         false,
-    ),
+    )),
     def(
         "workspace_checkpoint_delete",
         ModelVisible,

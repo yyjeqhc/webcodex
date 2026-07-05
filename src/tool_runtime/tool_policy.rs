@@ -3,9 +3,7 @@
 use super::metadata::{
     tool_metadata as fallback_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk,
 };
-use super::tool_definition::{
-    tool_definitions, AgentCapability, ToolDefinition, TOOL_DISCOVERY_GROUPS,
-};
+use super::tool_definition::{tool_definitions, AgentCapability, ToolDefinition};
 
 impl ToolDefinition {
     pub(crate) fn metadata(self) -> ToolMetadata {
@@ -29,7 +27,7 @@ impl ToolDefinition {
     }
 
     pub(crate) fn is_git_like(self) -> bool {
-        tool_is_in_discovery_group(self.name, "git")
+        self.policy.git_like
     }
 
     pub(crate) fn is_change_summary_like(self) -> bool {
@@ -253,11 +251,4 @@ pub(crate) fn model_visible_tool_names_csv() -> String {
         .map(|definition| definition.name)
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn tool_is_in_discovery_group(tool_name: &str, group_name: &str) -> bool {
-    TOOL_DISCOVERY_GROUPS
-        .iter()
-        .find(|group| group.name == group_name)
-        .is_some_and(|group| group.tools.contains(&tool_name))
 }

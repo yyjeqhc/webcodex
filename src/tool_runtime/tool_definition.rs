@@ -122,6 +122,7 @@ pub(crate) struct ToolDefinitionPolicy {
     pub(crate) captures_validation_output: bool,
     pub(crate) current_session_control: bool,
     pub(crate) creates_or_binds_session: bool,
+    pub(crate) git_like: bool,
     pub(crate) requires_explicit_business_session: bool,
 }
 
@@ -131,6 +132,7 @@ impl ToolDefinitionPolicy {
         captures_validation_output: false,
         current_session_control: false,
         creates_or_binds_session: false,
+        git_like: false,
         requires_explicit_business_session: false,
     };
 }
@@ -205,6 +207,16 @@ const fn current_session_control(definition: ToolDefinition) -> ToolDefinition {
     ToolDefinition {
         policy: ToolDefinitionPolicy {
             current_session_control: true,
+            ..definition.policy
+        },
+        ..definition
+    }
+}
+
+const fn git_like(definition: ToolDefinition) -> ToolDefinition {
+    ToolDefinition {
+        policy: ToolDefinitionPolicy {
+            git_like: true,
             ..definition.policy
         },
         ..definition

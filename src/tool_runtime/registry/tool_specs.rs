@@ -4,6 +4,7 @@ mod checkpoints;
 mod coding_tasks;
 mod discovery;
 mod files;
+mod git;
 mod hygiene;
 mod jobs;
 mod sessions;
@@ -16,14 +17,12 @@ use super::input_schemas::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
-    delete_line_range_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
-    git_diff_summary_input_schema, git_log_input_schema, git_status_input_schema,
-    insert_after_pattern_input_schema, insert_at_line_input_schema,
+    delete_line_range_input_schema, insert_after_pattern_input_schema, insert_at_line_input_schema,
     insert_before_pattern_input_schema, read_project_artifact_input_schema,
     read_project_artifact_metadata_input_schema, replace_exact_block_input_schema,
     replace_in_file_input_schema, replace_line_range_input_schema,
-    save_project_artifact_input_schema, show_changes_input_schema, validate_patch_input_schema,
-    with_common_testing_metadata, write_project_file_input_schema,
+    save_project_artifact_input_schema, validate_patch_input_schema, with_common_testing_metadata,
+    write_project_file_input_schema,
 };
 use super::{output_schema_for_tool, tool_annotations};
 
@@ -36,40 +35,8 @@ impl ToolRuntime {
         declarations.extend(coding_tasks::tool_specs());
         declarations.extend(hygiene::tool_specs());
         declarations.extend(files::tool_specs());
+        declarations.extend(git::tool_specs());
         declarations.extend(vec![
-            tool_spec(
-                "git_diff_summary",
-                "Read-only git diff summary for a project: `git status --porcelain`, "
-                    .to_string()
-                    + "`git diff --stat`, and a parsed changed-file list. Does not modify the "
-                    + "worktree.",
-                git_diff_summary_input_schema(),
-            ),
-            tool_spec(
-                "show_changes",
-                "Default inspect/review tool before final response. Read-only worktree plus optional session summary; reports status, warnings, next actions, and bounded hunks without modifying files.",
-                show_changes_input_schema(),
-            ),
-            tool_spec(
-                "git_status",
-                "Run git status --porcelain for a project.",
-                git_status_input_schema(),
-            ),
-            tool_spec(
-                "git_diff",
-                "Run git diff for a project, optionally scoped to paths.",
-                git_diff_input_schema(),
-            ),
-            tool_spec(
-                "git_diff_hunks",
-                "Return bounded structured git diff hunks for review. Supports optional paths and cached diff; does not modify the worktree.",
-                git_diff_hunks_input_schema(),
-            ),
-            tool_spec(
-                "git_log",
-                "Return bounded structured recent git commit history for a project. Does not return commit bodies or modify the worktree.",
-                git_log_input_schema(),
-            ),
             tool_spec(
                 "cargo_fmt",
                 "Run cargo fmt in an agent-registered project. Use check=true for cargo fmt -- --check before broader validation.",

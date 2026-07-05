@@ -72,26 +72,37 @@ impl ToolDefinition {
         if let Some(permission_risk) = self.policy.permission_risk {
             return permission_risk;
         }
-        if self.metadata.shell_like {
-            return "shell";
-        }
-        if self.metadata.destructive {
-            return "destructive";
-        }
-        if self.metadata.path_hint == ToolPathHint::Artifact {
-            return "artifact_write";
-        }
-        if self.metadata.path_hint == ToolPathHint::Patch || self.name.contains("patch") {
-            return "patch";
-        }
-        if matches!(
-            self.metadata.risk,
-            ToolRisk::ProjectWrite | ToolRisk::AccountManage
-        ) {
-            return "write";
-        }
-        "write"
+        permission_risk_from_metadata(self.metadata)
     }
+}
+
+fn permission_risk_from_metadata(metadata: ToolMetadata) -> &'static str {
+    if metadata.shell_like {
+        return "shell";
+    }
+    if metadata.destructive {
+        return "destructive";
+    }
+    if metadata.path_hint == ToolPathHint::Artifact {
+        return "artifact_write";
+    }
+    if metadata.path_hint == ToolPathHint::Patch {
+        return "patch";
+    }
+    if matches!(
+        metadata.risk,
+        ToolRisk::ProjectWrite | ToolRisk::AccountManage
+    ) {
+        return "write";
+    }
+    "write"
+}
+
+fn fallback_permission_risk(name: &str, metadata: ToolMetadata) -> &'static str {
+    if name.contains("patch") && metadata.path_hint != ToolPathHint::Patch {
+        return "patch";
+    }
+    permission_risk_from_metadata(metadata)
 }
 
 pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefinition> {
@@ -206,25 +217,7 @@ pub(crate) fn runtime_tool_permission_risk(name: &str) -> &'static str {
         .map(|definition| definition.permission_risk())
         .unwrap_or_else(|| {
             let metadata = fallback_tool_metadata(name);
-            if metadata.shell_like {
-                return "shell";
-            }
-            if metadata.destructive {
-                return "destructive";
-            }
-            if metadata.path_hint == ToolPathHint::Artifact {
-                return "artifact_write";
-            }
-            if metadata.path_hint == ToolPathHint::Patch || name.contains("patch") {
-                return "patch";
-            }
-            if matches!(
-                metadata.risk,
-                ToolRisk::ProjectWrite | ToolRisk::AccountManage
-            ) {
-                return "write";
-            }
-            "write"
+            fallback_permission_risk(name, metadata)
         })
 }
 

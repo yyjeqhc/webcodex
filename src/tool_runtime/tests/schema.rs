@@ -119,12 +119,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
     use crate::tool_runtime::tool_definition::{
         runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
         runtime_tool_creates_or_binds_session, runtime_tool_disabled_message,
-        runtime_tool_is_change_summary_like, runtime_tool_is_current_session_control,
-        runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
-        runtime_tool_is_write_like, runtime_tool_permission_risk,
-        runtime_tool_requires_explicit_business_session, runtime_tool_requires_permission,
-        runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
-        tool_definitions, TOOL_DISCOVERY_GROUPS,
+        runtime_tool_extra_accepted_flattened_args, runtime_tool_is_change_summary_like,
+        runtime_tool_is_current_session_control, runtime_tool_is_git_like,
+        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
+        runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
+        runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
+        runtime_tool_session_risk_class, tool_definitions, TOOL_DISCOVERY_GROUPS,
     };
 
     let git_group = TOOL_DISCOVERY_GROUPS
@@ -247,6 +247,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
             definition.name
         );
         assert_eq!(
+            runtime_tool_extra_accepted_flattened_args(definition.name),
+            definition.extra_accepted_flattened_args(),
+            "{} extra accepted flattened args facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
             runtime_tool_allows_current_session_fallback(definition.name),
             definition.allows_current_session_fallback(),
             "{} current-session fallback facade must use ToolDefinition",
@@ -334,6 +340,20 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
     assert_eq!(disabled_tools, vec!["run_codex"]);
+
+    let extra_accepted_flattened_arg_tools = tool_definitions()
+        .filter(|definition| !definition.extra_accepted_flattened_args().is_empty())
+        .map(|definition| {
+            (
+                definition.name,
+                definition.extra_accepted_flattened_args().to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        extra_accepted_flattened_arg_tools,
+        vec![("start_coding_task", vec!["session_id"])]
+    );
 
     let unit_argument_tools = tool_definitions()
         .filter(|definition| definition.uses_unit_arguments())

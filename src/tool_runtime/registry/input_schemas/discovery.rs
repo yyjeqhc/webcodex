@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use super::super::super::tool_spec::ToolSpec;
 use super::common::object_schema;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
+use crate::tool_runtime::tool_definition::runtime_tool_extra_accepted_flattened_args;
 
 pub(crate) fn list_tools_input_schema() -> Value {
     json!({
@@ -108,8 +109,10 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
         .collect();
     remaining.sort_unstable();
     names.extend(remaining.into_iter().map(str::to_string));
-    if spec.name == "start_coding_task" && !names.iter().any(|field| field == "session_id") {
-        names.push("session_id".to_string());
+    for field in runtime_tool_extra_accepted_flattened_args(&spec.name) {
+        if !names.iter().any(|name| name == field) {
+            names.push((*field).to_string());
+        }
     }
     names.push(TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string());
     names

@@ -32,11 +32,12 @@ pub(crate) use super::tool_policy::{
     model_visible_tool_names_csv, runtime_tool_agent_capability,
     runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
     runtime_tool_category, runtime_tool_creates_or_binds_session, runtime_tool_disabled_message,
-    runtime_tool_is_change_summary_like, runtime_tool_is_current_session_control,
-    runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
-    runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
-    runtime_tool_requires_explicit_business_session, runtime_tool_requires_permission,
-    runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
+    runtime_tool_extra_accepted_flattened_args, runtime_tool_is_change_summary_like,
+    runtime_tool_is_current_session_control, runtime_tool_is_git_like, runtime_tool_is_read_like,
+    runtime_tool_is_shell_like, runtime_tool_is_write_like, runtime_tool_metadata,
+    runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
+    runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
+    runtime_tool_session_risk_class,
 };
 
 /// Capability an agent-backed tool requires before dispatch can reach an
@@ -123,6 +124,7 @@ pub(crate) struct ToolDefinitionPolicy {
     pub(crate) current_session_control: bool,
     pub(crate) creates_or_binds_session: bool,
     pub(crate) disabled_message: Option<&'static str>,
+    pub(crate) extra_accepted_flattened_args: &'static [&'static str],
     pub(crate) git_like: bool,
     pub(crate) permission_risk: Option<&'static str>,
     pub(crate) requires_artifact_upload_path_binding: bool,
@@ -137,6 +139,7 @@ impl ToolDefinitionPolicy {
         current_session_control: false,
         creates_or_binds_session: false,
         disabled_message: None,
+        extra_accepted_flattened_args: &[],
         git_like: false,
         permission_risk: None,
         requires_artifact_upload_path_binding: false,
@@ -245,6 +248,19 @@ const fn disabled(definition: ToolDefinition, message: &'static str) -> ToolDefi
     ToolDefinition {
         policy: ToolDefinitionPolicy {
             disabled_message: Some(message),
+            ..definition.policy
+        },
+        ..definition
+    }
+}
+
+const fn extra_accepted_flattened_args(
+    definition: ToolDefinition,
+    fields: &'static [&'static str],
+) -> ToolDefinition {
+    ToolDefinition {
+        policy: ToolDefinitionPolicy {
+            extra_accepted_flattened_args: fields,
             ..definition.policy
         },
         ..definition

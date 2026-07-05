@@ -1,6 +1,9 @@
 use super::AgentCapability::GitOrShell;
 use super::ToolVisibility::ModelVisible;
-use super::{creates_or_binds_session, def, requires_explicit_business_session, ToolDefinition};
+use super::{
+    creates_or_binds_session, def, extra_accepted_flattened_args,
+    requires_explicit_business_session, ToolDefinition,
+};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::ReadOnly, RUNTIME_READ,
 };
@@ -19,19 +22,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
     )),
-    creates_or_binds_session(def(
-        "start_coding_task",
-        ModelVisible,
-        "workflow",
-        Some(GitOrShell),
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    )),
+    extra_accepted_flattened_args(
+        creates_or_binds_session(def(
+            "start_coding_task",
+            ModelVisible,
+            "workflow",
+            Some(GitOrShell),
+            "control",
+            ReadOnly,
+            Some(RUNTIME_READ),
+            true,
+            NoPath,
+            false,
+            false,
+        )),
+        &["session_id"],
+    ),
     requires_explicit_business_session(def(
         "finish_coding_task",
         ModelVisible,

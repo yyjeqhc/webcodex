@@ -54,6 +54,10 @@ impl ToolDefinition {
         self.policy.disabled_message
     }
 
+    pub(crate) fn extra_accepted_flattened_args(self) -> &'static [&'static str] {
+        self.policy.extra_accepted_flattened_args
+    }
+
     pub(crate) fn uses_unit_arguments(self) -> bool {
         self.policy.unit_arguments
     }
@@ -203,6 +207,11 @@ pub(crate) fn runtime_tool_creates_or_binds_session(name: &str) -> bool {
 
 pub(crate) fn runtime_tool_disabled_message(name: &str) -> Option<&'static str> {
     lookup_tool_definition(name).and_then(|definition| definition.disabled_message())
+}
+
+pub(crate) fn runtime_tool_extra_accepted_flattened_args(name: &str) -> &'static [&'static str] {
+    lookup_tool_definition(name)
+        .map_or(&[], |definition| definition.extra_accepted_flattened_args())
 }
 
 pub(crate) fn runtime_tool_allows_current_session_fallback(name: &str) -> bool {

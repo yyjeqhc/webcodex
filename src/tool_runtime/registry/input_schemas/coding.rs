@@ -27,6 +27,10 @@ pub(crate) fn start_coding_task_input_schema() -> Value {
                 "type": "boolean",
                 "description": "Include runtime_status output. Defaults to true."
             },
+            "compact_startup": {
+                "type": "boolean",
+                "description": "When include_runtime_status=true, return compact startup runtime observability instead of full runtime_status. Defaults to false."
+            },
             "include_git": {
                 "type": "boolean",
                 "description": "Include structured git/worktree status derived from show_changes. Defaults to true."

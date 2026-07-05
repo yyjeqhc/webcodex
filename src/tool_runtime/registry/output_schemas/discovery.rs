@@ -82,6 +82,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("count", schema_type("integer", "Tool count.")),
             (
+                "returned_count",
+                schema_type("integer", "Returned tool count after filters and limits."),
+            ),
+            (
                 "total_count",
                 schema_type("integer", "Total number of visible runtime tools."),
             ),
@@ -92,6 +96,18 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "truncated",
                 schema_type("boolean", "Whether limit truncated the matching tools."),
+            ),
+            (
+                "truncation_reason",
+                nullable_schema("string", "Reason for truncation, such as limit, or null."),
+            ),
+            (
+                "limit_applied",
+                schema_type("boolean", "Whether a caller-supplied limit was applied."),
+            ),
+            (
+                "requested_limit",
+                nullable_schema("integer", "Caller-supplied limit before effective cap, or null."),
             ),
             (
                 "category",
@@ -136,6 +152,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("integer", "Returned compact tool count after filtering."),
             ),
             (
+                "returned_count",
+                schema_type("integer", "Returned compact tool count after filtering and limit."),
+            ),
+            (
+                "total_count",
+                schema_type("integer", "Total number of runtime tools before filtering."),
+            ),
+            (
                 "filtered_count",
                 schema_type(
                     "integer",
@@ -169,6 +193,18 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "truncated",
                 schema_type("boolean", "Whether the limit truncated matching tools."),
+            ),
+            (
+                "truncation_reason",
+                nullable_schema("string", "Reason for truncation, such as limit, or null."),
+            ),
+            (
+                "limit_applied",
+                schema_type("boolean", "Whether a caller-supplied limit was applied."),
+            ),
+            (
+                "requested_limit",
+                nullable_schema("integer", "Caller-supplied limit after runtime clamping, or null."),
             ),
             (
                 "categories",

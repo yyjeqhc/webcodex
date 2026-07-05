@@ -1029,6 +1029,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "title",
         "bind_current",
         "include_runtime_status",
+        "compact_startup",
         "include_git",
         "include_recent_commits",
         "include_rules",

@@ -67,6 +67,7 @@ impl ToolRuntime {
             filtered_indexes
         };
         let truncated = filtered_count > returned_indexes.len();
+        let requested_limit = options.limit;
         let names: Vec<String> = returned_indexes
             .iter()
             .map(|index| specs[*index].name.clone())
@@ -88,9 +89,13 @@ impl ToolRuntime {
             "tools": Value::Array(tools),
             "names": names,
             "count": returned_indexes.len(),
+            "returned_count": returned_indexes.len(),
             "total_count": total_count,
             "filtered_count": filtered_count,
             "truncated": truncated,
+            "truncation_reason": if truncated { Some("limit") } else { None },
+            "limit_applied": options.limit.is_some(),
+            "requested_limit": requested_limit,
             "category": options.category,
             "features": options.features,
             "limit": if bounded_request { Some(effective_limit) } else { None },
@@ -107,6 +112,9 @@ impl ToolRuntime {
             output["filtered_count"] = json!(total_count);
             output["total_count"] = json!(total_count);
             output["truncated"] = json!(false);
+            output["truncation_reason"] = Value::Null;
+            output["limit_applied"] = json!(false);
+            output["requested_limit"] = Value::Null;
             output["category"] = Value::Null;
             output["features"] = Value::Null;
             output["limit"] = Value::Null;
@@ -191,8 +199,10 @@ impl ToolRuntime {
             None => specs.iter().collect(),
         };
         let filtered_count = filtered_specs.len();
+        let requested_limit = limit;
         let limit = limit.map(|limit| limit.clamp(1, 100));
         let truncated = limit.is_some_and(|limit| filtered_count > limit);
+        let limit_applied = requested_limit.is_some();
         let returned_specs: Vec<&ToolSpec> = match limit {
             Some(limit) => filtered_specs.into_iter().take(limit).collect(),
             None => filtered_specs,
@@ -207,12 +217,17 @@ impl ToolRuntime {
             "schema_version": 1,
             "tool_count": tool_count,
             "count": tools.len(),
+            "returned_count": tools.len(),
+            "total_count": tool_count,
             "filtered_count": filtered_count,
             "category": category,
             "filtered": categories_requested.is_some() || limit.is_some(),
             "categories_requested": categories_requested,
             "limit": limit,
             "truncated": truncated,
+            "truncation_reason": if truncated { Some("limit") } else { None },
+            "limit_applied": limit_applied,
+            "requested_limit": requested_limit,
             "categories": categories,
             "tools": tools,
         });

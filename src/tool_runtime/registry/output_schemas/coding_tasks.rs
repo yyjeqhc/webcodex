@@ -19,7 +19,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "runtime_status",
-                nullable_schema("object", "runtime_status output when requested; null otherwise."),
+                nullable_schema("object", "Full runtime_status output, or compact startup runtime observability when compact_startup=true; null when not requested."),
             ),
             (
                 "permissions",

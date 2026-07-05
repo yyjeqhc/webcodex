@@ -19,6 +19,13 @@ fn list_tools_schema_exposes_bounded_discovery_fields() {
         "category",
         "features",
         "limit",
+        "returned_count",
+        "total_count",
+        "filtered_count",
+        "limit_applied",
+        "requested_limit",
+        "truncation_reason",
+        "truncated",
         "categories",
         "recommended_flows",
     ] {
@@ -56,6 +63,11 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
         "filtered",
         "categories_requested",
         "limit",
+        "returned_count",
+        "total_count",
+        "limit_applied",
+        "requested_limit",
+        "truncation_reason",
         "truncated",
         "categories",
         "tools",
@@ -97,6 +109,45 @@ fn discovery_output_schemas_cover_runtime_payload_keys() {
         &tool_manifest_payload,
         output_schema_properties(tool_manifest_spec),
     );
+}
+
+#[test]
+fn tool_manifest_and_list_tools_limit_truncation_reports_limit_reason() {
+    use crate::tool_runtime::tool_definition::TOOL_CATEGORY_SESSION;
+
+    let runtime = test_runtime();
+    let list_tools = runtime.list_tools_payload(ListToolsOptions {
+        category: None,
+        features: None,
+        summary_only: true,
+        limit: Some(2),
+    });
+    assert_eq!(list_tools["truncated"], true);
+    assert_eq!(list_tools["truncation_reason"], "limit");
+    assert_eq!(list_tools["limit_applied"], true);
+    assert_eq!(list_tools["requested_limit"], 2);
+    assert_eq!(list_tools["returned_count"], 2);
+    assert!(list_tools["total_count"].as_u64().unwrap() > 2);
+    assert!(!serde_json::to_string(&list_tools)
+        .unwrap()
+        .contains("ResponseTooLarge"));
+
+    let manifest = runtime.compact_tool_manifest_payload_bounded(
+        Some(vec![TOOL_CATEGORY_SESSION.to_string()]),
+        Some(2),
+    );
+    assert_eq!(manifest["truncated"], true);
+    assert_eq!(manifest["truncation_reason"], "limit");
+    assert_eq!(manifest["limit_applied"], true);
+    assert_eq!(manifest["requested_limit"], 2);
+    assert_eq!(manifest["returned_count"], 2);
+    assert!(manifest["filtered_count"].as_u64().unwrap() > 2);
+    assert!(
+        manifest["total_count"].as_u64().unwrap() >= manifest["filtered_count"].as_u64().unwrap()
+    );
+    assert!(!serde_json::to_string(&manifest)
+        .unwrap()
+        .contains("ResponseTooLarge"));
 }
 
 fn output_schema_properties(spec: &ToolSpec) -> &serde_json::Map<String, Value> {

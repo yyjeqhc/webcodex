@@ -420,6 +420,10 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
   `cargo_test`, `validate_patch`, or `apply_patch_checked`; review with
   `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`; finish with
   `finish_coding_task` or `session_handoff_summary`.
+- For lightweight GPT Action or MCP sanity, call `start_coding_task` with
+  `include_runtime_status=true`, `compact_startup=true`, and a bounded
+  `tool_manifest_limit`. Limit-driven `truncated=true` with
+  `truncation_reason="limit"` is normal bounded output, not `ResponseTooLarge`.
 - `start_session` creates a session record but does not automatically bind future
   calls. For reliable handoff, keep and pass explicit `session_id` or
   `recording_session_id` values. Current-session binding is process-local

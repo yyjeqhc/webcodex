@@ -1138,6 +1138,10 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
                 },
+                "compact_startup": {
+                    "type": "boolean",
+                    "description": "Flattened start_coding_task flag. Defaults to false. When include_runtime_status=true, returns compact startup runtime observability instead of full runtime_status. Used only when `params` and `arguments` are absent."
+                },
                 "include_git": {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
@@ -2945,6 +2949,7 @@ mod tests {
             "include_validation",
             "include_workspace",
             "include_checkpoints",
+            "compact_startup",
             "include_tool_manifest",
             "tool_manifest_categories",
             "tool_manifest_limit",
@@ -2960,6 +2965,7 @@ mod tests {
         assert_eq!(properties["include_validation"]["type"], "boolean");
         assert_eq!(properties["include_workspace"]["type"], "boolean");
         assert_eq!(properties["include_checkpoints"]["type"], "boolean");
+        assert_eq!(properties["compact_startup"]["type"], "boolean");
         assert_eq!(properties["include_tool_manifest"]["type"], "boolean");
         assert_eq!(properties["tool_manifest_categories"]["type"], "array");
         assert_eq!(properties["tool_manifest_limit"]["type"], "integer");

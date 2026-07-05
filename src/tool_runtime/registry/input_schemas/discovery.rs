@@ -65,6 +65,7 @@ pub(crate) const ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER: &[&str] = &[
     "session_id",
     "bind_current",
     "include_runtime_status",
+    "compact_startup",
     "include_git",
     "include_recent_commits",
     "include_rules",

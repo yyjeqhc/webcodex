@@ -449,6 +449,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 deny_write_tools: false,
                 deny_shell_tools: false,
                 include_runtime_status: Some(false),
+                compact_startup: false,
                 include_git: Some(false),
                 include_recent_commits: Some(false),
                 include_rules: Some(false),

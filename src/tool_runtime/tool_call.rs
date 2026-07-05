@@ -72,6 +72,8 @@ pub enum ToolCall {
         #[serde(default)]
         include_runtime_status: Option<bool>,
         #[serde(default)]
+        compact_startup: bool,
+        #[serde(default)]
         include_git: Option<bool>,
         #[serde(default)]
         include_recent_commits: Option<bool>,

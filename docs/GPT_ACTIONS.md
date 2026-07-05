@@ -171,13 +171,15 @@ calling `callRuntimeTool`.
 
 1. Call `callRuntimeTool` with `start_coding_task`, `project`, and a short
    `title`; keep the returned explicit `session_id`. It accepts flattened
-   `include_tool_manifest`, `include_runtime_status`, `include_git`,
-   `include_recent_commits`, `include_rules`, `bind_current`,
+   `include_tool_manifest`, `include_runtime_status`, `compact_startup`,
+   `include_git`, `include_recent_commits`, `include_rules`, `bind_current`,
    `tool_manifest_categories`, and `tool_manifest_limit`. For startup, prefer
    bounded manifest categories such as `workflow`, `session`, `git`, `edit`,
    `artifact`, and `cleanup` instead of sending all tools into context. For
-   MCP direct and GPT Action lightweight sanity, use a compact startup/sanity
-   mode when the runtime exposes one. If no compact mode is available, a small
+   MCP direct and GPT Action lightweight sanity, pass
+   `include_runtime_status=true` with `compact_startup=true` to receive compact
+   runtime observability instead of the full `runtime_status` payload. If
+   compact startup is not available on an older runtime, a small
    `tool_manifest_limit` is still a reasonable bounded discovery shape.
 2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
    with `show_changes`.
@@ -405,12 +407,16 @@ agent-registered projects are available; prefer `projects.effective.status` and
 
 They must not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell `init_script` values.
 
-`start_coding_task(include_runtime_status=true)` can include non-secret
-observability metadata such as the public URL, tool names, agent policy summary,
-and allowed roots. Those fields are useful for deep troubleshooting, but they
-increase GPT Action response size. For lightweight sanity, prefer a compact
-runtime summary when available; otherwise keep manifest categories and limits
-small and reserve full `runtime_status` for investigation.
+`start_coding_task(include_runtime_status=true, compact_startup=true)` returns a
+compact runtime summary with build version/commit/dirty state, `tools.count`,
+`jobs.active_count`, `agents.summary`, and `projects.effective`,
+`projects.agent_registered`, and `projects.server_static` status/severity.
+It intentionally omits `tools.names`, full agent policy, `allowed_roots`, shell
+profile internals, command text, stdout/stderr, env values, tokens, secrets, and
+full config values. Full `start_coding_task(include_runtime_status=true)` remains
+available for deeper troubleshooting and can include non-secret observability
+metadata such as the public URL, tool names, agent policy summary, and allowed
+roots.
 
 ## Compatibility notes
 

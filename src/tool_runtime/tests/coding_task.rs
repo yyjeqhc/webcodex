@@ -1,10 +1,11 @@
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::shell_protocol::{AgentPolicySummary, ShellClientCapabilities};
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 use crate::tool_runtime::validation_parser::VALIDATION_OUTPUT_METADATA_ABSENT_REASON;
 use crate::tool_runtime::{is_known_tool_name, registered_tool_specs, SessionMode, ToolCall};
 use serde_json::{json, Value};
 use std::fs;
+use std::path::PathBuf;
 
 #[test]
 fn coding_task_tools_are_registered_in_metadata_and_openapi() {
@@ -65,6 +66,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     let properties = tool_call["properties"].as_object().unwrap();
     for field in [
         "include_runtime_status",
+        "compact_startup",
         "include_git",
         "include_recent_commits",
         "include_rules",
@@ -125,6 +127,7 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
                         deny_write_tools: false,
                         deny_shell_tools: false,
                         include_runtime_status: Some(false),
+                        compact_startup: false,
                         include_git: Some(true),
                         include_recent_commits: Some(true),
                         include_rules: Some(true),
@@ -254,6 +257,11 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
         .as_array()
         .unwrap()
         .iter()
+        .any(|field| field == "compact_startup"));
+    assert!(start_tool["accepted_flattened_args"]
+        .as_array()
+        .unwrap()
+        .iter()
         .any(|field| field == "tool_manifest_categories"));
     assert!(start_tool["accepted_flattened_args"]
         .as_array()
@@ -290,6 +298,7 @@ async fn start_coding_task_can_omit_compact_tool_manifest() {
                 deny_write_tools: false,
                 deny_shell_tools: false,
                 include_runtime_status: Some(false),
+                compact_startup: false,
                 include_git: Some(false),
                 include_recent_commits: Some(false),
                 include_rules: Some(false),
@@ -307,6 +316,146 @@ async fn start_coding_task_can_omit_compact_tool_manifest() {
         result.output.get("tool_manifest").is_none(),
         "include_tool_manifest=false should omit compact manifest"
     );
+}
+
+#[tokio::test]
+async fn start_coding_task_runtime_status_defaults_to_full_output() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let runtime = test_runtime();
+    let policy = AgentPolicySummary {
+        allowed_roots: vec![PathBuf::from("/tmp/startup-full-allowed-root")],
+        ..Default::default()
+    };
+    register_agent_with_shell_profiles(
+        &runtime,
+        "coding-full-status",
+        Some(policy),
+        vec![registered_project("demo", &tmp.path().to_string_lossy())],
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let project = "agent:coding-full-status:demo".to_string();
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_coding_task",
+                json!({
+                    "project": project,
+                    "include_runtime_status": true,
+                    "include_git": false,
+                    "include_recent_commits": false,
+                    "include_rules": false,
+                    "include_tool_manifest": false
+                }),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let runtime_status = &result.output["runtime_status"];
+    assert!(runtime_status["tools"]["names"].is_array());
+    assert!(runtime_status["configured_public_url"].is_null());
+    assert_eq!(
+        runtime_status["agents"]["clients"][0]["policy"]["allowed_roots"][0],
+        "/tmp/startup-full-allowed-root"
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_compact_startup_returns_sanitized_runtime_summary() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let runtime = test_runtime();
+    let policy = AgentPolicySummary {
+        allowed_roots: vec![PathBuf::from("/tmp/compact-allowed-root-never-emit")],
+        ..Default::default()
+    };
+    register_agent_with_shell_profiles(
+        &runtime,
+        "coding-compact-status",
+        Some(policy),
+        vec![registered_project("demo", &tmp.path().to_string_lossy())],
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let project = "agent:coding-compact-status:demo".to_string();
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_coding_task",
+                json!({
+                    "project": project,
+                    "include_runtime_status": true,
+                    "compact_startup": true,
+                    "include_git": false,
+                    "include_recent_commits": false,
+                    "include_rules": false,
+                    "include_tool_manifest": false
+                }),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let summary = &result.output["runtime_status"];
+    assert_eq!(summary["compact"], true);
+    assert_eq!(summary["build"]["version"], env!("CARGO_PKG_VERSION"));
+    assert!(summary["build"].get("git_commit").is_some());
+    assert!(summary["build"].get("git_dirty").is_some());
+    assert!(summary["tools"]["count"].as_u64().unwrap() > 0);
+    assert!(summary["tools"].get("names").is_none());
+    assert_eq!(summary["jobs"]["active_count"], 0);
+    assert!(summary["agents"]["summary"].is_object());
+    assert_eq!(summary["agents"]["summary"]["count"], 1);
+    assert_eq!(summary["agents"]["summary"]["online"], 1);
+    assert_eq!(
+        summary["agents"]["summary"]["clients"][0]["client_id"],
+        "coding-compact-status"
+    );
+    assert_eq!(
+        summary["agents"]["summary"]["clients"][0]["status"],
+        "online"
+    );
+    assert_eq!(
+        summary["agents"]["summary"]["clients"][0]["transport"],
+        "polling"
+    );
+    assert_eq!(
+        summary["agents"]["summary"]["clients"][0]["projects_count"],
+        1
+    );
+    assert_eq!(summary["projects"]["effective"]["status"], "ok");
+    assert_eq!(summary["projects"]["effective"]["count"], 1);
+    assert_eq!(summary["projects"]["agent_registered"]["count"], 1);
+    assert_eq!(summary["projects"]["agent_registered"]["online_count"], 1);
+    assert!(summary["projects"]["server_static"]["severity"].is_string());
+    assert!(summary["projects"]["server_static"]["status"].is_string());
+
+    let serialized = serde_json::to_string(summary).unwrap();
+    for forbidden in [
+        "tools.names",
+        "policy",
+        "allowed_roots",
+        "compact-allowed-root-never-emit",
+        "stdout",
+        "stderr",
+        "command",
+        "env",
+        "token",
+        "secret",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "compact startup leaked {forbidden}: {serialized}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -394,8 +543,18 @@ async fn start_coding_task_manifest_limit_truncates_filtered_entries() {
     assert_eq!(manifest["filtered"], true);
     assert_eq!(manifest["limit"], 2);
     assert_eq!(manifest["truncated"], true);
+    assert_eq!(manifest["truncation_reason"], "limit");
+    assert_eq!(manifest["limit_applied"], true);
+    assert_eq!(manifest["requested_limit"], 2);
     assert_eq!(manifest["count"], 2);
+    assert_eq!(manifest["returned_count"], 2);
+    assert!(
+        manifest["total_count"].as_u64().unwrap() >= manifest["filtered_count"].as_u64().unwrap()
+    );
     assert!(manifest["filtered_count"].as_u64().unwrap() > 2);
+    assert!(!serde_json::to_string(manifest)
+        .unwrap()
+        .contains("ResponseTooLarge"));
     assert!(manifest["tools"]
         .as_array()
         .unwrap()
@@ -425,6 +584,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
                 deny_write_tools: false,
                 deny_shell_tools: false,
                 include_runtime_status: Some(false),
+                compact_startup: false,
                 include_git: Some(false),
                 include_recent_commits: Some(false),
                 include_rules: Some(false),
@@ -640,6 +800,7 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
                 deny_write_tools: false,
                 deny_shell_tools: false,
                 include_runtime_status: Some(false),
+                compact_startup: false,
                 include_git: Some(false),
                 include_recent_commits: Some(false),
                 include_rules: Some(false),
@@ -765,6 +926,7 @@ async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
                 deny_write_tools: false,
                 deny_shell_tools: false,
                 include_runtime_status: Some(false),
+                compact_startup: false,
                 include_git: Some(false),
                 include_recent_commits: Some(false),
                 include_rules: Some(false),

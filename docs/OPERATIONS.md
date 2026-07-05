@@ -382,15 +382,18 @@ For bounded startup context, keep `include_tool_manifest=true` but pass
 the limit to 1..100 and reports whether the compact manifest was truncated. A
 limit-driven `truncated=true` is expected bounded output, not `ResponseTooLarge`;
 acceptance scripts should inspect the explicit limit and returned/total counts,
-plus `truncation_reason` or `limit_applied` when present.
+plus `truncation_reason="limit"`, `limit_applied=true`, `requested_limit`,
+`returned_count`, and `total_count`.
 
-For lightweight MCP direct or GPT Action sanity, prefer compact startup/sanity
-output when the runtime exposes it. If compact output is not available, use a
-small `tool_manifest_limit` instead of requesting the full manifest. Full
-`include_runtime_status=true` can include non-secret observability details such
-as the public URL, tool names, agent policy summary, and allowed roots, so keep
-it for deeper troubleshooting when a compact runtime summary is enough for
-sanity.
+For lightweight MCP direct or GPT Action sanity, pass
+`include_runtime_status=true` and `compact_startup=true`. Compact startup returns
+build version/commit/dirty state, `tools.count`, `jobs.active_count`,
+`agents.summary`, and effective/agent/server project status without `tools.names`,
+full agent policy, `allowed_roots`, shell profile internals, command text,
+stdout/stderr, env values, tokens, secrets, or full config values. Full
+`include_runtime_status=true` without `compact_startup` remains available for
+deeper troubleshooting and can include non-secret observability details such as
+the public URL, tool names, agent policy summary, and allowed roots.
 
 The response also includes `output.permissions`. The current self-hosted
 development profile is `policy=dev_auto_approve`, `auto_approve=true`, and
@@ -644,12 +647,13 @@ After deploying a new server, agent, or runtime build:
 2. Run `tool_manifest` or focused `list_tools` with `summary_only=true` plus
    `category`, `features`, or `limit`; avoid full `listRuntimeTools` in GPT
    Actions unless debugging schemas. If `truncated=true` is caused by the
-   caller-supplied limit, treat it as a bounded response rather than
-   `ResponseTooLarge`.
+   caller-supplied limit, `truncation_reason="limit"` confirms it is a bounded
+   response rather than `ResponseTooLarge`.
 3. Run `runtime_status`; prefer `projects.effective.status/count` over legacy
    `projects.count` when `projects.toml` is not configured but agent projects
-   are registered. For lightweight sanity, use compact runtime observability
-   when available and reserve full runtime status for deeper troubleshooting.
+   are registered. For lightweight sanity, prefer
+   `start_coding_task(include_runtime_status=true, compact_startup=true)` and
+   reserve full runtime status for deeper troubleshooting.
 4. Confirm `start_coding_task` and `finish_coding_task` are available through
    the generic runtime tool path.
 5. Confirm `session_handoff_summary` exposes `validation` when

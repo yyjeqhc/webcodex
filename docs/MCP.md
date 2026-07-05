@@ -96,6 +96,9 @@ debugging runtime schemas.
 args as well: each compact entry includes `accepted_flattened_args` and
 `deprecated_or_unsupported_args` without full input/output schemas. The manifest
 accepts `category`, `include_recommended_flows`, and `include_risk_summary`.
+When `tool_manifest_limit` or a focused `limit` produces `truncated=true`,
+`truncation_reason="limit"` marks it as caller-bounded output, not
+`ResponseTooLarge`.
 
 For smoke project selection, call `list_projects` and prefer
 entries in `projects` whose `capabilities.recommended_for_smoke=true`. The
@@ -186,7 +189,12 @@ automatically bind future calls. `start_coding_task` defaults
 `include_tool_manifest=false`; subsequent MCP calls should pass the returned
 explicit `session_id`. To keep startup context bounded, pass
 `tool_manifest_categories` such as `workflow`, `session`, `git`, `edit`,
-`artifact`, and `cleanup`, plus `tool_manifest_limit` when useful. When session
+`artifact`, and `cleanup`, plus `tool_manifest_limit` when useful. For
+lightweight MCP sanity, pass `include_runtime_status=true` and
+`compact_startup=true`; this returns compact runtime observability with build,
+tool count, active job count, agent health, and project status while omitting
+tool names, full agent policy, allowed roots, shell profile internals, command
+text, stdout/stderr, env values, tokens, and secrets. When session
 persistence is configured, session records,
 events, and messages may be persisted and restored through the `sessions.json`
 ledger.

@@ -29,7 +29,6 @@ const RULES_MAX_HEADINGS: usize = 8;
 const RULES_MAX_FIRST_LINES: usize = 5;
 const RULES_MAX_LINE_CHARS: usize = 180;
 const FINISH_SESSION_EVENT_LIMIT: usize = 200;
-const START_TOOL_MANIFEST_LIMIT_MAX: usize = 100;
 
 impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
@@ -41,6 +40,7 @@ impl ToolRuntime {
         deny_write_tools: bool,
         deny_shell_tools: bool,
         include_runtime_status: Option<bool>,
+        compact_startup: bool,
         include_git: Option<bool>,
         include_recent_commits: Option<bool>,
         include_rules: Option<bool>,
@@ -137,7 +137,11 @@ impl ToolRuntime {
                     "message": result.error,
                 }));
             }
-            result.output
+            if compact_startup {
+                compact_startup_runtime_status(&result.output)
+            } else {
+                result.output
+            }
         } else {
             Value::Null
         };
@@ -179,7 +183,7 @@ impl ToolRuntime {
         if include_tool_manifest {
             output["tool_manifest"] = self.compact_tool_manifest_payload_bounded(
                 tool_manifest_categories,
-                tool_manifest_limit.map(|limit| limit.clamp(1, START_TOOL_MANIFEST_LIMIT_MAX)),
+                tool_manifest_limit,
             );
         }
         ToolResult::ok(output)
@@ -459,6 +463,46 @@ fn rules_summary(snapshot: Option<&ProjectInstructionsSnapshot>) -> Value {
             "no project instruction source loaded from the fixed candidate list"
         },
         "note": snapshot.note.clone(),
+    })
+}
+
+fn compact_startup_runtime_status(status: &Value) -> Value {
+    json!({
+        "compact": true,
+        "build": {
+            "version": status.get("version").cloned().unwrap_or(Value::Null),
+            "git_commit": status.pointer("/build/git_commit").cloned().unwrap_or(Value::Null),
+            "git_dirty": status.pointer("/build/git_dirty").cloned().unwrap_or(Value::Null),
+        },
+        "tools": {
+            "count": status.pointer("/tools/count").cloned().unwrap_or(Value::Null),
+        },
+        "jobs": {
+            "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
+        },
+        "agents": {
+            "summary": status.pointer("/agents/summary").cloned().unwrap_or_else(|| json!({
+                "count": 0,
+                "online": 0,
+                "offline": 0,
+                "stale": 0,
+                "clients": [],
+            })),
+        },
+        "projects": {
+            "effective": status.pointer("/projects/effective").cloned().unwrap_or_else(|| json!({
+                "count": 0,
+                "status": "unknown",
+            })),
+            "agent_registered": status.pointer("/projects/agent_registered").cloned().unwrap_or_else(|| json!({
+                "count": 0,
+                "online_count": 0,
+            })),
+            "server_static": {
+                "status": status.pointer("/projects/server_static/status").cloned().unwrap_or(Value::Null),
+                "severity": status.pointer("/projects/server_static/severity").cloned().unwrap_or(Value::Null),
+            },
+        },
     })
 }
 

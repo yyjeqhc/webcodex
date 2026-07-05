@@ -74,11 +74,11 @@ impl ToolDefinition {
     }
 
     pub(crate) fn requires_session_project_escape(self) -> bool {
-        !self.metadata.read_only || self.metadata.destructive || self.metadata.shell_like
+        metadata_requires_write_or_shell_boundary(self.metadata)
     }
 
     pub(crate) fn requires_permission(self) -> bool {
-        !self.metadata.read_only || self.metadata.destructive || self.metadata.shell_like
+        metadata_requires_write_or_shell_boundary(self.metadata)
     }
 
     pub(crate) fn permission_risk(self) -> &'static str {
@@ -119,6 +119,10 @@ fn fallback_permission_risk(name: &str, metadata: ToolMetadata) -> &'static str 
         return "patch";
     }
     permission_risk_from_metadata(metadata)
+}
+
+fn metadata_requires_write_or_shell_boundary(metadata: ToolMetadata) -> bool {
+    !metadata.read_only || metadata.destructive || metadata.shell_like
 }
 
 pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefinition> {
@@ -222,19 +226,13 @@ pub(crate) fn runtime_tool_allows_current_session_fallback(name: &str) -> bool {
 pub(crate) fn runtime_tool_requires_session_project_escape(name: &str) -> bool {
     lookup_tool_definition(name)
         .map(|definition| definition.requires_session_project_escape())
-        .unwrap_or_else(|| {
-            let metadata = fallback_tool_metadata(name);
-            !metadata.read_only || metadata.destructive || metadata.shell_like
-        })
+        .unwrap_or_else(|| metadata_requires_write_or_shell_boundary(fallback_tool_metadata(name)))
 }
 
 pub(crate) fn runtime_tool_requires_permission(name: &str) -> bool {
     lookup_tool_definition(name)
         .map(|definition| definition.requires_permission())
-        .unwrap_or_else(|| {
-            let metadata = fallback_tool_metadata(name);
-            !metadata.read_only || metadata.destructive || metadata.shell_like
-        })
+        .unwrap_or_else(|| metadata_requires_write_or_shell_boundary(fallback_tool_metadata(name)))
 }
 
 pub(crate) fn runtime_tool_permission_risk(name: &str) -> &'static str {

@@ -9,6 +9,7 @@
 
 mod checkpoints;
 mod current_sessions;
+mod discovery;
 mod hygiene;
 mod sessions;
 
@@ -170,6 +171,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     hygiene::DEFINITIONS,
     current_sessions::DEFINITIONS,
     checkpoints::DEFINITIONS,
+    discovery::DEFINITIONS,
     TOOL_DEFINITION_TAIL,
 ];
 
@@ -188,84 +190,6 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
 )];
 
 const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
-    def(
-        "list_projects",
-        ModelVisible,
-        "project",
-        None,
-        "control",
-        ReadOnly,
-        Some(PROJECT_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "register_project",
-        ModelVisible,
-        "project",
-        None,
-        "control",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        false,
-        NoPath,
-        true,
-        false,
-    ),
-    def(
-        "create_project",
-        ModelVisible,
-        "project",
-        None,
-        "control",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        false,
-        NoPath,
-        true,
-        false,
-    ),
-    def(
-        "list_agents",
-        ModelVisible,
-        "runtime",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "runtime_status",
-        ModelVisible,
-        "runtime",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "tool_manifest",
-        ModelVisible,
-        "runtime",
-        None,
-        "control",
-        ReadOnly,
-        Some(RUNTIME_READ),
-        false,
-        NoPath,
-        false,
-        false,
-    ),
     def(
         "run_shell",
         ModelVisible,

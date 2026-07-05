@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+mod checkpoints;
 mod discovery;
 mod jobs;
 mod sessions;
@@ -12,19 +13,18 @@ use super::input_schemas::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
-    checkpoint_create_input_schema, checkpoint_delete_input_schema, checkpoint_list_input_schema,
-    checkpoint_restore_input_schema, checkpoint_show_input_schema, delete_line_range_input_schema,
-    delete_project_files_input_schema, discard_untracked_input_schema,
-    finish_coding_task_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
-    git_diff_summary_input_schema, git_log_input_schema, git_restore_paths_input_schema,
-    git_status_input_schema, insert_after_pattern_input_schema, insert_at_line_input_schema,
-    insert_before_pattern_input_schema, list_project_files_input_schema, read_file_input_schema,
-    read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
-    replace_exact_block_input_schema, replace_in_file_input_schema,
-    replace_line_range_input_schema, save_project_artifact_input_schema,
-    search_project_text_input_schema, show_changes_input_schema, start_coding_task_input_schema,
-    validate_patch_input_schema, with_common_testing_metadata,
-    workspace_hygiene_check_input_schema, write_project_file_input_schema,
+    delete_line_range_input_schema, delete_project_files_input_schema,
+    discard_untracked_input_schema, finish_coding_task_input_schema, git_diff_hunks_input_schema,
+    git_diff_input_schema, git_diff_summary_input_schema, git_log_input_schema,
+    git_restore_paths_input_schema, git_status_input_schema, insert_after_pattern_input_schema,
+    insert_at_line_input_schema, insert_before_pattern_input_schema,
+    list_project_files_input_schema, read_file_input_schema, read_project_artifact_input_schema,
+    read_project_artifact_metadata_input_schema, replace_exact_block_input_schema,
+    replace_in_file_input_schema, replace_line_range_input_schema,
+    save_project_artifact_input_schema, search_project_text_input_schema,
+    show_changes_input_schema, start_coding_task_input_schema, validate_patch_input_schema,
+    with_common_testing_metadata, workspace_hygiene_check_input_schema,
+    write_project_file_input_schema,
 };
 use super::{output_schema_for_tool, tool_annotations};
 
@@ -33,6 +33,7 @@ impl ToolRuntime {
         let mut declarations = discovery::tool_specs();
         declarations.extend(sessions::tool_specs());
         declarations.extend(jobs::tool_specs());
+        declarations.extend(checkpoints::tool_specs());
         declarations.extend(vec![
             tool_spec(
                 "start_coding_task",
@@ -48,31 +49,6 @@ impl ToolRuntime {
                 "workspace_hygiene_check",
                 "Default pre-final workspace hygiene review; read-only. Detects dirty worktree, untracked temp/smoke files, cache dirs, secret-like names, and large untracked files before validation or handoff. Never reads file contents.",
                 workspace_hygiene_check_input_schema(),
-            ),
-            tool_spec(
-                "workspace_checkpoint_create",
-                "Create a bounded workspace checkpoint outside the project worktree. Captures HEAD, status, text diffs, and optional small untracked text files.",
-                checkpoint_create_input_schema(),
-            ),
-            tool_spec(
-                "workspace_checkpoint_list",
-                "List checkpoint metadata for a project without returning full diffs or saved file content.",
-                checkpoint_list_input_schema(),
-            ),
-            tool_spec(
-                "workspace_checkpoint_show",
-                "Show bounded checkpoint metadata, file list, skipped files, and optional diff stat. Does not return full diff/content by default.",
-                checkpoint_show_input_schema(),
-            ),
-            tool_spec(
-                "workspace_checkpoint_restore",
-                "Restore a checkpoint after confirm=true. Requires matching HEAD and refuses unsafe current state rather than half-restoring.",
-                checkpoint_restore_input_schema(),
-            ),
-            tool_spec(
-                "workspace_checkpoint_delete",
-                "Delete one checkpoint JSON file after confirm=true. Does not touch the project worktree.",
-                checkpoint_delete_input_schema(),
             ),
             tool_spec(
                 "list_project_files",

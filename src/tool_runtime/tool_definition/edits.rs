@@ -1,6 +1,6 @@
 use super::AgentCapability::FileWrite;
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition};
+use super::{def, ToolDefinition, TOOL_CATEGORY_EDIT};
 use crate::tool_runtime::metadata::{
     ToolPathHint::SinglePath, ToolRisk::ProjectWrite, PROJECT_WRITE,
 };
@@ -9,7 +9,7 @@ pub(super) const COMPATIBILITY_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "replace_in_file",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -22,7 +22,7 @@ pub(super) const COMPATIBILITY_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "replace_exact_block",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -35,7 +35,7 @@ pub(super) const COMPATIBILITY_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "insert_before_pattern",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -48,7 +48,7 @@ pub(super) const COMPATIBILITY_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "insert_after_pattern",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -61,7 +61,7 @@ pub(super) const COMPATIBILITY_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "write_project_file",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -77,7 +77,7 @@ pub(super) const LINE_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "replace_line_range",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -90,7 +90,7 @@ pub(super) const LINE_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "insert_at_line",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -103,7 +103,7 @@ pub(super) const LINE_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "delete_line_range",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -116,7 +116,7 @@ pub(super) const LINE_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "apply_text_edits",
         ModelVisible,
-        "edit",
+        TOOL_CATEGORY_EDIT,
         Some(FileWrite),
         "agent",
         ProjectWrite,

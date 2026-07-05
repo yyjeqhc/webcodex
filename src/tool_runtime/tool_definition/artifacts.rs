@@ -1,6 +1,6 @@
 use super::AgentCapability::{FileRead, FileWrite};
 use super::ToolVisibility::ModelVisible;
-use super::{def, requires_artifact_upload_path_binding, ToolDefinition};
+use super::{def, requires_artifact_upload_path_binding, ToolDefinition, TOOL_CATEGORY_ARTIFACT};
 use crate::tool_runtime::metadata::{
     ToolPathHint::Artifact,
     ToolRisk::{ProjectWrite, ReadOnly},
@@ -11,7 +11,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "save_project_artifact",
         ModelVisible,
-        "artifact",
+        TOOL_CATEGORY_ARTIFACT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -24,7 +24,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "read_project_artifact_metadata",
         ModelVisible,
-        "artifact",
+        TOOL_CATEGORY_ARTIFACT,
         Some(FileRead),
         "agent",
         ReadOnly,
@@ -37,7 +37,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "read_project_artifact",
         ModelVisible,
-        "artifact",
+        TOOL_CATEGORY_ARTIFACT,
         Some(FileRead),
         "agent",
         ReadOnly,
@@ -50,7 +50,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "artifact_upload_begin",
         ModelVisible,
-        "artifact",
+        TOOL_CATEGORY_ARTIFACT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -63,7 +63,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_artifact_upload_path_binding(def(
         "artifact_upload_chunk",
         ModelVisible,
-        "artifact",
+        TOOL_CATEGORY_ARTIFACT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -76,7 +76,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_artifact_upload_path_binding(def(
         "artifact_upload_finish",
         ModelVisible,
-        "artifact",
+        TOOL_CATEGORY_ARTIFACT,
         Some(FileWrite),
         "agent",
         ProjectWrite,
@@ -89,7 +89,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_artifact_upload_path_binding(def(
         "artifact_upload_abort",
         ModelVisible,
-        "artifact",
+        TOOL_CATEGORY_ARTIFACT,
         Some(FileWrite),
         "agent",
         ProjectWrite,

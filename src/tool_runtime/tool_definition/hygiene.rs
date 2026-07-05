@@ -1,6 +1,6 @@
 use super::AgentCapability::{GitOrShell, Shell};
 use super::ToolVisibility::ModelVisible;
-use super::{def, git_like, ToolDefinition};
+use super::{def, git_like, ToolDefinition, TOOL_CATEGORY_CLEANUP};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, PathList},
     ToolRisk::{ProjectWrite, ReadOnly},
@@ -10,7 +10,7 @@ use crate::tool_runtime::metadata::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[def(
     "workspace_hygiene_check",
     ModelVisible,
-    "cleanup",
+    TOOL_CATEGORY_CLEANUP,
     Some(GitOrShell),
     "agent",
     ReadOnly,
@@ -25,7 +25,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "delete_project_files",
         ModelVisible,
-        "cleanup",
+        TOOL_CATEGORY_CLEANUP,
         Some(Shell),
         "agent",
         ProjectWrite,
@@ -38,7 +38,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     git_like(def(
         "git_restore_paths",
         ModelVisible,
-        "cleanup",
+        TOOL_CATEGORY_CLEANUP,
         Some(Shell),
         "agent",
         ProjectWrite,
@@ -51,7 +51,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     git_like(def(
         "discard_untracked",
         ModelVisible,
-        "cleanup",
+        TOOL_CATEGORY_CLEANUP,
         Some(Shell),
         "agent",
         ProjectWrite,

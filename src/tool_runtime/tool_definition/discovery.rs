@@ -1,5 +1,5 @@
 use super::ToolVisibility::ModelVisible;
-use super::{def, unit_arguments, ToolDefinition};
+use super::{def, unit_arguments, ToolDefinition, TOOL_CATEGORY_PROJECT, TOOL_CATEGORY_RUNTIME};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{ProjectWrite, ReadOnly},
@@ -10,7 +10,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     unit_arguments(def(
         "list_projects",
         ModelVisible,
-        "project",
+        TOOL_CATEGORY_PROJECT,
         None,
         "control",
         ReadOnly,
@@ -23,7 +23,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "register_project",
         ModelVisible,
-        "project",
+        TOOL_CATEGORY_PROJECT,
         None,
         "control",
         ProjectWrite,
@@ -36,7 +36,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "create_project",
         ModelVisible,
-        "project",
+        TOOL_CATEGORY_PROJECT,
         None,
         "control",
         ProjectWrite,
@@ -49,7 +49,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     unit_arguments(def(
         "list_agents",
         ModelVisible,
-        "runtime",
+        TOOL_CATEGORY_RUNTIME,
         None,
         "control",
         ReadOnly,
@@ -62,7 +62,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     unit_arguments(def(
         "runtime_status",
         ModelVisible,
-        "runtime",
+        TOOL_CATEGORY_RUNTIME,
         None,
         "control",
         ReadOnly,
@@ -75,7 +75,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "tool_manifest",
         ModelVisible,
-        "runtime",
+        TOOL_CATEGORY_RUNTIME,
         None,
         "control",
         ReadOnly,

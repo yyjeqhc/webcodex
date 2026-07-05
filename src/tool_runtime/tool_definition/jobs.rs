@@ -1,6 +1,8 @@
 use super::AgentCapability::{AsyncJobs, Shell};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
-use super::{def, disabled, permission_risk, ToolDefinition};
+use super::{
+    def, disabled, permission_risk, ToolDefinition, TOOL_CATEGORY_CODEX, TOOL_CATEGORY_JOB,
+};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, ReadOnly},
@@ -12,7 +14,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "run_shell",
         ModelVisible,
-        "job",
+        TOOL_CATEGORY_JOB,
         Some(Shell),
         "agent",
         JobRun,
@@ -26,7 +28,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "run_job",
             ModelVisible,
-            "job",
+            TOOL_CATEGORY_JOB,
             Some(AsyncJobs),
             "agent",
             JobRun,
@@ -36,13 +38,13 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             true,
             true,
         ),
-        "job",
+        TOOL_CATEGORY_JOB,
     ),
     permission_risk(
         def(
             "stop_job",
             ModelVisible,
-            "job",
+            TOOL_CATEGORY_JOB,
             None,
             "native",
             JobRun,
@@ -59,7 +61,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "run_codex",
                 ModelHidden,
-                "codex",
+                TOOL_CATEGORY_CODEX,
                 Some(AsyncJobs),
                 "agent",
                 JobRun,
@@ -69,14 +71,14 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 true,
             ),
-            "job",
+            TOOL_CATEGORY_JOB,
         ),
         RUN_CODEX_DISABLED_MESSAGE,
     ),
     def(
         "job_status",
         ModelVisible,
-        "job",
+        TOOL_CATEGORY_JOB,
         None,
         "native",
         ReadOnly,
@@ -89,7 +91,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "job_log",
         ModelVisible,
-        "job",
+        TOOL_CATEGORY_JOB,
         None,
         "native",
         ReadOnly,
@@ -105,7 +107,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "list_jobs",
         ModelVisible,
-        "job",
+        TOOL_CATEGORY_JOB,
         None,
         "native",
         ReadOnly,
@@ -118,7 +120,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "job_tail",
         ModelVisible,
-        "job",
+        TOOL_CATEGORY_JOB,
         None,
         "native",
         ReadOnly,

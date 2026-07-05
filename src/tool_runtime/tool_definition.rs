@@ -125,6 +125,20 @@ pub(crate) struct ToolDefinition {
     pub(crate) agent_capability: Option<AgentCapability>,
 }
 
+pub(crate) const TOOL_CATEGORY_ARTIFACT: &str = "artifact";
+pub(crate) const TOOL_CATEGORY_CHECKPOINT: &str = "checkpoint";
+pub(crate) const TOOL_CATEGORY_CLEANUP: &str = "cleanup";
+pub(crate) const TOOL_CATEGORY_CODEX: &str = "codex";
+pub(crate) const TOOL_CATEGORY_EDIT: &str = "edit";
+pub(crate) const TOOL_CATEGORY_FILE: &str = "file";
+pub(crate) const TOOL_CATEGORY_GIT: &str = "git";
+pub(crate) const TOOL_CATEGORY_JOB: &str = "job";
+pub(crate) const TOOL_CATEGORY_PATCH: &str = "patch";
+pub(crate) const TOOL_CATEGORY_PROJECT: &str = "project";
+pub(crate) const TOOL_CATEGORY_RUNTIME: &str = "runtime";
+pub(crate) const TOOL_CATEGORY_SESSION: &str = "session";
+pub(crate) const TOOL_CATEGORY_VALIDATION: &str = "validation";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolDefinitionPolicy {
     pub(crate) change_summary_like: bool,

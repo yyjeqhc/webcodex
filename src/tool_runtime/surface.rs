@@ -9,7 +9,9 @@ use super::registry::accepted_flattened_args_for_spec;
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
     is_model_visible_tool_name, runtime_tool_category, runtime_tool_metadata,
-    TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
+    TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT, TOOL_CATEGORY_GIT, TOOL_CATEGORY_PATCH,
+    TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION, TOOL_DISCOVERY_GROUPS,
+    TOOL_RECOMMENDED_FLOWS,
 };
 use super::tool_inputs::ListToolsOptions;
 use super::tool_result::ToolResult;
@@ -329,18 +331,18 @@ fn list_tool_matches_feature(name: &str, feature: &str) -> bool {
         return true;
     }
     match feature {
-        "artifact" => category == "artifact",
+        "artifact" => category == TOOL_CATEGORY_ARTIFACT,
         "artifact_upload" | "upload" => name.starts_with("artifact_upload_"),
         "read" => {
             runtime_tool_metadata(name).read_only
                 || name.starts_with("read_")
                 || name.contains("_read_")
         }
-        "edit" => matches!(category, "edit" | "patch"),
-        "session" => category == "session",
-        "git" => category == "git",
-        "validation" => category == "validation",
-        "runtime" => category == "runtime",
+        "edit" => matches!(category, TOOL_CATEGORY_EDIT | TOOL_CATEGORY_PATCH),
+        "session" => category == TOOL_CATEGORY_SESSION,
+        "git" => category == TOOL_CATEGORY_GIT,
+        "validation" => category == TOOL_CATEGORY_VALIDATION,
+        "runtime" => category == TOOL_CATEGORY_RUNTIME,
         other => name.contains(other),
     }
 }

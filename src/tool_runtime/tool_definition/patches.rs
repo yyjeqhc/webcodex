@@ -1,6 +1,6 @@
 use super::AgentCapability::Shell;
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition};
+use super::{def, ToolDefinition, TOOL_CATEGORY_PATCH};
 use crate::tool_runtime::metadata::{
     ToolPathHint::Patch,
     ToolRisk::{ProjectWrite, ReadOnly},
@@ -11,7 +11,7 @@ pub(super) const APPLY_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "apply_patch",
         ModelVisible,
-        "patch",
+        TOOL_CATEGORY_PATCH,
         Some(Shell),
         "agent",
         ProjectWrite,
@@ -24,7 +24,7 @@ pub(super) const APPLY_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "apply_patch_checked",
         ModelVisible,
-        "patch",
+        TOOL_CATEGORY_PATCH,
         Some(Shell),
         "agent",
         ProjectWrite,
@@ -39,7 +39,7 @@ pub(super) const APPLY_DEFINITIONS: &[ToolDefinition] = &[
 pub(super) const VALIDATION_DEFINITIONS: &[ToolDefinition] = &[def(
     "validate_patch",
     ModelVisible,
-    "patch",
+    TOOL_CATEGORY_PATCH,
     Some(Shell),
     "agent",
     ReadOnly,

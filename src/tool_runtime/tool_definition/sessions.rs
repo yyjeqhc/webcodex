@@ -2,7 +2,7 @@ use super::AgentCapability::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{
     creates_or_binds_session, def, extra_accepted_flattened_args,
-    requires_explicit_business_session, ToolDefinition,
+    requires_explicit_business_session, ToolDefinition, TOOL_CATEGORY_SESSION,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::ReadOnly, RUNTIME_READ,
@@ -12,7 +12,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     creates_or_binds_session(def(
         "start_session",
         ModelVisible,
-        "session",
+        TOOL_CATEGORY_SESSION,
         None,
         "control",
         ReadOnly,
@@ -54,7 +54,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(def(
         "session_summary",
         ModelVisible,
-        "session",
+        TOOL_CATEGORY_SESSION,
         None,
         "control",
         ReadOnly,
@@ -67,7 +67,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(def(
         "post_session_message",
         ModelVisible,
-        "session",
+        TOOL_CATEGORY_SESSION,
         None,
         "control",
         ReadOnly,
@@ -80,7 +80,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(def(
         "list_session_messages",
         ModelVisible,
-        "session",
+        TOOL_CATEGORY_SESSION,
         None,
         "control",
         ReadOnly,
@@ -93,7 +93,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(def(
         "resolve_session_message",
         ModelVisible,
-        "session",
+        TOOL_CATEGORY_SESSION,
         None,
         "control",
         ReadOnly,
@@ -106,7 +106,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(def(
         "session_discussion_summary",
         ModelVisible,
-        "session",
+        TOOL_CATEGORY_SESSION,
         None,
         "control",
         ReadOnly,
@@ -119,7 +119,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(def(
         "session_handoff_summary",
         ModelVisible,
-        "session",
+        TOOL_CATEGORY_SESSION,
         None,
         "control",
         ReadOnly,

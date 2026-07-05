@@ -48,7 +48,7 @@ impl ToolRuntime {
     }
 
     pub(crate) fn list_tools_payload(&self, options: ListToolsOptions) -> Value {
-        let specs = self.tool_specs();
+        let specs = Self::registered_tool_specs();
         let total_count = specs.len();
         let filtered_indexes = list_tools_filtered_indexes(&specs, &options);
         let filtered_count = filtered_indexes.len();
@@ -171,7 +171,7 @@ impl ToolRuntime {
         include_recommended_flows: bool,
         include_risk_summary: bool,
     ) -> Value {
-        let specs = self.tool_specs();
+        let specs = Self::registered_tool_specs();
         let tool_count = specs.len();
         let categories_requested = normalize_tool_manifest_categories(categories);
         let category = categories_requested

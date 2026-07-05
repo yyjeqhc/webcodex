@@ -1,8 +1,6 @@
 //! Runtime tool lookup and policy helpers derived from ToolDefinition.
 
-use super::metadata::{
-    tool_metadata as fallback_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk,
-};
+use super::metadata::{tool_metadata, ToolMetadata, ToolPathHint, ToolRisk};
 use super::tool_definition::{
     tool_definitions, AgentCapability, ToolDefinition, PERMISSION_RISK_ARTIFACT_WRITE,
     PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL,
@@ -133,6 +131,17 @@ pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefiniti
     tool_definitions().find(|definition| definition.name == name)
 }
 
+fn definition_or_metadata_facade(name: &str) -> Result<&'static ToolDefinition, ToolMetadata> {
+    lookup_tool_definition(name).ok_or_else(|| fallback_metadata_for_non_runtime_name(name))
+}
+
+fn fallback_metadata_for_non_runtime_name(name: &str) -> ToolMetadata {
+    // Known runtime names must resolve through ToolDefinition. This metadata
+    // facade is only for the legacy dedicated `delete_files` HTTP route and for
+    // safe Unknown metadata on non-runtime names; ToolCall still rejects both.
+    tool_metadata(name)
+}
+
 /// Returns `true` if `name` is a recognized runtime tool name.
 #[cfg(test)]
 pub fn is_known_tool_name(name: &str) -> bool {
@@ -145,9 +154,10 @@ pub(crate) fn known_tool_names() -> impl Iterator<Item = &'static str> {
 }
 
 pub(crate) fn runtime_tool_metadata(name: &str) -> ToolMetadata {
-    lookup_tool_definition(name)
-        .map(|definition| definition.metadata())
-        .unwrap_or_else(|| fallback_tool_metadata(name))
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.metadata(),
+        Err(metadata) => metadata,
+    }
 }
 
 pub(crate) fn runtime_tool_agent_capability(name: &str) -> Option<AgentCapability> {
@@ -163,30 +173,31 @@ pub(crate) fn runtime_tool_category(name: &str) -> &'static str {
 }
 
 pub(crate) fn runtime_tool_session_risk_class(name: &str) -> &'static str {
-    lookup_tool_definition(name)
-        .map(|definition| definition.session_risk_class())
-        .unwrap_or_else(|| fallback_tool_metadata(name).risk.session_risk_class())
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.session_risk_class(),
+        Err(metadata) => metadata.risk.session_risk_class(),
+    }
 }
 
 pub(crate) fn runtime_tool_is_read_like(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.is_read_like())
-        .unwrap_or_else(|| fallback_tool_metadata(name).read_only)
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.is_read_like(),
+        Err(metadata) => metadata.read_only,
+    }
 }
 
 pub(crate) fn runtime_tool_is_write_like(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.is_write_like())
-        .unwrap_or_else(|| fallback_tool_metadata(name).risk == ToolRisk::ProjectWrite)
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.is_write_like(),
+        Err(metadata) => metadata.risk == ToolRisk::ProjectWrite,
+    }
 }
 
 pub(crate) fn runtime_tool_is_shell_like(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.is_shell_like())
-        .unwrap_or_else(|| {
-            let metadata = fallback_tool_metadata(name);
-            metadata.shell_like || metadata.risk == ToolRisk::JobRun
-        })
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.is_shell_like(),
+        Err(metadata) => metadata.shell_like || metadata.risk == ToolRisk::JobRun,
+    }
 }
 
 pub(crate) fn runtime_tool_is_git_like(name: &str) -> bool {
@@ -232,24 +243,24 @@ pub(crate) fn runtime_tool_allows_current_session_fallback(name: &str) -> bool {
 }
 
 pub(crate) fn runtime_tool_requires_session_project_escape(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.requires_session_project_escape())
-        .unwrap_or_else(|| metadata_requires_write_or_shell_boundary(fallback_tool_metadata(name)))
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.requires_session_project_escape(),
+        Err(metadata) => metadata_requires_write_or_shell_boundary(metadata),
+    }
 }
 
 pub(crate) fn runtime_tool_requires_permission(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.requires_permission())
-        .unwrap_or_else(|| metadata_requires_write_or_shell_boundary(fallback_tool_metadata(name)))
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.requires_permission(),
+        Err(metadata) => metadata_requires_write_or_shell_boundary(metadata),
+    }
 }
 
 pub(crate) fn runtime_tool_permission_risk(name: &str) -> &'static str {
-    lookup_tool_definition(name)
-        .map(|definition| definition.permission_risk())
-        .unwrap_or_else(|| {
-            let metadata = fallback_tool_metadata(name);
-            fallback_permission_risk(name, metadata)
-        })
+    match definition_or_metadata_facade(name) {
+        Ok(definition) => definition.permission_risk(),
+        Err(metadata) => fallback_permission_risk(name, metadata),
+    }
 }
 
 pub(crate) fn is_model_visible_tool_name(name: &str) -> bool {

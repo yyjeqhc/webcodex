@@ -1128,6 +1128,39 @@ fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
 }
 
 #[test]
+fn tool_policy_metadata_fallback_boundary_is_named_and_isolated() {
+    let source = include_str!("../../tool_policy.rs");
+
+    for phrase in [
+        "fn definition_or_metadata_facade",
+        "fn fallback_metadata_for_non_runtime_name",
+        "legacy dedicated `delete_files` HTTP route",
+        "safe Unknown metadata",
+        "ToolCall still rejects both",
+    ] {
+        assert!(
+            source.contains(phrase),
+            "tool_policy fallback boundary should document {phrase}"
+        );
+    }
+    assert!(
+        source.contains(
+            "lookup_tool_definition(name).ok_or_else(|| fallback_metadata_for_non_runtime_name(name))"
+        ),
+        "metadata fallback must be reached only after ToolDefinition lookup misses"
+    );
+    assert_eq!(
+        source.matches("tool_metadata(name)").count(),
+        1,
+        "only fallback_metadata_for_non_runtime_name should call the metadata facade directly"
+    );
+    assert!(
+        !source.contains("fallback_tool_metadata"),
+        "metadata fallback should use the named boundary, not scattered aliases"
+    );
+}
+
+#[test]
 fn tool_definition_legacy_metadata_fallbacks_are_explicit_and_reasoned() {
     let metadata_only_names = crate::tool_runtime::metadata::iter_tool_metadata()
         .filter(|metadata| !is_known_tool_name(metadata.name))

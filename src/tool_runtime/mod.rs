@@ -5,6 +5,7 @@
 
 mod agent_authorization;
 mod cargo;
+mod cargo_tools;
 mod checkpoint;
 mod codex;
 mod coding_task;

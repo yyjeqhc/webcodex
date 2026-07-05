@@ -551,65 +551,9 @@ impl ToolRuntime {
                     .await
             }
 
-            ToolCall::CargoFmt {
-                project,
-                session_id: _,
-                cwd,
-                check,
-                timeout_secs,
-            } => self.cargo_fmt(project, cwd, check, timeout_secs).await,
-
-            ToolCall::CargoCheck {
-                project,
-                session_id: _,
-                cwd,
-                all_targets,
-                all_features,
-                no_default_features,
-                features,
-                package,
-                timeout_secs,
-            } => {
-                self.cargo_check(
-                    project,
-                    cwd,
-                    all_targets,
-                    all_features,
-                    no_default_features,
-                    features,
-                    package,
-                    timeout_secs,
-                )
-                .await
-            }
-
-            ToolCall::CargoTest {
-                project,
-                session_id: _,
-                cwd,
-                filter,
-                all_targets,
-                all_features,
-                no_default_features,
-                features,
-                package,
-                no_run,
-                timeout_secs,
-            } => {
-                self.cargo_test(
-                    project,
-                    cwd,
-                    filter,
-                    all_targets,
-                    all_features,
-                    no_default_features,
-                    features,
-                    package,
-                    no_run,
-                    timeout_secs,
-                )
-                .await
-            }
+            call @ (ToolCall::CargoFmt { .. }
+            | ToolCall::CargoCheck { .. }
+            | ToolCall::CargoTest { .. }) => self.dispatch_cargo_tool(call).await,
 
             call @ (ToolCall::RunJob { .. }
             | ToolCall::StopJob { .. }

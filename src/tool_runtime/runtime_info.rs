@@ -1,6 +1,7 @@
 //! Runtime observability metadata injected into `ToolRuntime`.
 
 use super::helpers::normalize_local_status;
+use super::jobs::local_jobs_visible_to_auth;
 use super::local_jobs::ACTIVE_JOB_STATUSES;
 use super::registry::registered_tool_specs;
 use super::{permissions, ToolResult, ToolRuntime};
@@ -208,7 +209,7 @@ impl ToolRuntime {
         // in-memory map. Active = running/queued/agent_queued/stop_requested.
         let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, None).await;
         let agent_known_count = agent_jobs.len();
-        let local_job_dirs: Vec<PathBuf> = if Self::local_jobs_visible_to_auth(auth) {
+        let local_job_dirs: Vec<PathBuf> = if local_jobs_visible_to_auth(auth) {
             let local_jobs_map = self.local_jobs.lock().await;
             local_jobs_map
                 .values()

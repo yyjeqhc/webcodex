@@ -579,13 +579,13 @@ fn active_job_brief(summary: &Value) -> Value {
     })
 }
 
-impl ToolRuntime {
-    pub(crate) fn local_jobs_visible_to_auth(auth: Option<&AuthContext>) -> bool {
-        !auth
-            .map(|auth| auth.is_lightweight() || auth.is_oauth_shared_key_subject())
-            .unwrap_or(false)
-    }
+pub(crate) fn local_jobs_visible_to_auth(auth: Option<&AuthContext>) -> bool {
+    !auth
+        .map(|auth| auth.is_lightweight() || auth.is_oauth_shared_key_subject())
+        .unwrap_or(false)
+}
 
+impl ToolRuntime {
     pub(crate) async fn run_job(
         &self,
         project: String,
@@ -760,7 +760,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         let killer = self.job_killer.as_ref();
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
-            if !Self::local_jobs_visible_to_auth(auth) {
+            if !local_jobs_visible_to_auth(auth) {
                 return ToolResult::err(format!("unknown job: {}", job_id));
             }
             return local_job_status(&job_id, &record, killer, include_command_preview);
@@ -775,7 +775,7 @@ impl ToolRuntime {
             .is_err()
         {
             if let Some(record) = self.recover_local_job(&job_id).await {
-                if !Self::local_jobs_visible_to_auth(auth) {
+                if !local_jobs_visible_to_auth(auth) {
                     return ToolResult::err(format!("unknown job: {}", job_id));
                 }
                 return local_job_status(&job_id, &record, killer, include_command_preview);
@@ -828,7 +828,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         let killer = self.job_killer.as_ref();
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
-            if !Self::local_jobs_visible_to_auth(auth) {
+            if !local_jobs_visible_to_auth(auth) {
                 return ToolResult::err(format!("unknown job: {}", job_id));
             }
             return local_job_log(&job_id, &record, killer, offset, tail_lines);
@@ -840,7 +840,7 @@ impl ToolRuntime {
             .is_err()
         {
             if let Some(record) = self.recover_local_job(&job_id).await {
-                if !Self::local_jobs_visible_to_auth(auth) {
+                if !local_jobs_visible_to_auth(auth) {
                     return ToolResult::err(format!("unknown job: {}", job_id));
                 }
                 return local_job_log(&job_id, &record, killer, offset, tail_lines);
@@ -901,8 +901,7 @@ impl ToolRuntime {
             })
             .map(agent_job_summary_value)
             .collect();
-        let local_records: Vec<(String, LocalJobRecord)> = if Self::local_jobs_visible_to_auth(auth)
-        {
+        let local_records: Vec<(String, LocalJobRecord)> = if local_jobs_visible_to_auth(auth) {
             let local_jobs_map = self.local_jobs.lock().await;
             local_jobs_map
                 .iter()
@@ -974,7 +973,7 @@ impl ToolRuntime {
             Some(record) => Some(record),
             None => self.recover_local_job(&job_id).await,
         } {
-            if !Self::local_jobs_visible_to_auth(auth) {
+            if !local_jobs_visible_to_auth(auth) {
                 return job_not_found_result(&project, &job_id);
             }
             let request_project = self
@@ -1143,7 +1142,7 @@ impl ToolRuntime {
             active.push(agent_job_summary_value(&job));
         }
 
-        if Self::local_jobs_visible_to_auth(auth) {
+        if local_jobs_visible_to_auth(auth) {
             let local_records: Vec<(String, LocalJobRecord)> = {
                 let local_jobs_map = self.local_jobs.lock().await;
                 local_jobs_map

@@ -319,6 +319,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 open_object_schema("Ledger-derived validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause; parser.available remains false when session ledger events lack those fields."),
             ),
             (
+                "verdict",
+                open_object_schema("Operator-friendly compact sanity verdict for summary_only output: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. Additive UX summary only; does not change safety semantics."),
+            ),
+            (
                 "suggested_next_actions",
                 array_schema(
                     schema_type("string", "Short suggested action."),

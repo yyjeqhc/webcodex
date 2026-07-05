@@ -395,8 +395,11 @@ stdout/stderr, env values, tokens, secrets, or full config values. Full
 `include_runtime_status=true` without `compact_startup` remains available for
 deeper troubleshooting and can include non-secret observability details such as
 the public URL, tool names, agent policy summary, and allowed roots.
+Read `output.startup_verdict.status` first. If it is `warn` or `fail`, inspect
+`startup_verdict.checks` and `startup_verdict.suggested_next_actions`; detailed
+startup fields remain the audit source.
 
-Manual lightweight sanity from current startup fields:
+Startup sanity verdict rules:
 
 - PASS: compact runtime status is present, `tools.count` is nonzero,
   `jobs.active_count=0`, an agent is online when the task depends on an agent
@@ -506,6 +509,11 @@ should prefer `stop_effect`, `terminal`, `terminal_pending`, and `final_status`.
 pass `include_workspace=true` and `include_validation=true`. For finish, pass
 `include_hygiene=true`, `include_validation_summary=true`, and keep
 `include_handoff=true` when a handoff aggregate is useful.
+Read `output.verdict.status`, `blocking`, and `blocking_reasons` first. The
+compact detail fields remain the final auditable basis. The verdict is an
+additive UX summary and does not change authorization, permissions, guards,
+session binding, expected-failure classification, MCP direct errors, or job
+lifecycle behavior.
 
 `finish_coding_task` and `session_handoff_summary` include a bounded `jobs`
 section. `active_count` remains a compatibility broad active count. New fields
@@ -519,7 +527,7 @@ itself. The jobs summary includes only metadata such as `job_id`, `kind`,
 `status`, `project`, and timestamps; it does not include raw stdout/stderr,
 tails, excerpts, or command text.
 
-Manual compact sanity from current handoff/finish fields:
+Compact handoff/finish verdict rules:
 
 - PASS: `workspace_clean=true`, `jobs.blocking_active_count=0`,
   `tool_failures.unexpected_count=0`,
@@ -685,7 +693,8 @@ After deploying a new server, agent, or runtime build:
    `projects.count` when `projects.toml` is not configured but agent projects
    are registered. For lightweight sanity, prefer
    `start_coding_task(include_runtime_status=true, compact_startup=true)` and
-   reserve full runtime status for deeper troubleshooting.
+   inspect `startup_verdict.status`; reserve full runtime status for deeper
+   troubleshooting.
 4. Confirm `start_coding_task` and `finish_coding_task` are available through
    the generic runtime tool path.
 5. Confirm `session_handoff_summary` exposes `validation` when

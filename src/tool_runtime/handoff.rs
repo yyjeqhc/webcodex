@@ -454,12 +454,13 @@ fn output_recent(tool_failures: &Value, key: &str) -> Value {
 }
 
 fn compact_handoff_output(output: &Value) -> Value {
+    let workspace_checked = output.get("workspace").is_some();
     let workspace_clean = output
         .get("workspace")
         .and_then(|workspace| workspace.get("clean"))
         .and_then(Value::as_bool)
         .unwrap_or(true);
-    json!({
+    let mut compact = json!({
         "summary_only": true,
         "project": output.get("project").cloned().unwrap_or(Value::Null),
         "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
@@ -471,7 +472,9 @@ fn compact_handoff_output(output: &Value) -> Value {
         "validation": compact_validation(output.get("validation").unwrap_or(&Value::Null)),
         "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
-    })
+    });
+    compact["verdict"] = compact_workflow_verdict(&compact, workspace_checked, None);
+    compact
 }
 
 pub(crate) fn compact_jobs(jobs: &Value) -> Value {
@@ -508,6 +511,178 @@ pub(crate) fn compact_validation(validation: &Value) -> Value {
         "status": validation.get("status").cloned().unwrap_or_else(|| json!("not_run")),
         "reason": validation.get("reason").cloned().unwrap_or_else(|| json!("no_validation_tool_invoked")),
     })
+}
+
+pub(crate) fn compact_workflow_verdict(
+    output: &Value,
+    workspace_checked: bool,
+    hygiene_checked: Option<bool>,
+) -> Value {
+    let mut blocking_reasons: Vec<&'static str> = Vec::new();
+    let mut warning_reasons: Vec<&'static str> = Vec::new();
+    let mut actions = string_array(output.get("suggested_next_actions"));
+
+    if !workspace_checked {
+        push_unique(&mut warning_reasons, "workspace_not_checked");
+        push_unique_action(&mut actions, "run show_changes before final handoff");
+    }
+    if output
+        .get("workspace_clean")
+        .and_then(Value::as_bool)
+        .is_some_and(|clean| !clean)
+    {
+        push_unique(&mut blocking_reasons, "workspace_dirty");
+        push_unique_action(&mut actions, "review workspace changes with show_changes");
+    }
+
+    if let Some(false) = hygiene_checked {
+        push_unique(&mut warning_reasons, "hygiene_not_checked");
+        push_unique_action(&mut actions, "run workspace_hygiene_check before closeout");
+    }
+    if output
+        .get("hygiene_clean")
+        .and_then(Value::as_bool)
+        .is_some_and(|clean| !clean)
+    {
+        push_unique(&mut blocking_reasons, "hygiene_failed");
+        push_unique_action(&mut actions, "review workspace hygiene before closeout");
+    }
+
+    let jobs = output.get("jobs").unwrap_or(&Value::Null);
+    if jobs
+        .get("blocking_active_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
+    {
+        push_unique(&mut blocking_reasons, "blocking_active_jobs");
+        push_unique_action(&mut actions, "stop or await blocking active jobs");
+    }
+    if jobs
+        .get("terminal_pending_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
+    {
+        push_unique(&mut warning_reasons, "jobs_terminal_pending");
+    }
+
+    let tool_failures = output.get("tool_failures").unwrap_or(&Value::Null);
+    let expected_count = count_field(tool_failures, "expected_count");
+    let unexpected_count = count_field(tool_failures, "unexpected_count");
+    let expectation_mismatch_count = count_field(tool_failures, "expectation_mismatch_count");
+    let unexpected_success_count = count_field(tool_failures, "unexpected_success_count");
+    if unexpected_count > 0 {
+        push_unique(&mut blocking_reasons, "unexpected_tool_failures");
+        push_unique_action(
+            &mut actions,
+            "review unexpected failed tool calls before proceeding",
+        );
+    }
+    if expectation_mismatch_count > 0 {
+        push_unique(&mut blocking_reasons, "expectation_mismatches");
+        push_unique_action(
+            &mut actions,
+            "review expected failure mismatches before proceeding",
+        );
+    }
+    if unexpected_success_count > 0 {
+        push_unique(&mut blocking_reasons, "unexpected_successes");
+        push_unique_action(
+            &mut actions,
+            "review expected-failure assertions that unexpectedly succeeded",
+        );
+    }
+    if expected_count > 0
+        && unexpected_count == 0
+        && expectation_mismatch_count == 0
+        && unexpected_success_count == 0
+    {
+        push_unique(&mut warning_reasons, "expected_failures_matched");
+        push_unique_action(&mut actions, "expected failure assertions matched");
+    }
+
+    match output
+        .get("validation")
+        .and_then(|validation| validation.get("status"))
+        .and_then(Value::as_str)
+    {
+        Some("not_run") => {
+            push_unique(&mut warning_reasons, "validation_not_run");
+            push_unique_action(
+                &mut actions,
+                "run validation before closeout when available",
+            );
+        }
+        Some("failed") => {
+            push_unique(&mut blocking_reasons, "validation_failed");
+            push_unique_action(&mut actions, "review validation failures before closeout");
+        }
+        Some("mixed") => {
+            push_unique(&mut blocking_reasons, "validation_mixed");
+            push_unique_action(
+                &mut actions,
+                "review mixed validation results before closeout",
+            );
+        }
+        Some("unknown") | None => {
+            push_unique(&mut warning_reasons, "validation_unknown");
+        }
+        Some(_) => {}
+    }
+
+    if actions.is_empty() {
+        actions.push("proceed with handoff or closeout".to_string());
+    }
+    let status = if blocking_reasons.is_empty() {
+        if warning_reasons.is_empty() {
+            "pass"
+        } else {
+            "warn"
+        }
+    } else {
+        "fail"
+    };
+
+    json!({
+        "status": status,
+        "blocking": !blocking_reasons.is_empty(),
+        "blocking_reasons": blocking_reasons,
+        "warning_reasons": warning_reasons,
+        "suggested_next_actions": actions,
+    })
+}
+
+fn count_field(value: &Value, key: &str) -> u64 {
+    value.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn push_unique<T>(values: &mut Vec<T>, value: T)
+where
+    T: PartialEq,
+{
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+fn push_unique_action(actions: &mut Vec<String>, action: &str) {
+    if !actions.iter().any(|existing| existing == action) {
+        actions.push(action.to_string());
+    }
 }
 
 /// Build a bounded list of suggested next actions based on the handoff state.

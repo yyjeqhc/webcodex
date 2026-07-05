@@ -196,7 +196,9 @@ runtime observability with build, tool count, active job count, agent health,
 and project status while omitting tool names, full agent policy, allowed roots,
 shell profile internals, command text, stdout/stderr, env values, tokens, and
 secrets. Treat `tool_manifest.truncated=true` with
-`truncation_reason="limit"` as normal bounded output. When session
+`truncation_reason="limit"` as normal bounded output. Read
+`startup_verdict.status` first, then `startup_verdict.checks` and
+`startup_verdict.suggested_next_actions` for next steps. When session
 persistence is configured, session records,
 events, and messages may be persisted and restored through the `sessions.json`
 ledger.
@@ -255,8 +257,10 @@ containing `workspace_clean`, `hygiene_clean`, compact `jobs`, `permissions`,
 `tool_failures`, `validation`, `warnings`, and `suggested_next_actions` only.
 Use `finish_coding_task(summary_only=true)` with `include_hygiene=true` and
 `include_validation_summary=true` for closeout. Full mode keeps bounded handoff
-detail. Its `jobs` section reports bounded active job counts, recent metadata,
-and warnings without stdout/stderr, tails, excerpts, or command text. Its `validation`
+detail. In compact mode, read `verdict.status`, `blocking`, and
+`blocking_reasons` first; detailed compact fields remain the audit source. Its
+`jobs` section reports bounded active job counts, recent metadata, and warnings
+without stdout/stderr, tails, excerpts, or command text. Its `validation`
 section is ledger-derived from validation-like tools (`cargo_fmt`,
 `cargo_check`, `cargo_test`, `validate_patch`, and `apply_patch_checked`). It
 does not expose raw stdout/stderr, excerpt fields, or
@@ -267,7 +271,9 @@ Validation includes `status` and `reason`: no validation events yields
 `not_run` with `no_validation_tool_invoked`; all-success/all-failure/mixed
 ledgers yield `passed`, `failed`, or `mixed`.
 
-For manual sanity today, PASS means `workspace_clean=true`,
+The compact `verdict` is an additive UX summary and does not change
+authorization, permissions, guards, session binding, failure classification, or
+MCP direct error behavior. PASS means `workspace_clean=true`,
 `jobs.blocking_active_count=0`, no unexpected failures, no expectation
 mismatches, no unexpected successes, and `hygiene_clean=true`. WARN means
 validation has not run, expected failures matched exactly, or startup/manifest

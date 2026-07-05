@@ -425,16 +425,19 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
   `include_tool_manifest=true`, and a small `tool_manifest_limit`. Limit-driven
   `truncated=true` with
   `truncation_reason="limit"` is normal bounded output, not `ResponseTooLarge`.
+  Read `startup_verdict.status` first, then its `checks` and
+  `suggested_next_actions` when attention is needed.
 - For compact handoff sanity, call `session_handoff_summary` with
   `summary_only=true`, `include_workspace=true`, and `include_validation=true`;
   call `finish_coding_task` with `summary_only=true`, `include_hygiene=true`,
-  and `include_validation_summary=true`.
-- Manual PASS means clean workspace, no blocking jobs, no unexpected tool
-  failures, no expected-failure mismatches or unexpected successes, and clean
-  hygiene. WARN covers validation not run, matched expected failures only, and
-  explicit bounded truncation. FAIL covers dirty workspace, blocking jobs,
-  unexpected failures, expectation mismatches, unexpected successes, or hygiene
-  failure.
+  and `include_validation_summary=true`. Read `verdict.status`, `blocking`, and
+  `blocking_reasons` first; detailed fields remain the audit source. The verdict
+  is additive UX only and does not change safety or expected-failure semantics.
+- PASS means clean workspace, no blocking jobs, no unexpected tool failures, no
+  expected-failure mismatches or unexpected successes, and clean hygiene. WARN
+  covers validation not run, matched expected failures only, and explicit bounded
+  truncation. FAIL covers dirty workspace, blocking jobs, unexpected failures,
+  expectation mismatches, unexpected successes, or hygiene failure.
 - `start_session` creates a session record but does not automatically bind future
   calls. For reliable handoff, keep and pass explicit `session_id` or
   `recording_session_id` values. Current-session binding is process-local

@@ -53,8 +53,23 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
             .contains_key("permissions"),
         "start_coding_task output schema should include permissions"
     );
+    assert!(
+        start_output["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("startup_verdict"),
+        "start_coding_task output schema should include startup_verdict"
+    );
     let finish = spec_named(&specs, "finish_coding_task");
     assert_eq!(required_fields(finish), vec!["project", "session_id"]);
+    let finish_output = crate::tool_runtime::registry::output_schema_for_tool("finish_coding_task");
+    assert!(
+        finish_output["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("verdict"),
+        "finish_coding_task output schema should include verdict"
+    );
 
     let openapi = crate::openapi::build_openapi_spec();
     let tool_call = &openapi["components"]["schemas"]["ToolCallRequest"];
@@ -468,6 +483,12 @@ async fn start_coding_task_compact_startup_returns_sanitized_runtime_summary() {
     assert_eq!(summary["projects"]["agent_registered"]["online_count"], 1);
     assert!(summary["projects"]["server_static"]["severity"].is_string());
     assert!(summary["projects"]["server_static"]["status"].is_string());
+    let verdict = &result.output["startup_verdict"];
+    assert_ne!(verdict["status"], "fail");
+    assert_eq!(verdict["blocking"], false);
+    assert_check_reason(verdict, "workspace", "workspace_not_checked");
+    assert_check_reason(verdict, "tool_manifest", "tool_manifest_not_requested");
+    assert_compact_verdict_safe(verdict, "startup verdict");
 
     let serialized = serde_json::to_string(summary).unwrap();
     for forbidden in [
@@ -487,6 +508,59 @@ async fn start_coding_task_compact_startup_returns_sanitized_runtime_summary() {
             "compact startup leaked {forbidden}: {serialized}"
         );
     }
+}
+
+#[tokio::test]
+async fn start_coding_task_compact_startup_verdict_accepts_clean_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-start-verdict", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::from_tool_name(
+                        "start_coding_task",
+                        json!({
+                            "project": project,
+                            "include_runtime_status": true,
+                            "compact_startup": true,
+                            "include_git": true,
+                            "include_recent_commits": false,
+                            "include_rules": false,
+                            "include_tool_manifest": true
+                        }),
+                    )
+                    .unwrap(),
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "coding-start-verdict")
+        .await
+        .expect("start_coding_task should inspect clean workspace");
+    complete_agent_request_by_running_locally(&runtime, "coding-start-verdict", req).await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    let verdict = &result.output["startup_verdict"];
+    assert_eq!(verdict["status"], "pass");
+    assert_eq!(verdict["blocking"], false);
+    assert_check_status(verdict, "runtime_status", "pass");
+    assert_check_status(verdict, "workspace", "pass");
+    assert_check_status(verdict, "jobs", "pass");
+    assert_check_status(verdict, "agent", "pass");
+    assert_check_status(verdict, "tool_manifest", "pass");
+    assert_compact_verdict_safe(verdict, "startup clean verdict");
 }
 
 #[tokio::test]
@@ -538,6 +612,10 @@ async fn start_coding_task_filters_compact_tool_manifest_by_categories() {
     assert!(tools
         .iter()
         .all(|tool| tool["accepted_flattened_args"].is_array()));
+    let verdict = &result.output["startup_verdict"];
+    assert_eq!(verdict["status"], "warn");
+    assert_check_reason(verdict, "runtime_status", "runtime_status_not_requested");
+    assert_check_reason(verdict, "workspace", "workspace_not_checked");
 }
 
 #[tokio::test]
@@ -591,6 +669,9 @@ async fn start_coding_task_manifest_limit_truncates_filtered_entries() {
         .unwrap()
         .iter()
         .all(|tool| tool["category"] == "session"));
+    let verdict = &result.output["startup_verdict"];
+    assert_ne!(verdict["status"], "fail");
+    assert_check_reason(verdict, "tool_manifest", "truncated_by_limit");
 }
 
 #[tokio::test]
@@ -789,6 +870,11 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     );
     assert!(result.output["warnings"].as_array().unwrap().is_empty());
     assert!(result.output["suggested_next_actions"].is_array());
+    let verdict = &result.output["verdict"];
+    assert_eq!(verdict["status"], "warn");
+    assert_eq!(verdict["blocking"], false);
+    assert_reason_list_contains(verdict, "warning_reasons", "validation_not_run");
+    assert_compact_verdict_safe(verdict, "finish compact verdict");
 
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in [
@@ -806,6 +892,61 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
             "summary_only finish leaked {forbidden}: {serialized}"
         );
     }
+}
+
+#[tokio::test]
+async fn finish_coding_task_summary_only_verdict_fails_for_dirty_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    fs::write(tmp.path().join("README.md"), "changed\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-finish-dirty", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("dirty finish".to_string()));
+    let session_id = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: true,
+                        include_diff: Some(false),
+                        include_hygiene: Some(false),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(true),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "coding-finish-dirty")
+        .await
+        .expect("finish_coding_task should inspect changes");
+    complete_agent_request_by_running_locally(&runtime, "coding-finish-dirty", req).await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], false);
+    assert_eq!(result.output["verdict"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["blocking"], true);
+    assert_reason_list_contains(
+        &result.output["verdict"],
+        "blocking_reasons",
+        "workspace_dirty",
+    );
+    assert_compact_verdict_safe(&result.output["verdict"], "dirty finish verdict");
 }
 
 #[tokio::test]
@@ -1080,6 +1221,46 @@ async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
 
 fn contains_string(values: &[Value], needle: &str) -> bool {
     values.iter().any(|value| value.as_str() == Some(needle))
+}
+
+fn assert_check_status(verdict: &Value, name: &str, status: &str) {
+    let check = verdict["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["name"] == name)
+        .unwrap_or_else(|| panic!("missing startup check {name}: {verdict}"));
+    assert_eq!(check["status"], status);
+}
+
+fn assert_check_reason(verdict: &Value, name: &str, reason: &str) {
+    let check = verdict["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["name"] == name)
+        .unwrap_or_else(|| panic!("missing startup check {name}: {verdict}"));
+    assert_eq!(check["reason"], reason);
+}
+
+fn assert_reason_list_contains(verdict: &Value, key: &str, reason: &str) {
+    let reasons = verdict[key].as_array().expect("reason list");
+    assert!(
+        reasons.iter().any(|value| value.as_str() == Some(reason)),
+        "{key} should contain {reason}: {verdict}"
+    );
+}
+
+fn assert_compact_verdict_safe(value: &Value, context: &str) {
+    let serialized = serde_json::to_string(value).unwrap();
+    for forbidden in [
+        "stdout", "stderr", "tail", "excerpt", "command", "token", "secret", "env",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "{context} leaked {forbidden}: {serialized}"
+        );
+    }
 }
 
 fn json_contains_key(value: &Value, key: &str) -> bool {

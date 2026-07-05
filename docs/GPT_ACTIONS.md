@@ -182,7 +182,9 @@ calling `callRuntimeTool`.
    compact runtime observability plus bounded workflow discovery instead of the
    full `runtime_status` payload. If compact startup is not available on an
    older runtime, a small `tool_manifest_limit` is still a reasonable bounded
-   discovery shape.
+   discovery shape. Read `output.startup_verdict.status` first; then inspect
+   its `checks` and `suggested_next_actions` when the status is `warn` or
+   `fail`.
 2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
    with `show_changes`.
 3. For scoped source edits with known line numbers, call `replace_line_range`,
@@ -209,6 +211,8 @@ calling `callRuntimeTool`.
    that omit recent events, command text, stdout/stderr, tails, and excerpts.
    For handoff, also pass `include_workspace=true` and `include_validation=true`.
    For finish, pass `include_hygiene=true` and `include_validation_summary=true`.
+   Read `output.verdict.status`, `blocking`, and `blocking_reasons` first; the
+   detailed compact fields remain the audit source.
 
 `finish_coding_task` and `session_handoff_summary` keep `active_count` for
 compatibility and also return `blocking_active_count`,
@@ -217,8 +221,10 @@ compatibility and also return `blocking_active_count`,
 `active_jobs_present`; stop-requested jobs produce nonblocking
 `jobs_terminal_pending`.
 
-Until an aggregate verdict is present, judge compact workflow sanity from the
-existing fields. PASS requires `workspace_clean=true`,
+Compact workflow outputs include operator-friendly verdicts. They are additive
+UX summaries and do not change authorization, permissions, guards, session
+binding, failure classification, or MCP direct error behavior. PASS requires
+`workspace_clean=true`,
 `jobs.blocking_active_count=0`, `tool_failures.unexpected_count=0`,
 `tool_failures.expectation_mismatch_count=0`,
 `tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`. WARN covers
@@ -427,10 +433,11 @@ compact runtime summary with build version/commit/dirty state, `tools.count`,
 `projects.agent_registered`, and `projects.server_static` status/severity.
 It intentionally omits `tools.names`, full agent policy, `allowed_roots`, shell
 profile internals, command text, stdout/stderr, env values, tokens, secrets, and
-full config values. Full `start_coding_task(include_runtime_status=true)` remains
-available for deeper troubleshooting and can include non-secret observability
-metadata such as the public URL, tool names, agent policy summary, and allowed
-roots.
+full config values. It also returns `startup_verdict`, a compact PASS/WARN/FAIL
+summary with per-check reasons and bounded next actions. Full
+`start_coding_task(include_runtime_status=true)` remains available for deeper
+troubleshooting and can include non-secret observability metadata such as the
+public URL, tool names, agent policy summary, and allowed roots.
 
 ## Compatibility notes
 

@@ -42,6 +42,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 open_object_schema("Deterministic recommended inspect/edit/validate/review/handoff tool groups."),
             ),
             (
+                "startup_verdict",
+                open_object_schema("Operator-friendly startup sanity verdict: status pass/warn/fail, blocking boolean, compact checks, and bounded suggested_next_actions. Additive UX summary only; does not change safety semantics."),
+            ),
+            (
                 "warnings",
                 array_schema(open_object_schema("Startup warning."), "Bounded startup warnings."),
             ),
@@ -104,6 +108,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "warnings",
                 array_schema(open_object_schema("Compact finish warning."), "Bounded compact summary_only warnings."),
+            ),
+            (
+                "verdict",
+                open_object_schema("Operator-friendly compact sanity verdict for summary_only output: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. Additive UX summary only; does not change safety semantics."),
             ),
             (
                 "suggested_next_actions",

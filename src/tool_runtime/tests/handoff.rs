@@ -565,6 +565,12 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
         .as_str()
         .unwrap_or("")
         .contains("review unexpected failed tool calls")));
+    assert_ne!(handoff.output["verdict"]["status"], "fail");
+    assert_reason_list_contains(
+        &handoff.output["verdict"],
+        "warning_reasons",
+        "expected_failures_matched",
+    );
 
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
@@ -679,6 +685,22 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
         action.as_str().unwrap_or("")
             == "review expected-failure assertions that unexpectedly succeeded"
     }));
+    assert_eq!(handoff.output["verdict"]["status"], "fail");
+    assert_reason_list_contains(
+        &handoff.output["verdict"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+    assert_reason_list_contains(
+        &handoff.output["verdict"],
+        "blocking_reasons",
+        "expectation_mismatches",
+    );
+    assert_reason_list_contains(
+        &handoff.output["verdict"],
+        "blocking_reasons",
+        "unexpected_successes",
+    );
 }
 
 #[tokio::test]
@@ -1062,6 +1084,11 @@ async fn session_handoff_summary_only_is_compact() {
     );
     assert!(result.output["warnings"].is_array());
     assert!(result.output["suggested_next_actions"].is_array());
+    let verdict = &result.output["verdict"];
+    assert_eq!(verdict["status"], "warn");
+    assert_eq!(verdict["blocking"], false);
+    assert_reason_list_contains(verdict, "warning_reasons", "expected_failures_matched");
+    assert_compact_verdict_safe(verdict, "summary_only handoff verdict");
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in [
         "recent_events",
@@ -1518,6 +1545,38 @@ async fn session_handoff_summary_with_workspace_clean_project() {
     assert!(workspace.get("diff_stat").is_none());
 }
 
+#[tokio::test]
+async fn session_handoff_summary_only_verdict_allows_clean_workspace_without_failures() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "handoff-clean-verdict", "demo", tmp.path()).await;
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("clean handoff".to_string()));
+    let sid = session.session_id.clone();
+
+    let result = dispatch_handoff_summary_only_with_agent(
+        &runtime,
+        "handoff-clean-verdict",
+        sid,
+        Some(project),
+        true,
+        false,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["summary_only"], true);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
+    assert_ne!(result.output["verdict"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["blocking"], false);
+    assert_compact_verdict_safe(&result.output["verdict"], "clean handoff verdict");
+}
+
 // =========================================================================
 // 8. Non-git project does not fail the whole tool
 // =========================================================================
@@ -1782,6 +1841,10 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     assert!(
         output_props.contains_key("tool_failures"),
         "session_handoff_summary output schema should expose tool_failures"
+    );
+    assert!(
+        output_props.contains_key("verdict"),
+        "session_handoff_summary output schema should expose verdict"
     );
     let description = spec.description.to_lowercase();
     for phrase in [
@@ -2192,4 +2255,57 @@ async fn dispatch_handoff_with_agent(
     }
 
     task.await.unwrap()
+}
+
+async fn dispatch_handoff_summary_only_with_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    session_id: String,
+    project: Option<String>,
+    include_workspace: bool,
+    include_checkpoints: bool,
+) -> ToolResult {
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .dispatch(ToolCall::SessionHandoffSummary {
+                session_id,
+                project,
+                include_workspace: Some(include_workspace),
+                include_checkpoints: Some(include_checkpoints),
+                include_validation: Some(true),
+                summary_only: true,
+                limit: None,
+            })
+            .await
+    });
+
+    if include_workspace {
+        let req = next_patch_agent_request(runtime, client_id)
+            .await
+            .expect("handoff workspace should enqueue an agent shell request");
+        complete_agent_request_by_running_locally(runtime, client_id, req).await;
+    }
+
+    task.await.unwrap()
+}
+
+fn assert_reason_list_contains(verdict: &Value, key: &str, reason: &str) {
+    let reasons = verdict[key].as_array().expect("reason list");
+    assert!(
+        reasons.iter().any(|value| value.as_str() == Some(reason)),
+        "{key} should contain {reason}: {verdict}"
+    );
+}
+
+fn assert_compact_verdict_safe(value: &Value, context: &str) {
+    let serialized = serde_json::to_string(value).unwrap();
+    for forbidden in [
+        "stdout", "stderr", "tail", "excerpt", "command", "token", "secret", "env",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "{context} leaked {forbidden}: {serialized}"
+        );
+    }
 }

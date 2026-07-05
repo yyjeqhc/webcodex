@@ -42,6 +42,8 @@ mod validation_events;
 mod validation_parser;
 
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
+#[cfg(test)]
+pub(crate) use agent_authorization::required_agent_capability;
 #[allow(unused_imports)]
 pub(crate) use local_jobs::{
     LocalJobKiller, LocalJobRecord, SystemJobKiller, TerminateOutcome, ACTIVE_JOB_STATUSES,

@@ -519,7 +519,7 @@ fn tool_definitions_match_agent_capability_dispatch_helper() {
             definition.name
         );
         assert_eq!(
-            ToolRuntime::required_agent_capability(&call),
+            required_agent_capability(&call),
             definition.agent_capability,
             "{} agent capability mirror must match dispatch helper",
             definition.name
@@ -861,7 +861,7 @@ fn required_agent_capability_matches_metadata_risk_table() {
         let call = ToolCall::from_tool_name(name, sample_tool_args(name))
             .unwrap_or_else(|e| panic!("{name} should deserialize: {e}"));
         assert_eq!(
-            ToolRuntime::required_agent_capability(&call),
+            required_agent_capability(&call),
             Some(capability),
             "{name} capability"
         );

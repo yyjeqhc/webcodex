@@ -2,13 +2,13 @@ use super::tool_definition::{runtime_tool_agent_capability, AgentCapability};
 use super::{ProjectResolverError, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
-impl ToolRuntime {
-    /// The capability an agent-backed tool variant requires from the agent
-    /// client. Non-agent tools (and tools without a project) require nothing.
-    pub(crate) fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
-        runtime_tool_agent_capability(call.tool_name())
-    }
+/// The capability an agent-backed tool variant requires from the agent
+/// client. Non-agent tools (and tools without a project) require nothing.
+pub(crate) fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
+    runtime_tool_agent_capability(call.tool_name())
+}
 
+impl ToolRuntime {
     /// Enforce the owner boundary and capability requirements for agent-backed
     /// runtime tools before dispatching. This is the single place where the
     /// runtime paths (`/api/tools/call`, `/api/projects/*`, `/mcp`, and the
@@ -26,7 +26,7 @@ impl ToolRuntime {
         let Some(project) = call.project() else {
             return Ok(());
         };
-        let required = match Self::required_agent_capability(call) {
+        let required = match required_agent_capability(call) {
             Some(cap) => cap,
             None => return Ok(()),
         };

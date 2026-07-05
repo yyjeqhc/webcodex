@@ -521,15 +521,15 @@ fn tool_specs_include_anchor_edit_tools() {
 fn apply_text_edits_metadata_mcp_openapi_consistency() {
     use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_EDIT;
 
-    // Known name + spec + metadata coverage. tool_specs() backs both the
-    // list_tools runtime tool and MCP tools/list (parity is enforced by
-    // mcp_tools_list_parity_with_rest_tools_list), so checking specs covers
+    // Known name + spec + metadata coverage. registered_tool_specs() backs
+    // both the list_tools runtime tool and MCP tools/list (parity is enforced
+    // by mcp_tools_list_parity_with_rest_tools_list), so checking specs covers
     // both surfaces.
     assert!(is_known_tool_name("apply_text_edits"));
     let specs = registered_tool_specs();
     assert!(
         specs.iter().any(|s| s.name == "apply_text_edits"),
-        "apply_text_edits must appear in tool_specs (list_tools + MCP tools/list)"
+        "apply_text_edits must appear in registered tool specs (list_tools + MCP tools/list)"
     );
     for spec in &specs {
         assert!(

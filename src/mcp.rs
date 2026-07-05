@@ -915,7 +915,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_tools_list_parity_with_rest_tools_list() {
         // MCP tools/list and REST /api/tools/list both expose the exact same
-        // tool names because both call ToolRuntime::tool_specs().
+        // registry-backed tool names.
         let runtime = test_runtime();
         let mcp_outcome = handle_mcp_request(
             &runtime,

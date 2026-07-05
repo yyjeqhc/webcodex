@@ -443,9 +443,10 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
   failures, expectation mismatches, unexpected successes, or failed validation.
 - During review, read `show_changes.clean`, `warnings`, `hunks_truncated`, and
   `suggested_next_actions`, then read `workspace_hygiene_check.clean`,
-  `findings`, `warnings`, and `suggested_next_actions`. The finish/handoff
-  compact verdict is the closeout aggregate; review-tool verdicts, when present,
-  use the same additive UX convention and do not change safety semantics.
+  `findings`, `warnings`, and `suggested_next_actions`. Both review tools also
+  expose top-level `verdict` summaries using the same additive UX convention.
+  The finish/handoff compact verdict remains the closeout aggregate and does not
+  change safety semantics.
 - `start_session` creates a session record but does not automatically bind future
   calls. For reliable handoff, keep and pass explicit `session_id` or
   `recording_session_id` values. Current-session binding is process-local

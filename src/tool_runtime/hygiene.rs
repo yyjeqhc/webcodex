@@ -381,6 +381,9 @@ pub(crate) fn build_hygiene_summary(
         })
         .collect();
 
+    let suggested_next_actions = suggested_hygiene_actions(findings, git_available);
+    let verdict = hygiene_verdict(git_available, findings, truncated, &suggested_next_actions);
+
     json!({
         "project": project,
         "resolved_project": resolved_project,
@@ -401,8 +404,91 @@ pub(crate) fn build_hygiene_summary(
         "findings": findings_json,
         "truncated": truncated,
         "warnings": warnings,
-        "suggested_next_actions": suggested_hygiene_actions(findings, git_available),
+        "suggested_next_actions": suggested_next_actions,
+        "verdict": verdict,
     })
+}
+
+fn hygiene_verdict(
+    git_available: bool,
+    findings: &[HygieneFinding],
+    truncated: bool,
+    suggested_next_actions: &[Value],
+) -> Value {
+    let mut blocking_reasons: Vec<&'static str> = Vec::new();
+    let mut warning_reasons: Vec<&'static str> = Vec::new();
+    let mut actions = suggested_next_actions
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    if !git_available {
+        push_unique_reason(&mut warning_reasons, "git_unavailable");
+        push_unique_action(
+            &mut actions,
+            "git-backed hygiene checks unavailable; continue with non-git review evidence",
+        );
+    }
+
+    if !findings.is_empty() {
+        let has_blocking_finding = findings.iter().any(|finding| {
+            matches!(finding.severity, "critical" | "high" | "medium")
+                || matches!(
+                    finding.kind,
+                    HygieneKind::DirtyWorktree
+                        | HygieneKind::SecretLikePath
+                        | HygieneKind::LargeUntrackedFile
+                )
+        });
+        if has_blocking_finding {
+            push_unique_reason(&mut blocking_reasons, "hygiene_failed");
+            push_unique_action(&mut actions, "review workspace hygiene before closeout");
+        } else {
+            push_unique_reason(&mut warning_reasons, "hygiene_findings_present");
+        }
+    }
+
+    if truncated {
+        push_unique_reason(&mut warning_reasons, "truncated_by_limit");
+        push_unique_action(
+            &mut actions,
+            "rerun workspace_hygiene_check with a higher max_findings if needed",
+        );
+    }
+
+    if actions.is_empty() {
+        actions.push("no action needed".to_string());
+    }
+    let status = if blocking_reasons.is_empty() {
+        if warning_reasons.is_empty() {
+            "pass"
+        } else {
+            "warn"
+        }
+    } else {
+        "fail"
+    };
+
+    json!({
+        "status": status,
+        "blocking": !blocking_reasons.is_empty(),
+        "blocking_reasons": blocking_reasons,
+        "warning_reasons": warning_reasons,
+        "suggested_next_actions": actions,
+    })
+}
+
+fn push_unique_reason(reasons: &mut Vec<&'static str>, reason: &'static str) {
+    if !reasons.iter().any(|existing| existing == &reason) {
+        reasons.push(reason);
+    }
+}
+
+fn push_unique_action(actions: &mut Vec<String>, action: &str) {
+    if !actions.iter().any(|existing| existing == action) {
+        actions.push(action.to_string());
+    }
 }
 
 // =========================================================================

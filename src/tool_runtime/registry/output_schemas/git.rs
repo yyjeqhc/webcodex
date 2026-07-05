@@ -135,6 +135,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             (
+                "verdict",
+                open_object_schema("Operator-friendly review verdict: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. Additive UX summary only; does not change safety semantics."),
+            ),
+            (
                 "session",
                 nullable_schema("object", "Optional session activity summary."),
             ),

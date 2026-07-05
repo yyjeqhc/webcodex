@@ -184,6 +184,7 @@ pub(crate) fn non_git_show_changes_payload(
         payload["untracked_previews"] = json!([]);
         payload["untracked_previews_truncated"] = json!(false);
     }
+    set_show_changes_verdict(&mut payload);
     payload
 }
 
@@ -458,6 +459,7 @@ pub(crate) fn parse_show_changes_output(
         output["hunks_truncated"] = json!(truncated);
     }
 
+    set_show_changes_verdict(&mut output);
     output
 }
 
@@ -803,6 +805,7 @@ pub(crate) fn apply_show_changes_session(
 ) {
     let Some(session_id) = session_id else {
         output["session"] = Value::Null;
+        set_show_changes_verdict(output);
         return;
     };
     let session_signals = match summary {
@@ -869,6 +872,7 @@ fn refresh_show_changes_suggestions(output: &mut Value, session: Option<SessionA
             push_unique_action(&mut actions, "check command/test results before commit");
         }
         output["suggested_next_actions"] = json!(actions);
+        set_show_changes_verdict(output);
         return;
     }
     let clean = output["clean"].as_bool().unwrap_or(false);
@@ -882,6 +886,115 @@ fn refresh_show_changes_suggestions(output: &mut Value, session: Option<SessionA
         has_smoke_warning,
         session,
     ));
+    set_show_changes_verdict(output);
+}
+
+fn set_show_changes_verdict(output: &mut Value) {
+    let mut blocking_reasons: Vec<&'static str> = Vec::new();
+    let mut warning_reasons: Vec<&'static str> = Vec::new();
+    let mut actions = string_array(output.get("suggested_next_actions"));
+
+    let git_available = output
+        .get("git_available")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let non_git_project = output
+        .get("non_git_project")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !git_available || non_git_project {
+        push_unique_reason(&mut warning_reasons, "git_unavailable");
+        push_unique_action(
+            &mut actions,
+            "git-backed status/diff unavailable; continue with non-git review evidence",
+        );
+    }
+
+    if output
+        .get("clean")
+        .and_then(Value::as_bool)
+        .is_some_and(|clean| !clean)
+    {
+        push_unique_reason(&mut blocking_reasons, "workspace_dirty");
+        push_unique_action(&mut actions, "review workspace changes with show_changes");
+    }
+
+    if git_available
+        && output
+            .get("exit_code")
+            .and_then(Value::as_i64)
+            .is_some_and(|exit_code| exit_code != 0)
+    {
+        push_unique_reason(&mut blocking_reasons, "git_inspection_failed");
+        push_unique_action(
+            &mut actions,
+            "rerun show_changes or inspect git status directly",
+        );
+    }
+
+    if output
+        .get("warnings")
+        .and_then(Value::as_array)
+        .is_some_and(|warnings| !warnings.is_empty())
+    {
+        push_unique_reason(&mut warning_reasons, "review_warnings_present");
+    }
+
+    if output
+        .get("hunks_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || output
+            .get("untracked_previews_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        push_unique_reason(&mut warning_reasons, "truncated_by_limit");
+        push_unique_action(
+            &mut actions,
+            "review bounded diff output or rerun with a narrower path set",
+        );
+    }
+
+    if actions.is_empty() {
+        actions.push("no action needed".to_string());
+    }
+    let status = if blocking_reasons.is_empty() {
+        if warning_reasons.is_empty() {
+            "pass"
+        } else {
+            "warn"
+        }
+    } else {
+        "fail"
+    };
+
+    output["verdict"] = json!({
+        "status": status,
+        "blocking": !blocking_reasons.is_empty(),
+        "blocking_reasons": blocking_reasons,
+        "warning_reasons": warning_reasons,
+        "suggested_next_actions": actions,
+    });
+}
+
+fn string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn push_unique_reason(reasons: &mut Vec<&'static str>, reason: &'static str) {
+    if !reasons.iter().any(|existing| existing == &reason) {
+        reasons.push(reason);
+    }
 }
 
 fn session_changed_paths(events: &[SessionEvent]) -> Vec<String> {

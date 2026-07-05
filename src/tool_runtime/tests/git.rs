@@ -69,6 +69,16 @@ fn show_changes_tool_is_known_and_parses() {
             session_event_limit: Some(8)
         } if project == "agent:oe:webcodex" && session_id == "wc_sess_1234"
     ));
+
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "show_changes");
+    let output_props = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert!(
+        output_props.contains_key("verdict"),
+        "show_changes output schema should expose verdict"
+    );
 }
 
 #[test]
@@ -212,6 +222,9 @@ fn show_changes_clean_worktree() {
     assert!(output.get("hunks").is_none());
     assert!(output["session"].is_null());
     assert_eq!(output["suggested_next_actions"][0], "no changes detected");
+    assert_review_verdict_shape(&output["verdict"]);
+    assert_ne!(output["verdict"]["status"], "fail");
+    assert_eq!(output["verdict"]["blocking"], false);
 }
 
 #[test]
@@ -230,6 +243,10 @@ fn show_changes_without_session_id_keeps_existing_behavior() {
     apply_show_changes_session(&mut output, None, None);
     assert_eq!(output["clean"], false);
     assert_eq!(output["counts"]["modified"], 1);
+    assert_review_verdict_shape(&output["verdict"]);
+    assert_eq!(output["verdict"]["status"], "fail");
+    assert_eq!(output["verdict"]["blocking"], true);
+    assert_reason_list_contains(&output["verdict"], "blocking_reasons", "workspace_dirty");
     assert!(output["session"].is_null());
     assert!(output["suggested_next_actions"]
         .as_array()
@@ -414,6 +431,8 @@ fn show_changes_reports_modified_file() {
     assert_eq!(output["clean"], false);
     assert_eq!(output["counts"]["modified"], 1);
     assert_eq!(output["counts"]["unstaged"], 1);
+    assert_eq!(output["verdict"]["status"], "fail");
+    assert_reason_list_contains(&output["verdict"], "blocking_reasons", "workspace_dirty");
     assert_eq!(output["files"][0]["path"], "src/users_http.rs");
     assert_eq!(output["files"][0]["status"], "modified");
     assert_eq!(output["files"][0]["kind"], "tracked");
@@ -441,6 +460,8 @@ fn show_changes_reports_untracked_file() {
     assert_eq!(output["files"][0]["status"], "untracked");
     assert_eq!(output["files"][0]["staged"], false);
     assert_eq!(output["warnings"][0]["kind"], "untracked_smoke_file");
+    assert_eq!(output["verdict"]["status"], "fail");
+    assert_reason_list_contains(&output["verdict"], "blocking_reasons", "workspace_dirty");
     assert!(output["suggested_next_actions"]
         .as_array()
         .unwrap()
@@ -496,6 +517,7 @@ index 1111111..2222222 100644
     );
     assert_eq!(output["hunk_count"], 1);
     assert_eq!(output["hunks_truncated"], true);
+    assert_reason_list_contains(&output["verdict"], "warning_reasons", "truncated_by_limit");
     let hunks = output["hunks"].as_array().unwrap();
     assert_eq!(hunks.len(), 1);
     assert_eq!(hunks[0]["path"], "src/lib.rs");
@@ -599,6 +621,11 @@ async fn show_changes_untracked_sensitive_path_preview_is_skipped() {
     assert!(
         !serialized.contains("API_TOKEN=secret"),
         "sensitive file content leaked: {serialized}"
+    );
+    assert_verdict_omits_raw_output_and_sensitive_values(
+        &output["verdict"],
+        &["API_TOKEN=secret"],
+        "show_changes sensitive preview verdict",
     );
 }
 
@@ -990,6 +1017,14 @@ async fn show_changes_degrades_gracefully_for_non_git_project() {
     );
     assert!(result.output["files"].as_array().unwrap().is_empty());
     assert!(result.output["session"].is_null());
+    assert_review_verdict_shape(&result.output["verdict"]);
+    assert_eq!(result.output["verdict"]["status"], "warn");
+    assert_eq!(result.output["verdict"]["blocking"], false);
+    assert_reason_list_contains(
+        &result.output["verdict"],
+        "warning_reasons",
+        "git_unavailable",
+    );
     let actions = result.output["suggested_next_actions"].as_array().unwrap();
     assert!(actions
         .iter()
@@ -1057,6 +1092,9 @@ async fn show_changes_real_git_repo_marks_git_available_and_reports_status() {
     assert_eq!(result.output["git_available"], true);
     assert_eq!(result.output["git_error"], serde_json::Value::Null);
     assert_eq!(result.output["clean"], true);
+    assert_review_verdict_shape(&result.output["verdict"]);
+    assert_ne!(result.output["verdict"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["blocking"], false);
     assert!(result.output["branch"].as_str().is_some());
     assert!(result.output["head"]["short"].as_str().is_some());
     assert_eq!(result.output["counts"]["modified"], 0);
@@ -1066,4 +1104,48 @@ async fn show_changes_real_git_repo_marks_git_available_and_reports_status() {
     assert!(!actions
         .iter()
         .any(|a| a.as_str().unwrap().contains("unavailable")));
+}
+
+fn assert_review_verdict_shape(verdict: &serde_json::Value) {
+    let status = verdict["status"].as_str().expect("status string");
+    assert!(
+        matches!(status, "pass" | "warn" | "fail"),
+        "unexpected verdict status {status}: {verdict}"
+    );
+    assert!(verdict["blocking"].is_boolean(), "blocking bool: {verdict}");
+    for key in [
+        "blocking_reasons",
+        "warning_reasons",
+        "suggested_next_actions",
+    ] {
+        assert!(verdict[key].is_array(), "{key} array: {verdict}");
+    }
+}
+
+fn assert_reason_list_contains(verdict: &serde_json::Value, key: &str, reason: &str) {
+    let reasons = verdict[key].as_array().expect("reason list");
+    assert!(
+        reasons.iter().any(|value| value.as_str() == Some(reason)),
+        "{key} should contain {reason}: {verdict}"
+    );
+}
+
+fn assert_verdict_omits_raw_output_and_sensitive_values(
+    verdict: &serde_json::Value,
+    forbidden_values: &[&str],
+    context: &str,
+) {
+    let serialized = serde_json::to_string(verdict).unwrap();
+    for forbidden in ["stdout", "stderr", "tail", "excerpt", "command"] {
+        assert!(
+            !serialized.contains(forbidden),
+            "{context} leaked raw output marker {forbidden}: {serialized}"
+        );
+    }
+    for forbidden in forbidden_values {
+        assert!(
+            !serialized.contains(forbidden),
+            "{context} leaked sensitive value {forbidden}: {serialized}"
+        );
+    }
 }

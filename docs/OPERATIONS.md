@@ -494,8 +494,8 @@ Review order for coding closeout is deterministic: call `show_changes`, inspect
 `workspace_hygiene_check`, inspect `clean`, `findings`, `warnings`, and
 `suggested_next_actions`; then use `session_handoff_summary` or
 `finish_coding_task` with `summary_only=true` for the compact aggregate verdict.
-If `show_changes` or `workspace_hygiene_check` expose a top-level `verdict`,
-read it first, but keep the detailed fields as the auditable basis.
+`show_changes` and `workspace_hygiene_check` expose top-level `verdict`
+summaries; read them first, but keep the detailed fields as the auditable basis.
 
 ### 6. Finish or hand off
 

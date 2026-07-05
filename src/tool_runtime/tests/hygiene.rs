@@ -100,6 +100,13 @@ fn workspace_hygiene_check_is_known_and_in_specs() {
     // MCP annotations: readOnlyHint=true.
     assert_eq!(spec.annotations["readOnlyHint"], true);
     assert_eq!(spec.annotations["destructiveHint"], false);
+    let output_props = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert!(
+        output_props.contains_key("verdict"),
+        "workspace_hygiene_check output schema should expose verdict"
+    );
 
     // OpenAPI ToolCallRequest.tool description includes the name.
     let openapi_spec = crate::openapi::build_openapi_spec();
@@ -146,6 +153,9 @@ async fn workspace_hygiene_check_clean_git_repo() {
     assert_eq!(result.output["counts"]["findings"], 0);
     assert!(result.output["findings"].as_array().unwrap().is_empty());
     assert_eq!(result.output["truncated"], false);
+    assert_review_verdict_shape(&result.output["verdict"]);
+    assert_ne!(result.output["verdict"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["blocking"], false);
 }
 
 // =========================================================================
@@ -170,6 +180,9 @@ async fn workspace_hygiene_check_detects_untracked_smoke_temp_file() {
         .unwrap_or_else(|| panic!("expected temporary_file finding: {findings:?}"));
     assert_eq!(smoke_finding["tracked_status"], "untracked");
     assert_eq!(smoke_finding["path"], ".webcodex-smoke-acceptance.txt");
+    assert_review_verdict_shape(&result.output["verdict"]);
+    assert_ne!(result.output["verdict"]["status"], "pass");
+    assert!(!verdict_reasons(&result.output["verdict"]).is_empty());
 }
 
 #[tokio::test]
@@ -206,6 +219,17 @@ async fn workspace_hygiene_check_detects_dirty_untracked_and_suspicious_paths() 
     assert!(
         !output_str.contains("DO_NOT_LEAK=this-value"),
         "output must not contain secret-like file contents"
+    );
+    assert_eq!(result.output["verdict"]["status"], "fail");
+    assert_reason_list_contains(
+        &result.output["verdict"],
+        "blocking_reasons",
+        "hygiene_failed",
+    );
+    assert_verdict_omits_raw_output_and_sensitive_values(
+        &result.output["verdict"],
+        &["DO_NOT_LEAK=this-value"],
+        "mixed hygiene verdict",
     );
 }
 
@@ -244,6 +268,11 @@ async fn workspace_hygiene_check_detects_secret_like_path_without_content() {
     assert!(
         !output_str.contains("sk-super-secret-value-12345"),
         "output must not contain secret values"
+    );
+    assert_verdict_omits_raw_output_and_sensitive_values(
+        &result.output["verdict"],
+        &["SUPER_SECRET_API_KEY", "sk-super-secret-value-12345"],
+        "secret hygiene verdict",
     );
 }
 
@@ -403,6 +432,14 @@ async fn workspace_hygiene_check_non_git_project_does_not_fail() {
         result.error
     );
     assert_eq!(result.output["git_available"], false);
+    assert_review_verdict_shape(&result.output["verdict"]);
+    assert_eq!(result.output["verdict"]["status"], "warn");
+    assert_eq!(result.output["verdict"]["blocking"], false);
+    assert_reason_list_contains(
+        &result.output["verdict"],
+        "warning_reasons",
+        "git_unavailable",
+    );
     let warnings = result.output["warnings"].as_array().unwrap();
     assert!(
         warnings.iter().any(|w| w == "non_git_project"),
@@ -572,4 +609,62 @@ fn workspace_hygiene_check_tool_is_known_and_parses() {
         log_args.get("findings").is_none(),
         "session_log_arguments must not include findings"
     );
+}
+
+fn assert_review_verdict_shape(verdict: &serde_json::Value) {
+    let status = verdict["status"].as_str().expect("status string");
+    assert!(
+        matches!(status, "pass" | "warn" | "fail"),
+        "unexpected verdict status {status}: {verdict}"
+    );
+    assert!(verdict["blocking"].is_boolean(), "blocking bool: {verdict}");
+    for key in [
+        "blocking_reasons",
+        "warning_reasons",
+        "suggested_next_actions",
+    ] {
+        assert!(verdict[key].is_array(), "{key} array: {verdict}");
+    }
+}
+
+fn assert_reason_list_contains(verdict: &serde_json::Value, key: &str, reason: &str) {
+    let reasons = verdict[key].as_array().expect("reason list");
+    assert!(
+        reasons.iter().any(|value| value.as_str() == Some(reason)),
+        "{key} should contain {reason}: {verdict}"
+    );
+}
+
+fn verdict_reasons(verdict: &serde_json::Value) -> Vec<&str> {
+    let mut reasons = Vec::new();
+    for key in ["blocking_reasons", "warning_reasons"] {
+        reasons.extend(
+            verdict[key]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str),
+        );
+    }
+    reasons
+}
+
+fn assert_verdict_omits_raw_output_and_sensitive_values(
+    verdict: &serde_json::Value,
+    forbidden_values: &[&str],
+    context: &str,
+) {
+    let serialized = serde_json::to_string(verdict).unwrap();
+    for forbidden in ["stdout", "stderr", "tail", "excerpt", "command"] {
+        assert!(
+            !serialized.contains(forbidden),
+            "{context} leaked raw output marker {forbidden}: {serialized}"
+        );
+    }
+    for forbidden in forbidden_values {
+        assert!(
+            !serialized.contains(forbidden),
+            "{context} leaked sensitive value {forbidden}: {serialized}"
+        );
+    }
 }

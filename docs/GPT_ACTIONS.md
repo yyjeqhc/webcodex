@@ -240,9 +240,9 @@ The intended closeout order is `start_coding_task` -> inspect/search/read ->
 edit -> validate -> `show_changes` -> `workspace_hygiene_check` ->
 `session_handoff_summary` when a handoff is useful -> `finish_coding_task`.
 `show_changes` and `workspace_hygiene_check` are the auditable review evidence;
-handoff/finish verdicts are the final compact PASS/WARN/FAIL aggregate. If a
-review tool exposes its own verdict, treat it as the same additive UX summary
-over the detailed review fields, not as a new guard or permission decision.
+their top-level verdicts are additive UX summaries over the detailed review
+fields. Handoff/finish verdicts are the final compact PASS/WARN/FAIL aggregate,
+not a new guard or permission decision.
 
 For non-coding tracking, `start_session` remains available through
 `callRuntimeTool`. It creates a session record but does not automatically bind

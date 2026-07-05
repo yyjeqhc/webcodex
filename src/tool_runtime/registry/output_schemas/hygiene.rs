@@ -52,6 +52,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Bounded suggested next actions.",
                 ),
             ),
+            (
+                "verdict",
+                open_object_schema("Operator-friendly hygiene verdict: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. Additive UX summary only; does not change safety semantics."),
+            ),
         ])),
         "delete_project_files" => Some(wrapped_output_schema(vec![
             (

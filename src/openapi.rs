@@ -1921,13 +1921,14 @@ fn insert_tool_call_request_flattened_arg_properties(schemas: &mut Value) {
     };
 
     for (field, schema_type) in SIMPLE_FLATTENED_TOOL_ARG_FIELDS {
-        properties.insert((*field).to_string(), flattened_tool_arg_schema(schema_type));
+        properties
+            .entry((*field).to_string())
+            .or_insert_with(|| flattened_tool_arg_schema(schema_type));
     }
     for field in STRING_ARRAY_FLATTENED_TOOL_ARG_FIELDS {
-        properties.insert(
-            (*field).to_string(),
-            flattened_string_array_tool_arg_schema(),
-        );
+        properties
+            .entry((*field).to_string())
+            .or_insert_with(flattened_string_array_tool_arg_schema);
     }
 }
 
@@ -2983,6 +2984,44 @@ mod tests {
         assert!(
             desc_blob.contains("top-level fields") && desc_blob.contains("params/arguments"),
             "ToolCallRequest must document flattened GPT Action compatibility"
+        );
+    }
+
+    #[test]
+    fn openapi_flattened_arg_table_does_not_overwrite_existing_properties() {
+        let mut schemas = json!({
+            "ToolCallRequest": {
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Existing project-specific schema."
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Existing args-specific schema."
+                    }
+                }
+            }
+        });
+
+        insert_tool_call_request_flattened_arg_properties(&mut schemas);
+
+        let properties = schemas["ToolCallRequest"]["properties"]
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            properties["project"]["description"],
+            "Existing project-specific schema."
+        );
+        assert_eq!(properties["args"]["items"]["type"], "integer");
+        assert_eq!(
+            properties["command"]["description"],
+            FLATTENED_TOOL_ARG_DESCRIPTION
+        );
+        assert_eq!(
+            properties["paths"]["description"],
+            FLATTENED_TOOL_ARG_DESCRIPTION
         );
     }
 

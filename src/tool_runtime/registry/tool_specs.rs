@@ -31,6 +31,12 @@ impl ToolRuntime {
         declarations.extend(testing::tool_specs());
         declarations.extend(artifacts::tool_specs());
         declarations.extend(edits::tool_specs());
+        debug_assert!(
+            declarations
+                .iter()
+                .all(|spec| super::super::tool_definition::is_model_visible_tool_name(&spec.name)),
+            "ToolSpec declarations must only include model-visible tools"
+        );
         model_visible_tool_definitions()
             .map(|definition| {
                 declarations

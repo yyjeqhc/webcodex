@@ -1,6 +1,6 @@
 use super::super::input_schemas::{
     job_log_input_schema, job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
-    run_codex_input_schema, run_job_input_schema, run_shell_input_schema, stop_job_input_schema,
+    run_job_input_schema, run_shell_input_schema, stop_job_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -21,11 +21,6 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "stop_job",
             "Stop a bounded runtime job started through WebCodex. Requires confirm=true, obeys project/session ownership, never exposes stdout/stderr, and returns stop_effect/terminal lifecycle fields.",
             stop_job_input_schema(),
-        ),
-        tool_spec(
-            "run_codex",
-            "Optional Codex CLI delegation as an async project job. Requires Codex CLI installed and configured on the owning agent. Use only when the user explicitly asks to delegate to Codex; otherwise use WebCodex file/git/shell/line-edit tools directly.",
-            run_codex_input_schema(),
         ),
         tool_spec(
             "job_status",

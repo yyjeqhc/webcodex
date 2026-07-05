@@ -46,7 +46,7 @@ pub(super) use git::{
 pub(super) use hygiene::workspace_hygiene_check_input_schema;
 pub(super) use jobs::{
     job_log_input_schema, job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
-    run_codex_input_schema, run_job_input_schema, run_shell_input_schema, stop_job_input_schema,
+    run_job_input_schema, run_shell_input_schema, stop_job_input_schema,
 };
 pub(super) use line_edits::{
     apply_text_edits_input_schema, delete_line_range_input_schema, insert_at_line_input_schema,

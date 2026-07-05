@@ -63,42 +63,6 @@ pub(crate) fn stop_job_input_schema() -> Value {
     ]))
 }
 
-pub(crate) fn run_codex_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Configured project id.", true),
-        (
-            "prompt",
-            "string",
-            "Instruction prompt passed to Codex CLI.",
-            true,
-        ),
-        (
-            "approval_mode",
-            "string",
-            "Codex approval mode. Empty/none/off/disabled omit --approval-mode.",
-            false,
-        ),
-        (
-            "timeout_secs",
-            "integer",
-            "Maximum runtime in seconds.",
-            false,
-        ),
-        (
-            "cwd",
-            "string",
-            "Optional project-relative working directory.",
-            false,
-        ),
-        (
-            "extra_args",
-            "array",
-            "Optional extra Codex CLI arguments.",
-            false,
-        ),
-    ]))
-}
-
 pub(crate) fn job_status_input_schema() -> Value {
     object_schema(vec![
         ("job_id", "string", "Job id.", true),

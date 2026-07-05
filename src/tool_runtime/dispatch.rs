@@ -414,62 +414,12 @@ impl ToolRuntime {
                     .await
             }
 
-            ToolCall::WorkspaceCheckpointCreate {
-                project,
-                title,
-                note,
-                include_untracked,
-                kind,
-                labels,
-                validation,
-                session_id: _,
-            } => {
-                self.workspace_checkpoint_create(
-                    project,
-                    title,
-                    note,
-                    include_untracked,
-                    kind,
-                    labels,
-                    validation,
-                )
-                .await
-            }
-
-            ToolCall::WorkspaceCheckpointList {
-                project,
-                limit,
-                session_id: _,
-            } => self.workspace_checkpoint_list(project, limit).await,
-
-            ToolCall::WorkspaceCheckpointShow {
-                project,
-                checkpoint_id,
-                include_diff_stat,
-                session_id: _,
-            } => {
-                self.workspace_checkpoint_show(project, checkpoint_id, include_diff_stat)
-                    .await
-            }
-
-            ToolCall::WorkspaceCheckpointRestore {
-                project,
-                checkpoint_id,
-                confirm,
-                session_id: _,
-            } => {
-                self.workspace_checkpoint_restore(project, checkpoint_id, confirm)
-                    .await
-            }
-
-            ToolCall::WorkspaceCheckpointDelete {
-                project,
-                checkpoint_id,
-                confirm,
-                session_id: _,
-            } => {
-                self.workspace_checkpoint_delete(project, checkpoint_id, confirm)
-                    .await
+            call @ (ToolCall::WorkspaceCheckpointCreate { .. }
+            | ToolCall::WorkspaceCheckpointList { .. }
+            | ToolCall::WorkspaceCheckpointShow { .. }
+            | ToolCall::WorkspaceCheckpointRestore { .. }
+            | ToolCall::WorkspaceCheckpointDelete { .. }) => {
+                self.dispatch_workspace_checkpoint_tool(call).await
             }
 
             ToolCall::ListProjects => self.list_projects(auth).await,

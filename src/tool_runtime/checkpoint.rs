@@ -9,7 +9,7 @@ use super::tool_inputs::{
     is_checkpoint_kind, is_checkpoint_validation_status, CheckpointValidationInput,
 };
 use super::tool_result::ToolResult;
-use super::ToolRuntime;
+use super::{ToolCall, ToolRuntime};
 use crate::action_sessions::secret_like_value;
 use crate::projects::ProjectConfig;
 use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
@@ -170,6 +170,65 @@ impl ToolRuntime {
     #[cfg(test)]
     pub(crate) fn checkpoint_state_dir(&self) -> &Path {
         self.checkpoint_store.state_dir()
+    }
+
+    pub(crate) async fn dispatch_workspace_checkpoint_tool(&self, call: ToolCall) -> ToolResult {
+        match call {
+            ToolCall::WorkspaceCheckpointCreate {
+                project,
+                title,
+                note,
+                include_untracked,
+                kind,
+                labels,
+                validation,
+                session_id: _,
+            } => {
+                self.workspace_checkpoint_create(
+                    project,
+                    title,
+                    note,
+                    include_untracked,
+                    kind,
+                    labels,
+                    validation,
+                )
+                .await
+            }
+            ToolCall::WorkspaceCheckpointList {
+                project,
+                limit,
+                session_id: _,
+            } => self.workspace_checkpoint_list(project, limit).await,
+            ToolCall::WorkspaceCheckpointShow {
+                project,
+                checkpoint_id,
+                include_diff_stat,
+                session_id: _,
+            } => {
+                self.workspace_checkpoint_show(project, checkpoint_id, include_diff_stat)
+                    .await
+            }
+            ToolCall::WorkspaceCheckpointRestore {
+                project,
+                checkpoint_id,
+                confirm,
+                session_id: _,
+            } => {
+                self.workspace_checkpoint_restore(project, checkpoint_id, confirm)
+                    .await
+            }
+            ToolCall::WorkspaceCheckpointDelete {
+                project,
+                checkpoint_id,
+                confirm,
+                session_id: _,
+            } => {
+                self.workspace_checkpoint_delete(project, checkpoint_id, confirm)
+                    .await
+            }
+            _ => unreachable!("non-checkpoint tool routed to checkpoint dispatcher"),
+        }
     }
 
     pub(crate) async fn workspace_checkpoint_create(

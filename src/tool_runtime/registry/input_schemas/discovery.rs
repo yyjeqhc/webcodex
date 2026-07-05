@@ -58,47 +58,47 @@ pub(crate) fn empty_input_schema() -> Value {
     object_schema(vec![])
 }
 
-pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
-    const PREFERRED_ORDER: &[&str] = &[
-        "project",
-        "path",
-        "title",
-        "session_id",
-        "bind_current",
-        "include_runtime_status",
-        "include_git",
-        "include_recent_commits",
-        "include_rules",
-        "include_tool_manifest",
-        "tool_manifest_categories",
-        "tool_manifest_limit",
-        "include_diff",
-        "include_hygiene",
-        "include_handoff",
-        "include_validation_summary",
-        "include_validation",
-        "include_workspace",
-        "include_checkpoints",
-        "category",
-        "features",
-        "summary_only",
-        "limit",
-        "allow_missing",
-        "upload_id",
-        ALLOW_CROSS_PROJECT_SESSION_FIELD,
-        "offset",
-        "content_base64",
-        "expected_bytes",
-        "expected_sha256",
-        "mime_type",
-        "overwrite",
-    ];
+pub(crate) const ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER: &[&str] = &[
+    "project",
+    "path",
+    "title",
+    "session_id",
+    "bind_current",
+    "include_runtime_status",
+    "include_git",
+    "include_recent_commits",
+    "include_rules",
+    "include_tool_manifest",
+    "tool_manifest_categories",
+    "tool_manifest_limit",
+    "include_diff",
+    "include_hygiene",
+    "include_handoff",
+    "include_validation_summary",
+    "include_validation",
+    "include_workspace",
+    "include_checkpoints",
+    "category",
+    "features",
+    "summary_only",
+    "limit",
+    "allow_missing",
+    "upload_id",
+    ALLOW_CROSS_PROJECT_SESSION_FIELD,
+    "offset",
+    "content_base64",
+    "expected_bytes",
+    "expected_sha256",
+    "mime_type",
+    "overwrite",
+];
 
+pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
     let Some(properties) = spec.input_schema["properties"].as_object() else {
         return vec![TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string()];
     };
     let mut names = Vec::new();
-    for field in PREFERRED_ORDER {
+    for field in ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER {
         if properties.contains_key(*field) {
             names.push((*field).to_string());
         }
@@ -106,7 +106,7 @@ pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
     let mut remaining: Vec<&str> = properties
         .keys()
         .map(String::as_str)
-        .filter(|field| !PREFERRED_ORDER.contains(field))
+        .filter(|field| !ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER.contains(field))
         .collect();
     remaining.sort_unstable();
     names.extend(remaining.into_iter().map(str::to_string));

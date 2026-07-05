@@ -33,6 +33,8 @@ pub(super) use cleanup::{
 };
 pub(super) use coding::{finish_coding_task_input_schema, start_coding_task_input_schema};
 pub(crate) use discovery::accepted_flattened_args_for_spec;
+#[cfg(test)]
+pub(crate) use discovery::ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER;
 pub(super) use discovery::{
     empty_input_schema, list_tools_input_schema, tool_manifest_input_schema,
 };

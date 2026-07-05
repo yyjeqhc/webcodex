@@ -12,6 +12,23 @@ use crate::tool_runtime::{
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, records this dedicated action in the session ledger and wins over any current-session binding.";
+const FLATTENED_TOOL_ARG_DESCRIPTION: &str =
+    "Flattened tool-specific argument. Used only when `params` and `arguments` are absent.";
+
+fn flattened_tool_arg_schema(schema_type: &str) -> Value {
+    json!({
+        "type": schema_type,
+        "description": FLATTENED_TOOL_ARG_DESCRIPTION
+    })
+}
+
+fn flattened_string_array_tool_arg_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": {"type": "string"},
+        "description": FLATTENED_TOOL_ARG_DESCRIPTION
+    })
+}
 
 fn public_url() -> String {
     std::env::var("WEBCODEX_PUBLIC_URL")
@@ -1103,26 +1120,11 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Flattened resolve_session_message resolution note. Used only when `params` and `arguments` are absent."
                 },
-                "project": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "mode": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "deny_write_tools": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "deny_shell_tools": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
+                "project": flattened_tool_arg_schema("string"),
+                "title": flattened_tool_arg_schema("string"),
+                "mode": flattened_tool_arg_schema("string"),
+                "deny_write_tools": flattened_tool_arg_schema("boolean"),
+                "deny_shell_tools": flattened_tool_arg_schema("boolean"),
                 "include_runtime_status": {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
@@ -1160,36 +1162,13 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Flattened tool-specific argument. For artifact_upload_chunk/finish/abort this is required and must exactly match the path used by artifact_upload_begin to bind upload_id to the target path. Used only when `params` and `arguments` are absent."
                 },
-                "command": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "args": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "paths": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "pattern": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
+                "command": flattened_tool_arg_schema("string"),
+                "cwd": flattened_tool_arg_schema("string"),
+                "timeout_secs": flattened_tool_arg_schema("integer"),
+                "args": flattened_string_array_tool_arg_schema(),
+                "paths": flattened_string_array_tool_arg_schema(),
+                "pattern": flattened_tool_arg_schema("string"),
+                "limit": flattened_tool_arg_schema("integer"),
                 "skip": {
                     "type": "integer",
                     "description": "Flattened git_log commit offset. Used only when `params` and `arguments` are absent."
@@ -1206,10 +1185,7 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened tool_manifest flag. Defaults to true and controls risk_summary in compact discovery output. Used only when `params` and `arguments` are absent."
                 },
-                "include_diff": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
+                "include_diff": flattened_tool_arg_schema("boolean"),
                 "include_hygiene": {
                     "type": "boolean",
                     "description": "Flattened finish_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
@@ -1242,38 +1218,14 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened session_handoff_summary flag. Include bounded checkpoint candidates when project is provided. Used only when params and arguments are absent."
                 },
-                "max_hunks": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "max_hunk_lines": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "session_event_limit": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "cached": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "check": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "all_targets": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "all_features": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "no_default_features": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
+                "max_hunks": flattened_tool_arg_schema("integer"),
+                "max_hunk_lines": flattened_tool_arg_schema("integer"),
+                "session_event_limit": flattened_tool_arg_schema("integer"),
+                "cached": flattened_tool_arg_schema("boolean"),
+                "check": flattened_tool_arg_schema("boolean"),
+                "all_targets": flattened_tool_arg_schema("boolean"),
+                "all_features": flattened_tool_arg_schema("boolean"),
+                "no_default_features": flattened_tool_arg_schema("boolean"),
                 "features": {
                     "type": "string",
                     "description": "Flattened list_tools feature filter, or cargo feature selection for cargo tools. Used only when `params` and `arguments` are absent."
@@ -1282,82 +1234,25 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened list_tools/session_handoff_summary/finish_coding_task flag. For list_tools, returns compact tool summaries without full schemas. For handoff/finish, returns compact verdict fields and omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts. Used only when `params` and `arguments` are absent."
                 },
-                "package": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "filter": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "no_run": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "start_line": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "context_before": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "context_after": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "with_line_numbers": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "end_line": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "line": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "text": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "old_text": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "new_text": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "expected_old_sha256": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "expected_old_prefix": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "expected_anchor_sha256": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "expected_anchor_prefix": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "content_base64": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "mime_type": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
+                "package": flattened_tool_arg_schema("string"),
+                "filter": flattened_tool_arg_schema("string"),
+                "no_run": flattened_tool_arg_schema("boolean"),
+                "start_line": flattened_tool_arg_schema("integer"),
+                "context_before": flattened_tool_arg_schema("integer"),
+                "context_after": flattened_tool_arg_schema("integer"),
+                "with_line_numbers": flattened_tool_arg_schema("boolean"),
+                "end_line": flattened_tool_arg_schema("integer"),
+                "line": flattened_tool_arg_schema("integer"),
+                "text": flattened_tool_arg_schema("string"),
+                "old_text": flattened_tool_arg_schema("string"),
+                "new_text": flattened_tool_arg_schema("string"),
+                "expected_old_sha256": flattened_tool_arg_schema("string"),
+                "expected_old_prefix": flattened_tool_arg_schema("string"),
+                "expected_anchor_sha256": flattened_tool_arg_schema("string"),
+                "expected_anchor_prefix": flattened_tool_arg_schema("string"),
+                "content": flattened_tool_arg_schema("string"),
+                "content_base64": flattened_tool_arg_schema("string"),
+                "mime_type": flattened_tool_arg_schema("string"),
                 "upload_id": {
                     "type": "string",
                     "description": "Flattened artifact_upload_chunk/finish/abort wc_upload_* id. The same path from artifact_upload_begin is also required so the runtime can bind upload_id to the requested target path. Used only when `params` and `arguments` are absent."
@@ -1366,107 +1261,34 @@ fn schemas() -> Value {
                     "type": "integer",
                     "description": "Flattened artifact_upload_begin final byte count guard. Used only when `params` and `arguments` are absent."
                 },
-                "encoding": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "max_bytes": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "overwrite": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "expected_sha256": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "expected_content_prefix": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "old": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "new": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "expected_replacements": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "allow_multiple": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
+                "encoding": flattened_tool_arg_schema("string"),
+                "max_bytes": flattened_tool_arg_schema("integer"),
+                "overwrite": flattened_tool_arg_schema("boolean"),
+                "expected_sha256": flattened_tool_arg_schema("string"),
+                "expected_content_prefix": flattened_tool_arg_schema("string"),
+                "old": flattened_tool_arg_schema("string"),
+                "new": flattened_tool_arg_schema("string"),
+                "expected_replacements": flattened_tool_arg_schema("integer"),
+                "allow_multiple": flattened_tool_arg_schema("boolean"),
                 "allow_missing": {
                     "type": "boolean",
                     "description": "Flattened read_project_artifact_metadata flag. When true, a missing artifact returns exists=false instead of a failed tool call. Used only when `params` and `arguments` are absent."
                 },
-                "paths": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "patch": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "deny_sensitive_paths": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "job_id": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "tail_lines": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "length": {
-                    "type": "integer",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "client_id": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "id": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "allow_patch": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "template": {
-                    "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "git_init": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                },
-                "allow_existing_empty": {
-                    "type": "boolean",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
-                }
+                "paths": flattened_string_array_tool_arg_schema(),
+                "patch": flattened_tool_arg_schema("string"),
+                "deny_sensitive_paths": flattened_tool_arg_schema("boolean"),
+                "job_id": flattened_tool_arg_schema("string"),
+                "tail_lines": flattened_tool_arg_schema("integer"),
+                "offset": flattened_tool_arg_schema("integer"),
+                "length": flattened_tool_arg_schema("integer"),
+                "client_id": flattened_tool_arg_schema("string"),
+                "id": flattened_tool_arg_schema("string"),
+                "name": flattened_tool_arg_schema("string"),
+                "description": flattened_tool_arg_schema("string"),
+                "allow_patch": flattened_tool_arg_schema("boolean"),
+                "template": flattened_tool_arg_schema("string"),
+                "git_init": flattened_tool_arg_schema("boolean"),
+                "allow_existing_empty": flattened_tool_arg_schema("boolean")
             }
         },
         "JobStatusRequest": {

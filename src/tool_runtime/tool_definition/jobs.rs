@@ -1,7 +1,8 @@
 use super::AgentCapability::{AsyncJobs, Shell};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    def, disabled, permission_risk, ToolDefinition, TOOL_CATEGORY_CODEX, TOOL_CATEGORY_JOB,
+    def, disabled, permission_risk, ToolDefinition, PERMISSION_RISK_JOB, TOOL_CATEGORY_CODEX,
+    TOOL_CATEGORY_JOB,
 };
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath,
@@ -54,7 +55,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             true,
             false,
         ),
-        "job",
+        PERMISSION_RISK_JOB,
     ),
     disabled(
         permission_risk(
@@ -71,7 +72,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 true,
             ),
-            TOOL_CATEGORY_JOB,
+            PERMISSION_RISK_JOB,
         ),
         RUN_CODEX_DISABLED_MESSAGE,
     ),

@@ -181,7 +181,10 @@ fn tool_definitions_drive_session_and_permission_policy() {
         runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
         runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
         runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
-        runtime_tool_session_risk_class, tool_definitions, TOOL_DISCOVERY_GROUPS,
+        runtime_tool_session_risk_class, tool_definitions, PERMISSION_RISK_ARTIFACT_WRITE,
+        PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_JOB, PERMISSION_RISK_PATCH,
+        PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
+        TOOL_DISCOVERY_GROUPS,
     };
 
     let git_group = TOOL_DISCOVERY_GROUPS
@@ -458,15 +461,15 @@ fn tool_definitions_drive_session_and_permission_policy() {
     }
 
     for (tool, risk) in [
-        ("cargo_check", "validation"),
-        ("run_shell", "shell"),
-        ("run_job", "job"),
-        ("stop_job", "job"),
-        ("run_codex", "job"),
-        ("delete_project_files", "destructive"),
-        ("save_project_artifact", "artifact_write"),
-        ("apply_patch", "patch"),
-        ("write_project_file", "write"),
+        ("cargo_check", PERMISSION_RISK_VALIDATION),
+        ("run_shell", PERMISSION_RISK_SHELL),
+        ("run_job", PERMISSION_RISK_JOB),
+        ("stop_job", PERMISSION_RISK_JOB),
+        ("run_codex", PERMISSION_RISK_JOB),
+        ("delete_project_files", PERMISSION_RISK_DESTRUCTIVE),
+        ("save_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("apply_patch", PERMISSION_RISK_PATCH),
+        ("write_project_file", PERMISSION_RISK_WRITE),
     ] {
         assert_eq!(runtime_tool_permission_risk(tool), risk, "{tool}");
     }
@@ -480,10 +483,13 @@ fn tool_definitions_drive_session_and_permission_policy() {
     assert!(!runtime_tool_allows_current_session_fallback("__unknown__"));
     assert!(runtime_tool_requires_permission("__unknown__"));
     assert!(runtime_tool_requires_session_project_escape("__unknown__"));
-    assert_eq!(runtime_tool_permission_risk("__unknown__"), "write");
+    assert_eq!(
+        runtime_tool_permission_risk("__unknown__"),
+        PERMISSION_RISK_WRITE
+    );
     assert_eq!(
         runtime_tool_permission_risk("compat_patch_like"),
-        "patch",
+        PERMISSION_RISK_PATCH,
         "unknown compatibility names keep the legacy path/name fallback"
     );
     assert_ne!(

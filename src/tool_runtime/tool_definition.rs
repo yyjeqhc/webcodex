@@ -140,6 +140,14 @@ pub(crate) const TOOL_CATEGORY_RUNTIME: &str = "runtime";
 pub(crate) const TOOL_CATEGORY_SESSION: &str = "session";
 pub(crate) const TOOL_CATEGORY_VALIDATION: &str = "validation";
 
+pub(crate) const PERMISSION_RISK_ARTIFACT_WRITE: &str = "artifact_write";
+pub(crate) const PERMISSION_RISK_DESTRUCTIVE: &str = "destructive";
+pub(crate) const PERMISSION_RISK_JOB: &str = "job";
+pub(crate) const PERMISSION_RISK_PATCH: &str = "patch";
+pub(crate) const PERMISSION_RISK_SHELL: &str = "shell";
+pub(crate) const PERMISSION_RISK_VALIDATION: &str = "validation";
+pub(crate) const PERMISSION_RISK_WRITE: &str = "write";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolDefinitionPolicy {
     pub(crate) change_summary_like: bool,

@@ -3,7 +3,11 @@
 use super::metadata::{
     tool_metadata as fallback_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk,
 };
-use super::tool_definition::{tool_definitions, AgentCapability, ToolDefinition};
+use super::tool_definition::{
+    tool_definitions, AgentCapability, ToolDefinition, PERMISSION_RISK_ARTIFACT_WRITE,
+    PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL,
+    PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
+};
 
 impl ToolDefinition {
     pub(crate) fn metadata(self) -> ToolMetadata {
@@ -83,7 +87,7 @@ impl ToolDefinition {
 
     pub(crate) fn permission_risk(self) -> &'static str {
         if self.captures_validation_output() {
-            return "validation";
+            return PERMISSION_RISK_VALIDATION;
         }
         if let Some(permission_risk) = self.policy.permission_risk {
             return permission_risk;
@@ -94,29 +98,29 @@ impl ToolDefinition {
 
 fn permission_risk_from_metadata(metadata: ToolMetadata) -> &'static str {
     if metadata.shell_like {
-        return "shell";
+        return PERMISSION_RISK_SHELL;
     }
     if metadata.destructive {
-        return "destructive";
+        return PERMISSION_RISK_DESTRUCTIVE;
     }
     if metadata.path_hint == ToolPathHint::Artifact {
-        return "artifact_write";
+        return PERMISSION_RISK_ARTIFACT_WRITE;
     }
     if metadata.path_hint == ToolPathHint::Patch {
-        return "patch";
+        return PERMISSION_RISK_PATCH;
     }
     if matches!(
         metadata.risk,
         ToolRisk::ProjectWrite | ToolRisk::AccountManage
     ) {
-        return "write";
+        return PERMISSION_RISK_WRITE;
     }
-    "write"
+    PERMISSION_RISK_WRITE
 }
 
 fn fallback_permission_risk(name: &str, metadata: ToolMetadata) -> &'static str {
     if name.contains("patch") && metadata.path_hint != ToolPathHint::Patch {
-        return "patch";
+        return PERMISSION_RISK_PATCH;
     }
     permission_risk_from_metadata(metadata)
 }

@@ -39,6 +39,11 @@ pub(crate) use super::tool_policy::{
     runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
     runtime_tool_session_risk_class,
 };
+use crate::shell_protocol::{
+    SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
+    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
+    SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_SHELL,
+};
 
 /// Capability an agent-backed tool requires before dispatch can reach an
 /// agent-backed project.
@@ -75,11 +80,14 @@ impl AgentCapability {
     pub(crate) fn registry_capabilities(self) -> &'static [&'static str] {
         match self {
             Self::OwnerOnly => &[],
-            Self::Shell => &["shell"],
-            Self::FileRead => &["file_read"],
-            Self::FileWrite => &["file_write"],
-            Self::GitOrShell => &["shell", "git"],
-            Self::AsyncJobs => &["async_jobs", "async_shell_jobs"],
+            Self::Shell => &[SHELL_CLIENT_CAPABILITY_SHELL],
+            Self::FileRead => &[SHELL_CLIENT_CAPABILITY_FILE_READ],
+            Self::FileWrite => &[SHELL_CLIENT_CAPABILITY_FILE_WRITE],
+            Self::GitOrShell => &[SHELL_CLIENT_CAPABILITY_SHELL, SHELL_CLIENT_CAPABILITY_GIT],
+            Self::AsyncJobs => &[
+                SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
+                SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
+            ],
         }
     }
 

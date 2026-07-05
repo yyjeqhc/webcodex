@@ -3,7 +3,8 @@ use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentPollRequest, ShellAgentProjectSummary,
     ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest, ShellClientView,
-    ShellJobCodexMetadata,
+    ShellJobCodexMetadata, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
+    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_SHELL,
 };
 use crate::shell_protocol::{
     ShellClientJobLogRequest, ShellClientJobLogResponse, ShellClientJobStatusRequest,
@@ -1951,18 +1952,27 @@ mod tests {
             })
             .await
             .unwrap();
-        assert!(registry.client_supports("oe", "shell").await.unwrap());
-        assert!(registry.client_supports("oe", "file_read").await.unwrap());
         assert!(registry
-            .client_supports("oe", "async_shell_jobs")
+            .client_supports("oe", SHELL_CLIENT_CAPABILITY_SHELL)
             .await
             .unwrap());
-        assert!(!registry.client_supports("oe", "git").await.unwrap());
+        assert!(registry
+            .client_supports("oe", SHELL_CLIENT_CAPABILITY_FILE_READ)
+            .await
+            .unwrap());
+        assert!(registry
+            .client_supports("oe", SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS)
+            .await
+            .unwrap());
+        assert!(!registry
+            .client_supports("oe", SHELL_CLIENT_CAPABILITY_GIT)
+            .await
+            .unwrap());
         // Unknown capability name is false, not an error.
         assert!(!registry.client_supports("oe", "teleport").await.unwrap());
         // Unknown client is a structured error.
         let err = registry
-            .client_supports("ghost", "shell")
+            .client_supports("ghost", SHELL_CLIENT_CAPABILITY_SHELL)
             .await
             .unwrap_err();
         assert!(err.contains("unknown shell client"));

@@ -1,16 +1,21 @@
 use super::validation::validate_id;
 use super::ShellClientRegistry;
-use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientCapabilities};
+use crate::shell_protocol::{
+    ShellAgentProjectSummary, ShellClientCapabilities, SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
+    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS, SHELL_CLIENT_CAPABILITY_FILE_READ,
+    SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_JOBS,
+    SHELL_CLIENT_CAPABILITY_SHELL,
+};
 
 fn capability_enabled(caps: &ShellClientCapabilities, capability: &str) -> bool {
     match capability {
-        "shell" => caps.shell,
-        "file_read" => caps.file_read,
-        "file_write" => caps.file_write,
-        "git" => caps.git,
-        "jobs" => caps.jobs,
-        "async_jobs" => caps.async_jobs,
-        "async_shell_jobs" => caps.async_shell_jobs,
+        SHELL_CLIENT_CAPABILITY_SHELL => caps.shell,
+        SHELL_CLIENT_CAPABILITY_FILE_READ => caps.file_read,
+        SHELL_CLIENT_CAPABILITY_FILE_WRITE => caps.file_write,
+        SHELL_CLIENT_CAPABILITY_GIT => caps.git,
+        SHELL_CLIENT_CAPABILITY_JOBS => caps.jobs,
+        SHELL_CLIENT_CAPABILITY_ASYNC_JOBS => caps.async_jobs,
+        SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS => caps.async_shell_jobs,
         _ => false,
     }
 }

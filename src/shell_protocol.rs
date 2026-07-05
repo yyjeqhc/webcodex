@@ -59,6 +59,14 @@ pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
 #[allow(dead_code)]
 pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
 
+pub const SHELL_CLIENT_CAPABILITY_SHELL: &str = "shell";
+pub const SHELL_CLIENT_CAPABILITY_FILE_READ: &str = "file_read";
+pub const SHELL_CLIENT_CAPABILITY_FILE_WRITE: &str = "file_write";
+pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
+pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
+pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
+pub const SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
     #[serde(default = "default_shell_true")]

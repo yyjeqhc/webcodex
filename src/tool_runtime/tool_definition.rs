@@ -157,7 +157,7 @@ const fn def(
     }
 }
 
-use AgentCapability::{FileRead, FileWrite, GitOrShell, Shell};
+use AgentCapability::{FileRead, FileWrite, Shell};
 use ToolPathHint::{Artifact, None as NoPath, Patch, PathList, SinglePath};
 use ToolRisk::{JobRun, ProjectWrite, ReadOnly};
 use ToolVisibility::ModelVisible;
@@ -179,6 +179,8 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     files::SEARCH_DEFINITIONS,
     git::SUMMARY_DEFINITIONS,
     jobs::LISTING_DEFINITIONS,
+    files::READ_DEFINITIONS,
+    git::DETAIL_DEFINITIONS,
     TOOL_DEFINITION_TAIL,
 ];
 
@@ -197,71 +199,6 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
 )];
 
 const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
-    def(
-        "read_file",
-        ModelVisible,
-        "file",
-        Some(FileRead),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        SinglePath,
-        false,
-        false,
-    ),
-    def(
-        "git_status",
-        ModelVisible,
-        "git",
-        Some(GitOrShell),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "git_diff",
-        ModelVisible,
-        "git",
-        Some(GitOrShell),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "git_diff_hunks",
-        ModelVisible,
-        "git",
-        Some(GitOrShell),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "git_log",
-        ModelVisible,
-        "git",
-        Some(GitOrShell),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
     def(
         "cargo_fmt",
         ModelVisible,

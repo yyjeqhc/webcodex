@@ -320,7 +320,7 @@ fn tool_specs_covers_expected_tool_set() {
     }
     assert!(
         !names.iter().any(|n| n == "run_codex"),
-        "run_codex must stay hidden from model-facing tool_specs: {:?}",
+        "run_codex must stay hidden from registered model-facing tool specs: {:?}",
         names
     );
 }

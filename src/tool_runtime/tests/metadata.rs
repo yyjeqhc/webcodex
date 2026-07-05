@@ -913,14 +913,14 @@ async fn run_codex_is_disabled_before_project_resolution() {
 }
 
 #[test]
-fn runtime_status_is_in_tool_specs() {
+fn runtime_status_is_in_registered_tool_specs() {
     let names: Vec<String> = registered_tool_specs()
         .iter()
         .map(|s| s.name.clone())
         .collect();
     assert!(
         names.iter().any(|n| n == "runtime_status"),
-        "runtime_status must be in tool_specs: {:?}",
+        "runtime_status must be in registered tool specs: {:?}",
         names
     );
 }

@@ -494,13 +494,13 @@ fn known_tool_names_matches_spec_count() {
         );
         assert!(
             !is_model_hidden_tool_name(&spec.name),
-            "{} must not be model-hidden when exposed in tool_specs()",
+            "{} must not be model-hidden when exposed in registered tool specs",
             spec.name
         );
     }
     assert!(
         specs.len() < known_tool_names().count(),
-        "tool_specs() should be a public subset while hidden tools remain implemented"
+        "registered tool specs should be a public subset while hidden tools remain implemented"
     );
     // Every known name must be recognized (i.e. must NOT yield the
     // "unknown tool" error). Unit tools parse with null args; non-unit

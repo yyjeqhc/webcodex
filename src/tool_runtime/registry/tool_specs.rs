@@ -8,6 +8,7 @@ mod git;
 mod hygiene;
 mod jobs;
 mod sessions;
+mod testing;
 
 use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_definitions};
 use super::super::tool_spec::ToolSpec;
@@ -16,7 +17,6 @@ use super::input_schemas::{
     apply_patch_checked_input_schema, apply_patch_input_schema, apply_text_edits_input_schema,
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
-    cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
     delete_line_range_input_schema, insert_after_pattern_input_schema, insert_at_line_input_schema,
     insert_before_pattern_input_schema, read_project_artifact_input_schema,
     read_project_artifact_metadata_input_schema, replace_exact_block_input_schema,
@@ -36,22 +36,8 @@ impl ToolRuntime {
         declarations.extend(hygiene::tool_specs());
         declarations.extend(files::tool_specs());
         declarations.extend(git::tool_specs());
+        declarations.extend(testing::tool_specs());
         declarations.extend(vec![
-            tool_spec(
-                "cargo_fmt",
-                "Run cargo fmt in an agent-registered project. Use check=true for cargo fmt -- --check before broader validation.",
-                cargo_fmt_input_schema(),
-            ),
-            tool_spec(
-                "cargo_check",
-                "Preferred structured Rust validation for cargo check. Defaults to --all-targets and supports features/package/cwd/timeout without shell interpolation; use before raw run_shell when applicable.",
-                cargo_check_input_schema(),
-            ),
-            tool_spec(
-                "cargo_test",
-                "Preferred structured Rust test runner. Supports filter, feature flags, package, --no-run, timeout, and bounded output tails; use before raw run_shell when applicable.",
-                cargo_test_input_schema(),
-            ),
             tool_spec(
                 "apply_patch",
                 "Apply a unified diff patch to an agent-registered project.".to_string(),

@@ -386,8 +386,7 @@ fn from_tool_name_error_includes_tool_name() {
 
 #[test]
 fn tool_call_project_accessor_covers_project_tool_specs() {
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         let call = ToolCall::from_tool_name(&spec.name, sample_tool_args(&spec.name))
             .unwrap_or_else(|e| panic!("{} should deserialize: {}", spec.name, e));
         let schema_has_project = spec.input_schema["properties"].get("project").is_some();
@@ -431,8 +430,7 @@ fn tool_call_project_accessor_covers_project_tool_specs() {
 
 #[test]
 fn tool_call_session_id_accessor_covers_session_tool_specs() {
-    let runtime = test_runtime();
-    for spec in runtime.tool_specs() {
+    for spec in registered_tool_specs() {
         if spec.input_schema["properties"].get("session_id").is_none() {
             continue;
         }
@@ -487,8 +485,7 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
 
 #[test]
 fn known_tool_names_matches_spec_count() {
-    let runtime = test_runtime();
-    let specs = runtime.tool_specs();
+    let specs = registered_tool_specs();
     for spec in &specs {
         assert!(
             is_known_tool_name(&spec.name),

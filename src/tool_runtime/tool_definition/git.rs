@@ -1,12 +1,12 @@
 use super::AgentCapability::GitOrShell;
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition};
+use super::{change_summary_like, def, ToolDefinition};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ,
 };
 
 pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
-    def(
+    change_summary_like(def(
         "git_diff_summary",
         ModelVisible,
         "git",
@@ -18,8 +18,8 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    change_summary_like(def(
         "show_changes",
         ModelVisible,
         "git",
@@ -31,7 +31,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
+    )),
 ];
 
 pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
@@ -61,7 +61,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
     ),
-    def(
+    change_summary_like(def(
         "git_diff_hunks",
         ModelVisible,
         "git",
@@ -73,7 +73,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
+    )),
     def(
         "git_log",
         ModelVisible,

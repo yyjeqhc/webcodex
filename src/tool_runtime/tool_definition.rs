@@ -118,6 +118,7 @@ pub(crate) struct ToolDefinition {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolDefinitionPolicy {
+    pub(crate) change_summary_like: bool,
     pub(crate) captures_validation_output: bool,
     pub(crate) current_session_control: bool,
     pub(crate) creates_or_binds_session: bool,
@@ -126,6 +127,7 @@ pub(crate) struct ToolDefinitionPolicy {
 
 impl ToolDefinitionPolicy {
     const DEFAULT: Self = Self {
+        change_summary_like: false,
         captures_validation_output: false,
         current_session_control: false,
         creates_or_binds_session: false,
@@ -183,6 +185,16 @@ const fn captures_validation_output(definition: ToolDefinition) -> ToolDefinitio
     ToolDefinition {
         policy: ToolDefinitionPolicy {
             captures_validation_output: true,
+            ..definition.policy
+        },
+        ..definition
+    }
+}
+
+const fn change_summary_like(definition: ToolDefinition) -> ToolDefinition {
+    ToolDefinition {
+        policy: ToolDefinitionPolicy {
+            change_summary_like: true,
             ..definition.policy
         },
         ..definition

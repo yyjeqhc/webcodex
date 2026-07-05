@@ -33,10 +33,7 @@ impl ToolDefinition {
     }
 
     pub(crate) fn is_change_summary_like(self) -> bool {
-        matches!(
-            self.name,
-            "show_changes" | "git_diff_summary" | "git_diff_hunks"
-        )
+        self.policy.change_summary_like
     }
 
     pub(crate) fn captures_validation_output(self) -> bool {

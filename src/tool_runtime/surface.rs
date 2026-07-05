@@ -24,7 +24,12 @@ impl ToolRuntime {
     /// Group every accepted tool name into coarse categories so a custom GPT
     /// can pick the right tool family at a glance. A tool may appear in more
     /// than one category. Returned as a JSON object keyed by category.
+    #[cfg(test)]
     pub fn tool_categories(&self) -> Value {
+        Self::registered_tool_categories()
+    }
+
+    pub(crate) fn registered_tool_categories() -> Value {
         let mut categories = serde_json::Map::new();
         for group in TOOL_DISCOVERY_GROUPS {
             let tools = group
@@ -100,7 +105,7 @@ impl ToolRuntime {
             "categories": if bounded_request {
                 build_manifest_categories(&specs)
             } else {
-                self.tool_categories()
+                Self::registered_tool_categories()
             },
             "recommended_flows": ToolRuntime::recommended_flows(),
             "recommended_next": "For daily GPT Action discovery, call callRuntimeTool with tool=tool_manifest. Use full listRuntimeTools only when debugging schemas.",

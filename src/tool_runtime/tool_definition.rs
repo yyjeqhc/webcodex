@@ -15,9 +15,10 @@ mod git;
 mod hygiene;
 mod jobs;
 mod sessions;
+mod testing;
 
 use super::metadata::{
-    metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, JOB_RUN, PROJECT_READ,
+    metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, PROJECT_READ,
     PROJECT_WRITE, RUNTIME_READ,
 };
 pub(crate) use super::tool_catalog::{TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS};
@@ -159,7 +160,7 @@ const fn def(
 
 use AgentCapability::{FileRead, FileWrite, Shell};
 use ToolPathHint::{Artifact, None as NoPath, Patch, PathList, SinglePath};
-use ToolRisk::{JobRun, ProjectWrite, ReadOnly};
+use ToolRisk::{ProjectWrite, ReadOnly};
 use ToolVisibility::ModelVisible;
 
 pub(crate) fn tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
@@ -181,6 +182,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     jobs::LISTING_DEFINITIONS,
     files::READ_DEFINITIONS,
     git::DETAIL_DEFINITIONS,
+    testing::DEFINITIONS,
     TOOL_DEFINITION_TAIL,
 ];
 
@@ -199,45 +201,6 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
 )];
 
 const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
-    def(
-        "cargo_fmt",
-        ModelVisible,
-        "validation",
-        Some(Shell),
-        "agent",
-        JobRun,
-        Some(JOB_RUN),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "cargo_check",
-        ModelVisible,
-        "validation",
-        Some(Shell),
-        "agent",
-        JobRun,
-        Some(JOB_RUN),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
-    def(
-        "cargo_test",
-        ModelVisible,
-        "validation",
-        Some(Shell),
-        "agent",
-        JobRun,
-        Some(JOB_RUN),
-        true,
-        NoPath,
-        false,
-        false,
-    ),
     def(
         "apply_patch",
         ModelVisible,

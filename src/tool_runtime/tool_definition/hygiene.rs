@@ -4,7 +4,7 @@ use super::{def, git_like, ToolDefinition, TOOL_CATEGORY_CLEANUP};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, PathList},
     ToolRisk::{ProjectWrite, ReadOnly},
-    PROJECT_READ, PROJECT_WRITE,
+    PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[def(
@@ -12,7 +12,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[def(
     ModelVisible,
     TOOL_CATEGORY_CLEANUP,
     Some(GitOrShell),
-    "agent",
+    TOOL_PROVIDER_AGENT,
     ReadOnly,
     Some(PROJECT_READ),
     true,
@@ -27,7 +27,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_CLEANUP,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ProjectWrite,
         Some(PROJECT_WRITE),
         true,
@@ -40,7 +40,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_CLEANUP,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ProjectWrite,
         Some(PROJECT_WRITE),
         true,
@@ -53,7 +53,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_CLEANUP,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ProjectWrite,
         Some(PROJECT_WRITE),
         true,

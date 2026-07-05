@@ -2,7 +2,7 @@ use super::AgentCapability::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{change_summary_like, def, git_like, ToolDefinition, TOOL_CATEGORY_GIT};
 use crate::tool_runtime::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ,
+    ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ, TOOL_PROVIDER_AGENT,
 };
 
 pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
@@ -11,7 +11,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -24,7 +24,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -40,7 +40,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -53,7 +53,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -66,7 +66,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -79,7 +79,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_GIT,
         Some(GitOrShell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),
         true,

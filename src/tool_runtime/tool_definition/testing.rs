@@ -1,7 +1,9 @@
 use super::AgentCapability::Shell;
 use super::ToolVisibility::ModelVisible;
 use super::{captures_validation_output, def, ToolDefinition, TOOL_CATEGORY_VALIDATION};
-use crate::tool_runtime::metadata::{ToolPathHint::None as NoPath, ToolRisk::JobRun, JOB_RUN};
+use crate::tool_runtime::metadata::{
+    ToolPathHint::None as NoPath, ToolRisk::JobRun, JOB_RUN, TOOL_PROVIDER_AGENT,
+};
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     captures_validation_output(def(
@@ -9,7 +11,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_VALIDATION,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         JobRun,
         Some(JOB_RUN),
         true,
@@ -22,7 +24,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_VALIDATION,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         JobRun,
         Some(JOB_RUN),
         true,
@@ -35,7 +37,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_VALIDATION,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         JobRun,
         Some(JOB_RUN),
         true,

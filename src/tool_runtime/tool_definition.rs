@@ -22,6 +22,7 @@ mod testing;
 
 use super::metadata::{
     metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, RUNTIME_READ,
+    TOOL_PROVIDER_CONTROL,
 };
 pub(crate) use super::tool_catalog::{TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS};
 pub use super::tool_policy::is_known_tool_name;
@@ -369,7 +370,7 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
     ModelVisible,
     "runtime",
     None,
-    "control",
+    TOOL_PROVIDER_CONTROL,
     ReadOnly,
     Some(RUNTIME_READ),
     false,

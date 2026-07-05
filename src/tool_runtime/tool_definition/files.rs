@@ -4,7 +4,7 @@ use super::{def, ToolDefinition, TOOL_CATEGORY_FILE};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, SinglePath},
     ToolRisk::ReadOnly,
-    PROJECT_READ,
+    PROJECT_READ, TOOL_PROVIDER_AGENT,
 };
 
 pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
@@ -13,7 +13,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_FILE,
         Some(FileRead),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -26,7 +26,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_FILE,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -41,7 +41,7 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[def(
     ModelVisible,
     TOOL_CATEGORY_FILE,
     Some(FileRead),
-    "agent",
+    TOOL_PROVIDER_AGENT,
     ReadOnly,
     Some(PROJECT_READ),
     true,

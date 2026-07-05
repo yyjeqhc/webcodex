@@ -47,6 +47,11 @@ pub(crate) const PROJECT_READ: &str = "project:read";
 pub(crate) const PROJECT_WRITE: &str = "project:write";
 pub(crate) const JOB_RUN: &str = "job:run";
 
+pub(crate) const TOOL_PROVIDER_AGENT: &str = "agent";
+pub(crate) const TOOL_PROVIDER_CONTROL: &str = "control";
+pub(crate) const TOOL_PROVIDER_NATIVE: &str = "native";
+pub(crate) const TOOL_PROVIDER_UNKNOWN: &str = "unknown";
+
 pub(crate) const fn metadata(
     name: &'static str,
     provider_id: &'static str,
@@ -72,7 +77,7 @@ pub(crate) const fn metadata(
 
 const LEGACY_ROUTE_METADATA: &[ToolMetadata] = &[metadata(
     "delete_files",
-    "agent",
+    TOOL_PROVIDER_AGENT,
     ToolRisk::ProjectWrite,
     Some(PROJECT_WRITE),
     true,
@@ -101,7 +106,7 @@ pub(crate) fn iter_tool_metadata() -> impl Iterator<Item = ToolMetadata> {
 pub(crate) fn tool_metadata(name: &str) -> ToolMetadata {
     lookup_tool_metadata(name).copied().unwrap_or(ToolMetadata {
         name: "<unknown>",
-        provider_id: "unknown",
+        provider_id: TOOL_PROVIDER_UNKNOWN,
         risk: ToolRisk::Unknown,
         oauth_scope: None,
         requires_project: false,
@@ -161,7 +166,7 @@ mod tests {
     fn tool_metadata_preserves_legacy_delete_files_route() {
         assert!(!is_known_tool_name("delete_files"));
         let metadata = lookup_tool_metadata("delete_files").unwrap();
-        assert_eq!(metadata.provider_id, "agent");
+        assert_eq!(metadata.provider_id, TOOL_PROVIDER_AGENT);
         assert_eq!(metadata.risk, ToolRisk::ProjectWrite);
         assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_WRITE));
         assert!(metadata.requires_project);
@@ -173,7 +178,7 @@ mod tests {
     #[test]
     fn tool_metadata_show_changes_is_project_read_and_read_only() {
         let metadata = lookup_tool_metadata("show_changes").unwrap();
-        assert_eq!(metadata.provider_id, "agent");
+        assert_eq!(metadata.provider_id, TOOL_PROVIDER_AGENT);
         assert_eq!(metadata.risk, ToolRisk::ReadOnly);
         assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ));
         assert!(metadata.requires_project);
@@ -184,7 +189,7 @@ mod tests {
     #[test]
     fn tool_metadata_start_session_is_runtime_read() {
         let metadata = lookup_tool_metadata("start_session").unwrap();
-        assert_eq!(metadata.provider_id, "control");
+        assert_eq!(metadata.provider_id, TOOL_PROVIDER_CONTROL);
         assert_eq!(metadata.risk, ToolRisk::ReadOnly);
         assert_eq!(metadata.oauth_scope, Some(SCOPE_RUNTIME_READ));
         assert!(!metadata.requires_project);
@@ -199,7 +204,7 @@ mod tests {
             "unbind_current_session",
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();
-            assert_eq!(metadata.provider_id, "control", "{name}");
+            assert_eq!(metadata.provider_id, TOOL_PROVIDER_CONTROL, "{name}");
             assert_eq!(metadata.risk, ToolRisk::ReadOnly, "{name}");
             assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ), "{name}");
             assert!(metadata.requires_project, "{name}");
@@ -217,7 +222,7 @@ mod tests {
             "workspace_checkpoint_show",
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();
-            assert_eq!(metadata.provider_id, "native", "{name}");
+            assert_eq!(metadata.provider_id, TOOL_PROVIDER_NATIVE, "{name}");
             assert_eq!(metadata.risk, ToolRisk::ReadOnly, "{name}");
             assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ), "{name}");
             assert!(metadata.requires_project, "{name}");
@@ -228,7 +233,7 @@ mod tests {
             "workspace_checkpoint_delete",
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();
-            assert_eq!(metadata.provider_id, "native", "{name}");
+            assert_eq!(metadata.provider_id, TOOL_PROVIDER_NATIVE, "{name}");
             assert_eq!(metadata.risk, ToolRisk::ProjectWrite, "{name}");
             assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_WRITE), "{name}");
             assert!(metadata.requires_project, "{name}");

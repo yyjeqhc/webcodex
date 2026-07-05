@@ -4,7 +4,7 @@ use super::{def, ToolDefinition, TOOL_CATEGORY_PATCH};
 use crate::tool_runtime::metadata::{
     ToolPathHint::Patch,
     ToolRisk::{ProjectWrite, ReadOnly},
-    PROJECT_READ, PROJECT_WRITE,
+    PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
 };
 
 pub(super) const APPLY_DEFINITIONS: &[ToolDefinition] = &[
@@ -13,7 +13,7 @@ pub(super) const APPLY_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_PATCH,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ProjectWrite,
         Some(PROJECT_WRITE),
         true,
@@ -26,7 +26,7 @@ pub(super) const APPLY_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_PATCH,
         Some(Shell),
-        "agent",
+        TOOL_PROVIDER_AGENT,
         ProjectWrite,
         Some(PROJECT_WRITE),
         true,
@@ -41,7 +41,7 @@ pub(super) const VALIDATION_DEFINITIONS: &[ToolDefinition] = &[def(
     ModelVisible,
     TOOL_CATEGORY_PATCH,
     Some(Shell),
-    "agent",
+    TOOL_PROVIDER_AGENT,
     ReadOnly,
     Some(PROJECT_READ),
     true,

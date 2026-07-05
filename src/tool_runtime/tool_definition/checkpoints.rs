@@ -4,7 +4,7 @@ use super::{def, git_like, ToolDefinition, TOOL_CATEGORY_CHECKPOINT};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{None as NoPath, Patch},
     ToolRisk::{ProjectWrite, ReadOnly},
-    PROJECT_READ, PROJECT_WRITE,
+    PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_NATIVE,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -13,7 +13,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_CHECKPOINT,
         Some(FileRead),
-        "native",
+        TOOL_PROVIDER_NATIVE,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -26,7 +26,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_CHECKPOINT,
         Some(OwnerOnly),
-        "native",
+        TOOL_PROVIDER_NATIVE,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -39,7 +39,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_CHECKPOINT,
         Some(OwnerOnly),
-        "native",
+        TOOL_PROVIDER_NATIVE,
         ReadOnly,
         Some(PROJECT_READ),
         true,
@@ -52,7 +52,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_CHECKPOINT,
         Some(FileWrite),
-        "native",
+        TOOL_PROVIDER_NATIVE,
         ProjectWrite,
         Some(PROJECT_WRITE),
         true,
@@ -65,7 +65,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_CHECKPOINT,
         Some(OwnerOnly),
-        "native",
+        TOOL_PROVIDER_NATIVE,
         ProjectWrite,
         Some(PROJECT_WRITE),
         true,

@@ -2005,6 +2005,38 @@ fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool_runtime::TOOL_CALL_WRAPPER_FIELDS;
+
+    fn test_tool_runtime() -> crate::tool_runtime::ToolRuntime {
+        crate::tool_runtime::ToolRuntime::new(
+            std::sync::Arc::new(crate::projects::ProjectsState::failed(
+                "projects not configured for openapi schema test".to_string(),
+                "test".to_string(),
+            )),
+            std::sync::Arc::new(crate::shell_client::ShellClientRegistry::default()),
+            std::sync::Arc::new(crate::config::CodexConfig::default()),
+            std::sync::Arc::new(crate::tool_runtime::RuntimeInfo::default()),
+        )
+    }
+
+    fn runtime_accepted_flattened_action_fields() -> std::collections::BTreeSet<String> {
+        let runtime = test_tool_runtime();
+        let mut fields = std::collections::BTreeSet::new();
+        for spec in runtime.tool_specs() {
+            if let Some(properties) = spec.input_schema["properties"].as_object() {
+                fields.extend(properties.keys().cloned());
+            }
+            for field in
+                crate::tool_runtime::tool_definition::runtime_tool_extra_accepted_flattened_args(
+                    &spec.name,
+                )
+            {
+                fields.insert((*field).to_string());
+            }
+        }
+        fields.insert(TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string());
+        fields
+    }
 
     /// Recursively collect every `$ref` string found anywhere in a JSON value.
     fn collect_refs(value: &Value, out: &mut Vec<String>) {
@@ -2892,75 +2924,21 @@ mod tests {
         let spec = build_openapi_spec();
         let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
         let properties = tool_call["properties"].as_object().unwrap();
+        let accepted_fields = runtime_accepted_flattened_action_fields();
 
-        for field in [
-            "project",
-            "title",
-            "session_id",
-            TOOL_CALL_RECORDING_SESSION_ID_FIELD,
-            ALLOW_CROSS_PROJECT_SESSION_FIELD,
-            TOOL_EXPECTED_FAILURE_FIELD,
-            TOOL_EXPECTED_FAILURE_KIND_FIELD,
-            TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
-            TOOL_ASSERTION_NAME_FIELD,
-            "mode",
-            "deny_write_tools",
-            "deny_shell_tools",
-            "include_runtime_status",
-            "include_git",
-            "include_recent_commits",
-            "include_rules",
-            "include_tool_manifest",
-            "tool_manifest_categories",
-            "tool_manifest_limit",
-            "bind_current",
-            "path",
-            "start_line",
-            "end_line",
-            "line",
-            "text",
-            "old_text",
-            "new_text",
-            "include_diff",
-            "include_hygiene",
-            "max_findings",
-            "include_tracked",
-            "include_handoff",
-            "include_validation_summary",
-            "include_validation",
-            "include_workspace",
-            "include_checkpoints",
-            "summary_only",
-            "include_recommended_flows",
-            "include_risk_summary",
-            "skip",
-            "context_before",
-            "context_after",
-            "with_line_numbers",
-            "content_base64",
-            "mime_type",
-            "upload_id",
-            "expected_bytes",
-            "encoding",
-            "offset",
-            "length",
-            "max_bytes",
-            "expected_old_prefix",
-            "expected_anchor_prefix",
-            "note",
-            "include_untracked",
-            "checkpoint_id",
-            "confirm",
-            "include_command_preview",
-            "include_diff_stat",
-            "edits",
-            "dry_run",
-            "expected_file_sha256",
-        ] {
+        for field in &accepted_fields {
             assert!(
                 properties.contains_key(field),
-                "ToolCallRequest.properties.{} must exist for flattened GPT Action calls",
-                field
+                "ToolCallRequest.properties.{field} must exist for flattened GPT Action calls"
+            );
+        }
+        for field in properties.keys() {
+            if TOOL_CALL_WRAPPER_FIELDS.contains(&field.as_str()) {
+                continue;
+            }
+            assert!(
+                accepted_fields.contains(field),
+                "ToolCallRequest.properties.{field} is not accepted by any runtime ToolSpec"
             );
         }
 

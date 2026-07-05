@@ -4,6 +4,9 @@
 
 This guide covers day-to-day WebCodex operations: server initialization, client enrollment, pairing, project registration, token management, and smoke testing. For first deployment, see [QUICK_START.md](QUICK_START.md). For production hardening, Nginx, QUIC, and OAuth2 details, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
+For the proposed ops health, deployment smoke, and agent fleet observability
+roadmap, see [OPS_OBSERVABILITY_ROADMAP.md](OPS_OBSERVABILITY_ROADMAP.md).
+
 ## Server initialization
 
 ### Environment file

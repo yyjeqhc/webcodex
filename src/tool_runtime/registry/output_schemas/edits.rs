@@ -49,6 +49,71 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("string", "Patch diff stat, when available."),
             ),
         ])),
+        "replace_in_file" => Some(wrapped_output_schema(vec![
+            (
+                "changed",
+                schema_type("boolean", "Compatibility edit result metadata. True when the agent changed the file; does not include file content, is not a shell-execution interface, and does not expose environment, token, or secret values."),
+            ),
+            ("path", schema_type("string", "Project-relative path reported by the agent when available.")),
+            (
+                "replacements",
+                schema_type("integer", "Number of replacements written on success."),
+            ),
+            (
+                "before_sha256",
+                schema_type("string", "sha256 of the original file content or checked content state."),
+            ),
+            (
+                "after_sha256",
+                schema_type("string", "sha256 of the file after the compatibility edit."),
+            ),
+            (
+                "bytes_written",
+                schema_type("integer", "Bytes in the final file after the compatibility edit."),
+            ),
+            (
+                "occurrences",
+                schema_type("integer", "Observed occurrence count for failed match validation."),
+            ),
+            (
+                "expected",
+                schema_type("integer", "Expected replacement count for failed match validation."),
+            ),
+            (
+                "error",
+                schema_type("string", "Agent-side compatibility edit rejection message, when unsuccessful."),
+            ),
+        ])),
+        "write_project_file" => Some(wrapped_output_schema(vec![
+            (
+                "path",
+                nullable_schema("string", "Project-relative path reported by the agent; null only when the agent could not parse the request payload."),
+            ),
+            (
+                "created",
+                schema_type("boolean", "True when the compatibility write created a new file."),
+            ),
+            (
+                "overwritten",
+                schema_type("boolean", "True when the compatibility write replaced an existing file."),
+            ),
+            (
+                "bytes_written",
+                schema_type("integer", "Bytes written to the final file. Result metadata only; does not include file content, is not a shell-execution interface, and does not expose environment, token, or secret values."),
+            ),
+            (
+                "sha256",
+                nullable_schema("string", "sha256 of the written file, current file on sha guard mismatch, or null when unavailable."),
+            ),
+            (
+                "warning",
+                nullable_schema("string", "Compatibility write safety warning, such as an unguarded overwrite warning; null otherwise."),
+            ),
+            (
+                "error",
+                schema_type("string", "Agent-side compatibility write rejection message, when unsuccessful."),
+            ),
+        ])),
         "replace_line_range" | "delete_line_range" => Some(wrapped_output_schema(vec![
             ("path", schema_type("string", "Project-relative path.")),
             (

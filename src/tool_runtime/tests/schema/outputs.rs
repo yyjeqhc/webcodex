@@ -20,16 +20,6 @@ const TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS: &[Temp
         reason: "project onboarding response still uses the generic wrapper while schema coverage converges",
         exit_condition: "replace with explicit project creation output fields",
     },
-    TemporaryDefaultOnlyOutputSchemaGap {
-        name: "replace_in_file",
-        reason: "compatibility edit result is covered by behavior tests while output schema is pending",
-        exit_condition: "replace with explicit compatibility edit output fields",
-    },
-    TemporaryDefaultOnlyOutputSchemaGap {
-        name: "write_project_file",
-        reason: "compatibility whole-file write result is covered by behavior tests while output schema is pending",
-        exit_condition: "replace with explicit whole-file write output fields",
-    },
 ];
 
 #[test]
@@ -66,12 +56,12 @@ fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
     assert_eq!(specs.len(), 66, "model-visible tools.count");
     assert_eq!(
         specs.len() - default_schema_names.len(),
-        62,
+        64,
         "explicit model-visible output schema coverage"
     );
     assert_eq!(
         default_schema_names.len(),
-        4,
+        2,
         "temporary default-only output schema gap count"
     );
     assert_eq!(
@@ -462,6 +452,101 @@ fn cleanup_output_schemas_describe_result_metadata_only() {
     }
 }
 
+#[test]
+fn compatibility_edit_output_schemas_include_metadata_fields() {
+    let specs = registered_tool_specs();
+
+    for field in [
+        "changed",
+        "path",
+        "replacements",
+        "before_sha256",
+        "after_sha256",
+        "bytes_written",
+        "occurrences",
+        "expected",
+        "error",
+    ] {
+        assert!(
+            output_schema_properties(&specs, "replace_in_file").contains_key(field),
+            "replace_in_file missing {field}"
+        );
+    }
+
+    for field in [
+        "path",
+        "created",
+        "overwritten",
+        "bytes_written",
+        "sha256",
+        "warning",
+        "error",
+    ] {
+        assert!(
+            output_schema_properties(&specs, "write_project_file").contains_key(field),
+            "write_project_file missing {field}"
+        );
+    }
+
+    assert_eq!(
+        output_schema_property(&specs, "replace_in_file", "replacements")["type"],
+        "integer"
+    );
+    assert_eq!(
+        output_schema_property(&specs, "write_project_file", "bytes_written")["type"],
+        "integer"
+    );
+}
+
+#[test]
+fn cleanup_and_compatibility_write_output_schemas_do_not_advertise_broad_exfiltration() {
+    let specs = registered_tool_specs();
+
+    for tool in [
+        "git_restore_paths",
+        "discard_untracked",
+        "replace_in_file",
+        "write_project_file",
+    ] {
+        let props = output_schema_properties(&specs, tool);
+        for forbidden in [
+            "content",
+            "file_content",
+            "stdout",
+            "stderr",
+            "stdin",
+            "env",
+            "environment",
+            "token",
+            "secret",
+            "old",
+            "new",
+            "command",
+            "shell_command",
+        ] {
+            assert!(
+                !props.contains_key(forbidden),
+                "{tool} output schema must not advertise {forbidden}"
+            );
+        }
+    }
+
+    for tool in ["replace_in_file", "write_project_file"] {
+        let descriptions = output_schema_description_text(output_schema_properties(&specs, tool));
+        for phrase in [
+            "result metadata",
+            "does not include file content",
+            "not a shell-execution interface",
+            "does not expose environment, token, or secret values",
+        ] {
+            assert!(
+                descriptions.contains(phrase),
+                "{tool} output schema descriptions should mention {phrase}: {descriptions}"
+            );
+        }
+    }
+}
+
 fn default_output_schema_field_names() -> BTreeSet<&'static str> {
     BTreeSet::from([
         "session_recorded",
@@ -495,6 +580,15 @@ fn output_schema_property<'a>(specs: &'a [ToolSpec], name: &str, field: &str) ->
     output_schema_properties(specs, name)
         .get(field)
         .unwrap_or_else(|| panic!("{name} missing output field {field}"))
+}
+
+fn output_schema_description_text(props: &serde_json::Map<String, Value>) -> String {
+    props
+        .values()
+        .filter_map(|schema| schema["description"].as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 #[test]

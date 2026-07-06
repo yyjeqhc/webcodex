@@ -110,28 +110,37 @@ Current fallback contract:
 ### Output schema convergence
 
 Model-visible runtime tools are not yet at full explicit output schema coverage.
-Current coverage is 62 of 66 model-visible tools. The default-only output schema
-gap list is down to these four temporary entries:
+Current coverage is 64 of 66 model-visible tools. The default-only output schema
+gap list is down to these two temporary entries:
 
 - `register_project`: onboarding response still uses the generic wrapper. Remove
   this gap when project registration output fields are explicit.
 - `create_project`: onboarding response still uses the generic wrapper. Remove
   this gap when project creation output fields are explicit.
-- `replace_in_file`: compatibility edit result is covered by behavior tests while
-  output schema is pending. Remove this gap when compatibility edit result fields
-  are explicit.
-- `write_project_file`: compatibility whole-file write result is covered by
-  behavior tests while output schema is pending. Remove this gap when whole-file
-  write result fields are explicit.
-
 `list_project_files`, `list_jobs`, `job_tail`, `git_restore_paths`, and
-`discard_untracked` now have explicit output schema fields. `list_jobs` describes
-bounded job metadata only and must not advertise stdout or stderr bodies.
-`job_tail` describes bounded stdout/stderr tail text plus line-offset
-continuation metadata; it is not an unbounded stdout/stderr dump. Cleanup schemas
-describe restored/discarded path result metadata and the fixed git cleanup command
-result wrapper; they do not create a general shell-execution interface, broaden
-permission/session behavior, or bypass path guards.
+`discard_untracked`, `replace_in_file`, and `write_project_file` now have
+explicit output schema fields. `list_jobs` describes bounded job metadata only
+and must not advertise stdout or stderr bodies. `job_tail` describes bounded
+stdout/stderr tail text plus line-offset continuation metadata; it is not an
+unbounded stdout/stderr dump. Cleanup schemas describe restored/discarded path
+result metadata and the fixed git cleanup command result wrapper; they do not
+create a general shell-execution interface, broaden permission/session behavior,
+or bypass path guards.
+
+The compatibility edit/write schemas describe agent-returned result metadata:
+paths, replacement counts, changed flags, bytes written, hashes, warnings, and
+agent rejection messages. They do not describe file-content dumps, stdout/stderr
+bodies, arbitrary shell execution, or environment/token/secret exposure. The
+schemas do not alter permission, session, path, or guard behavior; they only make
+the current wrapped result shape visible to discovery. `write_project_file` and
+`replace_in_file` remain compatibility paths. Source edits should still prefer
+structured line edits, `apply_text_edits`, or `apply_patch_checked`.
+
+The remaining `register_project` and `create_project` gaps should be handled in a
+separate pass. They are onboarding side-effect tools, so the schema should be
+derived from stable registration/creation response fields and tests should prove
+non-overwrite defaults, allowed-root policy, and non-consequential OpenAPI
+labeling remain unchanged before removing their allowlist entries.
 
 The former module-wide `#![allow(dead_code)]` on `tool_definition.rs` has been
 removed. Inventory-only helper facades are now kept behind `#[cfg(test)]`, and

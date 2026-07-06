@@ -642,7 +642,10 @@ fn compact_finish_output(output: &Value) -> Value {
         "warnings": output.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });
-    compact["verdict"] = compact_workflow_verdict(&compact, true, Some(hygiene_checked));
+    let verdict = compact_workflow_verdict(&compact, true, Some(hygiene_checked));
+    compact["suggested_next_actions"] = json!(merged_suggested_next_actions(&compact, &verdict));
+    compact["verdict"] = verdict.clone();
+    compact["finish_verdict"] = verdict;
     compact
 }
 
@@ -879,6 +882,27 @@ fn push_unique_action(actions: &mut Vec<String>, action: &str) {
     if !actions.iter().any(|existing| existing == action) {
         actions.push(action.to_string());
     }
+}
+
+fn merged_suggested_next_actions(output: &Value, verdict: &Value) -> Vec<String> {
+    let mut actions = string_array(output.get("suggested_next_actions"));
+    for action in string_array(verdict.get("suggested_next_actions")) {
+        push_unique_action(&mut actions, &action);
+    }
+    actions
+}
+
+fn string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn finish_suggested_next_actions(output: &Value) -> Vec<String> {

@@ -537,6 +537,9 @@ Review order for coding closeout is deterministic: call `show_changes`, inspect
 `finish_coding_task` with `summary_only=true` for the compact aggregate verdict.
 `show_changes` and `workspace_hygiene_check` expose top-level `verdict`
 summaries; read them first, but keep the detailed fields as the auditable basis.
+For final closeout reporting, use `finish_coding_task.finish_verdict` or
+`finish_coding_task.verdict`, not nested `show_changes.verdict` or
+`workspace_hygiene_check.verdict`.
 
 Discovery taxonomy is intentional: `start_coding_task` and
 `finish_coding_task` are `workflow` category tools for the coding lifecycle.
@@ -573,11 +576,14 @@ pass `include_workspace=true` and `include_validation=true`. For finish, pass
 `session_handoff_summary.include_workspace`: it controls the nested handoff
 workspace block when `include_handoff=true`; the top-level finish
 workspace/show_changes check keeps its existing default behavior.
-Read `output.verdict.status`, `blocking`, and `blocking_reasons` first. The
+For `finish_coding_task(summary_only=true)`, `output.finish_verdict` is an
+alias of `output.verdict`; read `status`, `blocking`, and `blocking_reasons`
+from either final closeout verdict, not from nested review tool verdicts. The
 compact detail fields remain the final auditable basis. The verdict is an
 additive UX summary and does not change authorization, permissions, guards,
 session binding, expected-failure classification, MCP direct errors, or job
-lifecycle behavior.
+lifecycle behavior. Top-level `suggested_next_actions` mirrors the final
+closeout actions from the verdict.
 
 For `summary_only=true` final outputs, sanity checks should reject stdout/stderr
 bodies, command text, tails, and excerpts. Raw lower-level diagnostic/status

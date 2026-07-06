@@ -118,8 +118,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 open_object_schema("Operator-friendly compact sanity verdict for summary_only output: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. Additive UX summary only; does not change safety semantics."),
             ),
             (
+                "finish_verdict",
+                open_object_schema("Alias of verdict for finish_coding_task summary_only output. Callers should report this final closeout verdict instead of nested show_changes.verdict or workspace_hygiene_check.verdict."),
+            ),
+            (
                 "suggested_next_actions",
-                array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions based on unexpected failures, workspace, and jobs."),
+                array_schema(schema_type("string", "Short suggested action."), "Top-level summary_only final closeout actions. May be non-empty when final verdict suggested_next_actions is non-empty, and preserves bounded finish actions."),
             ),
         ])),
         _ => None,

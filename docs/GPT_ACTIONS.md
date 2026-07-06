@@ -217,8 +217,11 @@ calling `callRuntimeTool`.
    For handoff, also pass `include_workspace=true` and `include_validation=true`.
    For finish, pass `include_workspace=true`, `include_hygiene=true`,
    `include_validation_summary=true`, and `include_diff=false`.
-   Read `output.verdict.status`, `blocking`, and `blocking_reasons` first; the
-   detailed compact fields remain the audit source.
+   For `finish_coding_task(summary_only=true)`, read
+   `output.finish_verdict.status` or `output.verdict.status`, `blocking`, and
+   `blocking_reasons` first; do not report nested `show_changes.verdict` or
+   `workspace_hygiene_check.verdict` as the final finish verdict. The detailed
+   compact fields remain the audit source.
 
 `finish_coding_task.include_workspace` is a compatibility flag matching
 `session_handoff_summary.include_workspace`: it controls the nested handoff
@@ -253,7 +256,9 @@ edit -> validate -> `show_changes` -> `workspace_hygiene_check` ->
 `show_changes` and `workspace_hygiene_check` are the auditable review evidence;
 their top-level verdicts are additive UX summaries over the detailed review
 fields. Handoff/finish verdicts are the final compact PASS/WARN/FAIL aggregate,
-not a new guard or permission decision.
+not a new guard or permission decision. `finish_coding_task(summary_only=true)`
+also exposes `finish_verdict` as an alias of `verdict`, and top-level
+`suggested_next_actions` mirrors the final closeout actions.
 
 For non-coding tracking, `start_session` remains available through
 `callRuntimeTool`. It creates a session record but does not automatically bind

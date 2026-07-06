@@ -77,12 +77,16 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "include_workspace must remain optional"
     );
     let finish_output = crate::tool_runtime::registry::output_schema_for_tool("finish_coding_task");
+    let finish_output_props = finish_output["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
     assert!(
-        finish_output["properties"]["output"]["properties"]
-            .as_object()
-            .unwrap()
-            .contains_key("verdict"),
+        finish_output_props.contains_key("verdict"),
         "finish_coding_task output schema should include verdict"
+    );
+    assert!(
+        finish_output_props.contains_key("finish_verdict"),
+        "finish_coding_task output schema should include finish_verdict"
     );
 
     let openapi = crate::openapi::build_openapi_spec();
@@ -929,13 +933,25 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     );
     assert_review_evidence_tools_safe(&result.output["review_evidence"]);
     assert!(result.output["warnings"].as_array().unwrap().is_empty());
+    assert!(result.output.get("verdict").is_some());
+    assert!(result.output.get("finish_verdict").is_some());
+    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
     assert!(result.output["suggested_next_actions"].is_array());
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);
     assert_eq!(verdict["status"], "warn");
     assert_eq!(verdict["blocking"], false);
+    let finish_verdict = &result.output["finish_verdict"];
+    assert_workflow_verdict_shape(finish_verdict);
+    assert_eq!(finish_verdict["status"], "warn");
+    assert_eq!(finish_verdict["blocking"], false);
     assert_reason_list_contains(
         verdict,
+        "warning_reasons",
+        "validation_not_run_with_review_evidence",
+    );
+    assert_reason_list_contains(
+        finish_verdict,
         "warning_reasons",
         "validation_not_run_with_review_evidence",
     );
@@ -948,6 +964,15 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
             == Some(
                 "no structured validation was run; review evidence is available for task-appropriate closeout"
             )));
+    assert!(result.output["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str()
+            == Some(
+                "no structured validation was run; review evidence is available for task-appropriate closeout"
+            )));
+    assert_verdict_actions_mirrored_at_top_level(&result.output);
     assert!(!verdict["suggested_next_actions"]
         .as_array()
         .unwrap()
@@ -1261,8 +1286,10 @@ async fn finish_coding_task_summary_only_warns_for_resolved_historical_validatio
     );
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);
+    assert_ne!(verdict["status"], "fail");
     assert_eq!(verdict["status"], "warn");
     assert_eq!(verdict["blocking"], false);
+    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
     assert_reason_list_contains(
         verdict,
         "warning_reasons",
@@ -1631,6 +1658,21 @@ fn assert_status_string(value: &Value) {
         matches!(status, "pass" | "warn" | "fail"),
         "unexpected verdict status {status}: {value}"
     );
+}
+
+fn assert_verdict_actions_mirrored_at_top_level(output: &Value) {
+    let top_level = output["suggested_next_actions"]
+        .as_array()
+        .expect("top-level suggested_next_actions array");
+    for action in output["finish_verdict"]["suggested_next_actions"]
+        .as_array()
+        .expect("finish verdict suggested_next_actions array")
+    {
+        assert!(
+            top_level.iter().any(|candidate| candidate == action),
+            "top-level suggested_next_actions should include final verdict action {action}: {output}"
+        );
+    }
 }
 
 fn assert_compact_verdict_safe(value: &Value, context: &str) {

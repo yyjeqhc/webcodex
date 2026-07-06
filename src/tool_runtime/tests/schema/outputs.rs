@@ -733,6 +733,18 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         output_props.contains_key("review_evidence"),
         "finish_coding_task output schema should include review_evidence"
     );
+    assert!(
+        output_props.contains_key("verdict"),
+        "finish_coding_task output schema should include verdict"
+    );
+    assert!(
+        output_props.contains_key("finish_verdict"),
+        "finish_coding_task output schema should include finish_verdict alias"
+    );
+    assert!(
+        output_props.contains_key("suggested_next_actions"),
+        "finish_coding_task output schema should include top-level suggested_next_actions"
+    );
     assert_permission_summary_schema_fields(&output_props["permissions"]);
     assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);
     assert_review_evidence_schema_fields(&output_props["review_evidence"]);
@@ -773,6 +785,31 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         assert!(
             review_description.contains(phrase),
             "finish review_evidence schema should mention {phrase}: {review_description}"
+        );
+    }
+    let finish_verdict_description = output_props["finish_verdict"]["description"]
+        .as_str()
+        .unwrap()
+        .to_lowercase();
+    for phrase in ["alias", "verdict", "summary_only"] {
+        assert!(
+            finish_verdict_description.contains(phrase),
+            "finish_verdict schema should mention {phrase}: {finish_verdict_description}"
+        );
+    }
+    let suggested_description = output_props["suggested_next_actions"]["description"]
+        .as_str()
+        .unwrap()
+        .to_lowercase();
+    for phrase in [
+        "top-level",
+        "final closeout actions",
+        "summary_only",
+        "may be non-empty",
+    ] {
+        assert!(
+            suggested_description.contains(phrase),
+            "finish suggested_next_actions schema should mention {phrase}: {suggested_description}"
         );
     }
 }

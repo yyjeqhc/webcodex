@@ -58,6 +58,9 @@ Round 2 discovery drift guards are tracked in
 `list_tools` category parity, category filtering, recommended-flow manifest
 parity, hidden/runtime-only exclusions, and bounded truncation metadata without
 changing runtime behavior.
+Round 4 fallback/policy boundary guards in the same map keep runtime metadata and
+runtime policy helpers definition-backed, while retaining only the explicit
+`delete_files` compatibility metadata and safe unknown-name fallback.
 Session ledger classification, session guard checks, cross-project session
 escape checks, validation-output capture classification, and dev permission
 risk labels now route through `ToolDefinition` semantic helpers/facades instead

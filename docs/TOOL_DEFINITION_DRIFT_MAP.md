@@ -1,6 +1,6 @@
 # ToolDefinition drift map
 
-Round 3 status for ToolDefinition source-of-truth convergence. This map is a
+Round 4 status for ToolDefinition source-of-truth convergence. This map is a
 boundary document only: it records the current declaration sources, guard tests,
 and next convergence steps without changing runtime behavior.
 
@@ -9,9 +9,10 @@ and next convergence steps without changing runtime behavior.
 `ToolDefinition` is now the canonical source for runtime tool names, canonical
 order, model-facing visibility, manifest category, runtime metadata and risk,
 agent capability, permission/session helper facades, and current-session fallback
-eligibility. Public `ToolSpec` order follows model-visible `ToolDefinition`
-order, and public specs derive output schemas and MCP annotations from the spec
-name.
+eligibility. Runtime metadata and runtime policy helpers are guarded to stay
+definition-backed. Public `ToolSpec` order follows model-visible
+`ToolDefinition` order, and public specs derive output schemas and MCP
+annotations from the spec name.
 
 The migration is not complete. The `ToolCall` enum, serde parser variants,
 `tool_name()` mirror, dispatch routing, ToolSpec descriptions, input schemas,
@@ -32,8 +33,9 @@ Current inventory classification:
   exposure, and curated discovery/recommended-flow placement.
 - hand-written and weakly guarded: dispatch routing and broad ToolSpec
   description coverage beyond targeted description checks.
-- legacy fallback only: safe unknown metadata and explicit `delete_files`
-  compatibility metadata.
+- legacy fallback only: safe unknown metadata/policy behavior and explicit
+  `delete_files` compatibility metadata. The fallback remains, but the boundary
+  is guarded.
 
 ## Current counts
 
@@ -61,12 +63,12 @@ Current inventory classification:
 | tool_manifest categories | Compact manifest uses `runtime_tool_category()`; discovery groups live in `tool_catalog.rs` | Partially | Yes: `schema/discovery.rs` checks ToolDefinition category membership, compact manifest vs bounded `list_tools` parity, category filters, and hidden exclusions | Tools appear in wrong category, multiple categories, hidden categories, or no category | Round 2 complete: keep parity/filter guards while categories remain hand-written |
 | list_tools discovery groups | `TOOL_DISCOVERY_GROUPS` in `tool_catalog.rs`, rendered by `registered_tool_categories()` for full discovery groups | Partially | Yes: `schema/discovery.rs` checks group keys, known/model-visible members, hidden exclusions, explicit cross-list allowlist, and group/category exception allowlist | Discovery categories drift away from known model-visible tools or expose hidden/runtime-only names | Keep workflow cross-listing explicit until group placement is generated or replaced |
 | recommended flows | `tool_catalog.rs` re-exported through definition layer | Partially | Yes: `schema/discovery.rs` checks list summaries, compact manifest name/purpose/tool order, known/model-visible tool refs, category presence, omission when disabled, and hidden exclusions | Flow references hidden/unknown tools or stale recommended paths | Round 2 complete: keep structured manifest parity guard |
-| metadata fallback | `metadata.rs` for unknown and `delete_files`; policy facade in `tool_policy.rs` | Legacy fallback only | Yes: `schema/migration.rs`, `tests/metadata.rs` | New runtime metadata bypasses ToolDefinition | Round 4: concentrate fallback boundary and prevent new runtime fallback names |
-| permission risk labels | `ToolDefinition` policy plus metadata-derived fallback for non-runtime names | Yes for runtime names | Yes: `schema/policy.rs`, `schema/migration.rs` | Write/shell/destructive tools receive wrong permission prompt or guard treatment | Keep facade tests; clean fallback only after route metadata is separated |
-| session/current-session behavior | `ToolDefinition` policy facades plus `ToolCall` accessors and dispatch/session logic | Partially | Yes: `schema/policy.rs`, session tests | Current-session fallback or explicit `session_id` behavior changes silently | Add accessor-policy drift tests before moving session behavior into definitions |
-| agent capability dispatch | `ToolDefinition.agent_capability` and `required_agent_capability()` parity | Yes for declared capability | Yes: `schema/definitions.rs`, `schema/policy.rs` | Agent-backed calls bypass or over-require capabilities | Keep strict no-fallback capability lookup |
-| delete_files compatibility metadata | `metadata.rs` legacy route metadata only | Legacy fallback only | Yes: `schema/definitions.rs`, `schema/migration.rs`, metadata tests | Legacy route becomes a runtime tool or public model-facing name | Keep explicit allowance until route metadata is removed or separated |
-| run_codex hidden behavior | Hidden `ToolDefinition`, disabled message, parser-known but model-hidden | Partially | Yes: `schema/definitions.rs`, `schema/migration.rs`, OpenAPI and MCP tests | Hidden disabled tool appears in model-facing specs or Action names | Keep hidden-only contract; do not expose without separate design |
+| metadata fallback | `metadata.rs` for unknown and `delete_files`; policy facade in `tool_policy.rs` | Legacy fallback only | Yes: `schema/migration.rs`, `schema/policy.rs`, `tests/metadata.rs` | New runtime metadata bypasses ToolDefinition | Round 4 complete: fallback remains, but runtime metadata is guarded as ToolDefinition-backed and non-runtime metadata names are allowlisted |
+| permission risk labels | `ToolDefinition` policy plus metadata-derived fallback for non-runtime names | Yes for runtime names | Yes: `schema/policy.rs`, `schema/migration.rs` | Write/shell/destructive tools receive wrong permission prompt or guard treatment | Round 4 complete: runtime helper parity and non-runtime fallback behavior are guarded; clean fallback only after route metadata is separated |
+| session/current-session behavior | `ToolDefinition` policy facades plus `ToolCall` accessors and dispatch/session logic | Partially | Yes: `schema/policy.rs`, `schema/migration.rs`, session tests | Current-session fallback or explicit `session_id` behavior changes silently | Keep current-session fallback parity tests; add accessor-policy drift tests before moving session behavior into definitions |
+| agent capability dispatch | `ToolDefinition.agent_capability` and `required_agent_capability()` parity | Yes for declared capability | Yes: `schema/definitions.rs`, `schema/migration.rs`, `schema/policy.rs` | Agent-backed calls bypass or over-require capabilities | Keep strict no-fallback capability lookup for legacy and unknown non-runtime names |
+| delete_files compatibility metadata | `metadata.rs` legacy route metadata only | Legacy fallback only | Yes: `schema/definitions.rs`, `schema/migration.rs`, `schema/policy.rs`, metadata tests | Legacy route becomes a runtime tool or public model-facing name | Round 4 complete: `delete_files` remains the only explicit non-runtime compatibility metadata name |
+| run_codex hidden behavior | Hidden `ToolDefinition`, disabled message, parser-known but model-hidden | Partially | Yes: `schema/definitions.rs`, `schema/migration.rs`, OpenAPI and MCP tests | Hidden disabled tool appears in model-facing specs or Action names | Round 4 complete: keep hidden ToolDefinition metadata path and hidden-only parser-known contract |
 
 ## Explicit non-goals
 
@@ -124,20 +126,52 @@ The new guards cover:
   `ToolDefinition` names while preserving `run_codex` hidden parser-known
   behavior and rejecting unknown names and legacy `delete_files`.
 
+## Round 4 metadata fallback / policy boundary guard status
+
+Round 4 added tests/docs only; it did not remove metadata fallback, change
+runtime handlers, change server/agent behavior, change auth/permission/guard or
+session semantics, change OpenAPI/MCP exposure, or change discovery behavior.
+
+The new guards cover:
+
+- runtime tool metadata from `lookup_tool_metadata()` and
+  `runtime_tool_metadata()` must match `ToolDefinition.metadata()`;
+- policy helpers for risk, permission, current-session fallback, category, and
+  agent capability must match `ToolDefinition` for known runtime names;
+- `delete_files` remains the only explicit non-runtime compatibility metadata
+  name, and it remains metadata-only rather than `ToolDefinition`, `ToolCall`,
+  model-facing ToolSpec, OpenAPI, MCP, `tool_manifest`, or `list_tools` content;
+- unknown metadata remains safe and non-callable: provider `unknown`, risk
+  `unknown`, no OAuth scope, no ToolDefinition, no ToolCall parser acceptance, no
+  model-facing discovery exposure, no current-session fallback, and no agent
+  capability fallback;
+- `run_codex` remains a hidden ToolDefinition with definition-backed metadata and
+  current parser-known hidden behavior, while staying absent from model-facing
+  ToolSpecs, OpenAPI accepted-name text, MCP `tools/list`, `tool_manifest`, and
+  `list_tools`.
+
+This strengthens source-of-truth convergence, but it does not complete the full
+migration. The `ToolCall` enum/parser/dispatch path, input schema generation,
+dedicated OpenAPI operation generation, and broader handler policy generation
+remain intentionally hand-written and contract-tested.
+
 ## Recommended next rounds
-
-### Round 4: metadata fallback / policy boundary cleanup
-
-Concentrate the metadata fallback boundary and policy helper ownership without
-changing behavior. Keep `delete_files` as the only explicit non-runtime
-compatibility name until route metadata is separated or retired, keep unknown
-metadata safe and non-callable, and prevent new runtime names from entering the
-metadata fallback path.
 
 ### Round 5: release_check + deployed sanity
 
-After fallback/policy cleanup is stable, run release_check-style local validation
-and deployed sanity checks against the read-only/discovery surfaces. Confirm
+After fallback/policy boundary guards are stable, run release_check-style local
+validation and deployed sanity checks against the read-only/discovery surfaces.
+Confirm
 ToolDefinition count, model-visible `tools.count`, OpenAPI operation count,
 output schema coverage, default-only output-schema gap, hidden exclusions, and
 GPT Action/MCP discovery behavior before any release work.
+
+Recommended Round 5 focus:
+
+- `release_check` local validation;
+- ops strict sanity;
+- direct MCP deployed sanity;
+- GPT Action generic `callRuntimeTool` sanity.
+
+Do not start another broad development round unless these checks fail or expose a
+specific drift gap.

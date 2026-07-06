@@ -540,3 +540,120 @@ fn required_agent_capability_matches_metadata_risk_table() {
         );
     }
 }
+
+#[test]
+fn policy_helpers_keep_non_runtime_names_on_fallback_boundary() {
+    use crate::tool_runtime::metadata::{
+        lookup_tool_metadata, ToolPathHint, ToolRisk, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
+        TOOL_PROVIDER_UNKNOWN,
+    };
+    use crate::tool_runtime::tool_definition::{
+        is_model_hidden_tool_name, is_model_visible_tool_name, lookup_tool_definition,
+        runtime_tool_allows_current_session_fallback, runtime_tool_category,
+        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
+        runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
+        runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
+        PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
+    };
+
+    let delete_files = runtime_tool_metadata("delete_files");
+    assert_eq!(delete_files.name, "delete_files");
+    assert_eq!(delete_files.provider_id, TOOL_PROVIDER_AGENT);
+    assert_eq!(delete_files.risk, ToolRisk::ProjectWrite);
+    assert_eq!(delete_files.oauth_scope, Some(PROJECT_WRITE));
+    assert!(delete_files.requires_project);
+    assert_eq!(delete_files.path_hint, ToolPathHint::PathList);
+    assert!(!delete_files.read_only);
+    assert!(delete_files.destructive);
+    assert!(!delete_files.shell_like);
+    assert_eq!(
+        lookup_tool_metadata("delete_files").copied(),
+        Some(delete_files)
+    );
+    assert!(lookup_tool_definition("delete_files").is_none());
+    assert!(!is_known_tool_name("delete_files"));
+    assert!(!is_model_visible_tool_name("delete_files"));
+    assert!(!is_model_hidden_tool_name("delete_files"));
+    assert_eq!(runtime_tool_category("delete_files"), "other");
+    assert_eq!(
+        runtime_tool_session_risk_class("delete_files"),
+        ToolRisk::ProjectWrite.session_risk_class()
+    );
+    assert!(!runtime_tool_is_read_like("delete_files"));
+    assert!(runtime_tool_is_write_like("delete_files"));
+    assert!(!runtime_tool_is_shell_like("delete_files"));
+    assert!(!runtime_tool_allows_current_session_fallback(
+        "delete_files"
+    ));
+    assert!(runtime_tool_requires_permission("delete_files"));
+    assert!(runtime_tool_requires_session_project_escape("delete_files"));
+    assert_eq!(
+        runtime_tool_permission_risk("delete_files"),
+        PERMISSION_RISK_DESTRUCTIVE
+    );
+    assert!(
+        ToolCall::from_tool_name(
+            "delete_files",
+            json!({"project": SAMPLE_PROJECT, "paths": ["old.txt"]})
+        )
+        .is_err(),
+        "delete_files must remain metadata-only, not a runtime ToolCall"
+    );
+    assert_agent_capability_lookup_rejects_non_runtime_name("delete_files");
+
+    for name in ["__unknown_tool_for_policy_test__", "not_a_tool"] {
+        let unknown = runtime_tool_metadata(name);
+        assert_eq!(unknown.name, "<unknown>", "{name}");
+        assert_eq!(unknown.provider_id, TOOL_PROVIDER_UNKNOWN, "{name}");
+        assert_eq!(unknown.risk, ToolRisk::Unknown, "{name}");
+        assert_eq!(unknown.oauth_scope, None, "{name}");
+        assert!(!unknown.requires_project, "{name}");
+        assert_eq!(unknown.path_hint, ToolPathHint::None, "{name}");
+        assert!(!unknown.read_only, "{name}");
+        assert!(!unknown.destructive, "{name}");
+        assert!(!unknown.shell_like, "{name}");
+        assert!(lookup_tool_metadata(name).is_none(), "{name}");
+        assert!(lookup_tool_definition(name).is_none(), "{name}");
+        assert!(!is_known_tool_name(name), "{name}");
+        assert!(!is_model_visible_tool_name(name), "{name}");
+        assert!(!is_model_hidden_tool_name(name), "{name}");
+        assert_eq!(runtime_tool_category(name), "other", "{name}");
+        assert_eq!(
+            runtime_tool_session_risk_class(name),
+            ToolRisk::Unknown.session_risk_class(),
+            "{name}"
+        );
+        assert!(!runtime_tool_is_read_like(name), "{name}");
+        assert!(!runtime_tool_is_write_like(name), "{name}");
+        assert!(!runtime_tool_is_shell_like(name), "{name}");
+        assert!(
+            !runtime_tool_allows_current_session_fallback(name),
+            "{name}"
+        );
+        assert!(runtime_tool_requires_permission(name), "{name}");
+        assert!(runtime_tool_requires_session_project_escape(name), "{name}");
+        assert_eq!(
+            runtime_tool_permission_risk(name),
+            PERMISSION_RISK_WRITE,
+            "{name}"
+        );
+        assert!(
+            ToolCall::from_tool_name(name, json!({})).is_err(),
+            "{name} must remain non-callable"
+        );
+        assert_agent_capability_lookup_rejects_non_runtime_name(name);
+    }
+}
+
+fn assert_agent_capability_lookup_rejects_non_runtime_name(name: &str) {
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(|| {
+        let _ = crate::tool_runtime::tool_definition::runtime_tool_agent_capability(name);
+    });
+    std::panic::set_hook(previous_hook);
+    assert!(
+        result.is_err(),
+        "{name} must not resolve agent capability through metadata fallback"
+    );
+}

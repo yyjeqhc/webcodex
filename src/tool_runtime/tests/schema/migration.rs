@@ -10,6 +10,8 @@ struct LegacyMetadataFallback {
     reason: &'static str,
 }
 
+const NON_RUNTIME_METADATA_COMPATIBILITY_NAMES: &[&str] = &["delete_files"];
+
 // TODO(tool-definition): delete this allowlist when the legacy dedicated
 // delete-files HTTP route is removed or is represented outside the runtime tool
 // metadata facade.
@@ -966,7 +968,10 @@ fn tool_definition_explains_all_tool_call_runtime_names() {
 
 #[test]
 fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
+    use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::{
+        lookup_tool_definition, runtime_tool_agent_capability,
+        runtime_tool_allows_current_session_fallback, runtime_tool_category,
         runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
         runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
         runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
@@ -974,6 +979,18 @@ fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
     };
 
     for definition in tool_definitions() {
+        assert_eq!(
+            lookup_tool_definition(definition.name).map(|definition| definition.name),
+            Some(definition.name),
+            "{} must resolve through ToolDefinition before any policy fallback",
+            definition.name
+        );
+        assert_eq!(
+            lookup_tool_metadata(definition.name).copied(),
+            Some(definition.metadata()),
+            "{} lookup_tool_metadata must return ToolDefinition metadata",
+            definition.name
+        );
         assert_eq!(
             runtime_tool_metadata(definition.name),
             definition.metadata(),
@@ -1005,6 +1022,18 @@ fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
             definition.name
         );
         assert_eq!(
+            runtime_tool_category(definition.name),
+            definition.category,
+            "{} category helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_allows_current_session_fallback(definition.name),
+            definition.allows_current_session_fallback(),
+            "{} current-session fallback helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
             runtime_tool_requires_permission(definition.name),
             definition.requires_permission(),
             "{} permission helper must match ToolDefinition",
@@ -1020,6 +1049,12 @@ fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
             runtime_tool_permission_risk(definition.name),
             definition.permission_risk(),
             "{} permission risk helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_agent_capability(definition.name),
+            definition.agent_capability,
+            "{} agent capability helper must match ToolDefinition",
             definition.name
         );
     }
@@ -1050,10 +1085,12 @@ fn tool_definition_strict_agent_capability_lookup_has_no_metadata_fallback() {
 fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
     use crate::tool_runtime::metadata::{lookup_tool_metadata, tool_metadata};
     use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, runtime_tool_is_read_like, runtime_tool_is_shell_like,
-        runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
-        runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
-        runtime_tool_session_risk_class, PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
+        is_model_visible_tool_name, lookup_tool_definition,
+        runtime_tool_allows_current_session_fallback, runtime_tool_category,
+        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
+        runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
+        runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
+        PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
     };
 
     let delete_files = lookup_tool_metadata("delete_files")
@@ -1082,6 +1119,7 @@ fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
         "delete_files metadata fallback must not make it ToolCall-parseable"
     );
     assert_eq!(runtime_tool_metadata("delete_files"), delete_files);
+    assert_eq!(runtime_tool_category("delete_files"), "other");
     assert_eq!(
         runtime_tool_session_risk_class("delete_files"),
         ToolRisk::ProjectWrite.session_risk_class()
@@ -1089,42 +1127,69 @@ fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
     assert!(!runtime_tool_is_read_like("delete_files"));
     assert!(runtime_tool_is_write_like("delete_files"));
     assert!(!runtime_tool_is_shell_like("delete_files"));
+    assert!(!runtime_tool_allows_current_session_fallback(
+        "delete_files"
+    ));
     assert!(runtime_tool_requires_permission("delete_files"));
     assert!(runtime_tool_requires_session_project_escape("delete_files"));
     assert_eq!(
         runtime_tool_permission_risk("delete_files"),
         PERMISSION_RISK_DESTRUCTIVE
     );
+    assert_model_facing_surfaces_do_not_list_name("delete_files");
+    assert_agent_capability_lookup_rejects_non_runtime_name("delete_files");
 
-    let unknown = tool_metadata("__unknown_non_runtime__");
-    assert!(lookup_tool_metadata("__unknown_non_runtime__").is_none());
-    assert_eq!(unknown.name, "<unknown>");
-    assert_eq!(unknown.provider_id, TOOL_PROVIDER_UNKNOWN);
-    assert_eq!(unknown.risk, ToolRisk::Unknown);
-    assert_eq!(unknown.oauth_scope, None);
-    assert!(!unknown.requires_project);
-    assert_eq!(unknown.path_hint, ToolPathHint::None);
-    assert!(!unknown.read_only);
-    assert!(!unknown.destructive);
-    assert!(!unknown.shell_like);
-    assert_eq!(runtime_tool_metadata("__unknown_non_runtime__"), unknown);
-    assert_eq!(
-        runtime_tool_session_risk_class("__unknown_non_runtime__"),
-        ToolRisk::Unknown.session_risk_class()
-    );
-    assert!(!runtime_tool_is_read_like("__unknown_non_runtime__"));
-    assert!(!runtime_tool_is_write_like("__unknown_non_runtime__"));
-    assert!(!runtime_tool_is_shell_like("__unknown_non_runtime__"));
-    assert!(runtime_tool_requires_permission("__unknown_non_runtime__"));
-    assert!(runtime_tool_requires_session_project_escape(
-        "__unknown_non_runtime__"
-    ));
-    assert_eq!(
-        runtime_tool_permission_risk("__unknown_non_runtime__"),
-        PERMISSION_RISK_WRITE
-    );
-    assert!(!is_known_tool_name("__unknown_non_runtime__"));
-    assert!(ToolCall::from_tool_name("__unknown_non_runtime__", json!({})).is_err());
+    for name in [
+        "__unknown_non_runtime__",
+        "__unknown_tool_for_metadata_test__",
+        "not_a_tool",
+        "delete_files_v2",
+    ] {
+        let unknown = tool_metadata(name);
+        assert!(lookup_tool_metadata(name).is_none(), "{name}");
+        assert!(
+            lookup_tool_definition(name).is_none(),
+            "{name} must not resolve to ToolDefinition"
+        );
+        assert!(!is_known_tool_name(name), "{name}");
+        assert!(!is_model_visible_tool_name(name), "{name}");
+        assert_eq!(unknown.name, "<unknown>", "{name}");
+        assert_eq!(unknown.provider_id, TOOL_PROVIDER_UNKNOWN, "{name}");
+        assert_eq!(unknown.risk, ToolRisk::Unknown, "{name}");
+        assert_eq!(unknown.oauth_scope, None, "{name}");
+        assert!(!unknown.requires_project, "{name}");
+        assert_eq!(unknown.path_hint, ToolPathHint::None, "{name}");
+        assert!(!unknown.read_only, "{name}");
+        assert!(!unknown.destructive, "{name}");
+        assert!(!unknown.shell_like, "{name}");
+        assert_eq!(runtime_tool_metadata(name), unknown, "{name}");
+        assert_eq!(runtime_tool_category(name), "other", "{name}");
+        assert_eq!(
+            runtime_tool_session_risk_class(name),
+            ToolRisk::Unknown.session_risk_class(),
+            "{name}"
+        );
+        assert!(!runtime_tool_is_read_like(name), "{name}");
+        assert!(!runtime_tool_is_write_like(name), "{name}");
+        assert!(!runtime_tool_is_shell_like(name), "{name}");
+        assert!(
+            !runtime_tool_allows_current_session_fallback(name),
+            "{name}"
+        );
+        assert!(runtime_tool_requires_permission(name), "{name}");
+        assert!(runtime_tool_requires_session_project_escape(name), "{name}");
+        assert_eq!(
+            runtime_tool_permission_risk(name),
+            PERMISSION_RISK_WRITE,
+            "{name}"
+        );
+        assert!(
+            ToolCall::from_tool_name(name, json!({})).is_err(),
+            "{name} must remain non-callable"
+        );
+        assert_model_facing_surfaces_do_not_list_name(name);
+        assert_agent_capability_lookup_rejects_non_runtime_name(name);
+    }
 }
 
 #[test]
@@ -1176,6 +1241,10 @@ fn tool_definition_legacy_metadata_fallbacks_are_explicit_and_reasoned() {
         .collect::<Vec<_>>();
 
     assert_eq!(
+        expected_names, NON_RUNTIME_METADATA_COMPATIBILITY_NAMES,
+        "non-runtime metadata compatibility allowlist must stay explicitly named"
+    );
+    assert_eq!(
         metadata_only_names, expected_names,
         "remaining metadata fallbacks must stay explicit and reasoned: {fallback_reasons:?}"
     );
@@ -1200,12 +1269,14 @@ fn tool_definition_legacy_metadata_fallbacks_are_explicit_and_reasoned() {
     assert_eq!(unknown.risk, ToolRisk::Unknown);
     assert!(!is_known_tool_name("__unknown__"));
     assert!(ToolCall::from_tool_name("__unknown__", json!({})).is_err());
+    assert_model_facing_surfaces_do_not_list_name("__unknown__");
 }
 
 #[test]
 fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
+    use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, model_hidden_tool_names, tool_definitions,
+        lookup_tool_definition, model_hidden_tool_names, runtime_tool_metadata, tool_definitions,
     };
 
     let openapi = crate::openapi::build_openapi_spec();
@@ -1276,10 +1347,30 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         lookup_tool_definition("run_codex").is_some(),
         "hidden run_codex must keep an explicit ToolDefinition"
     );
+    let run_codex_definition =
+        lookup_tool_definition("run_codex").expect("run_codex ToolDefinition");
+    assert_eq!(
+        lookup_tool_metadata("run_codex").copied(),
+        Some(run_codex_definition.metadata()),
+        "run_codex lookup_tool_metadata must return ToolDefinition metadata"
+    );
+    assert_eq!(
+        runtime_tool_metadata("run_codex"),
+        run_codex_definition.metadata(),
+        "run_codex runtime metadata helper must return ToolDefinition metadata"
+    );
     assert_eq!(
         model_hidden_tool_names().collect::<Vec<_>>(),
         vec!["run_codex"],
         "run_codex must remain the only hidden ToolDefinition"
+    );
+    assert!(
+        ToolCall::from_tool_name(
+            "run_codex",
+            json!({"project": SAMPLE_PROJECT, "prompt": "summarize"})
+        )
+        .is_ok(),
+        "run_codex hidden parser-known behavior must stay explicit"
     );
     assert_eq!(
         model_facing_names.len(),
@@ -1295,6 +1386,7 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         model_facing_names.len() + 1,
         "ToolDefinition includes only one hidden runtime tool"
     );
+    assert_model_facing_surfaces_do_not_list_name("run_codex");
 }
 
 #[test]
@@ -1371,4 +1463,72 @@ fn session_policy_label(
     } else {
         labels.join("+")
     }
+}
+
+fn assert_model_facing_surfaces_do_not_list_name(name: &str) {
+    let specs = registered_tool_specs();
+    let spec_names = specs
+        .iter()
+        .map(|spec| spec.name.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        !spec_names.contains(name),
+        "{name} must not appear in registered ToolSpecs"
+    );
+    assert!(
+        !registered_tool_names().iter().any(|tool| tool == name),
+        "{name} must not appear in model-facing tool names"
+    );
+
+    let mcp_payload = json!({ "tools": specs });
+    let mcp_names = mcp_payload["tools"]
+        .as_array()
+        .expect("MCP tools/list payload tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("MCP tool name"))
+        .collect::<BTreeSet<_>>();
+    assert!(
+        !mcp_names.contains(name),
+        "{name} must not appear in MCP tools/list names"
+    );
+
+    let openapi = crate::openapi::build_openapi_spec();
+    let tool_description = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
+        [TOOL_CALL_TOOL_FIELD]["description"]
+        .as_str()
+        .expect("ToolCallRequest.tool description");
+    assert!(
+        !tool_description.contains(name),
+        "{name} must not appear in callRuntimeTool accepted-name text"
+    );
+
+    let runtime = test_runtime();
+    let manifest = runtime.compact_tool_manifest_payload();
+    assert!(
+        !serde_json::to_string(&manifest).unwrap().contains(name),
+        "{name} must not appear in compact tool_manifest"
+    );
+    let list_tools = runtime.list_tools_payload(ListToolsOptions {
+        category: None,
+        features: None,
+        summary_only: true,
+        limit: None,
+    });
+    assert!(
+        !serde_json::to_string(&list_tools).unwrap().contains(name),
+        "{name} must not appear in bounded list_tools discovery"
+    );
+}
+
+fn assert_agent_capability_lookup_rejects_non_runtime_name(name: &str) {
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(|| {
+        let _ = crate::tool_runtime::tool_definition::runtime_tool_agent_capability(name);
+    });
+    std::panic::set_hook(previous_hook);
+    assert!(
+        result.is_err(),
+        "{name} must not resolve agent capability through metadata fallback"
+    );
 }

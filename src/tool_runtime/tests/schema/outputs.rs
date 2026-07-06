@@ -21,16 +21,6 @@ const TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS: &[Temp
         exit_condition: "replace with explicit project creation output fields",
     },
     TemporaryDefaultOnlyOutputSchemaGap {
-        name: "git_restore_paths",
-        reason: "cleanup write result is covered by behavior tests while output schema is pending",
-        exit_condition: "replace with explicit restored path output fields",
-    },
-    TemporaryDefaultOnlyOutputSchemaGap {
-        name: "discard_untracked",
-        reason: "cleanup write result is covered by behavior tests while output schema is pending",
-        exit_condition: "replace with explicit discarded path output fields",
-    },
-    TemporaryDefaultOnlyOutputSchemaGap {
         name: "replace_in_file",
         reason: "compatibility edit result is covered by behavior tests while output schema is pending",
         exit_condition: "replace with explicit compatibility edit output fields",
@@ -76,12 +66,12 @@ fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
     assert_eq!(specs.len(), 66, "model-visible tools.count");
     assert_eq!(
         specs.len() - default_schema_names.len(),
-        60,
+        62,
         "explicit model-visible output schema coverage"
     );
     assert_eq!(
         default_schema_names.len(),
-        6,
+        4,
         "temporary default-only output schema gap count"
     );
     assert_eq!(
@@ -401,6 +391,74 @@ fn key_tool_output_schemas_include_expected_fields() {
             has_output_field("list_projects", field),
             "list_projects missing {field}"
         );
+    }
+}
+
+#[test]
+fn cleanup_tool_output_schemas_include_metadata_fields() {
+    let specs = registered_tool_specs();
+
+    for field in ["restored_paths", "command_result"] {
+        assert!(
+            output_schema_properties(&specs, "git_restore_paths").contains_key(field),
+            "git_restore_paths missing {field}"
+        );
+    }
+    for field in ["discarded_untracked_paths", "command_result"] {
+        assert!(
+            output_schema_properties(&specs, "discard_untracked").contains_key(field),
+            "discard_untracked missing {field}"
+        );
+    }
+
+    let restored = output_schema_property(&specs, "git_restore_paths", "restored_paths");
+    assert_eq!(restored["type"], "array");
+    assert_eq!(restored["items"]["type"], "string");
+
+    let discarded =
+        output_schema_property(&specs, "discard_untracked", "discarded_untracked_paths");
+    assert_eq!(discarded["type"], "array");
+    assert_eq!(discarded["items"]["type"], "string");
+}
+
+#[test]
+fn cleanup_output_schemas_describe_result_metadata_only() {
+    let specs = registered_tool_specs();
+
+    for tool in ["git_restore_paths", "discard_untracked"] {
+        let props = output_schema_properties(&specs, tool);
+        for forbidden in [
+            "content",
+            "file_content",
+            "stdout",
+            "stderr",
+            "stdin",
+            "env",
+            "token",
+            "secret",
+            "command",
+            "shell_command",
+        ] {
+            assert!(
+                !props.contains_key(forbidden),
+                "{tool} output schema must not advertise {forbidden}"
+            );
+        }
+
+        let description = output_schema_property(&specs, tool, "command_result")["description"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase();
+        for phrase in [
+            "fixed git cleanup",
+            "result metadata",
+            "not a general shell-execution interface",
+        ] {
+            assert!(
+                description.contains(phrase),
+                "{tool} command_result description should mention {phrase}: {description}"
+            );
+        }
     }
 }
 

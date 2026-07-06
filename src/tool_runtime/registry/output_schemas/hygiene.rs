@@ -57,6 +57,32 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 open_object_schema("Operator-friendly hygiene verdict: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. Additive UX summary only; does not change safety semantics."),
             ),
         ])),
+        "git_restore_paths" => Some(wrapped_output_schema(vec![
+            (
+                "restored_paths",
+                array_schema(
+                    schema_type("string", "Project-relative path restored by git restore."),
+                    "Requested project-relative paths restored from the git index/worktree. Result metadata only; does not grant new path, permission, or session authority.",
+                ),
+            ),
+            (
+                "command_result",
+                open_object_schema("Fixed git cleanup command result metadata from git restore. This describes the requested cleanup result only, not a general shell-execution interface."),
+            ),
+        ])),
+        "discard_untracked" => Some(wrapped_output_schema(vec![
+            (
+                "discarded_untracked_paths",
+                array_schema(
+                    schema_type("string", "Project-relative untracked path discarded by git clean."),
+                    "Requested project-relative untracked paths discarded by git clean. Result metadata only; does not grant new path, permission, or session authority.",
+                ),
+            ),
+            (
+                "command_result",
+                open_object_schema("Fixed git cleanup command result metadata from git clean. This describes the requested cleanup result only, not a general shell-execution interface."),
+            ),
+        ])),
         "delete_project_files" => Some(wrapped_output_schema(vec![
             (
                 "ok",

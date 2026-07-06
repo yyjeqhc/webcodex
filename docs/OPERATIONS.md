@@ -10,14 +10,36 @@ roadmap, see [OPS_OBSERVABILITY_ROADMAP.md](OPS_OBSERVABILITY_ROADMAP.md).
 Operator-friendly read-only checks are available through:
 
 ```bash
-webcodex-cli ops status
-webcodex-cli ops agents
-webcodex-cli ops projects
-webcodex-cli ops smoke-preflight --project agent:workstation:my-repo
+webcodex-cli ops status --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
+webcodex-cli ops agents --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
+webcodex-cli ops projects --server-url "$SERVER_URL" --token-file "$USER_TOKEN_FILE"
+webcodex-cli ops smoke-preflight \
+  --server-url "$SERVER_URL" \
+  --token-file "$USER_TOKEN_FILE" \
+  --project agent:workstation:my-repo
+webcodex-cli ops smoke-preflight \
+  --server-url "$SERVER_URL" \
+  --token-file "$USER_TOKEN_FILE" \
+  --project agent:workstation:my-repo \
+  --strict
 ```
 
 These commands accept `--server-url`/`--url`, `--env-file`, `--token-file`,
-`--token`, and `--json`. They do not print token or env values.
+`--token`, `--json`, and `--strict`. They require a user token/PAT or another
+bearer token with suitable runtime/project/job read scopes. Prefer
+`--token-file` for operator use; `--token` is supported for constrained
+one-off calls but is easier to expose through shell history or process lists.
+They do not print token or env values.
+
+`WARN` means the check found something worth reviewing, but it is not
+necessarily a deploy blocker. By default, ops commands exit `0` when they can
+generate a report, even when `Overall: FAIL`. Add `--strict` for deployment
+gates: `PASS` and `WARN` exit `0`, while `FAIL` exits `2`.
+
+`ops smoke-preflight` short-circuits when the target project is missing,
+offline, disconnected, or not git-backed. In that case it reports the blocking
+reason without sending `show_changes` or `workspace_hygiene_check` to a stale or
+offline agent.
 
 ## Server initialization
 

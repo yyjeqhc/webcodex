@@ -191,6 +191,7 @@ pub(crate) fn ops_status_usage() -> &'static str {
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
+       --strict                Exit 2 when the ops report status is FAIL\n\
        -h, --help              Print help and exit\n"
 }
 
@@ -204,6 +205,7 @@ pub(crate) fn ops_agents_usage() -> &'static str {
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
+       --strict                Exit 2 when the ops report status is FAIL\n\
        -h, --help              Print help and exit\n"
 }
 
@@ -217,6 +219,7 @@ pub(crate) fn ops_projects_usage() -> &'static str {
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
+       --strict                Exit 2 when the ops report status is FAIL\n\
        -h, --help              Print help and exit\n"
 }
 
@@ -231,6 +234,7 @@ pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
+       --strict                Exit 2 when the ops report status is FAIL\n\
        -h, --help              Print help and exit\n\n\
      This command calls only read-only status/project/workspace inspection APIs.\n"
 }

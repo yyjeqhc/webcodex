@@ -1,8 +1,9 @@
 use super::support::*;
 use crate::webcodex_cli::ops::{
-    ops_agents_report, ops_projects_report, ops_smoke_preflight_report, ops_status_report,
-    render_ops_status,
+    ops_agents_report, ops_exit_code, ops_projects_report, ops_smoke_preflight_report,
+    ops_status_report, render_ops_status,
 };
+use crate::webcodex_cli::run_ops_command;
 use std::time::Duration;
 
 #[test]
@@ -30,6 +31,7 @@ fn ops_help_entrypoints_print_usage() {
                 "--token-file PATH",
                 "--token TOKEN",
                 "--json",
+                "--strict",
             ],
         ),
         (
@@ -42,6 +44,7 @@ fn ops_help_entrypoints_print_usage() {
                 "--token-file PATH",
                 "--token TOKEN",
                 "--json",
+                "--strict",
             ],
         ),
         (
@@ -54,6 +57,7 @@ fn ops_help_entrypoints_print_usage() {
                 "--token-file PATH",
                 "--token TOKEN",
                 "--json",
+                "--strict",
             ],
         ),
         (
@@ -67,6 +71,7 @@ fn ops_help_entrypoints_print_usage() {
                 "--token-file PATH",
                 "--token TOKEN",
                 "--json",
+                "--strict",
             ],
         ),
     ];
@@ -119,6 +124,7 @@ fn ops_common_flags_parse_without_printing_token() {
         "--token",
         "secret-token-value",
         "--json",
+        "--strict",
     ]) {
         CliAction::Ops(OpsCommand::Status(opts)) => {
             assert_eq!(opts.server_url, "http://runtime.example");
@@ -129,6 +135,7 @@ fn ops_common_flags_parse_without_printing_token() {
             assert_eq!(opts.token_file.as_deref(), Some(Path::new("/tmp/token")));
             assert_eq!(opts.token.as_deref(), Some("secret-token-value"));
             assert!(opts.json);
+            assert!(opts.strict);
         }
         other => panic!("expected ops status action, got {other:?}"),
     }
@@ -156,6 +163,138 @@ fn ops_parser_errors_do_not_leak_token_value() {
         }
         other => panic!("expected parser error, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn ops_status_http_401_reports_auth_required_not_runtime_unreachable() {
+    let output = run_ops_with_routes(
+        OpsCommand::Status(ops_common_opts(String::new())),
+        vec![(
+            "/api/runtime/status",
+            json_http_response(401, json!({"error": "missing token"})),
+        )],
+    )
+    .await;
+    assert!(output.contains("Overall: FAIL"), "{output}");
+    assert!(output.contains("auth_required"), "{output}");
+    assert!(output.contains("status: 401"), "{output}");
+    assert!(!output.contains("runtime_unreachable"), "{output}");
+}
+
+#[tokio::test]
+async fn ops_projects_http_401_uses_ops_report() {
+    let output = run_ops_with_routes(
+        OpsCommand::Projects(ops_common_opts(String::new())),
+        vec![(
+            "/api/projects/list",
+            json_http_response(401, json!({"error": "missing token"})),
+        )],
+    )
+    .await;
+    assert!(output.contains("Overall: FAIL"), "{output}");
+    assert!(output.contains("auth_required"), "{output}");
+    assert!(output.contains("status: 401"), "{output}");
+    assert!(!output.contains("projects list failed"), "{output}");
+}
+
+#[tokio::test]
+async fn ops_smoke_preflight_projects_401_uses_ops_report() {
+    let output = run_ops_with_routes(
+        OpsCommand::SmokePreflight(OpsSmokePreflightOptions {
+            common: ops_common_opts(String::new()),
+            project: "agent:ops:smoke".to_string(),
+        }),
+        vec![
+            (
+                "/api/runtime/status",
+                json_http_response(
+                    200,
+                    json!({"success": true, "output": runtime_status_fixture()}),
+                ),
+            ),
+            (
+                "/api/projects/list",
+                json_http_response(401, json!({"error": "missing token"})),
+            ),
+        ],
+    )
+    .await;
+    assert!(output.contains("Overall: FAIL"), "{output}");
+    assert!(output.contains("auth_required"), "{output}");
+    assert!(output.contains("endpoint: list_projects"), "{output}");
+    assert!(!output.contains("projects list failed"), "{output}");
+}
+
+#[tokio::test]
+async fn ops_http_403_reports_forbidden() {
+    let mut opts = ops_common_opts(String::new());
+    opts.token = Some("test-token".to_string());
+    let output = run_ops_with_routes(
+        OpsCommand::Status(opts),
+        vec![(
+            "/api/runtime/status",
+            json_http_response(403, json!({"error": "forbidden"})),
+        )],
+    )
+    .await;
+    assert!(output.contains("Overall: FAIL"), "{output}");
+    assert!(output.contains("forbidden"), "{output}");
+    assert!(output.contains("status: 403"), "{output}");
+    assert!(!output.contains("runtime_unreachable"), "{output}");
+}
+
+#[tokio::test]
+async fn ops_connection_failure_reports_runtime_unreachable() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    let output = run_ops_command(OpsCommand::Status(ops_common_opts(format!(
+        "http://{addr}"
+    ))))
+    .await
+    .unwrap()
+    .stdout;
+    assert!(output.contains("Overall: FAIL"), "{output}");
+    assert!(output.contains("runtime_unreachable"), "{output}");
+}
+
+#[test]
+fn ops_strict_exit_code_follows_report_status() {
+    let pass = ops_status_report("https://ops.example.test", &Some(runtime_status_fixture()));
+    assert_eq!(pass.verdict.status, "pass");
+    assert_eq!(ops_exit_code(true, pass.verdict.status), 0);
+
+    let mut warn_runtime = runtime_status_fixture();
+    warn_runtime["jobs"]["active_count"] = json!(1);
+    let warn = ops_status_report("https://ops.example.test", &Some(warn_runtime));
+    assert_eq!(warn.verdict.status, "warn");
+    assert_eq!(ops_exit_code(true, warn.verdict.status), 0);
+
+    let mut fail_runtime = runtime_status_fixture();
+    fail_runtime["agents"]["online_count"] = json!(0);
+    fail_runtime["agents"]["summary"]["online"] = json!(0);
+    let fail = ops_status_report("https://ops.example.test", &Some(fail_runtime));
+    assert_eq!(fail.verdict.status, "fail");
+    assert_eq!(ops_exit_code(true, fail.verdict.status), 2);
+    assert_eq!(ops_exit_code(false, fail.verdict.status), 0);
+}
+
+#[tokio::test]
+async fn ops_http_error_output_does_not_leak_token_value() {
+    let secret = "secret-token-value";
+    let mut opts = ops_common_opts(String::new());
+    opts.token = Some(secret.to_string());
+    let output = run_ops_with_routes(
+        OpsCommand::Status(opts),
+        vec![(
+            "/api/runtime/status",
+            json_http_response(401, json!({"error": format!("bad token {secret}")})),
+        )],
+    )
+    .await;
+    assert!(output.contains("Overall: FAIL"), "{output}");
+    assert!(output.contains("unauthorized"), "{output}");
+    assert!(!output.contains(secret), "{output}");
 }
 
 fn runtime_status_fixture() -> Value {
@@ -260,6 +399,113 @@ fn clean_hygiene_fixture() -> Value {
     })
 }
 
+fn ops_common_opts(server_url: String) -> OpsCommonOptions {
+    OpsCommonOptions {
+        server_url,
+        env_file: None,
+        token_file: None,
+        token: None,
+        json: false,
+        strict: false,
+    }
+}
+
+#[derive(Clone)]
+struct OpsHttpResponse {
+    status: u16,
+    content_type: String,
+    body: String,
+}
+
+fn json_http_response(status: u16, body: Value) -> OpsHttpResponse {
+    OpsHttpResponse {
+        status,
+        content_type: "application/json".to_string(),
+        body: serde_json::to_string(&body).unwrap(),
+    }
+}
+
+fn spawn_ops_route_server(
+    routes: Vec<(&'static str, OpsHttpResponse)>,
+) -> (
+    String,
+    std::sync::mpsc::Sender<()>,
+    thread::JoinHandle<Vec<String>>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut requests = Vec::new();
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut buf = [0u8; 16384];
+                    let n = stream.read(&mut buf).unwrap();
+                    let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                    requests.push(request.clone());
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let response = routes
+                        .iter()
+                        .find(|(path, _)| first_line.starts_with(&format!("POST {path} ")))
+                        .map(|(_, response)| response.clone())
+                        .unwrap_or_else(|| {
+                            json_http_response(404, json!({"error": "unexpected request"}))
+                        });
+                    write!(
+                        stream,
+                        "HTTP/1.1 {} OK\r\ncontent-type: {}\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{}",
+                        response.status,
+                        response.content_type,
+                        response.body.len(),
+                        response.body
+                    )
+                    .unwrap();
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stop_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(err) => panic!("fake ops route server accept failed: {err}"),
+            }
+        }
+        requests
+    });
+    (format!("http://{}", addr), stop_tx, handle)
+}
+
+async fn run_ops_with_routes(
+    command: OpsCommand,
+    routes: Vec<(&'static str, OpsHttpResponse)>,
+) -> String {
+    let (server_url, stop_tx, handle) = spawn_ops_route_server(routes);
+    let command = match command {
+        OpsCommand::Status(mut opts) => {
+            opts.server_url = server_url;
+            OpsCommand::Status(opts)
+        }
+        OpsCommand::Agents(mut opts) => {
+            opts.server_url = server_url;
+            OpsCommand::Agents(opts)
+        }
+        OpsCommand::Projects(mut opts) => {
+            opts.server_url = server_url;
+            OpsCommand::Projects(opts)
+        }
+        OpsCommand::SmokePreflight(mut opts) => {
+            opts.common.server_url = server_url;
+            OpsCommand::SmokePreflight(opts)
+        }
+    };
+    let output = run_ops_command(command).await.unwrap().stdout;
+    stop_tx.send(()).unwrap();
+    handle.join().unwrap();
+    output
+}
+
 fn smoke_preflight_opts(server_url: String, project: &str) -> OpsSmokePreflightOptions {
     OpsSmokePreflightOptions {
         common: OpsCommonOptions {
@@ -268,6 +514,7 @@ fn smoke_preflight_opts(server_url: String, project: &str) -> OpsSmokePreflightO
             token_file: None,
             token: Some("secret-smoke-token".to_string()),
             json: false,
+            strict: false,
         },
         project: project.to_string(),
     }
@@ -337,7 +584,8 @@ async fn run_smoke_preflight_with_projects(
         server_url, project,
     )))
     .await
-    .unwrap();
+    .unwrap()
+    .stdout;
     stop_tx.send(()).unwrap();
     let requests = handle.join().unwrap();
     (output, requests)
@@ -614,6 +862,27 @@ fn ops_smoke_preflight_dirty_workspace_fails() {
 }
 
 #[test]
+fn ops_smoke_preflight_online_non_recommended_project_warns() {
+    let runtime = runtime_status_fixture();
+    let projects = projects_fixture(false);
+    let show_changes = clean_show_changes_fixture();
+    let hygiene = clean_hygiene_fixture();
+    let report = ops_smoke_preflight_report(
+        "https://ops.example.test",
+        "agent:ops:smoke",
+        Some(&runtime),
+        Some(&projects),
+        Some(&show_changes),
+        Some(&hygiene),
+    );
+    assert_eq!(report.verdict.status, "warn");
+    assert!(report
+        .verdict
+        .warning_reasons
+        .contains(&"project_not_recommended_for_smoke".to_string()));
+}
+
+#[test]
 fn ops_json_and_human_outputs_do_not_contain_secret_values() {
     let secret = "secret-token-value";
     let mut runtime = runtime_status_fixture();
@@ -670,6 +939,8 @@ async fn ops_smoke_preflight_disconnected_project_short_circuits() {
     let mut projects = projects_fixture(true);
     projects["projects"][0]["connected"] = json!(false);
     projects["projects"][0]["agent_status"] = json!("stale");
+    projects["projects"][0]["capabilities"]["recommended_for_smoke"] = json!(false);
+    projects["projects"][0]["capabilities"]["safe_smoke_project"] = json!(false);
     let (output, requests) = run_smoke_preflight_with_projects(projects, "agent:ops:smoke").await;
     assert_eq!(
         smoke_request_kinds(&requests),
@@ -679,6 +950,14 @@ async fn ops_smoke_preflight_disconnected_project_short_circuits() {
     assert!(output.contains("Overall: FAIL"));
     assert!(
         output.contains("project_disconnected") || output.contains("project_offline"),
+        "{output}"
+    );
+    assert!(
+        !output.contains("project_not_recommended_for_smoke"),
+        "{output}"
+    );
+    assert!(
+        !output.contains("project_not_safe_smoke_project"),
         "{output}"
     );
 }

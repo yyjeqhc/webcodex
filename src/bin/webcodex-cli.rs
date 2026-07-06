@@ -39,6 +39,7 @@ use agent_init::{
     run_agent_init, AgentInitOptions, DEFAULT_INIT_PROJECTS_DIR, DEFAULT_POLL_INTERVAL_MS,
     TRANSPORT_WEBSOCKET,
 };
+use webcodex_cli::ops::ops_exit_code;
 use webcodex_cli::{
     agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
     client_enroll_usage, client_profile_agent_config, client_profile_agent_token_file,
@@ -767,6 +768,7 @@ fn default_ops_common_options() -> OpsCommonOptions {
         token_file: None,
         token: None,
         json: false,
+        strict: false,
     }
 }
 
@@ -780,6 +782,7 @@ fn parse_ops_common(args: &[String], command: &str) -> Result<OpsCommonOptions, 
             "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--token" => opts.token = Some(next_value(&mut iter, arg)?),
             "--json" => opts.json = true,
+            "--strict" => opts.strict = true,
             other => return Err(format!("unknown ops {} flag: {}", command, other)),
         }
     }
@@ -812,6 +815,7 @@ fn parse_ops_smoke_preflight(args: &[String]) -> Result<OpsSmokePreflightOptions
             "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--token" => common.token = Some(next_value(&mut iter, arg)?),
             "--json" => common.json = true,
+            "--strict" => common.strict = true,
             other => return Err(format!("unknown ops smoke-preflight flag: {}", other)),
         }
     }
@@ -1822,19 +1826,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        CliAction::Ops(command) => match run_ops_command(command).await {
-            Ok(stdout) => {
-                print!("{}", stdout);
-                if !stdout.ends_with('\n') {
-                    println!();
+        CliAction::Ops(command) => {
+            let strict = command.strict();
+            match run_ops_command(command).await {
+                Ok(output) => {
+                    print!("{}", output.stdout);
+                    if !output.stdout.ends_with('\n') {
+                        println!();
+                    }
+                    std::process::exit(ops_exit_code(strict, output.status));
                 }
-                std::process::exit(0);
+                Err(stderr) => {
+                    eprintln!("{}", stderr);
+                    std::process::exit(1);
+                }
             }
-            Err(stderr) => {
-                eprintln!("{}", stderr);
-                std::process::exit(1);
-            }
-        },
+        }
         CliAction::AgentInstallService(opts) => match run_agent_install_service(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);

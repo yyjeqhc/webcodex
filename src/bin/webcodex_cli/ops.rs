@@ -1,9 +1,7 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-use super::{
-    fetch_runtime_status, http_post_json_status, read_env_file_value, read_optional_token,
-};
+use super::{http_post_json_status, read_env_file_value, read_optional_token};
 
 const DEFAULT_EXPECTED_TOOL_COUNT: u64 = 66;
 
@@ -14,6 +12,7 @@ pub(crate) struct OpsCommonOptions {
     pub(crate) token_file: Option<PathBuf>,
     pub(crate) token: Option<String>,
     pub(crate) json: bool,
+    pub(crate) strict: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +27,23 @@ pub(crate) enum OpsCommand {
     Agents(OpsCommonOptions),
     Projects(OpsCommonOptions),
     SmokePreflight(OpsSmokePreflightOptions),
+}
+
+impl OpsCommand {
+    pub(crate) fn strict(&self) -> bool {
+        match self {
+            OpsCommand::Status(opts) | OpsCommand::Agents(opts) | OpsCommand::Projects(opts) => {
+                opts.strict
+            }
+            OpsCommand::SmokePreflight(opts) => opts.common.strict,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OpsCommandOutput {
+    pub(crate) stdout: String,
+    pub(crate) status: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,48 +97,151 @@ pub(crate) struct OpsReport {
     pub(crate) source: Value,
 }
 
-pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<String, String> {
+pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOutput, String> {
     match command {
         OpsCommand::Status(opts) => {
             let token = resolve_ops_token(&opts)?;
-            let runtime_status = fetch_runtime_status(&opts.server_url, token.as_deref()).await?;
-            let report = ops_status_report(&opts.server_url, &runtime_status.output);
-            render_ops_status(&report, opts.json)
+            let report = match fetch_ops_json_output(
+                &opts.server_url,
+                "/api/runtime/status",
+                token.as_deref(),
+                json!({}),
+            )
+            .await
+            {
+                Ok(runtime) => ops_status_report(&opts.server_url, &Some(runtime)),
+                Err(failure) => ops_http_failure_report(
+                    &opts.server_url,
+                    "runtime_status",
+                    failure,
+                    token.is_some(),
+                ),
+            };
+            render_ops_command_output(report, opts.json, render_ops_status)
         }
         OpsCommand::Agents(opts) => {
             let token = resolve_ops_token(&opts)?;
-            let runtime_status = fetch_runtime_status(&opts.server_url, token.as_deref()).await?;
-            let report = ops_agents_report(&opts.server_url, &runtime_status.output);
-            render_ops_agents(&report, opts.json)
+            let report = match fetch_ops_json_output(
+                &opts.server_url,
+                "/api/runtime/status",
+                token.as_deref(),
+                json!({}),
+            )
+            .await
+            {
+                Ok(runtime) => ops_agents_report(&opts.server_url, &Some(runtime)),
+                Err(failure) => ops_http_failure_report(
+                    &opts.server_url,
+                    "runtime_status",
+                    failure,
+                    token.is_some(),
+                ),
+            };
+            render_ops_command_output(report, opts.json, render_ops_agents)
         }
         OpsCommand::Projects(opts) => {
             let token = resolve_ops_token(&opts)?;
-            let projects = fetch_projects(&opts.server_url, token.as_deref()).await?;
-            let report = ops_projects_report(&opts.server_url, projects.as_ref());
-            render_ops_projects(&report, opts.json)
+            let report = match fetch_projects(&opts.server_url, token.as_deref()).await {
+                Ok(projects) => ops_projects_report(&opts.server_url, Some(&projects)),
+                Err(failure) => ops_http_failure_report(
+                    &opts.server_url,
+                    "list_projects",
+                    failure,
+                    token.is_some(),
+                ),
+            };
+            render_ops_command_output(report, opts.json, render_ops_projects)
         }
         OpsCommand::SmokePreflight(opts) => {
             let token = resolve_ops_token(&opts.common)?;
-            let runtime_status =
-                fetch_runtime_status(&opts.common.server_url, token.as_deref()).await?;
-            let projects = fetch_projects(&opts.common.server_url, token.as_deref()).await?;
+            let runtime_status = match fetch_ops_json_output(
+                &opts.common.server_url,
+                "/api/runtime/status",
+                token.as_deref(),
+                json!({}),
+            )
+            .await
+            {
+                Ok(runtime) => runtime,
+                Err(failure) => {
+                    let report = ops_http_failure_report(
+                        &opts.common.server_url,
+                        "runtime_status",
+                        failure,
+                        token.is_some(),
+                    );
+                    return render_ops_command_output(
+                        report,
+                        opts.common.json,
+                        render_ops_smoke_preflight,
+                    );
+                }
+            };
+            let projects = match fetch_projects(&opts.common.server_url, token.as_deref()).await {
+                Ok(projects) => projects,
+                Err(failure) => {
+                    let report = ops_http_failure_report(
+                        &opts.common.server_url,
+                        "list_projects",
+                        failure,
+                        token.is_some(),
+                    );
+                    return render_ops_command_output(
+                        report,
+                        opts.common.json,
+                        render_ops_smoke_preflight,
+                    );
+                }
+            };
             let target_state =
-                smoke_preflight_target_ready(find_project(projects.as_ref(), &opts.project));
+                smoke_preflight_target_ready(find_project(Some(&projects), &opts.project));
             let (show_changes, hygiene) = if target_state.ready {
-                let show_changes = call_runtime_tool(
+                let show_changes = match call_runtime_tool(
                     &opts.common.server_url,
                     token.as_deref(),
                     "show_changes",
                     json!({"project": opts.project, "include_diff": false}),
                 )
-                .await?;
-                let hygiene = call_runtime_tool(
+                .await
+                {
+                    Ok(value) => value,
+                    Err(failure) => {
+                        let report = ops_http_failure_report(
+                            &opts.common.server_url,
+                            "show_changes",
+                            failure,
+                            token.is_some(),
+                        );
+                        return render_ops_command_output(
+                            report,
+                            opts.common.json,
+                            render_ops_smoke_preflight,
+                        );
+                    }
+                };
+                let hygiene = match call_runtime_tool(
                     &opts.common.server_url,
                     token.as_deref(),
                     "workspace_hygiene_check",
                     json!({"project": opts.project}),
                 )
-                .await?;
+                .await
+                {
+                    Ok(value) => value,
+                    Err(failure) => {
+                        let report = ops_http_failure_report(
+                            &opts.common.server_url,
+                            "workspace_hygiene_check",
+                            failure,
+                            token.is_some(),
+                        );
+                        return render_ops_command_output(
+                            report,
+                            opts.common.json,
+                            render_ops_smoke_preflight,
+                        );
+                    }
+                };
                 (show_changes, hygiene)
             } else {
                 (None, None)
@@ -130,14 +249,32 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<String, Strin
             let report = ops_smoke_preflight_report(
                 &opts.common.server_url,
                 &opts.project,
-                runtime_status.output.as_ref(),
-                projects.as_ref(),
+                Some(&runtime_status),
+                Some(&projects),
                 show_changes.as_ref(),
                 hygiene.as_ref(),
             );
-            render_ops_smoke_preflight(&report, opts.common.json)
+            render_ops_command_output(report, opts.common.json, render_ops_smoke_preflight)
         }
     }
+}
+
+pub(crate) fn ops_exit_code(strict: bool, status: &str) -> i32 {
+    if strict && status == "fail" {
+        2
+    } else {
+        0
+    }
+}
+
+fn render_ops_command_output(
+    report: OpsReport,
+    json_output: bool,
+    render: fn(&OpsReport, bool) -> Result<String, String>,
+) -> Result<OpsCommandOutput, String> {
+    let status = report.verdict.status;
+    let stdout = render(&report, json_output)?;
+    Ok(OpsCommandOutput { stdout, status })
 }
 
 fn resolve_ops_token(opts: &OpsCommonOptions) -> Result<Option<String>, String> {
@@ -168,20 +305,123 @@ fn resolve_ops_token(opts: &OpsCommonOptions) -> Result<Option<String>, String> 
     Ok(None)
 }
 
-async fn fetch_projects(server_url: &str, token: Option<&str>) -> Result<Option<Value>, String> {
-    match http_post_json_status(server_url, "/api/projects/list", token, json!({})).await {
-        Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
-            Ok(Some(output_payload(value)))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpsHttpFailureKind {
+    Unauthorized,
+    Forbidden,
+    Unreachable,
+    ServerError,
+    NonJson,
+    Malformed,
+    Other,
+}
+
+impl OpsHttpFailureKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            OpsHttpFailureKind::Unauthorized => "unauthorized",
+            OpsHttpFailureKind::Forbidden => "forbidden",
+            OpsHttpFailureKind::Unreachable => "runtime_unreachable",
+            OpsHttpFailureKind::ServerError => "server_error",
+            OpsHttpFailureKind::NonJson => "non_json_response",
+            OpsHttpFailureKind::Malformed => "malformed_response",
+            OpsHttpFailureKind::Other => "http_error",
         }
-        Ok((status, content_type, Some(_))) => Err(format!(
-            "projects list failed: HTTP {} content-type {}",
-            status, content_type
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpsHttpFailure {
+    kind: OpsHttpFailureKind,
+    status_code: Option<u16>,
+    content_type: Option<String>,
+}
+
+impl OpsHttpFailure {
+    fn from_response(status: u16, content_type: String, parsed_json: bool) -> Self {
+        let kind = if status == 401 {
+            OpsHttpFailureKind::Unauthorized
+        } else if status == 403 {
+            OpsHttpFailureKind::Forbidden
+        } else if (500..600).contains(&status) {
+            OpsHttpFailureKind::ServerError
+        } else if !content_type_is_json(&content_type) {
+            OpsHttpFailureKind::NonJson
+        } else if !parsed_json {
+            OpsHttpFailureKind::Malformed
+        } else {
+            OpsHttpFailureKind::Other
+        };
+        Self {
+            kind,
+            status_code: Some(status),
+            content_type: Some(content_type),
+        }
+    }
+
+    fn from_transport_error(error: String) -> Self {
+        let kind = if error.starts_with("request failed:") {
+            OpsHttpFailureKind::Unreachable
+        } else if error.starts_with("failed to read response:") {
+            OpsHttpFailureKind::Malformed
+        } else {
+            OpsHttpFailureKind::Other
+        };
+        Self {
+            kind,
+            status_code: None,
+            content_type: None,
+        }
+    }
+}
+
+async fn fetch_ops_json_output(
+    server_url: &str,
+    path: &str,
+    token: Option<&str>,
+    body: Value,
+) -> Result<Value, OpsHttpFailure> {
+    match http_post_json_status(server_url, path, token, body).await {
+        Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
+            Ok(output_payload(value))
+        }
+        Ok((status, content_type, value)) => Err(OpsHttpFailure::from_response(
+            status,
+            content_type,
+            value.is_some(),
         )),
-        Ok((status, content_type, None)) => Err(format!(
-            "projects list failed: HTTP {} non-JSON response content-type {}",
-            status, content_type
-        )),
-        Err(e) => Err(e),
+        Err(e) => Err(OpsHttpFailure::from_transport_error(e)),
+    }
+}
+
+async fn fetch_projects(server_url: &str, token: Option<&str>) -> Result<Value, OpsHttpFailure> {
+    fetch_ops_json_output(server_url, "/api/projects/list", token, json!({})).await
+}
+
+fn ops_http_failure_report(
+    server_url: &str,
+    endpoint: &str,
+    failure: OpsHttpFailure,
+    token_present: bool,
+) -> OpsReport {
+    let mut verdict = OpsVerdict::pass();
+    verdict.fail_reason(
+        ops_http_failure_reason(&failure, token_present),
+        ops_http_failure_action(failure.kind),
+    );
+    let http = ops_http_failure_json(endpoint, &failure);
+    OpsReport {
+        verdict: verdict.finish(),
+        summary: json!({
+            "runtime_reachable": failure.kind != OpsHttpFailureKind::Unreachable,
+            "http": http.clone(),
+        }),
+        source: json!({
+            "server_url": server_url,
+            "runtime_commit": Value::Null,
+            "tool": endpoint,
+            "http": http,
+        }),
     }
 }
 
@@ -190,32 +430,70 @@ async fn call_runtime_tool(
     token: Option<&str>,
     tool: &str,
     params: Value,
-) -> Result<Option<Value>, String> {
-    match http_post_json_status(
+) -> Result<Option<Value>, OpsHttpFailure> {
+    fetch_ops_json_output(
         server_url,
         "/api/tools/call",
         token,
         json!({"tool": tool, "params": params}),
     )
     .await
-    {
-        Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
-            Ok(Some(output_payload(value)))
-        }
-        Ok((status, content_type, Some(_))) => Err(format!(
-            "{} failed: HTTP {} content-type {}",
-            tool, status, content_type
-        )),
-        Ok((status, content_type, None)) => Err(format!(
-            "{} failed: HTTP {} non-JSON response content-type {}",
-            tool, status, content_type
-        )),
-        Err(e) => Err(e),
-    }
+    .map(Some)
 }
 
 fn output_payload(value: Value) -> Value {
     value.get("output").cloned().unwrap_or(value)
+}
+
+fn ops_http_failure_reason(failure: &OpsHttpFailure, token_present: bool) -> &'static str {
+    match failure.kind {
+        OpsHttpFailureKind::Unauthorized if !token_present => "auth_required",
+        OpsHttpFailureKind::Unauthorized => "unauthorized",
+        OpsHttpFailureKind::Forbidden => "forbidden",
+        OpsHttpFailureKind::Unreachable => "runtime_unreachable",
+        OpsHttpFailureKind::ServerError => "server_error",
+        OpsHttpFailureKind::NonJson => "non_json_response",
+        OpsHttpFailureKind::Malformed => "malformed_response",
+        OpsHttpFailureKind::Other => "http_error",
+    }
+}
+
+fn ops_http_failure_action(kind: OpsHttpFailureKind) -> &'static str {
+    match kind {
+        OpsHttpFailureKind::Unauthorized => {
+            "provide a user token/PAT or bearer token accepted by the WebCodex server"
+        }
+        OpsHttpFailureKind::Forbidden => {
+            "use a bearer token with the required runtime, project, or job scope"
+        }
+        OpsHttpFailureKind::Unreachable => "check --server-url, DNS, firewall, and server process",
+        OpsHttpFailureKind::ServerError => {
+            "inspect WebCodex server logs for the failing ops request"
+        }
+        OpsHttpFailureKind::NonJson => {
+            "check the reverse proxy and server route; expected a JSON response"
+        }
+        OpsHttpFailureKind::Malformed => {
+            "check server logs and proxy output; the ops response was not valid JSON"
+        }
+        OpsHttpFailureKind::Other => "check HTTP status, content-type, and server logs",
+    }
+}
+
+fn ops_http_failure_json(endpoint: &str, failure: &OpsHttpFailure) -> Value {
+    json!({
+        "endpoint": endpoint,
+        "failure_kind": failure.kind.as_str(),
+        "status": failure.status_code,
+        "content_type": failure.content_type.clone(),
+    })
+}
+
+fn content_type_is_json(content_type: &str) -> bool {
+    content_type
+        .split(';')
+        .next()
+        .is_some_and(|ct| ct.trim().eq_ignore_ascii_case("application/json"))
 }
 
 pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> OpsReport {
@@ -535,17 +813,19 @@ pub(crate) fn ops_smoke_preflight_report(
                     "select a git-backed project for deploy smoke preflight",
                 );
             }
-            if !project_bool(project, "/capabilities/recommended_for_smoke") {
-                verdict.warn_reason(
-                    "project_not_recommended_for_smoke",
-                    "prefer a project with recommended_for_smoke=true",
-                );
-            }
-            if !project_bool(project, "/capabilities/safe_smoke_project") {
-                verdict.warn_reason(
-                    "project_not_safe_smoke_project",
-                    "prefer a project with safe_smoke_project=true",
-                );
+            if target_state.ready {
+                if !project_bool(project, "/capabilities/recommended_for_smoke") {
+                    verdict.warn_reason(
+                        "project_not_recommended_for_smoke",
+                        "prefer a project with recommended_for_smoke=true",
+                    );
+                }
+                if !project_bool(project, "/capabilities/safe_smoke_project") {
+                    verdict.warn_reason(
+                        "project_not_safe_smoke_project",
+                        "prefer a project with safe_smoke_project=true",
+                    );
+                }
             }
         }
         None => verdict.fail_reason(
@@ -640,6 +920,7 @@ pub(crate) fn render_ops_status(report: &OpsReport, json_output: bool) -> Result
         return render_ops_json(report);
     }
     let mut out = render_overall_header(report);
+    out.push_str(&render_http_failure(report));
     let server = &report.summary["server"];
     out.push_str("Server:\n");
     out.push_str(&format!(
@@ -703,6 +984,7 @@ pub(crate) fn render_ops_agents(report: &OpsReport, json_output: bool) -> Result
         return render_ops_json(report);
     }
     let mut out = render_overall_header(report);
+    out.push_str(&render_http_failure(report));
     out.push_str("Agents:\n");
     out.push_str("  client_id status transport projects_count active_jobs pending_requests last_seen_age_secs\n");
     for client in report.summary["agents"].as_array().into_iter().flatten() {
@@ -726,6 +1008,7 @@ pub(crate) fn render_ops_projects(report: &OpsReport, json_output: bool) -> Resu
         return render_ops_json(report);
     }
     let mut out = render_overall_header(report);
+    out.push_str(&render_http_failure(report));
     out.push_str("Projects:\n");
     out.push_str("  id client_id agent_status connected git_available recommended_for_smoke safe_smoke_project allow_patch path\n");
     for project in report.summary["projects"].as_array().into_iter().flatten() {
@@ -754,6 +1037,7 @@ pub(crate) fn render_ops_smoke_preflight(
         return render_ops_json(report);
     }
     let mut out = render_overall_header(report);
+    out.push_str(&render_http_failure(report));
     out.push_str("Project:\n");
     out.push_str(&format!(
         "  id: {}\n",
@@ -813,6 +1097,29 @@ fn render_ops_json(report: &OpsReport) -> Result<String, String> {
 
 fn render_overall_header(report: &OpsReport) -> String {
     format!("Overall: {}\n", report.verdict.status.to_ascii_uppercase())
+}
+
+fn render_http_failure(report: &OpsReport) -> String {
+    let http = &report.summary["http"];
+    if !http.is_object() {
+        return String::new();
+    }
+    let mut out = String::new();
+    out.push_str("HTTP:\n");
+    out.push_str(&format!(
+        "  endpoint: {}\n",
+        display_value(&http["endpoint"])
+    ));
+    out.push_str(&format!("  status: {}\n", display_value(&http["status"])));
+    out.push_str(&format!(
+        "  content_type: {}\n",
+        display_value(&http["content_type"])
+    ));
+    out.push_str(&format!(
+        "  failure: {}\n",
+        display_value(&http["failure_kind"])
+    ));
+    out
 }
 
 fn render_reasons(report: &OpsReport) -> String {

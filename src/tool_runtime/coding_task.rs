@@ -23,8 +23,8 @@ use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIE
 use super::tool_inputs::SessionMode;
 use super::tool_result::ToolResult;
 use super::validation_events::{skipped_validation_summary, validation_summary_for_session};
-use super::ToolRuntime;
 use super::{current_session_key, unknown_session_result};
+use super::{ToolCall, ToolRuntime};
 use crate::auth::AuthContext;
 
 const RULES_MAX_HEADINGS: usize = 8;
@@ -251,6 +251,21 @@ impl ToolRuntime {
             }));
         }
 
+        let show_changes_call = ToolCall::ShowChanges {
+            project: resolved.resolved_id.clone(),
+            session_id: Some(session_id.clone()),
+            include_diff: Some(include_diff),
+            max_hunks: None,
+            max_hunk_lines: None,
+            session_event_limit: Some(50),
+        };
+        let show_changes_start = self.sessions.record_tool_call_started_with_options(
+            Some(&session_id),
+            SessionTransport::Api,
+            show_changes_call.tool_name(),
+            &show_changes_call.session_log_arguments(),
+            Some(resolved.resolved_id.clone()),
+        );
         let changes_result = self
             .show_changes(
                 resolved.resolved_id.clone(),
@@ -261,6 +276,13 @@ impl ToolRuntime {
                 Some(50),
             )
             .await;
+        self.sessions.record_tool_call_finished(
+            show_changes_start,
+            changes_result.success,
+            &changes_result.output,
+            changes_result.error.as_deref(),
+            None,
+        );
         if !changes_result.success {
             final_warnings.push(json!({
                 "kind": "show_changes_failed",
@@ -281,6 +303,19 @@ impl ToolRuntime {
         );
 
         let hygiene = if include_hygiene {
+            let hygiene_call = ToolCall::WorkspaceHygieneCheck {
+                project: resolved.resolved_id.clone(),
+                max_findings: None,
+                include_tracked: None,
+                session_id: Some(session_id.clone()),
+            };
+            let hygiene_start = self.sessions.record_tool_call_started_with_options(
+                Some(&session_id),
+                SessionTransport::Api,
+                hygiene_call.tool_name(),
+                &hygiene_call.session_log_arguments(),
+                Some(resolved.resolved_id.clone()),
+            );
             let result = self
                 .workspace_hygiene_check(
                     resolved.resolved_id.clone(),
@@ -289,6 +324,13 @@ impl ToolRuntime {
                     Some(session_id.clone()),
                 )
                 .await;
+            self.sessions.record_tool_call_finished(
+                hygiene_start,
+                result.success,
+                &result.output,
+                result.error.as_deref(),
+                None,
+            );
             if !result.success {
                 final_warnings.push(json!({
                     "kind": "workspace_hygiene_failed",
@@ -331,6 +373,11 @@ impl ToolRuntime {
         } else {
             Value::Null
         };
+        let closeout_session_summary = self
+            .sessions
+            .summary(&session_id, Some(FINISH_SESSION_EVENT_LIMIT))
+            .unwrap_or_else(|| session_summary.clone());
+        let review_evidence = review_evidence_summary_for_session(&closeout_session_summary);
 
         let mut output = json!({
             "project": project,
@@ -347,7 +394,7 @@ impl ToolRuntime {
             "validation": validation,
             "permissions": permissions,
             "tool_failures": tool_failure_summary_from_events(&session_summary.events, 10),
-            "review_evidence": review_evidence_summary_for_session(&session_summary),
+            "review_evidence": review_evidence,
             "hygiene": hygiene,
             "handoff": handoff,
             "jobs": jobs,

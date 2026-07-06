@@ -690,12 +690,15 @@ interpret it with task context.
 `session_handoff_summary.review_evidence` are separate ledger-derived,
 non-cargo review summaries. They count successful read/search/diff/workspace/
 hygiene inspection tools such as `read_file`, `search_project_text`,
-`show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`. They never
-include file contents, stdout/stderr, diff hunks, command text, tokens, secrets,
-or raw input payloads. For docs-only or read-only audit tasks,
-`validation.status=not_run` can coexist with `review_evidence.total>0`; compact
-verdicts remain `warn` and use `validation_not_run_with_review_evidence`
-instead of treating the task as passed.
+`show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`.
+`finish_coding_task.review_evidence` may include the closeout review calls that
+`finish_coding_task` performs itself. Compact review evidence also includes a
+bounded `tools` list for explainability. It never includes file contents,
+stdout/stderr, diff hunks, command text, tokens, secrets, or raw input payloads.
+For docs-only or read-only audit tasks, `validation.status=not_run` can coexist
+with `review_evidence.total>0`; compact verdicts remain `warn` and use
+`validation_not_run_with_review_evidence` instead of treating the task as passed.
+Review evidence is not a replacement for structured validation.
 
 `finish_coding_task.permissions` and `session_handoff_summary.permissions`
 summarize high-risk permission decisions from the session ledger. A high-risk

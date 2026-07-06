@@ -571,6 +571,19 @@ fn review_evidence_summary_from_events(events: &[SessionEvent]) -> Value {
 }
 
 pub(crate) fn compact_review_evidence(review_evidence: &Value) -> Value {
+    let tools: Vec<Value> = review_evidence
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(Value::as_str)
+                .take(20)
+                .map(|tool| json!(tool))
+                .collect()
+        })
+        .unwrap_or_default();
+
     json!({
         "available": review_evidence.get("available").and_then(Value::as_bool).unwrap_or(false),
         "total": review_evidence.get("total").and_then(Value::as_u64).unwrap_or(0),
@@ -594,6 +607,7 @@ pub(crate) fn compact_review_evidence(review_evidence: &Value) -> Value {
             .get("hygiene_review_count")
             .and_then(Value::as_u64)
             .unwrap_or(0),
+        "tools": tools,
     })
 }
 

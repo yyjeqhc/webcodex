@@ -735,6 +735,7 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
     );
     assert_permission_summary_schema_fields(&output_props["permissions"]);
     assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);
+    assert_review_evidence_schema_fields(&output_props["review_evidence"]);
     let description = schema["properties"]["output"]["properties"]["validation"]["description"]
         .as_str()
         .unwrap();
@@ -765,6 +766,7 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         "non-cargo review evidence",
         "summary_only",
         "read/search/diff/workspace/hygiene",
+        "bounded tools",
         "does not include file contents",
         "does not change validation.status",
     ] {
@@ -823,6 +825,7 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     );
     assert_permission_summary_schema_fields(&output_props["permissions"]);
     assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);
+    assert_review_evidence_schema_fields(&output_props["review_evidence"]);
     let description = output_props["validation"]["description"]
         .as_str()
         .unwrap()
@@ -854,6 +857,7 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         "non-cargo review evidence",
         "summary_only",
         "read/search/diff/workspace/hygiene",
+        "bounded tools",
         "does not include file contents",
         "does not change validation.status",
     ] {
@@ -889,4 +893,22 @@ fn assert_job_lifecycle_summary_schema_fields(schema: &Value) {
     ] {
         assert!(props.contains_key(field), "jobs summary missing {field}");
     }
+}
+
+fn assert_review_evidence_schema_fields(schema: &Value) {
+    let props = schema["properties"].as_object().unwrap();
+    for field in [
+        "available",
+        "total",
+        "read_only_inspection_count",
+        "search_count",
+        "diff_review_count",
+        "workspace_review_count",
+        "hygiene_review_count",
+        "tools",
+    ] {
+        assert!(props.contains_key(field), "review_evidence missing {field}");
+    }
+    assert_eq!(props["tools"]["type"], "array");
+    assert_eq!(props["tools"]["items"]["type"], "string");
 }

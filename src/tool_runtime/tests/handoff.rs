@@ -1599,7 +1599,11 @@ async fn session_handoff_summary_only_warns_with_review_evidence_when_validation
         1
     );
     assert_eq!(result.output["review_evidence"]["hygiene_review_count"], 0);
-    assert!(result.output["review_evidence"].get("tools").is_none());
+    assert_eq!(
+        result.output["review_evidence"]["tools"],
+        json!(["read_file", "search_project_text", "show_changes"])
+    );
+    assert_review_evidence_tools_safe(&result.output["review_evidence"]);
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);
     assert_eq!(verdict["status"], "warn");
@@ -1875,6 +1879,34 @@ async fn session_handoff_summary_only_verdict_fails_for_unresolved_mixed_validat
         "warning_reasons",
         "validation_historical_failures_resolved",
     );
+}
+
+#[test]
+fn compact_review_evidence_tools_are_bounded_and_source_only() {
+    let source_tools: Vec<Value> = (0..25)
+        .map(|idx| Value::String(format!("review_tool_{idx}")))
+        .collect();
+    let review_evidence = json!({
+        "available": true,
+        "total": 25,
+        "read_only_inspection_count": 25,
+        "search_count": 0,
+        "diff_review_count": 0,
+        "workspace_review_count": 0,
+        "hygiene_review_count": 0,
+        "tools": source_tools,
+        "command": "ignored command text"
+    });
+
+    let compact = crate::tool_runtime::handoff::compact_review_evidence(&review_evidence);
+
+    let tools = compact["tools"]
+        .as_array()
+        .expect("compact review evidence tools array");
+    assert_eq!(tools.len(), 20);
+    assert_eq!(tools[0], "review_tool_0");
+    assert_eq!(tools[19], "review_tool_19");
+    assert!(compact.get("command").is_none());
 }
 
 // =========================================================================
@@ -2632,5 +2664,42 @@ fn assert_compact_verdict_safe(value: &Value, context: &str) {
             !serialized.contains(forbidden),
             "{context} leaked {forbidden}: {serialized}"
         );
+    }
+}
+
+fn assert_review_evidence_tools_safe(review_evidence: &Value) {
+    let tools = review_evidence["tools"]
+        .as_array()
+        .expect("review_evidence.tools array");
+    assert!(
+        !tools.is_empty(),
+        "review_evidence.tools should not be empty"
+    );
+    assert!(tools.len() <= 20, "review_evidence.tools should be bounded");
+    for tool in tools {
+        let tool = tool.as_str().expect("review evidence tool name");
+        assert!(
+            matches!(
+                tool,
+                "read_file"
+                    | "list_project_files"
+                    | "search_project_text"
+                    | "git_diff"
+                    | "git_diff_summary"
+                    | "git_diff_hunks"
+                    | "show_changes"
+                    | "git_status"
+                    | "workspace_hygiene_check"
+            ),
+            "unexpected review evidence tool name {tool}"
+        );
+        for forbidden in [
+            "stdout", "stderr", "tail", "excerpt", "command", "token", "secret", "env",
+        ] {
+            assert!(
+                !tool.contains(forbidden),
+                "review_evidence.tools leaked {forbidden}: {review_evidence}"
+            );
+        }
     }
 }

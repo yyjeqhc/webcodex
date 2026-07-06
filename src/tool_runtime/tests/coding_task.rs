@@ -806,11 +806,16 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     assert!(validation.get("observed_commands").is_none());
     assert_eq!(result.output["review_evidence"]["available"], true);
     assert_eq!(result.output["review_evidence"]["source"], "session_ledger");
-    assert_eq!(result.output["review_evidence"]["total"], 0);
-    assert!(result.output["review_evidence"]["tools"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert_eq!(result.output["review_evidence"]["total"], 1);
+    assert_eq!(
+        result.output["review_evidence"]["workspace_review_count"],
+        1
+    );
+    assert_eq!(
+        result.output["review_evidence"]["tools"],
+        json!(["show_changes"])
+    );
+    assert_review_evidence_tools_safe(&result.output["review_evidence"]);
     assert!(result.output["hygiene"].is_null());
     assert!(result.output["handoff"].is_null());
     assert!(result.output["final_warnings"]
@@ -896,19 +901,53 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
         result.output["validation"]["reason"],
         "no_validation_tool_invoked"
     );
+    assert_eq!(result.output["review_evidence"]["available"], true);
+    assert!(
+        result.output["review_evidence"]["total"].as_u64().unwrap() > 0,
+        "finish summary_only should count closeout review evidence: {}",
+        result.output["review_evidence"]
+    );
+    assert!(
+        result.output["review_evidence"]["workspace_review_count"]
+            .as_u64()
+            .unwrap()
+            > 0
+            || result.output["review_evidence"]["hygiene_review_count"]
+                .as_u64()
+                .unwrap()
+                > 0,
+        "finish summary_only should count workspace or hygiene review evidence: {}",
+        result.output["review_evidence"]
+    );
+    assert_eq!(
+        result.output["review_evidence"]["tools"]
+            .as_array()
+            .expect("review evidence tools array")
+            .first()
+            .and_then(Value::as_str),
+        Some("show_changes")
+    );
+    assert_review_evidence_tools_safe(&result.output["review_evidence"]);
     assert!(result.output["warnings"].as_array().unwrap().is_empty());
     assert!(result.output["suggested_next_actions"].is_array());
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);
     assert_eq!(verdict["status"], "warn");
     assert_eq!(verdict["blocking"], false);
-    assert_reason_list_contains(verdict, "warning_reasons", "validation_not_run");
+    assert_reason_list_contains(
+        verdict,
+        "warning_reasons",
+        "validation_not_run_with_review_evidence",
+    );
+    assert_reason_list_not_contains(verdict, "warning_reasons", "validation_not_run");
     assert!(verdict["suggested_next_actions"]
         .as_array()
         .unwrap()
         .iter()
         .any(|action| action.as_str()
-            == Some("run validation or review before closeout when applicable")));
+            == Some(
+                "no structured validation was run; review evidence is available for task-appropriate closeout"
+            )));
     assert!(!verdict["suggested_next_actions"]
         .as_array()
         .unwrap()
@@ -919,7 +958,6 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in [
         "recent_events",
-        "show_changes",
         "recent_failed_tools",
         "stdout",
         "stderr",
@@ -932,6 +970,10 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
             "summary_only finish leaked {forbidden}: {serialized}"
         );
     }
+    assert!(
+        !serialized.contains("\"show_changes\":"),
+        "summary_only finish leaked raw show_changes payload: {serialized}"
+    );
 }
 
 #[tokio::test]
@@ -1026,12 +1068,30 @@ async fn finish_coding_task_summary_only_includes_review_evidence_for_docs_only_
         "no_validation_tool_invoked"
     );
     assert_eq!(result.output["review_evidence"]["available"], true);
-    assert_eq!(result.output["review_evidence"]["total"], 2);
-    assert_eq!(result.output["review_evidence"]["search_count"], 1);
-    assert_eq!(
-        result.output["review_evidence"]["workspace_review_count"],
-        1
+    assert!(
+        result.output["review_evidence"]["total"].as_u64().unwrap() >= 2,
+        "finish summary_only should preserve existing and closeout review evidence: {}",
+        result.output["review_evidence"]
     );
+    assert_eq!(result.output["review_evidence"]["search_count"], 1);
+    assert!(
+        result.output["review_evidence"]["workspace_review_count"]
+            .as_u64()
+            .unwrap()
+            >= 2,
+        "finish summary_only should include manual and closeout workspace review evidence: {}",
+        result.output["review_evidence"]
+    );
+    let tools = result.output["review_evidence"]["tools"]
+        .as_array()
+        .expect("review evidence tools array");
+    assert!(tools
+        .iter()
+        .any(|tool| tool.as_str() == Some("search_project_text")));
+    assert!(tools
+        .iter()
+        .any(|tool| tool.as_str() == Some("show_changes")));
+    assert_review_evidence_tools_safe(&result.output["review_evidence"]);
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);
     assert_eq!(verdict["status"], "warn");
@@ -1582,6 +1642,43 @@ fn assert_compact_verdict_safe(value: &Value, context: &str) {
             !serialized.contains(forbidden),
             "{context} leaked {forbidden}: {serialized}"
         );
+    }
+}
+
+fn assert_review_evidence_tools_safe(review_evidence: &Value) {
+    let tools = review_evidence["tools"]
+        .as_array()
+        .expect("review_evidence.tools array");
+    assert!(
+        !tools.is_empty(),
+        "review_evidence.tools should not be empty"
+    );
+    assert!(tools.len() <= 20, "review_evidence.tools should be bounded");
+    for tool in tools {
+        let tool = tool.as_str().expect("review evidence tool name");
+        assert!(
+            matches!(
+                tool,
+                "read_file"
+                    | "list_project_files"
+                    | "search_project_text"
+                    | "git_diff"
+                    | "git_diff_summary"
+                    | "git_diff_hunks"
+                    | "show_changes"
+                    | "git_status"
+                    | "workspace_hygiene_check"
+            ),
+            "unexpected review evidence tool name {tool}"
+        );
+        for forbidden in [
+            "stdout", "stderr", "tail", "excerpt", "command", "token", "secret", "env",
+        ] {
+            assert!(
+                !tool.contains(forbidden),
+                "review_evidence.tools leaked {forbidden}: {review_evidence}"
+            );
+        }
     }
 }
 

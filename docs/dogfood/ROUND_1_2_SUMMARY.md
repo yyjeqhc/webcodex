@@ -271,3 +271,7 @@ Goal:
 ```text
 Validate whether casual user prompts still produce correct project exploration, minimal edits, structured validation, and clean finish behavior in a more realistic repository shape.
 ```
+
+## Follow-up
+
+Round 3 medium-complexity casual prompt results are recorded in [`ROUND_3_MEDIUM_SUMMARY.md`](./ROUND_3_MEDIUM_SUMMARY.md).

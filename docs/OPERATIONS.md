@@ -613,15 +613,23 @@ Compact handoff/finish verdict rules:
   `review_evidence`, resolved historical validation failures are present
   (`validation.status=mixed`, `latest_status=passed`,
   `historical_failures.resolved=true`, and
-  `historical_failures.unresolved=false`), matched expected failures are present
-  (`expected_count>0` while unexpected/mismatch/unexpected-success counts are
-  all zero), non-git/git-unavailable review context, terminal-pending
+  `historical_failures.unresolved=false`), resolved validation-like historical
+  tool failures from `cargo_fmt`, `cargo_check`, or `cargo_test` were followed
+  by passed structured validation while workspace and hygiene checks are clean,
+  matched expected failures are present (`expected_count>0` while
+  unexpected/mismatch/unexpected-success counts are all zero),
+  non-git/git-unavailable review context, terminal-pending
   nonblocking jobs, or bounded startup/manifest/review output was truncated only
   because of an explicit limit.
 - FAIL: workspace is dirty, blocking jobs are active, unexpected tool failures
   exist, expected-failure mismatches exist, expected-failure calls unexpectedly
   succeeded, hygiene failed, validation failed, or mixed validation still has an
   unresolved/latest failure.
+
+Unresolved validation failures and non-validation tool failures remain
+blocking. Callers should still inspect `validation.historical_failures` and
+`finish_verdict.warning_reasons` to distinguish resolved validation feedback
+from a clean first-pass run.
 
 For a read-only handoff without finish aggregation:
 
@@ -688,9 +696,13 @@ include `status` and `reason`: `events_total=0` yields `status=not_run` and
 yield `passed`, `failed`, and `mixed`. `validation.status=mixed` remains strict
 ledger history. Summary outputs also include `latest_status` and
 `historical_failures`; a mixed ledger with a later successful validation and no
-unresolved historical failure may warn instead of fail. `not_run` means no
-structured validation tool was invoked, so docs-only or read-only work should
-interpret it with task context.
+unresolved historical failure may warn instead of fail. `finish_coding_task`
+may also downgrade resolved historical `cargo_fmt`, `cargo_check`, or
+`cargo_test` tool failures when later structured validation passed and the
+workspace/hygiene checks are clean. Non-validation tool failures and unresolved
+validation failures remain blocking. `not_run` means no structured validation
+tool was invoked, so docs-only or read-only work should interpret it with task
+context.
 
 `finish_coding_task.review_evidence` and
 `session_handoff_summary.review_evidence` are separate ledger-derived,

@@ -642,7 +642,12 @@ fn compact_finish_output(output: &Value) -> Value {
         "warnings": output.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });
-    let verdict = compact_workflow_verdict(&compact, true, Some(hygiene_checked));
+    let mut verdict_input = compact.clone();
+    verdict_input["tool_failures"] = output
+        .get("tool_failures")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let verdict = compact_workflow_verdict(&verdict_input, true, Some(hygiene_checked));
     compact["suggested_next_actions"] = json!(merged_suggested_next_actions(&compact, &verdict));
     compact["verdict"] = verdict.clone();
     compact["finish_verdict"] = verdict;

@@ -1,10 +1,11 @@
 use super::support::*;
+use crate::auth::AuthContext;
 use crate::shell_protocol::{AgentPolicySummary, ShellClientCapabilities};
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::validation_parser::VALIDATION_OUTPUT_METADATA_ABSENT_REASON;
 use crate::tool_runtime::{
-    is_known_tool_name, registered_tool_specs, SessionMode, ToolCall, ToolRuntime,
+    is_known_tool_name, registered_tool_specs, SessionMode, ToolCall, ToolResult, ToolRuntime,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -1308,6 +1309,158 @@ async fn finish_coding_task_summary_only_warns_for_resolved_historical_validatio
 }
 
 #[tokio::test]
+async fn finish_coding_task_summary_only_does_not_block_resolved_cargo_fmt_failure() {
+    let fixture = finish_summary_fixture("coding-finish-resolved-fmt").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        false,
+        json!({
+            "exit_code": 1,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["resolved"],
+        true
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        false
+    );
+    let verdict = &result.output["finish_verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_ne!(verdict["status"], "fail");
+    assert_eq!(verdict["blocking"], false);
+    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
+    assert_reason_list_not_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+    assert_reason_list_contains(
+        verdict,
+        "warning_reasons",
+        "validation_historical_failures_resolved",
+    );
+    assert_reason_list_contains(
+        verdict,
+        "warning_reasons",
+        "resolved_validation_like_tool_failures",
+    );
+}
+
+#[tokio::test]
+async fn finish_coding_task_summary_only_blocks_unresolved_cargo_fmt_failure() {
+    let fixture = finish_summary_fixture("coding-finish-unresolved-fmt").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        false,
+        json!({
+            "exit_code": 1,
+            "failure_kind": "validation_failed"
+        }),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(result.output["validation"]["status"], "failed");
+    assert_eq!(result.output["validation"]["latest_status"], "failed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        true
+    );
+    let verdict = &result.output["finish_verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "fail");
+    assert_eq!(verdict["blocking"], true);
+    assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+}
+
+#[tokio::test]
+async fn finish_coding_task_summary_only_keeps_non_validation_tool_failures_blocking() {
+    let fixture = finish_summary_fixture("coding-finish-read-failure").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "read_file",
+        json!({"project": fixture.project.clone(), "path": "README.md"}),
+        false,
+        json!({
+            "error_kind": "permission_denied"
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_test",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(result.output["validation"]["status"], "passed");
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    let verdict = &result.output["finish_verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "fail");
+    assert_eq!(verdict["blocking"], true);
+    assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+}
+
+#[tokio::test]
 async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
@@ -1769,4 +1922,78 @@ fn record_coding_task_tool_event(
     runtime
         .sessions
         .record_tool_call_finished(start, success, &output, error, None);
+}
+
+struct FinishSummaryFixture {
+    _tmp: tempfile::TempDir,
+    runtime: ToolRuntime,
+    project: String,
+    session_id: String,
+    auth: AuthContext,
+    client_id: &'static str,
+}
+
+async fn finish_summary_fixture(client_id: &'static str) -> FinishSummaryFixture {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some(client_id.to_string()));
+    FinishSummaryFixture {
+        _tmp: tmp,
+        runtime,
+        project,
+        session_id: session.session_id,
+        auth: auth_context(None, true),
+        client_id,
+    }
+}
+
+async fn finish_coding_task_summary_only_with_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    session_id: String,
+    auth: AuthContext,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: true,
+                        include_diff: Some(false),
+                        include_workspace: None,
+                        include_hygiene: Some(true),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(true),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    for _ in 0..200 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
+            complete_agent_request_by_running_locally(runtime, client_id, req).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "finish_coding_task summary_only did not finish after read-only agent requests"
+    );
+    task.await.unwrap()
 }

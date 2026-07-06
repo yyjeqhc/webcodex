@@ -709,16 +709,32 @@ pub(crate) fn compact_workflow_verdict(
         push_unique(&mut warning_reasons, "jobs_terminal_pending");
     }
 
+    let validation = output.get("validation").unwrap_or(&Value::Null);
     let tool_failures = output.get("tool_failures").unwrap_or(&Value::Null);
     let expected_count = count_field(tool_failures, "expected_count");
     let unexpected_count = count_field(tool_failures, "unexpected_count");
     let expectation_mismatch_count = count_field(tool_failures, "expectation_mismatch_count");
     let unexpected_success_count = count_field(tool_failures, "unexpected_success_count");
-    if unexpected_count > 0 {
+    let resolved_validation_like_unexpected_count =
+        resolved_validation_like_unexpected_tool_failure_count(
+            tool_failures,
+            output,
+            validation,
+            workspace_checked,
+            hygiene_checked,
+        );
+    let blocking_unexpected_count =
+        unexpected_count.saturating_sub(resolved_validation_like_unexpected_count);
+    if blocking_unexpected_count > 0 {
         push_unique(&mut blocking_reasons, "unexpected_tool_failures");
         push_unique_action(
             &mut actions,
             "review unexpected failed tool calls before proceeding",
+        );
+    } else if resolved_validation_like_unexpected_count > 0 {
+        push_unique(
+            &mut warning_reasons,
+            "resolved_validation_like_tool_failures",
         );
     }
     if expectation_mismatch_count > 0 {
@@ -744,7 +760,6 @@ pub(crate) fn compact_workflow_verdict(
         push_unique_action(&mut actions, "expected failure assertions matched");
     }
 
-    let validation = output.get("validation").unwrap_or(&Value::Null);
     match validation.get("status").and_then(Value::as_str) {
         Some("not_run") => {
             let review_evidence_total = output
@@ -829,6 +844,40 @@ fn validation_historical_failures_resolved(validation: &Value) -> bool {
             .pointer("/historical_failures/unresolved")
             .and_then(Value::as_bool)
             == Some(false)
+}
+
+fn resolved_validation_like_unexpected_tool_failure_count(
+    tool_failures: &Value,
+    output: &Value,
+    validation: &Value,
+    workspace_checked: bool,
+    hygiene_checked: Option<bool>,
+) -> u64 {
+    if !workspace_checked
+        || hygiene_checked != Some(true)
+        || output.get("workspace_clean").and_then(Value::as_bool) != Some(true)
+        || output.get("hygiene_clean").and_then(Value::as_bool) != Some(true)
+        || !validation_historical_failures_resolved(validation)
+    {
+        return 0;
+    }
+
+    tool_failures
+        .get("recent_unexpected")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|failure| {
+            failure
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .is_some_and(is_validation_like_closeout_tool)
+        })
+        .count() as u64
+}
+
+fn is_validation_like_closeout_tool(tool_name: &str) -> bool {
+    matches!(tool_name, "cargo_fmt" | "cargo_check" | "cargo_test")
 }
 
 fn count_field(value: &Value, key: &str) -> u64 {

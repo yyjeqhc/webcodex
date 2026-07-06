@@ -259,6 +259,12 @@ fields. Handoff/finish verdicts are the final compact PASS/WARN/FAIL aggregate,
 not a new guard or permission decision. `finish_coding_task(summary_only=true)`
 also exposes `finish_verdict` as an alias of `verdict`, and top-level
 `suggested_next_actions` mirrors the final closeout actions.
+`finish_verdict` may warn instead of fail for resolved historical
+`cargo_fmt`, `cargo_check`, or `cargo_test` failures when later structured
+validation passed and workspace/hygiene checks are clean. Unresolved validation
+failures and non-validation tool failures remain blocking, so callers should
+still inspect `validation.historical_failures` and
+`finish_verdict.warning_reasons`.
 
 For non-coding tracking, `start_session` remains available through
 `callRuntimeTool`. It creates a session record but does not automatically bind
@@ -443,8 +449,12 @@ The summary includes `status` and `reason`: no validation events yields
 `passed`, all failures are `failed`, and mixed outcomes are `mixed`.
 `validation.status=mixed` remains strict ledger history. Summary outputs also
 include `latest_status` and `historical_failures`, so resolved historical
-failures can warn instead of fail. `not_run` means no structured validation tool
-was invoked; interpret it with task context for docs-only or read-only work.
+failures can warn instead of fail. `finish_coding_task` may downgrade resolved
+historical `cargo_fmt`, `cargo_check`, or `cargo_test` tool failures only after
+later structured validation passed and workspace/hygiene checks are clean;
+unresolved validation failures and non-validation tool failures remain
+blocking. `not_run` means no structured validation tool was invoked; interpret
+it with task context for docs-only or read-only work.
 
 `finish_coding_task.review_evidence` and
 `session_handoff_summary.review_evidence` are separate ledger-derived,

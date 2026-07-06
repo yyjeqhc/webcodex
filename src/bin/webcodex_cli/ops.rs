@@ -1,4 +1,11 @@
+use serde_json::{json, Value};
 use std::path::PathBuf;
+
+use super::{
+    fetch_runtime_status, http_post_json_status, read_env_file_value, read_optional_token,
+};
+
+const DEFAULT_EXPECTED_TOOL_COUNT: u64 = 66;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OpsCommonOptions {
@@ -23,20 +30,880 @@ pub(crate) enum OpsCommand {
     SmokePreflight(OpsSmokePreflightOptions),
 }
 
-impl OpsCommand {
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            Self::Status(_) => "status",
-            Self::Agents(_) => "agents",
-            Self::Projects(_) => "projects",
-            Self::SmokePreflight(_) => "smoke-preflight",
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OpsVerdict {
+    pub(crate) status: &'static str,
+    pub(crate) blocking: bool,
+    pub(crate) blocking_reasons: Vec<String>,
+    pub(crate) warning_reasons: Vec<String>,
+    pub(crate) suggested_next_actions: Vec<String>,
+}
+
+impl OpsVerdict {
+    fn pass() -> Self {
+        Self {
+            status: "pass",
+            blocking: false,
+            blocking_reasons: Vec::new(),
+            warning_reasons: Vec::new(),
+            suggested_next_actions: Vec::new(),
+        }
+    }
+
+    fn fail_reason(&mut self, reason: impl Into<String>, action: impl Into<String>) {
+        self.status = "fail";
+        self.blocking = true;
+        push_unique_string(&mut self.blocking_reasons, reason.into());
+        push_unique_string(&mut self.suggested_next_actions, action.into());
+    }
+
+    fn warn_reason(&mut self, reason: impl Into<String>, action: impl Into<String>) {
+        if self.status != "fail" {
+            self.status = "warn";
+        }
+        push_unique_string(&mut self.warning_reasons, reason.into());
+        push_unique_string(&mut self.suggested_next_actions, action.into());
+    }
+
+    fn finish(mut self) -> Self {
+        if self.suggested_next_actions.is_empty() {
+            self.suggested_next_actions
+                .push("no action needed".to_string());
+        }
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct OpsReport {
+    pub(crate) verdict: OpsVerdict,
+    pub(crate) summary: Value,
+    pub(crate) source: Value,
+}
+
+pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<String, String> {
+    match command {
+        OpsCommand::Status(opts) => {
+            let token = resolve_ops_token(&opts)?;
+            let runtime_status = fetch_runtime_status(&opts.server_url, token.as_deref()).await?;
+            let report = ops_status_report(&opts.server_url, &runtime_status.output);
+            render_ops_status(&report, opts.json)
+        }
+        OpsCommand::Agents(opts) => {
+            let token = resolve_ops_token(&opts)?;
+            let runtime_status = fetch_runtime_status(&opts.server_url, token.as_deref()).await?;
+            let report = ops_agents_report(&opts.server_url, &runtime_status.output);
+            render_ops_agents(&report, opts.json)
+        }
+        OpsCommand::Projects(opts) => {
+            let token = resolve_ops_token(&opts)?;
+            let projects = fetch_projects(&opts.server_url, token.as_deref()).await?;
+            let report = ops_projects_report(&opts.server_url, projects.as_ref());
+            render_ops_projects(&report, opts.json)
+        }
+        OpsCommand::SmokePreflight(opts) => {
+            let token = resolve_ops_token(&opts.common)?;
+            let runtime_status =
+                fetch_runtime_status(&opts.common.server_url, token.as_deref()).await?;
+            let projects = fetch_projects(&opts.common.server_url, token.as_deref()).await?;
+            let show_changes = call_runtime_tool(
+                &opts.common.server_url,
+                token.as_deref(),
+                "show_changes",
+                json!({"project": opts.project, "include_diff": false}),
+            )
+            .await?;
+            let hygiene = call_runtime_tool(
+                &opts.common.server_url,
+                token.as_deref(),
+                "workspace_hygiene_check",
+                json!({"project": opts.project}),
+            )
+            .await?;
+            let report = ops_smoke_preflight_report(
+                &opts.common.server_url,
+                &opts.project,
+                runtime_status.output.as_ref(),
+                projects.as_ref(),
+                show_changes.as_ref(),
+                hygiene.as_ref(),
+            );
+            render_ops_smoke_preflight(&report, opts.common.json)
         }
     }
 }
 
-pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<String, String> {
-    Err(format!(
-        "ops {} is not implemented yet; run with --help for usage",
-        command.name()
-    ))
+fn resolve_ops_token(opts: &OpsCommonOptions) -> Result<Option<String>, String> {
+    if let Some(token) = &opts.token {
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err("--token cannot be empty".to_string());
+        }
+        return Ok(Some(token));
+    }
+    if let Some(token) = read_optional_token(&opts.token_file, "--token-file")? {
+        return Ok(Some(token));
+    }
+    if let Some(path) = &opts.env_file {
+        if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
+            let token = token.trim().to_string();
+            if !token.is_empty() {
+                return Ok(Some(token));
+            }
+        }
+    }
+    if let Ok(token) = std::env::var("WEBCODEX_TOKEN") {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return Ok(Some(token));
+        }
+    }
+    Ok(None)
+}
+
+async fn fetch_projects(server_url: &str, token: Option<&str>) -> Result<Option<Value>, String> {
+    match http_post_json_status(server_url, "/api/projects/list", token, json!({})).await {
+        Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
+            Ok(Some(output_payload(value)))
+        }
+        Ok((status, content_type, Some(_))) => Err(format!(
+            "projects list failed: HTTP {} content-type {}",
+            status, content_type
+        )),
+        Ok((status, content_type, None)) => Err(format!(
+            "projects list failed: HTTP {} non-JSON response content-type {}",
+            status, content_type
+        )),
+        Err(e) => Err(e),
+    }
+}
+
+async fn call_runtime_tool(
+    server_url: &str,
+    token: Option<&str>,
+    tool: &str,
+    params: Value,
+) -> Result<Option<Value>, String> {
+    match http_post_json_status(
+        server_url,
+        "/api/tools/call",
+        token,
+        json!({"tool": tool, "params": params}),
+    )
+    .await
+    {
+        Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
+            Ok(Some(output_payload(value)))
+        }
+        Ok((status, content_type, Some(_))) => Err(format!(
+            "{} failed: HTTP {} content-type {}",
+            tool, status, content_type
+        )),
+        Ok((status, content_type, None)) => Err(format!(
+            "{} failed: HTTP {} non-JSON response content-type {}",
+            tool, status, content_type
+        )),
+        Err(e) => Err(e),
+    }
+}
+
+fn output_payload(value: Value) -> Value {
+    value.get("output").cloned().unwrap_or(value)
+}
+
+pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> OpsReport {
+    let mut verdict = OpsVerdict::pass();
+    let Some(runtime) = runtime.as_ref() else {
+        verdict.fail_reason(
+            "runtime_unreachable",
+            "check --server-url, network reachability, and bearer token",
+        );
+        return OpsReport {
+            verdict: verdict.finish(),
+            summary: json!({"runtime_reachable": false}),
+            source: source_json(server_url, None, "runtime_status"),
+        };
+    };
+    let runtime_commit_value = runtime_commit(runtime);
+    if runtime.get("service").and_then(Value::as_str).is_none() {
+        verdict.fail_reason(
+            "malformed_runtime_status",
+            "rerun runtime_status directly and inspect server logs",
+        );
+    }
+
+    let dirty = runtime.pointer("/build/git_dirty").and_then(Value::as_bool);
+    if dirty != Some(false) {
+        verdict.warn_reason(
+            "server_build_dirty",
+            "deploy a clean server build before release smoke",
+        );
+    }
+
+    let tools_count = runtime.pointer("/tools/count").and_then(Value::as_u64);
+    if tools_count != Some(DEFAULT_EXPECTED_TOOL_COUNT) {
+        verdict.warn_reason(
+            format!(
+                "tools_count_unexpected:{}",
+                tools_count
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            ),
+            "confirm runtime tool registry count before deployment",
+        );
+    }
+
+    let active_jobs = runtime
+        .pointer("/jobs/active_count")
+        .and_then(Value::as_u64);
+    if active_jobs.unwrap_or(0) > 0 {
+        verdict.warn_reason(
+            format!("active_jobs:{}", active_jobs.unwrap_or(0)),
+            "wait for active jobs to finish before smoke validation",
+        );
+    }
+
+    let online = agent_count(runtime, "online_count", "online");
+    let offline = agent_count(runtime, "offline_count", "offline");
+    let stale = agent_count(runtime, "stale_count", "stale");
+    if online == 0 {
+        verdict.fail_reason(
+            "no_online_agents",
+            "start a webcodex-agent and rerun ops status",
+        );
+    } else {
+        if offline > 0 {
+            verdict.warn_reason(
+                format!("offline_agents:{}", offline),
+                "inspect offline agents with ops agents",
+            );
+        }
+        if stale > 0 {
+            verdict.warn_reason(
+                format!("stale_agents:{}", stale),
+                "inspect stale agents with ops agents",
+            );
+        }
+    }
+
+    let effective_status = str_pointer(runtime, "/projects/effective/status");
+    if effective_status.as_deref() != Some("ok") {
+        verdict.fail_reason(
+            format!(
+                "projects_effective_status:{}",
+                effective_status.unwrap_or_else(|| "unknown".to_string())
+            ),
+            "inspect project registration and connected agents",
+        );
+    }
+
+    let server_static_status = str_pointer(runtime, "/projects/server_static/status");
+    let server_static_severity = str_pointer(runtime, "/projects/server_static/severity");
+    if server_static_status.as_deref() == Some("not_configured")
+        && server_static_severity.as_deref() == Some("info")
+        && str_pointer(runtime, "/projects/effective/status").as_deref() == Some("ok")
+    {
+        verdict.warn_reason(
+            "server_static_not_configured_info",
+            "using agent-registered projects; no server-side projects.toml configured",
+        );
+    }
+
+    let summary = json!({
+        "runtime_reachable": true,
+        "server": {
+            "version": runtime.get("version").cloned().unwrap_or(Value::Null),
+            "commit": runtime_commit_value,
+            "dirty": dirty,
+        },
+        "tools": {
+            "count": tools_count,
+        },
+        "jobs": {
+            "active_count": active_jobs,
+        },
+        "agents": {
+            "online_count": online,
+            "offline_count": offline,
+            "stale_count": stale,
+            "clients": agent_clients(runtime),
+        },
+        "projects": {
+            "effective": {
+                "status": str_pointer(runtime, "/projects/effective/status"),
+                "count": runtime.pointer("/projects/effective/count").and_then(Value::as_u64),
+            },
+            "server_static": {
+                "status": server_static_status,
+                "severity": server_static_severity,
+            },
+        },
+    });
+    OpsReport {
+        verdict: verdict.finish(),
+        summary,
+        source: source_json(server_url, runtime_commit_value, "runtime_status"),
+    }
+}
+
+pub(crate) fn ops_agents_report(server_url: &str, runtime: &Option<Value>) -> OpsReport {
+    let mut verdict = OpsVerdict::pass();
+    let Some(runtime) = runtime.as_ref() else {
+        verdict.fail_reason(
+            "runtime_unreachable",
+            "check --server-url, network reachability, and bearer token",
+        );
+        return OpsReport {
+            verdict: verdict.finish(),
+            summary: json!({"runtime_reachable": false, "agents": []}),
+            source: source_json(server_url, None, "runtime_status"),
+        };
+    };
+    let clients = agent_clients(runtime);
+    let online = agent_count(runtime, "online_count", "online");
+    let offline = agent_count(runtime, "offline_count", "offline");
+    let stale = agent_count(runtime, "stale_count", "stale");
+    let active_jobs = clients
+        .iter()
+        .filter_map(|client| client.get("active_jobs").and_then(Value::as_u64))
+        .sum::<u64>();
+    if online == 0 {
+        verdict.fail_reason(
+            "no_online_agents",
+            "start a webcodex-agent and rerun ops agents",
+        );
+    }
+    if offline > 0 {
+        verdict.warn_reason(
+            format!("offline_agents:{}", offline),
+            "inspect offline agents and restart them if needed",
+        );
+    }
+    if stale > 0 {
+        verdict.warn_reason(
+            format!("stale_agents:{}", stale),
+            "inspect stale agents and transport health",
+        );
+    }
+    if active_jobs > 0 {
+        verdict.warn_reason(
+            format!("active_agent_jobs:{}", active_jobs),
+            "wait for active agent jobs to finish before smoke validation",
+        );
+    }
+    let summary = json!({
+        "runtime_reachable": true,
+        "online_count": online,
+        "offline_count": offline,
+        "stale_count": stale,
+        "active_jobs": active_jobs,
+        "agents": clients,
+    });
+    OpsReport {
+        verdict: verdict.finish(),
+        summary,
+        source: source_json(server_url, runtime_commit(runtime), "runtime_status"),
+    }
+}
+
+pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) -> OpsReport {
+    let mut verdict = OpsVerdict::pass();
+    let projects_list = project_entries(projects);
+    let total = projects_list.len();
+    let online = projects_list
+        .iter()
+        .filter(|project| project_connected(project))
+        .count();
+    let recommended = projects_list
+        .iter()
+        .filter(|project| project_bool(project, "/capabilities/recommended_for_smoke"))
+        .count();
+    if total == 0 {
+        verdict.fail_reason(
+            "no_projects",
+            "register an agent project and rerun ops projects",
+        );
+    } else if online == 0 {
+        verdict.fail_reason(
+            "no_online_projects",
+            "start the owning agent for at least one project",
+        );
+    }
+    if total > 0 && recommended == 0 {
+        verdict.warn_reason(
+            "no_recommended_smoke_project",
+            "choose a git-backed safe smoke project or register one",
+        );
+    }
+    let summary = json!({
+        "count": total,
+        "online_count": online,
+        "recommended_for_smoke_count": recommended,
+        "projects": compact_projects(&projects_list),
+    });
+    OpsReport {
+        verdict: verdict.finish(),
+        summary,
+        source: source_json(server_url, None, "list_projects"),
+    }
+}
+
+pub(crate) fn ops_smoke_preflight_report(
+    server_url: &str,
+    project_id: &str,
+    runtime: Option<&Value>,
+    projects: Option<&Value>,
+    show_changes: Option<&Value>,
+    hygiene: Option<&Value>,
+) -> OpsReport {
+    let mut verdict = OpsVerdict::pass();
+    let projects_list = project_entries(projects);
+    let project = projects_list
+        .iter()
+        .find(|project| project.get("id").and_then(Value::as_str) == Some(project_id));
+    let active_jobs = runtime
+        .and_then(|value| value.pointer("/jobs/active_count"))
+        .and_then(Value::as_u64);
+    if active_jobs.unwrap_or(0) > 0 {
+        verdict.fail_reason(
+            format!("active_jobs:{}", active_jobs.unwrap_or(0)),
+            "wait for active jobs to finish before deploy smoke preflight",
+        );
+    }
+
+    match project {
+        Some(project) => {
+            if !project_connected(project) {
+                verdict.fail_reason(
+                    "project_offline",
+                    "start the owning agent and wait for the project to reconnect",
+                );
+            }
+            if !project_bool(project, "/capabilities/git_available") {
+                verdict.fail_reason(
+                    "project_git_unavailable",
+                    "select a git-backed project for deploy smoke preflight",
+                );
+            }
+            if !project_bool(project, "/capabilities/recommended_for_smoke") {
+                verdict.warn_reason(
+                    "project_not_recommended_for_smoke",
+                    "prefer a project with recommended_for_smoke=true",
+                );
+            }
+        }
+        None => verdict.fail_reason(
+            "project_missing",
+            "run ops projects and pass an existing runtime project id",
+        ),
+    }
+
+    let show_clean = show_changes
+        .and_then(|value| value.get("clean"))
+        .and_then(Value::as_bool);
+    let show_verdict = verdict_status(show_changes);
+    if show_clean != Some(true) {
+        verdict.fail_reason(
+            "workspace_dirty",
+            "review show_changes output and clean or commit workspace changes",
+        );
+    }
+    if show_verdict.as_deref() == Some("fail") || show_verdict.is_none() {
+        verdict.fail_reason(
+            format!(
+                "show_changes_verdict:{}",
+                show_verdict.as_deref().unwrap_or("unknown")
+            ),
+            "rerun show_changes directly and inspect the failure",
+        );
+    }
+
+    let hygiene_clean = hygiene
+        .and_then(|value| value.get("clean"))
+        .and_then(Value::as_bool);
+    let hygiene_verdict = verdict_status(hygiene);
+    if hygiene_clean != Some(true) {
+        verdict.fail_reason(
+            "hygiene_not_clean",
+            "review workspace_hygiene_check findings before deploy smoke",
+        );
+    }
+    if hygiene_verdict.as_deref() == Some("fail") || hygiene_verdict.is_none() {
+        verdict.fail_reason(
+            format!(
+                "hygiene_verdict:{}",
+                hygiene_verdict.as_deref().unwrap_or("unknown")
+            ),
+            "rerun workspace_hygiene_check directly and inspect the failure",
+        );
+    } else if hygiene_verdict.as_deref() == Some("warn") {
+        verdict.warn_reason(
+            "hygiene_warnings_present",
+            "review low-severity hygiene findings before deployment",
+        );
+    }
+
+    let project_summary = project.map(compact_project).unwrap_or_else(|| {
+        json!({
+            "id": project_id,
+            "exists": false,
+        })
+    });
+    let summary = json!({
+        "project": project_summary,
+        "workspace": {
+            "clean": show_clean,
+            "show_changes_verdict_status": show_verdict,
+        },
+        "hygiene": {
+            "clean": hygiene_clean,
+            "verdict_status": hygiene_verdict,
+        },
+        "jobs": {
+            "active_count": active_jobs,
+        },
+    });
+    OpsReport {
+        verdict: verdict.finish(),
+        summary,
+        source: smoke_preflight_source_json(server_url, runtime.and_then(runtime_commit)),
+    }
+}
+
+pub(crate) fn render_ops_status(report: &OpsReport, json_output: bool) -> Result<String, String> {
+    if json_output {
+        return render_ops_json(report);
+    }
+    let mut out = render_overall_header(report);
+    let server = &report.summary["server"];
+    out.push_str("Server:\n");
+    out.push_str(&format!(
+        "  version: {}\n",
+        display_value(&server["version"])
+    ));
+    out.push_str(&format!("  commit: {}\n", display_value(&server["commit"])));
+    out.push_str(&format!("  dirty: {}\n", display_value(&server["dirty"])));
+    out.push_str("Tools:\n");
+    out.push_str(&format!(
+        "  count: {}\n",
+        display_value(&report.summary["tools"]["count"])
+    ));
+    out.push_str("Jobs:\n");
+    out.push_str(&format!(
+        "  active_count: {}\n",
+        display_value(&report.summary["jobs"]["active_count"])
+    ));
+    out.push_str("Agents:\n");
+    out.push_str(&format!(
+        "  online/offline/stale: {}/{}/{}\n",
+        display_value(&report.summary["agents"]["online_count"]),
+        display_value(&report.summary["agents"]["offline_count"]),
+        display_value(&report.summary["agents"]["stale_count"])
+    ));
+    for client in report.summary["agents"]["clients"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "  - client_id={} status={} transport={} projects_count={} active_jobs={} last_seen_age_secs={}\n",
+            display_value(&client["client_id"]),
+            display_value(&client["status"]),
+            display_value(&client["transport"]),
+            display_value(&client["projects_count"]),
+            display_value(&client["active_jobs"]),
+            display_value(&client["last_seen_age_secs"])
+        ));
+    }
+    out.push_str("Projects:\n");
+    out.push_str(&format!(
+        "  effective.status: {}\n",
+        display_value(&report.summary["projects"]["effective"]["status"])
+    ));
+    out.push_str(&format!(
+        "  effective.count: {}\n",
+        display_value(&report.summary["projects"]["effective"]["count"])
+    ));
+    out.push_str(&format!(
+        "  server_static.status/severity: {}/{}\n",
+        display_value(&report.summary["projects"]["server_static"]["status"]),
+        display_value(&report.summary["projects"]["server_static"]["severity"])
+    ));
+    out.push_str(&render_reasons(report));
+    Ok(out)
+}
+
+pub(crate) fn render_ops_agents(report: &OpsReport, json_output: bool) -> Result<String, String> {
+    if json_output {
+        return render_ops_json(report);
+    }
+    let mut out = render_overall_header(report);
+    out.push_str("Agents:\n");
+    out.push_str("  client_id status transport projects_count active_jobs pending_requests last_seen_age_secs\n");
+    for client in report.summary["agents"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "  {} {} {} {} {} {} {}\n",
+            display_value(&client["client_id"]),
+            display_value(&client["status"]),
+            display_value(&client["transport"]),
+            display_value(&client["projects_count"]),
+            display_value(&client["active_jobs"]),
+            display_value(&client["pending_requests"]),
+            display_value(&client["last_seen_age_secs"])
+        ));
+    }
+    out.push_str(&render_reasons(report));
+    Ok(out)
+}
+
+pub(crate) fn render_ops_projects(report: &OpsReport, json_output: bool) -> Result<String, String> {
+    if json_output {
+        return render_ops_json(report);
+    }
+    let mut out = render_overall_header(report);
+    out.push_str("Projects:\n");
+    out.push_str("  id client_id agent_status connected git_available recommended_for_smoke safe_smoke_project allow_patch path\n");
+    for project in report.summary["projects"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "  {} {} {} {} {} {} {} {} {}\n",
+            display_value(&project["id"]),
+            display_value(&project["client_id"]),
+            display_value(&project["agent_status"]),
+            display_value(&project["connected"]),
+            display_value(&project["git_available"]),
+            display_value(&project["recommended_for_smoke"]),
+            display_value(&project["safe_smoke_project"]),
+            display_value(&project["allow_patch"]),
+            display_value(&project["path"])
+        ));
+    }
+    out.push_str(&render_reasons(report));
+    Ok(out)
+}
+
+pub(crate) fn render_ops_smoke_preflight(
+    report: &OpsReport,
+    json_output: bool,
+) -> Result<String, String> {
+    if json_output {
+        return render_ops_json(report);
+    }
+    let mut out = render_overall_header(report);
+    out.push_str("Project:\n");
+    out.push_str(&format!(
+        "  id: {}\n",
+        display_value(&report.summary["project"]["id"])
+    ));
+    out.push_str(&format!(
+        "  online: {}\n",
+        display_value(&report.summary["project"]["connected"])
+    ));
+    out.push_str(&format!(
+        "  git_available: {}\n",
+        display_value(&report.summary["project"]["git_available"])
+    ));
+    out.push_str(&format!(
+        "  recommended_for_smoke: {}\n",
+        display_value(&report.summary["project"]["recommended_for_smoke"])
+    ));
+    out.push_str("Workspace:\n");
+    out.push_str(&format!(
+        "  clean: {}\n",
+        display_value(&report.summary["workspace"]["clean"])
+    ));
+    out.push_str(&format!(
+        "  show_changes.verdict.status: {}\n",
+        display_value(&report.summary["workspace"]["show_changes_verdict_status"])
+    ));
+    out.push_str("Hygiene:\n");
+    out.push_str(&format!(
+        "  clean: {}\n",
+        display_value(&report.summary["hygiene"]["clean"])
+    ));
+    out.push_str(&format!(
+        "  verdict.status: {}\n",
+        display_value(&report.summary["hygiene"]["verdict_status"])
+    ));
+    out.push_str("Jobs:\n");
+    out.push_str(&format!(
+        "  active_count: {}\n",
+        display_value(&report.summary["jobs"]["active_count"])
+    ));
+    out.push_str(&render_reasons(report));
+    Ok(out)
+}
+
+fn render_ops_json(report: &OpsReport) -> Result<String, String> {
+    serde_json::to_string_pretty(&json!({
+        "status": report.verdict.status,
+        "blocking": report.verdict.blocking,
+        "blocking_reasons": report.verdict.blocking_reasons,
+        "warning_reasons": report.verdict.warning_reasons,
+        "suggested_next_actions": report.verdict.suggested_next_actions,
+        "summary": report.summary,
+        "source": report.source,
+    }))
+    .map_err(|e| e.to_string())
+}
+
+fn render_overall_header(report: &OpsReport) -> String {
+    format!("Overall: {}\n", report.verdict.status.to_ascii_uppercase())
+}
+
+fn render_reasons(report: &OpsReport) -> String {
+    let mut out = String::new();
+    out.push_str("Warnings:\n");
+    if report.verdict.warning_reasons.is_empty() {
+        out.push_str("  none\n");
+    } else {
+        for reason in &report.verdict.warning_reasons {
+            out.push_str(&format!("  - {}\n", reason));
+        }
+    }
+    if !report.verdict.blocking_reasons.is_empty() {
+        out.push_str("Blocking:\n");
+        for reason in &report.verdict.blocking_reasons {
+            out.push_str(&format!("  - {}\n", reason));
+        }
+    }
+    out.push_str("Next actions:\n");
+    for action in &report.verdict.suggested_next_actions {
+        out.push_str(&format!("  - {}\n", action));
+    }
+    out
+}
+
+fn source_json(server_url: &str, runtime_commit: Option<String>, tool: &str) -> Value {
+    json!({
+        "server_url": server_url,
+        "runtime_commit": runtime_commit,
+        "tool": tool,
+    })
+}
+
+fn smoke_preflight_source_json(server_url: &str, runtime_commit: Option<String>) -> Value {
+    json!({
+        "server_url": server_url,
+        "runtime_commit": runtime_commit,
+        "tool": "runtime_status",
+        "tools": [
+            "runtime_status",
+            "list_projects",
+            "show_changes",
+            "workspace_hygiene_check"
+        ],
+    })
+}
+
+fn runtime_commit(runtime: &Value) -> Option<String> {
+    runtime
+        .pointer("/build/git_commit")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn str_pointer(value: &Value, pointer: &str) -> Option<String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn agent_count(runtime: &Value, field: &str, summary_field: &str) -> u64 {
+    runtime
+        .pointer(&format!("/agents/{field}"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            runtime
+                .pointer(&format!("/agents/summary/{summary_field}"))
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or(0)
+}
+
+fn agent_clients(runtime: &Value) -> Vec<Value> {
+    let clients = runtime
+        .pointer("/agents/summary/clients")
+        .or_else(|| runtime.pointer("/agents/clients"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    clients
+        .into_iter()
+        .map(|client| {
+            json!({
+                "client_id": client.get("client_id").cloned().unwrap_or(Value::Null),
+                "status": client.get("status").cloned().unwrap_or(Value::Null),
+                "transport": client.get("transport").cloned().unwrap_or(Value::Null),
+                "projects_count": client.get("projects_count").cloned().unwrap_or(Value::Null),
+                "active_jobs": client.get("active_jobs").cloned().unwrap_or(Value::Null),
+                "pending_requests": client.get("pending_requests").cloned().unwrap_or(Value::Null),
+                "last_seen_age_secs": client.get("last_seen_age_secs").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect()
+}
+
+fn project_entries(projects: Option<&Value>) -> Vec<Value> {
+    projects
+        .and_then(|value| value.get("projects"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn compact_projects(projects: &[Value]) -> Vec<Value> {
+    projects.iter().map(compact_project).collect()
+}
+
+fn compact_project(project: &Value) -> Value {
+    json!({
+        "id": project.get("id").cloned().unwrap_or(Value::Null),
+        "client_id": project.get("client_id").cloned().unwrap_or(Value::Null),
+        "agent_status": project.get("agent_status").cloned().unwrap_or(Value::Null),
+        "connected": project.get("connected").cloned().unwrap_or(Value::Null),
+        "git_available": project.pointer("/capabilities/git_available").cloned().unwrap_or(Value::Null),
+        "recommended_for_smoke": project.pointer("/capabilities/recommended_for_smoke").cloned().unwrap_or(Value::Null),
+        "safe_smoke_project": project.pointer("/capabilities/safe_smoke_project").cloned().unwrap_or(Value::Null),
+        "allow_patch": project.get("allow_patch").cloned().unwrap_or(Value::Null),
+        "path": project.get("path").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn project_connected(project: &Value) -> bool {
+    project
+        .get("connected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || project.get("agent_status").and_then(Value::as_str) == Some("online")
+}
+
+fn project_bool(project: &Value, pointer: &str) -> bool {
+    project
+        .pointer(pointer)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn verdict_status(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(|value| value.pointer("/verdict/status"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn display_value(value: &Value) -> String {
+    match value {
+        Value::Null => "unknown".to_string(),
+        Value::String(s) if s.is_empty() => "unknown".to_string(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn push_unique_string(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
 }

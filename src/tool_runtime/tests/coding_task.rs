@@ -804,6 +804,13 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     );
     assert_no_raw_validation_output_fields(validation, "finish validation summary");
     assert!(validation.get("observed_commands").is_none());
+    assert_eq!(result.output["review_evidence"]["available"], true);
+    assert_eq!(result.output["review_evidence"]["source"], "session_ledger");
+    assert_eq!(result.output["review_evidence"]["total"], 0);
+    assert!(result.output["review_evidence"]["tools"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     assert!(result.output["hygiene"].is_null());
     assert!(result.output["handoff"].is_null());
     assert!(result.output["final_warnings"]
@@ -900,7 +907,8 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|action| action.as_str() == Some("run validation before closeout when applicable")));
+        .any(|action| action.as_str()
+            == Some("run validation or review before closeout when applicable")));
     assert!(!verdict["suggested_next_actions"]
         .as_array()
         .unwrap()
@@ -924,6 +932,115 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
             "summary_only finish leaked {forbidden}: {serialized}"
         );
     }
+}
+
+#[tokio::test]
+async fn finish_coding_task_summary_only_includes_review_evidence_for_docs_only_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "docs.md", "hello\n", "add docs");
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-finish-docs", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("docs-only finish".to_string()));
+    let session_id = session.session_id.clone();
+
+    record_coding_task_tool_event(
+        &runtime,
+        &session_id,
+        "replace_line_range",
+        json!({
+            "project": project,
+            "path": "docs.md",
+            "start_line": 1,
+            "end_line": 1,
+            "replacement": "updated docs"
+        }),
+        true,
+        json!({}),
+    );
+    record_coding_task_tool_event(
+        &runtime,
+        &session_id,
+        "search_project_text",
+        json!({"project": project, "query": "docs"}),
+        true,
+        json!({}),
+    );
+    record_coding_task_tool_event(
+        &runtime,
+        &session_id,
+        "show_changes",
+        json!({"project": project, "include_diff": false}),
+        true,
+        json!({}),
+    );
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: true,
+                        include_diff: Some(false),
+                        include_workspace: None,
+                        include_hygiene: Some(true),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(true),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    for _ in 0..200 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(req) = next_patch_agent_request(&runtime, "coding-finish-docs").await {
+            complete_agent_request_by_running_locally(&runtime, "coding-finish-docs", req).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "finish_coding_task summary_only did not finish after read-only agent requests"
+    );
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["summary_only"], true);
+    assert_eq!(result.output["validation"]["status"], "not_run");
+    assert_eq!(
+        result.output["validation"]["reason"],
+        "no_validation_tool_invoked"
+    );
+    assert_eq!(result.output["review_evidence"]["available"], true);
+    assert_eq!(result.output["review_evidence"]["total"], 2);
+    assert_eq!(result.output["review_evidence"]["search_count"], 1);
+    assert_eq!(
+        result.output["review_evidence"]["workspace_review_count"],
+        1
+    );
+    let verdict = &result.output["verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "warn");
+    assert_reason_list_contains(
+        verdict,
+        "warning_reasons",
+        "validation_not_run_with_review_evidence",
+    );
+    assert_reason_list_not_contains(verdict, "warning_reasons", "validation_not_run");
 }
 
 #[tokio::test]

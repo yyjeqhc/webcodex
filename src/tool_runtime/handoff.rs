@@ -16,7 +16,7 @@ use super::permissions::permission_summary_from_events;
 use super::session_context::{
     session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
 };
-use super::sessions::tool_failure_summary_from_events;
+use super::sessions::{tool_failure_summary_from_events, SessionEvent, SessionSummary};
 use super::sessions::{SessionDiscussionCounts, SessionDiscussionSummary, SessionMessage};
 use super::tool_result::ToolResult;
 use super::validation_events::validation_summary_for_session;
@@ -191,6 +191,7 @@ impl ToolRuntime {
             "unexpected_failed_tool_calls": unexpected_failed_tool_calls,
             "expectation_mismatches": expectation_mismatches,
             "unexpected_success_tool_calls": unexpected_success_tool_calls,
+            "review_evidence": review_evidence_summary_for_session(&summary),
             "jobs": jobs,
             "warnings": warnings,
         });
@@ -470,6 +471,7 @@ fn compact_handoff_output(output: &Value) -> Value {
         "permissions": compact_permissions(output.get("permissions").unwrap_or(&Value::Null)),
         "tool_failures": compact_tool_failures(output.get("tool_failures").unwrap_or(&Value::Null)),
         "validation": compact_validation(output.get("validation").unwrap_or(&Value::Null)),
+        "review_evidence": compact_review_evidence(output.get("review_evidence").unwrap_or(&Value::Null)),
         "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });
@@ -519,6 +521,106 @@ pub(crate) fn compact_validation(validation: &Value) -> Value {
             .cloned()
             .unwrap_or_else(compact_validation_historical_failures_fallback),
     })
+}
+
+pub(crate) fn review_evidence_summary_for_session(summary: &SessionSummary) -> Value {
+    review_evidence_summary_from_events(&summary.events)
+}
+
+fn review_evidence_summary_from_events(events: &[SessionEvent]) -> Value {
+    let mut read_only_inspection_count = 0_u64;
+    let mut search_count = 0_u64;
+    let mut diff_review_count = 0_u64;
+    let mut workspace_review_count = 0_u64;
+    let mut hygiene_review_count = 0_u64;
+    let mut total = 0_u64;
+    let mut tools: Vec<String> = Vec::new();
+
+    for event in events {
+        if event.kind != "tool_call_finished" || event.status.as_deref() != Some("succeeded") {
+            continue;
+        }
+        let Some(kind) = review_evidence_kind(event.tool_name.as_str()) else {
+            continue;
+        };
+        match kind {
+            ReviewEvidenceKind::ReadOnlyInspection => read_only_inspection_count += 1,
+            ReviewEvidenceKind::Search => search_count += 1,
+            ReviewEvidenceKind::DiffReview => diff_review_count += 1,
+            ReviewEvidenceKind::WorkspaceReview => workspace_review_count += 1,
+            ReviewEvidenceKind::HygieneReview => {
+                workspace_review_count += 1;
+                hygiene_review_count += 1;
+            }
+        }
+        total += 1;
+        push_unique_tool(&mut tools, &event.tool_name);
+    }
+
+    json!({
+        "available": true,
+        "source": "session_ledger",
+        "read_only_inspection_count": read_only_inspection_count,
+        "search_count": search_count,
+        "diff_review_count": diff_review_count,
+        "workspace_review_count": workspace_review_count,
+        "hygiene_review_count": hygiene_review_count,
+        "total": total,
+        "tools": tools,
+    })
+}
+
+pub(crate) fn compact_review_evidence(review_evidence: &Value) -> Value {
+    json!({
+        "available": review_evidence.get("available").and_then(Value::as_bool).unwrap_or(false),
+        "total": review_evidence.get("total").and_then(Value::as_u64).unwrap_or(0),
+        "read_only_inspection_count": review_evidence
+            .get("read_only_inspection_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "search_count": review_evidence
+            .get("search_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "diff_review_count": review_evidence
+            .get("diff_review_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "workspace_review_count": review_evidence
+            .get("workspace_review_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "hygiene_review_count": review_evidence
+            .get("hygiene_review_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReviewEvidenceKind {
+    ReadOnlyInspection,
+    Search,
+    DiffReview,
+    WorkspaceReview,
+    HygieneReview,
+}
+
+fn review_evidence_kind(tool_name: &str) -> Option<ReviewEvidenceKind> {
+    match tool_name {
+        "read_file" | "list_project_files" => Some(ReviewEvidenceKind::ReadOnlyInspection),
+        "search_project_text" => Some(ReviewEvidenceKind::Search),
+        "git_diff" | "git_diff_summary" | "git_diff_hunks" => Some(ReviewEvidenceKind::DiffReview),
+        "show_changes" | "git_status" => Some(ReviewEvidenceKind::WorkspaceReview),
+        "workspace_hygiene_check" => Some(ReviewEvidenceKind::HygieneReview),
+        _ => None,
+    }
+}
+
+fn push_unique_tool(tools: &mut Vec<String>, tool_name: &str) {
+    if !tools.iter().any(|tool| tool == tool_name) {
+        tools.push(tool_name.to_string());
+    }
 }
 
 fn compact_validation_latest_status_fallback(validation: &Value) -> Value {
@@ -631,11 +733,27 @@ pub(crate) fn compact_workflow_verdict(
     let validation = output.get("validation").unwrap_or(&Value::Null);
     match validation.get("status").and_then(Value::as_str) {
         Some("not_run") => {
-            push_unique(&mut warning_reasons, "validation_not_run");
-            push_unique_action(
-                &mut actions,
-                "run validation before closeout when applicable",
-            );
+            let review_evidence_total = output
+                .get("review_evidence")
+                .and_then(|review_evidence| review_evidence.get("total"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if review_evidence_total > 0 {
+                push_unique(
+                    &mut warning_reasons,
+                    "validation_not_run_with_review_evidence",
+                );
+                push_unique_action(
+                    &mut actions,
+                    "no structured validation was run; review evidence is available for task-appropriate closeout",
+                );
+            } else {
+                push_unique(&mut warning_reasons, "validation_not_run");
+                push_unique_action(
+                    &mut actions,
+                    "run validation or review before closeout when applicable",
+                );
+            }
         }
         Some("failed") => {
             push_unique(&mut blocking_reasons, "validation_failed");

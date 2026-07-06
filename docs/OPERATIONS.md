@@ -603,8 +603,9 @@ Compact handoff/finish verdict rules:
   `tool_failures.unexpected_count=0`,
   `tool_failures.expectation_mismatch_count=0`,
   `tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`.
-- WARN: `validation.status=not_run`, resolved historical validation failures are
-  present (`validation.status=mixed`, `latest_status=passed`,
+- WARN: `validation.status=not_run` with or without ledger-derived
+  `review_evidence`, resolved historical validation failures are present
+  (`validation.status=mixed`, `latest_status=passed`,
   `historical_failures.resolved=true`, and
   `historical_failures.unresolved=false`), matched expected failures are present
   (`expected_count>0` while unexpected/mismatch/unexpected-success counts are
@@ -684,6 +685,17 @@ ledger history. Summary outputs also include `latest_status` and
 unresolved historical failure may warn instead of fail. `not_run` means no
 structured validation tool was invoked, so docs-only or read-only work should
 interpret it with task context.
+
+`finish_coding_task.review_evidence` and
+`session_handoff_summary.review_evidence` are separate ledger-derived,
+non-cargo review summaries. They count successful read/search/diff/workspace/
+hygiene inspection tools such as `read_file`, `search_project_text`,
+`show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`. They never
+include file contents, stdout/stderr, diff hunks, command text, tokens, secrets,
+or raw input payloads. For docs-only or read-only audit tasks,
+`validation.status=not_run` can coexist with `review_evidence.total>0`; compact
+verdicts remain `warn` and use `validation_not_run_with_review_evidence`
+instead of treating the task as passed.
 
 `finish_coding_task.permissions` and `session_handoff_summary.permissions`
 summarize high-risk permission decisions from the session ledger. A high-risk

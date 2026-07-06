@@ -239,12 +239,13 @@ binding, failure classification, or MCP direct error behavior. PASS requires
 `jobs.blocking_active_count=0`, `tool_failures.unexpected_count=0`,
 `tool_failures.expectation_mismatch_count=0`,
 `tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`. WARN covers
-`validation.status=not_run`, mixed validation where historical failures were
-resolved by a later successful validation, matched expected failures only, and
-bounded `truncated=true` with `truncation_reason="limit"`. FAIL covers dirty
-workspace, blocking jobs, unexpected tool failures, expectation mismatches,
-unexpected successes, hygiene failure, validation failure, or mixed validation
-with an unresolved/latest failure.
+`validation.status=not_run` with or without ledger-derived `review_evidence`,
+mixed validation where historical failures were resolved by a later successful
+validation, matched expected failures only, and bounded `truncated=true` with
+`truncation_reason="limit"`. FAIL covers dirty workspace, blocking jobs,
+unexpected tool failures, expectation mismatches, unexpected successes, hygiene
+failure, validation failure, or mixed validation with an unresolved/latest
+failure.
 
 The intended closeout order is `start_coding_task` -> inspect/search/read ->
 edit -> validate -> `show_changes` -> `workspace_hygiene_check` ->
@@ -439,6 +440,17 @@ The summary includes `status` and `reason`: no validation events yields
 include `latest_status` and `historical_failures`, so resolved historical
 failures can warn instead of fail. `not_run` means no structured validation tool
 was invoked; interpret it with task context for docs-only or read-only work.
+
+`finish_coding_task.review_evidence` and
+`session_handoff_summary.review_evidence` are separate ledger-derived,
+non-cargo review summaries. They count successful read/search/diff/workspace/
+hygiene inspection tools such as `read_file`, `search_project_text`,
+`show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`. They never
+include file contents, stdout/stderr, diff hunks, command text, tokens, secrets,
+or raw input payloads. For docs-only or read-only audit tasks,
+`validation.status=not_run` can coexist with `review_evidence.total>0`; compact
+verdicts remain `warn` and use `validation_not_run_with_review_evidence`
+instead of treating the task as passed.
 
 The minimal parser extracts only stable facts from safe bounded metadata, such
 as Cargo severity/code/span and test summary counts. It does not infer root

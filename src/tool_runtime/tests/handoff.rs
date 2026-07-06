@@ -1106,7 +1106,8 @@ async fn session_handoff_summary_only_is_compact() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|action| action.as_str() == Some("run validation before closeout when applicable")));
+        .any(|action| action.as_str()
+            == Some("run validation or review before closeout when applicable")));
     assert!(!verdict["suggested_next_actions"]
         .as_array()
         .unwrap()
@@ -1535,6 +1536,88 @@ async fn session_handoff_summary_validation_unavailable_without_validation_event
     );
     assert!(validation.get("latest_success").is_none());
     assert!(validation.get("latest_failure").is_none());
+
+    let review_evidence = &result.output["review_evidence"];
+    assert_eq!(review_evidence["available"], true);
+    assert_eq!(review_evidence["source"], "session_ledger");
+    assert_eq!(review_evidence["read_only_inspection_count"], 1);
+    assert_eq!(review_evidence["search_count"], 0);
+    assert_eq!(review_evidence["diff_review_count"], 0);
+    assert_eq!(review_evidence["workspace_review_count"], 0);
+    assert_eq!(review_evidence["hygiene_review_count"], 0);
+    assert_eq!(review_evidence["total"], 1);
+    assert_eq!(review_evidence["tools"][0], "read_file");
+}
+
+#[tokio::test]
+async fn session_handoff_summary_only_warns_with_review_evidence_when_validation_not_run() {
+    let runtime = test_runtime();
+    let session = runtime.sessions.start_session(
+        Some("agent:eval:demo".to_string()),
+        Some("read-only audit handoff".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "read_file",
+        json!({"project": "agent:eval:demo", "path": "docs/OPERATIONS.md"}),
+        true,
+        json!({}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "search_project_text",
+        json!({"project": "agent:eval:demo", "query": "validation"}),
+        true,
+        json!({}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "show_changes",
+        json!({"project": "agent:eval:demo", "include_diff": false}),
+        true,
+        json!({}),
+    );
+
+    let result = handoff_summary_only(&runtime, &sid).await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["validation"]["status"], "not_run");
+    assert_eq!(result.output["review_evidence"]["available"], true);
+    assert_eq!(result.output["review_evidence"]["total"], 3);
+    assert_eq!(
+        result.output["review_evidence"]["read_only_inspection_count"],
+        1
+    );
+    assert_eq!(result.output["review_evidence"]["search_count"], 1);
+    assert_eq!(
+        result.output["review_evidence"]["workspace_review_count"],
+        1
+    );
+    assert_eq!(result.output["review_evidence"]["hygiene_review_count"], 0);
+    assert!(result.output["review_evidence"].get("tools").is_none());
+    let verdict = &result.output["verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "warn");
+    assert_eq!(verdict["blocking"], false);
+    assert_reason_list_contains(
+        verdict,
+        "warning_reasons",
+        "validation_not_run_with_review_evidence",
+    );
+    assert_reason_list_not_contains(verdict, "warning_reasons", "validation_not_run");
+    assert!(verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str()
+            == Some(
+                "no structured validation was run; review evidence is available for task-appropriate closeout"
+            )));
 }
 
 // =========================================================================
@@ -1700,6 +1783,14 @@ async fn session_handoff_summary_only_verdict_fails_for_failed_validation() {
     record_handoff_tool_event(
         &runtime,
         &sid,
+        "search_project_text",
+        json!({"project": "agent:eval:demo", "query": "cargo"}),
+        true,
+        json!({}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
         "cargo_test",
         json!({
             "project": "agent:eval:demo",
@@ -1717,6 +1808,7 @@ async fn session_handoff_summary_only_verdict_fails_for_failed_validation() {
     let result = handoff_summary_only(&runtime, &sid).await;
 
     assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["review_evidence"]["total"], 1);
     assert_eq!(result.output["validation"]["status"], "failed");
     assert_eq!(result.output["validation"]["latest_status"], "failed");
     assert_eq!(

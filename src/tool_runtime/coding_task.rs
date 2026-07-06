@@ -8,8 +8,8 @@
 use serde_json::{json, Value};
 
 use super::handoff::{
-    compact_jobs, compact_permissions, compact_tool_failures, compact_validation,
-    compact_workflow_verdict,
+    compact_jobs, compact_permissions, compact_review_evidence, compact_tool_failures,
+    compact_validation, compact_workflow_verdict, review_evidence_summary_for_session,
 };
 use super::permissions::{permission_profile_payload, permission_summary_from_events};
 use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSnapshot};
@@ -347,6 +347,7 @@ impl ToolRuntime {
             "validation": validation,
             "permissions": permissions,
             "tool_failures": tool_failure_summary_from_events(&session_summary.events, 10),
+            "review_evidence": review_evidence_summary_for_session(&session_summary),
             "hygiene": hygiene,
             "handoff": handoff,
             "jobs": jobs,
@@ -590,6 +591,7 @@ fn compact_finish_output(output: &Value) -> Value {
         "permissions": compact_permissions(output.get("permissions").unwrap_or(&Value::Null)),
         "tool_failures": compact_tool_failures(output.get("tool_failures").unwrap_or(&Value::Null)),
         "validation": compact_validation(output.get("validation").unwrap_or(&Value::Null)),
+        "review_evidence": compact_review_evidence(output.get("review_evidence").unwrap_or(&Value::Null)),
         "warnings": output.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });

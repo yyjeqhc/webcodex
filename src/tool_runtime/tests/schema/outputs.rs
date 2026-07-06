@@ -729,6 +729,10 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         output_props.contains_key("summary_only"),
         "finish_coding_task output schema should include summary_only for compact output"
     );
+    assert!(
+        output_props.contains_key("review_evidence"),
+        "finish_coding_task output schema should include review_evidence"
+    );
     assert_permission_summary_schema_fields(&output_props["permissions"]);
     assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);
     let description = schema["properties"]["output"]["properties"]["validation"]["description"]
@@ -750,6 +754,23 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         assert!(
             description.contains(phrase),
             "validation output schema should mention {phrase}: {description}"
+        );
+    }
+    let review_description = output_props["review_evidence"]["description"]
+        .as_str()
+        .unwrap()
+        .to_lowercase();
+    for phrase in [
+        "ledger-derived",
+        "non-cargo review evidence",
+        "summary_only",
+        "read/search/diff/workspace/hygiene",
+        "does not include file contents",
+        "does not change validation.status",
+    ] {
+        assert!(
+            review_description.contains(phrase),
+            "finish review_evidence schema should mention {phrase}: {review_description}"
         );
     }
 }
@@ -775,6 +796,10 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     assert!(
         output_props.contains_key("validation"),
         "session_handoff_summary output schema should include validation"
+    );
+    assert!(
+        output_props.contains_key("review_evidence"),
+        "session_handoff_summary output schema should include review_evidence"
     );
     assert!(
         output_props.contains_key("permissions"),
@@ -818,6 +843,23 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         assert!(
             description.contains(phrase),
             "handoff validation output schema should mention {phrase}: {description}"
+        );
+    }
+    let review_description = output_props["review_evidence"]["description"]
+        .as_str()
+        .unwrap()
+        .to_lowercase();
+    for phrase in [
+        "ledger-derived",
+        "non-cargo review evidence",
+        "summary_only",
+        "read/search/diff/workspace/hygiene",
+        "does not include file contents",
+        "does not change validation.status",
+    ] {
+        assert!(
+            review_description.contains(phrase),
+            "handoff review_evidence schema should mention {phrase}: {review_description}"
         );
     }
 }

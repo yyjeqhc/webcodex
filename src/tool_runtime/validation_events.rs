@@ -57,6 +57,9 @@ struct ValidationSummary {
     available: bool,
     status: &'static str,
     reason: Option<&'static str>,
+    latest: Option<ValidationEvent>,
+    latest_status: &'static str,
+    historical_failures: ValidationHistoricalFailures,
     source: &'static str,
     events_total: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,6 +76,13 @@ struct ValidationSummary {
     skipped: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ValidationHistoricalFailures {
+    count: usize,
+    resolved: bool,
+    unresolved: bool,
+}
+
 pub(crate) fn validation_summary_for_session(summary: &SessionSummary) -> Value {
     validation_summary_from_events(&summary.events, DEFAULT_VALIDATION_EVENT_LIMIT)
 }
@@ -82,6 +92,9 @@ pub(crate) fn skipped_validation_summary() -> Value {
         available: false,
         status: "unknown",
         reason: Some("validation_summary_not_requested"),
+        latest: None,
+        latest_status: "unknown",
+        historical_failures: no_historical_failures(),
         source: VALIDATION_SOURCE,
         events_total: 0,
         successes: None,
@@ -102,6 +115,9 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
             available: false,
             status: "not_run",
             reason: Some("no_validation_tool_invoked"),
+            latest: None,
+            latest_status: "not_run",
+            historical_failures: no_historical_failures(),
             source: VALIDATION_SOURCE,
             events_total,
             successes: None,
@@ -121,6 +137,9 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
     let failures = events_total.saturating_sub(successes);
     let status = validation_status(successes, failures);
     let parser = parser_summary_for_events(&validation_events);
+    let latest = validation_events.last().cloned();
+    let latest_status = validation_latest_status(latest.as_ref());
+    let historical_failures = validation_historical_failures(failures, latest.as_ref());
     let latest_success = validation_events
         .iter()
         .rev()
@@ -138,6 +157,9 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
         available: true,
         status,
         reason: None,
+        latest,
+        latest_status,
+        historical_failures,
         source: VALIDATION_SOURCE,
         events_total,
         successes: Some(successes),
@@ -156,6 +178,35 @@ fn validation_status(successes: usize, failures: usize) -> &'static str {
         (true, false) => "passed",
         (false, true) => "failed",
         (false, false) => "unknown",
+    }
+}
+
+fn validation_latest_status(latest: Option<&ValidationEvent>) -> &'static str {
+    match latest {
+        Some(event) if event.success => "passed",
+        Some(_) => "failed",
+        None => "not_run",
+    }
+}
+
+fn validation_historical_failures(
+    failures: usize,
+    latest: Option<&ValidationEvent>,
+) -> ValidationHistoricalFailures {
+    let latest_passed = latest.is_some_and(|event| event.success);
+    let latest_failed = latest.is_some_and(|event| !event.success);
+    ValidationHistoricalFailures {
+        count: failures,
+        resolved: failures > 0 && latest_passed,
+        unresolved: failures > 0 && latest_failed,
+    }
+}
+
+fn no_historical_failures() -> ValidationHistoricalFailures {
+    ValidationHistoricalFailures {
+        count: 0,
+        resolved: false,
+        unresolved: false,
     }
 }
 
@@ -320,6 +371,15 @@ fn to_value(summary: ValidationSummary) -> Value {
     serde_json::to_value(summary).unwrap_or_else(|_| {
         json!({
             "available": false,
+            "status": "unknown",
+            "reason": "validation_summary_unavailable",
+            "latest": null,
+            "latest_status": "unknown",
+            "historical_failures": {
+                "count": 0,
+                "resolved": false,
+                "unresolved": false,
+            },
             "source": VALIDATION_SOURCE,
             "events_total": 0,
             "events": [],

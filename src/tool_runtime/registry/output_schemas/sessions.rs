@@ -316,7 +316,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "validation",
-                open_object_schema("Ledger-derived validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause; parser.available remains false when session ledger events lack those fields."),
+                open_object_schema("Ledger-derived validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. The status field remains strict ledger history; latest_status and historical_failures distinguish final validation state from resolved historical failures. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause; parser.available remains false when session ledger events lack those fields."),
             ),
             (
                 "verdict",

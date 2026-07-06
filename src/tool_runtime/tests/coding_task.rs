@@ -1,8 +1,11 @@
 use super::support::*;
 use crate::shell_protocol::{AgentPolicySummary, ShellClientCapabilities};
 use crate::tool_runtime::metadata::lookup_tool_metadata;
+use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::validation_parser::VALIDATION_OUTPUT_METADATA_ABSENT_REASON;
-use crate::tool_runtime::{is_known_tool_name, registered_tool_specs, SessionMode, ToolCall};
+use crate::tool_runtime::{
+    is_known_tool_name, registered_tool_specs, SessionMode, ToolCall, ToolRuntime,
+};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
@@ -893,6 +896,16 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     assert_eq!(verdict["status"], "warn");
     assert_eq!(verdict["blocking"], false);
     assert_reason_list_contains(verdict, "warning_reasons", "validation_not_run");
+    assert!(verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str() == Some("run validation before closeout when applicable")));
+    assert!(!verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str() == Some("run validation before closeout when available")));
     assert_compact_verdict_safe(verdict, "finish compact verdict");
 
     let serialized = serde_json::to_string(&result.output).unwrap();
@@ -968,6 +981,126 @@ async fn finish_coding_task_summary_only_verdict_fails_for_dirty_workspace() {
         "workspace_dirty",
     );
     assert_compact_verdict_safe(&result.output["verdict"], "dirty finish verdict");
+}
+
+#[tokio::test]
+async fn finish_coding_task_summary_only_warns_for_resolved_historical_validation_failures() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-finish-resolved", "demo", tmp.path())
+            .await;
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("resolved validation finish".to_string()),
+    );
+    let session_id = session.session_id.clone();
+
+    record_coding_task_tool_event(
+        &runtime,
+        &session_id,
+        "cargo_test",
+        json!({
+            "project": project,
+            "expected_failure": true,
+            "expected_failure_kind": "validation_failed",
+            "assertion_name": "pre-fix validation should fail"
+        }),
+        false,
+        json!({
+            "exit_code": 101,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_coding_task_tool_event(
+        &runtime,
+        &session_id,
+        "cargo_check",
+        json!({"project": project}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: true,
+                        include_diff: Some(false),
+                        include_workspace: None,
+                        include_hygiene: Some(true),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(true),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    for _ in 0..200 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(req) = next_patch_agent_request(&runtime, "coding-finish-resolved").await {
+            complete_agent_request_by_running_locally(&runtime, "coding-finish-resolved", req)
+                .await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "finish_coding_task summary_only did not finish after read-only agent requests"
+    );
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["count"],
+        1
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["resolved"],
+        true
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        false
+    );
+    let verdict = &result.output["verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "warn");
+    assert_eq!(verdict["blocking"], false);
+    assert_reason_list_contains(
+        verdict,
+        "warning_reasons",
+        "validation_historical_failures_resolved",
+    );
+    assert_reason_list_not_contains(verdict, "blocking_reasons", "validation_mixed");
+    assert!(verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
+    assert_compact_verdict_safe(verdict, "resolved validation finish verdict");
 }
 
 #[tokio::test]
@@ -1274,6 +1407,14 @@ fn assert_reason_list_contains(verdict: &Value, key: &str, reason: &str) {
     );
 }
 
+fn assert_reason_list_not_contains(verdict: &Value, key: &str, reason: &str) {
+    let reasons = verdict[key].as_array().expect("reason list");
+    assert!(
+        !reasons.iter().any(|value| value.as_str() == Some(reason)),
+        "{key} should not contain {reason}: {verdict}"
+    );
+}
+
 fn assert_startup_verdict_shape(verdict: &Value) {
     assert_status_string(verdict);
     assert!(verdict["blocking"].is_boolean(), "blocking bool: {verdict}");
@@ -1352,4 +1493,24 @@ fn assert_no_raw_validation_output_fields(value: &Value, context: &str) {
             "{context} must not include {key}: {value}"
         );
     }
+}
+
+fn record_coding_task_tool_event(
+    runtime: &ToolRuntime,
+    session_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    success: bool,
+    output: Value,
+) {
+    let start = runtime.sessions.record_tool_call_started(
+        Some(session_id),
+        SessionTransport::Api,
+        tool_name,
+        &arguments,
+    );
+    let error = (!success).then_some("tool failed");
+    runtime
+        .sessions
+        .record_tool_call_finished(start, success, &output, error, None);
 }

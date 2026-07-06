@@ -1082,6 +1082,19 @@ async fn session_handoff_summary_only_is_compact() {
         result.output["validation"]["reason"],
         "no_validation_tool_invoked"
     );
+    assert_eq!(result.output["validation"]["latest_status"], "not_run");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["count"],
+        0
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["resolved"],
+        false
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        false
+    );
     assert!(result.output["warnings"].is_array());
     assert!(result.output["suggested_next_actions"].is_array());
     let verdict = &result.output["verdict"];
@@ -1089,6 +1102,16 @@ async fn session_handoff_summary_only_is_compact() {
     assert_eq!(verdict["status"], "warn");
     assert_eq!(verdict["blocking"], false);
     assert_reason_list_contains(verdict, "warning_reasons", "expected_failures_matched");
+    assert!(verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str() == Some("run validation before closeout when applicable")));
+    assert!(!verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str() == Some("run validation before closeout when available")));
     assert_compact_verdict_safe(verdict, "summary_only handoff verdict");
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in [
@@ -1577,6 +1600,189 @@ async fn session_handoff_summary_only_verdict_allows_clean_workspace_without_fai
     assert_eq!(result.output["verdict"]["blocking"], false);
     assert_workflow_verdict_shape(&result.output["verdict"]);
     assert_compact_verdict_safe(&result.output["verdict"], "clean handoff verdict");
+}
+
+#[tokio::test]
+async fn session_handoff_summary_only_warns_for_resolved_historical_validation_failures() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "handoff-resolved-validation", "demo", tmp.path())
+            .await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("resolved validation handoff".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({
+            "project": project,
+            "expected_failure": true,
+            "expected_failure_kind": "validation_failed",
+            "assertion_name": "pre-fix validation should fail"
+        }),
+        false,
+        json!({
+            "exit_code": 101,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_check",
+        json!({"project": project}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = dispatch_handoff_summary_only_with_agent(
+        &runtime,
+        "handoff-resolved-validation",
+        sid,
+        Some(project),
+        true,
+        false,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["count"],
+        1
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["resolved"],
+        true
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        false
+    );
+    let verdict = &result.output["verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "warn");
+    assert_eq!(verdict["blocking"], false);
+    assert_reason_list_contains(
+        verdict,
+        "warning_reasons",
+        "validation_historical_failures_resolved",
+    );
+    assert_reason_list_not_contains(verdict, "blocking_reasons", "validation_mixed");
+    assert!(verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
+}
+
+#[tokio::test]
+async fn session_handoff_summary_only_verdict_fails_for_failed_validation() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("failed validation handoff".to_string()));
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({
+            "project": "agent:eval:demo",
+            "expected_failure": true,
+            "expected_failure_kind": "validation_failed",
+            "assertion_name": "validation failure remains blocking"
+        }),
+        false,
+        json!({
+            "exit_code": 101,
+            "failure_kind": "validation_failed"
+        }),
+    );
+
+    let result = handoff_summary_only(&runtime, &sid).await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["validation"]["status"], "failed");
+    assert_eq!(result.output["validation"]["latest_status"], "failed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        true
+    );
+    let verdict = &result.output["verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "fail");
+    assert_eq!(verdict["blocking"], true);
+    assert_reason_list_contains(verdict, "blocking_reasons", "validation_failed");
+}
+
+#[tokio::test]
+async fn session_handoff_summary_only_verdict_fails_for_unresolved_mixed_validation() {
+    let runtime = test_runtime();
+    let session = runtime.sessions.start_session(
+        None,
+        Some("unresolved mixed validation handoff".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({
+            "project": "agent:eval:demo",
+            "expected_failure": true,
+            "expected_failure_kind": "validation_failed",
+            "assertion_name": "later validation failure remains blocking"
+        }),
+        false,
+        json!({
+            "exit_code": 101,
+            "failure_kind": "validation_failed"
+        }),
+    );
+
+    let result = handoff_summary_only(&runtime, &sid).await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["latest_status"], "failed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        true
+    );
+    let verdict = &result.output["verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "fail");
+    assert_eq!(verdict["blocking"], true);
+    assert_reason_list_contains(verdict, "blocking_reasons", "validation_mixed");
+    assert_reason_list_not_contains(
+        verdict,
+        "warning_reasons",
+        "validation_historical_failures_resolved",
+    );
 }
 
 // =========================================================================
@@ -2298,6 +2504,14 @@ fn assert_reason_list_contains(verdict: &Value, key: &str, reason: &str) {
     assert!(
         reasons.iter().any(|value| value.as_str() == Some(reason)),
         "{key} should contain {reason}: {verdict}"
+    );
+}
+
+fn assert_reason_list_not_contains(verdict: &Value, key: &str, reason: &str) {
+    let reasons = verdict[key].as_array().expect("reason list");
+    assert!(
+        !reasons.iter().any(|value| value.as_str() == Some(reason)),
+        "{key} should not contain {reason}: {verdict}"
     );
 }
 

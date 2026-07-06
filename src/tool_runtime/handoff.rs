@@ -510,6 +510,32 @@ pub(crate) fn compact_validation(validation: &Value) -> Value {
     json!({
         "status": validation.get("status").cloned().unwrap_or_else(|| json!("not_run")),
         "reason": validation.get("reason").cloned().unwrap_or_else(|| json!("no_validation_tool_invoked")),
+        "latest_status": validation
+            .get("latest_status")
+            .cloned()
+            .unwrap_or_else(|| compact_validation_latest_status_fallback(validation)),
+        "historical_failures": validation
+            .get("historical_failures")
+            .cloned()
+            .unwrap_or_else(compact_validation_historical_failures_fallback),
+    })
+}
+
+fn compact_validation_latest_status_fallback(validation: &Value) -> Value {
+    let latest_status = match validation.get("status").and_then(Value::as_str) {
+        Some("passed") => "passed",
+        Some("failed") => "failed",
+        Some("not_run") => "not_run",
+        _ => "unknown",
+    };
+    json!(latest_status)
+}
+
+fn compact_validation_historical_failures_fallback() -> Value {
+    json!({
+        "count": 0,
+        "resolved": false,
+        "unresolved": false,
     })
 }
 
@@ -602,16 +628,13 @@ pub(crate) fn compact_workflow_verdict(
         push_unique_action(&mut actions, "expected failure assertions matched");
     }
 
-    match output
-        .get("validation")
-        .and_then(|validation| validation.get("status"))
-        .and_then(Value::as_str)
-    {
+    let validation = output.get("validation").unwrap_or(&Value::Null);
+    match validation.get("status").and_then(Value::as_str) {
         Some("not_run") => {
             push_unique(&mut warning_reasons, "validation_not_run");
             push_unique_action(
                 &mut actions,
-                "run validation before closeout when available",
+                "run validation before closeout when applicable",
             );
         }
         Some("failed") => {
@@ -619,11 +642,22 @@ pub(crate) fn compact_workflow_verdict(
             push_unique_action(&mut actions, "review validation failures before closeout");
         }
         Some("mixed") => {
-            push_unique(&mut blocking_reasons, "validation_mixed");
-            push_unique_action(
-                &mut actions,
-                "review mixed validation results before closeout",
-            );
+            if validation_historical_failures_resolved(validation) {
+                push_unique(
+                    &mut warning_reasons,
+                    "validation_historical_failures_resolved",
+                );
+                push_unique_action(
+                    &mut actions,
+                    "historical validation failures were resolved by later successful validation",
+                );
+            } else {
+                push_unique(&mut blocking_reasons, "validation_mixed");
+                push_unique_action(
+                    &mut actions,
+                    "review mixed validation results before closeout",
+                );
+            }
         }
         Some("unknown") | None => {
             push_unique(&mut warning_reasons, "validation_unknown");
@@ -651,6 +685,18 @@ pub(crate) fn compact_workflow_verdict(
         "warning_reasons": warning_reasons,
         "suggested_next_actions": actions,
     })
+}
+
+fn validation_historical_failures_resolved(validation: &Value) -> bool {
+    validation.get("latest_status").and_then(Value::as_str) == Some("passed")
+        && validation
+            .pointer("/historical_failures/resolved")
+            .and_then(Value::as_bool)
+            == Some(true)
+        && validation
+            .pointer("/historical_failures/unresolved")
+            .and_then(Value::as_bool)
+            == Some(false)
 }
 
 fn count_field(value: &Value, key: &str) -> u64 {

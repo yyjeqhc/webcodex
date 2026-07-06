@@ -249,10 +249,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .filter(|definition| definition.uses_unit_arguments())
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    assert_eq!(
-        unit_argument_tools,
-        vec!["list_projects", "list_agents"]
-    );
+    assert_eq!(unit_argument_tools, vec!["list_projects", "list_agents"]);
 
     let artifact_upload_path_binding_tools = tool_definitions()
         .filter(|definition| definition.requires_artifact_upload_path_binding())

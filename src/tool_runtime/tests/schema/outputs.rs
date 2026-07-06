@@ -744,6 +744,8 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         "bounded tails",
         "safe result metadata",
         "never infer root cause",
+        "latest_status",
+        "historical_failures",
     ] {
         assert!(
             description.contains(phrase),
@@ -810,6 +812,8 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         "safe result metadata",
         "never infer root cause",
         "parser.available remains false when session ledger events lack those fields",
+        "latest_status",
+        "historical_failures",
     ] {
         assert!(
             description.contains(phrase),

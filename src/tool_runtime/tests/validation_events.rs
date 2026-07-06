@@ -65,6 +65,12 @@ fn validation_summary_is_unavailable_without_validation_events() {
     );
     assert!(validation.get("latest_success").is_none());
     assert!(validation.get("latest_failure").is_none());
+    assert!(validation.get("latest").is_some());
+    assert!(validation["latest"].is_null());
+    assert_eq!(validation["latest_status"], "not_run");
+    assert_eq!(validation["historical_failures"]["count"], 0);
+    assert_eq!(validation["historical_failures"]["resolved"], false);
+    assert_eq!(validation["historical_failures"]["unresolved"], false);
 }
 
 #[test]
@@ -421,6 +427,78 @@ fn latest_success_and_failure_follow_session_ledger_order() {
         VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
     assert_no_raw_validation_output_fields(&validation, "validation summary");
+}
+
+#[test]
+fn failed_validation_followed_by_success_marks_historical_failure_resolved() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({"exit_code": 101}),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["available"], true);
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], true);
+    assert_eq!(validation["historical_failures"]["unresolved"], false);
+    assert_eq!(validation["latest"]["tool_name"], "cargo_check");
+    assert_eq!(validation["latest"]["success"], true);
+    assert_eq!(validation["latest_success"]["tool_name"], "cargo_check");
+    assert_eq!(validation["latest_failure"]["tool_name"], "cargo_test");
+}
+
+#[test]
+fn successful_validation_followed_by_failure_marks_historical_failure_unresolved() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({"exit_code": 101}),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["available"], true);
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["latest_status"], "failed");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], false);
+    assert_eq!(validation["historical_failures"]["unresolved"], true);
+    assert_eq!(validation["latest"]["tool_name"], "cargo_test");
+    assert_eq!(validation["latest"]["success"], false);
+    assert_eq!(validation["latest_success"]["tool_name"], "cargo_check");
+    assert_eq!(validation["latest_failure"]["tool_name"], "cargo_test");
 }
 
 #[tokio::test]

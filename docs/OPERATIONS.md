@@ -603,14 +603,18 @@ Compact handoff/finish verdict rules:
   `tool_failures.unexpected_count=0`,
   `tool_failures.expectation_mismatch_count=0`,
   `tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`.
-- WARN: `validation.status=not_run`, matched expected failures are present
+- WARN: `validation.status=not_run`, resolved historical validation failures are
+  present (`validation.status=mixed`, `latest_status=passed`,
+  `historical_failures.resolved=true`, and
+  `historical_failures.unresolved=false`), matched expected failures are present
   (`expected_count>0` while unexpected/mismatch/unexpected-success counts are
   all zero), non-git/git-unavailable review context, terminal-pending
   nonblocking jobs, or bounded startup/manifest/review output was truncated only
   because of an explicit limit.
 - FAIL: workspace is dirty, blocking jobs are active, unexpected tool failures
   exist, expected-failure mismatches exist, expected-failure calls unexpectedly
-  succeeded, hygiene failed, or validation failed.
+  succeeded, hygiene failed, validation failed, or mixed validation still has an
+  unresolved/latest failure.
 
 For a read-only handoff without finish aggregation:
 
@@ -674,7 +678,12 @@ or `validation_output_summary`; the parser extracts only stable facts from safe
 bounded metadata and does not infer root causes or suggest fixes. Summaries
 include `status` and `reason`: `events_total=0` yields `status=not_run` and
 `reason=no_validation_tool_invoked`; all-success, all-failure, and mixed ledgers
-yield `passed`, `failed`, and `mixed`.
+yield `passed`, `failed`, and `mixed`. `validation.status=mixed` remains strict
+ledger history. Summary outputs also include `latest_status` and
+`historical_failures`; a mixed ledger with a later successful validation and no
+unresolved historical failure may warn instead of fail. `not_run` means no
+structured validation tool was invoked, so docs-only or read-only work should
+interpret it with task context.
 
 `finish_coding_task.permissions` and `session_handoff_summary.permissions`
 summarize high-risk permission decisions from the session ledger. A high-risk

@@ -239,10 +239,12 @@ binding, failure classification, or MCP direct error behavior. PASS requires
 `jobs.blocking_active_count=0`, `tool_failures.unexpected_count=0`,
 `tool_failures.expectation_mismatch_count=0`,
 `tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`. WARN covers
-`validation.status=not_run`, matched expected failures only, and bounded
-`truncated=true` with `truncation_reason="limit"`. FAIL covers dirty workspace,
-blocking jobs, unexpected tool failures, expectation mismatches, unexpected
-successes, or hygiene failure.
+`validation.status=not_run`, mixed validation where historical failures were
+resolved by a later successful validation, matched expected failures only, and
+bounded `truncated=true` with `truncation_reason="limit"`. FAIL covers dirty
+workspace, blocking jobs, unexpected tool failures, expectation mismatches,
+unexpected successes, hygiene failure, validation failure, or mixed validation
+with an unresolved/latest failure.
 
 The intended closeout order is `start_coding_task` -> inspect/search/read ->
 edit -> validate -> `show_changes` -> `workspace_hygiene_check` ->
@@ -433,6 +435,10 @@ Validation summaries come from session ledger events for validation-like tools:
 The summary includes `status` and `reason`: no validation events yields
 `status="not_run"` and `reason="no_validation_tool_invoked"`; all successes are
 `passed`, all failures are `failed`, and mixed outcomes are `mixed`.
+`validation.status=mixed` remains strict ledger history. Summary outputs also
+include `latest_status` and `historical_failures`, so resolved historical
+failures can warn instead of fail. `not_run` means no structured validation tool
+was invoked; interpret it with task context for docs-only or read-only work.
 
 The minimal parser extracts only stable facts from safe bounded metadata, such
 as Cargo severity/code/span and test summary counts. It does not infer root

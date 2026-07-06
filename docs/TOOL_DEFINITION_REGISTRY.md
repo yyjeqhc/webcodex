@@ -109,14 +109,21 @@ Current fallback contract:
 
 ### Output schema convergence
 
-Model-visible runtime tools are not yet at full explicit output schema coverage.
-Current coverage is 64 of 66 model-visible tools. The default-only output schema
-gap list is down to these two temporary entries:
+Model-visible runtime tools now have full explicit output schema coverage.
+Current coverage is 66 of 66 model-visible tools. The default-only output schema
+gap list is empty: 0 remaining entries.
 
-- `register_project`: onboarding response still uses the generic wrapper. Remove
-  this gap when project registration output fields are explicit.
-- `create_project`: onboarding response still uses the generic wrapper. Remove
-  this gap when project creation output fields are explicit.
+`register_project` and `create_project` now have explicit output schemas for
+their agent-returned onboarding result metadata. The schemas describe project
+ids, agent ids, names, paths, project config paths, allow_patch flags, and
+result outcome metadata such as created/overwritten config, created directory,
+template, and git-init status. They do not describe token, secret, environment,
+file-content, stdout/stderr, command, or arbitrary project-file payloads.
+Onboarding output schemas do not change authorization, allowed-root, overwrite,
+empty-directory, template, git-init, agent registration, or permission behavior.
+They also do not bypass agent-side path policy or grant arbitrary write access
+to project files.
+
 `list_project_files`, `list_jobs`, `job_tail`, `git_restore_paths`, and
 `discard_untracked`, `replace_in_file`, and `write_project_file` now have
 explicit output schema fields. `list_jobs` describes bounded job metadata only
@@ -136,11 +143,10 @@ the current wrapped result shape visible to discovery. `write_project_file` and
 `replace_in_file` remain compatibility paths. Source edits should still prefer
 structured line edits, `apply_text_edits`, or `apply_patch_checked`.
 
-The remaining `register_project` and `create_project` gaps should be handled in a
-separate pass. They are onboarding side-effect tools, so the schema should be
-derived from stable registration/creation response fields and tests should prove
-non-overwrite defaults, allowed-root policy, and non-consequential OpenAPI
-labeling remain unchanged before removing their allowlist entries.
+This completes output schema convergence only. The broader ToolDefinition
+registry migration is still incomplete: input schema declarations, `ToolCall`
+parser paths, OpenAPI accepted names and flattened Action fields, MCP exposure,
+metadata, and policy declarations still have duplicate maintenance points.
 
 The former module-wide `#![allow(dead_code)]` on `tool_definition.rs` has been
 removed. Inventory-only helper facades are now kept behind `#[cfg(test)]`, and

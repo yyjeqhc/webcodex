@@ -10,6 +10,7 @@ mod files;
 mod git;
 mod hygiene;
 mod jobs;
+mod projects;
 mod sessions;
 mod testing;
 
@@ -20,6 +21,9 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
         return schema;
     }
     if let Some(schema) = discovery::output_schema_for_tool(name) {
+        return schema;
+    }
+    if let Some(schema) = projects::output_schema_for_tool(name) {
         return schema;
     }
     if let Some(schema) = coding_tasks::output_schema_for_tool(name) {

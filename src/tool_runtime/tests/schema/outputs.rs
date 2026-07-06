@@ -9,18 +9,8 @@ struct TemporaryDefaultOnlyOutputSchemaGap {
 // TODO(tool-definition): remove entries as these tools gain explicit output
 // schema fields, or move the allowlist to a generated definition-backed
 // declaration once output_schema is part of ToolDefinition.
-const TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS: &[TemporaryDefaultOnlyOutputSchemaGap] = &[
-    TemporaryDefaultOnlyOutputSchemaGap {
-        name: "register_project",
-        reason: "project onboarding response still uses the generic wrapper while schema coverage converges",
-        exit_condition: "replace with explicit project registration output fields",
-    },
-    TemporaryDefaultOnlyOutputSchemaGap {
-        name: "create_project",
-        reason: "project onboarding response still uses the generic wrapper while schema coverage converges",
-        exit_condition: "replace with explicit project creation output fields",
-    },
-];
+const TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS:
+    &[TemporaryDefaultOnlyOutputSchemaGap] = &[];
 
 #[test]
 fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
@@ -56,12 +46,12 @@ fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
     assert_eq!(specs.len(), 66, "model-visible tools.count");
     assert_eq!(
         specs.len() - default_schema_names.len(),
-        64,
+        66,
         "explicit model-visible output schema coverage"
     );
     assert_eq!(
         default_schema_names.len(),
-        2,
+        0,
         "temporary default-only output schema gap count"
     );
     assert_eq!(
@@ -382,6 +372,136 @@ fn key_tool_output_schemas_include_expected_fields() {
             "list_projects missing {field}"
         );
     }
+}
+
+#[test]
+fn project_onboarding_output_schemas_include_result_metadata_fields() {
+    let specs = registered_tool_specs();
+
+    for field in [
+        "id",
+        "agent_project_id",
+        "client_id",
+        "name",
+        "path",
+        "description",
+        "projects_config_path",
+        "created_config",
+        "overwritten",
+        "allow_patch",
+    ] {
+        assert!(
+            output_schema_properties(&specs, "register_project").contains_key(field),
+            "register_project missing {field}"
+        );
+    }
+
+    for field in [
+        "id",
+        "agent_project_id",
+        "client_id",
+        "name",
+        "path",
+        "description",
+        "projects_config_path",
+        "created_directory",
+        "created_config",
+        "overwritten",
+        "allow_patch",
+        "template",
+        "git_initialized",
+    ] {
+        assert!(
+            output_schema_properties(&specs, "create_project").contains_key(field),
+            "create_project missing {field}"
+        );
+    }
+
+    for tool in ["register_project", "create_project"] {
+        let props = output_schema_properties(&specs, tool);
+        for forbidden in [
+            "token",
+            "secret",
+            "env",
+            "stdout",
+            "stderr",
+            "command",
+            "file_content",
+            "content",
+        ] {
+            assert!(
+                !props.contains_key(forbidden),
+                "{tool} output schema must not advertise {forbidden}"
+            );
+        }
+
+        let descriptions = output_schema_description_text(props);
+        for phrase in [
+            "result metadata",
+            "does not include file content",
+            "does not expose environment, token, or secret values",
+            "does not bypass authorization, permission, allowed-root, or agent path policy",
+        ] {
+            assert!(
+                descriptions.contains(phrase),
+                "{tool} output schema descriptions should mention {phrase}: {descriptions}"
+            );
+        }
+
+        for field in ["path", "projects_config_path"] {
+            let description = output_schema_property(&specs, tool, field)["description"]
+                .as_str()
+                .expect("path-like field description")
+                .to_lowercase();
+            assert!(
+                description.contains("result metadata path")
+                    && description.contains("not file content"),
+                "{tool} {field} description must describe metadata path only: {description}"
+            );
+        }
+
+        for field in ["created_config", "overwritten"] {
+            let description = output_schema_property(&specs, tool, field)["description"]
+                .as_str()
+                .expect("outcome field description")
+                .to_lowercase();
+            assert!(
+                description.contains("result outcome metadata"),
+                "{tool} {field} description must describe outcome metadata: {description}"
+            );
+        }
+    }
+
+    let created_directory_description =
+        output_schema_property(&specs, "create_project", "created_directory")["description"]
+            .as_str()
+            .expect("created_directory description")
+            .to_lowercase();
+    assert!(
+        created_directory_description.contains("result outcome metadata"),
+        "create_project created_directory description must describe outcome metadata: {created_directory_description}"
+    );
+
+    let template_description = output_schema_property(&specs, "create_project", "template")
+        ["description"]
+        .as_str()
+        .expect("template description")
+        .to_lowercase();
+    assert!(
+        template_description.contains("does not change")
+            && template_description.contains("template behavior"),
+        "create_project template description must not imply behavior changes: {template_description}"
+    );
+
+    let git_description = output_schema_property(&specs, "create_project", "git_initialized")
+        ["description"]
+        .as_str()
+        .expect("git_initialized description")
+        .to_lowercase();
+    assert!(
+        git_description.contains("does not change") && git_description.contains("git-init"),
+        "create_project git_initialized description must not imply behavior changes: {git_description}"
+    );
 }
 
 #[test]

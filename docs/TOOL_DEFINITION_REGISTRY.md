@@ -107,6 +107,34 @@ Current fallback contract:
   behind a small number of named helper functions, rather than scattering
   fallback calls through each policy helper.
 
+### Output schema convergence
+
+Model-visible runtime tools are not yet at full explicit output schema coverage.
+Current coverage is 60 of 66 model-visible tools. The default-only output schema
+gap list is down to these six temporary entries:
+
+- `register_project`: onboarding response still uses the generic wrapper. Remove
+  this gap when project registration output fields are explicit.
+- `create_project`: onboarding response still uses the generic wrapper. Remove
+  this gap when project creation output fields are explicit.
+- `git_restore_paths`: cleanup write result is covered by behavior tests while
+  output schema is pending. Remove this gap when restored-path result fields are
+  explicit.
+- `discard_untracked`: cleanup write result is covered by behavior tests while
+  output schema is pending. Remove this gap when discarded-path result fields are
+  explicit.
+- `replace_in_file`: compatibility edit result is covered by behavior tests while
+  output schema is pending. Remove this gap when compatibility edit result fields
+  are explicit.
+- `write_project_file`: compatibility whole-file write result is covered by
+  behavior tests while output schema is pending. Remove this gap when whole-file
+  write result fields are explicit.
+
+`list_project_files`, `list_jobs`, and `job_tail` now have explicit output schema
+fields. `list_jobs` describes bounded job metadata only and must not advertise
+stdout or stderr bodies. `job_tail` describes bounded stdout/stderr tail text plus
+line-offset continuation metadata; it is not an unbounded stdout/stderr dump.
+
 The former module-wide `#![allow(dead_code)]` on `tool_definition.rs` has been
 removed. Inventory-only helper facades are now kept behind `#[cfg(test)]`, and
 any future dead-code allowance in this layer should be item-scoped with a

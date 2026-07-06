@@ -1,6 +1,6 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
-use super::common::{nullable_schema, schema_type, wrapped_output_schema};
+use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_schema};
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
@@ -66,6 +66,23 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("kind", schema_type("string", "Job kind.")),
             ("status", schema_type("string", "Initial job status.")),
             ("project", schema_type("string", "Project id.")),
+        ])),
+        "list_jobs" => Some(wrapped_output_schema(vec![
+            (
+                "jobs",
+                array_schema(
+                    job_summary_schema(),
+                    "Bounded job summaries; never includes stdout or stderr bodies.",
+                ),
+            ),
+            ("count", schema_type("integer", "Returned job summary count.")),
+            (
+                "truncated",
+                schema_type(
+                    "boolean",
+                    "Whether the collected job summaries exceeded the returned limit.",
+                ),
+            ),
         ])),
         "stop_job" => Some(wrapped_output_schema(vec![
             (
@@ -203,6 +220,74 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("string", "Job status observed with the log."),
             ),
         ])),
+        "job_tail" => Some(wrapped_output_schema(vec![
+            ("job_id", schema_type("string", "Runtime job id.")),
+            (
+                "stdout",
+                schema_type(
+                    "string",
+                    "Bounded stdout tail text. Defaults to the last 200 lines and clamps requested tail_lines to runtime bounds; this is not an unbounded stdout dump.",
+                ),
+            ),
+            (
+                "stderr",
+                schema_type(
+                    "string",
+                    "Bounded stderr tail text. Defaults to the last 200 lines and clamps requested tail_lines to runtime bounds; this is not an unbounded stderr dump.",
+                ),
+            ),
+            (
+                "next_stdout_line",
+                schema_type(
+                    "integer",
+                    "Next 1-based stdout line offset after the bounded tail selection.",
+                ),
+            ),
+            (
+                "next_stderr_line",
+                schema_type(
+                    "integer",
+                    "Next 1-based stderr line offset after the bounded tail selection.",
+                ),
+            ),
+            (
+                "status",
+                schema_type("string", "Job status observed with the bounded tail."),
+            ),
+        ])),
         _ => None,
     }
+}
+
+fn job_summary_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Bounded job metadata summary. Does not include stdout, stderr, command text, or log bodies.",
+        "properties": {
+            "job_id": schema_type("string", "Runtime job id."),
+            "kind": schema_type("string", "Job kind."),
+            "status": schema_type("string", "Current job status."),
+            "project": nullable_schema("string", "Project id, when known."),
+            "executor": schema_type("string", "Executor backing this job, such as agent or local."),
+            "client_id": nullable_schema("string", "Agent client id for agent-backed jobs, when available."),
+            "created_at": schema_type("integer", "Job creation timestamp."),
+            "started_at": nullable_schema("integer", "Job start timestamp, when available."),
+            "ended_at": nullable_schema("integer", "Job end timestamp, when available."),
+            "duration_ms": nullable_schema("integer", "Job duration in milliseconds, when available."),
+            "elapsed_secs": nullable_schema("integer", "Elapsed job runtime in seconds, when available."),
+            "exit_code": nullable_schema("integer", "Process exit code, when available.")
+        },
+        "required": [
+            "job_id",
+            "kind",
+            "status",
+            "project",
+            "executor",
+            "created_at",
+            "started_at",
+            "ended_at",
+            "exit_code"
+        ],
+        "additionalProperties": true
+    })
 }

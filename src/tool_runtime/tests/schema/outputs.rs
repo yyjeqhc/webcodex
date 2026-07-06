@@ -21,21 +21,6 @@ const TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS: &[Temp
         exit_condition: "replace with explicit project creation output fields",
     },
     TemporaryDefaultOnlyOutputSchemaGap {
-        name: "list_project_files",
-        reason: "bounded file-list payload is covered by behavior tests while output schema is pending",
-        exit_condition: "replace with explicit file listing output fields",
-    },
-    TemporaryDefaultOnlyOutputSchemaGap {
-        name: "list_jobs",
-        reason: "bounded job summary payload is covered by behavior tests while output schema is pending",
-        exit_condition: "replace with explicit job list output fields",
-    },
-    TemporaryDefaultOnlyOutputSchemaGap {
-        name: "job_tail",
-        reason: "bounded log-tail payload is covered by behavior tests while output schema is pending",
-        exit_condition: "replace with explicit bounded tail output fields",
-    },
-    TemporaryDefaultOnlyOutputSchemaGap {
         name: "git_restore_paths",
         reason: "cleanup write result is covered by behavior tests while output schema is pending",
         exit_condition: "replace with explicit restored path output fields",
@@ -88,6 +73,17 @@ fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
         })
         .collect::<Vec<_>>();
 
+    assert_eq!(specs.len(), 66, "model-visible tools.count");
+    assert_eq!(
+        specs.len() - default_schema_names.len(),
+        60,
+        "explicit model-visible output schema coverage"
+    );
+    assert_eq!(
+        default_schema_names.len(),
+        6,
+        "temporary default-only output schema gap count"
+    );
     assert_eq!(
         default_schema_names, allowed_names,
         "model-visible tools may use the default output schema only with an explicit allowance"
@@ -144,6 +140,26 @@ fn key_tool_output_schemas_include_expected_fields() {
         assert!(
             has_output_field("search_project_text", field),
             "search_project_text missing {field}"
+        );
+    }
+    for field in ["project", "path", "entries", "truncated"] {
+        assert!(
+            has_output_field("list_project_files", field),
+            "list_project_files missing {field}"
+        );
+    }
+    assert!(
+        !output_schema_properties(&specs, "list_project_files").contains_key("count"),
+        "list_project_files schema must not invent a count field absent from runtime output"
+    );
+    let file_entries = output_schema_property(&specs, "list_project_files", "entries");
+    let file_entry_props = file_entries["items"]["properties"]
+        .as_object()
+        .expect("list_project_files entries item properties");
+    for field in ["path", "kind"] {
+        assert!(
+            file_entry_props.contains_key(field),
+            "list_project_files entry missing {field}"
         );
     }
     for field in ["job_id", "kind", "status", "project"] {
@@ -208,6 +224,79 @@ fn key_tool_output_schemas_include_expected_fields() {
         assert!(
             has_output_field("job_log", field),
             "job_log missing {field}"
+        );
+    }
+    for field in ["jobs", "count", "truncated"] {
+        assert!(
+            has_output_field("list_jobs", field),
+            "list_jobs missing {field}"
+        );
+    }
+    let jobs_schema = output_schema_property(&specs, "list_jobs", "jobs");
+    let jobs_description = jobs_schema["description"]
+        .as_str()
+        .expect("list_jobs jobs description")
+        .to_lowercase();
+    assert!(
+        jobs_description.contains("bounded") && jobs_description.contains("never includes stdout"),
+        "list_jobs jobs description must describe bounded metadata without stdout/stderr bodies: {jobs_description}"
+    );
+    let job_summary_props = jobs_schema["items"]["properties"]
+        .as_object()
+        .expect("list_jobs item properties");
+    for field in [
+        "job_id",
+        "kind",
+        "status",
+        "project",
+        "executor",
+        "created_at",
+        "started_at",
+        "ended_at",
+        "exit_code",
+    ] {
+        assert!(
+            job_summary_props.contains_key(field),
+            "list_jobs summary missing {field}"
+        );
+    }
+    for forbidden in ["stdout", "stderr"] {
+        assert!(
+            !job_summary_props.contains_key(forbidden),
+            "list_jobs summary schema must not expose {forbidden} bodies"
+        );
+    }
+    for field in [
+        "job_id",
+        "stdout",
+        "stderr",
+        "next_stdout_line",
+        "next_stderr_line",
+        "status",
+    ] {
+        assert!(
+            has_output_field("job_tail", field),
+            "job_tail missing {field}"
+        );
+    }
+    for field in ["stdout", "stderr"] {
+        let description = output_schema_property(&specs, "job_tail", field)["description"]
+            .as_str()
+            .expect("job_tail stream description")
+            .to_lowercase();
+        assert!(
+            description.contains("bounded") && description.contains("not an unbounded"),
+            "job_tail {field} description must describe bounded tail text: {description}"
+        );
+    }
+    for field in ["next_stdout_line", "next_stderr_line"] {
+        let description = output_schema_property(&specs, "job_tail", field)["description"]
+            .as_str()
+            .expect("job_tail offset description")
+            .to_lowercase();
+        assert!(
+            description.contains("offset") && description.contains("bounded tail"),
+            "job_tail {field} description must describe bounded tail offset metadata: {description}"
         );
     }
     for field in [
@@ -332,6 +421,22 @@ fn output_schema_field_names(spec: &ToolSpec) -> BTreeSet<&str> {
         .keys()
         .map(String::as_str)
         .collect()
+}
+
+fn output_schema_properties<'a>(
+    specs: &'a [ToolSpec],
+    name: &str,
+) -> &'a serde_json::Map<String, Value> {
+    let spec = spec_named(specs, name);
+    spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{} output schema properties", spec.name))
+}
+
+fn output_schema_property<'a>(specs: &'a [ToolSpec], name: &str, field: &str) -> &'a Value {
+    output_schema_properties(specs, name)
+        .get(field)
+        .unwrap_or_else(|| panic!("{name} missing output field {field}"))
 }
 
 #[test]

@@ -436,6 +436,10 @@ Read `output.startup_verdict.status` first. If it is `warn` or `fail`, inspect
 `startup_verdict.checks` and `startup_verdict.suggested_next_actions`; detailed
 startup fields remain the audit source.
 
+Standalone `runtime_status` also accepts `summary_only=true` or `compact=true`
+for the same compact health shape. Use that for first-contact deployed sanity;
+reserve full no-arg `runtime_status` for deeper troubleshooting.
+
 Startup sanity verdict rules:
 
 - PASS: compact runtime status is present, `tools.count` is nonzero,
@@ -455,7 +459,7 @@ development profile is `policy=dev_auto_approve`, `auto_approve=true`, and
 ### 2. Discover and inspect
 
 ```json
-{"tool": "runtime_status", "params": {}}
+{"tool": "runtime_status", "params": {"summary_only": true}}
 {"tool": "list_projects", "params": {}}
 {"tool": "read_file", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs"}}
 {"tool": "search_project_text", "params": {"project": "agent:workstation:my-repo", "pattern": "authenticate", "path": "src"}}
@@ -534,6 +538,13 @@ Review order for coding closeout is deterministic: call `show_changes`, inspect
 `show_changes` and `workspace_hygiene_check` expose top-level `verdict`
 summaries; read them first, but keep the detailed fields as the auditable basis.
 
+Discovery taxonomy is intentional: `start_coding_task` and
+`finish_coding_task` are `workflow` category tools for the coding lifecycle.
+`start_session`, `bind_current_session`, `session_summary`, and
+`session_handoff_summary` are `session` category tools for raw ledger and
+session-control workflows. Use `category=workflow` for lifecycle discovery and
+`category=session` for session ledger/control discovery.
+
 ### 6. Finish or hand off
 
 ```json
@@ -543,7 +554,10 @@ summaries; read them first, but keep the detailed fields as the auditable basis.
     "project": "agent:workstation:my-repo",
     "session_id": "wc_sess_example",
     "include_handoff": true,
+    "include_workspace": true,
+    "include_hygiene": true,
     "include_validation_summary": true,
+    "include_diff": false,
     "summary_only": true
   }
 }
@@ -552,13 +566,24 @@ summaries; read them first, but keep the detailed fields as the auditable basis.
 `finish_coding_task` and `session_handoff_summary` should be used with
 `summary_only=true` for compact handoff and closeout checks. For handoff, also
 pass `include_workspace=true` and `include_validation=true`. For finish, pass
-`include_hygiene=true`, `include_validation_summary=true`, and keep
+`include_workspace=true`, `include_hygiene=true`,
+`include_validation_summary=true`, `include_diff=false`, and keep
 `include_handoff=true` when a handoff aggregate is useful.
+`finish_coding_task.include_workspace` is a compatibility flag matching
+`session_handoff_summary.include_workspace`: it controls the nested handoff
+workspace block when `include_handoff=true`; the top-level finish
+workspace/show_changes check keeps its existing default behavior.
 Read `output.verdict.status`, `blocking`, and `blocking_reasons` first. The
 compact detail fields remain the final auditable basis. The verdict is an
 additive UX summary and does not change authorization, permissions, guards,
 session binding, expected-failure classification, MCP direct errors, or job
 lifecycle behavior.
+
+For `summary_only=true` final outputs, sanity checks should reject stdout/stderr
+bodies, command text, tails, and excerpts. Raw lower-level diagnostic/status
+payloads may contain empty string fields such as `stderr: ""`; treat non-empty
+stdout/stderr bodies as sensitive/high-noise unless explicitly requested, and
+never allow env values, tokens, or secrets to appear.
 
 `finish_coding_task` and `session_handoff_summary` include a bounded `jobs`
 section. `active_count` remains a compatibility broad active count. New fields
@@ -694,12 +719,14 @@ Use this sequence to verify a deployment without modifying any project.
 Assumes a registered project `agent:workstation:my-repo`.
 
 ```json
-{"tool": "runtime_status", "params": {}}
+{"tool": "runtime_status", "params": {"summary_only": true}}
 ```
 
-Confirm `output.permissions.policy` is the expected profile. For development
-builds this is normally `dev_auto_approve`; release deployments should plan to
-use `require_approval`.
+Confirm service/build, `tools.count`, `jobs.active_count`, agent summary, and
+project effective status. Use full no-arg `runtime_status` only when you need
+deeper details such as `output.permissions.policy`; for development builds this
+is normally `dev_auto_approve`, and release deployments should plan to use
+`require_approval`.
 
 ```json
 {"tool": "list_agents", "params": {}}
@@ -735,9 +762,10 @@ After deploying a new server, agent, or runtime build:
    Actions unless debugging schemas. If `truncated=true` is caused by the
    caller-supplied limit, `truncation_reason="limit"` confirms it is a bounded
    response rather than `ResponseTooLarge`.
-3. Run `runtime_status`; prefer `projects.effective.status/count` over legacy
-   `projects.count` when `projects.toml` is not configured but agent projects
-   are registered. For lightweight sanity, prefer
+3. Run `runtime_status(summary_only=true)` or `runtime_status(compact=true)`;
+   prefer `projects.effective.status/count` over legacy `projects.count` when
+   `projects.toml` is not configured but agent projects are registered. For
+   workflow sanity, also use
    `start_coding_task(include_runtime_status=true, compact_startup=true)` and
    inspect `startup_verdict.status`; reserve full runtime status for deeper
    troubleshooting.
@@ -750,6 +778,19 @@ After deploying a new server, agent, or runtime build:
    `read_file` or `search_project_text`,
    `show_changes`, and `finish_coding_task`.
 7. Run local or staging E2E and eval checks:
+
+Preferred deployed generic sanity sequence:
+
+1. `runtime_status(summary_only=true)` or `runtime_status(compact=true)`.
+2. `tool_manifest`.
+3. `tool_manifest(category=runtime)`, `tool_manifest(category=session)`, and
+   `tool_manifest(category=git)` for focused discovery.
+4. `show_changes(include_diff=false)` on the selected smoke project.
+5. `workspace_hygiene_check` on the same smoke project.
+6. `finish_coding_task(summary_only=true, include_workspace=true,
+   include_hygiene=true, include_handoff=true,
+   include_validation_summary=true, include_diff=false)` with the explicit
+   `session_id`.
 
 ```bash
 bash scripts/e2e_zero_config_ws.sh

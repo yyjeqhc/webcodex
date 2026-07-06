@@ -77,6 +77,13 @@ fn bootstrap_auth() -> crate::auth::AuthContext {
     }
 }
 
+fn runtime_status_call() -> ToolCall {
+    ToolCall::RuntimeStatus {
+        compact: false,
+        summary_only: false,
+    }
+}
+
 async fn register_agent_projects_for_auth(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -598,7 +605,7 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     );
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     let client = &result.output["agents"]["clients"][0];
     let sp = &client["shell_profiles"];
@@ -926,6 +933,43 @@ fn runtime_status_is_in_registered_tool_specs() {
 }
 
 #[test]
+fn runtime_status_input_schema_exposes_compact_flags() {
+    let specs = registered_tool_specs();
+    let spec = specs
+        .iter()
+        .find(|spec| spec.name == "runtime_status")
+        .expect("runtime_status spec");
+    let properties = spec.input_schema["properties"]
+        .as_object()
+        .expect("runtime_status input properties");
+    for field in ["compact", "summary_only"] {
+        assert!(
+            properties.contains_key(field),
+            "runtime_status input schema should expose {field}"
+        );
+        assert_eq!(properties[field]["type"], "boolean");
+    }
+    let required = spec.input_schema["required"]
+        .as_array()
+        .expect("runtime_status required fields");
+    assert!(
+        required.is_empty(),
+        "runtime_status compact flags must stay optional: {required:?}"
+    );
+
+    let openapi = crate::openapi::build_openapi_spec();
+    let tool_call_properties = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
+        .as_object()
+        .expect("ToolCallRequest properties");
+    for field in ["compact", "summary_only"] {
+        assert!(
+            tool_call_properties.contains_key(field),
+            "ToolCallRequest.properties should expose flattened runtime_status {field}"
+        );
+    }
+}
+
+#[test]
 fn session_handoff_validation_exposure_keeps_read_only_metadata() {
     let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("session_handoff_summary")
         .expect("session_handoff_summary metadata");
@@ -1010,6 +1054,9 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     for field in ["summary_only", "category", "features", "limit"] {
         assert!(accepted("list_tools").contains(&field.to_string()));
     }
+    for field in ["compact", "summary_only"] {
+        assert!(accepted("runtime_status").contains(&field.to_string()));
+    }
     for tool in [
         "stop_job",
         "job_status",
@@ -1057,6 +1104,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "include_diff",
         "include_hygiene",
         "include_handoff",
+        "include_workspace",
         "include_validation_summary",
         "summary_only",
     ] {
@@ -1301,7 +1349,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
 #[tokio::test]
 async fn runtime_status_with_no_projects_returns_configured_false() {
     let runtime = test_runtime();
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let out = &result.output;
     assert_eq!(out["service"], "webcodex");
@@ -1358,7 +1406,7 @@ async fn runtime_status_uses_agent_projects_as_effective_when_server_config_miss
     )
     .await;
 
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let projects = &result.output["projects"];
     assert_eq!(projects["server_static"]["configured"], false);
@@ -1380,7 +1428,7 @@ async fn runtime_status_uses_agent_projects_as_effective_when_server_config_miss
 #[tokio::test]
 async fn runtime_status_includes_build_metadata() {
     let runtime = test_runtime();
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let build = &result.output["build"];
     assert!(build.is_object());
@@ -1390,10 +1438,104 @@ async fn runtime_status_includes_build_metadata() {
 }
 
 #[tokio::test]
+async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
+    use crate::shell_protocol::{AgentPolicySummary, ShellProfilesSummary};
+
+    let runtime = test_runtime();
+    let policy = AgentPolicySummary {
+        allowed_roots: vec![PathBuf::from(
+            "/tmp/runtime-compact-allowed-root-never-emit",
+        )],
+        shell_profiles: Some(ShellProfilesSummary {
+            default_profile: Some("rust".to_string()),
+            configured_count: 1,
+            prepared_cache_count: 0,
+            profiles: vec![profile_summary_entry("rust", true, 3)],
+        }),
+        ..Default::default()
+    };
+    register_agent_with_shell_profiles(
+        &runtime,
+        "runtime-compact-status",
+        Some(policy),
+        vec![registered_project("demo", "/tmp/runtime-compact-demo")],
+    )
+    .await;
+
+    for arguments in [json!({"compact": true}), json!({"summary_only": true})] {
+        let result = runtime
+            .dispatch(ToolCall::from_tool_name("runtime_status", arguments.clone()).unwrap())
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        let summary = &result.output;
+        assert_eq!(summary["compact"], true, "arguments: {arguments}");
+        for pointer in [
+            "/service",
+            "/version",
+            "/build/git_commit",
+            "/build/git_dirty",
+            "/tools/count",
+            "/jobs/active_count",
+            "/agents/summary/online",
+            "/projects/effective/status",
+            "/projects/effective/count",
+            "/projects/server_static/status",
+            "/projects/server_static/severity",
+            "/projects/server_static/message",
+        ] {
+            assert!(
+                summary.pointer(pointer).is_some(),
+                "compact runtime_status should include {pointer}: {summary:?}"
+            );
+        }
+        assert_eq!(summary["service"], "webcodex");
+        assert_eq!(summary["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(summary["agents"]["summary"]["count"], 1);
+        assert_eq!(summary["agents"]["summary"]["online"], 1);
+        assert_eq!(summary["projects"]["effective"]["count"], 1);
+        assert_eq!(summary["projects"]["effective"]["status"], "ok");
+        assert!(summary["tools"].get("names").is_none());
+        assert!(
+            summary
+                .pointer("/agents/clients/0/policy/allowed_roots")
+                .is_none(),
+            "compact runtime_status must not include full client policy"
+        );
+        assert!(
+            summary
+                .pointer("/agents/clients/0/shell_profiles")
+                .is_none(),
+            "compact runtime_status must not include shell profile details"
+        );
+
+        let serialized = serde_json::to_string(summary).unwrap();
+        for forbidden in [
+            "tools.names",
+            "allowed_roots",
+            "runtime-compact-allowed-root-never-emit",
+            "shell_profiles",
+            "stdout",
+            "stderr",
+            "command",
+            "tail",
+            "excerpt",
+            "env",
+            "token",
+            "secret",
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "compact runtime_status leaked {forbidden}: {serialized}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn runtime_status_with_loaded_project_returns_configured_true() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = runtime_with_project(tmp.path(), "demo");
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let out = &result.output;
     assert_eq!(out["projects"]["configured"], true);
@@ -1415,7 +1557,7 @@ async fn runtime_status_does_not_expose_tokens_or_secrets() {
         ))),
     };
     let runtime = runtime_with_info(info);
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     let serialized = serde_json::to_string(&result.output).unwrap();
     // The summary must never contain secret-like field names.
@@ -1445,7 +1587,7 @@ async fn runtime_status_does_not_expose_tokens_or_secrets() {
 #[tokio::test]
 async fn runtime_status_quic_disabled_is_non_sensitive() {
     let runtime = runtime_with_info(RuntimeInfo::default());
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     assert_eq!(result.output["quic"]["enabled"], false);
     assert_eq!(result.output["quic"]["listen"], "0.0.0.0:8443");
@@ -1477,7 +1619,7 @@ async fn runtime_status_quic_enabled_error_is_sanitized() {
         configured_public_url: None,
         quic: Some(status),
     });
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     assert_eq!(result.output["quic"]["enabled"], true);
     assert_eq!(result.output["quic"]["listener_started"], false);
@@ -1506,7 +1648,7 @@ async fn runtime_status_quic_started_reports_listen_and_alpn() {
         configured_public_url: None,
         quic: Some(status),
     });
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     assert_eq!(result.output["quic"]["enabled"], true);
     assert_eq!(result.output["quic"]["listen"], "127.0.0.1:9443");
@@ -1526,7 +1668,7 @@ async fn runtime_status_auth_enabled_reflects_runtime_info() {
             crate::config::QuicServerConfig::default().runtime_status(),
         ))),
     });
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     assert_eq!(result.output["auth_enabled"], false);
     assert!(result.output["configured_public_url"].is_null());
@@ -1538,7 +1680,7 @@ async fn runtime_status_auth_enabled_reflects_runtime_info() {
             crate::config::QuicServerConfig::default().runtime_status(),
         ))),
     });
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     assert_eq!(result.output["auth_enabled"], true);
     assert_eq!(
@@ -1591,7 +1733,7 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     );
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     let agents = &result.output["agents"];
     assert_eq!(agents["count"], 1);
@@ -1662,7 +1804,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     );
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     let clients = result.output["agents"]["clients"].as_array().unwrap();
     let policy = &clients[0]["policy"];
@@ -1705,7 +1847,7 @@ async fn runtime_status_policy_summary_is_null_for_older_agents() {
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     );
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     let clients = result.output["agents"]["clients"].as_array().unwrap();
     // Older/minimal payload -> policy is null, not a fatal error.
@@ -1810,7 +1952,7 @@ async fn runtime_status_marks_stale_websocket_agent_with_last_seen() {
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     );
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     let agents = &result.output["agents"];
     assert_eq!(agents["count"], 1);
@@ -1857,7 +1999,7 @@ async fn runtime_status_reflects_websocket_transport_label() {
         .await
         .unwrap();
 
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     let clients = &result.output["agents"]["clients"];
     let entry = clients
@@ -1932,7 +2074,7 @@ async fn runtime_status_counts_local_jobs() {
         },
     );
 
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let jobs = &result.output["jobs"];
     assert_eq!(jobs["local_known_count"], 2);
@@ -1944,7 +2086,7 @@ async fn runtime_status_counts_local_jobs() {
 #[tokio::test]
 async fn runtime_status_tools_summary_lists_names() {
     let runtime = test_runtime();
-    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
     let tools = &result.output["tools"];
     let names = tools["names"].as_array().unwrap();

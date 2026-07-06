@@ -108,9 +108,11 @@ be safe for basic smoke without being git-backed.
 
 Typical MCP tools include:
 
-- Discovery, health, and task tracking: `list_tools`, `start_session`,
-  `start_coding_task`, `finish_coding_task`, `session_summary`,
-  `session_handoff_summary`, `runtime_status`, `list_projects`, `list_agents`.
+- Discovery and health: `list_tools`, `runtime_status`, `list_projects`,
+  `list_agents`.
+- Workflow lifecycle: `start_coding_task`, `finish_coding_task`.
+- Session ledger/control: `start_session`, `bind_current_session`,
+  `session_summary`, `session_handoff_summary`.
 - Read-only project inspection: `show_changes`, `list_project_files`, `read_file`, `search_project_text`, `git_status`, `git_diff`, `git_diff_summary`, `git_diff_hunks`.
 - Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`.
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
@@ -194,10 +196,13 @@ failures, expectation mismatches, unexpected successes, or failed validation.
 Detailed review fields remain the auditable source and verdicts do not change
 authorization, guards, direct MCP error behavior, or job lifecycle semantics.
 
-`start_session`, `start_coding_task`, `finish_coding_task`, `session_summary`,
-and `session_handoff_summary` are the current task tracking foundation. They
-create, close out, and read bounded task-recorder metadata only; they do not
-modify a workspace. `start_session` creates a session record but does not
+`start_coding_task` and `finish_coding_task` are `workflow` category tools for
+the coding lifecycle. `start_session`, `bind_current_session`,
+`session_summary`, and `session_handoff_summary` are `session` category tools
+for raw session ledger/control discovery. Use `category=workflow` for coding
+task lifecycle discovery and `category=session` for session ledger/control.
+They create, close out, and read bounded task-recorder metadata only; they do
+not modify a workspace. `start_session` creates a session record but does not
 automatically bind future calls. `start_coding_task` defaults
 `bind_current=false` and includes a compact `tool_manifest` unless
 `include_tool_manifest=false`; subsequent MCP calls should pass the returned
@@ -212,10 +217,12 @@ shell profile internals, command text, stdout/stderr, env values, tokens, and
 secrets. Treat `tool_manifest.truncated=true` with
 `truncation_reason="limit"` as normal bounded output. Read
 `startup_verdict.status` first, then `startup_verdict.checks` and
-`startup_verdict.suggested_next_actions` for next steps. When session
-persistence is configured, session records,
-events, and messages may be persisted and restored through the `sessions.json`
-ledger.
+`startup_verdict.suggested_next_actions` for next steps. Standalone
+`runtime_status` accepts `summary_only=true` or `compact=true` for the same
+compact health shape; full no-arg runtime status remains available for
+schema/debug investigations. When session persistence is configured, session
+records, events, and messages may be persisted and restored through the
+`sessions.json` ledger.
 The ledger is for task continuity and handoff metadata, not a complete audit
 log. Current-session bindings remain process-local in-memory state and may be
 lost on restart, so pass the session id explicitly for deterministic MCP
@@ -270,8 +277,12 @@ implicitly use the current-session binding. Pass `summary_only=true`,
 containing `workspace_clean`, `hygiene_clean`, compact `jobs`, `permissions`,
 `tool_failures`, `validation`, `warnings`, and `suggested_next_actions` only.
 Use `finish_coding_task(summary_only=true)` with `include_hygiene=true` and
-`include_validation_summary=true` for closeout. Full mode keeps bounded handoff
-detail. In compact mode, read `verdict.status`, `blocking`, and
+`include_validation_summary=true`, `include_workspace=true`, and
+`include_diff=false` for closeout. In finish, `include_workspace` is a
+compatibility flag for the nested handoff workspace block; the top-level finish
+workspace/show_changes check keeps its existing default behavior. Full mode
+keeps bounded handoff detail. In compact mode, read `verdict.status`,
+`blocking`, and
 `blocking_reasons` first; detailed compact fields remain the audit source. Its
 `jobs` section reports bounded active job counts, recent metadata, and warnings
 without stdout/stderr, tails, excerpts, or command text. Its `validation`
@@ -284,6 +295,12 @@ LSP/tree-sitter, or LLM summarization.
 Validation includes `status` and `reason`: no validation events yields
 `not_run` with `no_validation_tool_invoked`; all-success/all-failure/mixed
 ledgers yield `passed`, `failed`, or `mixed`.
+
+For `summary_only=true` handoff/finish outputs, sanity checks should reject
+stdout/stderr bodies, command text, tails, and excerpts. Raw diagnostic/status
+payloads may contain empty string fields such as `stderr: ""`; non-empty
+stdout/stderr bodies are high-noise unless explicitly requested and must never
+contain env values, tokens, or secrets.
 
 The compact `verdict` is an additive UX summary and does not change
 authorization, permissions, guards, session binding, failure classification, or

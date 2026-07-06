@@ -73,6 +73,7 @@ fn critical_call_runtime_tool_flattened_args_remain_accepted() {
         "summary_only",
         "include_command_preview",
         "compact_startup",
+        "compact",
     ] {
         assert!(
             accepted_fields.contains(field),

@@ -421,6 +421,11 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
   review with `show_changes`, `git_diff_hunks`, and
   `workspace_hygiene_check` -> hand off with `session_handoff_summary` when
   needed -> close out with `finish_coding_task`.
+- Tool taxonomy: `start_coding_task` and `finish_coding_task` are `workflow`
+  tools. `start_session`, `bind_current_session`, `session_summary`, and
+  `session_handoff_summary` are `session` tools. Use `category=workflow` to
+  discover the coding task lifecycle and `category=session` for raw session
+  ledger/control tools.
 - For lightweight GPT Action or MCP sanity, call `start_coding_task` with
   `include_runtime_status=true`, `compact_startup=true`,
   `include_tool_manifest=true`, and a small `tool_manifest_limit`. Limit-driven
@@ -428,10 +433,15 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
   `truncation_reason="limit"` is normal bounded output, not `ResponseTooLarge`.
   Read `startup_verdict.status` first, then its `checks` and
   `suggested_next_actions` when attention is needed.
+- Standalone runtime health sanity can call `runtime_status` with
+  `summary_only=true` or `compact=true` for the same compact status shape.
 - For compact handoff sanity, call `session_handoff_summary` with
   `summary_only=true`, `include_workspace=true`, and `include_validation=true`;
   call `finish_coding_task` with `summary_only=true`, `include_hygiene=true`,
-  and `include_validation_summary=true`. Read `verdict.status`, `blocking`, and
+  `include_validation_summary=true`, `include_workspace=true`, and
+  `include_diff=false`. In finish, `include_workspace` is a compatibility flag
+  for the nested handoff workspace block; the top-level finish workspace check
+  keeps its existing default behavior. Read `verdict.status`, `blocking`, and
   `blocking_reasons` first; detailed fields remain the audit source. The verdict
   is additive UX only and does not change safety or expected-failure semantics.
 - PASS means clean workspace, clean hygiene, no blocking jobs, no unexpected
@@ -454,6 +464,11 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
 - `session_handoff_summary` requires an explicit `session_id`. Its validation
   section is ledger-derived and does not expose raw stdout/stderr,
   `validation_output_summary`, or excerpt fields.
+- For `summary_only=true` finish/handoff outputs, sanity checks should reject
+  stdout/stderr bodies, command text, tails, and excerpts. Raw diagnostic/status
+  payloads may still contain empty fields such as `stderr: ""`; non-empty
+  stdout/stderr bodies are high-noise unless explicitly requested and must never
+  include env values, tokens, or secrets.
 - `run_shell` is a bounded escape hatch, not the default validation source.
 - For project-scoped current sessions, call `start_session` with `project`. A
   session created with `project = null` cannot later be bound to a specific

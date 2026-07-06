@@ -77,6 +77,11 @@ Confirm:
 - Runtime paths did not regain `python3 -c` or `run_agent_helper`.
 - `finish_coding_task.validation` and `session_handoff_summary.validation` do not
   expose raw stdout/stderr, excerpt fields, or `validation_output_summary`.
+- `summary_only=true` final outputs do not expose stdout/stderr bodies, command
+  text, tails, or excerpts. Raw diagnostic/status payloads may contain empty
+  string fields such as `stderr: ""`, but non-empty stdout/stderr bodies remain
+  high-noise unless explicitly requested and must not include env values,
+  tokens, or secrets.
 - The validation parser is described conservatively: stable facts only, no
   root-cause inference, no fix suggestions, no LSP/tree-sitter, and no LLM
   summarization.
@@ -112,15 +117,18 @@ After deploying a new server, agent, or runtime build:
 2. Run `tool_manifest` or focused `list_tools` through the target integration;
    use `summary_only=true` with `category`, `features`, or `limit` for GPT
    Actions, and reserve full `listRuntimeTools` for schema debugging.
-3. Run `runtime_status`.
+3. Run `runtime_status(summary_only=true)` or `runtime_status(compact=true)`.
 4. Confirm `start_coding_task` and `finish_coding_task` are available through
    the generic runtime tool path.
 5. Confirm `session_handoff_summary` exposes `validation` when
    `include_validation` defaults to true.
 6. On a `list_projects` entry with `capabilities.recommended_for_smoke=true`
    and, for git smoke, `capabilities.git_available=true`, run
-   `start_coding_task`, `read_file` or `search_project_text`, `show_changes`,
-   and `finish_coding_task`.
+   `start_coding_task`, `read_file` or `search_project_text`,
+   `show_changes(include_diff=false)`, `workspace_hygiene_check`, and
+   `finish_coding_task(summary_only=true, include_workspace=true,
+   include_hygiene=true, include_handoff=true,
+   include_validation_summary=true, include_diff=false)`.
 7. Run the local or staging smoke/eval commands:
 
 ```bash

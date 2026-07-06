@@ -59,7 +59,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
     )),
-    unit_arguments(def(
+    def(
         "runtime_status",
         ModelVisible,
         TOOL_CATEGORY_RUNTIME,
@@ -71,7 +71,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    )),
+    ),
     def(
         "tool_manifest",
         ModelVisible,

@@ -23,7 +23,13 @@ impl ToolRuntime {
                 limit,
             })),
             ToolCall::ListAgents => self.list_agents(auth).await,
-            ToolCall::RuntimeStatus => self.runtime_status(auth).await,
+            ToolCall::RuntimeStatus {
+                compact,
+                summary_only,
+            } => {
+                self.runtime_status_with_options(auth, compact, summary_only)
+                    .await
+            }
             ToolCall::ToolManifest {
                 category,
                 include_recommended_flows,

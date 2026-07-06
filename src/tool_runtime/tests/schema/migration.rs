@@ -1324,6 +1324,7 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         "summary_only",
         "include_command_preview",
         "compact_startup",
+        "compact",
     ] {
         assert!(
             tool_call_properties.contains_key(field),

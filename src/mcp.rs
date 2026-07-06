@@ -1623,6 +1623,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mcp_tools_list_exposes_finish_and_runtime_status_ux_flags() {
+        let runtime = test_runtime();
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(10)), json!({})),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(v) => v,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        let tools = value["result"]["tools"].as_array().unwrap();
+        let tool = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap_or_else(|| panic!("missing MCP tool {name}"))
+        };
+
+        let finish_props = tool("finish_coding_task")["inputSchema"]["properties"]
+            .as_object()
+            .expect("finish_coding_task inputSchema properties");
+        assert!(
+            finish_props.contains_key("include_workspace"),
+            "MCP finish_coding_task schema should expose include_workspace"
+        );
+        let finish_required = tool("finish_coding_task")["inputSchema"]["required"]
+            .as_array()
+            .expect("finish_coding_task required fields");
+        assert!(
+            !finish_required
+                .iter()
+                .any(|field| field.as_str() == Some("include_workspace")),
+            "include_workspace must not be required in MCP schema"
+        );
+
+        let runtime_props = tool("runtime_status")["inputSchema"]["properties"]
+            .as_object()
+            .expect("runtime_status inputSchema properties");
+        for field in ["compact", "summary_only"] {
+            assert!(
+                runtime_props.contains_key(field),
+                "MCP runtime_status schema should expose {field}"
+            );
+            assert_eq!(runtime_props[field]["type"], "boolean");
+        }
+    }
+
+    #[tokio::test]
     async fn mcp_tools_list_includes_validate_patch() {
         // validate_patch is a patch preflight / dry-run tool exposed via MCP
         // tools/list (and a thin REST wrapper), but NOT via GPT Actions.

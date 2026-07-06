@@ -251,7 +251,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .collect::<Vec<_>>();
     assert_eq!(
         unit_argument_tools,
-        vec!["list_projects", "list_agents", "runtime_status"]
+        vec!["list_projects", "list_agents"]
     );
 
     let artifact_upload_path_binding_tools = tool_definitions()

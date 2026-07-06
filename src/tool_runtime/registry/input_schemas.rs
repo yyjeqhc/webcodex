@@ -36,7 +36,8 @@ pub(crate) use discovery::accepted_flattened_args_for_spec;
 #[cfg(test)]
 pub(crate) use discovery::ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER;
 pub(super) use discovery::{
-    empty_input_schema, list_tools_input_schema, tool_manifest_input_schema,
+    empty_input_schema, list_tools_input_schema, runtime_status_input_schema,
+    tool_manifest_input_schema,
 };
 pub(super) use files::{
     list_project_files_input_schema, read_file_input_schema, search_project_text_input_schema,

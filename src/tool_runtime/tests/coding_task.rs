@@ -62,6 +62,17 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     );
     let finish = spec_named(&specs, "finish_coding_task");
     assert_eq!(required_fields(finish), vec!["project", "session_id"]);
+    let finish_props = finish.input_schema["properties"].as_object().unwrap();
+    assert!(
+        finish_props.contains_key("include_workspace"),
+        "finish_coding_task input schema should accept include_workspace as a compatibility flag"
+    );
+    assert!(
+        !required_fields(finish)
+            .iter()
+            .any(|field| field == "include_workspace"),
+        "include_workspace must remain optional"
+    );
     let finish_output = crate::tool_runtime::registry::output_schema_for_tool("finish_coding_task");
     assert!(
         finish_output["properties"]["output"]["properties"]
@@ -91,6 +102,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "bind_current",
         "include_hygiene",
         "include_handoff",
+        "include_workspace",
         "include_validation_summary",
         "include_validation",
         "summary_only",
@@ -732,6 +744,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
                         session_id,
                         summary_only: false,
                         include_diff: Some(false),
+                        include_workspace: None,
                         include_hygiene: Some(false),
                         include_handoff: Some(false),
                         include_validation_summary: Some(true),
@@ -824,6 +837,7 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
                         session_id,
                         summary_only: true,
                         include_diff: Some(false),
+                        include_workspace: None,
                         include_hygiene: Some(true),
                         include_handoff: Some(false),
                         include_validation_summary: Some(true),
@@ -927,6 +941,7 @@ async fn finish_coding_task_summary_only_verdict_fails_for_dirty_workspace() {
                         session_id,
                         summary_only: true,
                         include_diff: Some(false),
+                        include_workspace: None,
                         include_hygiene: Some(false),
                         include_handoff: Some(false),
                         include_validation_summary: Some(true),
@@ -1034,6 +1049,7 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
                         session_id,
                         summary_only: false,
                         include_diff: Some(false),
+                        include_workspace: None,
                         include_hygiene: Some(false),
                         include_handoff: Some(false),
                         include_validation_summary: Some(false),
@@ -1179,6 +1195,7 @@ async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
                         session_id,
                         summary_only: false,
                         include_diff: Some(false),
+                        include_workspace: None,
                         include_hygiene: Some(false),
                         include_handoff: Some(false),
                         include_validation_summary: Some(false),

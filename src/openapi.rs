@@ -1142,6 +1142,10 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to false. When include_runtime_status=true, returns compact startup runtime observability instead of full runtime_status. Used only when `params` and `arguments` are absent."
                 },
+                "compact": {
+                    "type": "boolean",
+                    "description": "Flattened runtime_status flag. Defaults to false. When true, returns compact runtime observability for sanity checks instead of the full status payload. Used only when `params` and `arguments` are absent."
+                },
                 "include_git": {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
@@ -1217,7 +1221,7 @@ fn schemas() -> Value {
                 },
                 "include_workspace": {
                     "type": "boolean",
-                    "description": "Flattened session_handoff_summary flag. Include a bounded workspace/git status summary when project is provided. Used only when params and arguments are absent."
+                    "description": "Flattened session_handoff_summary/finish_coding_task flag. For handoff, include a bounded workspace/git status summary when project is provided. For finish, this is a compatibility flag for the nested handoff workspace block; the top-level finish workspace/show_changes check keeps its existing default behavior. Used only when params and arguments are absent."
                 },
                 "include_checkpoints": {
                     "type": "boolean",
@@ -1229,7 +1233,7 @@ fn schemas() -> Value {
                 },
                 "summary_only": {
                     "type": "boolean",
-                    "description": "Flattened list_tools/session_handoff_summary/finish_coding_task flag. For list_tools, returns compact tool summaries without full schemas. For handoff/finish, returns compact verdict fields and omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened list_tools/runtime_status/session_handoff_summary/finish_coding_task flag. For list_tools, returns compact tool summaries without full schemas. For runtime_status, aliases compact=true. For handoff/finish, returns compact verdict fields and omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts. Used only when `params` and `arguments` are absent."
                 },
                 "upload_id": {
                     "type": "string",
@@ -2950,6 +2954,7 @@ mod tests {
             "include_workspace",
             "include_checkpoints",
             "compact_startup",
+            "compact",
             "include_tool_manifest",
             "tool_manifest_categories",
             "tool_manifest_limit",
@@ -2966,6 +2971,7 @@ mod tests {
         assert_eq!(properties["include_workspace"]["type"], "boolean");
         assert_eq!(properties["include_checkpoints"]["type"], "boolean");
         assert_eq!(properties["compact_startup"]["type"], "boolean");
+        assert_eq!(properties["compact"]["type"], "boolean");
         assert_eq!(properties["include_tool_manifest"]["type"], "boolean");
         assert_eq!(properties["tool_manifest_categories"]["type"], "array");
         assert_eq!(properties["tool_manifest_limit"]["type"], "integer");

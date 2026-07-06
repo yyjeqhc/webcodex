@@ -126,6 +126,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
                         session_id,
                         summary_only: false,
                         include_diff: Some(false),
+                        include_workspace: None,
                         include_hygiene: Some(false),
                         include_handoff: Some(false),
                         include_validation_summary: Some(false),

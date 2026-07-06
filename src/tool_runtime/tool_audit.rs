@@ -828,6 +828,7 @@ impl ToolCall {
                 session_id,
                 summary_only,
                 include_diff,
+                include_workspace,
                 include_hygiene,
                 include_handoff,
                 include_validation_summary,
@@ -836,6 +837,7 @@ impl ToolCall {
                 "session_id": session_id,
                 "summary_only": summary_only,
                 "include_diff": include_diff,
+                "include_workspace": include_workspace,
                 "include_hygiene": include_hygiene,
                 "include_handoff": include_handoff,
                 "include_validation_summary": include_validation_summary,
@@ -859,6 +861,13 @@ impl ToolCall {
                 "features": features,
                 "summary_only": summary_only,
                 "limit": limit,
+            }),
+            Self::RuntimeStatus {
+                compact,
+                summary_only,
+            } => serde_json::json!({
+                "compact": compact,
+                "summary_only": summary_only,
             }),
             Self::WorkspaceHygieneCheck {
                 project,

@@ -1,6 +1,6 @@
 use super::super::input_schemas::{
     create_project_input_schema, empty_input_schema, list_tools_input_schema,
-    register_project_input_schema, tool_manifest_input_schema,
+    register_project_input_schema, runtime_status_input_schema, tool_manifest_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -45,8 +45,9 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "Return a structured runtime health/observability summary (service "
                 .to_string()
                 + "metadata, projects config status, agent client summaries, and job counts). "
+                + "Use compact=true or summary_only=true for a lightweight sanity payload. "
                 + "Read-only; never exposes tokens, secrets, full env, or stdout/stderr.",
-            empty_input_schema(),
+            runtime_status_input_schema(),
         ),
         tool_spec(
             "tool_manifest",

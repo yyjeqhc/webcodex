@@ -280,7 +280,13 @@ pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Resp
     let _ = body;
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
-        .dispatch_with_auth(ToolCall::RuntimeStatus, auth.as_ref())
+        .dispatch_with_auth(
+            ToolCall::RuntimeStatus {
+                compact: false,
+                summary_only: false,
+            },
+            auth.as_ref(),
+        )
         .await;
     render_result(res, &audit, "runtime_status", None, result);
 }

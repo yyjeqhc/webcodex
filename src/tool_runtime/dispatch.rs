@@ -257,7 +257,7 @@ impl ToolRuntime {
         match call {
             call @ (ToolCall::ListTools { .. }
             | ToolCall::ListAgents
-            | ToolCall::RuntimeStatus
+            | ToolCall::RuntimeStatus { .. }
             | ToolCall::ToolManifest { .. }) => self.dispatch_discovery_tool(call, auth).await,
 
             call @ (ToolCall::StartSession { .. }

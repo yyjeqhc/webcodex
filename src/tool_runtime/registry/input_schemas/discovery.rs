@@ -54,6 +54,24 @@ pub(crate) fn tool_manifest_input_schema() -> Value {
     })
 }
 
+pub(crate) fn runtime_status_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "compact": {
+                "type": "boolean",
+                "description": "When true, return compact runtime observability with service/version, build revision, tool/job counts, agent health summary, and project effective/server status. Defaults to false."
+            },
+            "summary_only": {
+                "type": "boolean",
+                "description": "Alias for compact=true. Returns the same compact runtime observability shape. Defaults to false."
+            }
+        },
+        "required": [],
+        "additionalProperties": false,
+    })
+}
+
 pub(crate) fn empty_input_schema() -> Value {
     object_schema(vec![])
 }
@@ -66,6 +84,7 @@ pub(crate) const ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER: &[&str] = &[
     "bind_current",
     "include_runtime_status",
     "compact_startup",
+    "compact",
     "include_git",
     "include_recent_commits",
     "include_rules",

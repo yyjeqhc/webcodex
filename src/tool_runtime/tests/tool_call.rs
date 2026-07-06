@@ -19,7 +19,7 @@ fn from_tool_name_parses_unit_tools_without_arguments() {
                 ToolCall::ListTools { .. }
                     | ToolCall::ListProjects
                     | ToolCall::ListAgents
-                    | ToolCall::RuntimeStatus
+                    | ToolCall::RuntimeStatus { .. }
             ),
             "unit tool {} should parse",
             name
@@ -538,10 +538,75 @@ fn known_tool_names_matches_spec_count() {
 #[test]
 fn from_tool_name_parses_runtime_status() {
     let call = ToolCall::from_tool_name("runtime_status", Value::Null).unwrap();
-    assert!(matches!(call, ToolCall::RuntimeStatus));
+    assert!(matches!(
+        call,
+        ToolCall::RuntimeStatus {
+            compact: false,
+            summary_only: false
+        }
+    ));
     // Also accepts an empty object.
     let call = ToolCall::from_tool_name("runtime_status", json!({})).unwrap();
-    assert!(matches!(call, ToolCall::RuntimeStatus));
+    assert!(matches!(
+        call,
+        ToolCall::RuntimeStatus {
+            compact: false,
+            summary_only: false
+        }
+    ));
+    let call = ToolCall::from_tool_name(
+        "runtime_status",
+        json!({"compact": true, "summary_only": true}),
+    )
+    .unwrap();
+    assert!(matches!(
+        call,
+        ToolCall::RuntimeStatus {
+            compact: true,
+            summary_only: true
+        }
+    ));
+}
+
+#[test]
+fn from_tool_name_parses_finish_coding_task_include_workspace_compatibility() {
+    let call = ToolCall::from_tool_name(
+        "finish_coding_task",
+        json!({
+            "project": "agent:client:demo",
+            "session_id": "wc_sess_demo",
+            "summary_only": true,
+            "include_workspace": true,
+            "include_validation_summary": true,
+            "include_hygiene": true,
+            "include_handoff": true,
+            "include_diff": false
+        }),
+    )
+    .unwrap();
+
+    match call {
+        ToolCall::FinishCodingTask {
+            project,
+            session_id,
+            summary_only,
+            include_diff,
+            include_workspace,
+            include_hygiene,
+            include_handoff,
+            include_validation_summary,
+        } => {
+            assert_eq!(project, "agent:client:demo");
+            assert_eq!(session_id, "wc_sess_demo");
+            assert!(summary_only);
+            assert_eq!(include_diff, Some(false));
+            assert_eq!(include_workspace, Some(true));
+            assert_eq!(include_hygiene, Some(true));
+            assert_eq!(include_handoff, Some(true));
+            assert_eq!(include_validation_summary, Some(true));
+        }
+        other => panic!("expected finish_coding_task, got {other:?}"),
+    }
 }
 
 #[test]

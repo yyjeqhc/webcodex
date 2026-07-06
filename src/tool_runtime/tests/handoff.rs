@@ -2156,6 +2156,7 @@ async fn finish_coding_task_summary_only_no_hygiene(
                     session_id,
                     summary_only: true,
                     include_diff: Some(false),
+                    include_workspace: None,
                     include_hygiene: Some(false),
                     include_handoff: Some(false),
                     include_validation_summary: Some(false),

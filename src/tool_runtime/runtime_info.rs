@@ -334,6 +334,66 @@ impl ToolRuntime {
         }
         ToolResult::ok(output)
     }
+
+    pub(crate) async fn runtime_status_with_options(
+        &self,
+        auth: Option<&AuthContext>,
+        compact: bool,
+        summary_only: bool,
+    ) -> ToolResult {
+        let result = self.runtime_status(auth).await;
+        if compact || summary_only {
+            ToolResult {
+                output: compact_runtime_status(&result.output),
+                ..result
+            }
+        } else {
+            result
+        }
+    }
+}
+
+pub(crate) fn compact_runtime_status(status: &Value) -> Value {
+    json!({
+        "compact": true,
+        "service": status.get("service").cloned().unwrap_or_else(|| json!("webcodex")),
+        "version": status.get("version").cloned().unwrap_or(Value::Null),
+        "build": {
+            "version": status.get("version").cloned().unwrap_or(Value::Null),
+            "git_commit": status.pointer("/build/git_commit").cloned().unwrap_or(Value::Null),
+            "git_dirty": status.pointer("/build/git_dirty").cloned().unwrap_or(Value::Null),
+        },
+        "tools": {
+            "count": status.pointer("/tools/count").cloned().unwrap_or(Value::Null),
+        },
+        "jobs": {
+            "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
+        },
+        "agents": {
+            "summary": status.pointer("/agents/summary").cloned().unwrap_or_else(|| json!({
+                "count": 0,
+                "online": 0,
+                "offline": 0,
+                "stale": 0,
+                "clients": [],
+            })),
+        },
+        "projects": {
+            "effective": status.pointer("/projects/effective").cloned().unwrap_or_else(|| json!({
+                "count": 0,
+                "status": "unknown",
+            })),
+            "agent_registered": status.pointer("/projects/agent_registered").cloned().unwrap_or_else(|| json!({
+                "count": 0,
+                "online_count": 0,
+            })),
+            "server_static": {
+                "status": status.pointer("/projects/server_static/status").cloned().unwrap_or(Value::Null),
+                "severity": status.pointer("/projects/server_static/severity").cloned().unwrap_or(Value::Null),
+                "message": status.pointer("/projects/server_static/message").cloned().unwrap_or(Value::Null),
+            },
+        },
+    })
 }
 
 fn is_projects_not_configured_error(error: &str) -> bool {

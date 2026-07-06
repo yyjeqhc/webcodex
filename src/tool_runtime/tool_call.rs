@@ -100,6 +100,8 @@ pub enum ToolCall {
         #[serde(default)]
         include_diff: Option<bool>,
         #[serde(default)]
+        include_workspace: Option<bool>,
+        #[serde(default)]
         include_hygiene: Option<bool>,
         #[serde(default)]
         include_handoff: Option<bool>,
@@ -869,7 +871,12 @@ pub enum ToolCall {
     /// This is a read-only observability tool: it never exposes tokens,
     /// secrets, full env, or stdout/stderr. It returns service metadata,
     /// project config status, agent client summaries, and job counts.
-    RuntimeStatus,
+    RuntimeStatus {
+        #[serde(default)]
+        compact: bool,
+        #[serde(default)]
+        summary_only: bool,
+    },
 
     /// Return a compact, bounded tool manifest with categories, risk summary,
     /// and recommended flows. Intended as a lightweight alternative to
@@ -1015,7 +1022,7 @@ impl ToolCall {
             Self::RegisterProject { .. } => "register_project",
             Self::CreateProject { .. } => "create_project",
             Self::ListAgents => "list_agents",
-            Self::RuntimeStatus => "runtime_status",
+            Self::RuntimeStatus { .. } => "runtime_status",
             Self::ToolManifest { .. } => "tool_manifest",
         }
     }

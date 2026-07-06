@@ -1722,21 +1722,39 @@ async fn runtime_status_filters_job_counts_by_auth_group() {
     let _job_open = start_agent_runtime_job(&runtime, "status-open", "proj-open", &open).await;
 
     let status_a = runtime
-        .dispatch_with_auth(ToolCall::RuntimeStatus, Some(&shared_a))
+        .dispatch_with_auth(
+            ToolCall::RuntimeStatus {
+                compact: false,
+                summary_only: false,
+            },
+            Some(&shared_a),
+        )
         .await;
     assert!(status_a.success, "{:?}", status_a.error);
     assert_eq!(status_a.output["jobs"]["agent_known_count"], 1);
     assert_eq!(status_a.output["jobs"]["active_count"], 1);
 
     let status_open = runtime
-        .dispatch_with_auth(ToolCall::RuntimeStatus, Some(&open))
+        .dispatch_with_auth(
+            ToolCall::RuntimeStatus {
+                compact: false,
+                summary_only: false,
+            },
+            Some(&open),
+        )
         .await;
     assert!(status_open.success, "{:?}", status_open.error);
     assert_eq!(status_open.output["jobs"]["agent_known_count"], 1);
     assert_eq!(status_open.output["jobs"]["active_count"], 1);
 
     let status_bootstrap = runtime
-        .dispatch_with_auth(ToolCall::RuntimeStatus, Some(&bootstrap))
+        .dispatch_with_auth(
+            ToolCall::RuntimeStatus {
+                compact: false,
+                summary_only: false,
+            },
+            Some(&bootstrap),
+        )
         .await;
     assert!(status_bootstrap.success, "{:?}", status_bootstrap.error);
     assert_eq!(status_bootstrap.output["jobs"]["agent_known_count"], 3);

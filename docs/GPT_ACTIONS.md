@@ -185,6 +185,8 @@ calling `callRuntimeTool`.
    discovery shape. Read `output.startup_verdict.status` first; then inspect
    its `checks` and `suggested_next_actions` when the status is `warn` or
    `fail`.
+   For first-contact runtime health without starting a task, call
+   `runtime_status` with flattened `summary_only=true` or `compact=true`.
 2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
    with `show_changes`.
 3. For scoped source edits with known line numbers, call `replace_line_range`,
@@ -213,9 +215,15 @@ calling `callRuntimeTool`.
    `session_id`. Pass flattened `summary_only=true` for compact smoke verdicts
    that omit recent events, command text, stdout/stderr, tails, and excerpts.
    For handoff, also pass `include_workspace=true` and `include_validation=true`.
-   For finish, pass `include_hygiene=true` and `include_validation_summary=true`.
+   For finish, pass `include_workspace=true`, `include_hygiene=true`,
+   `include_validation_summary=true`, and `include_diff=false`.
    Read `output.verdict.status`, `blocking`, and `blocking_reasons` first; the
    detailed compact fields remain the audit source.
+
+`finish_coding_task.include_workspace` is a compatibility flag matching
+`session_handoff_summary.include_workspace`: it controls the nested handoff
+workspace block when `include_handoff=true`; the top-level finish
+workspace/show_changes check keeps its existing default behavior.
 
 `finish_coding_task` and `session_handoff_summary` keep `active_count` for
 compatibility and also return `blocking_active_count`,
@@ -276,12 +284,15 @@ schemas remain unchanged.
 
 ## Session tracking
 
-`start_session`, `start_coding_task`, `finish_coding_task`, `session_summary`,
-and `session_handoff_summary` are runtime tools for task tracking and handoff.
-They let a caller group later `/api/tools/call` invocations under an opaque
-`wc_sess_*` id and ask which tools ran, which succeeded or failed, which project
-id was supplied, which write-like paths were inferred, and which job-like calls
-returned a `job_id`.
+`start_coding_task` and `finish_coding_task` are `workflow` category tools for
+the coding lifecycle. `start_session`, `bind_current_session`,
+`session_summary`, and `session_handoff_summary` are `session` category tools
+for raw session ledger/control. Use `category=workflow` for lifecycle discovery
+and `category=session` for raw session ledger/control. They let a caller group
+later `/api/tools/call` invocations under an opaque `wc_sess_*` id and ask
+which tools ran, which succeeded or failed, which project id was supplied,
+which write-like paths were inferred, and which job-like calls returned a
+`job_id`.
 
 `start_session` creates a session record. It does not automatically bind future
 calls as current. `start_coding_task` is the preferred coding-task entry point;
@@ -408,6 +419,12 @@ where `approved_count` is a compatibility alias for manual approvals and
 stdout/stderr, environment, tokens, secrets, raw command text, patches, file
 contents, or excerpts.
 
+For `summary_only=true` final outputs, sanity checks should reject stdout/stderr
+bodies, command text, tails, and excerpts. Raw lower-level diagnostic/status
+payloads may contain empty string fields such as `stderr: ""`; non-empty
+stdout/stderr bodies are high-noise unless explicitly requested and must never
+contain env values, tokens, or secrets.
+
 ## Validation summaries
 
 Validation summaries come from session ledger events for validation-like tools:
@@ -438,17 +455,20 @@ agent-registered projects are available; prefer `projects.effective.status` and
 
 They must not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell `init_script` values.
 
-`start_coding_task(include_runtime_status=true, compact_startup=true)` returns a
-compact runtime summary with build version/commit/dirty state, `tools.count`,
-`jobs.active_count`, `agents.summary`, and `projects.effective`,
-`projects.agent_registered`, and `projects.server_static` status/severity.
+`runtime_status(summary_only=true)`, `runtime_status(compact=true)`, and
+`start_coding_task(include_runtime_status=true, compact_startup=true)` return a
+compact runtime summary with service/version, build commit/dirty state,
+`tools.count`, `jobs.active_count`, `agents.summary`, and `projects.effective`,
+`projects.agent_registered`, and `projects.server_static` status/severity/message.
 It intentionally omits `tools.names`, full agent policy, `allowed_roots`, shell
 profile internals, command text, stdout/stderr, env values, tokens, secrets, and
 full config values. It also returns `startup_verdict`, a compact PASS/WARN/FAIL
-summary with per-check reasons and bounded next actions. Full
-`start_coding_task(include_runtime_status=true)` remains available for deeper
-troubleshooting and can include non-secret observability metadata such as the
-public URL, tool names, agent policy summary, and allowed roots.
+summary with per-check reasons and bounded next actions when used through
+`start_coding_task`. Full
+no-arg `runtime_status` and `start_coding_task(include_runtime_status=true)`
+remain available for deeper troubleshooting and can include non-secret
+observability metadata such as the public URL, tool names, agent policy summary,
+and allowed roots.
 
 ## Compatibility notes
 

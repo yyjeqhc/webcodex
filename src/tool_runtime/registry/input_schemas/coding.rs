@@ -82,6 +82,10 @@ pub(crate) fn finish_coding_task_input_schema() -> Value {
                 "type": "boolean",
                 "description": "Include bounded diff hunks in show_changes. Defaults to true."
             },
+            "include_workspace": {
+                "type": "boolean",
+                "description": "Compatibility flag matching session_handoff_summary.include_workspace. Defaults to true. When include_handoff=true, controls whether the nested handoff summary includes its workspace block; the top-level finish workspace/show_changes check remains unchanged."
+            },
             "include_hygiene": {
                 "type": "boolean",
                 "description": "Include workspace_hygiene_check output. Defaults to true."

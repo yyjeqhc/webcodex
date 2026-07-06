@@ -14,6 +14,7 @@ use super::handoff::{
 use super::permissions::{permission_profile_payload, permission_summary_from_events};
 use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSnapshot};
 use super::project_resolution::ResolvedProject;
+use super::runtime_info::compact_runtime_status;
 use super::session_context::{
     session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
 };
@@ -141,7 +142,7 @@ impl ToolRuntime {
                 }));
             }
             if compact_startup {
-                compact_startup_runtime_status(&result.output)
+                compact_runtime_status(&result.output)
             } else {
                 result.output
             }
@@ -206,12 +207,14 @@ impl ToolRuntime {
         session_id: String,
         summary_only: bool,
         include_diff: Option<bool>,
+        include_workspace: Option<bool>,
         include_hygiene: Option<bool>,
         include_handoff: Option<bool>,
         include_validation_summary: Option<bool>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let include_diff = include_diff.unwrap_or(true);
+        let include_workspace = include_workspace.unwrap_or(true);
         let include_hygiene = include_hygiene.unwrap_or(true);
         let include_handoff = include_handoff.unwrap_or(true);
         let include_validation_summary = include_validation_summary.unwrap_or(true);
@@ -310,7 +313,7 @@ impl ToolRuntime {
                 .session_handoff_summary(
                     session_id.clone(),
                     Some(resolved.resolved_id.clone()),
-                    Some(true),
+                    Some(include_workspace),
                     Some(true),
                     Some(include_validation_summary),
                     summary_only,
@@ -473,46 +476,6 @@ fn rules_summary(snapshot: Option<&ProjectInstructionsSnapshot>) -> Value {
             "no project instruction source loaded from the fixed candidate list"
         },
         "note": snapshot.note.clone(),
-    })
-}
-
-fn compact_startup_runtime_status(status: &Value) -> Value {
-    json!({
-        "compact": true,
-        "build": {
-            "version": status.get("version").cloned().unwrap_or(Value::Null),
-            "git_commit": status.pointer("/build/git_commit").cloned().unwrap_or(Value::Null),
-            "git_dirty": status.pointer("/build/git_dirty").cloned().unwrap_or(Value::Null),
-        },
-        "tools": {
-            "count": status.pointer("/tools/count").cloned().unwrap_or(Value::Null),
-        },
-        "jobs": {
-            "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
-        },
-        "agents": {
-            "summary": status.pointer("/agents/summary").cloned().unwrap_or_else(|| json!({
-                "count": 0,
-                "online": 0,
-                "offline": 0,
-                "stale": 0,
-                "clients": [],
-            })),
-        },
-        "projects": {
-            "effective": status.pointer("/projects/effective").cloned().unwrap_or_else(|| json!({
-                "count": 0,
-                "status": "unknown",
-            })),
-            "agent_registered": status.pointer("/projects/agent_registered").cloned().unwrap_or_else(|| json!({
-                "count": 0,
-                "online_count": 0,
-            })),
-            "server_static": {
-                "status": status.pointer("/projects/server_static/status").cloned().unwrap_or(Value::Null),
-                "severity": status.pointer("/projects/server_static/severity").cloned().unwrap_or(Value::Null),
-            },
-        },
     })
 }
 

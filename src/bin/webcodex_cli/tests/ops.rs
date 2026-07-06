@@ -3,6 +3,7 @@ use crate::webcodex_cli::ops::{
     ops_agents_report, ops_projects_report, ops_smoke_preflight_report, ops_status_report,
     render_ops_status,
 };
+use std::time::Duration;
 
 #[test]
 fn ops_help_entrypoints_print_usage() {
@@ -259,6 +260,115 @@ fn clean_hygiene_fixture() -> Value {
     })
 }
 
+fn smoke_preflight_opts(server_url: String, project: &str) -> OpsSmokePreflightOptions {
+    OpsSmokePreflightOptions {
+        common: OpsCommonOptions {
+            server_url,
+            env_file: None,
+            token_file: None,
+            token: Some("secret-smoke-token".to_string()),
+            json: false,
+        },
+        project: project.to_string(),
+    }
+}
+
+fn spawn_smoke_preflight_server(
+    projects: Value,
+) -> (
+    String,
+    std::sync::mpsc::Sender<()>,
+    thread::JoinHandle<Vec<String>>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut requests = Vec::new();
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut buf = [0u8; 16384];
+                    let n = stream.read(&mut buf).unwrap();
+                    let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                    requests.push(request.clone());
+                    let first_line = request.lines().next().unwrap_or_default().to_string();
+                    let body = if first_line.starts_with("POST /api/runtime/status ") {
+                        json!({"success": true, "output": runtime_status_fixture()})
+                    } else if first_line.starts_with("POST /api/projects/list ") {
+                        json!({"success": true, "output": projects.clone()})
+                    } else if request.contains(r#""tool":"show_changes""#) {
+                        json!({"success": true, "output": clean_show_changes_fixture()})
+                    } else if request.contains(r#""tool":"workspace_hygiene_check""#) {
+                        json!({"success": true, "output": clean_hygiene_fixture()})
+                    } else {
+                        json!({"success": false, "error": "unexpected request"})
+                    };
+                    let body = serde_json::to_string(&body).unwrap();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .unwrap();
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stop_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(err) => panic!("fake ops server accept failed: {err}"),
+            }
+        }
+        requests
+    });
+    (format!("http://{}", addr), stop_tx, handle)
+}
+
+async fn run_smoke_preflight_with_projects(
+    projects: Value,
+    project: &str,
+) -> (String, Vec<String>) {
+    let (server_url, stop_tx, handle) = spawn_smoke_preflight_server(projects);
+    let output = run_ops_command(OpsCommand::SmokePreflight(smoke_preflight_opts(
+        server_url, project,
+    )))
+    .await
+    .unwrap();
+    stop_tx.send(()).unwrap();
+    let requests = handle.join().unwrap();
+    (output, requests)
+}
+
+fn smoke_request_kinds(requests: &[String]) -> Vec<&'static str> {
+    requests
+        .iter()
+        .map(|request| {
+            let first_line = request.lines().next().unwrap_or_default();
+            if first_line.starts_with("POST /api/runtime/status ") {
+                "runtime_status"
+            } else if first_line.starts_with("POST /api/projects/list ") {
+                "projects_list"
+            } else if request.contains(r#""tool":"show_changes""#) {
+                "show_changes"
+            } else if request.contains(r#""tool":"workspace_hygiene_check""#) {
+                "workspace_hygiene_check"
+            } else {
+                "unexpected"
+            }
+        })
+        .collect()
+}
+
+fn assert_no_workspace_preflight_tools(requests: &[String]) {
+    let joined = requests.join("\n---\n");
+    assert!(!joined.contains(r#""tool":"show_changes""#));
+    assert!(!joined.contains(r#""tool":"workspace_hygiene_check""#));
+}
+
 #[test]
 fn ops_status_runtime_ok_passes() {
     let runtime = Some(runtime_status_fixture());
@@ -363,6 +473,107 @@ fn ops_projects_no_recommended_smoke_warns() {
 }
 
 #[test]
+fn ops_projects_disconnected_and_stale_warns() {
+    let projects = json!({
+        "count": 3,
+        "recommended_for_smoke": ["agent:ops:smoke"],
+        "projects": [
+            {
+                "id": "agent:ops:smoke",
+                "client_id": "ops",
+                "agent_status": "online",
+                "connected": true,
+                "allow_patch": true,
+                "path": "/srv/webcodex-smoke",
+                "capabilities": {
+                    "git_available": true,
+                    "safe_smoke_project": true,
+                    "recommended_for_smoke": true
+                }
+            },
+            {
+                "id": "agent:ops:disconnected",
+                "client_id": "ops",
+                "agent_status": "online",
+                "connected": false,
+                "allow_patch": true,
+                "path": "/srv/webcodex-disconnected",
+                "capabilities": {
+                    "git_available": true,
+                    "safe_smoke_project": false,
+                    "recommended_for_smoke": false
+                }
+            },
+            {
+                "id": "agent:ops:stale",
+                "client_id": "stale",
+                "agent_status": "stale",
+                "connected": true,
+                "allow_patch": true,
+                "path": "/srv/webcodex-stale",
+                "capabilities": {
+                    "git_available": true,
+                    "safe_smoke_project": false,
+                    "recommended_for_smoke": false
+                }
+            }
+        ]
+    });
+    let report = ops_projects_report("https://ops.example.test", Some(&projects));
+    assert_eq!(report.verdict.status, "warn");
+    assert!(report
+        .verdict
+        .warning_reasons
+        .contains(&"disconnected_projects:1".to_string()));
+    assert!(report
+        .verdict
+        .warning_reasons
+        .contains(&"stale_projects:1".to_string()));
+}
+
+#[test]
+fn ops_projects_recommended_smoke_offline_warns() {
+    let projects = json!({
+        "count": 2,
+        "recommended_for_smoke": ["agent:ops:offline-smoke"],
+        "projects": [
+            {
+                "id": "agent:ops:online",
+                "client_id": "ops",
+                "agent_status": "online",
+                "connected": true,
+                "allow_patch": true,
+                "path": "/srv/webcodex-online",
+                "capabilities": {
+                    "git_available": true,
+                    "safe_smoke_project": false,
+                    "recommended_for_smoke": false
+                }
+            },
+            {
+                "id": "agent:ops:offline-smoke",
+                "client_id": "special",
+                "agent_status": "stale",
+                "connected": false,
+                "allow_patch": true,
+                "path": "/srv/webcodex-offline-smoke",
+                "capabilities": {
+                    "git_available": true,
+                    "safe_smoke_project": true,
+                    "recommended_for_smoke": true
+                }
+            }
+        ]
+    });
+    let report = ops_projects_report("https://ops.example.test", Some(&projects));
+    assert_eq!(report.verdict.status, "warn");
+    assert!(report
+        .verdict
+        .warning_reasons
+        .contains(&"recommended_smoke_offline:1".to_string()));
+}
+
+#[test]
 fn ops_smoke_preflight_clean_project_passes() {
     let runtime = runtime_status_fixture();
     let projects = projects_fixture(true);
@@ -418,55 +629,18 @@ fn ops_json_and_human_outputs_do_not_contain_secret_values() {
 
 #[tokio::test]
 async fn ops_smoke_preflight_calls_only_read_only_endpoints() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let handle = thread::spawn(move || {
-        for _ in 0..4 {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 16384];
-            let n = stream.read(&mut buf).unwrap();
-            let request = String::from_utf8_lossy(&buf[..n]).to_string();
-            tx.send(request.clone()).unwrap();
-            let first_line = request.lines().next().unwrap_or_default().to_string();
-            let body = if first_line.starts_with("POST /api/runtime/status ") {
-                json!({"success": true, "output": runtime_status_fixture()})
-            } else if first_line.starts_with("POST /api/projects/list ") {
-                json!({"success": true, "output": projects_fixture(true)})
-            } else if request.contains(r#""tool":"show_changes""#) {
-                json!({"success": true, "output": clean_show_changes_fixture()})
-            } else if request.contains(r#""tool":"workspace_hygiene_check""#) {
-                json!({"success": true, "output": clean_hygiene_fixture()})
-            } else {
-                json!({"success": false, "error": "unexpected request"})
-            };
-            let body = serde_json::to_string(&body).unwrap();
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
-                body.len(),
-                body
-            )
-            .unwrap();
-        }
-    });
-
-    let opts = OpsSmokePreflightOptions {
-        common: OpsCommonOptions {
-            server_url: format!("http://{}", addr),
-            env_file: None,
-            token_file: None,
-            token: Some("secret-smoke-token".to_string()),
-            json: false,
-        },
-        project: "agent:ops:smoke".to_string(),
-    };
-    let output = run_ops_command(OpsCommand::SmokePreflight(opts))
-        .await
-        .unwrap();
-    handle.join().unwrap();
-    let requests = rx.try_iter().collect::<Vec<_>>();
+    let (output, requests) =
+        run_smoke_preflight_with_projects(projects_fixture(true), "agent:ops:smoke").await;
     assert_eq!(requests.len(), 4);
+    assert_eq!(
+        smoke_request_kinds(&requests),
+        vec![
+            "runtime_status",
+            "projects_list",
+            "show_changes",
+            "workspace_hygiene_check"
+        ]
+    );
     let joined = requests.join("\n---\n");
     assert!(joined.contains("POST /api/runtime/status "));
     assert!(joined.contains("POST /api/projects/list "));
@@ -476,4 +650,49 @@ async fn ops_smoke_preflight_calls_only_read_only_endpoints() {
     assert!(!joined.contains(r#""tool":"run_job""#));
     assert!(!output.contains("secret-smoke-token"));
     assert!(output.contains("Overall: PASS"));
+}
+
+#[tokio::test]
+async fn ops_smoke_preflight_project_missing_short_circuits() {
+    let (output, requests) =
+        run_smoke_preflight_with_projects(projects_fixture(true), "agent:ops:missing").await;
+    assert_eq!(
+        smoke_request_kinds(&requests),
+        vec!["runtime_status", "projects_list"]
+    );
+    assert_no_workspace_preflight_tools(&requests);
+    assert!(output.contains("Overall: FAIL"));
+    assert!(output.contains("project_missing"));
+}
+
+#[tokio::test]
+async fn ops_smoke_preflight_disconnected_project_short_circuits() {
+    let mut projects = projects_fixture(true);
+    projects["projects"][0]["connected"] = json!(false);
+    projects["projects"][0]["agent_status"] = json!("stale");
+    let (output, requests) = run_smoke_preflight_with_projects(projects, "agent:ops:smoke").await;
+    assert_eq!(
+        smoke_request_kinds(&requests),
+        vec!["runtime_status", "projects_list"]
+    );
+    assert_no_workspace_preflight_tools(&requests);
+    assert!(output.contains("Overall: FAIL"));
+    assert!(
+        output.contains("project_disconnected") || output.contains("project_offline"),
+        "{output}"
+    );
+}
+
+#[tokio::test]
+async fn ops_smoke_preflight_non_git_project_short_circuits() {
+    let mut projects = projects_fixture(true);
+    projects["projects"][0]["capabilities"]["git_available"] = json!(false);
+    let (output, requests) = run_smoke_preflight_with_projects(projects, "agent:ops:smoke").await;
+    assert_eq!(
+        smoke_request_kinds(&requests),
+        vec!["runtime_status", "projects_list"]
+    );
+    assert_no_workspace_preflight_tools(&requests);
+    assert!(output.contains("Overall: FAIL"));
+    assert!(output.contains("project_git_unavailable"));
 }

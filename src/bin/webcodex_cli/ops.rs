@@ -106,20 +106,27 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<String, Strin
             let runtime_status =
                 fetch_runtime_status(&opts.common.server_url, token.as_deref()).await?;
             let projects = fetch_projects(&opts.common.server_url, token.as_deref()).await?;
-            let show_changes = call_runtime_tool(
-                &opts.common.server_url,
-                token.as_deref(),
-                "show_changes",
-                json!({"project": opts.project, "include_diff": false}),
-            )
-            .await?;
-            let hygiene = call_runtime_tool(
-                &opts.common.server_url,
-                token.as_deref(),
-                "workspace_hygiene_check",
-                json!({"project": opts.project}),
-            )
-            .await?;
+            let target_state =
+                smoke_preflight_target_ready(find_project(projects.as_ref(), &opts.project));
+            let (show_changes, hygiene) = if target_state.ready {
+                let show_changes = call_runtime_tool(
+                    &opts.common.server_url,
+                    token.as_deref(),
+                    "show_changes",
+                    json!({"project": opts.project, "include_diff": false}),
+                )
+                .await?;
+                let hygiene = call_runtime_tool(
+                    &opts.common.server_url,
+                    token.as_deref(),
+                    "workspace_hygiene_check",
+                    json!({"project": opts.project}),
+                )
+                .await?;
+                (show_changes, hygiene)
+            } else {
+                (None, None)
+            };
             let report = ops_smoke_preflight_report(
                 &opts.common.server_url,
                 &opts.project,
@@ -412,11 +419,26 @@ pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) ->
     let total = projects_list.len();
     let online = projects_list
         .iter()
-        .filter(|project| project_connected(project))
+        .filter(|project| project_online(project))
+        .count();
+    let disconnected = projects_list
+        .iter()
+        .filter(|project| !project_connected(project))
+        .count();
+    let stale = projects_list
+        .iter()
+        .filter(|project| project_agent_status(project).as_deref() == Some("stale"))
         .count();
     let recommended = projects_list
         .iter()
         .filter(|project| project_bool(project, "/capabilities/recommended_for_smoke"))
+        .count();
+    let recommended_smoke_offline = projects_list
+        .iter()
+        .filter(|project| {
+            project_bool(project, "/capabilities/recommended_for_smoke")
+                && (!project_online(project))
+        })
         .count();
     if total == 0 {
         verdict.fail_reason(
@@ -435,10 +457,31 @@ pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) ->
             "choose a git-backed safe smoke project or register one",
         );
     }
+    if disconnected > 0 {
+        verdict.warn_reason(
+            format!("disconnected_projects:{}", disconnected),
+            "inspect disconnected projects and restart their owning agents if needed",
+        );
+    }
+    if stale > 0 {
+        verdict.warn_reason(
+            format!("stale_projects:{}", stale),
+            "inspect stale projects with ops agents",
+        );
+    }
+    if recommended_smoke_offline > 0 {
+        verdict.warn_reason(
+            format!("recommended_smoke_offline:{}", recommended_smoke_offline),
+            "start the recommended smoke project agent or select another connected git project",
+        );
+    }
     let summary = json!({
         "count": total,
         "online_count": online,
+        "disconnected_count": disconnected,
+        "stale_count": stale,
         "recommended_for_smoke_count": recommended,
+        "recommended_smoke_offline_count": recommended_smoke_offline,
         "projects": compact_projects(&projects_list),
     });
     OpsReport {
@@ -461,6 +504,7 @@ pub(crate) fn ops_smoke_preflight_report(
     let project = projects_list
         .iter()
         .find(|project| project.get("id").and_then(Value::as_str) == Some(project_id));
+    let target_state = smoke_preflight_target_ready(project);
     let active_jobs = runtime
         .and_then(|value| value.pointer("/jobs/active_count"))
         .and_then(Value::as_u64);
@@ -473,13 +517,19 @@ pub(crate) fn ops_smoke_preflight_report(
 
     match project {
         Some(project) => {
-            if !project_connected(project) {
+            if !target_state.connected {
                 verdict.fail_reason(
-                    "project_offline",
+                    "project_disconnected",
                     "start the owning agent and wait for the project to reconnect",
                 );
             }
-            if !project_bool(project, "/capabilities/git_available") {
+            if !target_state.agent_online {
+                verdict.fail_reason(
+                    "project_offline",
+                    "start the owning agent and wait for the project status to become online",
+                );
+            }
+            if !target_state.git_available {
                 verdict.fail_reason(
                     "project_git_unavailable",
                     "select a git-backed project for deploy smoke preflight",
@@ -489,6 +539,12 @@ pub(crate) fn ops_smoke_preflight_report(
                 verdict.warn_reason(
                     "project_not_recommended_for_smoke",
                     "prefer a project with recommended_for_smoke=true",
+                );
+            }
+            if !project_bool(project, "/capabilities/safe_smoke_project") {
+                verdict.warn_reason(
+                    "project_not_safe_smoke_project",
+                    "prefer a project with safe_smoke_project=true",
                 );
             }
         }
@@ -502,45 +558,49 @@ pub(crate) fn ops_smoke_preflight_report(
         .and_then(|value| value.get("clean"))
         .and_then(Value::as_bool);
     let show_verdict = verdict_status(show_changes);
-    if show_clean != Some(true) {
-        verdict.fail_reason(
-            "workspace_dirty",
-            "review show_changes output and clean or commit workspace changes",
-        );
-    }
-    if show_verdict.as_deref() == Some("fail") || show_verdict.is_none() {
-        verdict.fail_reason(
-            format!(
-                "show_changes_verdict:{}",
-                show_verdict.as_deref().unwrap_or("unknown")
-            ),
-            "rerun show_changes directly and inspect the failure",
-        );
+    if target_state.ready {
+        if show_clean != Some(true) {
+            verdict.fail_reason(
+                "workspace_dirty",
+                "review show_changes output and clean or commit workspace changes",
+            );
+        }
+        if show_verdict.as_deref() == Some("fail") || show_verdict.is_none() {
+            verdict.fail_reason(
+                format!(
+                    "show_changes_verdict:{}",
+                    show_verdict.as_deref().unwrap_or("unknown")
+                ),
+                "rerun show_changes directly and inspect the failure",
+            );
+        }
     }
 
     let hygiene_clean = hygiene
         .and_then(|value| value.get("clean"))
         .and_then(Value::as_bool);
     let hygiene_verdict = verdict_status(hygiene);
-    if hygiene_clean != Some(true) {
-        verdict.fail_reason(
-            "hygiene_not_clean",
-            "review workspace_hygiene_check findings before deploy smoke",
-        );
-    }
-    if hygiene_verdict.as_deref() == Some("fail") || hygiene_verdict.is_none() {
-        verdict.fail_reason(
-            format!(
-                "hygiene_verdict:{}",
-                hygiene_verdict.as_deref().unwrap_or("unknown")
-            ),
-            "rerun workspace_hygiene_check directly and inspect the failure",
-        );
-    } else if hygiene_verdict.as_deref() == Some("warn") {
-        verdict.warn_reason(
-            "hygiene_warnings_present",
-            "review low-severity hygiene findings before deployment",
-        );
+    if target_state.ready {
+        if hygiene_clean != Some(true) {
+            verdict.fail_reason(
+                "hygiene_not_clean",
+                "review workspace_hygiene_check findings before deploy smoke",
+            );
+        }
+        if hygiene_verdict.as_deref() == Some("fail") || hygiene_verdict.is_none() {
+            verdict.fail_reason(
+                format!(
+                    "hygiene_verdict:{}",
+                    hygiene_verdict.as_deref().unwrap_or("unknown")
+                ),
+                "rerun workspace_hygiene_check directly and inspect the failure",
+            );
+        } else if hygiene_verdict.as_deref() == Some("warn") {
+            verdict.warn_reason(
+                "hygiene_warnings_present",
+                "review low-severity hygiene findings before deployment",
+            );
+        }
     }
 
     let project_summary = project.map(compact_project).unwrap_or_else(|| {
@@ -566,7 +626,12 @@ pub(crate) fn ops_smoke_preflight_report(
     OpsReport {
         verdict: verdict.finish(),
         summary,
-        source: smoke_preflight_source_json(server_url, runtime.and_then(runtime_commit)),
+        source: smoke_preflight_source_json(
+            server_url,
+            runtime.and_then(runtime_commit),
+            show_changes.is_some(),
+            hygiene.is_some(),
+        ),
     }
 }
 
@@ -781,17 +846,24 @@ fn source_json(server_url: &str, runtime_commit: Option<String>, tool: &str) -> 
     })
 }
 
-fn smoke_preflight_source_json(server_url: &str, runtime_commit: Option<String>) -> Value {
+fn smoke_preflight_source_json(
+    server_url: &str,
+    runtime_commit: Option<String>,
+    called_show_changes: bool,
+    called_hygiene: bool,
+) -> Value {
+    let mut tools = vec![json!("runtime_status"), json!("list_projects")];
+    if called_show_changes {
+        tools.push(json!("show_changes"));
+    }
+    if called_hygiene {
+        tools.push(json!("workspace_hygiene_check"));
+    }
     json!({
         "server_url": server_url,
         "runtime_commit": runtime_commit,
         "tool": "runtime_status",
-        "tools": [
-            "runtime_status",
-            "list_projects",
-            "show_changes",
-            "workspace_hygiene_check"
-        ],
+        "tools": tools,
     })
 }
 
@@ -853,6 +925,17 @@ fn project_entries(projects: Option<&Value>) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn find_project<'a>(projects: Option<&'a Value>, project_id: &str) -> Option<&'a Value> {
+    projects
+        .and_then(|value| value.get("projects"))
+        .and_then(Value::as_array)
+        .and_then(|projects| {
+            projects
+                .iter()
+                .find(|project| project.get("id").and_then(Value::as_str) == Some(project_id))
+        })
+}
+
 fn compact_projects(projects: &[Value]) -> Vec<Value> {
     projects.iter().map(compact_project).collect()
 }
@@ -876,7 +959,21 @@ fn project_connected(project: &Value) -> bool {
         .get("connected")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        || project.get("agent_status").and_then(Value::as_str) == Some("online")
+}
+
+fn project_agent_status(project: &Value) -> Option<String> {
+    project
+        .get("agent_status")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn project_agent_online(project: &Value) -> bool {
+    project_agent_status(project).as_deref() == Some("online")
+}
+
+fn project_online(project: &Value) -> bool {
+    project_connected(project) && project_agent_online(project)
 }
 
 fn project_bool(project: &Value, pointer: &str) -> bool {
@@ -891,6 +988,34 @@ fn verdict_status(value: Option<&Value>) -> Option<String> {
         .and_then(|value| value.pointer("/verdict/status"))
         .and_then(Value::as_str)
         .map(ToString::to_string)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SmokePreflightTargetState {
+    ready: bool,
+    connected: bool,
+    agent_online: bool,
+    git_available: bool,
+}
+
+fn smoke_preflight_target_ready(project: Option<&Value>) -> SmokePreflightTargetState {
+    let Some(project) = project else {
+        return SmokePreflightTargetState {
+            ready: false,
+            connected: false,
+            agent_online: false,
+            git_available: false,
+        };
+    };
+    let connected = project_connected(project);
+    let agent_online = project_agent_online(project);
+    let git_available = project_bool(project, "/capabilities/git_available");
+    SmokePreflightTargetState {
+        ready: connected && agent_online && git_available,
+        connected,
+        agent_online,
+        git_available,
+    }
 }
 
 fn display_value(value: &Value) -> String {

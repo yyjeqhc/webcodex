@@ -1,6 +1,6 @@
 # ToolDefinition drift map
 
-Round 1 inventory for ToolDefinition source-of-truth convergence. This map is a
+Round 2 status for ToolDefinition source-of-truth convergence. This map is a
 boundary document only: it records the current declaration sources, guard tests,
 and next convergence steps without changing runtime behavior.
 
@@ -28,8 +28,8 @@ Current inventory classification:
   model-facing `ToolSpec` rows/order, compact `tool_manifest` entries, generic
   `callRuntimeTool` accepted-name text, flattened GPT Action argument discovery.
 - hand-written but contract-tested: `tool_name()`, input schemas, output
-  schemas, OpenAPI operation exposure, MCP `tools/list` visibility, category and
-  recommended-flow discovery.
+  schemas, OpenAPI operation exposure, MCP `tools/list` visibility, and curated
+  discovery/recommended-flow placement.
 - hand-written and weakly guarded: dispatch routing and all ToolSpec
   descriptions beyond targeted description checks.
 - legacy fallback only: safe unknown metadata and explicit `delete_files`
@@ -57,8 +57,9 @@ Current inventory classification:
 | MCP annotations | `registry/annotations.rs` from `runtime_tool_metadata()` | Yes for runtime names | Yes: `schema/annotations.rs`, `schema/specs.rs`, `mcp` tests | MCP clients see wrong read-only/destructive/open-world hints | Keep definition-backed generation and MCP parity tests |
 | OpenAPI operation exposure | Hand-written `src/openapi.rs` paths and schemas | Partially for generic accepted names | Yes: `src/openapi.rs` tests, `schema/migration.rs` | Dedicated Actions count or visibility changes unexpectedly | Keep operation count 25; do not generate operations yet |
 | GPT Action flattened args | Derived from ToolSpec input schemas plus definition extra args, inserted in `src/openapi.rs` | Partially | Yes: `schema/flattened_args.rs`, `src/openapi.rs` tests | `callRuntimeTool` loses required top-level fields or loosens schema | Round 3: assert every accepted flattened arg has a declared source |
-| tool_manifest categories | Compact manifest uses `runtime_tool_category()`; discovery groups live in `tool_catalog.rs` | Partially | Yes: `schema/discovery.rs` | Tools appear in wrong category, multiple categories, hidden categories, or no category | Round 2: tighten compact and discovery-group category parity |
-| recommended flows | `tool_catalog.rs` re-exported through definition layer | Partially | Yes: `schema/discovery.rs` | Flow references hidden/unknown tools or stale recommended paths | Round 2: keep known-visible checks and consider per-flow purpose coverage |
+| tool_manifest categories | Compact manifest uses `runtime_tool_category()`; discovery groups live in `tool_catalog.rs` | Partially | Yes: `schema/discovery.rs` checks ToolDefinition category membership, compact manifest vs bounded `list_tools` parity, category filters, and hidden exclusions | Tools appear in wrong category, multiple categories, hidden categories, or no category | Round 2 complete: keep parity/filter guards while categories remain hand-written |
+| list_tools discovery groups | `TOOL_DISCOVERY_GROUPS` in `tool_catalog.rs`, rendered by `registered_tool_categories()` for full discovery groups | Partially | Yes: `schema/discovery.rs` checks group keys, known/model-visible members, hidden exclusions, explicit cross-list allowlist, and group/category exception allowlist | Discovery categories drift away from known model-visible tools or expose hidden/runtime-only names | Keep workflow cross-listing explicit until group placement is generated or replaced |
+| recommended flows | `tool_catalog.rs` re-exported through definition layer | Partially | Yes: `schema/discovery.rs` checks list summaries, compact manifest name/purpose/tool order, known/model-visible tool refs, category presence, omission when disabled, and hidden exclusions | Flow references hidden/unknown tools or stale recommended paths | Round 2 complete: keep structured manifest parity guard |
 | metadata fallback | `metadata.rs` for unknown and `delete_files`; policy facade in `tool_policy.rs` | Legacy fallback only | Yes: `schema/migration.rs`, `tests/metadata.rs` | New runtime metadata bypasses ToolDefinition | Round 4: concentrate fallback boundary and prevent new runtime fallback names |
 | permission risk labels | `ToolDefinition` policy plus metadata-derived fallback for non-runtime names | Yes for runtime names | Yes: `schema/policy.rs`, `schema/migration.rs` | Write/shell/destructive tools receive wrong permission prompt or guard treatment | Keep facade tests; clean fallback only after route metadata is separated |
 | session/current-session behavior | `ToolDefinition` policy facades plus `ToolCall` accessors and dispatch/session logic | Partially | Yes: `schema/policy.rs`, session tests | Current-session fallback or explicit `session_id` behavior changes silently | Add accessor-policy drift tests before moving session behavior into definitions |
@@ -73,16 +74,29 @@ Current inventory classification:
 - Do not remove metadata fallback yet.
 - Do not remove `delete_files` compatibility metadata yet.
 - Do not change runtime handlers, dispatch behavior, OpenAPI operation exposure,
-  MCP names, auth policy, guard behavior, or session semantics as part of Round 1.
+  MCP names, auth policy, guard behavior, or session semantics as part of this
+  drift-guard work.
+
+## Round 2 discovery guard status
+
+Round 2 added tests only; it did not change runtime, server, agent, auth,
+permission, guard, session, OpenAPI, MCP, ToolCall parser, or handler behavior.
+
+Current model-facing discovery shapes are intentionally split:
+
+- compact `tool_manifest.categories` and bounded `list_tools.categories` are
+  ToolDefinition category maps.
+- full discovery groups from `registered_tool_categories()` are curated workflow
+  groups declared in `TOOL_DISCOVERY_GROUPS`.
+
+The workflow groups intentionally cross-list some tools, for example shared
+review/git/checkpoint tools and the `workflow` category tools
+`start_coding_task` and `finish_coding_task`. The exact cross-listed tools and
+the group/category exception map are explicit allowlists in
+`src/tool_runtime/tests/schema/discovery.rs`, so future drift must be reviewed
+rather than silently absorbed.
 
 ## Recommended next rounds
-
-### Round 2: discovery/tool_manifest drift tightening
-
-Focus on model-facing discovery only. Tighten tests around compact
-`tool_manifest` category membership, `list_tools` category groups, category
-filtering, recommended-flow tool references, and hidden/runtime-only exclusions.
-Do not change handlers or parser generation.
 
 ### Round 3: input schema / flattened args drift tests
 

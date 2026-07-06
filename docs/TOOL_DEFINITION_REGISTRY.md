@@ -53,6 +53,11 @@ Recommended-flow entries live in the definition-layer tool catalog and render
 into both the short `list_tools` hints and the structured `tool_manifest` flow
 list, but they are still curated rather than generated from per-tool
 definitions.
+Round 2 discovery drift guards are tracked in
+`docs/TOOL_DEFINITION_DRIFT_MAP.md`; they cover compact manifest and bounded
+`list_tools` category parity, category filtering, recommended-flow manifest
+parity, hidden/runtime-only exclusions, and bounded truncation metadata without
+changing runtime behavior.
 Session ledger classification, session guard checks, cross-project session
 escape checks, validation-output capture classification, and dev permission
 risk labels now route through `ToolDefinition` semantic helpers/facades instead

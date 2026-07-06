@@ -10,6 +10,7 @@ pub(crate) fn usage() -> &'static str {
        pairing create                                   Create a temporary client pairing code\n\
        client enroll                                    Enroll a client from a pairing code\n\
        doctor                                           Run non-destructive diagnostics\n\
+       ops status|agents|projects|smoke-preflight       Read-only operator workflow checks\n\
        user/users create/list                             Manage users\n\
        token generate                                   Generate a local wc_pat_* value and hash\n\
        token create-local                               Locally create and register a wc_pat_* with an account credential\n\
@@ -158,6 +159,80 @@ pub(crate) fn doctor_usage() -> &'static str {
      agent.toml locally and checks projects_dir, project paths, and\n\
      shell_profile resolution without contacting the server. It never prints\n\
      init_script bodies or env values.\n"
+}
+
+pub(crate) fn ops_usage() -> &'static str {
+    "Usage: webcodex-cli ops <COMMAND>\n\n\
+     Read-only operator workflow checks for WebCodex.\n\n\
+     Commands:\n\
+       status                  Summarize runtime, tools, jobs, agents, and projects\n\
+       agents                  Show compact agent fleet status\n\
+       projects                Show compact project inventory and smoke suitability\n\
+       smoke-preflight         Check a project before deploy smoke validation\n\n\
+     Common flags:\n\
+       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --url URL               Alias for --server-url\n\
+       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH       Read bearer token from file\n\
+       --token TOKEN           Bearer token input; never printed\n\
+       --json                  Print machine-readable output\n\
+       -h, --help              Print help and exit\n\n\
+     These commands are read-only. They do not run jobs, start shell commands,\n\
+     create sessions, write files, or print token/env values.\n"
+}
+
+pub(crate) fn ops_status_usage() -> &'static str {
+    "Usage: webcodex-cli ops status [OPTIONS]\n\n\
+     Summarize runtime, tools, jobs, agents, and project health.\n\n\
+     Options:\n\
+       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --url URL               Alias for --server-url\n\
+       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH       Read bearer token from file\n\
+       --token TOKEN           Bearer token input; never printed\n\
+       --json                  Print machine-readable output\n\
+       -h, --help              Print help and exit\n"
+}
+
+pub(crate) fn ops_agents_usage() -> &'static str {
+    "Usage: webcodex-cli ops agents [OPTIONS]\n\n\
+     Show compact read-only agent fleet status.\n\n\
+     Options:\n\
+       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --url URL               Alias for --server-url\n\
+       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH       Read bearer token from file\n\
+       --token TOKEN           Bearer token input; never printed\n\
+       --json                  Print machine-readable output\n\
+       -h, --help              Print help and exit\n"
+}
+
+pub(crate) fn ops_projects_usage() -> &'static str {
+    "Usage: webcodex-cli ops projects [OPTIONS]\n\n\
+     Show compact read-only project inventory and smoke suitability.\n\n\
+     Options:\n\
+       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --url URL               Alias for --server-url\n\
+       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH       Read bearer token from file\n\
+       --token TOKEN           Bearer token input; never printed\n\
+       --json                  Print machine-readable output\n\
+       -h, --help              Print help and exit\n"
+}
+
+pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
+    "Usage: webcodex-cli ops smoke-preflight --project PROJECT_ID [OPTIONS]\n\n\
+     Read-only deploy smoke preflight for one project.\n\n\
+     Options:\n\
+       --project PROJECT_ID    Runtime project id to check\n\
+       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --url URL               Alias for --server-url\n\
+       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH       Read bearer token from file\n\
+       --token TOKEN           Bearer token input; never printed\n\
+       --json                  Print machine-readable output\n\
+       -h, --help              Print help and exit\n\n\
+     This command calls only read-only status/project/workspace inspection APIs.\n"
 }
 
 pub(crate) fn server_usage() -> &'static str {

@@ -45,14 +45,16 @@ use webcodex_cli::{
     client_profile_projects_dir, client_profile_service_file, client_profile_user_token_file,
     client_usage, connect_usage, default_client_output_dir_for_profile, default_server_paths,
     discover_binary, discover_named_binary_absolute, discover_webcodex_binary, doctor_usage,
-    is_systemd_platform, pairing_create_usage, pairing_usage, query_systemd_service_status,
+    is_systemd_platform, ops_agents_usage, ops_projects_usage, ops_smoke_preflight_usage,
+    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, query_systemd_service_status,
     read_optional_token, render_token_generate, resolve_doctor_general_token,
     run_agent_install_service, run_agent_status, run_agent_token_create_local, run_client_enroll,
-    run_connect, run_doctor, run_local_agent_doctor, run_pairing_create, run_quic_doctor_checks,
-    run_server_init, run_server_install_service, run_server_status, run_server_up,
-    run_setup_single_user, run_token_create_local, server_init_usage, server_install_service_usage,
-    server_status_usage, server_up_usage, server_usage, usage, validate_client_profile,
-    write_secret_file, write_text_file, ServerStatusOptions,
+    run_connect, run_doctor, run_local_agent_doctor, run_ops_command, run_pairing_create,
+    run_quic_doctor_checks, run_server_init, run_server_install_service, run_server_status,
+    run_server_up, run_setup_single_user, run_token_create_local, server_init_usage,
+    server_install_service_usage, server_status_usage, server_up_usage, server_usage, usage,
+    validate_client_profile, write_secret_file, write_text_file, OpsCommand, OpsCommonOptions,
+    OpsSmokePreflightOptions, ServerStatusOptions,
 };
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
 const SETUP_AGENT_SCOPES: &[&str] = &[
@@ -73,6 +75,7 @@ enum CliAction {
     PairingCreate(PairingCreateOptions),
     ClientEnroll(ClientEnrollOptions),
     Doctor(DoctorOptions),
+    Ops(OpsCommand),
     AgentInstallService(AgentInstallServiceOptions),
     AgentStatus(AgentStatusOptions),
     ServerInit(ServerInitOptions),
@@ -296,6 +299,7 @@ where
         "pairing" => parse_pairing_subcommand(&args[1..]),
         "client" => parse_client_subcommand(&args[1..]),
         "doctor" => parse_doctor_command(&args[1..]),
+        "ops" => parse_ops_subcommand(&args[1..]),
         "agent" => parse_agent_subcommand(&args[1..]),
         "agent-token" | "agent-tokens" => {
             parse_agent_token_subcommand(args[0].as_str(), &args[1..])
@@ -664,6 +668,158 @@ fn parse_client_subcommand(args: &[String]) -> CliAction {
             stderr: format!("unknown client subcommand: {}\n", other),
         },
     }
+}
+
+fn parse_ops_subcommand(args: &[String]) -> CliAction {
+    if args.is_empty() {
+        return CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("{}\n", ops_usage()),
+        };
+    }
+    match args[0].as_str() {
+        "--help" | "-h" => CliAction::Exit {
+            code: 0,
+            stdout: ops_usage().to_string(),
+            stderr: String::new(),
+        },
+        "status" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: ops_status_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_ops_common(&args[1..], "status") {
+                Ok(opts) => CliAction::Ops(OpsCommand::Status(opts)),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        "agents" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: ops_agents_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_ops_common(&args[1..], "agents") {
+                Ok(opts) => CliAction::Ops(OpsCommand::Agents(opts)),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        "projects" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: ops_projects_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_ops_common(&args[1..], "projects") {
+                Ok(opts) => CliAction::Ops(OpsCommand::Projects(opts)),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        "smoke-preflight" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: ops_smoke_preflight_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_ops_smoke_preflight(&args[1..]) {
+                Ok(opts) => CliAction::Ops(OpsCommand::SmokePreflight(opts)),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        other => CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("unknown ops subcommand: {}\n", other),
+        },
+    }
+}
+
+fn default_ops_common_options() -> OpsCommonOptions {
+    OpsCommonOptions {
+        server_url: "http://127.0.0.1:8080".to_string(),
+        env_file: None,
+        token_file: None,
+        token: None,
+        json: false,
+    }
+}
+
+fn parse_ops_common(args: &[String], command: &str) -> Result<OpsCommonOptions, String> {
+    let mut opts = default_ops_common_options();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--server-url" | "--url" => opts.server_url = next_value(&mut iter, arg)?,
+            "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token" => opts.token = Some(next_value(&mut iter, arg)?),
+            "--json" => opts.json = true,
+            other => return Err(format!("unknown ops {} flag: {}", command, other)),
+        }
+    }
+    validate_ops_common(&opts)
+}
+
+fn validate_ops_common(opts: &OpsCommonOptions) -> Result<OpsCommonOptions, String> {
+    if opts.server_url.trim().is_empty() {
+        return Err("--server-url cannot be empty".to_string());
+    }
+    if opts
+        .token
+        .as_ref()
+        .is_some_and(|token| token.trim().is_empty())
+    {
+        return Err("--token cannot be empty".to_string());
+    }
+    Ok(opts.clone())
+}
+
+fn parse_ops_smoke_preflight(args: &[String]) -> Result<OpsSmokePreflightOptions, String> {
+    let mut common = default_ops_common_options();
+    let mut project = String::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--project" => project = next_value(&mut iter, arg)?,
+            "--server-url" | "--url" => common.server_url = next_value(&mut iter, arg)?,
+            "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token" => common.token = Some(next_value(&mut iter, arg)?),
+            "--json" => common.json = true,
+            other => return Err(format!("unknown ops smoke-preflight flag: {}", other)),
+        }
+    }
+    common = validate_ops_common(&common)?;
+    if project.trim().is_empty() {
+        return Err("--project is required".to_string());
+    }
+    Ok(OpsSmokePreflightOptions { common, project })
 }
 
 fn parse_server_subcommand(args: &[String]) -> CliAction {
@@ -1660,6 +1816,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!();
                 }
                 std::process::exit(if opts.strict && has_fail { 1 } else { 0 });
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::Ops(command) => match run_ops_command(command).await {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
             }
             Err(stderr) => {
                 eprintln!("{}", stderr);

@@ -4,6 +4,7 @@ pub(crate) mod doctor;
 pub(crate) mod doctor_support;
 pub(crate) mod env;
 pub(crate) mod http;
+pub(crate) mod ops;
 pub(crate) mod output;
 pub(crate) mod pairing;
 pub(crate) mod profiles;
@@ -40,6 +41,7 @@ pub(crate) use http::{
     fetch_runtime_status, http_get_json_status, http_post_json_status, post_json_authed,
     post_json_unauthed, ApiCall,
 };
+pub(crate) use ops::{run_ops_command, OpsCommand, OpsCommonOptions, OpsSmokePreflightOptions};
 #[cfg(test)]
 pub(crate) use output::RevisionComparison;
 pub(crate) use output::{
@@ -75,7 +77,8 @@ pub(crate) use tokens::{
 };
 pub(crate) use usage::{
     agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
-    client_enroll_usage, client_usage, connect_usage, doctor_usage, pairing_create_usage,
-    pairing_usage, server_init_usage, server_install_service_usage, server_status_usage,
-    server_up_usage, server_usage, usage,
+    client_enroll_usage, client_usage, connect_usage, doctor_usage, ops_agents_usage,
+    ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
+    pairing_create_usage, pairing_usage, server_init_usage, server_install_service_usage,
+    server_status_usage, server_up_usage, server_usage, usage,
 };

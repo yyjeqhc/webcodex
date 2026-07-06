@@ -85,6 +85,11 @@ fn tool_specs_derive_contract_fields_from_name() {
 fn tool_specs_input_schemas_are_objects() {
     for spec in registered_tool_specs() {
         let schema = &spec.input_schema;
+        assert!(
+            schema.is_object(),
+            "tool '{}' must have an input_schema object",
+            spec.name
+        );
         assert_eq!(
             schema["type"].as_str(),
             Some("object"),
@@ -101,6 +106,130 @@ fn tool_specs_input_schemas_are_objects() {
             "tool '{}' input schema must have required array",
             spec.name
         );
+        assert_eq!(
+            schema["additionalProperties"], false,
+            "tool '{}' input schema must reject undeclared top-level properties",
+            spec.name
+        );
+    }
+}
+
+#[test]
+fn tool_specs_input_schema_fields_are_declared_and_safe() {
+    for spec in registered_tool_specs() {
+        let properties = input_schema_properties(&spec);
+        let required = spec.input_schema["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{} input schema required array", spec.name));
+        let mut seen_required = BTreeSet::new();
+
+        for field in required {
+            let field = field
+                .as_str()
+                .unwrap_or_else(|| panic!("{} required entries must be strings", spec.name));
+            assert!(
+                properties.contains_key(field),
+                "{} required field '{}' must be declared in input_schema.properties",
+                spec.name,
+                field
+            );
+            assert!(
+                seen_required.insert(field),
+                "{} required field '{}' must not be duplicated",
+                spec.name,
+                field
+            );
+        }
+
+        assert_schema_property_names_are_safe(&spec.name, &spec.input_schema, "input_schema");
+    }
+}
+
+#[test]
+fn mcp_tools_list_exposes_registered_tool_spec_input_schemas() {
+    let mcp_source = include_str!("../../../mcp.rs");
+    assert!(
+        mcp_source.contains("\"tools\": registered_tool_specs()"),
+        "MCP tools/list should expose registered ToolSpec rows directly so inputSchema stays in parity"
+    );
+
+    let specs = registered_tool_specs();
+    let payload = json!({ "tools": &specs });
+    let tools = payload["tools"].as_array().expect("MCP tools/list tools");
+    assert_eq!(tools.len(), 66, "MCP model-facing tool count");
+    assert_eq!(
+        tools.len(),
+        specs.len(),
+        "MCP tools/list count must match registered ToolSpec count"
+    );
+
+    for (tool, spec) in tools.iter().zip(specs.iter()) {
+        assert_eq!(
+            tool["name"].as_str(),
+            Some(spec.name.as_str()),
+            "MCP tool order/name must match registered ToolSpec"
+        );
+        assert_eq!(
+            tool["inputSchema"]["required"], spec.input_schema["required"],
+            "{} MCP inputSchema required fields must match ToolSpec input_schema",
+            spec.name
+        );
+        assert_eq!(
+            tool["inputSchema"]["additionalProperties"], spec.input_schema["additionalProperties"],
+            "{} MCP inputSchema additionalProperties must match ToolSpec input_schema",
+            spec.name
+        );
+
+        let mcp_property_names = tool["inputSchema"]["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{} MCP inputSchema properties", spec.name))
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let spec_property_names = input_schema_properties(spec)
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            mcp_property_names, spec_property_names,
+            "{} MCP inputSchema property names must match ToolSpec input_schema",
+            spec.name
+        );
+    }
+
+    let mcp_names = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("MCP tool name"))
+        .collect::<BTreeSet<_>>();
+    assert!(
+        !mcp_names.contains("run_codex"),
+        "MCP tools/list must not expose hidden run_codex"
+    );
+    assert!(
+        !mcp_names.contains("delete_files"),
+        "MCP tools/list must not expose legacy delete_files metadata"
+    );
+}
+
+#[test]
+fn tool_specs_required_fields_match_declared_properties() {
+    for spec in registered_tool_specs() {
+        let properties = input_schema_properties(&spec);
+        let required = spec.input_schema["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{} input schema required array", spec.name));
+
+        for field in required {
+            let field = field
+                .as_str()
+                .unwrap_or_else(|| panic!("{} required entry must be string", spec.name));
+            assert!(
+                properties.contains_key(field),
+                "{} required field '{}' must exist in properties",
+                spec.name,
+                field
+            );
+        }
     }
 }
 
@@ -334,5 +463,69 @@ fn tool_specs_descriptions_fit_gpt_action_limit() {
             spec.name,
             spec.description.chars().count()
         );
+    }
+}
+
+const SENSITIVE_INPUT_FIELD_NAMES: &[&str] = &[
+    "token",
+    "secret",
+    "env",
+    "environment",
+    "credential",
+    "password",
+];
+
+fn input_schema_properties(spec: &ToolSpec) -> &serde_json::Map<String, Value> {
+    spec.input_schema["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{} input schema properties object", spec.name))
+}
+
+fn assert_schema_property_names_are_safe(tool_name: &str, schema: &Value, path: &str) {
+    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+        for (field, property_schema) in properties {
+            assert!(
+                !field.is_empty(),
+                "{tool_name} {path} property names must be non-empty"
+            );
+            assert_ne!(
+                field, TOOL_CALL_TOOL_FIELD,
+                "{tool_name} {path}.{field} must not expose the generic callRuntimeTool wrapper field"
+            );
+            let lower = field.to_ascii_lowercase();
+            assert!(
+                !SENSITIVE_INPUT_FIELD_NAMES.contains(&lower.as_str()),
+                "{tool_name} {path}.{field} looks like a sensitive input field; stop and review before exposing it"
+            );
+            if field.starts_with("test_")
+                || matches!(
+                    field.as_str(),
+                    "expected_failure" | "expected_failure_kind" | "assertion_name"
+                )
+            {
+                assert!(
+                    crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS
+                        .contains(&field.as_str()),
+                    "{tool_name} {path}.{field} must use the shared testing metadata field allowlist"
+                );
+            }
+
+            let nested_path = format!("{path}.properties.{field}");
+            assert_schema_property_names_are_safe(tool_name, property_schema, &nested_path);
+        }
+    }
+
+    if let Some(items) = schema.get("items") {
+        let nested_path = format!("{path}.items");
+        assert_schema_property_names_are_safe(tool_name, items, &nested_path);
+    }
+
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(schemas) = schema.get(key).and_then(Value::as_array) {
+            for (idx, nested) in schemas.iter().enumerate() {
+                let nested_path = format!("{path}.{key}[{idx}]");
+                assert_schema_property_names_are_safe(tool_name, nested, &nested_path);
+            }
+        }
     }
 }

@@ -334,6 +334,10 @@ Expected checks:
 - current-session fallback eligibility is explicit and keeps control tools,
   session-creation tools, and required-business-session tools out of implicit
   fallback.
+- Round 3 drift guards pin hand-written input schema structure, required/property
+  parity, GPT Action flattened args, generic `ToolCallRequest`, MCP serialized
+  `inputSchema` parity, and ToolCall accepted-name gating; see
+  `docs/TOOL_DEFINITION_DRIFT_MAP.md`.
 
 ### Phase 3: generate discovery mirrors from definitions
 

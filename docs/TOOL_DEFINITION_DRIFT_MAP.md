@@ -1,6 +1,6 @@
 # ToolDefinition drift map
 
-Round 2 status for ToolDefinition source-of-truth convergence. This map is a
+Round 3 status for ToolDefinition source-of-truth convergence. This map is a
 boundary document only: it records the current declaration sources, guard tests,
 and next convergence steps without changing runtime behavior.
 
@@ -28,10 +28,10 @@ Current inventory classification:
   model-facing `ToolSpec` rows/order, compact `tool_manifest` entries, generic
   `callRuntimeTool` accepted-name text, flattened GPT Action argument discovery.
 - hand-written but contract-tested: `tool_name()`, input schemas, output
-  schemas, OpenAPI operation exposure, MCP `tools/list` visibility, and curated
-  discovery/recommended-flow placement.
-- hand-written and weakly guarded: dispatch routing and all ToolSpec
-  descriptions beyond targeted description checks.
+  schemas, OpenAPI operation exposure, MCP `tools/list` visibility/input schema
+  exposure, and curated discovery/recommended-flow placement.
+- hand-written and weakly guarded: dispatch routing and broad ToolSpec
+  description coverage beyond targeted description checks.
 - legacy fallback only: safe unknown metadata and explicit `delete_files`
   compatibility metadata.
 
@@ -48,15 +48,16 @@ Current inventory classification:
 | Surface / concern | Current source | Backed by ToolDefinition? | Guard test exists? | Risk if drift occurs | Recommended next action |
 | --- | --- | --- | --- | --- | --- |
 | ToolDefinition known names | `src/tool_runtime/tool_definition.rs` grouped definitions | Yes | Yes: `schema/definitions.rs`, `schema/migration.rs` | Missing or extra runtime name changes discovery, parser acceptance, or policy | Keep as canonical; fail counts/order on every runtime tool change |
-| ToolCall parser accepted names | `ToolCall::from_tool_name()` gates on `lookup_tool_definition()`, then serde parses `ToolCall` | Partially | Yes: `schema/migration.rs`, `tests/tool_call.rs` | Definition accepts a name whose enum variant or args do not parse | Round 4+ only: generate or table-drive parser parity after dispatch coverage is stronger |
+| ToolCall parser accepted names | `ToolCall::from_tool_name()` gates on `lookup_tool_definition()`, then serde parses `ToolCall` | Partially | Yes: `schema/definitions.rs`, `schema/migration.rs`, `tests/tool_call.rs` | Definition accepts a name whose enum variant or args do not parse | Round 3 complete: keep accepted-name gate parity; do not generate parser yet |
 | `tool_name()` | Manual match in `src/tool_runtime/tool_call.rs` | No | Yes: `schema/definitions.rs`, `schema/migration.rs` | Parsed calls record, dispatch, audit, or policy under wrong names | Keep mirror tests; do not generate in Round 1 |
 | dispatch handlers | Manual match in `src/tool_runtime/dispatch.rs` plus domain dispatchers | No | Partial domain coverage; no full generated dispatch mirror | New tool can parse but route to wrong handler, miss guards, or miss auth behavior | Add non-invasive dispatch inventory tests before any generation |
 | ToolSpec descriptions | Hand-written per registry module | No | Partial: `schema/descriptions.rs` spot checks | Model guidance can become stale or unsafe | Round 2 can add concise required-description invariants for high-risk tools |
-| input schemas | Hand-written `src/tool_runtime/registry/input_schemas/*` | No | Yes: `schema/specs.rs`, `schema/flattened_args.rs`, domain schema tests | Parser, MCP, and GPT Action flattened args drift apart | Round 3: add input-schema and flattened-arg drift matrix tests |
+| input schemas | Hand-written `src/tool_runtime/registry/input_schemas/*` | No | Yes: `schema/specs.rs`, `schema/flattened_args.rs`, domain schema tests | Parser, MCP, and GPT Action flattened args drift apart | Round 3 complete: keep structure, required/property, safety-name, and additionalProperties guards |
 | output schemas | Hand-written `src/tool_runtime/registry/output_schemas/*`, attached by spec name | Partially | Yes: `schema/outputs.rs`, `schema/specs.rs` | Discovery returns default-only or misleading output contracts | Keep 66/66 and default-gap zero checks |
 | MCP annotations | `registry/annotations.rs` from `runtime_tool_metadata()` | Yes for runtime names | Yes: `schema/annotations.rs`, `schema/specs.rs`, `mcp` tests | MCP clients see wrong read-only/destructive/open-world hints | Keep definition-backed generation and MCP parity tests |
-| OpenAPI operation exposure | Hand-written `src/openapi.rs` paths and schemas | Partially for generic accepted names | Yes: `src/openapi.rs` tests, `schema/migration.rs` | Dedicated Actions count or visibility changes unexpectedly | Keep operation count 25; do not generate operations yet |
-| GPT Action flattened args | Derived from ToolSpec input schemas plus definition extra args, inserted in `src/openapi.rs` | Partially | Yes: `schema/flattened_args.rs`, `src/openapi.rs` tests | `callRuntimeTool` loses required top-level fields or loosens schema | Round 3: assert every accepted flattened arg has a declared source |
+| OpenAPI operation exposure | Hand-written `src/openapi.rs` paths and schemas | Partially for generic accepted names | Yes: `src/openapi.rs` tests, `schema/flattened_args.rs`, `schema/migration.rs` | Dedicated Actions count or visibility changes unexpectedly | Keep operation count 25 and strict generic `ToolCallRequest`; do not generate operations yet |
+| GPT Action flattened args | Derived from ToolSpec input schemas plus definition extra args, inserted in `src/openapi.rs` | Partially | Yes: `schema/flattened_args.rs`, `src/openapi.rs` tests | `callRuntimeTool` loses required top-level fields or loosens schema | Round 3 complete: every accepted flattened arg must have a ToolSpec or explicit wrapper source |
+| MCP `tools/list` input schema exposure | `src/mcp.rs` returns serialized `registered_tool_specs()` | Partially through `ToolSpec` | Yes: `schema/specs.rs`, `mcp` tests | MCP inputSchema properties or required fields drift from model-visible ToolSpec rows | Round 3 complete: keep serialized ToolSpec inputSchema parity guard |
 | tool_manifest categories | Compact manifest uses `runtime_tool_category()`; discovery groups live in `tool_catalog.rs` | Partially | Yes: `schema/discovery.rs` checks ToolDefinition category membership, compact manifest vs bounded `list_tools` parity, category filters, and hidden exclusions | Tools appear in wrong category, multiple categories, hidden categories, or no category | Round 2 complete: keep parity/filter guards while categories remain hand-written |
 | list_tools discovery groups | `TOOL_DISCOVERY_GROUPS` in `tool_catalog.rs`, rendered by `registered_tool_categories()` for full discovery groups | Partially | Yes: `schema/discovery.rs` checks group keys, known/model-visible members, hidden exclusions, explicit cross-list allowlist, and group/category exception allowlist | Discovery categories drift away from known model-visible tools or expose hidden/runtime-only names | Keep workflow cross-listing explicit until group placement is generated or replaced |
 | recommended flows | `tool_catalog.rs` re-exported through definition layer | Partially | Yes: `schema/discovery.rs` checks list summaries, compact manifest name/purpose/tool order, known/model-visible tool refs, category presence, omission when disabled, and hidden exclusions | Flow references hidden/unknown tools or stale recommended paths | Round 2 complete: keep structured manifest parity guard |
@@ -96,17 +97,47 @@ the group/category exception map are explicit allowlists in
 `src/tool_runtime/tests/schema/discovery.rs`, so future drift must be reviewed
 rather than silently absorbed.
 
+## Round 3 input schema / flattened args guard status
+
+Round 3 added tests/docs only; it did not generate input schemas, generate the
+`ToolCall` enum, change runtime handlers, change server/agent behavior, change
+auth/permission/guard/session semantics, or change OpenAPI/MCP exposure.
+
+The new guards cover:
+
+- every model-visible `ToolSpec.input_schema` remains an object with object
+  properties, array required fields, and top-level `additionalProperties: false`;
+- required fields are unique and declared in properties;
+- input property names are non-empty, do not use the generic wrapper `tool`
+  field, and do not introduce sensitive-looking names such as token, secret,
+  env, credential, or password;
+- common testing metadata fields remain tied to the shared metadata allowlist;
+- MCP `tools/list` continues to serialize `registered_tool_specs()` directly,
+  with serialized `inputSchema` property keys, required fields, and
+  `additionalProperties` matching `ToolSpec.input_schema`;
+- OpenAPI generic `ToolCallRequest` remains strict, requires `tool`, keeps
+  operation count at 25, and excludes hidden/runtime-only names such as
+  `run_codex` and legacy `delete_files` from accepted-name documentation;
+- GPT Action flattened top-level fields cover every model-visible ToolSpec input
+  property and every extra generic wrapper field has an explicit source;
+- `ToolCall::from_tool_name()` accepted-name gating stays aligned with
+  `ToolDefinition` names while preserving `run_codex` hidden parser-known
+  behavior and rejecting unknown names and legacy `delete_files`.
+
 ## Recommended next rounds
-
-### Round 3: input schema / flattened args drift tests
-
-Add guards that compare ToolSpec input-schema properties, required fields,
-accepted flattened args, and `ToolCallRequest.properties`. The goal is to prove
-flattened GPT Action compatibility remains explicit without generating input
-schemas.
 
 ### Round 4: metadata fallback / policy boundary cleanup
 
-Shrink the named metadata fallback boundary after route metadata is separated or
-retired. Keep `delete_files` as the only explicit non-runtime compatibility name
-until then, and keep unknown-name metadata safe and non-callable.
+Concentrate the metadata fallback boundary and policy helper ownership without
+changing behavior. Keep `delete_files` as the only explicit non-runtime
+compatibility name until route metadata is separated or retired, keep unknown
+metadata safe and non-callable, and prevent new runtime names from entering the
+metadata fallback path.
+
+### Round 5: release_check + deployed sanity
+
+After fallback/policy cleanup is stable, run release_check-style local validation
+and deployed sanity checks against the read-only/discovery surfaces. Confirm
+ToolDefinition count, model-visible `tools.count`, OpenAPI operation count,
+output schema coverage, default-only output-schema gap, hidden exclusions, and
+GPT Action/MCP discovery behavior before any release work.

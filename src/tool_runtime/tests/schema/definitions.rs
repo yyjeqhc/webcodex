@@ -237,6 +237,49 @@ fn delete_files_remains_legacy_metadata_only_not_runtime_tool() {
 }
 
 #[test]
+fn tool_call_parser_name_gate_matches_tool_definitions() {
+    use crate::tool_runtime::tool_definition::{model_hidden_tool_names, tool_definitions};
+
+    let definition_names = tool_definitions()
+        .map(|definition| definition.name)
+        .collect::<BTreeSet<_>>();
+    let known_names = known_tool_names().collect::<BTreeSet<_>>();
+    assert_eq!(
+        known_names, definition_names,
+        "ToolCall parser accepted-name gate must match ToolDefinition names"
+    );
+
+    for name in &definition_names {
+        let result = ToolCall::from_tool_name(name, Value::Null);
+        if let Err(err) = result {
+            assert!(
+                !err.contains("unknown tool"),
+                "{name} has a ToolDefinition but parser treated it as unknown: {err}"
+            );
+        }
+    }
+
+    let err = ToolCall::from_tool_name("__not_a_webcodex_tool__", Value::Null).unwrap_err();
+    assert!(
+        err.contains("unknown tool"),
+        "unknown tool names must stay rejected by the parser gate: {err}"
+    );
+    assert!(
+        ToolCall::from_tool_name(
+            "delete_files",
+            json!({"project": SAMPLE_PROJECT, "paths": []})
+        )
+        .is_err(),
+        "delete_files must remain legacy route metadata only, not ToolCall parseable"
+    );
+    assert_eq!(
+        model_hidden_tool_names().collect::<Vec<_>>(),
+        vec!["run_codex"],
+        "run_codex hidden parser-known behavior must stay explicit"
+    );
+}
+
+#[test]
 fn tool_definitions_match_agent_capability_dispatch_helper() {
     use crate::tool_runtime::tool_definition::tool_definitions;
 

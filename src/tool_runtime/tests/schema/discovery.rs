@@ -290,6 +290,95 @@ fn tool_manifest_categories_cover_every_model_visible_definition() {
 }
 
 #[test]
+fn tool_manifest_compact_categories_match_single_tool_definition_category() {
+    use crate::tool_runtime::tool_definition::{
+        lookup_tool_definition, model_visible_tool_definitions,
+    };
+    use std::collections::BTreeMap;
+
+    let runtime = test_runtime();
+    let manifest = runtime.compact_tool_manifest_payload();
+    let categories = manifest["categories"]
+        .as_object()
+        .expect("tool_manifest categories");
+    let visible_names = model_visible_tool_definitions()
+        .map(|definition| definition.name)
+        .collect::<BTreeSet<_>>();
+    let mut memberships: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for (category, members) in categories {
+        for member in members
+            .as_array()
+            .unwrap_or_else(|| panic!("{category} members must be an array"))
+        {
+            let name = member
+                .as_str()
+                .unwrap_or_else(|| panic!("{category} member must be a string"));
+            let definition = lookup_tool_definition(name)
+                .unwrap_or_else(|| panic!("{category} member {name} missing ToolDefinition"));
+            assert!(
+                definition.visibility.is_model_visible(),
+                "{category} member {name} must be model-visible"
+            );
+            assert_eq!(
+                definition.category, category,
+                "{name} compact manifest category must match ToolDefinition category"
+            );
+            memberships
+                .entry(name.to_string())
+                .or_default()
+                .push(category.clone());
+        }
+    }
+
+    assert_eq!(
+        memberships.len(),
+        visible_names.len(),
+        "compact tool_manifest categories must cover every model-visible tool exactly once"
+    );
+    for definition in model_visible_tool_definitions() {
+        let member_categories = memberships
+            .get(definition.name)
+            .unwrap_or_else(|| panic!("{} missing compact manifest category", definition.name));
+        assert_eq!(
+            member_categories,
+            &vec![definition.category.to_string()],
+            "{} must have exactly one compact manifest category",
+            definition.name
+        );
+    }
+    for forbidden in ["delete_files", "run_codex"] {
+        assert!(
+            !memberships.contains_key(forbidden),
+            "{forbidden} must not appear in model-facing tool_manifest categories"
+        );
+    }
+
+    let tools = manifest["tools"].as_array().expect("tool_manifest tools");
+    assert_eq!(
+        tools.len(),
+        visible_names.len(),
+        "unfiltered compact tool_manifest must list every model-visible tool"
+    );
+    for tool in tools {
+        let name = tool["name"]
+            .as_str()
+            .expect("tool_manifest tool name must be a string");
+        let definition = lookup_tool_definition(name)
+            .unwrap_or_else(|| panic!("{name} compact manifest entry missing ToolDefinition"));
+        assert!(
+            visible_names.contains(name),
+            "{name} compact manifest entry must be model-visible"
+        );
+        assert_eq!(
+            tool["category"].as_str(),
+            Some(definition.category),
+            "{name} compact manifest entry category must match ToolDefinition"
+        );
+    }
+}
+
+#[test]
 fn tool_manifest_recommended_flows_reference_visible_defined_tools() {
     use crate::tool_runtime::tool_definition::{
         is_model_visible_tool_name, lookup_tool_definition, TOOL_RECOMMENDED_FLOWS,

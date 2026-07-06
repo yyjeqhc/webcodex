@@ -49,8 +49,10 @@ The full-schema `list_tools` category map now formats model-visible discovery
 groups declared beside `ToolDefinition`, so registry code no longer owns a
 separate category membership table or needs the full `ToolSpec` list to build
 categories.
-Recommended-flow entries are also definition-backed and rendered into both the
-short `list_tools` hints and the structured `tool_manifest` flow list.
+Recommended-flow entries live in the definition-layer tool catalog and render
+into both the short `list_tools` hints and the structured `tool_manifest` flow
+list, but they are still curated rather than generated from per-tool
+definitions.
 Session ledger classification, session guard checks, cross-project session
 escape checks, validation-output capture classification, and dev permission
 risk labels now route through `ToolDefinition` semantic helpers/facades instead
@@ -80,9 +82,10 @@ WebCodex is intentionally in a middle state with three related layers:
 
 Definition-backed paths today include known-tool checks, parser acceptance,
 model-hidden and model-visible discovery, public `ToolSpec` ordering, MCP
-annotations, tool manifest categories, recommended-flow summaries,
-session-ledger classification, current-session fallback eligibility,
-permission-risk labels, and agent capability dispatch checks.
+annotations, compact tool manifest categories, session-ledger classification,
+current-session fallback eligibility, permission-risk labels, and agent
+capability dispatch checks. Recommended-flow summaries are shared through the
+definition-layer catalog but remain curated.
 
 Fallback-backed paths remain deliberately narrow. `runtime_tool_metadata()` and
 the metadata facade can still return a safe `Unknown` metadata record for names
@@ -147,6 +150,9 @@ This completes output schema convergence only. The broader ToolDefinition
 registry migration is still incomplete: input schema declarations, `ToolCall`
 parser paths, OpenAPI accepted names and flattened Action fields, MCP exposure,
 metadata, and policy declarations still have duplicate maintenance points.
+See `docs/TOOL_DEFINITION_DRIFT_MAP.md` for the Round 1 source-of-truth drift
+inventory and next convergence route. Output schema convergence is complete, but
+ToolDefinition source-of-truth convergence is not complete.
 
 The former module-wide `#![allow(dead_code)]` on `tool_definition.rs` has been
 removed. Inventory-only helper facades are now kept behind `#[cfg(test)]`, and

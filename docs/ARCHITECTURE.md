@@ -84,3 +84,15 @@ When adding or renaming a runtime tool, keep these synchronized in the same chan
 - Consistency tests.
 
 Default to exposing new specialized behavior through the generic runtime tool path unless there is a clear product reason and GPT Actions operation-count budget for a dedicated operation.
+
+### ToolDefinition Dead-Code Hygiene
+
+`src/tool_runtime/tool_definition.rs` must not use a module-wide `#![allow(dead_code)]`.
+During the ToolDefinition migration, unused residue should be removed when
+possible. Test-only helpers should be placed behind `#[cfg(test)]`, and any
+remaining temporary compatibility allowance must be item-scoped rather than
+module-wide.
+
+Schema migration tests enforce this documentation so the tool surface does not
+quietly accumulate broad dead-code allowances while ToolDefinition, ToolCall,
+MCP, OpenAPI, and metadata stay synchronized.

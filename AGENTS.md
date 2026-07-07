@@ -14,19 +14,33 @@ Guide for autonomous agents (Codex, GLM, ChatGPT, MCP, GPT Action) developing ag
 
 ---
 
-## 2. Non-Negotiable Safety Rules
+## 2. Default Safety Rules
 
 | Rule | Enforcement |
 |---|---|
-| Do not tag. | Never create git tags. |
-| Do not push. | Never push to any remote. |
-| Do not npm publish. | Never run `npm publish` or equivalent. |
-| Do not create GitHub Releases. | Never create releases via API or CLI. |
+| Do not tag by default. | Do not create git tags unless the user explicitly requests a release/tag task that satisfies the Release Exception below. |
+| Do not push by default. | Do not push to any remote unless the user explicitly requests a release/publish task that satisfies the Release Exception below. |
+| Do not npm publish by default. | Do not run `npm publish` or equivalent unless the user explicitly requests an npm publish task that satisfies the Release Exception below. |
+| Do not create GitHub Releases by default. | Do not create releases via API or CLI unless the user explicitly requests a GitHub Release task that satisfies the Release Exception below. |
 | Do not rewrite history. | No `rebase`, `filter-branch`, or `commit --amend` unless explicitly requested; do not use destructive resets on changes you did not create. |
 | Do not rebase/squash unless explicitly requested. | Preserve merge topology. |
 | Do not touch secrets or token files. | Skip `.env`, `.env.*`, credential files, and any file containing tokens. |
 | Do not print token values. | Never echo, log, or include tokens in output. |
 | Do not modify release docs unless explicitly requested. | Leave release checklists, changelogs, version docs, and packaging/release files untouched. |
+
+### Release Exception
+
+Release operations are allowed only when all conditions below are true:
+
+1. The user explicitly requests a release, tag, push, GitHub Release, or npm publish task.
+2. The request names the intended version, package, repository, and release target.
+3. The worktree is clean before the release starts, except for release files intentionally created during the task.
+4. The agent verifies that the remote tag, GitHub Release, and npm package version do not already exist before creating or publishing them.
+5. The agent does not force-push, overwrite tags, amend published commits, or replace existing releases.
+6. The agent runs the relevant release gates and stops on the first failed gate.
+7. The agent never prints secrets, tokens, npm tokens, GitHub tokens, `.env` contents, or credential file contents.
+8. Any post-tag manifest/checksum commit must be reported explicitly and must not move the release tag.
+9. If the release task conflicts with these rules, stop and report before making irreversible changes.
 
 ---
 
@@ -234,11 +248,18 @@ Every agent final response must include:
 
 ## 10. Standing Task Contracts / Prompt Compression
 
-Subsequent tasks **inherit** the safety (§2), editing (§3), branch/commit (§4),
-validation (§5), test organization (§6), architecture (§7), and session (§8)
-rules defined in this document. User prompts do **not** need to repeat
-no-tag / no-push / no-publish / no-release / no-rebase / no-amend / no-secrets
-directives each time.
+Subsequent ordinary development tasks **inherit** the safety (§2), editing (§3),
+branch/commit (§4), validation (§5), test organization (§6), architecture (§7),
+and session (§8) rules defined in this document. User prompts do **not** need to
+repeat default no-tag / no-push / no-publish / no-release / no-rebase /
+no-amend / no-secrets directives each time.
+
+An explicit release prompt may override only the default no-tag, no-push,
+no-GitHub-Release, and no-npm-publish rules when all §2 Release Exception
+conditions are satisfied. That override is limited to the named version,
+package, repository, and release target. It does not override no-force-push,
+no-tag-overwrite, no-release-replacement, no-secrets, no-history-rewrite,
+worktree, or validation rules.
 
 When a user prompt conflicts with AGENTS.md rules, **the stricter, safer
 constraint wins**.

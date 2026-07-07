@@ -138,14 +138,16 @@ MCP 可以直接暴露 runtime tools。不要把完整工具目录塞进每个 p
     "webcodex": {
       "url": "https://your-domain.example/mcp",
       "headers": {
-        "Authorization": "Bearer ${WEBCODEX_TOKEN_FOR_MCP}"
+        "Authorization": "Bearer ${WEBCODEX_MCP_BEARER}"
       }
     }
   }
 }
 ```
 
-`WEBCODEX_TOKEN_FOR_MCP` 应保存第一次评估用的 shared key，或生产 user token。不要放 bootstrap/admin、account 或 agent tokens。
+使用 `WEBCODEX_MCP_BEARER` 表示 MCP client 中配置的 Bearer 值。
+它可以是 quick-start shared key，也可以是生产 user token。
+它不应该是 server bootstrap `WEBCODEX_TOKEN`、account credential 或 agent token。
 
 ## 常见错误
 

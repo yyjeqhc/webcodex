@@ -138,14 +138,16 @@ The exact shape depends on your MCP client:
     "webcodex": {
       "url": "https://your-domain.example/mcp",
       "headers": {
-        "Authorization": "Bearer ${WEBCODEX_TOKEN_FOR_MCP}"
+        "Authorization": "Bearer ${WEBCODEX_MCP_BEARER}"
       }
     }
   }
 }
 ```
 
-`WEBCODEX_TOKEN_FOR_MCP` should contain the first-evaluation shared key or a production user token. It should not contain bootstrap/admin, account, or agent tokens.
+Use `WEBCODEX_MCP_BEARER` for the Bearer value configured in your MCP client.
+It may be the quick-start shared key or a production user token. It must not be
+the server bootstrap `WEBCODEX_TOKEN`, an account credential, or an agent token.
 
 ## Common Errors
 

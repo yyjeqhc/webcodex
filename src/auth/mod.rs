@@ -1,9 +1,9 @@
 //! WebCodex authentication and authorization.
 //!
 //! This module implements the bearer-token authentication pipeline used by all
-//! protected API endpoints. It supports four credential types today (bootstrap,
-//! personal API token, agent token, account credential) and reserves extension
-//! points for OAuth2 in a future phase.
+//! protected API endpoints. It supports bootstrap, personal API tokens, agent
+//! tokens, account credentials, OAuth2 access tokens, quick-start shared keys,
+//! and explicit open-anonymous mode.
 //!
 //! ## Submodules
 //!
@@ -26,11 +26,11 @@
 //!
 //! [`Principal`] is a higher-level abstraction derived from [`AuthContext`] that
 //! unifies the identity representation regardless of auth method. During this
-//! first refactoring phase both types coexist — `AuthContext` remains the
+//! current migration phase both types coexist — `AuthContext` remains the
 //! depot-injected type so existing handlers are unaffected. See
 //! [`principal::Principal::from_auth_context`].
 //!
-//! ## Future: OAuth2
+//! ## Token Verifier Chain
 //!
 //! The [`TokenVerifier`] trait is the extension point for bearer token
 //! verification. The verifier chain currently runs [`PatVerifier`] followed by
@@ -2000,8 +2000,9 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_oauth2_stub_does_not_break_pat_fallback() {
-        // The OAuth2Verifier stub always returns Ok(None), so PatVerifier
-        // should still handle the token. This test verifies the chain works.
+        // PatVerifier runs before OAuth2Verifier for PAT-shaped tokens, so PAT
+        // authentication should remain stable while OAuth2 support is present in
+        // the chain.
         let config = gate_test_config(Some("secret"));
         let (_tmp, db) = gate_test_db();
         let user = gate_seed_user(&db, "alice");
@@ -2010,7 +2011,7 @@ mod tests {
         let result = authenticate(&config, Some(&db), &token).await.unwrap();
         assert!(
             result.is_some(),
-            "PAT should still work with OAuth2 stub in chain"
+            "PAT should still work with OAuth2 verifier in chain"
         );
         let ctx = result.unwrap();
         assert_eq!(ctx.kind, AuthKind::ApiToken);

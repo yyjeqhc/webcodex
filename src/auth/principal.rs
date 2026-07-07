@@ -1,18 +1,19 @@
 //! Principal — the authenticated identity abstraction.
 //!
 //! A [`Principal`] represents *who* is making a request and *how* they
-//! authenticated. It is the unified identity type that all authorization
-//! decisions should go through, regardless of whether the caller used a PAT,
-//! an agent token, an account credential, or (in a future phase) an OAuth2
-//! bearer token.
+//! authenticated. It is the intended higher-level authorization identity for
+//! callers authenticated with bootstrap, PAT, agent token, account credential,
+//! OAuth2 access token, shared-key, or explicit open-anonymous auth.
 //!
 //! ## Relationship to `AuthContext`
 //!
 //! [`AuthContext`] is the low-level Salvo depot-injected struct that carries the
 //! raw database fields. `Principal` is a higher-level abstraction derived from
-//! `AuthContext`. Both types coexist — `AuthContext` remains the depot-injected
-//! type so existing handlers are unaffected. A future phase can migrate handlers
-//! to read `Principal` directly from the depot.
+//! `AuthContext`. Both types coexist during the current migration phase:
+//! `AuthContext` remains the depot-injected runtime identity used by existing
+//! handlers, middleware, and tool runtime paths. New Principal-based
+//! authorization must preserve `AuthContext` semantics, including lightweight
+//! shared-key/open-anonymous grouping and agent transport gates.
 
 use crate::auth::scopes::SCOPE_ADMIN;
 
@@ -22,12 +23,11 @@ use crate::auth::scopes::SCOPE_ADMIN;
 
 /// The authentication method used by a caller.
 ///
-/// This enum is intentionally non-exhaustive so that new methods (e.g.
-/// `OAuth2`) can be added in a future phase without breaking existing match
-/// arms.
+/// This enum is intentionally non-exhaustive so additional methods can be added
+/// without breaking existing match arms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-#[allow(dead_code)] // OAuth2 variant reserved for future phase
+#[allow(dead_code)] // Some variants are used only by Principal migration paths
 pub enum AuthMethod {
     /// The server-wide `WEBCODEX_TOKEN` bootstrap token (or auth disabled in
     /// development mode).
@@ -39,8 +39,8 @@ pub enum AuthMethod {
     AgentToken,
     /// A high-entropy account credential (`wc_acct_*`).
     AccountCredential,
-    /// An OAuth2 bearer token. **Reserved for future use** — no verifier is
-    /// wired up yet.
+    /// An OAuth2 opaque access token (`wc_oat_*`) authenticated by the OAuth2
+    /// verifier.
     OAuth2,
     /// A lightweight shared-key bearer token (quick-start mode). Non-admin,
     /// grouped by key hash.
@@ -70,7 +70,7 @@ impl std::fmt::Display for AuthMethod {
 
 /// Errors that can occur during the authentication or authorization pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // Several variants reserved for future OAuth2 phase
+#[allow(dead_code)] // Some variants are used only by Principal migration paths
 pub enum AuthError {
     /// No credentials were provided (missing or empty `Authorization` header).
     MissingToken,
@@ -318,24 +318,27 @@ impl AuthContext {
 
 /// The authenticated identity of a request caller.
 ///
-/// `Principal` is the **single source of truth** for authorization decisions.
-/// It captures who is making the request, how they authenticated, and what
-/// scopes they hold. All authorization checks (`require_scope`,
-/// `authorize_tool_call`, etc.) should operate on `Principal` rather than
-/// reaching into raw token or database fields.
+/// `Principal` is the intended higher-level authorization identity. During the
+/// current migration phase, [`AuthContext`] remains the Salvo depot-injected
+/// runtime identity used by existing handlers, middleware, and tool runtime
+/// paths. New authorization code that uses `Principal` must preserve
+/// `AuthContext` semantics, including lightweight shared-key/open-anonymous
+/// grouping and agent transport gates.
 ///
 /// ## Construction
 ///
 /// `Principal` instances are created from [`AuthContext`](crate::auth::AuthContext)
 /// via [`Principal::from_auth_context`] during the authentication pipeline.
-/// Handlers and tool dispatch code should not construct `Principal` manually.
+/// Current handlers and tool dispatch code still generally receive
+/// `AuthContext`; migrate call sites deliberately rather than constructing
+/// `Principal` manually.
 ///
 /// ## Extensibility
 ///
-/// The `allowed_agents` and `allowed_projects` fields are reserved for future
-/// fine-grained authorization without requiring a struct change.
+/// The `allowed_agents` and `allowed_projects` fields are placeholders for
+/// planned fine-grained authorization without requiring a struct change.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields and methods reserved for future handler migration
+#[allow(dead_code)] // Fields and methods used by the Principal migration path
 pub struct Principal {
     /// The subject identifier — typically the user ID from the database.
     /// `None` only for bootstrap auth (which acts as a virtual admin).
@@ -366,18 +369,18 @@ pub struct Principal {
     /// auth methods.
     pub allowed_client_id: Option<String>,
 
-    /// Reserved for future fine-grained agent-level authorization.
+    /// Placeholder for later fine-grained agent-level authorization.
     /// Currently unused; will be populated when per-principal agent ACLs are
     /// introduced.
     pub allowed_agents: Vec<String>,
 
-    /// Reserved for future fine-grained project-level authorization.
+    /// Placeholder for later fine-grained project-level authorization.
     /// Currently unused; will be populated when per-principal project ACLs are
     /// introduced.
     pub allowed_projects: Vec<String>,
 }
 
-#[allow(dead_code)] // Methods reserved for future handler migration to Principal
+#[allow(dead_code)] // Methods used by the Principal migration path
 impl Principal {
     // ------------------------------------------------------------------
     // Construction
@@ -402,8 +405,8 @@ impl Principal {
 
     /// Derive a `Principal` from an existing [`AuthContext`].
     ///
-    /// This is the primary construction path during Phase 1. It maps the
-    /// existing `AuthKind` values to `AuthMethod` and carries over all
+    /// This is the primary construction path during the current migration. It
+    /// maps the existing `AuthKind` values to `AuthMethod` and carries over all
     /// relevant fields.
     pub fn from_auth_context(ctx: &AuthContext) -> Self {
         let method = match ctx.kind {
@@ -492,10 +495,12 @@ impl Principal {
         self.is_bootstrap() || self.scopes.iter().any(|s| s == SCOPE_ADMIN)
     }
 
-    /// True when the caller may use an agent transport endpoint for the given
-    /// `client_id`. Bootstrap may use any client_id. Agent tokens may only use
-    /// the `allowed_client_id` they are bound to. All other auth methods are
-    /// rejected.
+    /// Principal-migration helper for agent transport gates.
+    ///
+    /// Current agent endpoint gating is still enforced through
+    /// [`AuthContext::can_use_agent_endpoint`] and middleware. Keep semantics,
+    /// including lightweight shared-key/open-anonymous handling, aligned before
+    /// migrating handlers to this helper.
     pub fn can_use_agent_endpoint(&self, client_id: &str) -> bool {
         if self.is_bootstrap() {
             return true;
@@ -511,20 +516,22 @@ impl Principal {
     }
 
     // ------------------------------------------------------------------
-    // Future OAuth2 extension point
+    // OAuth2 construction placeholder
     // ------------------------------------------------------------------
 
-    /// Placeholder for future OAuth2-specific principal construction.
+    /// Legacy placeholder for claims-based OAuth2 principal construction.
     ///
-    /// When an OAuth2 token verifier is wired up (Phase 2 of the auth
-    /// refactoring), it will call this method with the decoded token claims.
-    /// For now this is a compile-time reminder that the extension point exists.
+    /// Current OAuth2 access tokens are authenticated by
+    /// [`crate::auth::OAuth2Verifier`] and converted through
+    /// [`Principal::from_auth_context`]. This helper is not wired into the token
+    /// verifier chain.
     #[allow(dead_code)]
     pub(crate) fn from_oauth2_claims_stub(
         _subject: String,
         _scopes: Vec<String>,
     ) -> Result<Self, AuthError> {
-        // Stub: will be implemented when the OAuth2 verifier is added.
+        // Unused placeholder; current OAuth2 verification reaches Principal
+        // through AuthContext.
         Err(AuthError::Internal(
             "OAuth2 verification is not yet implemented".to_string(),
         ))

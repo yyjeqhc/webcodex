@@ -908,7 +908,7 @@ fn agent_read_file_command(path: &str, start_line: usize, limit: usize) -> Resul
 }
 
 fn agent_overview_command(project_name: &str, allowed_checks: &[String]) -> String {
-    let important = "README.md TODO.md Cargo.toml package.json pyproject.toml src/main.rs";
+    let important = "README.md AGENTS.md Cargo.toml package.json pyproject.toml src/main.rs";
     format!(
         "printf 'Project: {project}\\nRoot: '; pwd; printf 'Branch: '; git rev-parse --abbrev-ref HEAD 2>/dev/null || true; printf '\\nGit Status:\\n'; git status --short --untracked-files=no 2>/dev/null || true; printf '\\nAllowed Checks: {checks}\\n\\nImportant Files:'; for f in {important}; do if test -e \"$f\"; then printf '\\n  %s: yes' \"$f\"; else printf '\\n  %s: no' \"$f\"; fi; done; printf '\\n'",
         project = project_name, checks = allowed_checks.join(", "), important = important,
@@ -1198,7 +1198,7 @@ pub(super) fn execute_context_item(
                 .to_string();
             let important_files = [
                 "README.md",
-                "TODO.md",
+                "AGENTS.md",
                 "Cargo.toml",
                 "scripts/e2e_zero_config_ws.sh",
                 "src/main.rs",
@@ -1686,7 +1686,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 .to_string();
             let important_files = [
                 "README.md",
-                "TODO.md",
+                "AGENTS.md",
                 "Cargo.toml",
                 "scripts/e2e_zero_config_ws.sh",
                 "src/main.rs",

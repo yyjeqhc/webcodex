@@ -48,8 +48,9 @@ The metadata must advertise `/oauth/authorize`, `/oauth/token`,
 
 ## 2. Create a user + PAT (if you do not already have one)
 
-The authorize login flow accepts a PAT or the bootstrap token. Create a user
-and a PAT via the first-party API:
+The authorize login flow requires a PAT. The bootstrap token can create the user
+and mint the PAT, but it cannot complete authorize because authorization codes
+must bind to a concrete user id:
 
 ```bash
 # Create a user (bootstrap admin).

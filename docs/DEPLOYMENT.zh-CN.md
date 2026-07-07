@@ -61,11 +61,12 @@ token、refresh token 与 authorization code。
 
 将客户端指向 `https://your-domain.example/oauth/authorize?...`。在没有
 Bearer token 且没有 session cookie 时，WebCodex 渲染一个最小登录页；输入
-WebCodex PAT（或 bootstrap token）即可获得 10 分钟的 `HttpOnly` session
-cookie，随后在 consent 页确认。点击 `Allow` 会重定向回注册的
-`redirect_uri` 并携带 `wc_oac_*` code；在 `POST /oauth/token` 用它换取
-`wc_oat_*` access token。`/oauth/authorize` 的 Bearer Bootstrap/PAT 直接签发
-路径对非浏览器客户端继续可用。
+WebCodex PAT 即可获得 10 分钟的 `HttpOnly` session cookie，随后在 consent
+页确认。点击 `Allow` 会重定向回注册的 `redirect_uri` 并携带 `wc_oac_*`
+code；在 `POST /oauth/token` 用它换取 `wc_oat_*` access token。非浏览器
+客户端仍可用 first-party Bearer PAT 走 `/oauth/authorize` 直接签发
+authorization code 的路径。Bootstrap token 可以创建 OAuth client，但因为
+没有 user id，不能完成 authorize。
 
 完整的端到端 smoke test 演练（启用、创建 client、authorize、换 token、
 撤销）见 [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md)。

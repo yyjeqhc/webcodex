@@ -2,23 +2,22 @@
 
 This document describes the internal OAuth2 data model and storage layer in
 WebCodex. For the user-facing authentication model, see
-[AUTH_MODEL.md](AUTH_MODEL.md). For the overall auth architecture, see
-[AUTH_ARCHITECTURE.md](AUTH_ARCHITECTURE.md).
+[AUTH_MODEL.md](AUTH_MODEL.md).
 
-## Current phase
+## Current behavior
 
-**Phase 2e-3** adds the minimal OAuth2 onboarding closed loop: a first-party
-client management API (`/api/oauth/clients/{create,list,revoke}`) so OAuth
-clients no longer need to be hand-inserted into the database, plus a minimal
-browser login + consent UX on `/oauth/authorize` backed by a short-lived
-in-memory first-party session cookie. The Bearer Bootstrap/PAT direct-issuance
-path on `/oauth/authorize` is preserved unchanged.
+WebCodex supports a first-party OAuth2 authorization-code flow with client
+management APIs (`/api/oauth/clients/{create,list,revoke}`), browser login and
+consent on `/oauth/authorize`, opaque access/refresh tokens, and delegated route
+scope enforcement. The browser flow uses a short-lived in-memory first-party
+session cookie. A first-party Bearer PAT can still use the direct
+authorization-code issuance path on `/oauth/authorize`.
 
-### Phase 2e-3: client management and authorize UX
+### Client management and authorize UX
 
-Phase 2e-3 closes the OAuth2 onboarding loop without touching
-`/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, delegated scope
-enforcement, or existing PAT behavior:
+The OAuth2 onboarding loop keeps `/oauth/token`, `/oauth/revoke`,
+`OAuth2Verifier`, delegated scope enforcement, and existing PAT behavior scoped
+to their dedicated handlers:
 
 - **`POST /api/oauth/clients/create`** — creates a `wc_client_*` /
   `wc_csec_*` pair. The plaintext `client_secret` is returned **exactly once**
@@ -80,15 +79,14 @@ cannot drive the authorize login or direct authorize issuance. Bootstrap/PAT
 may still **create** OAuth clients via the management API; when bootstrap
 creates a client, the client is attributed to the first registered user.
 
-Not implemented in this phase: dynamic client registration, OIDC, JWKS/JWT,
+Not implemented: dynamic client registration, OIDC, JWKS/JWT,
 `userinfo_endpoint`, `client_credentials` grant, device code flow, full
 resource/audience enforcement, full username/password login, and DB-backed
 session storage (the session store is process-local in-memory).
 
-### Phase 2f-1: delegated OAuth scope enforcement
+### Delegated OAuth scope enforcement
 
-Phase 2f-1 turns the Phase 2f-0 route policy into executable enforcement for
-delegated OAuth access tokens only:
+Route policy enforcement applies to delegated OAuth access tokens only:
 
 - `AuthKind::OAuth2Token` is checked against an explicit route policy enum:
   `Public`, `FirstPartyOnly`, `AgentSurface`, `Require(scope)`,
@@ -119,28 +117,17 @@ delegated OAuth access tokens only:
 When a concrete scope is required, the response also includes
 `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scope>"`.
 
-Phase 2f-1 does not change `/oauth/authorize`, `/oauth/token`, or
+Delegated scope enforcement does not change `/oauth/authorize`, `/oauth/token`, or
 `/oauth/revoke` grant/revocation semantics. Full resource/audience
 enforcement, route-level project-resource authorization, `client_credentials`,
 device code, JWKS, JWT, OIDC, and `/.well-known/openid-configuration` remain
 unimplemented.
 
-### Phase 2e-2: authorization server metadata and authorize identity boundary
+### Authorization server metadata and authorize request handling
 
-Phase 2e-2 keeps `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, and
-AuthMiddleware semantics unchanged, while adding two authorize/discovery
-boundaries:
-
-- `/oauth/authorize` still runs behind `AuthMiddleware`, but the handler now
-  explicitly allows only `AuthKind::Bootstrap` and `AuthKind::ApiToken` as
-  authorize identity sources. OAuth2 access tokens cannot be used to obtain
-  new authorization codes. Agent tokens and account credentials are rejected
-  by existing AuthMiddleware surface gates or, if they reach the handler, by
-  the authorize allowlist. Rejected identities create no
-  `oauth_authorization_codes` row.
-- `GET /.well-known/oauth-authorization-server` is public, requires no Bearer
-  token, and returns 404 with `{"error":"OAuth2 is not enabled"}` when OAuth2
-  is disabled.
+`GET /.well-known/oauth-authorization-server` is public, requires no Bearer
+token, and returns 404 with `{"error":"OAuth2 is not enabled"}` when OAuth2 is
+disabled.
 
 Authorization server metadata contains only implemented capabilities:
 
@@ -166,22 +153,17 @@ reuses `oauth_scopes_supported()`.
 The current token endpoint supports `client_secret_post` only; public clients
 and `token_endpoint_auth_method = "none"` are not supported.
 
-`/.well-known/openid-configuration` is still not implemented. The server does
-not advertise JWKS, userinfo, registration, device authorization,
-introspection, claims, ID token signing algorithms, route-level OAuth scope
-enforcement, or full MCP resource/audience enforcement.
+`GET /oauth/authorize` is mounted at the root path, not under `/api`, and uses
+the identity sources described in [Client management and authorize
+UX](#client-management-and-authorize-ux). Authorization-code issuance follows
+these rules:
 
-### Phase 2e-1c: authorization code issuance
-
-Phase 2e-1c keeps the Phase 2e-1b validation boundary and enables code
-issuance:
-
-- `GET /oauth/authorize` is mounted at the root path, not under `/api`, and is
-  protected by `AuthMiddleware`.
 - OAuth2 disabled returns a direct 404.
-- Requests must carry an allowed first-party identity source and an
-  authenticated `AuthContext.user_id`; unauthenticated requests and rejected
-  identity sources create no code.
+- Direct Bearer issuance requires a first-party PAT with an authenticated
+  `AuthContext.user_id`; OAuth2 access tokens, agent tokens, account
+  credentials, and bootstrap identity create no code.
+- Browser consent issuance requires a valid `webcodex_authorize_session`
+  cookie that was created by `/oauth/authorize/login` from a PAT.
 - `client_id` is required and non-empty, and must identify a non-revoked
   client.
 - `redirect_uri` is required, non-empty, and must exactly match one registered
@@ -204,15 +186,10 @@ issuance:
   `/oauth/token` remains responsible for consuming the code and issuing
   `wc_oat_*` and `wc_ort_*` tokens.
 
-Phase 2e-2 publishes authorization server metadata for the implemented
-authorization code and refresh token capabilities.
+Authorize request helpers keep parsing and redirect behavior explicit:
 
-### Phase 2e-1a: authorization request helpers
-
-Phase 2e-1a introduces internal helper code only:
-
-- `OAuthAuthorizeRequest` and `OAuthAuthorizeError` model future authorize
-  request parsing and the direct-vs-redirectable error boundary.
+- `OAuthAuthorizeRequest` and `OAuthAuthorizeError` model authorize request
+  parsing and the direct-vs-redirectable error boundary.
 - `parse_authorize_query()` parses the known authorize query parameters,
   rejects duplicate known parameters as `invalid_request`, requires
   `response_type`, `client_id`, `redirect_uri`, `code_challenge`, and
@@ -230,50 +207,11 @@ The global OAuth scope registry contains only delegable OAuth scopes:
 `account:manage`. Agent scopes (`agent:*`) and `admin` are excluded from OAuth
 delegation.
 
-### Phase 2e-0: authorization endpoint contract
-
-The future `/oauth/authorize` endpoint will be an authenticated first-party
-authorization endpoint protected by `AuthMiddleware`. The authorizing user is
-`AuthContext.user_id`; Phase 2e-1 will not add an independent username/password
-login page, third-party cookie session, or consent UI.
-
-Planned request contract:
-
-- `response_type` must be `code`.
-- `client_id` must identify a non-revoked registered client.
-- `redirect_uri` is required and must exactly match one registered URI.
-- `code_challenge` is required and `code_challenge_method` must be `S256`,
-  even if `config.oauth2.require_pkce` is false.
-- `scope`, when present, must be a subset of the client's allowed scopes and
-  the global OAuth scopes (`runtime:read`, `project:read`, `project:write`,
-  `job:run`, `account:manage`). `agent:*` and `admin` are not delegable.
-- Empty `scope` defaults to the normalized client/global OAuth intersection;
-  an empty result is `invalid_scope`.
-- `resource`, when present, must identify WebCodex itself. Accepted values are
-  the configured issuer/base URL and that same base with `/mcp` appended.
-- `state` is opaque. WebCodex does not interpret or trust it. The decoded
-  state value is preserved semantically and URL-encoded again when redirecting.
-
-Error handling is split by redirect trust. Unknown clients, revoked clients,
-missing `redirect_uri`, and redirect URI mismatches return direct 400 errors
-and must not redirect to a request-controlled URI. After `client_id` and
-`redirect_uri` are validated, request errors such as unsupported
-`response_type`, invalid scope, invalid PKCE, or unsupported/external
-`resource` may redirect to the registered URI with `error` and
-decoded/re-encoded `state`.
-
-Phase 2e-1c generates one plaintext `wc_oac_*` code, stores only its
-SHA-256 hash in `oauth_authorization_codes`, and redirects once with `code`
-and optional decoded/re-encoded `state`. The stored row includes `client_id`,
-`user_id`, `redirect_uri`, normalized `scopes`, optional accepted `resource`,
-PKCE challenge and method, `created_at`, `expires_at`, `used_at = None`, and
-`revoked_at = None`.
-
 Authorization server metadata (`/.well-known/oauth-authorization-server`) is
-implemented in Phase 2e-2. OpenID Connect metadata
-(`/.well-known/openid-configuration`) remains intentionally unimplemented.
+implemented. OpenID Connect metadata (`/.well-known/openid-configuration`)
+remains intentionally unimplemented.
 
-### Phase 2d-1: protected resource metadata
+### Protected resource metadata
 
 The endpoint `GET /.well-known/oauth-protected-resource` returns JSON
 metadata describing the WebCodex OAuth2 resource server:
@@ -312,10 +250,10 @@ header when OAuth2 is enabled and an issuer is configured. 403 responses do
 not include this header.
 
 Authorization server metadata (`/.well-known/oauth-authorization-server`) is
-implemented in Phase 2e-2. It is public, derives its endpoint URLs from the
-issuer, and only advertises implemented OAuth capabilities.
+implemented. It is public, derives its endpoint URLs from the issuer, and only
+advertises implemented OAuth capabilities.
 
-### Phase 2b-1: `POST /oauth/token`
+### Token endpoint: authorization code grant
 
 The token endpoint implements RFC 6749 §4.1.3 (authorization code grant) with
 PKCE (RFC 7636) support:
@@ -339,7 +277,7 @@ Error responses follow RFC 6749 §5.2 format:
 }
 ```
 
-### Phase 2b-1.1: hardening
+### Token endpoint hardening
 
 The token endpoint is hardened with the following changes:
 
@@ -362,7 +300,7 @@ Post-consume validation semantics are preserved:
 - `client_id` / `redirect_uri` / PKCE mismatch → code **consumed**
   (post-consume failures are intentional; the code cannot be retried)
 
-### Phase 2b-1.2: no tokens on failed exchange
+### Failed exchange behavior
 
 Fixes a bug where `POST /oauth/token` inserted access and refresh tokens
 even when post-consume validation (client_id / redirect_uri / PKCE)
@@ -396,7 +334,7 @@ validation outcome.
 | PKCE mismatch | Yes | **No** |
 | Valid exchange | Yes | Yes (transactional) |
 
-### Phase 2b-2: refresh_token grant
+### Token endpoint: refresh token grant
 
 `POST /oauth/token` now supports `grant_type=refresh_token` with refresh
 token rotation (RFC 6749 §6).
@@ -439,7 +377,7 @@ The `scope` parameter is **not yet supported**; including it returns
 - New tokens inherit `user_id`, `scopes`, `resource`, and `client_id` from
   the old refresh token.
 
-### Phase 2b-3: `POST /oauth/revoke`
+### Token revocation endpoint
 
 The token revocation endpoint implements RFC 7009. Clients can revoke access
 tokens and refresh tokens.
@@ -490,7 +428,7 @@ tokens and refresh tokens.
 - The response `{}` does not disclose whether the token existed, which client
   it belongs to, or what type it is — preventing token enumeration.
 
-### Phase 2c-1: OAuth2 access token verification
+### OAuth2 access token verification
 
 `OAuth2Verifier` now validates opaque `wc_oat_*` access tokens so that
 OAuth2-issued tokens can be used as bearer tokens on HTTP endpoints protected
@@ -522,22 +460,20 @@ by `AuthMiddleware`.
   before `OAuth2Verifier` runs, so `last_used_at` is not updated. The QUIC
   surface is agent-only.
 
-**What is NOT covered**:
+**Related enforcement**:
 
-- Route-level OAuth scope enforcement was added in Phase 2f-1 (see above).
-  At the Phase 2c-1 boundary the `scopes` field was populated in
-  `AuthContext` but no handler checked it yet.
+- Route-level OAuth scope enforcement is covered above.
 - Accepted self `resource` indicators are stored on authorization codes and
   issued tokens, but full audience binding is not enforced across API
   surfaces.
 
-### Phase 2c-1.1: forbid `last_used_at` updates on rejected surfaces
+### Rejected-surface `last_used_at` behavior
 
-In Phase 2c-1, `OAuth2Verifier` updated `last_used_at` on successful
-verification regardless of whether the surface would ultimately accept the
-token. `authenticate_bearer()` and `AuthMiddleware` rejected OAuth2 tokens
-*after* the verifier ran, leaving a stale `last_used_at` on tokens that
-were never actually used.
+Earlier OAuth2 verification updated `last_used_at` on successful verification
+regardless of whether the surface would ultimately accept the token.
+`authenticate_bearer()` and `AuthMiddleware` rejected OAuth2 tokens *after* the
+verifier ran, leaving a stale `last_used_at` on tokens that were never actually
+used.
 
 Fix: `wc_oat_*` tokens are now pre-rejected before `OAuth2Verifier` runs:
 
@@ -698,11 +634,11 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 - JWT/JWKS/OIDC
 - Handler migration to `Principal`
 
-### Phase 2f-0: route scope policy definition
+### Route scope policy definition
 
-Phase 2f-0 originally introduced the route-level OAuth scope policy table.
-Phase 2f-1 now enforces that policy for `AuthKind::OAuth2Token` (see the
-Phase 2f-1 section above). The helper
+The route-level OAuth scope policy table is enforced for
+`AuthKind::OAuth2Token` (see [Delegated OAuth scope
+enforcement](#delegated-oauth-scope-enforcement)). The helper
 `required_oauth_scope_for_path_method(method, path)` in `src/auth/scopes.rs`
 maps regular HTTP route method/path pairs to one of the existing delegable
 OAuth scopes:
@@ -730,14 +666,13 @@ cookie, and rejects Bootstrap (no `user_id`), OAuth2 access tokens, agent
 tokens, and account credentials. Delegated OAuth scopes therefore do not apply
 to it.
 
-Route-level enforcement (Phase 2f-1) applies this policy only to
-`AuthKind::OAuth2Token`. Bootstrap auth, personal API tokens, and other
-first-party WebCodex credentials are not constrained by OAuth delegated
-scopes. Agent token and account credential surfaces continue to use the existing
-surface gates; OAuth2 access tokens remain non-delegable on agent transport
-surfaces.
+Route-level enforcement applies this policy only to `AuthKind::OAuth2Token`.
+Bootstrap auth, personal API tokens, and other first-party WebCodex credentials
+are not constrained by OAuth delegated scopes. Agent token and account
+credential surfaces continue to use the existing surface gates; OAuth2 access
+tokens remain non-delegable on agent transport surfaces.
 
 Unknown routes and tools fail closed for `AuthKind::OAuth2Token` (HTTP 403);
-Phase 2f-1 wired this helper into `AuthMiddleware`. Self resource indicators
-may be stored on issued OAuth tokens for MCP compatibility, but full
+`AuthMiddleware` applies this helper before handlers run. Self resource
+indicators may be stored on issued OAuth tokens for MCP compatibility, but full
 resource/audience enforcement is still not implemented.

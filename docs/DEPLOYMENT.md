@@ -61,12 +61,13 @@ and authorization codes.
 ### Browser authorize flow
 
 Point the client at `https://your-domain.example/oauth/authorize?...`. With no
-Bearer token and no session cookie, WebCodex renders a minimal login page;
-enter a WebCodex PAT (or bootstrap token) to get a 10-minute `HttpOnly` session
-cookie, then approve the consent page. `Allow` redirects back to the registered
-`redirect_uri` with a `wc_oac_*` code; exchange it at `POST /oauth/token` for a
-`wc_oat_*` access token. The Bearer Bootstrap/PAT direct-issuance path on
-`/oauth/authorize` still works for non-browser clients.
+Bearer token and no session cookie, WebCodex renders a minimal login page; enter
+a WebCodex PAT to get a 10-minute `HttpOnly` session cookie, then approve the
+consent page. `Allow` redirects back to the registered `redirect_uri` with a
+`wc_oac_*` code; exchange it at `POST /oauth/token` for a `wc_oat_*` access
+token. A first-party Bearer PAT can still use the direct authorization-code
+issuance path on `/oauth/authorize` for non-browser clients. The bootstrap token
+can create OAuth clients but cannot authorize one because it has no user id.
 
 A full end-to-end smoke test walkthrough (enable, create client, authorize,
 token exchange, revoke) is in [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md).

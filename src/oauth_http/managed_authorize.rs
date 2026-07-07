@@ -161,7 +161,7 @@ pub(crate) enum OAuthAuthorizeError {
     UnsupportedResource,
 }
 
-/// Parse a future `/oauth/authorize` query string without performing runtime
+/// Parse an `/oauth/authorize` query string without performing runtime
 /// validation, DB lookups, redirects, or authorization code issuance.
 ///
 /// Duplicate known parameters are rejected because they make the OAuth request

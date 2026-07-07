@@ -29,14 +29,14 @@ changes without a diff, run workspace hygiene, and finish. Do not edit files.
 3. `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`, or `apply_patch_checked`
 4. `validate_patch`, `cargo_fmt`, `cargo_check`, or `cargo_test`
 5. `show_changes`
-6. `git_diff_hunks` when targeted diff review is needed
+6. `git_diff_hunks` when targeted diff inspection is needed
 7. `workspace_hygiene_check`
 8. `finish_coding_task`
 9. `session_handoff_summary` when another operator or client needs to continue
 
 `run_shell` is available as a bounded escape hatch. It should not be the first choice for editing or validation.
 
-## What The User Reviews
+## What The User Checks
 
 - Changed files and whether they match the requested scope.
 - Validation result and whether it is appropriate for the change type.
@@ -51,7 +51,7 @@ changes without a diff, run workspace hygiene, and finish. Do not edit files.
 - Keep the project id explicit: `agent:<client_id>:<project_id>`.
 - Prefer structured edits over shell-based writes.
 - Prefer structured validation over broad shell commands.
-- The final workspace should be clean, or intentionally dirty for human review.
+- The final workspace should be clean, or intentionally dirty for human inspection.
 - If the task was only a smoke test, revert the small edit with normal Git review practices.
 
 ## Next

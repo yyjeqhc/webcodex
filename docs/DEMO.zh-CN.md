@@ -29,14 +29,14 @@ changes without a diff, run workspace hygiene, and finish. Do not edit files.
 3. `replace_line_range`、`insert_at_line`、`delete_line_range`、`apply_text_edits` 或 `apply_patch_checked`
 4. `validate_patch`、`cargo_fmt`、`cargo_check` 或 `cargo_test`
 5. `show_changes`
-6. 需要定向 diff review 时使用 `git_diff_hunks`
+6. 需要定向 diff 检查时使用 `git_diff_hunks`
 7. `workspace_hygiene_check`
 8. `finish_coding_task`
 9. 需要另一个 operator 或 client 接手时使用 `session_handoff_summary`
 
 `run_shell` 是受限 escape hatch，不应该作为编辑或验证的第一选择。
 
-## 用户需要 Review 什么
+## 用户需要检查什么
 
 - changed files 是否符合请求范围。
 - validation result 是否匹配变更类型。
@@ -51,7 +51,7 @@ changes without a diff, run workspace hygiene, and finish. Do not edit files.
 - 明确写出 project id：`agent:<client_id>:<project_id>`。
 - 优先使用结构化编辑，而不是 shell 写入。
 - 优先使用结构化验证，而不是宽泛 shell 命令。
-- 最终 workspace 应该 clean，或者是为了人类 review 而有意保持 dirty。
+- 最终 workspace 应该 clean，或者是为了人工检查而有意保持 dirty。
 - 如果任务只是 smoke test，用常规 Git review 流程回滚小修改。
 
 ## 下一步

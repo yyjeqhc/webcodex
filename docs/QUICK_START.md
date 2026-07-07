@@ -30,20 +30,23 @@ MCP and GPT Actions call the same WebCodex ToolRuntime. The client changes the p
 
 Do not use real secrets, production repositories, or privileged shell profiles for the first run.
 
-## 1. Build The Binaries
+## 1. Install The Binaries
 
-From the WebCodex checkout:
+For the current Linux x64 release, install the npm wrapper:
 
 ```bash
-cargo build --release --bins
-export PATH="$PWD/target/release:$PATH"
-
+npm install -g @yyjeqhc/webcodex
 webcodex -h
 webcodex-cli -h
 webcodex-agent -h
 ```
 
-Released binary artifacts can replace the `cargo build` step once the matching release is available.
+The current npm wrapper ships Linux x64 binaries. On unsupported platforms, or when developing from this checkout, build from source:
+
+```bash
+cargo build --release --bins
+export PATH="$PWD/target/release:$PATH"
+```
 
 ## 2. Choose One Shared Key And Start The Server
 
@@ -80,7 +83,7 @@ webcodex
 
 Keep the `webcodex` process running.
 
-For a public ChatGPT connection, put the server behind HTTPS and use that public URL instead. Localhost is enough for a local runtime sanity check.
+For ChatGPT-hosted clients, including GPT Actions and ChatGPT remote MCP, put the server behind a public HTTPS URL with a valid certificate and use that public URL instead. WebCodex does not configure Nginx, Caddy, or tunnels for you; see [DEPLOYMENT.md](DEPLOYMENT.md). Local or self-hosted clients that can reach the server directly can use localhost or a private HTTP URL.
 
 ## 3. Connect An Agent And Register A Project
 
@@ -203,7 +206,7 @@ change, show changes, run workspace hygiene, and finish with a clear verdict.
 Prefer structured edit tools. Do not use run_shell unless needed.
 ```
 
-Review the changed files and diff before accepting the result. Revert the edit manually or with your usual Git workflow if it was only a smoke test.
+Inspect the changed files and diff before accepting the result. Revert the edit manually or with your usual Git workflow if it was only a smoke test.
 
 ## First Success Criteria
 
@@ -213,7 +216,7 @@ You are set up when:
 - `list_projects` shows an `agent:<client_id>:<project_id>` project.
 - The client can read `README.md`.
 - A read-only coding task finishes cleanly.
-- A small edit can be reviewed and reverted.
+- A small edit can be inspected and reverted.
 
 ## Production Auth Comes Later
 

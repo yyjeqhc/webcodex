@@ -105,9 +105,8 @@ runtime-only compatibility paths. Use them through `callRuntimeTool` when
 needed; source editing should prefer `replace_line_range`, `insert_at_line`,
 `delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
 
-Legacy `/api/codex/*` routes are not part of the GPT Actions schema. New GPT
-workflows should use the dedicated `/api/projects/*` Actions or
-`callRuntimeTool`.
+GPT workflows operate on agent-registered projects through dedicated
+`/api/projects/*` Actions or `callRuntimeTool`.
 
 It does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints such as:
 
@@ -275,7 +274,7 @@ Do not use `save_project_artifact`, `artifact_upload_begin`,
 source-writing tools. They are for bounded project artifact transfer, not for
 editing UTF-8 source files.
 
-Codex delegation is currently hidden from GPT Actions and model-facing runtime tool discovery. Operators who want Codex should run it outside WebCodex, or wait for a future explicit opt-in feature flag.
+WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes. GPT Actions clients should use structured edit tools, patch validation, cargo validation, bounded `run_shell` / `run_job` escape hatches, `show_changes`, `workspace_hygiene_check`, and `finish_coding_task`. Operators who need Codex-specific workflows should run Codex outside WebCodex.
 
 `show_changes` is a read-only project inspection tool available through
 `callRuntimeTool`. It summarizes branch/head, modified/added/deleted/renamed/
@@ -500,10 +499,10 @@ causes, suggest fixes, call an LLM, use LSP, or use tree-sitter.
 
 ## Observability
 
-`runtime_status.projects` separates `server_static`, `agent_registered`, and
-`effective` counts. A missing `projects.toml` is not a runtime failure when
-agent-registered projects are available; prefer `projects.effective.status` and
-`projects.effective.count` for model-facing health checks.
+`runtime_status.projects` reports `mode="agent_registered"`,
+`agent_registered`, and `effective` counts. Prefer
+`projects.effective.status` and `projects.effective.count` for model-facing
+health checks.
 
 `getRuntimeStatus` and `callRuntimeTool` with `list_agents` may show a redacted policy summary:
 
@@ -518,8 +517,8 @@ They must not expose tokens, env values, `Authorization` headers, full `agent.to
 `runtime_status(summary_only=true)`, `runtime_status(compact=true)`, and
 `start_coding_task(include_runtime_status=true, compact_startup=true)` return a
 compact runtime summary with service/version, build commit/dirty state,
-`tools.count`, `jobs.active_count`, `agents.summary`, and `projects.effective`,
-`projects.agent_registered`, and `projects.server_static` status/severity/message.
+`tools.count`, `jobs.active_count`, `agents.summary`, `projects.mode`,
+`projects.effective`, and `projects.agent_registered`.
 It intentionally omits `tools.names`, full agent policy, `allowed_roots`, shell
 profile internals, command text, stdout/stderr, env values, tokens, secrets, and
 full config values. It also returns `startup_verdict`, a compact PASS/WARN/FAIL

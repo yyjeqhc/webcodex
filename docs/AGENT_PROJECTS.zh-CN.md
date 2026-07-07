@@ -8,15 +8,17 @@ Agent 会把 project registry entries 报告给 server。GPT Actions 和 MCP 使
 agent:<client_id>:<project_id>
 ```
 
+项目由 agent 注册，不再通过 server 侧 projects.toml 暴露给 runtime。
+
 ## Project registry files
 
-每个 agent 都有一个 `projects_dir`，其中每个已注册项目对应一个项目文件。对于 agent-backed projects，server 不需要匹配的 server-side project block。
+每个 agent 都有一个 `projects_dir`，其中每个已注册项目对应一个项目文件。Server 通过已连接 agent registry 看到这些 entries。
 
 项目 entry 包含人类可读名称、agent host 上的绝对路径，以及 `allow_patch` 等 policy flags。
 
 ## Agent `projects.d/*.toml` 格式
 
-Agent project files 是 agent 配置的 `projects_dir` 中的一项目一文件 TOML。它们**不是** server-side `projects.toml` 的格式。
+Agent project files 是 agent 配置的 `projects_dir` 中的一项目一文件 TOML。
 
 正确的 agent `projects.d/webcodex.toml` 格式：
 
@@ -42,7 +44,7 @@ test = ["cargo test"]
 path = "/srv/webcodex/projects/webcodex"
 ```
 
-这种 nested `[projects.webcodex]` 形状属于 legacy server-side `projects.toml`。如果写进 agent `projects.d/*.toml`，顶层 `id` 会缺失，并报 `missing field id`。请使用顶层 `id` 和 `path` 字段。
+这种 nested `[projects.webcodex]` 形状属于旧的 server-side project 文件格式。如果写进 agent `projects.d/*.toml`，顶层 `id` 会缺失，并报 `missing field id`。请使用顶层 `id` 和 `path` 字段。
 
 ## Agent-side project management tools
 
@@ -77,29 +79,11 @@ allowed_roots = ["/root/git"]
 
 `listProjects` 中的每个项目还包含 `agent_status`、`connected`、`last_seen`、`shell_profile`、`resolved_shell_profile` 和 `shell_profile_status`。
 
-## Server-side `projects.toml` 与 agent-registered projects
+## Agent-registered runtime surface
 
-Server-side `projects.toml` config 是 legacy/metadata only。Runtime tool execution（`run_shell`、`apply_patch`、git 等）使用 **agent-registered** projects。只存在于 server-side `projects.toml` 的项目不能通过 runtime surface 执行；请使用 `listProjects` 返回的 `agent:<client_id>:<project_id>`。
+Runtime tool execution（`run_shell`、`apply_patch`、git、files、jobs、sessions）只使用 **agent-registered** projects。请使用 `listProjects` 返回的 id，例如 `agent:<client_id>:<project_id>`。
 
-如果某个项目在 `runtime_status` 中出现，但 tool call 报 “Unknown project” / “projects.toml” 相关错误，通常说明可执行项目集来自 connected agent registry，而不是 server-side file。
-
-如果 `runtime_status.projects.server_static.status = "not_configured"`，并且
-message 是 `projects.toml not configured; using agent-registered projects`，
-意思只是这个可选 metadata 文件不存在。Agent-only deployment 中这是正常状态。
-如果 operator 仍然想保留 server-side metadata file，可以设置
-`PROJECTS_CONFIG=/path/to/projects.toml`，并使用一个很小的内联格式：
-
-```toml
-[projects.webcodex]
-path = "/srv/webcodex/projects/webcodex"
-executor = "agent"
-client_id = "workstation"
-allow_patch = true
-```
-
-这个文件可以让 server-static 状态不再显示 not_configured，也可兼容 legacy
-metadata path；但 runtime tools 仍应使用 `listProjects` 返回的
-`agent:<client_id>:<project_id>` id。
+如果你看到旧文档或旧部署提示要求配置 server-side `projects.toml`，那是 legacy guidance，不是新部署要求。
 
 ## Troubleshooting
 

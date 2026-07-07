@@ -414,8 +414,8 @@ curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
 ## 6. Runtime 注意点
 
 - 使用 project-scoped current session 时，请在 `start_session` 时传入 `project`。`project = null` 创建的 session 不能后续绑定到某个具体 project；返回 `session_project_mismatch` 是预期审计语义，不代表 runtime 故障。
-- 如果 `runtime_status` 显示 server project config not configured，只表示 server-side `projects.toml` 未配置。通过已连接 agent 注册的 projects 仍然可以正常可用；用 `list_projects` 查看当前 runtime surface。
-- Codex delegation 当前已从模型可见 surface 隐藏/禁用，包括 GPT Actions、MCP `tools/list`、runtime tool discovery 和 generic model-facing dispatch。legacy `/api/codex/run` endpoint 默认关闭，只有设置 `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1` 才挂载；该 opt-in 不会重新启用 `run_codex`。不要把 `run_codex` 写成推荐路径。推荐的模型工作流是结构化编辑工具（`replace_line_range`、`insert_at_line`、`delete_line_range`）、patch validation、受控 shell/job validation、`show_changes` 以及 sessions/handoff。
+- 项目由 agent 注册，不再通过 server 侧 projects.toml 暴露给 runtime。用 `list_projects` 查看当前 runtime surface。
+- 推荐的模型工作流是结构化编辑工具（`replace_line_range`、`insert_at_line`、`delete_line_range`）、patch validation、受控 shell/job validation、`show_changes` 以及 sessions/handoff。
 - 使用 `transport = "auto"` 时，agent 只有在配置了 `[quic]` section 后才会先尝试 QUIC，然后 fallback 到 WebSocket，再 fallback 到 polling。没有 `[quic]` 时，`auto` 会从 WebSocket 开始。
 
 ## 7. 应该选择哪种模式？

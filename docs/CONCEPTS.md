@@ -81,11 +81,7 @@ The recommended coding workflow is:
 `run_shell` and `run_job` remain bounded command/job escape hatches. They are not
 the default validation source and are not the primary source-editing path.
 
-Codex delegation (`run_codex`) is currently hidden/disabled from model-facing
-surfaces: GPT Actions, MCP `tools/list`, runtime tool discovery, and generic
-model-facing dispatch. The legacy `/api/codex/run` endpoint is default-off and
-only mounted with `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1`; that opt-in does not
-re-enable `run_codex`. Do not treat it as the recommended path.
+Projects are registered by agents, not by server-side `projects.toml`.
 
 ### Artifact transfer
 
@@ -119,10 +115,7 @@ OpenAPI surface is 25 operations, so chunked artifact upload and compatibility
 edit tools remain available through `callRuntimeTool` rather than dedicated GPT
 Action operations.
 
-The older `/api/codex/*` REST API is lifecycle-deprecated and not exposed in the
-GPT Actions OpenAPI schema. New clients should use `/api/tools/call`,
-`/api/projects/*`, or MCP; `/api/codex/*` remains only for historical callers
-and audit continuity.
+Current clients should use `/api/tools/call`, `/api/projects/*`, or MCP.
 
 ### MCP surface
 

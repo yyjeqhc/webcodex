@@ -54,7 +54,7 @@ Authorization: Bearer <token>
 
 ## Codex CLI
 
-Codex delegation is currently hidden from model-facing runtime surfaces. Local internal validation may still use stub Codex binaries for the retained runner, but GPT Actions and MCP clients should use structured edit tools plus `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and `apply_patch_checked` first. Treat `run_job` and `run_shell` as bounded fallback diagnostics/build/test tools, not the default validation source.
+WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes. GPT Actions and MCP clients should use structured edit tools plus `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and `apply_patch_checked` first. Treat `run_job` and `run_shell` as bounded fallback diagnostics/build/test tools, not the default validation source. Run Codex outside WebCodex for Codex-specific workflows.
 
 ## Management setup
 

@@ -22,7 +22,7 @@ set -euo pipefail
 #
 # What this does NOT do:
 #   - It does not touch the real ChatGPT web UI.
-#   - It does not invoke Codex delegation or the real Codex CLI.
+#   - It does not invoke removed run_codex paths or the real Codex CLI.
 #   - It does not implement QUIC.
 #
 # Environment overrides:
@@ -870,8 +870,8 @@ for fp in forbidden:
     if fp in paths:
         errors.append(f"forbidden path present in schema: {fp}")
 
-# Legacy /api/codex/* sub-routes must not appear. Codex delegation remains
-# hidden from GPT Actions.
+# Legacy /api/codex/* sub-routes and run_codex must remain removed from
+# GPT Actions/OpenAPI.
 legacy_codex = ["/api/codex/command_request_op", "/api/codex/command_request",
                 "/api/codex/context", "/api/codex/context_batch",
                 "/api/codex/apply_patch", "/api/codex/edit",

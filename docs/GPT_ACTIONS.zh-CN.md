@@ -95,7 +95,7 @@ webcodex-cli token create-local \
 
 GPT Actions surface 有意小于完整 admin API。它包含 runtime、project、git、patch、file、shell/job、artifact 和 session operations。
 
-legacy `/api/codex/*` routes 不属于 GPT Actions schema。新的 GPT workflow 应使用 dedicated `/api/projects/*` Actions 或 `callRuntimeTool`。
+GPT workflows 通过 dedicated `/api/projects/*` Actions 或 `callRuntimeTool` 操作 agent-registered projects。
 
 它不暴露 user、API-token、agent-token、pairing/enrollment、setup、doctor、npm、server management 或 audit endpoints，例如：
 
@@ -122,7 +122,7 @@ legacy `/api/codex/*` routes 不属于 GPT Actions schema。新的 GPT workflow 
 8. `runProjectShellCommand` 或 `startProjectShellJob` 只在文件编辑完成后运行受限命令。
 9. 编码任务优先使用 structured edit tools，并通过受控的 `runProjectShellCommand` / `startProjectShellJob` 验证流程执行检查。
 
-Codex delegation 当前已从 GPT Actions 和模型可见 runtime tool discovery 隐藏。需要 Codex 的 operator 应在 WebCodex 外部手动运行，或等待未来显式 opt-in feature flag。
+WebCodex 不再暴露 `run_codex` 或 legacy `/api/codex/*` routes。GPT Actions clients 应使用 structured edit tools、patch validation、cargo validation、受限 `run_shell` / `run_job` escape hatches、`show_changes`、`workspace_hygiene_check` 和 `finish_coding_task`。需要 Codex-specific workflows 的 operator 应在 WebCodex 外部运行 Codex。
 
 ## 可观测性
 

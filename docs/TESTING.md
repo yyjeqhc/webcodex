@@ -33,8 +33,7 @@ tests with different cost profiles sharing the same default lane.
 - Tests that touch HTTP/auth behavior must use `AuthEnvGuard` or an equivalent
   `TEST_ENV_LOCK` guard for auth mode env, especially
   `WEBCODEX_SHARED_KEY_ENABLED`, `WEBCODEX_ALLOW_ANONYMOUS`,
-  `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE`, and
-  `WEBCODEX_ENABLE_LEGACY_CODEX_RUN`. Managed-token rejection tests should
+  and `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE`. Managed-token rejection tests should
   explicitly disable direct shared-key fallback and open anonymous mode before
   asserting that an unknown or wrong bearer returns 401.
 - Keep the auth-mode semantics separate in tests:

@@ -65,6 +65,6 @@ agent:<client_id>:<project_id>
 
 The server routes project tool calls to the owning connected agent.
 
-## Optional Codex jobs
+## Codex-specific workflows
 
-Codex delegation is currently hidden from model-facing runtime surfaces. The retained runner is a project tool path, not an agent lifecycle mechanism, and should be invoked outside WebCodex until a future explicit opt-in is available.
+WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes. Agent lifecycle and project dispatch use structured runtime tools, agent-registered projects, bounded shell/job validation, MCP, and GPT Actions. Run Codex outside WebCodex when needed.

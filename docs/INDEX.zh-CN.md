@@ -38,7 +38,7 @@ agent 和 troubleshooting 文档维护中文版本；深层 internals、release 
 
 ## Agent 和 Runtime
 
-16. [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) / [AGENT_PROJECTS.md](AGENT_PROJECTS.md) - agent `projects.d/*.toml` 格式、顶层 `id/path`、项目管理工具，以及 server-side `projects.toml` 注意事项。
+16. [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) / [AGENT_PROJECTS.md](AGENT_PROJECTS.md) - agent `projects.d/*.toml` 格式、顶层 `id/path`、项目管理工具和 runtime project id。
 17. [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) / [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) - QUIC、WebSocket、polling、`auto` fallback 和 transport validation。
 18. [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) / [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) - agent auth、identity、protocol 和 redacted policy summaries。
 19. [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) / [SHELL_PROFILES.md](SHELL_PROFILES.md) - prepared shell environment snapshots、profile 配置、解析规则和安全边界。

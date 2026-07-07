@@ -825,9 +825,9 @@ After deploying a new server, agent, or runtime build:
    caller-supplied limit, `truncation_reason="limit"` confirms it is a bounded
    response rather than `ResponseTooLarge`.
 3. Run `runtime_status(summary_only=true)` or `runtime_status(compact=true)`;
-   prefer `projects.effective.status/count` over legacy `projects.count` when
-   `projects.toml` is not configured but agent projects are registered. For
-   workflow sanity, also use
+   confirm `projects.effective.status`, `projects.effective.count`, and
+   `projects.agent_registered.online_count`. Projects are registered by agents,
+   not by server-side `projects.toml`. For workflow sanity, also use
    `start_coding_task(include_runtime_status=true, compact_startup=true)` and
    inspect `startup_verdict.status`; reserve full runtime status for deeper
    troubleshooting.

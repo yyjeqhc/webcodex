@@ -53,7 +53,7 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
   numbers or patch context are known.
 - Run Rust-oriented checks through structured Cargo helpers when configured;
   `run_shell` remains a bounded escape hatch, not the default validation source.
-- Codex CLI delegation is currently hidden from model-facing runtime surfaces; run Codex outside WebCodex until a future explicit opt-in is available.
+- WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes; run Codex outside WebCodex for Codex-specific workflows.
 - Track task sessions with `start_session`, `start_coding_task`,
   `finish_coding_task`, `session_summary`, `session_handoff_summary`, and
   session-aware `show_changes`.
@@ -76,7 +76,7 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 | Agent-backed project registry | Working; project ids use `agent:<client_id>:<project_id>`. |
 | Structured line edits | Working; preferred for scoped source edits with known line numbers. |
 | Git/file/patch/shell/Cargo tools | Working; shell execution should remain bounded and project-scoped. |
-| Codex CLI delegation | Hidden from GPT Actions, MCP, and runtime tool discovery pending an explicit opt-in. |
+| Codex CLI workflows | Run outside WebCodex; `run_codex` and legacy `/api/codex/*` routes are removed. |
 | Release artifacts | Planned v0.2.0 GitHub release will publish `linux-x64`, `linux-arm64`, and `darwin-arm64` artifacts. |
 | Windows and `darwin-x64` binaries | Not planned for v0.2.0 release artifacts. |
 

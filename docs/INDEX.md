@@ -40,7 +40,7 @@ English-only.
 
 ## Agent And Runtime
 
-16. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) / [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) - agent `projects.d/*.toml` format, top-level `id/path`, project management tools, and server-side `projects.toml` caveats.
+16. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) / [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) - agent `projects.d/*.toml` format, top-level `id/path`, project management tools, and runtime project ids.
 17. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) - QUIC, WebSocket, polling, `auto` fallback, and transport validation.
 18. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) - agent auth, identity, protocol, and redacted policy summaries.
 19. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) - prepared shell environment snapshots, profile config, resolution rules, and safety boundaries.

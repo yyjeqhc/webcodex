@@ -370,9 +370,9 @@ The OpenAPI GPT Actions management surface intentionally excludes users, API tok
 
 MCP uses the same user API token and the same `ToolRuntime` as GPT Actions.
 
-## Codex CLI delegation
+## Codex-specific workflows
 
-Codex delegation is currently hidden from GPT Actions, MCP `tools/list`, runtime tool discovery, and generic model-facing dispatch. Operators who want Codex should run it outside WebCodex, or wait for a future explicit opt-in feature flag.
+WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes. GPT Actions and MCP clients should use structured edit tools, patch validation, cargo validation, bounded `run_shell` / `run_job` escape hatches, `show_changes`, `workspace_hygiene_check`, and `finish_coding_task`. Operators who need Codex-specific workflows should run Codex outside WebCodex.
 
 ## Smoke checks
 

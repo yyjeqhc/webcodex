@@ -179,7 +179,8 @@ The registered line prints the final `actual_transport` and a server label with 
 
 `runtime_status` and `listAgents` show the actual connected transport label, not merely the preferred setting. Both include compact agent health fields for quick checks: online/stale/offline counts plus per-client `client_id`, `status`, `transport`, `last_seen_age_secs`, `projects_count`, `pending_requests`, and `active_jobs`.
 
-Agent-only deployments may intentionally have no server-side `projects.toml`. In that case, if agent-registered projects are online and `projects.effective.status = "ok"`, `runtime_status.projects.server_static` reports `status = "not_configured"` with `severity = "info"` instead of treating the missing file as an unhealthy effective project state.
+Projects are registered by agents. Use `runtime_status.projects.effective` and
+`listProjects` to confirm that online agent projects are visible to the runtime.
 
 ### Foreground polling failures
 

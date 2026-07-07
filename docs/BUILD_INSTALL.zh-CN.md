@@ -182,4 +182,4 @@ Authorization: Bearer <token>
 
 systemd services 不读取交互式 shell 启动文件，例如 `~/.bashrc`。如果命令需要 Rust/Cargo、Node 或 Codex CLI，请通过 agent shell profiles 或 service manager environment 暴露它们。
 
-Codex delegation 当前已从模型可见 runtime surface 隐藏。需要 Codex 时请在 WebCodex 外部运行，或等待未来显式 opt-in feature flag。
+WebCodex 不再暴露 `run_codex` 或 legacy `/api/codex/*` routes。需要 Codex-specific workflows 时，请在 WebCodex 外部运行 Codex。

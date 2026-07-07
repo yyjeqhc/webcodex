@@ -367,9 +367,9 @@ OpenAPI GPT Actions 管理面有意排除 users、API tokens、agent tokens、pa
 
 MCP 使用同一个用户 API token，并使用与 GPT Actions 相同的 `ToolRuntime`。
 
-## Codex CLI delegation
+## Codex-specific workflows
 
-Codex delegation 当前已从 GPT Actions、MCP `tools/list`、runtime tool discovery 和模型可见 generic dispatch 隐藏。需要 Codex 的 operator 应在 WebCodex 外部运行，或等待未来显式 opt-in feature flag。
+WebCodex 不再暴露 `run_codex` 或 legacy `/api/codex/*` routes。GPT Actions 和 MCP clients 应使用 structured edit tools、patch validation、cargo validation、受限 `run_shell` / `run_job` escape hatches、`show_changes`、`workspace_hygiene_check` 和 `finish_coding_task`。需要 Codex-specific workflows 的 operator 应在 WebCodex 外部运行 Codex。
 
 ## Smoke checks
 

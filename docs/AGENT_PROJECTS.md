@@ -8,15 +8,17 @@ An agent reports project registry entries to the server. GPT Actions and MCP the
 agent:<client_id>:<project_id>
 ```
 
+Projects are registered by agents, not by server-side projects.toml.
+
 ## Project registry files
 
-Each agent has a `projects_dir` containing one project file per registered project. The server does not need a matching server-side project block for agent-backed projects.
+Each agent has a `projects_dir` containing one project file per registered project. The server sees those entries through the connected agent registry.
 
 A project entry contains a human name, an absolute path on the agent host, and policy flags such as `allow_patch`.
 
 ## Agent `projects.d/*.toml` format
 
-Agent project files are one-file-per-project TOML files in the agent's configured `projects_dir`. They are **not** the same format as the server-side `projects.toml`.
+Agent project files are one-file-per-project TOML files in the agent's configured `projects_dir`.
 
 Correct agent `projects.d/webcodex.toml` format:
 
@@ -42,7 +44,7 @@ Incorrect for agent `projects.d/*.toml`:
 path = "/srv/webcodex/projects/webcodex"
 ```
 
-That nested `[projects.webcodex]` shape belongs to the legacy server-side `projects.toml`. In an agent `projects.d/*.toml` file it leaves the top-level `id` absent and will fail with `missing field id`. Use top-level `id` and `path` fields instead.
+That nested `[projects.webcodex]` shape belongs to an old server-side projects file format. In an agent `projects.d/*.toml` file it leaves the top-level `id` absent and will fail with `missing field id`. Use top-level `id` and `path` fields instead.
 
 
 ## Agent-side project management tools
@@ -78,39 +80,15 @@ This is only an example of a narrowed deployment, not the default.
 
 Each project in `listProjects` also carries `agent_status` (`online` / `stale`), `connected`, `last_seen`, `shell_profile` (the project's setting), `resolved_shell_profile` (the actually-used name), and `shell_profile_status` (`configured` / `missing` / `not_configured` / `unknown`).
 
-## Server-side `projects.toml` vs agent-registered projects
+## Agent-registered runtime surface
 
-> The server-side `projects.toml` config is legacy/metadata only. Runtime tool
-> execution (run_shell, apply_patch, git, …) uses **agent-registered**
-> projects. A project listed only in the server-side `projects.toml` is **not**
-> executable through the runtime surface; use an agent-registered id like
-> `agent:<client_id>:<project_id>` from `listProjects`.
+Runtime tool execution (`run_shell`, `apply_patch`, git, files, jobs, sessions)
+uses **agent-registered** projects only. Use the id returned by `listProjects`,
+for example `agent:<client_id>:<project_id>`.
 
-This is why a project may appear in `runtime_status` (`projects.configured =
-true`) but still be rejected by tool calls with an "Unknown project" /
-"projects.toml" error: the executable set comes from the connected agent's
-registry, not the server-side file. If a project seems to flicker in and out of
-`listProjects`, check the owning agent's liveness (`agent_status`, `connected`,
-`last_seen`): a `stale` or disconnected agent's projects are listed but cannot
-execute until the agent reconnects.
-
-If `runtime_status.projects.server_static.status = "not_configured"` and the
-message says `projects.toml not configured; using agent-registered projects`,
-the server is reporting that this optional metadata file is absent. It is normal
-for agent-only deployments. If an operator still wants a server-side metadata
-file, use `PROJECTS_CONFIG=/path/to/projects.toml` and keep the file minimal:
-
-```toml
-[projects.webcodex]
-path = "/srv/webcodex/projects/webcodex"
-executor = "agent"
-client_id = "workstation"
-allow_patch = true
-```
-
-This file can quiet the server-static status and support legacy metadata paths,
-but runtime tools should still use the `agent:<client_id>:<project_id>` id
-returned by `listProjects`.
+If you see older docs or deployment prompts telling you to configure a
+server-side `projects.toml`, that is legacy guidance and is not required for new
+deployments.
 
 ## Troubleshooting
 

@@ -67,8 +67,6 @@ MCP 和 GPT Actions 共享同一个 `ToolRuntime`。通过 MCP 发起的 tool ca
   `job_status` 默认不返回 `command_preview`，并返回 `command_preview_included=false`；仅在定向调试时传 `include_command_preview=true`，此时会附带有界 preview 元数据。它不会返回 stdout/stderr body。
 - Structured Cargo helpers：`cargo_fmt`、`cargo_check`、`cargo_test`。
 
-Codex delegation（`run_codex`）当前已从 MCP `tools/list` 和模型可见 runtime discovery 隐藏/禁用。需要 Codex 时请在 WebCodex 外部运行。legacy `/api/codex/run` endpoint 默认不挂载；只有设置 `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1` 才恢复旧 endpoint 形状，但不会重新启用 `run_codex`。
-
 已知目标行号时，优先使用 structured line edit tools。多文件修改使用 patch tools。把 `run_shell` 和 `run_job` 当作 diagnostics/build/test fallback，而不是首选源码编辑方式。`stop_job` 保留兼容字段 `stopped`，但模型应优先读取 `stop_effect`、`terminal`、`terminal_pending`。handoff/finish jobs summary 保留 `active_count`，并新增 `blocking_active_count`、`nonblocking_active_count`；`queued`、`running`、`started`、`agent_queued` 会阻塞收口，`stop_requested` 是非阻塞 terminal-pending 状态，只会产生 `blocking=false` 的 `jobs_terminal_pending`。
 
 Smoke / acceptance 测试可以在任意 MCP tool arguments 中附加

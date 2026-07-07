@@ -121,8 +121,6 @@ Typical MCP tools include:
   `job_status` omits `command_preview` by default and returns `command_preview_included=false`; pass `include_command_preview=true` only for focused debugging, which adds bounded preview metadata. It never returns stdout/stderr bodies.
 - Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
 
-Codex delegation (`run_codex`) is currently hidden/disabled from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex. The legacy `/api/codex/run` endpoint is not mounted unless `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1`, and that opt-in preserves only the old endpoint shape; it does not re-enable `run_codex`.
-
 Use `start_coding_task` for the recommended coding-loop entry point, then
 inspect with `read_file`, `search_project_text`, and `show_changes`. Use the
 structured line edit tools when you already know the target line range, and
@@ -323,9 +321,8 @@ count; use `manual_approved_count`, `auto_approved_count`, and
 stdout/stderr, command bodies, patches, file contents, env, tokens, secrets, or
 excerpts.
 
-`runtime_status.projects` separates `server_static`, `agent_registered`, and
-`effective`. A missing `projects.toml` should not be treated as an overall
-runtime failure when agent-registered projects are available; prefer
+MCP tools operate on agent-registered projects. `runtime_status.projects`
+reports `mode="agent_registered"`, `agent_registered`, and `effective`; prefer
 `projects.effective.status` and `projects.effective.count`.
 
 Use agent-backed project ids such as:

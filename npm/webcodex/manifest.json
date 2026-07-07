@@ -3,7 +3,7 @@
   "artifacts": {
     "linux-x64": {
       "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.2.0/webcodex-v0.2.0-linux-x64.tar.gz",
-      "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
+      "sha256": "59ad5af7569c62c0c1b93f68c09cc6760d55cfed6ef5d40881be25d16a61228c"
     }
   }
 }

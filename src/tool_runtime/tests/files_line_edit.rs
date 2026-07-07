@@ -368,7 +368,7 @@ async fn replace_in_file_rejects_invalid_input_before_agent_dispatch() {
         let err = result.error.unwrap();
         // Must NOT be the project-resolution error — proves early reject.
         assert!(
-            !err.contains("shell client") && !err.contains("projects.toml"),
+            !err.contains("shell client"),
             "should fail input validation before project resolution: {}",
             err
         );

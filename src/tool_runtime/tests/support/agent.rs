@@ -1,7 +1,6 @@
 use super::auth::auth_context;
 use super::runtime::test_runtime;
 use crate::config::CodexConfig;
-use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
     AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
@@ -11,7 +10,6 @@ use crate::shell_protocol::{
 use crate::tool_runtime::{RuntimeInfo, ToolCall, ToolResult, ToolRuntime};
 use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -189,35 +187,9 @@ pub(in crate::tool_runtime::tests) async fn dispatch_checkpoint_with_local_agent
     task.await.unwrap()
 }
 
-pub(in crate::tool_runtime::tests) fn agent_project_config(
-    path: &str,
-    client_id: &str,
-) -> ProjectConfig {
-    ProjectConfig {
-        path: path.to_string(),
-        executor: Executor::Agent,
-        client_id: Some(client_id.to_string()),
-        allow_patch: true,
-        allow_command_requests: false,
-        allow_raw_command_requests: false,
-        default_apply_patch_backend: None,
-        allowed_checks: vec![],
-        checks: None,
-        commands: HashMap::new(),
-        hooks: HashMap::new(),
-    }
-}
-
 pub(in crate::tool_runtime::tests) fn runtime_with_agent_project(client_id: &str) -> ToolRuntime {
-    let mut projects = HashMap::new();
-    projects.insert(
-        "agent-proj".to_string(),
-        agent_project_config("/tmp/agent-proj", client_id),
-    );
-    let config = ProjectsConfig { projects };
-    let state = ProjectsState::loaded(config, "test".to_string());
+    let _ = client_id;
     ToolRuntime::new(
-        Arc::new(state),
         Arc::new(ShellClientRegistry::default()),
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
@@ -258,27 +230,8 @@ pub(in crate::tool_runtime::tests) fn runtime_with_local_project(
     root: &Path,
     project_id: &str,
 ) -> ToolRuntime {
-    let mut projects = HashMap::new();
-    projects.insert(
-        project_id.to_string(),
-        ProjectConfig {
-            path: root.to_string_lossy().to_string(),
-            executor: Executor::Local,
-            client_id: None,
-            allow_patch: true,
-            allow_command_requests: false,
-            allow_raw_command_requests: false,
-            default_apply_patch_backend: None,
-            allowed_checks: Vec::new(),
-            checks: None,
-            commands: HashMap::new(),
-            hooks: HashMap::new(),
-        },
-    );
-    let config = ProjectsConfig { projects };
-    let state = ProjectsState::loaded(config, "test".to_string());
+    let _ = (root, project_id);
     ToolRuntime::new(
-        Arc::new(state),
         Arc::new(ShellClientRegistry::default()),
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),

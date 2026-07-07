@@ -339,8 +339,6 @@ impl ToolRuntime {
             | ToolCall::ListJobs { .. }
             | ToolCall::JobTail { .. }) => self.dispatch_job_tool(call, auth).await,
 
-            call @ ToolCall::RunCodex { .. } => self.dispatch_codex_tool(call).await,
-
             call @ ToolCall::WorkspaceHygieneCheck { .. } => self.dispatch_hygiene_tool(call).await,
         }
     }

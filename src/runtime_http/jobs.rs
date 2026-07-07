@@ -6,20 +6,6 @@ use salvo::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-struct CodexRunRequest {
-    pub project: String,
-    pub prompt: String,
-    #[serde(default)]
-    pub approval_mode: Option<String>,
-    #[serde(default)]
-    pub timeout_secs: Option<i64>,
-    #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub extra_args: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
 struct JobStatusRequest {
     pub job_id: String,
 }
@@ -82,47 +68,6 @@ struct JobTailRequest {
     pub job_id: String,
     #[serde(default)]
     pub tail_lines: Option<usize>,
-}
-
-#[handler]
-pub async fn codex_run(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/codex/run", "runCodexTask");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: CodexRunRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let project = Some(body.project.clone());
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunCodex {
-                project: body.project,
-                prompt: body.prompt,
-                session_id: None,
-                approval_mode: body.approval_mode,
-                timeout_secs: body.timeout_secs,
-                cwd: body.cwd,
-                extra_args: body.extra_args,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "run_codex", project, result);
 }
 
 #[handler]

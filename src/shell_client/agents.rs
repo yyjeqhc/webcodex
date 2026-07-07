@@ -220,6 +220,7 @@ impl ShellClientRegistry {
         }
     }
 
+    #[cfg(test)]
     pub async fn list_clients(&self) -> Vec<ShellClientView> {
         let inner = self.inner.lock().await;
         let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();

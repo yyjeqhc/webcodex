@@ -20,20 +20,6 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
             copy_keys(obj, &mut out, &["timeout_secs", "cwd"]);
         }
-        "run_codex" => {
-            out.insert(
-                "prompt_present".to_string(),
-                Value::Bool(obj.contains_key("prompt")),
-            );
-            copy_keys(obj, &mut out, &["approval_mode", "timeout_secs", "cwd"]);
-            if let Some(count) = obj
-                .get("extra_args")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-            {
-                out.insert("extra_args_count".to_string(), Value::from(count));
-            }
-        }
         "write_project_file" => {
             copy_keys(
                 obj,
@@ -276,21 +262,6 @@ impl ToolCall {
                 "project": project,
                 "job_id": job_id,
                 "confirm": confirm,
-            }),
-            Self::RunCodex {
-                project,
-                approval_mode,
-                timeout_secs,
-                cwd,
-                extra_args,
-                ..
-            } => serde_json::json!({
-                "project": project,
-                "prompt_present": true,
-                "approval_mode": approval_mode,
-                "timeout_secs": timeout_secs,
-                "cwd": cwd,
-                "extra_args_count": extra_args.as_ref().map(Vec::len),
             }),
             Self::ApplyPatch { project, .. } => serde_json::json!({
                 "project": project,

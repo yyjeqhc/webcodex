@@ -229,7 +229,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .filter(|definition| definition.disabled_message().is_some())
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    assert_eq!(disabled_tools, vec!["run_codex"]);
+    assert_eq!(disabled_tools, Vec::<&'static str>::new());
 
     let extra_accepted_flattened_arg_tools = tool_definitions()
         .filter(|definition| !definition.extra_accepted_flattened_args().is_empty())
@@ -292,7 +292,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("run_shell", PERMISSION_RISK_SHELL),
         ("run_job", PERMISSION_RISK_JOB),
         ("stop_job", PERMISSION_RISK_JOB),
-        ("run_codex", PERMISSION_RISK_JOB),
         ("delete_project_files", PERMISSION_RISK_DESTRUCTIVE),
         ("save_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
         ("apply_patch", PERMISSION_RISK_PATCH),

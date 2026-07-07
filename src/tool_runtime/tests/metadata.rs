@@ -2,7 +2,6 @@
 
 use super::super::*;
 use super::support::*;
-use crate::projects::ProjectsState;
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
     ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest,
@@ -597,10 +596,6 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
         .await
         .unwrap();
     let runtime = ToolRuntime::new(
-        Arc::new(ProjectsState::failed(
-            "none".to_string(),
-            "test".to_string(),
-        )),
         registry,
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
@@ -892,31 +887,6 @@ async fn agent_tool_allows_bootstrap_token_for_run_job() {
         )
         .await;
     assert!(result.success, "{:?}", result.error);
-}
-
-#[tokio::test]
-async fn run_codex_is_disabled_before_project_resolution() {
-    // Codex delegation remains implemented underneath, but model-facing runtime
-    // dispatch must reject it before project resolution or job creation.
-    let tmp = tempfile::tempdir().unwrap();
-    let runtime = runtime_with_codex(tmp.path(), CodexConfig::default());
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunCodex {
-                project: "demo".to_string(),
-                prompt: "echo hi".to_string(),
-                session_id: None,
-                approval_mode: None,
-                timeout_secs: Some(10),
-                cwd: None,
-                extra_args: None,
-            },
-            None,
-        )
-        .await;
-    assert!(!result.success);
-    assert_eq!(result.output["code"], "run_codex_disabled");
-    assert!(result.error.unwrap().contains("currently disabled"));
 }
 
 #[test]
@@ -1367,18 +1337,12 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
         out["permissions"]["release_recommended_policy"],
         "require_approval"
     );
-    // No projects.toml -> configured false, load_error present.
-    assert_eq!(out["projects"]["configured"], false);
+    assert_eq!(out["projects"]["mode"], "agent_registered");
     assert_eq!(out["projects"]["count"], 0);
-    assert!(out["projects"]["load_error"].is_string());
-    assert_eq!(out["projects"]["server_static"]["configured"], false);
-    assert_eq!(out["projects"]["server_static"]["count"], 0);
-    assert_eq!(out["projects"]["server_static"]["status"], "not_configured");
-    assert_eq!(out["projects"]["server_static"]["severity"], "warning");
-    assert_eq!(
-        out["projects"]["server_static"]["warning"],
-        "projects.toml not configured"
-    );
+    assert!(out["projects"].get("configured").is_none());
+    assert!(out["projects"].get("config_path").is_none());
+    assert!(out["projects"].get("load_error").is_none());
+    assert!(out["projects"].get("server_static").is_none());
     assert_eq!(out["projects"]["agent_registered"]["count"], 0);
     assert_eq!(out["projects"]["agent_registered"]["online_count"], 0);
     assert_eq!(out["projects"]["effective"]["count"], 0);
@@ -1386,7 +1350,7 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
 }
 
 #[tokio::test]
-async fn runtime_status_uses_agent_projects_as_effective_when_server_config_missing() {
+async fn runtime_status_uses_agent_projects_as_effective() {
     let runtime = test_runtime();
     let mut smoke = registered_project("webcodex-smoke", "/tmp/webcodex-smoke");
     smoke.git_branch = Some("main".to_string());
@@ -1409,15 +1373,11 @@ async fn runtime_status_uses_agent_projects_as_effective_when_server_config_miss
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let projects = &result.output["projects"];
-    assert_eq!(projects["server_static"]["configured"], false);
-    assert_eq!(projects["server_static"]["count"], 0);
-    assert_eq!(projects["server_static"]["status"], "not_configured");
-    assert_eq!(projects["server_static"]["severity"], "info");
-    assert!(projects["server_static"]["warning"].is_null());
-    assert_eq!(
-        projects["server_static"]["message"],
-        "projects.toml not configured; using agent-registered projects"
-    );
+    assert_eq!(projects["mode"], "agent_registered");
+    assert!(projects.get("server_static").is_none());
+    assert!(projects.get("configured").is_none());
+    assert!(projects.get("config_path").is_none());
+    assert!(projects.get("load_error").is_none());
     assert_eq!(projects["agent_registered"]["count"], 1);
     assert_eq!(projects["agent_registered"]["online_count"], 1);
     assert_eq!(projects["effective"]["count"], 1);
@@ -1479,9 +1439,8 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
             "/agents/summary/online",
             "/projects/effective/status",
             "/projects/effective/count",
-            "/projects/server_static/status",
-            "/projects/server_static/severity",
-            "/projects/server_static/message",
+            "/projects/agent_registered/count",
+            "/projects/agent_registered/online_count",
         ] {
             assert!(
                 summary.pointer(pointer).is_some(),
@@ -1528,23 +1487,8 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
                 "compact runtime_status leaked {forbidden}: {serialized}"
             );
         }
+        assert!(summary.pointer("/projects/server_static").is_none());
     }
-}
-
-#[tokio::test]
-async fn runtime_status_with_loaded_project_returns_configured_true() {
-    let tmp = tempfile::tempdir().unwrap();
-    let runtime = runtime_with_project(tmp.path(), "demo");
-    let result = runtime.dispatch(runtime_status_call()).await;
-    assert!(result.success, "{:?}", result.error);
-    let out = &result.output;
-    assert_eq!(out["projects"]["configured"], true);
-    assert_eq!(out["projects"]["count"], 1);
-    assert!(out["projects"]["load_error"].is_null());
-    assert_eq!(out["projects"]["server_static"]["configured"], true);
-    assert_eq!(out["projects"]["server_static"]["count"], 1);
-    assert_eq!(out["projects"]["effective"]["count"], 1);
-    assert_eq!(out["projects"]["effective"]["status"], "ok");
 }
 
 #[tokio::test]
@@ -1725,10 +1669,6 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
         .await
         .unwrap();
     let runtime = ToolRuntime::new(
-        Arc::new(ProjectsState::failed(
-            "none".to_string(),
-            "test".to_string(),
-        )),
         registry,
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
@@ -1796,10 +1736,6 @@ async fn runtime_status_includes_sanitized_policy_summary() {
         .await
         .unwrap();
     let runtime = ToolRuntime::new(
-        Arc::new(ProjectsState::failed(
-            "none".to_string(),
-            "test".to_string(),
-        )),
         registry,
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
@@ -1839,10 +1775,6 @@ async fn runtime_status_policy_summary_is_null_for_older_agents() {
         .await
         .unwrap();
     let runtime = ToolRuntime::new(
-        Arc::new(ProjectsState::failed(
-            "none".to_string(),
-            "test".to_string(),
-        )),
         registry,
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
@@ -1880,10 +1812,6 @@ async fn list_agents_includes_sanitized_policy_summary() {
         .await
         .unwrap();
     let runtime = ToolRuntime::new(
-        Arc::new(ProjectsState::failed(
-            "none".to_string(),
-            "test".to_string(),
-        )),
         registry,
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
@@ -1944,10 +1872,6 @@ async fn runtime_status_marks_stale_websocket_agent_with_last_seen() {
     registry.set_last_seen_for_test("ws-stale", stale_ts).await;
 
     let runtime = ToolRuntime::new(
-        Arc::new(ProjectsState::failed(
-            "none".to_string(),
-            "test".to_string(),
-        )),
         registry,
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
@@ -1971,10 +1895,6 @@ async fn runtime_status_marks_stale_websocket_agent_with_last_seen() {
 async fn runtime_status_reflects_websocket_transport_label() {
     let registry = Arc::new(ShellClientRegistry::default());
     let runtime = ToolRuntime::new(
-        Arc::new(ProjectsState::failed(
-            "none".to_string(),
-            "test".to_string(),
-        )),
         registry.clone(),
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
@@ -2098,7 +2018,7 @@ async fn runtime_status_tools_summary_lists_names() {
     );
     assert!(
         !names.iter().any(|n| n == "run_codex"),
-        "runtime_status tools.names must not include hidden run_codex: {:?}",
+        "runtime_status tools.names must not include removed run_codex: {:?}",
         names
     );
     assert_eq!(tools["count"], names.len() as i64);

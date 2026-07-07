@@ -989,7 +989,8 @@ async fn list_project_files_rejects_non_agent_project_id() {
         .await;
     assert!(!result.success);
     let err = result.error.unwrap();
-    assert!(err.contains("agent") || err.contains("projects.toml"));
+    assert!(err.contains("agent"), "{err}");
+    assert!(!err.contains("projects.toml"), "{err}");
 }
 
 #[tokio::test]

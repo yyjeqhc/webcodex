@@ -3,8 +3,8 @@
 use super::super::project_instructions;
 use super::super::*;
 use super::support::*;
+use crate::projects::ProjectConfig;
 use crate::shell_protocol::ShellClientCapabilities;
-use std::fs;
 
 #[tokio::test]
 async fn start_session_without_project_instructions_when_no_candidate_exists() {
@@ -303,26 +303,59 @@ async fn session_summary_returns_project_instructions_without_content() {
 }
 
 #[tokio::test]
-async fn load_project_instructions_first_match_wins_locally() {
-    // Direct unit-style test of the loader against a local project root so
-    // the local read path and first-match-wins ordering are exercised
-    // without driving an agent.
+async fn load_project_instructions_first_match_wins_from_agent_project() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(
-        dir.path().join("CLAUDE.md"),
-        "# Claude\n\nclaude-local rules\n",
+    let runtime = test_runtime();
+    register_agent(
+        &runtime,
+        "instr-order",
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
     )
-    .unwrap();
-    fs::write(
-        dir.path().join("agents.md"),
-        "# lower agents\n\nignored because CLAUDE.md wins earlier? no, AGENTS.md is first\n",
-    )
-    .unwrap();
+    .await;
+    let config = ProjectConfig {
+        path: dir.path().to_string_lossy().to_string(),
+        client_id: "instr-order".to_string(),
+        allow_patch: true,
+    };
     // Note: AGENTS.md is absent, agents.md is present (2nd candidate),
     // CLAUDE.md is present (3rd candidate). First match wins => agents.md.
-    let config = local_project_config(&dir.path().to_string_lossy());
-    let runtime = test_runtime();
-    let snapshot = runtime.load_project_instructions(&config).await;
+    let load = runtime.load_project_instructions(&config);
+    let drive_agent = async {
+        let missing = next_agent_request_for_instance(&runtime, "instr-order", "inst")
+            .await
+            .expect("AGENTS.md candidate should enqueue an agent file_read");
+        assert_eq!(missing.kind, "file_read");
+        assert_eq!(missing.path.as_deref(), Some("AGENTS.md"));
+        complete_patch_agent_request(
+            &runtime,
+            "instr-order",
+            &missing.request_id,
+            1,
+            "",
+            "no such file or directory",
+        )
+        .await;
+
+        let present = next_agent_request_for_instance(&runtime, "instr-order", "inst")
+            .await
+            .expect("agents.md candidate should enqueue an agent file_read");
+        assert_eq!(present.kind, "file_read");
+        assert_eq!(present.path.as_deref(), Some("agents.md"));
+        complete_patch_agent_request(
+            &runtime,
+            "instr-order",
+            &present.request_id,
+            0,
+            "# lower agents\n\nlower agents rules\n",
+            "",
+        )
+        .await;
+    };
+    let (snapshot, _) = tokio::join!(load, drive_agent);
     assert!(snapshot.loaded);
     assert_eq!(snapshot.files.len(), 1);
     assert_eq!(snapshot.files[0].path, "agents.md");

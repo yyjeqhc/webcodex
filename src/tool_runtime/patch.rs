@@ -453,13 +453,11 @@ mod tests {
     use super::super::{RuntimeInfo, ToolResult};
     use super::*;
     use crate::config::CodexConfig;
-    use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
     use crate::shell_client::ShellClientRegistry;
     use crate::shell_protocol::{
         ShellAgentPollRequest, ShellAgentProjectSummary, ShellClientCapabilities,
         ShellClientRegisterRequest,
     };
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     fn codex_apply_patch_wrapper() -> &'static str {
@@ -471,28 +469,8 @@ mod tests {
     }
 
     fn runtime_with_agent_project(client_id: &str) -> ToolRuntime {
-        let mut projects = HashMap::new();
-        projects.insert(
-            "agent-proj".to_string(),
-            ProjectConfig {
-                path: "/tmp/agent-proj".to_string(),
-                executor: Executor::Agent,
-                client_id: Some(client_id.to_string()),
-                allow_patch: true,
-                allow_command_requests: false,
-                allow_raw_command_requests: false,
-                default_apply_patch_backend: None,
-                allowed_checks: Vec::new(),
-                checks: None,
-                commands: HashMap::new(),
-                hooks: HashMap::new(),
-            },
-        );
+        let _ = client_id;
         ToolRuntime::new(
-            Arc::new(ProjectsState::loaded(
-                ProjectsConfig { projects },
-                "test".to_string(),
-            )),
             Arc::new(ShellClientRegistry::default()),
             Arc::new(CodexConfig::default()),
             Arc::new(RuntimeInfo::default()),

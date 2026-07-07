@@ -103,9 +103,8 @@ const GPT_ACTION_OPS: &[&str] = &[
 
 /// Legacy and non-GPT-Actions paths that must never appear in
 /// `/openapi.json`. The GPT Actions surface is intentionally small and
-/// POST-only; raw shell, file transfer, desktop, and the old codex
-/// command/context endpoints belong to other internal routers, not to
-/// the GPT-importable schema.
+/// POST-only; removed legacy `/api/codex/*` paths must stay absent from the
+/// GPT-importable schema.
 #[cfg(test)]
 const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/messages",
@@ -186,7 +185,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         "info": {
             "title": "WebCodex Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. Codex delegation is hidden from GPT Actions for now; run Codex outside WebCodex if needed. All endpoints require Bearer auth; static bearer/API-key hosts may use a shared key for quick start or wc_pat_* for managed mode. MCP and GPT Actions share the same ToolRuntime."
+            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. Projects are registered by agents and use runtime ids like agent:<client_id>:<project_id>. All endpoints require Bearer auth; static bearer/API-key hosts may use a shared key for quick start or wc_pat_* for managed mode. MCP and GPT Actions share the same ToolRuntime."
         },
         "servers": [
             {
@@ -2361,20 +2360,20 @@ mod tests {
     }
 
     #[test]
-    fn openapi_hides_codex_delegation_from_model_facing_spec() {
+    fn openapi_rejects_legacy_codex_paths_from_model_facing_spec() {
         let spec = build_openapi_spec();
         assert!(
             spec["paths"].get("/api/codex/run").is_none(),
-            "Codex delegation must not be exposed as a GPT Action path"
+            "legacy /api/codex/run must not be exposed as a GPT Action path"
         );
         let serialized = serde_json::to_string(&spec).unwrap();
         assert!(
             !serialized.contains("runCodexTask"),
-            "Codex delegation operation id must stay hidden from OpenAPI"
+            "legacy runCodexTask operation id must stay absent from OpenAPI"
         );
         assert!(
             !serialized.contains("CodexRunRequest"),
-            "Codex delegation request schema must stay hidden from OpenAPI"
+            "legacy CodexRunRequest schema must stay absent from OpenAPI"
         );
         let tool_desc = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
             [TOOL_CALL_TOOL_FIELD]["description"]
@@ -3169,7 +3168,7 @@ mod tests {
         // Phase 3 promoted 10 core runtime tools to dedicated GPT Actions,
         // then later phases promoted run_job plus project onboarding actions.
         // Compatibility edit tools are now runtime-only again, so the current
-        // GPT Action count is 25 while Codex delegation remains hidden.
+        // GPT Action count is 25 after removing legacy `/api/codex/*` routes.
         // The surface must stay <= 30.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]

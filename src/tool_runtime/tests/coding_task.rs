@@ -465,7 +465,6 @@ async fn start_coding_task_compact_startup_returns_sanitized_runtime_summary() {
         "/agents/summary/online",
         "/projects/effective/status",
         "/projects/agent_registered/online_count",
-        "/projects/server_static/status",
     ] {
         assert!(
             summary.pointer(pointer).is_some(),
@@ -501,8 +500,7 @@ async fn start_coding_task_compact_startup_returns_sanitized_runtime_summary() {
     assert_eq!(summary["projects"]["effective"]["count"], 1);
     assert_eq!(summary["projects"]["agent_registered"]["count"], 1);
     assert_eq!(summary["projects"]["agent_registered"]["online_count"], 1);
-    assert!(summary["projects"]["server_static"]["severity"].is_string());
-    assert!(summary["projects"]["server_static"]["status"].is_string());
+    assert!(summary["projects"].get("server_static").is_none());
     let verdict = &result.output["startup_verdict"];
     assert_startup_verdict_shape(verdict);
     assert_ne!(verdict["status"], "fail");

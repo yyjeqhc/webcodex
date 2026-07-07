@@ -12,19 +12,17 @@ const MAX_PREVIEW_TEXT: usize = 120;
 
 #[cfg(test)]
 #[allow(dead_code)]
-// Historical /api/codex/* endpoints remain here so audit/session stats can
-// classify old events. They are lifecycle-deprecated for new clients.
 pub const AUDITED_ACTION_ROUTES: &[&str] = &[
-    "/api/codex/projects",
-    "/api/codex/context_batch",
-    "/api/codex/edit",
-    "/api/codex/artifact",
-    "/api/codex/git",
-    "/api/codex/command",
-    "/api/codex/command_request_op",
-    "/api/codex/job",
-    "/api/codex/check",
-    "/api/codex/report",
+    "/api/tools/call",
+    "/api/runtime/status",
+    "/api/artifacts/import",
+    "/api/projects/list",
+    "/api/projects/read_file",
+    "/api/projects/git_status",
+    "/api/projects/git_diff",
+    "/api/projects/apply_patch",
+    "/api/projects/run_job",
+    "/api/projects/run_shell",
     "/api/shell/clients",
     "/api/shell/run",
     "/api/shell/file",
@@ -448,22 +446,31 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
             }
         }
         match event.endpoint.as_str() {
-            "/api/codex/edit" => edit_count += 1,
-            "/api/codex/context_batch" | "/api/codex/context" => context_count += 1,
-            "/api/codex/job" => job_count += 1,
-            "/api/codex/command"
-            | "/api/codex/command_request"
-            | "/api/codex/command_request_op"
-            | "/api/codex/command_request_raw"
-            | "/api/codex/command_request_batch"
-            | "/api/codex/command_approve"
-            | "/api/codex/command_reject" => command_count += 1,
-            "/api/codex/report" => report_count += 1,
-            "/api/codex/artifact" => artifact_count += 1,
-            "/api/codex/git" => git_count += 1,
-            "/api/shell/clients" | "/api/shell/run" | "/api/shell/file" | "/api/shell/job" => {
-                shell_count += 1
+            "/api/projects/apply_patch"
+            | "/api/projects/apply_patch_checked"
+            | "/api/projects/replace_in_file"
+            | "/api/projects/write_file" => edit_count += 1,
+            "/api/projects/list"
+            | "/api/projects/read_file"
+            | "/api/projects/list_files"
+            | "/api/projects/search_text" => context_count += 1,
+            "/api/projects/run_job" | "/api/jobs/status" | "/api/jobs/log" | "/api/jobs/tail" => {
+                job_count += 1
             }
+            "/api/tools/call" => command_count += 1,
+            "/api/runtime/status" => report_count += 1,
+            "/api/artifacts/import"
+            | "/api/projects/delete_files"
+            | "/api/projects/git_restore_paths"
+            | "/api/projects/discard_untracked" => artifact_count += 1,
+            "/api/projects/git_status"
+            | "/api/projects/git_diff"
+            | "/api/projects/git_diff_summary" => git_count += 1,
+            "/api/projects/run_shell"
+            | "/api/shell/clients"
+            | "/api/shell/run"
+            | "/api/shell/file"
+            | "/api/shell/job" => shell_count += 1,
             _ => {}
         }
     }

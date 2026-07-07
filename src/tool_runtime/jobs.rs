@@ -1263,52 +1263,12 @@ impl ToolRuntime {
         stop_local_job(&job_id, &record, self.job_killer.as_ref())
     }
 
-    /// Recover a local job from on-disk `.codex/jobs/<job_id>/metadata.json`
-    /// under any configured project root. Rejects job ids that could escape
-    /// the project directory and verifies the metadata matches the configured
-    /// project before caching the record in memory.
+    /// On-disk local job recovery used to scan server-configured project roots.
+    /// The runtime no longer has a server-side project map, so only in-memory
+    /// local jobs from the current process can be queried or stopped.
     pub(crate) async fn recover_local_job(&self, job_id: &str) -> Option<LocalJobRecord> {
         if !is_safe_job_id(job_id) {
             return None;
-        }
-        let projects = self.projects.config.as_ref()?;
-        for (id, proj) in &projects.projects {
-            let root = proj.root();
-            let job_dir = root.join(format!(".codex/jobs/{}", job_id));
-            let meta_path = job_dir.join("metadata.json");
-            if !meta_path.exists() {
-                continue;
-            }
-            // Path safety: canonicalize both and verify the job dir is under
-            // the configured project root.
-            let canonical_root = match root.canonicalize() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let canonical_job_dir = match job_dir.canonicalize() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            if !canonical_job_dir.starts_with(&canonical_root) {
-                continue;
-            }
-            // Verify metadata belongs to this configured project. This stops a
-            // recovered job from one project being mistaken for another.
-            let meta = read_json(meta_path);
-            let meta_project = meta.get("project").and_then(Value::as_str).unwrap_or("");
-            let meta_path_str = meta.get("path").and_then(Value::as_str).unwrap_or("");
-            if meta_project != id || meta_path_str != proj.path {
-                continue;
-            }
-            let record = LocalJobRecord {
-                project: id.clone(),
-                dir: job_dir.clone(),
-            };
-            self.local_jobs
-                .lock()
-                .await
-                .insert(job_id.to_string(), record.clone());
-            return Some(record);
         }
         None
     }

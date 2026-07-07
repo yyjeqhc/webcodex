@@ -106,7 +106,6 @@ pub(crate) struct AuthEnvGuard {
     shared_key_enabled: Option<std::ffi::OsString>,
     allow_anonymous: Option<std::ffi::OsString>,
     oauth2_shared_key_bridge: Option<std::ffi::OsString>,
-    legacy_codex_run: Option<std::ffi::OsString>,
 }
 
 #[cfg(test)]
@@ -118,7 +117,6 @@ impl AuthEnvGuard {
             shared_key_enabled: std::env::var_os("WEBCODEX_SHARED_KEY_ENABLED"),
             allow_anonymous: std::env::var_os("WEBCODEX_ALLOW_ANONYMOUS"),
             oauth2_shared_key_bridge: std::env::var_os("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE"),
-            legacy_codex_run: std::env::var_os("WEBCODEX_ENABLE_LEGACY_CODEX_RUN"),
         }
     }
 
@@ -153,14 +151,6 @@ impl AuthEnvGuard {
     pub(crate) fn disable_oauth2_shared_key_bridge(&self) {
         std::env::remove_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
     }
-
-    pub(crate) fn enable_legacy_codex_run(&self) {
-        std::env::set_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN", "1");
-    }
-
-    pub(crate) fn disable_legacy_codex_run(&self) {
-        std::env::remove_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN");
-    }
 }
 
 #[cfg(test)]
@@ -172,7 +162,6 @@ impl Drop for AuthEnvGuard {
             "WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE",
             &self.oauth2_shared_key_bridge,
         );
-        restore_test_env("WEBCODEX_ENABLE_LEGACY_CODEX_RUN", &self.legacy_codex_run);
     }
 }
 

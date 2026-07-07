@@ -1,9 +1,8 @@
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::projects::{Executor, ProjectConfig};
+use crate::projects::ProjectConfig;
 use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientView};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectResolverCandidate {
@@ -145,16 +144,8 @@ impl ToolRuntime {
     fn project_config_from_candidate(candidate: &ProjectResolverCandidate) -> ProjectConfig {
         ProjectConfig {
             path: candidate.path.clone(),
-            executor: Executor::Agent,
-            client_id: Some(candidate.client_id.clone()),
+            client_id: candidate.client_id.clone(),
             allow_patch: candidate.allow_patch,
-            allow_command_requests: false,
-            allow_raw_command_requests: false,
-            default_apply_patch_backend: None,
-            allowed_checks: Vec::new(),
-            checks: None,
-            commands: HashMap::new(),
-            hooks: HashMap::new(),
         }
     }
 

@@ -467,18 +467,6 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             None,
         ),
         ExpectedToolPolicy::new(
-            "run_codex",
-            "codex",
-            "job_run",
-            false,
-            false,
-            true,
-            false,
-            "current_session_fallback",
-            true,
-            Some(AsyncJobs),
-        ),
-        ExpectedToolPolicy::new(
             "job_status",
             "job",
             "read_only",
@@ -862,7 +850,7 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
     let definition_name_set = definition_names.iter().copied().collect::<BTreeSet<_>>();
     assert_eq!(definition_name_set, expected_names);
     assert_eq!(definition_names, known_tool_names().collect::<Vec<_>>());
-    assert_eq!(definition_names.len(), 67, "runtime ToolDefinition count");
+    assert_eq!(definition_names.len(), 66, "runtime ToolDefinition count");
 
     for entry in expected {
         let definition = lookup_tool_definition(entry.name)
@@ -1274,9 +1262,8 @@ fn tool_definition_legacy_metadata_fallbacks_are_explicit_and_reasoned() {
 
 #[test]
 fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
-    use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, model_hidden_tool_names, runtime_tool_metadata, tool_definitions,
+        lookup_tool_definition, model_hidden_tool_names, tool_definitions,
     };
 
     let openapi = crate::openapi::build_openapi_spec();
@@ -1343,35 +1330,23 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
     let definition_names = tool_definitions()
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    assert_eq!(definition_names.len(), 67, "ToolDefinition count");
+    assert_eq!(definition_names.len(), 66, "ToolDefinition count");
     assert!(
-        lookup_tool_definition("run_codex").is_some(),
-        "hidden run_codex must keep an explicit ToolDefinition"
-    );
-    let run_codex_definition =
-        lookup_tool_definition("run_codex").expect("run_codex ToolDefinition");
-    assert_eq!(
-        lookup_tool_metadata("run_codex").copied(),
-        Some(run_codex_definition.metadata()),
-        "run_codex lookup_tool_metadata must return ToolDefinition metadata"
-    );
-    assert_eq!(
-        runtime_tool_metadata("run_codex"),
-        run_codex_definition.metadata(),
-        "run_codex runtime metadata helper must return ToolDefinition metadata"
+        lookup_tool_definition("run_codex").is_none(),
+        "run_codex must not keep an explicit ToolDefinition"
     );
     assert_eq!(
         model_hidden_tool_names().collect::<Vec<_>>(),
-        vec!["run_codex"],
-        "run_codex must remain the only hidden ToolDefinition"
+        Vec::<&'static str>::new(),
+        "hidden ToolDefinitions must be removed"
     );
     assert!(
         ToolCall::from_tool_name(
             "run_codex",
             json!({"project": SAMPLE_PROJECT, "prompt": "summarize"})
         )
-        .is_ok(),
-        "run_codex hidden parser-known behavior must stay explicit"
+        .is_err(),
+        "run_codex must not remain parser-known"
     );
     assert_eq!(
         model_facing_names.len(),
@@ -1380,12 +1355,12 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
     );
     assert!(
         !model_facing_names.iter().any(|name| name == "run_codex"),
-        "run_codex must remain hidden from model-facing tools: {model_facing_names:?}"
+        "run_codex must remain removed from model-facing tools: {model_facing_names:?}"
     );
     assert_eq!(
         known_tool_names().count(),
-        model_facing_names.len() + 1,
-        "ToolDefinition includes only one hidden runtime tool"
+        model_facing_names.len(),
+        "ToolDefinition count must match model-facing tool count"
     );
     assert_model_facing_surfaces_do_not_list_name("run_codex");
 }

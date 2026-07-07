@@ -3,7 +3,6 @@ use super::local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller};
 use super::runtime_info::RuntimeInfo;
 use super::sessions;
 use crate::config::CodexConfig;
-use crate::projects::ProjectsState;
 use crate::shell_client::ShellClientRegistry;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -12,7 +11,6 @@ use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct ToolRuntime {
-    pub projects: Arc<ProjectsState>,
     pub shell_clients: Arc<ShellClientRegistry>,
     #[allow(dead_code)]
     pub codex: Arc<CodexConfig>,
@@ -25,13 +23,11 @@ pub struct ToolRuntime {
 
 impl ToolRuntime {
     pub fn new(
-        projects: Arc<ProjectsState>,
         shell_clients: Arc<ShellClientRegistry>,
         codex: Arc<CodexConfig>,
         runtime_info: Arc<RuntimeInfo>,
     ) -> Self {
         Self {
-            projects,
             shell_clients,
             codex,
             runtime_info,
@@ -52,10 +48,6 @@ impl ToolRuntime {
         shell_clients: Arc<ShellClientRegistry>,
     ) -> Self {
         Self::new(
-            Arc::new(ProjectsState::failed(
-                "projects not configured for test".to_string(),
-                "test".to_string(),
-            )),
             shell_clients,
             Arc::new(CodexConfig::default()),
             Arc::new(RuntimeInfo::default()),

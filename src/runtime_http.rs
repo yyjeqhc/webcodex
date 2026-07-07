@@ -20,8 +20,7 @@ mod projects;
 
 pub use import_http::import_conversation_files_to_project;
 pub use jobs::{
-    codex_run, job_log, job_status, job_stop, job_tail, jobs_list, projects_run_job,
-    projects_run_shell,
+    job_log, job_status, job_stop, job_tail, jobs_list, projects_run_job, projects_run_shell,
 };
 pub use project_files::{
     projects_apply_patch, projects_apply_patch_checked, projects_delete_files,
@@ -294,12 +293,10 @@ pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Resp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
     use crate::shell_client::ShellClientRegistry;
     use crate::CodexConfig;
     use salvo::test::{ResponseExt, TestClient};
     use salvo::Service;
-    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -450,33 +447,10 @@ mod tests {
         (tmp, service, token)
     }
 
-    fn local_project_config(path: &str) -> ProjectConfig {
-        ProjectConfig {
-            path: path.to_string(),
-            executor: Executor::Local,
-            client_id: None,
-            allow_patch: true,
-            allow_command_requests: false,
-            allow_raw_command_requests: false,
-            default_apply_patch_backend: None,
-            allowed_checks: vec![],
-            checks: None,
-            commands: HashMap::new(),
-            hooks: HashMap::new(),
-        }
-    }
-
-    /// Build a ToolRuntime backed by a single local project rooted at `root`.
+    /// Build a ToolRuntime without any server-side project configuration.
     fn runtime_with_local_project(root: &std::path::Path, project_id: &str) -> ToolRuntime {
-        let mut projects = HashMap::new();
-        projects.insert(
-            project_id.to_string(),
-            local_project_config(&root.to_string_lossy()),
-        );
-        let config = ProjectsConfig { projects };
-        let state = ProjectsState::loaded(config, "test".to_string());
+        let _ = (root, project_id);
         ToolRuntime::new(
-            Arc::new(state),
             Arc::new(ShellClientRegistry::default()),
             Arc::new(CodexConfig::default()),
             Arc::new(crate::tool_runtime::RuntimeInfo::default()),
@@ -713,7 +687,7 @@ mod tests {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
         let service = Service::new(build_projects_router(config, db, runtime));
 
         let mut resp = TestClient::post("http://localhost/api/runtime/status")
@@ -727,8 +701,14 @@ mod tests {
         let out = &body["output"];
         assert_eq!(out["service"], "webcodex");
         assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(out["projects"]["configured"], true);
+        assert_eq!(out["projects"]["mode"], "agent_registered");
+        assert!(out["projects"].get("configured").is_none());
+        assert!(out["projects"].get("server_static").is_none());
         assert_eq!(out["projects"]["count"], 1);
+        assert_eq!(out["projects"]["agent_registered"]["count"], 1);
+        assert_eq!(out["projects"]["agent_registered"]["online_count"], 1);
+        assert_eq!(out["projects"]["effective"]["count"], 1);
+        assert_eq!(out["projects"]["effective"]["status"], "ok");
         assert!(out["agents"]["count"].is_i64());
         assert!(out["jobs"]["active_count"].is_i64());
         assert!(out["tools"]["count"].is_i64());
@@ -1045,7 +1025,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_tools_call_run_codex_returns_disabled_without_creating_job() {
+    async fn http_tools_call_run_codex_is_unknown_without_creating_job() {
         let (_tmp, service) = phase2_service();
         let mut resp = TestClient::post("http://localhost/api/tools/call")
             .bearer_auth("secret")
@@ -1060,11 +1040,14 @@ mod tests {
             .await;
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false);
-        assert_eq!(body["output"]["code"], "run_codex_disabled");
+        assert_eq!(body["status"], 400);
         let err = body["error"].as_str().unwrap();
-        assert!(err.contains("currently disabled"), "{err}");
-        assert!(!err.contains("/"), "error must not leak local paths: {err}");
+        assert!(err.contains("unknown tool 'run_codex'"), "{err}");
+        assert_eq!(
+            err.matches("run_codex").count(),
+            1,
+            "unknown-tool error must not advertise removed run_codex: {err}"
+        );
 
         let mut resp = TestClient::post("http://localhost/api/tools/call")
             .bearer_auth("secret")

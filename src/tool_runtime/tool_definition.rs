@@ -73,7 +73,7 @@ pub(crate) enum AgentCapability {
     /// `git_status` / `git_diff` (agent path runs git via shell; accept either
     /// an explicit `git` capability or `shell`).
     GitOrShell,
-    /// `run_job` / `run_codex` (agent path starts an async job).
+    /// `run_job` (agent path starts an async job).
     AsyncJobs,
 }
 
@@ -111,13 +111,12 @@ impl AgentCapability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolVisibility {
     ModelVisible,
-    ModelHidden,
 }
 
 impl ToolVisibility {
     #[cfg(test)]
     pub(crate) fn is_model_hidden(self) -> bool {
-        matches!(self, Self::ModelHidden)
+        false
     }
 
     pub(crate) fn is_model_visible(self) -> bool {
@@ -141,7 +140,6 @@ pub(crate) struct ToolDefinition {
 pub(crate) const TOOL_CATEGORY_ARTIFACT: &str = "artifact";
 pub(crate) const TOOL_CATEGORY_CHECKPOINT: &str = "checkpoint";
 pub(crate) const TOOL_CATEGORY_CLEANUP: &str = "cleanup";
-pub(crate) const TOOL_CATEGORY_CODEX: &str = "codex";
 pub(crate) const TOOL_CATEGORY_EDIT: &str = "edit";
 pub(crate) const TOOL_CATEGORY_FILE: &str = "file";
 pub(crate) const TOOL_CATEGORY_GIT: &str = "git";
@@ -281,16 +279,6 @@ const fn creates_or_binds_session(definition: ToolDefinition) -> ToolDefinition 
     ToolDefinition {
         policy: ToolDefinitionPolicy {
             creates_or_binds_session: true,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
-
-const fn disabled(definition: ToolDefinition, message: &'static str) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            disabled_message: Some(message),
             ..definition.policy
         },
         ..definition

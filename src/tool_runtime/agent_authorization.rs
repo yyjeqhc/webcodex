@@ -11,13 +11,12 @@ pub(crate) fn required_agent_capability(call: &ToolCall) -> Option<AgentCapabili
 impl ToolRuntime {
     /// Enforce the owner boundary and capability requirements for agent-backed
     /// runtime tools before dispatching. This is the single place where the
-    /// runtime paths (`/api/tools/call`, `/api/projects/*`, `/mcp`, and the
-    /// gated legacy `/api/codex/run`) check that the caller is allowed to drive an agent. Legacy
+    /// runtime paths (`/api/tools/call`, `/api/projects/*`, `/mcp`) check that
+    /// the caller is allowed to drive an agent.
     /// `/api/shell/*` handlers keep their own `assert_shell_client_owner`
     /// checks; this method closes the gap for the runtime paths.
     ///
-    /// Returns `Ok(())` for local-executor projects and project-less tools so
-    /// they are unaffected.
+    /// Returns `Ok(())` for project-less tools so they are unaffected.
     pub(crate) async fn authorize_agent_tool(
         &self,
         call: &ToolCall,

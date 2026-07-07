@@ -9,6 +9,21 @@ use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest}
 use serde_json::json;
 use std::fs;
 
+async fn seed_local_job(
+    runtime: &ToolRuntime,
+    job_id: &str,
+    project: &str,
+    dir: std::path::PathBuf,
+) {
+    runtime.local_jobs.lock().await.insert(
+        job_id.to_string(),
+        LocalJobRecord {
+            project: project.to_string(),
+            dir,
+        },
+    );
+}
+
 #[tokio::test]
 async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     let runtime = runtime_with_agent_project("telemetry-shell");
@@ -251,7 +266,7 @@ fn read_lines_from_tail_is_capped_to_max() {
 }
 
 #[tokio::test]
-async fn recover_local_job_status_after_restart() {
+async fn disk_local_job_status_is_not_recovered_without_server_project_map() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let project_id = "demo";
@@ -267,25 +282,13 @@ async fn recover_local_job_status_after_restart() {
         "",
         json!({}),
     );
-    // local_jobs is empty (simulating restart); recovery should find it.
+    // local_jobs is empty (simulating restart); the runtime no longer scans
+    // server-configured project roots, so disk-only jobs are not recovered.
     assert!(runtime.local_jobs.lock().await.is_empty());
     let result = runtime.job_status(job_id.to_string()).await;
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["status"], "completed");
-    assert_eq!(result.output["project"], project_id);
-    assert_eq!(result.output["executor"], "local");
-    assert_eq!(result.output["kind"], "shell");
-    assert!(result.output.get("command_preview").is_none());
-    let debug_result = runtime
-        .dispatch(ToolCall::JobStatus {
-            job_id: job_id.to_string(),
-            include_command_preview: true,
-        })
-        .await;
-    assert!(debug_result.success, "{:?}", debug_result.error);
-    assert_eq!(debug_result.output["command_preview"], "echo test");
-    // Recovered job is now cached in memory.
-    assert!(runtime.local_jobs.lock().await.contains_key(job_id));
+    assert!(!result.success, "{:?}", result.output);
+    assert!(result.error.unwrap().contains("unknown job"));
+    assert!(!runtime.local_jobs.lock().await.contains_key(job_id));
 }
 
 #[tokio::test]
@@ -295,7 +298,7 @@ async fn job_status_reports_lifecycle_fields_and_bounded_preview_metadata() {
     let runtime = runtime_with_project(root, "demo");
     let job_id = "12121212-3434-5656-7878-909090909090";
     let now = chrono::Utc::now().timestamp();
-    write_fake_job(
+    let dir = write_fake_job(
         root,
         job_id,
         "demo",
@@ -305,6 +308,7 @@ async fn job_status_reports_lifecycle_fields_and_bounded_preview_metadata() {
         "stderr secret body\n",
         json!({ "started_at": now, "max_runtime_secs": 3600 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
 
     let result = runtime.job_status(job_id.to_string()).await;
     assert!(result.success, "{:?}", result.error);
@@ -335,12 +339,12 @@ async fn job_status_reports_lifecycle_fields_and_bounded_preview_metadata() {
 }
 
 #[tokio::test]
-async fn recover_local_job_log_after_restart() {
+async fn local_job_log_reads_in_memory_local_job() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let runtime = runtime_with_project(root, "demo");
     let job_id = "22222222-3333-4444-5555-666666666666";
-    write_fake_job(
+    let dir = write_fake_job(
         root,
         job_id,
         "demo",
@@ -350,6 +354,7 @@ async fn recover_local_job_log_after_restart() {
         "stderr line\n",
         json!({}),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let result = runtime.job_log(job_id.to_string(), None, None).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["stdout"], "stdout line");
@@ -598,7 +603,7 @@ async fn local_job_status_marks_over_time_running_job_lost() {
     let runtime = runtime_with_project(root, "demo");
     let job_id = "66666666-7777-8888-9999-000000000000";
     let past = chrono::Utc::now().timestamp() - 100_000;
-    write_fake_job(
+    let dir = write_fake_job(
         root,
         job_id,
         "demo",
@@ -608,6 +613,7 @@ async fn local_job_status_marks_over_time_running_job_lost() {
         "",
         json!({ "started_at": past, "max_runtime_secs": 60 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let result = runtime.job_status(job_id.to_string()).await;
     assert!(result.success);
     assert_eq!(result.output["status"], "lost");
@@ -621,7 +627,7 @@ async fn local_job_status_keeps_completed_job_completed() {
     let job_id = "77777777-8888-9999-0000-111111111111";
     let past = chrono::Utc::now().timestamp() - 100_000;
     // Completed jobs stay completed even if max_runtime would have passed.
-    write_fake_job(
+    let dir = write_fake_job(
         root,
         job_id,
         "demo",
@@ -631,6 +637,7 @@ async fn local_job_status_keeps_completed_job_completed() {
         "",
         json!({ "started_at": past, "max_runtime_secs": 60 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let result = runtime.job_status(job_id.to_string()).await;
     assert!(result.success);
     assert_eq!(result.output["status"], "completed");
@@ -665,6 +672,7 @@ async fn timeout_terminates_recorded_process_group() {
         12345,
         json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 12345 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir.clone()).await;
     let result = runtime.job_status(job_id.to_string()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["status"], "lost");
@@ -688,7 +696,7 @@ async fn timeout_without_pid_only_marks_lost_no_kill() {
     let past = chrono::Utc::now().timestamp() - 100_000;
     // No pid file, no process_group_id — simulates very old metadata that
     // predates pid/pgid tracking. We must NOT guess a pid to kill.
-    write_fake_job(
+    let dir = write_fake_job(
         root,
         job_id,
         "demo",
@@ -698,6 +706,7 @@ async fn timeout_without_pid_only_marks_lost_no_kill() {
         "",
         json!({ "started_at": past, "max_runtime_secs": 60 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let result = runtime.job_status(job_id.to_string()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["status"], "lost");
@@ -713,7 +722,7 @@ async fn job_log_also_reclaims_timeout_process_group() {
     let (runtime, killer) = runtime_with_fake_killer(root, "demo");
     let job_id = "14141414-5656-7878-9090-111111111111";
     let past = chrono::Utc::now().timestamp() - 100_000;
-    write_fake_job_with_pgid(
+    let dir = write_fake_job_with_pgid(
         root,
         job_id,
         "demo",
@@ -722,6 +731,7 @@ async fn job_log_also_reclaims_timeout_process_group() {
         4242,
         json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 4242 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let result = runtime.job_log(job_id.to_string(), None, None).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["status"], "lost");
@@ -735,7 +745,7 @@ async fn timeout_does_not_affect_completed_job() {
     let (runtime, killer) = runtime_with_fake_killer(root, "demo");
     let job_id = "15151515-6767-8989-1010-121212121212";
     let past = chrono::Utc::now().timestamp() - 100_000;
-    write_fake_job_with_pgid(
+    let dir = write_fake_job_with_pgid(
         root,
         job_id,
         "demo",
@@ -744,6 +754,7 @@ async fn timeout_does_not_affect_completed_job() {
         9999,
         json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 9999 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let result = runtime.job_status(job_id.to_string()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["status"], "completed");
@@ -766,6 +777,7 @@ async fn stop_job_terminates_process_group() {
         7777,
         json!({ "started_at": now, "max_runtime_secs": 3600, "process_group_id": 7777 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir.clone()).await;
     let result = runtime.stop_job(job_id.to_string()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["status"], "stopped");
@@ -781,7 +793,7 @@ async fn stop_job_leaves_completed_job_untouched() {
     let (runtime, killer) = runtime_with_fake_killer(root, "demo");
     let job_id = "17171717-8989-1010-1212-141414141414";
     let past = chrono::Utc::now().timestamp() - 100_000;
-    write_fake_job_with_pgid(
+    let dir = write_fake_job_with_pgid(
         root,
         job_id,
         "demo",
@@ -790,6 +802,7 @@ async fn stop_job_leaves_completed_job_untouched() {
         8888,
         json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 8888 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let result = runtime.stop_job(job_id.to_string()).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["status"], "completed");
@@ -840,6 +853,7 @@ async fn model_facing_stop_job_requires_confirm_without_stopping_or_approving() 
             "session_id": session.session_id,
         }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir.clone()).await;
 
     let result = runtime
         .dispatch(ToolCall::StopJob {
@@ -894,6 +908,7 @@ async fn model_facing_stop_job_stops_local_job_and_records_permission() {
             "session_id": session.session_id,
         }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir.clone()).await;
 
     let result = runtime
         .dispatch(ToolCall::StopJob {
@@ -934,7 +949,7 @@ async fn model_facing_stop_job_noops_already_finished_with_permission() {
         .start_session(Some("demo".to_string()), Some("stop done".to_string()));
     let job_id = "20202020-1111-2222-3333-444444444444";
     let past = chrono::Utc::now().timestamp() - 100;
-    write_fake_job_with_pgid(
+    let dir = write_fake_job_with_pgid(
         root,
         job_id,
         "demo",
@@ -948,6 +963,7 @@ async fn model_facing_stop_job_noops_already_finished_with_permission() {
             "session_id": session.session_id,
         }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
 
     let result = runtime
         .dispatch(ToolCall::StopJob {
@@ -982,7 +998,7 @@ async fn model_facing_stop_job_allows_unknown_session_with_project_warning() {
     let (runtime, killer) = runtime_with_fake_killer(root, "demo");
     let job_id = "21212121-2222-3333-4444-555555555555";
     let now = chrono::Utc::now().timestamp();
-    write_fake_job_with_pgid(
+    let dir = write_fake_job_with_pgid(
         root,
         job_id,
         "demo",
@@ -991,6 +1007,7 @@ async fn model_facing_stop_job_allows_unknown_session_with_project_warning() {
         1212,
         json!({ "started_at": now, "max_runtime_secs": 3600, "process_group_id": 1212 }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
 
     let result = runtime
         .dispatch(ToolCall::StopJob {
@@ -1025,7 +1042,7 @@ async fn model_facing_stop_job_rejects_different_session_before_stop() {
         .start_session(Some("demo".to_string()), Some("other".to_string()));
     let job_id = "22222222-3333-4444-5555-666666666666";
     let now = chrono::Utc::now().timestamp();
-    write_fake_job_with_pgid(
+    let dir = write_fake_job_with_pgid(
         root,
         job_id,
         "demo",
@@ -1039,6 +1056,7 @@ async fn model_facing_stop_job_rejects_different_session_before_stop() {
             "session_id": owner_session.session_id,
         }),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
 
     let result = runtime
         .dispatch(ToolCall::StopJob {
@@ -1291,7 +1309,7 @@ async fn model_facing_stop_job_session_project_mismatch_beats_auto_approve() {
 }
 
 #[tokio::test]
-async fn job_log_recovery_returns_bounded_output() {
+async fn job_log_returns_bounded_output_for_in_memory_local_job() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let runtime = runtime_with_project(root, "demo");
@@ -1300,7 +1318,7 @@ async fn job_log_recovery_returns_bounded_output() {
         .map(|i| format!("line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    write_fake_job(
+    let dir = write_fake_job(
         root,
         job_id,
         "demo",
@@ -1310,6 +1328,7 @@ async fn job_log_recovery_returns_bounded_output() {
         "",
         json!({}),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let result = runtime.job_log(job_id.to_string(), None, None).await;
     assert!(result.success);
     let out = result.output["stdout"].as_str().unwrap();
@@ -1320,7 +1339,7 @@ async fn job_log_recovery_returns_bounded_output() {
 }
 
 #[tokio::test]
-async fn job_log_recovery_paginates_with_offset() {
+async fn job_log_paginates_with_offset_for_in_memory_local_job() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let runtime = runtime_with_project(root, "demo");
@@ -1329,7 +1348,7 @@ async fn job_log_recovery_paginates_with_offset() {
         .map(|i| format!("line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    write_fake_job(
+    let dir = write_fake_job(
         root,
         job_id,
         "demo",
@@ -1339,6 +1358,7 @@ async fn job_log_recovery_paginates_with_offset() {
         "",
         json!({}),
     );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
     let first = runtime.job_log(job_id.to_string(), Some(1), None).await;
     assert!(first.success);
     let out = first.output["stdout"].as_str().unwrap();

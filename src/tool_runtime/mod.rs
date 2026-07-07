@@ -7,8 +7,6 @@ mod agent_authorization;
 mod cargo;
 mod cargo_tools;
 mod checkpoint;
-mod codex;
-mod codex_tools;
 mod coding_task;
 mod coding_task_tools;
 mod discovery_tools;
@@ -111,9 +109,6 @@ pub(crate) use session_context::{
 };
 #[cfg(test)]
 pub(crate) use surface::{recommended_flows, registered_tool_categories};
-
-pub(crate) const RUN_CODEX_DISABLED_MESSAGE: &str =
-    "run_codex is currently disabled on model-facing surfaces; use run_job or external local Codex manually.";
 
 pub(crate) fn tool_disabled_result(tool_name: &str, message: &'static str) -> ToolResult {
     ToolResult::err_with_output(

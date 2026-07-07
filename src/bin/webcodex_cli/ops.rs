@@ -582,18 +582,6 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
         );
     }
 
-    let server_static_status = str_pointer(runtime, "/projects/server_static/status");
-    let server_static_severity = str_pointer(runtime, "/projects/server_static/severity");
-    if server_static_status.as_deref() == Some("not_configured")
-        && server_static_severity.as_deref() == Some("info")
-        && str_pointer(runtime, "/projects/effective/status").as_deref() == Some("ok")
-    {
-        verdict.warn_reason(
-            "server_static_not_configured_info",
-            "using agent-registered projects; no server-side projects.toml configured",
-        );
-    }
-
     let summary = json!({
         "runtime_reachable": true,
         "server": {
@@ -617,10 +605,6 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
             "effective": {
                 "status": str_pointer(runtime, "/projects/effective/status"),
                 "count": runtime.pointer("/projects/effective/count").and_then(Value::as_u64),
-            },
-            "server_static": {
-                "status": server_static_status,
-                "severity": server_static_severity,
             },
         },
     });
@@ -969,11 +953,6 @@ pub(crate) fn render_ops_status(report: &OpsReport, json_output: bool) -> Result
     out.push_str(&format!(
         "  effective.count: {}\n",
         display_value(&report.summary["projects"]["effective"]["count"])
-    ));
-    out.push_str(&format!(
-        "  server_static.status/severity: {}/{}\n",
-        display_value(&report.summary["projects"]["server_static"]["status"]),
-        display_value(&report.summary["projects"]["server_static"]["severity"])
     ));
     out.push_str(&render_reasons(report));
     Ok(out)

@@ -145,20 +145,20 @@ fn tool_definitions_drive_metadata_visibility_and_categories() {
 }
 
 #[test]
-fn hidden_run_codex_surface_contract_is_explicit() {
+fn legacy_run_codex_surface_is_removed() {
     use crate::tool_runtime::tool_definition::{
         lookup_tool_definition, model_hidden_tool_names, tool_definitions,
     };
 
-    assert_eq!(tool_definitions().count(), 67, "ToolDefinition count");
+    assert_eq!(tool_definitions().count(), 66, "ToolDefinition count");
     assert!(
-        lookup_tool_definition("run_codex").is_some(),
-        "run_codex must keep an explicit hidden ToolDefinition"
+        lookup_tool_definition("run_codex").is_none(),
+        "run_codex must not keep a ToolDefinition"
     );
     assert_eq!(
         model_hidden_tool_names().collect::<Vec<_>>(),
-        vec!["run_codex"],
-        "run_codex must remain the only model-hidden ToolDefinition"
+        Vec::<&'static str>::new(),
+        "there should be no model-hidden ToolDefinitions"
     );
 
     let model_visible_names = registered_tool_names();
@@ -189,7 +189,15 @@ fn hidden_run_codex_surface_contract_is_explicit() {
             .iter()
             .any(|operation_id| operation_id.contains("runCodex")
                 || operation_id.contains("RunCodex")),
-        "run_codex must not gain a dedicated OpenAPI operation: {operation_ids:?}"
+        "run_codex must not have a dedicated OpenAPI operation: {operation_ids:?}"
+    );
+    assert!(
+        ToolCall::from_tool_name(
+            "run_codex",
+            json!({"project": SAMPLE_PROJECT, "prompt": "summarize"})
+        )
+        .is_err(),
+        "run_codex must not remain parser-known"
     );
 }
 
@@ -274,8 +282,8 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
     );
     assert_eq!(
         model_hidden_tool_names().collect::<Vec<_>>(),
-        vec!["run_codex"],
-        "run_codex hidden parser-known behavior must stay explicit"
+        Vec::<&'static str>::new(),
+        "hidden parser-known tools must be removed"
     );
 }
 
@@ -284,14 +292,7 @@ fn tool_definitions_match_agent_capability_dispatch_helper() {
     use crate::tool_runtime::tool_definition::tool_definitions;
 
     for definition in tool_definitions() {
-        let args = if definition.name == "run_codex" {
-            json!({
-                "project": SAMPLE_PROJECT,
-                "prompt": "summarize",
-            })
-        } else {
-            sample_tool_args(definition.name)
-        };
+        let args = sample_tool_args(definition.name);
         let call = ToolCall::from_tool_name(definition.name, args)
             .unwrap_or_else(|e| panic!("{} should deserialize: {e}", definition.name));
         assert_eq!(

@@ -178,11 +178,9 @@ impl Default for QuicServerConfig {
 
 /// Codex CLI execution configuration, sourced from `CODEX_*` env vars.
 ///
-/// Codex is an **optional advanced capability**. When Codex is not installed,
-/// the runtime still serves `read_file`, `git_status`, `git_diff`,
-/// `apply_patch`, and `run_shell` through the agent. The legacy `run_codex`
-/// path remains disabled on model-facing surfaces and should not be used as the
-/// default coding workflow.
+/// Codex is an optional advanced local dependency for external workflows. The
+/// WebCodex runtime itself serves `read_file`, `git_status`, `git_diff`,
+/// `apply_patch`, and `run_shell` through the agent registry.
 #[derive(Debug, Clone)]
 pub struct CodexConfig {
     /// Path/name of the Codex CLI binary. Default `codex`.
@@ -334,10 +332,6 @@ pub(crate) fn env_flag(key: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
-}
-
-pub(crate) fn legacy_codex_run_enabled() -> bool {
-    env_flag("WEBCODEX_ENABLE_LEGACY_CODEX_RUN").unwrap_or(false)
 }
 
 pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {

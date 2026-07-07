@@ -336,10 +336,6 @@ fn runtime_status_fixture() -> Value {
             "effective": {
                 "status": "ok",
                 "count": 1
-            },
-            "server_static": {
-                "status": "ok",
-                "severity": "info"
             }
         }
     })
@@ -627,21 +623,6 @@ fn ops_status_runtime_ok_passes() {
         report.source["runtime_commit"],
         "15138884e3a8ddcf294cae98183ecaac37af7230"
     );
-}
-
-#[test]
-fn ops_status_server_static_not_configured_info_does_not_fail() {
-    let mut runtime = runtime_status_fixture();
-    runtime["projects"]["server_static"] = json!({
-        "status": "not_configured",
-        "severity": "info"
-    });
-    let report = ops_status_report("https://ops.example.test", &Some(runtime));
-    assert_ne!(report.verdict.status, "fail");
-    assert!(report
-        .verdict
-        .warning_reasons
-        .contains(&"server_static_not_configured_info".to_string()));
 }
 
 #[test]

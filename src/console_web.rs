@@ -94,14 +94,9 @@ mod tests {
     /// route so tests can assert both the public console entry and that the
     /// data API still requires Bearer auth.
     fn build_test_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
-        let projects_state = Arc::new(crate::projects::ProjectsState::failed(
-            "none".to_string(),
-            "test".to_string(),
-        ));
         let shell_registry = Arc::new(crate::ShellClientRegistry::default());
         let runtime_info = Arc::new(crate::tool_runtime::RuntimeInfo::default());
         let tool_runtime = Arc::new(crate::tool_runtime::ToolRuntime::new(
-            projects_state,
             shell_registry,
             Arc::new(config.codex.clone()),
             runtime_info,

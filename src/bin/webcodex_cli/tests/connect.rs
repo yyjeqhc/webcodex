@@ -400,6 +400,15 @@ fn connect_output_uses_agent_registration_quick_start_model() {
         other => panic!("expected Connect, got {other:?}"),
     };
     assert!(out.contains("The project should appear after the agent registers"));
+    assert!(
+        output_dir.join("projects.d").join("repo.toml").exists(),
+        "connect must write the agent-side projects.d entry"
+    );
+    assert!(
+        !output_dir.join("projects.toml").exists(),
+        "connect must not write legacy server-side projects.toml"
+    );
+    assert!(!out.contains("PROJECTS_CONFIG"));
     assert!(!out.contains("merge projects.toml"));
     assert!(!out.contains("use the runtime API"));
     assert!(!out.contains("Register the project on the server"));

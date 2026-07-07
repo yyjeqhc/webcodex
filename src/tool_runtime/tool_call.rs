@@ -458,22 +458,6 @@ pub enum ToolCall {
         confirm: bool,
     },
 
-    /// Start Codex CLI as an async background job.
-    RunCodex {
-        project: String,
-        prompt: String,
-        #[serde(default)]
-        session_id: Option<String>,
-        #[serde(default)]
-        approval_mode: Option<String>,
-        #[serde(default)]
-        timeout_secs: Option<i64>,
-        #[serde(default)]
-        cwd: Option<String>,
-        #[serde(default)]
-        extra_args: Option<Vec<String>>,
-    },
-
     /// Query the status of a running/finished job.
     JobStatus {
         job_id: String,
@@ -992,7 +976,6 @@ impl ToolCall {
             Self::ReadFile { .. } => "read_file",
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
-            Self::RunCodex { .. } => "run_codex",
             Self::JobStatus { .. } => "job_status",
             Self::JobLog { .. } => "job_log",
             Self::ListProjectFiles { .. } => "list_project_files",
@@ -1046,7 +1029,6 @@ impl ToolCall {
             | Self::ReadFile { session_id, .. }
             | Self::RunJob { session_id, .. }
             | Self::StopJob { session_id, .. }
-            | Self::RunCodex { session_id, .. }
             | Self::ListProjectFiles { session_id, .. }
             | Self::SearchProjectText { session_id, .. }
             | Self::GitDiffSummary { session_id, .. }
@@ -1096,7 +1078,6 @@ impl ToolCall {
             | Self::ReadFile { session_id, .. }
             | Self::RunJob { session_id, .. }
             | Self::StopJob { session_id, .. }
-            | Self::RunCodex { session_id, .. }
             | Self::ListProjectFiles { session_id, .. }
             | Self::SearchProjectText { session_id, .. }
             | Self::GitDiffSummary { session_id, .. }
@@ -1151,7 +1132,6 @@ impl ToolCall {
             | Self::ReadFile { project, .. }
             | Self::RunJob { project, .. }
             | Self::StopJob { project, .. }
-            | Self::RunCodex { project, .. }
             | Self::ListProjectFiles { project, .. }
             | Self::SearchProjectText { project, .. }
             | Self::GitDiffSummary { project, .. }

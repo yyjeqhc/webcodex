@@ -293,7 +293,6 @@ mod tests {
             "run_shell",
             "run_job",
             "stop_job",
-            "run_codex",
             "cargo_fmt",
             "cargo_check",
             "cargo_test",

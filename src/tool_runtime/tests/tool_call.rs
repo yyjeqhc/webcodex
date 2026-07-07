@@ -177,8 +177,8 @@ fn from_tool_name_parses_run_shell_with_optional_fields() {
 }
 
 #[test]
-fn from_tool_name_parses_run_codex_with_all_fields() {
-    let call = ToolCall::from_tool_name(
+fn from_tool_name_rejects_removed_run_codex() {
+    let err = ToolCall::from_tool_name(
         "run_codex",
         json!({
             "project": "demo",
@@ -189,26 +189,8 @@ fn from_tool_name_parses_run_codex_with_all_fields() {
             "extra_args": ["--verbose"]
         }),
     )
-    .unwrap();
-    match call {
-        ToolCall::RunCodex {
-            project,
-            prompt,
-            approval_mode,
-            timeout_secs,
-            cwd,
-            extra_args,
-            ..
-        } => {
-            assert_eq!(project, "demo");
-            assert_eq!(prompt, "fix tests");
-            assert_eq!(approval_mode.as_deref(), Some("suggest"));
-            assert_eq!(timeout_secs, Some(120));
-            assert_eq!(cwd.as_deref(), Some("src"));
-            assert_eq!(extra_args.unwrap(), vec!["--verbose".to_string()]);
-        }
-        other => panic!("expected RunCodex, got {:?}", other),
-    }
+    .unwrap_err();
+    assert!(err.contains("unknown tool"), "{err}");
 }
 
 #[test]
@@ -361,21 +343,6 @@ fn from_tool_name_rejects_wrong_field_type() {
     let err = ToolCall::from_tool_name("run_shell", json!({"project": 123, "command": "echo"}))
         .unwrap_err();
     assert!(!err.is_empty());
-
-    let err = ToolCall::from_tool_name("run_codex", json!({"project": "demo", "prompt": 42}))
-        .unwrap_err();
-    assert!(!err.is_empty());
-}
-
-#[test]
-fn from_tool_name_rejects_unknown_variant_field() {
-    // extra_args must be an array, not a string.
-    let err = ToolCall::from_tool_name(
-        "run_codex",
-        json!({"project": "demo", "prompt": "x", "extra_args": "--verbose"}),
-    )
-    .unwrap_err();
-    assert!(!err.is_empty());
 }
 
 #[test]
@@ -498,9 +465,10 @@ fn known_tool_names_matches_spec_count() {
             spec.name
         );
     }
-    assert!(
-        specs.len() < known_tool_names().count(),
-        "registered tool specs should be a public subset while hidden tools remain implemented"
+    assert_eq!(
+        specs.len(),
+        known_tool_names().count(),
+        "registered tool specs should cover every known runtime tool after hidden tools are removed"
     );
     // Every known name must be recognized (i.e. must NOT yield the
     // "unknown tool" error). Unit tools parse with null args; non-unit

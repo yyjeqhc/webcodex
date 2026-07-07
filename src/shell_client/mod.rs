@@ -32,11 +32,13 @@ mod requests;
 mod state;
 mod validation;
 
-#[allow(unused_imports)]
+#[cfg(test)]
+pub(crate) use auth::assert_shell_client_owner;
+#[cfg(test)]
 pub(crate) use auth::ShellClientAuthGroup;
 pub(crate) use auth::{
-    assert_shell_client_owner, effective_register_owner, enforce_agent_transport,
-    enforce_register_owner, requested_by_from_auth, require_agent_transport_scope,
+    effective_register_owner, enforce_agent_transport, enforce_register_owner,
+    requested_by_from_auth, require_agent_transport_scope,
 };
 pub use handlers::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,

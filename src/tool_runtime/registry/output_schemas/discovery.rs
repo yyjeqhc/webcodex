@@ -26,7 +26,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "projects",
-                open_object_schema("Project counts split into server_static, agent_registered, and effective. Legacy configured/count/load_error fields are retained; prefer projects.effective for model-facing status."),
+                open_object_schema("Project counts from the agent registry. Prefer projects.effective for model-facing status."),
             ),
             (
                 "agents",

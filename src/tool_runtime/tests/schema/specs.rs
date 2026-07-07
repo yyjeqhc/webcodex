@@ -203,7 +203,7 @@ fn mcp_tools_list_exposes_registered_tool_spec_input_schemas() {
         .collect::<BTreeSet<_>>();
     assert!(
         !mcp_names.contains("run_codex"),
-        "MCP tools/list must not expose hidden run_codex"
+        "MCP tools/list must not expose removed run_codex"
     );
     assert!(
         !mcp_names.contains("delete_files"),
@@ -384,7 +384,7 @@ fn tool_specs_covers_expected_tool_set() {
     assert_eq!(
         names.len(),
         66,
-        "model-facing runtime/MCP tool count should be 66 after exposing stop_job"
+        "model-facing runtime/MCP tool count should remain 66"
     );
     for expected in [
         "list_tools",
@@ -449,7 +449,7 @@ fn tool_specs_covers_expected_tool_set() {
     }
     assert!(
         !names.iter().any(|n| n == "run_codex"),
-        "run_codex must stay hidden from registered model-facing tool specs: {:?}",
+        "run_codex must stay removed from registered model-facing tool specs: {:?}",
         names
     );
 }

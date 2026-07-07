@@ -355,7 +355,7 @@ fn tool_discovery_groups_drive_tool_categories() {
             .map(|name| {
                 assert_ne!(
                     *name, "run_codex",
-                    "discovery group {} must not include hidden runtime tool run_codex",
+                    "discovery group {} must not include removed runtime tool run_codex",
                     group.name
                 );
                 assert_ne!(

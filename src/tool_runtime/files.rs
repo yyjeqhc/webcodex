@@ -2823,9 +2823,8 @@ impl ToolRuntime {
     /// Read a single instruction candidate from a resolved project. Returns
     /// `(content, total_lines)` on success or `None` on any failure.
     ///
-    /// For agent projects the read is routed to the owning agent via the
-    /// `file_read` op with a short best-effort timeout. For server-configured
-    /// (local) projects the file is read directly from the resolved root.
+    /// Reads are routed to the owning agent via the `file_read` op with a short
+    /// best-effort timeout.
     async fn read_instruction_candidate(
         &self,
         config: &ProjectConfig,
@@ -2838,60 +2837,39 @@ impl ToolRuntime {
         let read_limit = MAX_LINES_PER_FILE + 1;
         const WAIT_TIMEOUT: u64 = 6;
 
-        if config.is_agent() {
-            let client_id = config.agent_client_id().ok()?;
-            let (request_id, rx) = self
-                .shell_clients
-                .enqueue_file_op(
-                    ShellFileOpRequest {
-                        op: "read".to_string(),
-                        client_id: client_id.to_string(),
-                        path: path.to_string(),
-                        cwd: Some(config.path.clone()),
-                        content: None,
-                        max_bytes: Some(512 * 1024),
-                        old_text: None,
-                        pattern: None,
-                        expected_sha256: None,
-                        expected_prefix: None,
-                        start_line: Some(1),
-                        end_line: Some(read_limit),
-                        line: None,
-                        create_dirs: false,
-                        wait_timeout_secs: WAIT_TIMEOUT,
-                    },
-                    "project_instructions".to_string(),
-                )
-                .await
-                .ok()?;
-            match tokio::time::timeout(Duration::from_secs(WAIT_TIMEOUT + 2), rx).await {
-                Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                    parse_instruction_agent_stdout(resp.stdout.unwrap_or_default())
-                }
-                _ => {
-                    self.shell_clients.cancel_request(&request_id).await;
-                    None
-                }
+        let client_id = config.agent_client_id().ok()?;
+        let (request_id, rx) = self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: "read".to_string(),
+                    client_id: client_id.to_string(),
+                    path: path.to_string(),
+                    cwd: Some(config.path.clone()),
+                    content: None,
+                    max_bytes: Some(512 * 1024),
+                    old_text: None,
+                    pattern: None,
+                    expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: Some(1),
+                    end_line: Some(read_limit),
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: WAIT_TIMEOUT,
+                },
+                "project_instructions".to_string(),
+            )
+            .await
+            .ok()?;
+        match tokio::time::timeout(Duration::from_secs(WAIT_TIMEOUT + 2), rx).await {
+            Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
+                parse_instruction_agent_stdout(resp.stdout.unwrap_or_default())
             }
-        } else {
-            // Server-configured (local) project: read directly. The root lives
-            // on the server host, so the true total line count is exact.
-            let root = config.root();
-            let file_path = root.join(path);
-            let canonical_root = root.canonicalize().ok()?;
-            let canonical = file_path.canonicalize().ok()?;
-            if !canonical.starts_with(&canonical_root) {
-                return None;
+            _ => {
+                self.shell_clients.cancel_request(&request_id).await;
+                None
             }
-            if !canonical.is_file() {
-                return None;
-            }
-            let content = std::fs::read_to_string(&canonical).ok()?;
-            let total_lines = content.lines().count();
-            if content_is_empty_instruction(&content) {
-                return None;
-            }
-            Some((content, total_lines))
         }
     }
 

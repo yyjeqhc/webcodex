@@ -97,23 +97,11 @@ impl ToolRuntime {
     /// Build the runtime observability summary. Read-only; never exposes
     /// tokens, api keys, full env, complete project path lists, or
     /// stdout/stderr. Returns a structured JSON object with service metadata,
-    /// project config status, agent client summaries, and job counts.
+    /// agent-registered project status, agent client summaries, and job counts.
     pub(crate) async fn runtime_status(&self, auth: Option<&AuthContext>) -> ToolResult {
         let clients = self.shell_clients.list_clients_for_auth(auth).await;
 
         // -- projects summary -------------------------------------------------
-        let (projects_configured, projects_count, projects_load_error) =
-            match self.projects.config.as_ref() {
-                Some(cfg) => (true, cfg.projects.len(), None),
-                None => (
-                    false,
-                    0,
-                    self.projects
-                        .load_error
-                        .clone()
-                        .or_else(|| Some("Projects not configured".to_string())),
-                ),
-            };
         let agent_registered_count: usize = clients
             .iter()
             .map(|client| {
@@ -135,58 +123,14 @@ impl ToolRuntime {
                     .count()
             })
             .sum();
-        let effective_count = if agent_registered_count > 0 {
-            agent_registered_count
-        } else {
-            projects_count
-        };
+        let effective_count = agent_registered_count;
         let effective_status = if effective_count > 0 {
             "ok"
         } else {
             "no_projects"
         };
-        let server_static_not_configured = !projects_configured
-            && projects_load_error
-                .as_deref()
-                .map(is_projects_not_configured_error)
-                .unwrap_or(true);
-        let agent_only_effective_ok = server_static_not_configured
-            && agent_registered_online_count > 0
-            && effective_status == "ok";
-        let server_static_status = if projects_configured {
-            "ok"
-        } else if server_static_not_configured {
-            "not_configured"
-        } else {
-            "error"
-        };
-        let server_static_severity = if projects_configured || agent_only_effective_ok {
-            "info"
-        } else if server_static_not_configured {
-            "warning"
-        } else {
-            "error"
-        };
-        let server_warning = if projects_configured || agent_only_effective_ok {
-            None
-        } else if server_static_not_configured {
-            Some("projects.toml not configured")
-        } else {
-            Some("projects.toml load error")
-        };
-        let server_static_message = agent_only_effective_ok
-            .then_some("projects.toml not configured; using agent-registered projects");
         let projects = json!({
-            "server_static": {
-                "configured": projects_configured,
-                "count": projects_count,
-                "config_path": self.projects.config_path,
-                "load_error": projects_load_error.clone(),
-                "status": server_static_status,
-                "severity": server_static_severity,
-                "warning": server_warning,
-                "message": server_static_message,
-            },
+            "mode": "agent_registered",
             "agent_registered": {
                 "count": agent_registered_count,
                 "online_count": agent_registered_online_count,
@@ -195,10 +139,7 @@ impl ToolRuntime {
                 "count": effective_count,
                 "status": effective_status,
             },
-            "configured": projects_configured,
             "count": effective_count,
-            "config_path": self.projects.config_path,
-            "load_error": projects_load_error,
         });
 
         let now = chrono::Utc::now().timestamp();
@@ -387,18 +328,9 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
                 "count": 0,
                 "online_count": 0,
             })),
-            "server_static": {
-                "status": status.pointer("/projects/server_static/status").cloned().unwrap_or(Value::Null),
-                "severity": status.pointer("/projects/server_static/severity").cloned().unwrap_or(Value::Null),
-                "message": status.pointer("/projects/server_static/message").cloned().unwrap_or(Value::Null),
-            },
+            "mode": status.pointer("/projects/mode").cloned().unwrap_or_else(|| json!("agent_registered")),
         },
     })
-}
-
-fn is_projects_not_configured_error(error: &str) -> bool {
-    let lower = error.to_ascii_lowercase();
-    lower.contains("not configured") || lower.contains("not found")
 }
 
 fn enabled_projects_count(client: &ShellClientView) -> usize {

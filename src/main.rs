@@ -19,7 +19,6 @@ mod artifact_policy;
 mod audit_http;
 mod auth;
 mod build_info;
-mod codex;
 mod config;
 mod console_web;
 mod db;
@@ -132,30 +131,6 @@ only for local/trusted-network demos."
     // Set max payload size to 2MB for text messages
     salvo::http::request::set_global_secure_max_size(config.max_text_size);
 
-    // Load projects config for legacy /api/codex/* handlers. Keep those
-    // lifecycle-deprecated routes mounted even when the config is invalid so
-    // historical callers get structured JSON errors instead of router-level
-    // 404s. New clients should use /api/tools/call, /api/projects/*, or MCP.
-    let projects_config_path = projects::ProjectsConfig::config_path_from_env();
-    let projects_state = match projects::ProjectsConfig::load() {
-        Ok(cfg) => {
-            tracing::info!(
-                "Loaded projects config {} with {} projects",
-                projects_config_path,
-                cfg.projects.len()
-            );
-            projects::ProjectsState::loaded(cfg, projects_config_path)
-        }
-        Err(e) => {
-            tracing::warn!(
-                "Projects config not loaded from {}: {}. Legacy /api/codex routes will return config errors.",
-                projects_config_path,
-                e
-            );
-            projects::ProjectsState::failed(e, projects_config_path)
-        }
-    };
-
     let cors = Cors::permissive();
     let config = Arc::new(config);
     let db = Arc::new(db);
@@ -164,7 +139,6 @@ only for local/trusted-network demos."
     // login form to the consent decision. PAT/bootstrap plaintext is never
     // stored here — only the resolved user identity.
     let authorize_session_store = Arc::new(oauth_http::AuthorizeSessionStore::new());
-    let projects_state = Arc::new(projects_state);
     let shell_registry = Arc::new(ShellClientRegistry::default());
     let quic_cfg = config::QuicServerConfig::from_env();
     let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_env_with_quic_config(
@@ -172,7 +146,6 @@ only for local/trusted-network demos."
     ));
     let tool_runtime = Arc::new(
         tool_runtime::ToolRuntime::new(
-            projects_state.clone(),
             shell_registry.clone(),
             Arc::new(config.codex.clone()),
             runtime_info.clone(),
@@ -228,7 +201,7 @@ only for local/trusted-network demos."
         }
     }
 
-    let mut authed_api_router = Router::new()
+    let authed_api_router = Router::new()
         .hoop(AuthMiddleware)
         .push(Router::with_path("tools/list").post(runtime_http::tools_list))
         .push(Router::with_path("tools/call").post(runtime_http::tools_call))
@@ -325,14 +298,6 @@ only for local/trusted-network demos."
         // enforced by the shared AuthMiddleware hoop.
         .push(Router::with_path("agents/ws").get(agent_ws::agent_ws));
 
-    if config::legacy_codex_run_enabled() {
-        tracing::warn!(
-            "legacy /api/codex/run endpoint mounted by WEBCODEX_ENABLE_LEGACY_CODEX_RUN; run_codex remains disabled"
-        );
-        authed_api_router =
-            authed_api_router.push(Router::with_path("codex/run").post(runtime_http::codex_run));
-    }
-
     let api_router = Router::with_path("api")
         .push(Router::with_path("pairing/enroll").post(pairing_http::pairing_enroll))
         .push(
@@ -355,7 +320,6 @@ only for local/trusted-network demos."
         .hoop(affix_state::inject(config.clone()))
         .hoop(affix_state::inject(db.clone()))
         .hoop(affix_state::inject(authorize_session_store.clone()))
-        .hoop(affix_state::inject(projects_state.clone()))
         .hoop(affix_state::inject(shell_registry.clone()))
         .hoop(affix_state::inject(tool_runtime.clone()))
         .hoop(cors.into_handler())
@@ -393,24 +357,6 @@ only for local/trusted-network demos."
                 .get(mcp::mcp_info)
                 .post(mcp::mcp_post),
         );
-
-    // Legacy /api/codex/* API routes remain mounted for historical callers and
-    // audit continuity. New clients should use /api/tools/call, /api/projects/*,
-    // or MCP. If projects.toml failed to load, handlers return structured
-    // errors instead of disappearing with 404.
-    router = router.push(
-        Router::with_path("api/codex")
-            .hoop(AuthMiddleware)
-            .push(Router::with_path("context").post(codex::codex_context))
-            .push(Router::with_path("projects").post(codex::codex_projects))
-            .push(Router::with_path("context_batch").post(codex::codex_context_batch))
-            .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
-            .push(Router::with_path("edit").post(codex::codex_edit))
-            .push(Router::with_path("artifact").post(codex::codex_artifact))
-            .push(Router::with_path("git").post(codex::codex_git))
-            .push(Router::with_path("job").post(codex::codex_job))
-            .push(Router::with_path("report").post(codex::codex_report)),
-    );
 
     // Read-only audit query API. Admin/debug surface only: NOT part of the
     // GPT Actions OpenAPI schema. All endpoints are POST + Bearer auth.

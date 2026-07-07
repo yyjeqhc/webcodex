@@ -160,7 +160,7 @@ fn openapi_generic_call_runtime_tool_schema_remains_strict_model_visible_surface
         .sum();
     assert_eq!(operation_count, 25, "OpenAPI operation count");
 
-    assert_eq!(tool_definitions().count(), 67, "ToolDefinition count");
+    assert_eq!(tool_definitions().count(), 66, "ToolDefinition count");
     assert_eq!(
         registered_tool_specs().len(),
         66,

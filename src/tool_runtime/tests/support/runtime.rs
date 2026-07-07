@@ -1,9 +1,8 @@
 use crate::config::CodexConfig;
-use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
+use crate::projects::ProjectConfig;
 use crate::shell_client::ShellClientRegistry;
 use crate::tool_runtime::{RuntimeInfo, ToolRuntime, ToolSpec};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -141,16 +140,8 @@ pub(in crate::tool_runtime::tests) fn required_fields(spec: &ToolSpec) -> Vec<St
 pub(in crate::tool_runtime::tests) fn local_project_config(path: &str) -> ProjectConfig {
     ProjectConfig {
         path: path.to_string(),
-        executor: Executor::Local,
-        client_id: None,
+        client_id: "local-unit-test".to_string(),
         allow_patch: true,
-        allow_command_requests: false,
-        allow_raw_command_requests: false,
-        default_apply_patch_backend: None,
-        allowed_checks: vec![],
-        checks: None,
-        commands: HashMap::new(),
-        hooks: HashMap::new(),
     }
 }
 
@@ -158,59 +149,16 @@ pub(in crate::tool_runtime::tests) fn runtime_with_project(
     root: &Path,
     project_id: &str,
 ) -> ToolRuntime {
-    let mut projects = HashMap::new();
-    projects.insert(
-        project_id.to_string(),
-        local_project_config(&root.to_string_lossy()),
-    );
-    let config = ProjectsConfig { projects };
-    let state = ProjectsState::loaded(config, "test".to_string());
+    let _ = (root, project_id);
     ToolRuntime::new(
-        Arc::new(state),
         Arc::new(ShellClientRegistry::default()),
         Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     )
 }
 
-pub(in crate::tool_runtime::tests) fn codex_config_with_allowlist(
-    allowlist: &[&str],
-) -> CodexConfig {
-    CodexConfig {
-        bin: "codex".to_string(),
-        approval_mode: String::new(),
-        default_timeout_secs: 3600,
-        max_prompt_bytes: 100_000,
-        allowed_extra_args: allowlist.iter().map(|s| s.to_string()).collect(),
-    }
-}
-
-pub(in crate::tool_runtime::tests) fn runtime_with_codex(
-    root: &Path,
-    codex: CodexConfig,
-) -> ToolRuntime {
-    let mut projects = HashMap::new();
-    projects.insert(
-        "demo".to_string(),
-        local_project_config(&root.to_string_lossy()),
-    );
-    let config = ProjectsConfig { projects };
-    let state = ProjectsState::loaded(config, "test".to_string());
-    ToolRuntime::new(
-        Arc::new(state),
-        Arc::new(ShellClientRegistry::default()),
-        Arc::new(codex),
-        Arc::new(RuntimeInfo::default()),
-    )
-}
-
 pub(in crate::tool_runtime::tests) fn runtime_with_info(info: RuntimeInfo) -> ToolRuntime {
-    let projects = Arc::new(ProjectsState::failed(
-        "projects not configured for test".to_string(),
-        "test".to_string(),
-    ));
     ToolRuntime::new(
-        projects,
         Arc::new(ShellClientRegistry::default()),
         Arc::new(CodexConfig::default()),
         Arc::new(info),

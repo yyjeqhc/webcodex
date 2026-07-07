@@ -22,8 +22,8 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
         );
     }
     assert!(
-        specs.len() < known_tool_names().count(),
-        "hidden implemented tools should make public specs a strict subset"
+        specs.len() == known_tool_names().count(),
+        "public specs should cover every implemented runtime tool after legacy hidden tools were removed"
     );
     assert!(crate::tool_runtime::metadata::lookup_tool_metadata("apply_text_edits").is_some());
     // The edit category includes the new tool.

@@ -7,7 +7,6 @@
 use std::collections::HashSet;
 
 use super::principal::AuthContext;
-use crate::config::legacy_codex_run_enabled;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 
 // ---------------------------------------------------------------------------
@@ -204,9 +203,6 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         ("POST", "/api/tools/call") => {
             OAuthRouteScopePolicy::BodyAware(OAuthBodyAwarePolicy::RuntimeToolCall)
         }
-        ("POST", "/api/codex/run") if legacy_codex_run_enabled() => {
-            OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN)
-        }
         ("POST", "/api/artifacts/import") => OAuthRouteScopePolicy::Require(SCOPE_PROJECT_WRITE),
 
         ("POST", "/api/jobs/status")
@@ -244,16 +240,6 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         | ("POST", "/api/projects/run_job")
         | ("POST", "/api/shell/run")
         | ("POST", "/api/shell/job") => OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN),
-
-        ("POST", "/api/codex/context")
-        | ("POST", "/api/codex/projects")
-        | ("POST", "/api/codex/context_batch")
-        | ("POST", "/api/codex/report") => OAuthRouteScopePolicy::Require(SCOPE_PROJECT_READ),
-        ("POST", "/api/codex/apply_patch")
-        | ("POST", "/api/codex/edit")
-        | ("POST", "/api/codex/artifact")
-        | ("POST", "/api/codex/git") => OAuthRouteScopePolicy::Require(SCOPE_PROJECT_WRITE),
-        ("POST", "/api/codex/job") => OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN),
 
         ("POST", "/api/users/create")
         | ("POST", "/api/users/list")
@@ -526,19 +512,25 @@ mod tests {
     }
 
     #[test]
-    fn oauth_route_policy_legacy_codex_run_is_flag_gated() {
-        let env = crate::auth::AuthEnvGuard::auth_required();
-        env.disable_legacy_codex_run();
-        assert_eq!(
-            oauth_route_scope_policy_for_path_method("POST", "/api/codex/run"),
-            OAuthRouteScopePolicy::Unknown
-        );
-
-        env.enable_legacy_codex_run();
-        assert_eq!(
-            oauth_route_scope_policy_for_path_method("POST", "/api/codex/run"),
-            OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN)
-        );
+    fn oauth_route_policy_legacy_codex_routes_are_removed() {
+        for path in [
+            "/api/codex/run",
+            "/api/codex/context",
+            "/api/codex/projects",
+            "/api/codex/context_batch",
+            "/api/codex/apply_patch",
+            "/api/codex/edit",
+            "/api/codex/artifact",
+            "/api/codex/git",
+            "/api/codex/job",
+            "/api/codex/report",
+        ] {
+            assert_eq!(
+                oauth_route_scope_policy_for_path_method("POST", path),
+                OAuthRouteScopePolicy::Unknown,
+                "{path}"
+            );
+        }
     }
 
     #[test]
@@ -597,15 +589,6 @@ mod tests {
             ("GET", "/api/agents/ws"),
             ("POST", "/api/pairing/enroll"),
             ("POST", "/api/pairing/create"),
-            ("POST", "/api/codex/context"),
-            ("POST", "/api/codex/projects"),
-            ("POST", "/api/codex/context_batch"),
-            ("POST", "/api/codex/apply_patch"),
-            ("POST", "/api/codex/edit"),
-            ("POST", "/api/codex/artifact"),
-            ("POST", "/api/codex/git"),
-            ("POST", "/api/codex/job"),
-            ("POST", "/api/codex/report"),
             ("POST", "/api/audit/sessions"),
             ("POST", "/api/audit/session"),
             ("POST", "/api/audit/stats"),

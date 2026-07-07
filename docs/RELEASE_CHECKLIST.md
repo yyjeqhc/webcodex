@@ -89,9 +89,21 @@ Confirm:
 
 ## 6. Packaging And Docs Check
 
+For the planned v0.2.0 binary release:
+
+- Rust package metadata should be `0.2.0`.
+- GitHub Release artifacts are planned for `linux-x64`, `linux-arm64`, and
+  `darwin-arm64`.
+- Windows and `darwin-x64` artifacts are out of scope for v0.2.0.
+- The npm package stays at `0.1.0` for this release, and `npm install -g
+  @yyjeqhc/webcodex` continues to install the currently published npm
+  package/manifest until a later npm release updates it.
+- Use `docs/RELEASE_NOTES_v0.2.0.md` as the v0.2.0 release-note source and keep
+  publication-state wording accurate before and after the GitHub Release exists.
+
 Confirm:
 
-- `README.md`, GPT Actions, MCP, Concepts, Operations, and eval docs tell the
+- `README.md`, GPT Actions, MCP, Concepts, Operations, and validation docs tell the
   same coding workflow story: `start_coding_task`, inspect, structured edits,
   structured validation, review, then `finish_coding_task` or
   `session_handoff_summary`.
@@ -108,6 +120,9 @@ Confirm:
   `ToolCallRequest.properties`; do not loosen `additionalProperties`.
 - npm package name, artifact names, service install instructions, and release
   artifact wording are verified if relevant to the release.
+- Release artifact smoke uses `webcodex --version`, `webcodex-cli --version`,
+  and `webcodex-agent --version`; `webcodex-cli version` is not a documented
+  command.
 
 ## 7. Post-Deployment Acceptance Smoke
 

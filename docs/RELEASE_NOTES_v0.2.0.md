@@ -2,7 +2,7 @@
 
 [English](RELEASE_NOTES_v0.2.0.md)
 
-**Status:** GitHub release preparation. This is a binary release from the `v0.1.0` tag to the current `main` HEAD. npm publish is intentionally out of scope for this release.
+**Status:** GitHub release preparation. This is a planned binary release from the `v0.1.0` tag to the final v0.2.0 release commit. npm publish is intentionally out of scope for this release.
 
 ## Upgrade from v0.1.0
 
@@ -131,21 +131,14 @@ The recommended session workflow for GPT Actions and MCP:
 - **No external MCP host/provider system.** The current MCP endpoint exposes WebCodex runtime tools only.
 - **Dynamic client registration, OIDC, JWKS/JWT, `client_credentials` grant, and device code flow are not implemented.**
 
-## Validation checklist
+## Release validation
 
-- [x] `cargo fmt` — clean
-- [x] `cargo fmt --check` — passes
-- [x] `cargo check --all-targets` — passes
-- [x] `cargo test --bin webcodex metadata` — passes
-- [x] `cargo test --bin webcodex kernel` — passes
-- [x] `cargo test --bin webcodex session` — passes
-- [x] `cargo test --bin webcodex show_changes` — passes
-- [x] `cargo test --bin webcodex oauth_route_policy` — passes
-- [x] `cargo test --bin webcodex mcp` — passes
-- [x] `cargo test --bin webcodex openapi` — passes
-- [x] `git diff --check` — clean
-- [x] Full test suite: 0 failures, 4 ignored (import HTTP flaky tests)
+Run the current release readiness procedure in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
+against the final v0.2.0 release commit before publishing artifacts. Do not treat
+this release-note draft as a substitute for fresh validation output.
 
-## Commits since v0.1.0
+## Scope since v0.1.0
 
-This release includes 79 commits from `v0.1.0` to `main` HEAD, covering OAuth2, structured edits, session tracking, tool metadata, transport improvements, documentation, and operational tooling.
+This release covers OAuth2, structured edits, session tracking, tool metadata,
+transport improvements, documentation, and operational tooling added after the
+`v0.1.0` tag. Use the final git tag comparison for the exact commit list.

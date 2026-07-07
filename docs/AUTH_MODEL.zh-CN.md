@@ -97,7 +97,7 @@ agent:alice-macbook:my-repo
 
 ```toml
 id = "webcodex"
-path = "/root/git/private-drop"
+path = "/srv/webcodex/projects/webcodex"
 ```
 
 不要在 agent `projects.d/*.toml` 文件中使用 server-side `[projects.<id>]` 语法。

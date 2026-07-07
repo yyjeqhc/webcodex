@@ -22,7 +22,7 @@ Correct agent `projects.d/webcodex.toml` format:
 
 ```toml
 id = "webcodex"
-path = "/root/git/private-drop"
+path = "/srv/webcodex/projects/webcodex"
 name = "WebCodex"
 kind = "repo"
 description = "WebCodex repository"
@@ -39,7 +39,7 @@ Incorrect for agent `projects.d/*.toml`:
 
 ```toml
 [projects.webcodex]
-path = "/root/git/private-drop"
+path = "/srv/webcodex/projects/webcodex"
 ```
 
 That nested `[projects.webcodex]` shape belongs to the legacy server-side `projects.toml`. In an agent `projects.d/*.toml` file it leaves the top-level `id` absent and will fail with `missing field id`. Use top-level `id` and `path` fields instead.
@@ -102,7 +102,7 @@ file, use `PROJECTS_CONFIG=/path/to/projects.toml` and keep the file minimal:
 
 ```toml
 [projects.webcodex]
-path = "/root/git/private-drop"
+path = "/srv/webcodex/projects/webcodex"
 executor = "agent"
 client_id = "workstation"
 allow_patch = true

@@ -111,7 +111,7 @@ The `<project_id>` comes from a top-level `id` field in an agent `projects.d/*.t
 
 ```toml
 id = "webcodex"
-path = "/root/git/private-drop"
+path = "/srv/webcodex/projects/webcodex"
 ```
 
 Do not use server-side `[projects.<id>]` syntax in agent `projects.d/*.toml` files.

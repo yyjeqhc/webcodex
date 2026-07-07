@@ -5,6 +5,10 @@
 从 [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) 和
 [CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md) 开始。README 是产品概览；这个索引是 setup、operation、security 和 developer maintenance 文档的精简地图。
 
+语言策略：英文文档是 canonical。主要 onboarding、部署、GPT Actions、MCP、
+agent 和 troubleshooting 文档维护中文版本；深层 internals、release procedure
+和 developer-maintenance 文档可以只保留英文版本。
+
 ## 从这里开始
 
 1. [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) / [QUICK_START.md](QUICK_START.md) - onboarding、决策树、shared-key/open/managed 路径、service vs manual mode，以及第一次 runtime 检查。

@@ -22,7 +22,7 @@ Agent project files 是 agent 配置的 `projects_dir` 中的一项目一文件 
 
 ```toml
 id = "webcodex"
-path = "/root/git/private-drop"
+path = "/srv/webcodex/projects/webcodex"
 name = "WebCodex"
 kind = "repo"
 description = "WebCodex repository"
@@ -39,7 +39,7 @@ test = ["cargo test"]
 
 ```toml
 [projects.webcodex]
-path = "/root/git/private-drop"
+path = "/srv/webcodex/projects/webcodex"
 ```
 
 这种 nested `[projects.webcodex]` 形状属于 legacy server-side `projects.toml`。如果写进 agent `projects.d/*.toml`，顶层 `id` 会缺失，并报 `missing field id`。请使用顶层 `id` 和 `path` 字段。
@@ -91,7 +91,7 @@ message 是 `projects.toml not configured; using agent-registered projects`，
 
 ```toml
 [projects.webcodex]
-path = "/root/git/private-drop"
+path = "/srv/webcodex/projects/webcodex"
 executor = "agent"
 client_id = "workstation"
 allow_patch = true

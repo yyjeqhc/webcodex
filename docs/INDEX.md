@@ -6,6 +6,11 @@ Start with [QUICK_START.md](QUICK_START.md) and [CONCEPTS.md](CONCEPTS.md).
 The README is the product overview; this index is the compact map for setup,
 operation, security, and developer maintenance docs.
 
+Language policy: English docs are canonical. Chinese translations are maintained
+for the main onboarding, deployment, GPT Actions, MCP, agent, and troubleshooting
+guides. Deep internals, release procedure, and developer-maintenance docs may be
+English-only.
+
 ## Start Here
 
 1. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) - onboarding, decision tree, shared-key/open/managed paths, service vs manual mode, and first runtime check.

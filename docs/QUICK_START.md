@@ -8,7 +8,7 @@ For vocabulary, read [CONCEPTS.md](CONCEPTS.md). For a realistic tool flow, read
 
 ## Fastest Path
 
-Generate one long random evaluation key on the client/operator side after the server is running. Use that same evaluation key for `webcodex-cli connect`, `curl`, MCP, and GPT Actions. In quick-start shared-key mode, the server does not pre-enroll that value as a single allowed key. Instead, any non-managed Bearer value becomes a lightweight shared-key principal grouped by `shared_key_hash`, so the agent and the client must use the same key to land in the same shared-key group. Move to scoped tokens, OAuth, and production deployment later.
+Start the server first. Then generate one evaluation key from the repo/agent terminal and keep that printed value for the rest of setup. Use it when you connect the agent, verify with `curl`, and configure MCP or GPT Actions auth. Move to scoped tokens, OAuth, and production deployment later.
 
 ## What You Will Run
 
@@ -50,9 +50,11 @@ export PATH="$PWD/target/release:$PATH"
 
 ## 2. Start The Server
 
+Run this on the machine that will host the WebCodex server. For the localhost example, this can be the same machine that has your repo.
+
 `server up` creates the server env file and enables shared-key quick-start mode. It does not need the evaluation key.
 
-In terminal 1:
+Server terminal:
 
 ```bash
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
@@ -75,11 +77,13 @@ For ChatGPT-hosted clients, including GPT Actions and ChatGPT remote MCP, put th
 
 ## 3. Generate One Evaluation Key, Connect An Agent, And Register A Project
 
-In terminal 2, from the repository you want WebCodex to operate:
+Run this on the machine that has the repository. For the localhost example, use another terminal on the same machine.
+
+Repo/agent terminal, from the repository you want WebCodex to operate:
 
 ```bash
 export WEBCODEX_KEY="$(openssl rand -base64 32)"
-printf 'Use this value as your MCP/GPT Actions Bearer key: %s\n' "$WEBCODEX_KEY"
+printf 'Copy this key into MCP/GPT Actions auth: %s\n' "$WEBCODEX_KEY"
 
 webcodex-cli connect http://127.0.0.1:8080 \
   --key "$WEBCODEX_KEY" \
@@ -90,9 +94,9 @@ webcodex-cli connect http://127.0.0.1:8080 \
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
 
-Copy the printed key into your MCP client or GPT Action Bearer/API-key auth field. Use the same `WEBCODEX_KEY` value for agent connect, curl verification, MCP, and GPT Actions.
+Keep the printed key for this setup. Paste that same value when you verify with `curl` and when you configure MCP or GPT Actions auth. You do not need to add this key to the server config.
 
-The server does not pre-enroll the key; non-managed Bearer values become lightweight shared-key principals grouped by `shared_key_hash`. Do not paste real key values into committed files.
+Auth detail (optional): quick-start mode groups non-managed Bearer values by `shared_key_hash`. For setup, you only need to remember: use the same printed key for connect, verify, MCP, and GPT Actions. Do not paste real key values into committed files.
 
 The `connect` command generates an agent config and a project registry entry for the selected root. The default client id uses the config path shown above; use the config path printed by `connect` if you change it.
 
@@ -100,7 +104,7 @@ Projects live on the agent machine. The agent registers allowed directories with
 
 ## 4. Verify Runtime Health
 
-In terminal 3, paste the same evaluation key:
+Client terminal, paste the same key printed above:
 
 ```bash
 export WEBCODEX_KEY="<same evaluation key>"
@@ -147,7 +151,7 @@ For ChatGPT or another hosted client, replace localhost with the public HTTPS se
 https://your-domain.example/mcp
 ```
 
-For the first evaluation, use the same evaluation key that you generated in terminal 2 and used with `webcodex-cli connect --key`. Production auth comes later. See [MCP.md](MCP.md) for screenshots and common MCP errors.
+For the first evaluation, use the same evaluation key that you printed in the repo/agent terminal and used with `webcodex-cli connect --key`. Production auth comes later. See [MCP.md](MCP.md) for screenshots and common MCP errors.
 
 ## 6. Or Connect GPT Actions
 

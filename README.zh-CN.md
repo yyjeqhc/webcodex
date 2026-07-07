@@ -30,10 +30,10 @@ export PATH="$PWD/target/release:$PATH"
 
 ## 快速开始
 
-第一次本地运行需要两个终端。下面命令假设 npm 安装后的 binaries 已经在 `PATH` 中。
+localhost 示例建议先在同一台机器上开两个终端：一个运行 server，另一个进入你想让 WebCodex 操作的仓库。下面命令假设 npm 安装后的 binaries 已经在 `PATH` 中。
 如果你从源码构建，请先执行 `export PATH="$PWD/target/release:$PATH"`。
 
-终端 1 - 创建 server 配置并启动 server：
+server 终端 - 创建 server 配置并启动 WebCodex：
 
 ```bash
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
@@ -46,13 +46,13 @@ webcodex-cli server up \
 WEBCODEX_ENV_FILE="$WEBCODEX_ENV" webcodex
 ```
 
-`server up` 会在 `$WEBCODEX_ENV` 不存在时创建它，也会创建父目录。这个文件保存 server 设置和 server admin key。它不是要复制到客户端里的 evaluation key。
+`server up` 会在 `$WEBCODEX_ENV` 不存在时创建它，也会创建父目录。这个文件保存 server 设置和 server admin key。它不是要复制到 MCP 或 GPT Actions 里的 key。
 
-终端 2 - 创建一个 evaluation key、注册仓库并启动 agent：
+仓库终端 - 进入你想让 WebCodex 操作的仓库，创建 key、注册仓库并启动 agent：
 
 ```bash
 export WEBCODEX_KEY="$(openssl rand -base64 32)"
-printf 'Use this value as your MCP/GPT Actions Bearer key: %s\n' "$WEBCODEX_KEY"
+printf 'Copy this key into MCP/GPT Actions auth: %s\n' "$WEBCODEX_KEY"
 
 webcodex-cli connect http://127.0.0.1:8080 \
   --key "$WEBCODEX_KEY" \
@@ -63,11 +63,11 @@ webcodex-cli connect http://127.0.0.1:8080 \
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
 
-同一个 key 用在三个地方：`webcodex-cli connect --key`、下面“验证”里的 curl 命令，以及 MCP/GPT Actions 的 Bearer/API-key auth 配置。server 不需要提前拿到这个值；quick-start mode 会按 key 的 hash 匹配 client 和 agent。
+先留好打印出来的 key。后面用 `curl` 验证、配置 MCP client 或 GPT Actions auth 时，都粘贴同一个值。不需要把这个 key 加到 server 配置里。
 
 ## 验证
 
-在另一个终端中，手动粘贴同一个评估 key：
+在客户端终端中，粘贴上面打印的同一个 key：
 
 ```bash
 export WEBCODEX_KEY="<同一个评估 key>"
@@ -93,7 +93,7 @@ curl -sS \
 
 - 本地客户端可以直接使用 `http://127.0.0.1:8080`。
 - ChatGPT 托管的客户端需要公网 HTTPS URL。你可以把 WebCodex 放到 Nginx、Caddy 或 tunnel 后面，并用 `--public-url https://your-domain.example` 启动 server，然后使用 `https://your-domain.example/openapi.json` 或 `https://your-domain.example/mcp`。
-- MCP client 使用 `/mcp`；GPT Actions 使用 `/openapi.json`。第一次运行时，把同一个 evaluation key 填到 Bearer/API-key auth 配置里。
+- MCP client 使用 `/mcp`；GPT Actions 使用 `/openapi.json`。第一次运行时，把仓库终端打印出来的 key 填到 Bearer/API-key auth 配置里。
 
 ## 整体结构
 

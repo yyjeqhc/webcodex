@@ -30,10 +30,10 @@ See [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) for platform support and inst
 
 ## Quick Start
 
-For a first local run, use two terminals. The commands below assume the npm-installed binaries are on your `PATH`.
+For the localhost example, start with two terminals on the same machine: one for the server, one from the repo you want WebCodex to work on. The commands below assume the npm-installed binaries are on your `PATH`.
 If you built from source, export `PATH="$PWD/target/release:$PATH"` first.
 
-Terminal 1 - create the server config and start the server:
+Server terminal - create the server config and start WebCodex:
 
 ```bash
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
@@ -46,13 +46,13 @@ webcodex-cli server up \
 WEBCODEX_ENV_FILE="$WEBCODEX_ENV" webcodex
 ```
 
-`server up` creates `$WEBCODEX_ENV` if it does not exist, including the parent directory. That file stores server settings and a server admin key. It is not the evaluation key you paste into clients.
+`server up` creates `$WEBCODEX_ENV` if it does not exist, including the parent directory. That file stores server settings and a server admin key. It is not the key you paste into MCP or GPT Actions.
 
-Terminal 2 - create one evaluation key, register a repo, and start the agent:
+Repo terminal - from the repo you want WebCodex to work on, create a key, register the repo, and start the agent:
 
 ```bash
 export WEBCODEX_KEY="$(openssl rand -base64 32)"
-printf 'Use this value as your MCP/GPT Actions Bearer key: %s\n' "$WEBCODEX_KEY"
+printf 'Copy this key into MCP/GPT Actions auth: %s\n' "$WEBCODEX_KEY"
 
 webcodex-cli connect http://127.0.0.1:8080 \
   --key "$WEBCODEX_KEY" \
@@ -63,11 +63,11 @@ webcodex-cli connect http://127.0.0.1:8080 \
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
 
-Use the same key in three places: `webcodex-cli connect --key`, the Verify curl commands below, and your MCP/GPT Actions Bearer/API-key auth field. The server does not need the value ahead of time; quick-start mode matches clients and agents by the key's hash.
+Keep the printed key for this setup. Paste that same value when you verify with `curl` and when you configure MCP or GPT Actions auth. You do not need to add this key to the server config.
 
 ## Verify
 
-In another terminal, paste the same evaluation key:
+In a client terminal, paste the same key printed above:
 
 ```bash
 export WEBCODEX_KEY="<same evaluation key>"
@@ -93,7 +93,7 @@ For the full walkthrough, see [docs/QUICK_START.md](docs/QUICK_START.md).
 
 - Local clients can use `http://127.0.0.1:8080`.
 - ChatGPT-hosted clients need a public HTTPS URL. Put WebCodex behind Nginx, Caddy, or a tunnel, start the server with `--public-url https://your-domain.example`, then use `https://your-domain.example/openapi.json` or `https://your-domain.example/mcp`.
-- MCP clients use `/mcp`; GPT Actions use `/openapi.json`. For the first run, paste the same evaluation key into the Bearer/API-key auth field.
+- MCP clients use `/mcp`; GPT Actions use `/openapi.json`. For the first run, use the key printed in the repo terminal as the Bearer/API-key value.
 
 ## How It Fits Together
 

@@ -2,7 +2,11 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-WebCodex 通过 MCP endpoint 暴露与 GPT Actions 相同的 runtime tools。
+如果 client 支持 remote MCP，使用 MCP。
+如果你在构建 Custom GPT，使用 GPT Actions。
+两者调用同一个 WebCodex ToolRuntime。
+
+WebCodex 扮演 remote MCP server。WebCodex agent 不是 MCP 协议里的 client；它是 WebCodex server 后面的本地执行 worker。
 
 ## Endpoint
 
@@ -10,92 +14,129 @@ WebCodex 通过 MCP endpoint 暴露与 GPT Actions 相同的 runtime tools。
 https://your-domain.example/mcp
 ```
 
-## 部署模型
+本地 smoke test：
 
-WebCodex 当前提供的是一个远程 MCP endpoint，背后连接 WebCodex runtime tools。`webcodex-agent` 是本地执行 agent，不是 MCP 协议意义上的 client。
+```text
+http://127.0.0.1:8080/mcp
+```
 
-在 MCP 术语中，AI host 创建 MCP client 连接，WebCodex server 扮演 MCP server，WebCodex agent 在 server 后面执行项目工作。local stdio MCP-server 注册和外部 MCP-server brokering 属于未来扩展，不是当前 endpoint 的前置条件。
+Hosted client 通常要求 HTTPS。把 `your-domain.example` 换成你自己的 WebCodex 域名。
 
-把示例中的 `your-domain.example` 替换成你自己的 WebCodex HTTPS 域名。
+## 认证
 
-## 创建 ChatGPT MCP app / connector
+MCP client 使用 Bearer/API-key authentication：
 
-`docs/assets/mcp-*.png` 中的截图展示了 ChatGPT app/connector 流程：
+```text
+Authorization: Bearer <shared-key-or-user-token>
+```
+
+quick start 使用 `webcodex-cli server up` 打印的 shared key。managed deployment 使用 scoped user token。
+
+MCP 不要使用这些凭据：
+
+- server bootstrap/admin token，
+- account credential，
+- agent token，
+- OAuth refresh token，
+- raw env file values。
+
+不要把真实 token 写进提交的 MCP config。优先使用环境变量或 client secret store。
+
+## 创建 ChatGPT MCP App / Connector
+
+`docs/assets/mcp-*.png` 截图是 ChatGPT app/connector 流程的 UI 路标：
 
 ![打开 ChatGPT apps](assets/mcp-1.png)
 ![选择 webcodex](assets/mcp-2.png)
 ![配置 MCP URL 和认证](assets/mcp-3.png)
 ![连接 webcodex](assets/mcp-4.png)
 
-1. 打开 ChatGPT 的 apps/connectors 区域，选择创建或配置 MCP app。
-2. 将 app name 设置成容易识别的名称，例如 `webcodex`。
-3. 将 MCP server URL 设置为：
+1. 打开 ChatGPT apps/connectors，创建或配置 MCP app。
+2. 起一个容易识别的名字，例如 `webcodex`。
+3. MCP server URL 填 WebCodex `/mcp` endpoint。
+4. 配置 HTTP/API-key Bearer authentication。
+5. 保存并连接 app。
+6. 先跑 discovery 和只读 project calls，再进入写任务。
 
-   ```text
-   https://your-domain.example/mcp
-   ```
+## 第一次检查
 
-4. 将 authentication 配置成 HTTP/API key Bearer auth。quick start 使用 shared key；managed mode 使用 `wc_pat_xxx` personal API token。shared-key quick start 不要选择 OAuth。
-5. 保存 app，然后在 ChatGPT 提示时连接它。
-6. 先用低风险 discovery tools 测试：列出 tools、检查 runtime status、列出 projects，再调用只读 project tool。
+让 client 先跑低风险检查：
 
-## 认证
+1. compact 或 summary 形态的 `runtime_status`。
+2. `list_projects`。
+3. 对 `README.md` 做有界 `read_file`。
+4. `show_changes`，并设置 `include_diff=false`。
 
-使用 Bearer authentication。quick start 使用 shared key；managed mode 使用 `wc_pat_xxx` personal API token。静态 Bearer/API-key 认证既可以把任一值作为 `Authorization: Bearer ...` 发送。
-
-OAuth 是独立 flow。OAuth client 字段留空不会变成 no-auth，也不会变成静态 Bearer。Open demo mode 只能用于 Host 明确提供 None / No authentication / no-auth 设置，且 WebCodex server 已用 `--open` 启动的场景。
-
-MCP 不要使用这些凭据：
-
-- `WEBCODEX_TOKEN`：server bootstrap/root/admin credential。
-- `wc_acct_xxx`：只供用户 CLI 创建本地 PAT 和 agent token。
-- `wc_agent_xxx`：只供 `webcodex-agent` 使用。
-
-生产部署推荐流程是管理员一次性签发 user account credential，然后用户运行 `webcodex-cli token create-local` 在本地生成 `wc_pat_xxx`，服务器只登记其 hash。
-
-## Runtime surface
-
-MCP 和 GPT Actions 共享同一个 `ToolRuntime`。通过 MCP 发起的 tool call 会到达相同 runtime、agent registry、project ids 和 safety boundaries。
-
-常见 MCP tools 包括：
-
-- Discovery / health：`list_tools`、`runtime_status`、`list_projects`、`list_agents`。
-- 只读项目检查：`list_project_files`、`read_file`、`search_project_text`、`git_status`、`git_diff`、`git_diff_summary`、`git_diff_hunks`。
-- 推荐结构化编辑：`replace_line_range`、`insert_at_line`、`delete_line_range`。
-- Patch workflows：`validate_patch`、`apply_patch_checked`。
-- 项目命令与 jobs：`run_shell`、`run_job`、`stop_job`、`job_status`、`job_log`、`job_tail`。
-  `job_status` 默认不返回 `command_preview`，并返回 `command_preview_included=false`；仅在定向调试时传 `include_command_preview=true`，此时会附带有界 preview 元数据。它不会返回 stdout/stderr body。
-- Structured Cargo helpers：`cargo_fmt`、`cargo_check`、`cargo_test`。
-
-已知目标行号时，优先使用 structured line edit tools。多文件修改使用 patch tools。把 `run_shell` 和 `run_job` 当作 diagnostics/build/test fallback，而不是首选源码编辑方式。`stop_job` 保留兼容字段 `stopped`，但模型应优先读取 `stop_effect`、`terminal`、`terminal_pending`。handoff/finish jobs summary 保留 `active_count`，并新增 `blocking_active_count`、`nonblocking_active_count`；`queued`、`running`、`started`、`agent_queued` 会阻塞收口，`stop_requested` 是非阻塞 terminal-pending 状态，只会产生 `blocking=false` 的 `jobs_terminal_pending`。
-
-Smoke / acceptance 测试可以在任意 MCP tool arguments 中附加
-`expected_failure`、`expected_failure_kind`、
-`test_expect_failure_kind`、`assertion_name`。这些字段只用于测试记录：
-WebCodex 会把它们写入 session ledger，并在具体 tool dispatch 前移除。
-它们不会改变 authorization、permission、hard guards、执行行为、
-`command_started` 或 immediate success/error result。handoff/finish summary
-会把匹配的预期失败计入 expected failures；unexpected failures、kind 不匹配
-和标记为 expected_failure 但实际成功的调用仍会作为需要处理的问题显示。
-
-`session_handoff_summary` 和 `finish_coding_task` 支持
-`summary_only=true`。该模式返回紧凑 verdict 字段，例如
-`workspace_clean`、`hygiene_clean`、compact `jobs`、`permissions`、
-`tool_failures`、`validation`、`warnings`、`suggested_next_actions`，并省略
-recent events、stdout/stderr、tail/excerpt 和 command text。普通模式保持兼容的
-完整有界输出。
-
-Agent-backed project ids 形如：
+project id 应该长这样：
 
 ```text
 agent:<client_id>:<project_id>
 ```
 
-例如：`agent:ubuntu-client:webcodex`。
+prompt 里写完整 project id，避免模型选错仓库。
+
+## 默认 Coding Loop
+
+使用这个 workflow，不要让模型自行发明 shell session：
+
+```text
+startup:
+  start_coding_task
+
+inspect:
+  list_project_files
+  search_project_text
+  read_file
+
+edit:
+  replace_line_range
+  insert_at_line
+  delete_line_range
+  apply_text_edits
+  apply_patch_checked
+
+validate:
+  validate_patch
+  cargo_check
+  cargo_test
+  cargo_fmt
+
+review:
+  show_changes
+  git_diff_hunks
+  workspace_hygiene_check
+
+finish:
+  finish_coding_task
+  session_handoff_summary
+```
+
+`start_coding_task` 返回 session id，后续 review 和 finish tools 可以继续使用。`finish_coding_task` 是完成任务的推荐收口工具；`session_handoff_summary` 用于把上下文交给另一个 operator 或后续 client。
+
+## Advanced / Escape-Hatch Tools
+
+```text
+run_shell:
+  bounded escape hatch, not default editing or validation path
+
+run_job:
+  for explicit async jobs, not default coding loop
+
+artifact / checkpoint / cleanup:
+  advanced workflow tools
+```
+
+这些工具有用，但不应该成为模型第一选择。优先使用结构化 read、edit、validation、review 和 finish tools。
+
+## Tool Discovery
+
+MCP 可以直接暴露 runtime tools。不要把完整工具目录塞进每个 prompt。日常发现工具时，使用 compact manifest 或 focused category，然后按上面的默认 coding loop 工作。
+
+只有调试 client/tool schema behavior 时，才使用完整 schema-oriented discovery。
 
 ## 示例客户端配置
 
-具体格式取决于 MCP client。secrets 应使用 placeholders 或环境变量，不要把真实 token 提交进配置文件。
+具体格式取决于 MCP client：
 
 ```json
 {
@@ -103,33 +144,40 @@ agent:<client_id>:<project_id>
     "webcodex": {
       "url": "https://your-domain.example/mcp",
       "headers": {
-        "<bearer-auth-header-name>": "Bearer ${WEBCODEX_PAT}"
+        "Authorization": "Bearer ${WEBCODEX_TOKEN_FOR_MCP}"
       }
     }
   }
 }
 ```
 
-其中 `WEBCODEX_PAT` 在 quick start 中可保存 shared key；在 managed mode 中保存由 `webcodex-cli token create-local` 生成的 `wc_pat_xxx`。
+`WEBCODEX_TOKEN_FOR_MCP` 应保存 quick-start shared key 或 managed user token。不要放 server bootstrap/admin credential、account credential 或 agent token。
 
 ## 常见错误
 
 ### 401 Unauthorized
 
-Token 缺失、格式错误、过期、已撤销，或 server 不认识。确认 quick start 的 shared key 与 agent/server 一致；managed mode 则生成新的 `wc_pat_xxx`，并确认 MCP client 读取的是正确环境变量。
+token 缺失、格式错误、过期、已撤销，或 server 不认识。确认 MCP client 正在发送预期 Bearer value。
 
 ### 403 Forbidden
 
-Token 有效，但缺少请求工具或项目操作所需 scope。为当前工作流创建具备所需 scopes 的 PAT。
+token 有效，但缺少请求工具或项目操作所需 scope。使用面向 runtime/project/job access 的 token。
 
-### Token 类型错误
+### Agent Offline
 
-MCP 的静态 Bearer 可以使用 quick-start shared key 或 managed `wc_pat_xxx`。`WEBCODEX_TOKEN`、`wc_acct_xxx` 和 `wc_agent_xxx` 分别属于其他 surface。
+server 可达，但所选 agent 未连接。启动 `webcodex-agent` 并检查 `runtime_status`。
 
-### Agent offline
+### Project Not Registered
 
-Server 在线，但所选 `client_id` offline 或 stale。启动 `webcodex-agent`，并检查 `runtime_status` 或 `list_agents`。
+agent 在线，但请求的 `agent:<client_id>:<project_id>` 不存在。通过 agent connection flow 注册项目，然后重试 `list_projects`。
 
-### Project not registered
+### Response Too Large
 
-Agent 在线，但请求的 `agent:<client_id>:<project_id>` 不存在。添加顶层 agent `projects.d/*.toml` 文件，包含 `id` 和 `path`，然后重启或刷新 agent。
+使用 compact runtime status、focused manifest discovery、有界文件范围、`show_changes(include_diff=false)`，以及 summary-only finish 或 handoff calls。
+
+## 相关文档
+
+- 快速开始：[QUICK_START.zh-CN.md](QUICK_START.zh-CN.md)
+- Demo 工作流：[DEMO.zh-CN.md](DEMO.zh-CN.md)
+- GPT Actions：[GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md)
+- 安全：[../SECURITY.md](../SECURITY.md)

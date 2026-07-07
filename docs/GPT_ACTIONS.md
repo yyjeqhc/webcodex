@@ -2,621 +2,179 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-WebCodex exposes a focused OpenAPI schema for ChatGPT GPT Actions at:
+Use MCP if your client supports remote MCP.
+Use GPT Actions if you are building a Custom GPT.
+Both surfaces call the same WebCodex ToolRuntime.
+
+GPT Actions gives a Custom GPT a focused OpenAPI surface for WebCodex runtime tools. It is the right path when you want a ChatGPT Custom GPT rather than a generic remote MCP connector.
+
+## Schema URL
 
 ```text
-GET /openapi.json
+https://your-domain.example/openapi.json
 ```
 
-GPT Actions and MCP share the same `ToolRuntime`; GPT Actions provides typed REST operations while MCP provides MCP framing.
+For local inspection:
 
-## Create a GPT Action in ChatGPT
+```text
+http://127.0.0.1:8080/openapi.json
+```
 
-The existing `docs/assets/gpt-action-*.png` screenshots are suitable for the current deployment guide because they cover the full ChatGPT GPT builder path: open the editor, configure the GPT, add an Action, set Bearer authentication, and import the WebCodex OpenAPI schema. Treat them as UI landmarks rather than exact button-position requirements; ChatGPT may rename or move controls over time.
+ChatGPT Actions require a public HTTPS URL for actual use.
 
-Use the screenshots with the checklist below:
+## Create A GPT Action In ChatGPT
+
+The screenshots in `docs/assets/gpt-action-*.png` are UI landmarks. ChatGPT may move buttons over time, but the flow is the same.
 
 1. **Open or create a GPT.**
 
    ![Open GPT editor](assets/gpt-action-1.png)
 
-   Start from ChatGPT's GPT creation or edit flow.
-
 2. **Enter the GPT configuration screen.**
 
    ![Configure GPT](assets/gpt-action-2.png)
-
-   Confirm you are editing the GPT's configuration, not an ordinary chat.
 
 3. **Open Actions and add an Action.**
 
    ![Add an Action](assets/gpt-action-3.png)
 
-   Use the Actions section of the GPT builder; do not paste the OpenAPI schema into the GPT instructions.
-
 4. **Configure Action authentication.**
 
    ![Set Action authentication](assets/gpt-action-4.png)
 
-   Choose API key / HTTP authentication, set the auth type to **Bearer**, and paste either the shared key for quick start or a `wc_pat_xxx` personal API token for managed mode. Do not choose OAuth for the shared-key quick start. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
+   Choose API-key or HTTP authentication, set the auth type to Bearer, and use the quick-start shared key or a managed user token. Do not use server bootstrap/admin credentials, account credentials, or agent tokens.
 
-5. **Import the OpenAPI schema and required metadata.**
+5. **Import the OpenAPI schema.**
 
    ![Import OpenAPI schema](assets/gpt-action-5.png)
 
-   Import or paste the schema URL:
+   Import the schema URL from your WebCodex server. If ChatGPT asks for a privacy policy URL, use your own product or deployment policy URL and do not put secrets in it.
 
-   ```text
-   https://your-domain.example/openapi.json
-   ```
-
-   Set the GPT privacy policy URL if the ChatGPT UI requires it. Use your own product or deployment privacy URL; do not put secrets in that URL.
-
-6. Save the Action, then test a harmless discovery call such as `getRuntimeStatus`, followed by `listProjects` and a read-only project call such as `getProjectGitStatus`.
-7. Use mutation tools only against a known disposable project until the GPT has been validated.
+6. Save the Action.
+7. Test `getRuntimeStatus`, then `listProjects`, then a read-only project call.
+8. Use mutation tools only after a read-only task has finished cleanly.
 
 ## Authentication
 
-Configure the GPT Action with Bearer/API-key authentication in the GPT Action settings. Static bearer/API-key host auth can be used with either a shared key for quick start or a `wc_pat_xxx` token for managed mode.
+Configure GPT Actions with Bearer/API-key authentication.
 
-For production, use a `wc_pat_xxx` personal API token for GPT Actions and MCP. The recommended explicit flow is: an administrator issues a one-time `wc_acct_xxx` account credential, then the user runs `webcodex-cli token create-local` locally to generate a `wc_pat_xxx` and register only its hash with the server.
+For the quick start, use the shared key printed by `webcodex-cli server up`. For managed deployments, use a scoped user token created for this GPT.
 
-OAuth is a separate flow. Blank OAuth client fields usually mean the host may attempt OAuth metadata discovery, dynamic client registration, or client metadata discovery; they do not become no-auth or static bearer.
+Do not paste these into GPT Actions:
 
-Do not paste or store `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx` as a GPT Actions or MCP credential. `WEBCODEX_TOKEN` is only for server bootstrap/root/admin work, `wc_acct_xxx` is only for local token self-registration, and `wc_agent_xxx` is only for `webcodex-agent` WebSocket connectivity. Pairing/enrollment remains available as a shortcut: `webcodex-cli pairing create` creates a short-lived `wc_pair_*` code on the server/admin side, and `webcodex-cli client enroll` exchanges that code on the client side.
+- server bootstrap/admin token,
+- account credential,
+- agent token,
+- OAuth refresh token,
+- env file contents.
 
-`?token=` is not a GPT Actions auth mechanism. It is accepted only by `/api/agents/ws` for WebSocket handshake compatibility.
+Pairing, token creation, agent enrollment, server setup, and other management tasks belong in `webcodex-cli`, not GPT Actions.
 
-GPT Actions require a public HTTPS URL for the WebCodex server.
+## Tool Surface
 
+GPT Actions exposes a focused public operation surface and a generic `callRuntimeTool` operation for runtime tools. It intentionally does not expose admin, setup, pairing, token-management, agent-token, server-management, or audit endpoints.
 
-## Token selection
+When using `callRuntimeTool`, pass the runtime tool name and flattened top-level fields expected by the OpenAPI schema. Use focused discovery rather than sending the full tool catalog into a model prompt.
 
-Credential purpose summary:
+MCP and GPT Actions share the same runtime, project ids, session recording, agent bridge, and safety boundaries.
 
-- GPT Actions / MCP / `/api/tools/list` / `/api/tools/call`: use the shared key for quick start, or `wc_pat_xxx` for managed mode.
-- Server bootstrap and emergency admin: use `WEBCODEX_TOKEN`.
-- Local self-registration of PATs and agent tokens: use `wc_acct_xxx` only with `webcodex-cli token create-local` or `webcodex-cli agent-token create-local`.
-- Agent connection: use `wc_agent_xxx` only in `webcodex-agent` config.
+## Default Coding Loop
 
-A GPT Action configured with `wc_acct_xxx` will not be able to call runtime tools and leaks the wrong secret into the wrong surface. For managed mode, generate a PAT instead:
-
-```bash
-webcodex-cli token create-local \
-  --server https://your-domain.example \
-  --user alice \
-  --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
-  --name gpt-action \
-  --scopes runtime:read,project:read,project:write,job:run
-```
-
-## Tool surface
-
-The GPT Actions surface is intentionally smaller than the full admin API. It includes runtime, project, git, patch, file, shell/job, artifact, and session operations.
-
-GPT Actions can expose at most 30 operations/tools. The current WebCodex OpenAPI
-surface is intentionally held at 25 operations. New runtime tools should usually
-remain reachable through `callRuntimeTool` instead of becoming dedicated
-Actions. Chunked artifact upload tools (`artifact_upload_begin`,
-`artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`) are
-not dedicated GPT Action operations; call them through `callRuntimeTool`.
-Compatibility edit tools (`replace_in_file`, `write_project_file`) are also
-runtime-only compatibility paths. Use them through `callRuntimeTool` when
-needed; source editing should prefer `replace_line_range`, `insert_at_line`,
-`delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
-
-GPT workflows operate on agent-registered projects through dedicated
-`/api/projects/*` Actions or `callRuntimeTool`.
-
-It does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints such as:
+Use this loop for Custom GPT coding tasks:
 
 ```text
-/api/users/create
-/api/tokens/create
-/api/agent-tokens/create
-/api/pairing/create
-/api/pairing/enroll
-/api/audit/sessions
+startup:
+  start_coding_task
+
+inspect:
+  list_project_files
+  search_project_text
+  read_file
+
+edit:
+  replace_line_range
+  insert_at_line
+  delete_line_range
+  apply_text_edits
+  apply_patch_checked
+
+validate:
+  validate_patch
+  cargo_check
+  cargo_test
+  cargo_fmt
+
+review:
+  show_changes
+  git_diff_hunks
+  workspace_hygiene_check
+
+finish:
+  finish_coding_task
+  session_handoff_summary
 ```
 
-Use `webcodex-cli` for those management tasks.
+The intended closeout order is:
 
-After deploying a server/agent/runtime build that changes tool schemas, refresh
-the GPT Action schema from `/openapi.json`. Then test discovery and read-only
-runtime calls before any mutation: `getRuntimeStatus`, `callRuntimeTool` with
-`tool_manifest`, and read-only `show_changes` against a safe test project. Full
-`listRuntimeTools` includes expanded schemas and may be too large for GPT
-Actions; use it mainly for schema debugging. For focused discovery, call
-`listRuntimeTools` with `summary_only=true` plus `category`, `features`, or
-`limit`, or use `callRuntimeTool` with `tool_manifest`. The current runtime
-scale is roughly 66 tools; the size issue is full schema/metadata expansion,
-not tool system sprawl.
-
-`tool_manifest` is the recommended GPT Action discovery call for accepted
-flattened arguments. Each compact tool entry includes
-`accepted_flattened_args` and `deprecated_or_unsupported_args` without returning
-full input/output schemas. `tool_manifest` itself accepts flattened top-level
-`category`, `include_recommended_flows`, and `include_risk_summary`. Focused
-`list_tools` accepts flattened `summary_only`, `category`, `features`, and
-`limit`.
-
-When `tool_manifest_limit` or `limit` is supplied, `truncated=true` means the
-caller asked WebCodex to bound the response. That is normal bounded output, not
-`ResponseTooLarge`. Smoke and acceptance scripts should check whether a limit
-was explicit, compare `returned_count` with `total_count`, and prefer
-`truncation_reason` / `limit_applied` when those fields are present. Do not fail
-only because `truncated=true`.
-
-`runtime_status` exposes the current permission profile in `output.permissions`.
-The self-hosted development default is `policy="dev_auto_approve"`,
-`auto_approve=true`, and `human_approval_required=false`. This only auto-approves
-high-risk tools after hard checks have passed; it does not bypass auth, OAuth
-scope policy, session guards, project/session mismatch checks, path safety,
-sensitive-path denial, or agent/project policy. A future release-oriented profile
-should switch to `require_approval` for human approval.
-
-For smoke project selection, call `listProjects` and prefer projects whose
-`capabilities.recommended_for_smoke` is `true` inside `output.projects`. The
-response shape is `{count, projects, recommended_for_smoke}`. For git smoke,
-require `capabilities.git_available=true`; `agent:special:test-mcp` may be safe
-for basic smoke but is not necessarily git-backed.
-
-## Recommended flow
-
-For coding tasks, use the deterministic coding-loop tools through generic
-`callRuntimeTool`; they are runtime tools, not dedicated GPT Action operations.
-GPT Actions should pass tool arguments as flattened top-level fields when
-calling `callRuntimeTool`.
-
-1. Call `callRuntimeTool` with `start_coding_task`, `project`, and a short
-   `title`; keep the returned explicit `session_id`. It accepts flattened
-   `include_tool_manifest`, `include_runtime_status`, `compact_startup`,
-   `include_git`, `include_recent_commits`, `include_rules`, `bind_current`,
-   `tool_manifest_categories`, and `tool_manifest_limit`. For startup, prefer
-   bounded manifest categories such as `workflow`, `session`, `git`, `edit`,
-   `artifact`, and `cleanup` instead of sending all tools into context. For
-   MCP direct and GPT Action lightweight sanity, pass
-   `include_runtime_status=true`, `compact_startup=true`,
-   `include_tool_manifest=true`, and a small `tool_manifest_limit` to receive
-   compact runtime observability plus bounded workflow discovery instead of the
-   full `runtime_status` payload. If compact startup is not available on an
-   older runtime, a small `tool_manifest_limit` is still a reasonable bounded
-   discovery shape. Read `output.startup_verdict.status` first; then inspect
-   its `checks` and `suggested_next_actions` when the status is `warn` or
-   `fail`.
-   For first-contact runtime health without starting a task, call
-   `runtime_status` with flattened `summary_only=true` or `compact=true`.
-2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
-   with `show_changes`.
-3. For scoped source edits with known line numbers, call `replace_line_range`,
-   `insert_at_line`, `delete_line_range`, or `apply_text_edits` through
-   `callRuntimeTool`.
-4. For broader multi-file edits, use `validateProjectPatch` first, then
-   `applyProjectPatchChecked` only when the patch is intentional.
-5. Validate with structured helpers first: `callRuntimeTool` with `cargo_fmt`,
-   `cargo_check`, or `cargo_test`, plus `validateProjectPatch` /
-   `applyProjectPatchChecked` for patch workflows.
-6. Use `runProjectShellCommand` or `startProjectShellJob` only as bounded
-   diagnostics/build/test fallbacks in registered projects. If an async job must
-   be stopped, call `callRuntimeTool` with `tool="stop_job"`, the same
-   `project`, the returned `job_id`, the explicit `session_id` when available,
-   and `confirm=true`. `stop_job` is not a dedicated GPT Action operation; it
-   obeys project/session job ownership boundaries and does not expose
-   stdout/stderr. Treat `stopped` as a compatibility field; prefer
-   `stop_effect`, `terminal`, and `terminal_pending`.
-7. Review with `callRuntimeTool` using `show_changes`, `git_diff_hunks`, and
-   `workspace_hygiene_check`. Read `show_changes.clean`, `warnings`,
-   `hunks_truncated`, and `suggested_next_actions`, then
-   `workspace_hygiene_check.clean`, `findings`, `warnings`, and
-   `suggested_next_actions`.
-8. Finish with `callRuntimeTool` using `finish_coding_task`; for cross-client or
-   multi-step handoff, call `session_handoff_summary` with the explicit
-   `session_id`. Pass flattened `summary_only=true` for compact smoke verdicts
-   that omit recent events, command text, stdout/stderr, tails, and excerpts.
-   For handoff, also pass `include_workspace=true` and `include_validation=true`.
-   For finish, pass `include_workspace=true`, `include_hygiene=true`,
-   `include_validation_summary=true`, and `include_diff=false`.
-   For `finish_coding_task(summary_only=true)`, read
-   `output.finish_verdict.status` or `output.verdict.status`, `blocking`, and
-   `blocking_reasons` first; do not report nested `show_changes.verdict` or
-   `workspace_hygiene_check.verdict` as the final finish verdict. The detailed
-   compact fields remain the audit source.
-
-`finish_coding_task.include_workspace` is a compatibility flag matching
-`session_handoff_summary.include_workspace`: it controls the nested handoff
-workspace block when `include_handoff=true`; the top-level finish
-workspace/show_changes check keeps its existing default behavior.
-
-`finish_coding_task` and `session_handoff_summary` keep `active_count` for
-compatibility and also return `blocking_active_count`,
-`nonblocking_active_count`, `running_count`, `stop_requested_count`, and
-`terminal_pending_count`. Only blocking active jobs produce
-`active_jobs_present`; stop-requested jobs produce nonblocking
-`jobs_terminal_pending`.
-
-Compact workflow outputs include operator-friendly verdicts. They are additive
-UX summaries and do not change authorization, permissions, guards, session
-binding, failure classification, or MCP direct error behavior. PASS requires
-`workspace_clean=true`,
-`jobs.blocking_active_count=0`, `tool_failures.unexpected_count=0`,
-`tool_failures.expectation_mismatch_count=0`,
-`tool_failures.unexpected_success_count=0`, and `hygiene_clean=true`. WARN covers
-`validation.status=not_run` with or without ledger-derived `review_evidence`,
-mixed validation where historical failures were resolved by a later successful
-validation, matched expected failures only, and bounded `truncated=true` with
-`truncation_reason="limit"`. FAIL covers dirty workspace, blocking jobs,
-unexpected tool failures, expectation mismatches, unexpected successes, hygiene
-failure, validation failure, or mixed validation with an unresolved/latest
-failure.
-
-The intended closeout order is `start_coding_task` -> inspect/search/read ->
-edit -> validate -> `show_changes` -> `workspace_hygiene_check` ->
-`session_handoff_summary` when a handoff is useful -> `finish_coding_task`.
-`show_changes` and `workspace_hygiene_check` are the auditable review evidence;
-their top-level verdicts are additive UX summaries over the detailed review
-fields. Handoff/finish verdicts are the final compact PASS/WARN/FAIL aggregate,
-not a new guard or permission decision. `finish_coding_task(summary_only=true)`
-also exposes `finish_verdict` as an alias of `verdict`, and top-level
-`suggested_next_actions` mirrors the final closeout actions.
-`finish_verdict` may warn instead of fail for resolved historical
-`cargo_fmt`, `cargo_check`, or `cargo_test` failures when later structured
-validation passed and workspace/hygiene checks are clean. Unresolved validation
-failures and non-validation tool failures remain blocking, so callers should
-still inspect `validation.historical_failures` and
-`finish_verdict.warning_reasons`.
-
-For non-coding tracking, `start_session` remains available through
-`callRuntimeTool`. It creates a session record but does not automatically bind
-future calls.
-
-Do not use `save_project_artifact`, `artifact_upload_begin`,
-`artifact_upload_chunk`, `artifact_upload_finish`, or `artifact_upload_abort` as
-source-writing tools. They are for bounded project artifact transfer, not for
-editing UTF-8 source files.
-
-WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes. GPT Actions clients should use structured edit tools, patch validation, cargo validation, bounded `run_shell` / `run_job` escape hatches, `show_changes`, `workspace_hygiene_check`, and `finish_coding_task`. Operators who need Codex-specific workflows should run Codex outside WebCodex.
-
-`show_changes` is a read-only project inspection tool available through
-`callRuntimeTool`. It summarizes branch/head, modified/added/deleted/renamed/
-untracked files, `git diff --stat`, optional bounded hunks, simple warnings for
-untracked smoke/tmp/test/anchor files, optional session activity, and suggested
-next actions. Use it before summarizing a task, reviewing, or committing. It
-requires `project:read` and never modifies, cleans, stages, commits, or restores
-the worktree.
-
-Tool risk, OAuth scope, session risk class, MCP annotations, and path hints now
-begin from `ToolMetadata`. This is the metadata-only foundation for a later
-ToolKernel/ToolProvider design; it does not change runtime dispatch, OAuth grant
-management, or the existing tool API.
-
-`callRuntimeTool` now enters the same lightweight `ToolKernel` facade used by
-MCP `tools/call`. The facade performs metadata-backed OAuth scope checks,
-session event recording, `ToolCall` parsing, and dispatch to the existing
-`ToolRuntime` handlers. It is not a provider system; concrete tool handlers and
-schemas remain unchanged.
-
-## Session tracking
-
-`start_coding_task` and `finish_coding_task` are `workflow` category tools for
-the coding lifecycle. `start_session`, `bind_current_session`,
-`session_summary`, and `session_handoff_summary` are `session` category tools
-for raw session ledger/control. Use `category=workflow` for lifecycle discovery
-and `category=session` for raw session ledger/control. They let a caller group
-later `/api/tools/call` invocations under an opaque `wc_sess_*` id and ask
-which tools ran, which succeeded or failed, which project id was supplied,
-which write-like paths were inferred, and which job-like calls returned a
-`job_id`.
-
-`start_session` creates a session record. It does not automatically bind future
-calls as current. `start_coding_task` is the preferred coding-task entry point;
-it creates a session, returns an explicit `session_id`, gathers deterministic
-startup context, includes a compact `tool_manifest` by default, and defaults
-`bind_current=false`. Set flattened `include_tool_manifest=false` to omit that
-manifest, or pass flattened `tool_manifest_categories` and
-`tool_manifest_limit` to bound compact entries while keeping
-`accepted_flattened_args`. `finish_coding_task` requires an explicit
-`session_id`; it does not fall back to current-session binding. Both
-`finish_coding_task` and `session_handoff_summary` include a bounded `jobs`
-section with active job counts, recent metadata, and warnings. That section is
-for supervision only and never includes stdout/stderr, tails, excerpts, or
-command text.
-
-Start a session through the generic Action:
-
-```json
-{
-  "tool": "start_session",
-  "params": {
-    "project": "agent:workstation:my-repo",
-    "title": "implement show_changes follow-up"
-  }
-}
+```text
+start_coding_task -> inspect -> edit -> validate -> show_changes -> workspace_hygiene_check -> finish_coding_task
 ```
 
-Pass the returned id as `recording_session_id` metadata on later generic calls
-when using `params` or `arguments`:
+Use `session_handoff_summary` when another operator or client needs to continue the task.
 
-```json
-{
-  "tool": "read_file",
-  "recording_session_id": "wc_sess_example",
-  "params": {
-    "project": "agent:workstation:my-repo",
-    "path": "src/mcp.rs",
-    "start_line": 1,
-    "limit": 20
-  }
-}
+## Advanced And Escape-Hatch Tools
+
+```text
+run_shell:
+  bounded escape hatch, not default editing or validation path
+
+run_job:
+  for explicit async jobs, not default coding loop
+
+artifact / checkpoint / cleanup:
+  advanced workflow tools
 ```
 
-Then summarize it directly, or pass the same id to `show_changes` so the git
-state and session activity are returned together:
+Shell and job tools can execute project commands through the agent. Use them only when a structured validation helper is not enough, and review the resulting workspace state before finishing.
 
-```json
-{
-  "tool": "show_changes",
-  "params": {
-    "project": "agent:workstation:my-repo",
-    "session_id": "wc_sess_example",
-    "include_diff": false,
-    "session_event_limit": 30
-  }
-}
+Artifact, checkpoint, and cleanup tools support advanced workflows. They are not replacements for structured source edits or normal code review.
+
+## First Safe Prompt
+
+```text
+Use WebCodex on project agent:<client_id>:<project_id>.
+Start a coding task, inspect README.md, summarize the project, show changes
+without a diff, run workspace hygiene, and finish. Do not edit files.
 ```
 
-For `/api/tools/call`, top-level `recording_session_id` is recorder metadata
-for the current generic wrapper call and is stripped before concrete tool
-dispatch. Top-level `session_id` is ordinary flattened tool input when
-`params`/`arguments` are absent. `params.session_id` is the `show_changes`
-business argument that selects which session to summarize; those ids may be the
-same or different.
+After that succeeds, try one small, reversible edit on a disposable branch.
 
-The recorder is bounded. Session records, events, and messages may be persisted
-and restored through the configured `sessions.json` ledger, but the ledger is
-task continuity and handoff metadata rather than a complete audit log. The
-recorder does not automatically modify a workspace and does not scan diffs.
-Inputs and errors are redacted and bounded before storage. Current-session
-bindings remain process-local in-memory state, not durable ledger state, and
-may be lost on restart. For reliable long-running or cross-client workflows,
-keep the explicit `session_id` and pass it as tool input or
-`recording_session_id` metadata instead of relying only on current binding.
-In session summaries, `policy_rejected` means a safety or policy check blocked
-the request before a write. A `read_project_artifact_metadata` call with
-`allow_missing=true` and `exists=false` is a successful negative assertion, not a
-failed tool call.
+## Common Errors
 
-`session_handoff_summary` is read-only and requires a business `session_id`.
-It does not implicitly use the current-session binding. Its optional
-`validation` section is ledger-derived and does not expose raw stdout/stderr,
-excerpt fields, or `validation_output_summary`. It accepts flattened
-`include_validation`, `include_workspace`, `include_checkpoints`,
-`summary_only`, and `limit`.
+### Schema Import Fails
 
-For smoke and acceptance tests, `callRuntimeTool` accepts flattened testing
-metadata: `expected_failure`, `expected_failure_kind`,
-`test_expect_failure_kind`, and `assertion_name`. These fields are recorded in
-the session ledger and stripped before concrete runtime tool dispatch. They do
-not change authorization, permission decisions, hard guards, execution,
-`command_started`, or immediate success/error output. `finish_coding_task` and
-`session_handoff_summary` classify matching negative-path failures as expected
-while keeping unexpected failures, expectation mismatches, and unexpected
-successes visible in `tool_failures` and `suggested_next_actions`.
+Confirm the server is reachable over public HTTPS and `/openapi.json` returns the WebCodex schema.
 
-For expected Cargo validation failures, callers may use
-`expected_failure=true` with `expected_failure_kind=validation_failed`.
-`cargo_fmt`, `cargo_check`, and `cargo_test` set
-`failure_kind="validation_failed"` only when the underlying Cargo command
-started and returned a nonzero exit code. Permission denials, session/project
-mismatches, guard denials, timeouts, malformed arguments, disconnected agents,
-commands that did not start, and runtime errors keep their existing failure or
-error kind.
+### Auth Fails
 
-`cargo_test` also reports zero-tests metadata when it can parse Rust test
-harness output: `tests_detected`, `tests_run_count`, and `zero_tests_run`.
-The parser sums all `running N test` / `running N tests` sections, so a mixed
-lib `running 0 tests` plus integration `running 1 test` run is not considered
-zero-tests. A successful `cargo_test` with `zero_tests_run=true` should not be
-treated as strong validation; closeout summaries warn with
-`cargo_test_zero_tests` and suggest checking the filter or command. If
-`expected_failure=true` but `cargo_test` exits successfully after running zero
-tests, it is still an unexpected success / invalid negative assertion.
-`cargo_fmt` and `cargo_check` do not report zero-tests metadata.
+Confirm the Action uses Bearer/API-key auth and the token is intended for GPT Actions or runtime access.
 
-In GPT Actions, an expected negative path through `callRuntimeTool` may still
-appear as an outer `tool_error`. This usually happens because REST
-`/api/tools/call` returns HTTP 400 when the concrete runtime result has
-`ToolResult.success=false`. That outer Action UX is not, by itself, a transport
-failure or a session classifier failure. For smoke calls marked
-`expected_failure=true`, judge the final result from the immediate payload
-`failure_kind` / `error_kind`, from
-`session_handoff_summary(summary_only=true).tool_failures`, and from
-`finish_coding_task(summary_only=true).tool_failures`.
+### GPT Chose The Wrong Project
 
-The `tool_failures` classifier reports separate counts for `expected_count`,
-`unexpected_count`, `expectation_mismatch_count`, and
-`unexpected_success_count`. Matched expected negative paths should increment the
-expected bucket, not be rewritten into success. Auth failures, schema failures,
-invalid JSON, unknown tools, `session_project_mismatch`,
-`confirmation_required`, and other real guard or transport errors must keep
-their failure semantics.
+Put the full `agent:<client_id>:<project_id>` in the prompt. Ask the GPT to call `listProjects` or `list_projects` before reading or editing.
 
-For tools that are not read-only, are destructive, or are shell/job-like, the
-session ledger records bounded permission decision metadata after hard safety
-checks pass. Under `dev_auto_approve`, those entries have
-`status="auto_approved"` and include policy, request id, risk class, tool name,
-and project id only. Read-only tools do not create permission events.
-`finish_coding_task.permissions` and `session_handoff_summary.permissions`
-summarize these events with deterministic counts and a bounded `recent` list,
-where `approved_count` is a compatibility alias for manual approvals and
-`total_approved_count` includes manual plus auto approvals. They never include
-stdout/stderr, environment, tokens, secrets, raw command text, patches, file
-contents, or excerpts.
+### Response Too Large
 
-For `summary_only=true` final outputs, sanity checks should reject stdout/stderr
-bodies, command text, tails, and excerpts. Raw lower-level diagnostic/status
-payloads may contain empty string fields such as `stderr: ""`; non-empty
-stdout/stderr bodies are high-noise unless explicitly requested and must never
-contain env values, tokens, or secrets.
+Use compact runtime status, focused tool manifest discovery, bounded file reads, `show_changes(include_diff=false)`, and summary-only finish or handoff outputs.
 
-## Validation summaries
+### Shell Is Suggested Too Early
 
-Validation summaries come from session ledger events for validation-like tools:
-`cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
-`apply_patch_checked`. `run_shell` is not classified as validation by default.
-The summary includes `status` and `reason`: no validation events yields
-`status="not_run"` and `reason="no_validation_tool_invoked"`; all successes are
-`passed`, all failures are `failed`, and mixed outcomes are `mixed`.
-`validation.status=mixed` remains strict ledger history. Summary outputs also
-include `latest_status` and `historical_failures`, so resolved historical
-failures can warn instead of fail. `finish_coding_task` may downgrade resolved
-historical `cargo_fmt`, `cargo_check`, or `cargo_test` tool failures only after
-later structured validation passed and workspace/hygiene checks are clean;
-unresolved validation failures and non-validation tool failures remain
-blocking. `not_run` means no structured validation tool was invoked; interpret
-it with task context for docs-only or read-only work.
+Redirect the GPT to the default loop: inspect, structured edit, structured validation, review, and finish. Use shell/job only as an explicit escape hatch.
 
-For `cargo_test`, validation events preserve parsed zero-tests metadata when
-available. A successful zero-test run remains visible through closeout warnings
-rather than counting as strong test coverage.
+## Related Docs
 
-`finish_coding_task.review_evidence` and
-`session_handoff_summary.review_evidence` are separate ledger-derived,
-non-cargo review summaries. They count successful read/search/diff/workspace/
-hygiene inspection tools such as `read_file`, `search_project_text`,
-`show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`.
-`finish_coding_task.review_evidence` may include the closeout review calls that
-`finish_coding_task` performs itself. Compact review evidence also includes a
-bounded `tools` list for explainability. It never includes file contents,
-stdout/stderr, diff hunks, command text, tokens, secrets, or raw input payloads.
-For docs-only or read-only audit tasks, `validation.status=not_run` can coexist
-with `review_evidence.total>0`; compact verdicts remain `warn` and use
-`validation_not_run_with_review_evidence` instead of treating the task as passed.
-Review evidence is not a replacement for structured validation.
-
-The minimal parser extracts only stable facts from safe bounded metadata, such
-as Cargo severity/code/span and test summary counts. It does not infer root
-causes, suggest fixes, call an LLM, use LSP, or use tree-sitter.
-
-## Observability
-
-`runtime_status.projects` reports `mode="agent_registered"`,
-`agent_registered`, and `effective` counts. Prefer
-`projects.effective.status` and `projects.effective.count` for model-facing
-health checks.
-
-`getRuntimeStatus` and `callRuntimeTool` with `list_agents` may show a redacted policy summary:
-
-- `allow_raw_shell`
-- `allow_cwd_anywhere`
-- `allowed_roots`
-- `max_timeout_secs`
-- `max_output_bytes`
-
-They must not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell `init_script` values.
-
-`runtime_status(summary_only=true)`, `runtime_status(compact=true)`, and
-`start_coding_task(include_runtime_status=true, compact_startup=true)` return a
-compact runtime summary with service/version, build commit/dirty state,
-`tools.count`, `jobs.active_count`, `agents.summary`, `projects.mode`,
-`projects.effective`, and `projects.agent_registered`.
-It intentionally omits `tools.names`, full agent policy, `allowed_roots`, shell
-profile internals, command text, stdout/stderr, env values, tokens, secrets, and
-full config values. It also returns `startup_verdict`, a compact PASS/WARN/FAIL
-summary with per-check reasons and bounded next actions when used through
-`start_coding_task`. Full
-no-arg `runtime_status` and `start_coding_task(include_runtime_status=true)`
-remain available for deeper troubleshooting and can include non-secret
-observability metadata such as the public URL, tool names, agent policy summary,
-and allowed roots.
-
-## Compatibility notes
-
-The management CLI compatibility commands `webcodex users`, `webcodex tokens`, and `webcodex agent-tokens` still work, but `webcodex-cli` is the recommended CLI for current setup and operations.
-
-## Artifact transfer and conversation file import
-
-Artifact transfer is a bounded project artifact transfer primitive. It is for
-importing and exporting binary or external files associated with a project. It
-is not the source-editing path, object storage, a gallery, or a large-file
-platform.
-
-GPT Action OpenAPI operations and MCP/runtime tools are related but not
-identical. The runtime side exposes more tools, and `callRuntimeTool` is the
-generic entry point for runtime-only tools. To stay under the GPT Actions
-30-operation limit, WebCodex exposes exactly one dedicated conversation-file
-import Action: `importConversationFilesToProject` at
-`POST /api/artifacts/import`.
-
-Use this single Action for generated images, user-uploaded files, Code Interpreter outputs, PDFs, zip archives, CSV/JSON/text files, and other supported bounded binary artifacts. The recommended path remains `importConversationFilesToProject` plus `openaiFileIdRefs`. Do not create separate dedicated GPT Actions for images, zip files, or PDFs.
-
-Recommended generated-image flow:
-
-1. The GPT uses built-in image generation in the current ChatGPT conversation.
-2. The GPT calls `importConversationFilesToProject` with `openaiFileIdRefs`, `project`, and optionally `output_dir` such as `docs/assets` or `artifacts/imports`. If the model already has a generated image, user upload, or Code Interpreter file reference from the current conversation, it must pass that file reference as `openaiFileIdRefs`; do not call the import Action with an empty array.
-3. WebCodex immediately downloads each `download_link`, validates MIME type and project-relative output paths, and saves the file under the selected agent/project directory.
-4. The response returns each saved file's `source_name`, `project`, `path`, `bytes_written`, `mime_type`, and `sha256`.
-
-
-Do not use shell/base64 as a fallback for large files. Calling
-`save_project_artifact` through `callRuntimeTool` is only appropriate for small
-binary payloads or cases where a trusted base64 string already exists; the
-import Action with `openaiFileIdRefs` is the preferred path for ChatGPT
-conversation files. `save_project_artifact` is not a replacement for
-`write_project_file` through `callRuntimeTool` or the structured source-editing
-tools.
-
-Artifact runtime tools form the project-local read/write loop:
-
-- `save_project_artifact` saves a bounded one-shot base64 payload into a project artifact path.
-- `artifact_upload_begin` starts a bounded upload with optional `expected_bytes` and `expected_sha256` guards.
-- `artifact_upload_chunk` appends one base64 chunk at the next contiguous `offset`.
-- `artifact_upload_finish` verifies guards and atomically commits the temporary upload to the target path.
-- `artifact_upload_abort` cleans temporary upload state when the upload fails, is cancelled, or is no longer needed, and reports `final_file_exists` without touching the final path.
-- `read_project_artifact_metadata` inspects artifact metadata such as bytes, MIME type, sha256, image dimensions, and zip entry count without returning file content. Set `allow_missing=true` when verifying an expected absence.
-- `read_project_artifact` is a bounded chunked read from a non-sensitive project path and returns one base64 segment plus full-file metadata.
-
-Do not use `read_project_artifact` for large files. Prefer metadata-only inspection, targeted source reads, or external artifact transfer flows instead of returning large base64 payloads through `callRuntimeTool`.
-
-This flow does not call the OpenAI Images API from WebCodex and therefore does not consume `gpt-image-2` API image-generation charges. The image generation happens in ChatGPT; WebCodex only imports the resulting conversation file through the GPT Actions file-passing mechanism.
-
-Security constraints: imports are limited to at most 10 files per request and 10 MiB per file. Paths must stay inside the project root; `..`, absolute paths, `.git`, `.env*`, `*.pem`, `secrets`, `tokens`, `node_modules`, and `target` paths are rejected. `overwrite` defaults to `false`. Zip files are saved as zip files and are not automatically extracted. For smoke artifacts, use `artifacts/smoke/<name>.artifact` or `artifacts/smoke/<name>.txt`; do not use `.bin` with `application/octet-stream`.
-
-
-## Chunked artifact uploads
-
-Use chunked upload through the generic `callRuntimeTool` Action:
-
-1. `artifact_upload_begin`
-2. `artifact_upload_chunk` until all bytes are sent
-3. `artifact_upload_finish`
-
-Call `artifact_upload_abort` when an upload fails, is cancelled, or is no longer
-needed.
-
-Each `artifact_upload_chunk` payload is base64 and the decoded chunk must be at
-most 64 KiB. The artifact total limit is currently 10 MiB. `offset` must be
-contiguous with the bytes already received. `artifact_upload_chunk`,
-`artifact_upload_finish`, and `artifact_upload_abort` must repeat the exact
-`path` used by `artifact_upload_begin`; this intentionally binds `upload_id` to
-the requested target artifact path. `expected_bytes` and
-`expected_sha256` are optional integrity guards captured at begin time and
-checked before finish commits the upload. `artifact_upload_finish` succeeds only
-after the guard checks pass, then atomically commits the temporary upload to the
-target project-relative path. `artifact_upload_abort` removes the temporary
-upload state and returns `temp_file_removed`, `sidecar_removed`,
-`final_file_touched=false`, and `final_file_exists`. Prefer this abort output
-for cleanup verification; do not prove absence by intentionally causing a read
-failure. Session logs do not record raw base64; they keep bounded summary fields
-such as path, upload id, offsets, byte counts, and sha256 guard metadata.
-
-## Artifact metadata and chunked content reads
-
-For existing project artifacts, prefer `read_project_artifact_metadata` first. It returns size, sha256, MIME type, and image dimensions where available without embedding file content in the GPT Action response. For abort verification or other expected absence checks, pass `allow_missing=true`; a missing file then returns `exists=false` and `missing=true` as a successful result.
-
-Do not read large files as one base64 response. If content is needed, call
-`read_project_artifact` as a bounded chunked read: use `offset` and `length`
-(default 32768 bytes, maximum 65536 bytes) and continue from `next_offset` while
-`truncated` is true. The returned `content_base64` contains only the current
-segment; `sha256`, `mime_type`, `file_bytes`, `offset`, `bytes_returned`,
-`next_offset`, `truncated`, and `eof` describe the segment and full artifact
-file. This is not an unlimited download tool.
+- Quick Start: [QUICK_START.md](QUICK_START.md)
+- Demo workflow: [DEMO.md](DEMO.md)
+- MCP: [MCP.md](MCP.md)
+- Concepts: [CONCEPTS.md](CONCEPTS.md)
+- Security: [../SECURITY.md](../SECURITY.md)

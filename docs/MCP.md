@@ -2,7 +2,11 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-WebCodex exposes the same runtime tools used by GPT Actions through an MCP endpoint.
+Use MCP if your client supports remote MCP.
+Use GPT Actions if you are building a Custom GPT.
+Both surfaces call the same WebCodex ToolRuntime.
+
+WebCodex acts as the remote MCP server. The WebCodex agent is not the MCP client; it is the local execution worker behind the WebCodex server.
 
 ## Endpoint
 
@@ -10,332 +14,129 @@ WebCodex exposes the same runtime tools used by GPT Actions through an MCP endpo
 https://your-domain.example/mcp
 ```
 
-## Deployment model
+For a local smoke test:
 
-WebCodex currently exposes a remote MCP endpoint backed by WebCodex runtime tools. The connected `webcodex-agent` is a local execution agent, not the MCP client in the protocol sense.
+```text
+http://127.0.0.1:8080/mcp
+```
 
-In MCP terminology, the AI host creates the MCP client connection, WebCodex server acts as the MCP server, and the WebCodex agent executes project work behind that server. Local stdio MCP-server registration and external MCP-server brokering are separate future extensions, not required for the current endpoint.
+Hosted clients usually require HTTPS. Use your own WebCodex domain in place of `your-domain.example`.
 
-Use your own WebCodex HTTPS domain in place of `your-domain.example`.
+## Authentication
 
-## Create a ChatGPT MCP app / connector
+Configure the MCP client with Bearer/API-key authentication:
 
-The screenshots in `docs/assets/mcp-*.png` show the ChatGPT app/connector flow:
+```text
+Authorization: Bearer <shared-key-or-user-token>
+```
+
+For the quick start, use the shared key printed by `webcodex-cli server up`. For managed deployments, use a scoped user token.
+
+Do not use these credentials for MCP:
+
+- server bootstrap/admin token,
+- account credential,
+- agent token,
+- OAuth refresh token,
+- raw env file values.
+
+Do not paste real tokens into committed MCP config files. Prefer environment variables or your client secret store.
+
+## Create A ChatGPT MCP App / Connector
+
+The screenshots in `docs/assets/mcp-*.png` are UI landmarks for the ChatGPT app/connector flow:
 
 ![Open ChatGPT apps](assets/mcp-1.png)
 ![Choose webcodex](assets/mcp-2.png)
 ![Configure MCP URL and auth](assets/mcp-3.png)
 ![Connect webcodex](assets/mcp-4.png)
 
-1. Open ChatGPT's apps/connectors area and choose to create or configure an MCP app.
-2. Set the app name to something recognizable, for example `webcodex`.
-3. Set the MCP server URL to:
+1. Open ChatGPT apps/connectors and create or configure an MCP app.
+2. Name it something recognizable, for example `webcodex`.
+3. Set the MCP server URL to your WebCodex `/mcp` endpoint.
+4. Configure HTTP/API-key Bearer authentication.
+5. Save and connect the app.
+6. Start with discovery and read-only project calls before any write task.
 
-   ```text
-   https://your-domain.example/mcp
-   ```
+## First Checks
 
-4. Configure authentication as HTTP/API key Bearer auth. Use the shared key for quick start, or a `wc_pat_xxx` personal API token for managed mode. Do not choose OAuth for the shared-key quick start.
-5. Save the app, then connect it in ChatGPT when prompted.
-6. Test with low-risk discovery tools first: list tools, check runtime status, list projects, then call a read-only project tool.
+Ask the client to run low-risk checks:
 
-## Authentication
+1. `runtime_status` with a compact or summary shape.
+2. `list_projects`.
+3. A bounded `read_file` call against `README.md`.
+4. `show_changes` with `include_diff=false`.
 
-Use Bearer authentication with either a shared key for quick start or a `wc_pat_xxx` personal API token for managed mode. Static bearer/API-key host auth can carry either value as `Authorization: Bearer ...`.
-
-OAuth is a separate flow. Blank OAuth client fields do not become no-auth or static bearer. Open demo mode is only for hosts with an explicit None / No authentication / no-auth setting and a WebCodex server started with `--open`.
-
-Do not use these credentials for MCP:
-
-- `WEBCODEX_TOKEN`: server bootstrap/root/admin credential.
-- `wc_acct_xxx`: account credential used only by the user CLI to create local PATs and agent tokens.
-- `wc_agent_xxx`: agent token used only by `webcodex-agent`.
-
-For production, the recommended flow is to issue a user account credential once, then have the user run `webcodex-cli token create-local` locally. That command generates a `wc_pat_xxx` and registers only its hash with the server.
-
-## Runtime surface
-
-MCP and GPT Actions share the same `ToolRuntime`. A tool call made through MCP
-reaches the same runtime, agent registry, project ids, and safety boundaries as
-a GPT Action call. `tools/call` goes through the lightweight `ToolKernel`
-facade, which centralizes metadata-backed OAuth checks, session event recording,
-`ToolCall` parsing, and dispatch to the existing runtime handlers. This is
-preparation for later provider work, not an external MCP host or provider
-marketplace.
-
-Runtime tools can be exposed directly as MCP tools, subject to the tool manifest
-and MCP client constraints. GPT Actions are different: the dedicated operation
-surface must stay below the 30-operation limit, so artifact upload remains
-available there through `callRuntimeTool` rather than dedicated operations.
-
-`runtime_status` exposes the current permission profile as
-`output.permissions`. The current self-hosted development profile is
-`dev_auto_approve`: high-risk tools are automatically approved only after hard
-safety checks pass. It never bypasses authentication, OAuth scopes, read-only
-session guards, `deny_write_tools`, `deny_shell_tools`, project/session mismatch
-guards, path safety, sensitive-path denial, or agent policy. Future
-release-oriented deployments should use a `require_approval` policy.
-
-Runtime tool discovery includes annotations derived from `ToolMetadata`, a
-lightweight precursor to ToolProvider. The metadata centralizes risk, OAuth
-scope, read-only/destructive/open-world hints, project requirement, and path
-hint facts without changing dispatch or tool behavior. Future external MCP
-providers must generate equivalent metadata before their tools can be listed or
-called.
-
-MCP `tools/list` remains the full schema-oriented discovery surface. In GPT
-Actions, full `listRuntimeTools` can be too large because schemas, metadata,
-and descriptions expand the response; this is not a sign that the roughly
-66-tool runtime surface has become unbounded. GPT Actions should prefer
-`callRuntimeTool` with `tool_manifest` for daily discovery, or pass
-`summary_only=true` with `category`, `features`, or `limit` to
-`listRuntimeTools` for focused discovery. Use full `listRuntimeTools` only when
-debugging runtime schemas.
-
-`tool_manifest` is the lightweight discovery surface for flattened GPT Action
-args as well: each compact entry includes `accepted_flattened_args` and
-`deprecated_or_unsupported_args` without full input/output schemas. The manifest
-accepts `category`, `include_recommended_flows`, and `include_risk_summary`.
-When `tool_manifest_limit` or a focused `limit` produces `truncated=true`,
-`truncation_reason="limit"` marks it as caller-bounded output, not
-`ResponseTooLarge`.
-
-For smoke project selection, call `list_projects` and prefer
-entries in `projects` whose `capabilities.recommended_for_smoke=true`. The
-runtime output shape is `{count, projects, recommended_for_smoke}`. For git
-smoke, require `capabilities.git_available=true`; `agent:special:test-mcp` can
-be safe for basic smoke without being git-backed.
-
-Typical MCP tools include:
-
-- Discovery and health: `list_tools`, `runtime_status`, `list_projects`,
-  `list_agents`.
-- Workflow lifecycle: `start_coding_task`, `finish_coding_task`.
-- Session ledger/control: `start_session`, `bind_current_session`,
-  `session_summary`, `session_handoff_summary`.
-- Read-only project inspection: `show_changes`, `list_project_files`, `read_file`, `search_project_text`, `git_status`, `git_diff`, `git_diff_summary`, `git_diff_hunks`.
-- Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`.
-- Patch workflows: `validate_patch`, `apply_patch_checked`.
-- Bounded artifact transfer: `save_project_artifact`, `read_project_artifact_metadata`, `read_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`.
-- Project commands and jobs: `run_shell`, `run_job`, `stop_job`, `job_status`, `job_log`, `job_tail`.
-  `job_status` omits `command_preview` by default and returns `command_preview_included=false`; pass `include_command_preview=true` only for focused debugging, which adds bounded preview metadata. It never returns stdout/stderr bodies.
-- Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
-
-Use `start_coding_task` for the recommended coding-loop entry point, then
-inspect with `read_file`, `search_project_text`, and `show_changes`. Use the
-structured line edit tools when you already know the target line range, and
-`apply_text_edits` for coordinated exact edits in one UTF-8 file. Use
-`validate_patch` and `apply_patch_checked` for broader multi-file changes.
-Validate with `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
-`apply_patch_checked` before falling back to bounded command/job tools. Review
-with `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`; for
-closeout, read `show_changes.clean`, warnings, truncation flags, and next
-actions, then read `workspace_hygiene_check.clean`, findings, warnings, and
-next actions before `session_handoff_summary` or `finish_coding_task`. Treat
-`run_shell` and `run_job` as diagnostics/build/test fallbacks, not as the first
-source-editing path or the default validation source. Use `stop_job` only to
-stop bounded WebCodex jobs returned by `run_job`; it requires `confirm=true`,
-obeys project/session boundaries, returns no stdout/stderr, and preserves the
-legacy `stopped` field while models should prefer `stop_effect`, `terminal`,
-and `terminal_pending`. Finish with `finish_coding_task`, or use
-`session_handoff_summary` for multi-step handoff.
-
-Job lifecycle summaries keep `active_count` for compatibility but split it into
-`blocking_active_count` and `nonblocking_active_count`. `queued`, `running`,
-`started`, and `agent_queued` are blocking active states. `stop_requested` is
-nonblocking terminal-pending state and may produce `jobs_terminal_pending`
-with `blocking=false`; it does not trigger `active_jobs_present`.
-
-Artifact transfer is a bounded project artifact transfer primitive for binary
-or external files associated with a project. It is not the source-editing path,
-object storage, a gallery, or a large-file platform. Do not use
-`save_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`,
-`artifact_upload_finish`, or `artifact_upload_abort` as replacements for
-`replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`,
-or `apply_patch_checked`.
-
-The minimal chunked upload sequence is `artifact_upload_begin`,
-`artifact_upload_chunk` until all bytes are sent, then
-`artifact_upload_finish`. Use `artifact_upload_abort` when the upload fails, is
-cancelled, or is no longer needed. Each chunk is base64, decoded chunks are
-limited to 64 KiB, the current artifact total limit is 10 MiB, `offset` must be
-contiguous, and `artifact_upload_chunk`, `artifact_upload_finish`, and
-`artifact_upload_abort` must repeat the exact `path` from
-`artifact_upload_begin`. Repeating `path` is intentional because it binds
-`upload_id` to the requested target artifact path. `expected_bytes` /
-`expected_sha256` are integrity guards checked before finish atomically commits
-the target path. Session metadata records summary fields rather than raw
-base64. For smoke artifacts, use `artifacts/smoke/<name>.artifact` or
-`artifacts/smoke/<name>.txt`; do not use `.bin` with
-`application/octet-stream`. `artifact_upload_abort` reports
-`final_file_exists` after removing temporary upload state.
-
-For download/readback, use `read_project_artifact_metadata` before
-`read_project_artifact`. `read_project_artifact` returns a bounded base64
-segment with `sha256`, `mime_type`, `offset`, `next_offset`, `truncated`, and
-`eof`; continue from `next_offset` while needed. It is not an unlimited file
-download tool. To verify an expected absence, call
-`read_project_artifact_metadata` with `allow_missing=true`; missing then returns
-`exists=false` and `missing=true` as a successful result.
-
-Use `show_changes` near the end of a task to summarize the current worktree,
-check for untracked smoke/tmp/test files, review `git diff --stat`, request
-optional bounded hunks with `include_diff=true`, and optionally include session
-activity with `session_id`. It is read-only, requires `project:read`, and never
-cleans, stages, commits, or restores files.
-
-Closeout verdicts are additive UX summaries. PASS means clean workspace and
-hygiene, no blocking jobs, no unexpected tool failures, no expectation
-mismatches, no unexpected expected-failure successes, and no failed validation.
-WARN covers validation not run, matched expected failures, non-git review
-context, terminal-pending nonblocking jobs, or explicit limit truncation. FAIL
-covers dirty workspace, hygiene failure, blocking active jobs, unexpected tool
-failures, expectation mismatches, unexpected successes, or failed validation.
-Detailed review fields remain the auditable source and verdicts do not change
-authorization, guards, direct MCP error behavior, or job lifecycle semantics.
-
-`start_coding_task` and `finish_coding_task` are `workflow` category tools for
-the coding lifecycle. `start_session`, `bind_current_session`,
-`session_summary`, and `session_handoff_summary` are `session` category tools
-for raw session ledger/control discovery. Use `category=workflow` for coding
-task lifecycle discovery and `category=session` for session ledger/control.
-They create, close out, and read bounded task-recorder metadata only; they do
-not modify a workspace. `start_session` creates a session record but does not
-automatically bind future calls. `start_coding_task` defaults
-`bind_current=false` and includes a compact `tool_manifest` unless
-`include_tool_manifest=false`; subsequent MCP calls should pass the returned
-explicit `session_id`. To keep startup context bounded, pass
-`tool_manifest_categories` such as `workflow`, `session`, `git`, `edit`,
-`artifact`, and `cleanup`, plus a small `tool_manifest_limit` when useful. For
-lightweight MCP sanity, pass `include_runtime_status=true`,
-`compact_startup=true`, and `include_tool_manifest=true`; this returns compact
-runtime observability with build, tool count, active job count, agent health,
-and project status while omitting tool names, full agent policy, allowed roots,
-shell profile internals, command text, stdout/stderr, env values, tokens, and
-secrets. Treat `tool_manifest.truncated=true` with
-`truncation_reason="limit"` as normal bounded output. Read
-`startup_verdict.status` first, then `startup_verdict.checks` and
-`startup_verdict.suggested_next_actions` for next steps. Standalone
-`runtime_status` accepts `summary_only=true` or `compact=true` for the same
-compact health shape; full no-arg runtime status remains available for
-schema/debug investigations. When session persistence is configured, session
-records, events, and messages may be persisted and restored through the
-`sessions.json` ledger.
-The ledger is for task continuity and handoff metadata, not a complete audit
-log. Current-session bindings remain process-local in-memory state and may be
-lost on restart, so pass the session id explicitly for deterministic MCP
-handoff. To group MCP tool calls, pass the session id as reserved metadata in
-`tools/call` arguments:
-
-```json
-{
-  "name": "read_file",
-  "arguments": {
-    "_session_id": "wc_sess_example",
-    "project": "agent:workstation:my-repo",
-    "path": "src/mcp.rs",
-    "start_line": 1,
-    "limit": 20
-  }
-}
-```
-
-WebCodex strips `_session_id` before dispatching the concrete tool, so it is
-not forwarded to the tool parser, agent, or workspace files. The summary records
-bounded/redacted start and finish events, including tool name, transport,
-project id when supplied, risk class, status, duration, inferred write-like
-paths, and returned `job_id` when available.
-In session summaries, `policy_rejected` means a safety or policy check blocked
-the request before a write. A missing artifact result from
-`read_project_artifact_metadata` with `allow_missing=true` is a successful
-negative assertion, not a failed tool call.
-
-Smoke and acceptance tests may add optional testing metadata to any MCP tool
-call arguments: `expected_failure`, `expected_failure_kind`,
-`test_expect_failure_kind`, and `assertion_name`. WebCodex records these fields
-in the session ledger and strips them before concrete tool dispatch. They do
-not change authorization, permission decisions, hard guards, execution,
-`command_started`, or the immediate success/error result. In handoff/finish
-summaries, failed calls whose expected failure kind matches are counted as
-expected failures; mismatches, unexpected failures, and expected-failure calls
-that unexpectedly succeed remain action-worthy.
-
-For `show_changes`, distinguish two session fields:
-
-- `arguments._session_id` is MCP reserved tracking metadata for recording this
-  `show_changes` call.
-- `arguments.session_id` is the `show_changes` business parameter that asks it
-  to include a session activity summary.
-
-They can be the same id or different ids.
-
-`session_handoff_summary` requires explicit `arguments.session_id`; it does not
-implicitly use the current-session binding. Pass `summary_only=true`,
-`include_workspace=true`, and `include_validation=true` for compact smoke output
-containing `workspace_clean`, `hygiene_clean`, compact `jobs`, `permissions`,
-`tool_failures`, `validation`, `warnings`, and `suggested_next_actions` only.
-Use `finish_coding_task(summary_only=true)` with `include_hygiene=true` and
-`include_validation_summary=true`, `include_workspace=true`, and
-`include_diff=false` for closeout. In finish, `include_workspace` is a
-compatibility flag for the nested handoff workspace block; the top-level finish
-workspace/show_changes check keeps its existing default behavior. Full mode
-keeps bounded handoff detail. In compact mode, read `verdict.status`,
-`blocking`, and
-`blocking_reasons` first; detailed compact fields remain the audit source. Its
-`jobs` section reports bounded active job counts, recent metadata, and warnings
-without stdout/stderr, tails, excerpts, or command text. Its `validation`
-section is ledger-derived from validation-like tools (`cargo_fmt`,
-`cargo_check`, `cargo_test`, `validate_patch`, and `apply_patch_checked`). It
-does not expose raw stdout/stderr, excerpt fields, or
-`validation_output_summary`, and the minimal parser extracts only stable facts
-from safe bounded metadata without root-cause inference, fix suggestions,
-LSP/tree-sitter, or LLM summarization.
-Validation includes `status` and `reason`: no validation events yields
-`not_run` with `no_validation_tool_invoked`; all-success/all-failure/mixed
-ledgers yield `passed`, `failed`, or `mixed`.
-
-For `summary_only=true` handoff/finish outputs, sanity checks should reject
-stdout/stderr bodies, command text, tails, and excerpts. Raw diagnostic/status
-payloads may contain empty string fields such as `stderr: ""`; non-empty
-stdout/stderr bodies are high-noise unless explicitly requested and must never
-contain env values, tokens, or secrets.
-
-The compact `verdict` is an additive UX summary and does not change
-authorization, permissions, guards, session binding, failure classification, or
-MCP direct error behavior. PASS means `workspace_clean=true`,
-`jobs.blocking_active_count=0`, no unexpected failures, no expectation
-mismatches, no unexpected successes, and `hygiene_clean=true`. WARN means
-validation has not run, expected failures matched exactly, or startup/manifest
-output was bounded by an explicit limit. FAIL means dirty workspace, blocking
-jobs, unexpected tool failures, expectation mismatches, unexpected successes, or
-hygiene failure.
-
-The session ledger also stores minimal permission decision metadata for
-high-risk tools: `required=true`, policy, request id, `status=auto_approved`,
-reason, risk, tool name, and project id. Read-only tools do not create noisy
-permission events. `finish_coding_task.permissions` and
-`session_handoff_summary.permissions` return deterministic counts and a bounded
-recent list. `approved_count` is retained as the manual approval compatibility
-count; use `manual_approved_count`, `auto_approved_count`, and
-`total_approved_count` for clear totals. Permission summaries never include
-stdout/stderr, command bodies, patches, file contents, env, tokens, secrets, or
-excerpts.
-
-MCP tools operate on agent-registered projects. `runtime_status.projects`
-reports `mode="agent_registered"`, `agent_registered`, and `effective`; prefer
-`projects.effective.status` and `projects.effective.count`.
-
-Use agent-backed project ids such as:
+The project id should look like:
 
 ```text
 agent:<client_id>:<project_id>
 ```
 
-For example, `agent:workstation:my-repo`.
+Name the full project id in prompts so the model does not choose the wrong repository.
 
-## Example client configuration
+## Default Coding Loop
 
-The exact shape depends on your MCP client. Use placeholders and environment variables for secrets; do not paste real tokens into committed config files.
+Use this workflow rather than asking the model to improvise a shell session:
+
+```text
+startup:
+  start_coding_task
+
+inspect:
+  list_project_files
+  search_project_text
+  read_file
+
+edit:
+  replace_line_range
+  insert_at_line
+  delete_line_range
+  apply_text_edits
+  apply_patch_checked
+
+validate:
+  validate_patch
+  cargo_check
+  cargo_test
+  cargo_fmt
+
+review:
+  show_changes
+  git_diff_hunks
+  workspace_hygiene_check
+
+finish:
+  finish_coding_task
+  session_handoff_summary
+```
+
+`start_coding_task` returns the session id used by later review and finish tools. `finish_coding_task` is the preferred closeout for a completed task; `session_handoff_summary` is for passing context to another operator or later client.
+
+## Advanced And Escape-Hatch Tools
+
+```text
+run_shell:
+  bounded escape hatch, not default editing or validation path
+
+run_job:
+  for explicit async jobs, not default coding loop
+
+artifact / checkpoint / cleanup:
+  advanced workflow tools
+```
+
+These tools are useful, but they are not the first thing a model should reach for. Prefer structured read, edit, validation, review, and finish tools.
+
+## Tool Discovery
+
+MCP can expose runtime tools directly. Do not put the entire tool catalog into every prompt. For daily discovery, ask for a compact manifest or focused category, then use the default coding loop above.
+
+Use full schema-oriented discovery only when debugging client/tool schema behavior.
+
+## Example Client Configuration
+
+The exact shape depends on your MCP client:
 
 ```json
 {
@@ -343,33 +144,40 @@ The exact shape depends on your MCP client. Use placeholders and environment var
     "webcodex": {
       "url": "https://your-domain.example/mcp",
       "headers": {
-        "<bearer-auth-header-name>": "Bearer ${WEBCODEX_PAT}"
+        "Authorization": "Bearer ${WEBCODEX_TOKEN_FOR_MCP}"
       }
     }
   }
 }
 ```
 
-For quick start, `WEBCODEX_PAT` may contain the shared key. For managed mode, it contains a `wc_pat_xxx` value generated with `webcodex-cli token create-local`.
+`WEBCODEX_TOKEN_FOR_MCP` should contain the quick-start shared key or a managed user token. It should not contain server bootstrap/admin credentials, account credentials, or agent tokens.
 
-## Common errors
+## Common Errors
 
 ### 401 Unauthorized
 
-The token is missing, malformed, expired, revoked, or not recognized by the server. Confirm the quick-start shared key matches the agent/server key; in managed mode, generate a fresh `wc_pat_xxx` and verify the MCP client is reading the intended environment variable.
+The token is missing, malformed, expired, revoked, or not recognized. Confirm the MCP client is sending the intended Bearer value.
 
 ### 403 Forbidden
 
-The token is valid but lacks the scope needed for the requested tool or project operation. Create a PAT with the scopes needed for your workflow.
+The token is valid but lacks the scope needed for the requested tool or project operation. Use a token intended for runtime/project/job access.
 
-### Wrong token type
+### Agent Offline
 
-MCP static Bearer auth can use the quick-start shared key or a managed `wc_pat_xxx`. `WEBCODEX_TOKEN`, `wc_acct_xxx`, and `wc_agent_xxx` are intentionally for other surfaces.
+The server is reachable, but the selected agent is not connected. Start `webcodex-agent` and check `runtime_status`.
 
-### Agent offline
+### Project Not Registered
 
-The server is up, but the selected `client_id` is offline or stale. Start `webcodex-agent` and check `runtime_status` or `list_agents`.
+The agent is online, but the requested `agent:<client_id>:<project_id>` does not exist. Register the project through the agent connection flow and retry `list_projects`.
 
-### Project not registered
+### Response Too Large
 
-The agent is online, but the requested `agent:<client_id>:<project_id>` does not exist. Add a top-level agent `projects.d/*.toml` file with `id` and `path`, then restart or refresh the agent.
+Use compact runtime status, focused manifest discovery, bounded file ranges, `show_changes(include_diff=false)`, and summary-only finish or handoff calls.
+
+## Related Docs
+
+- Quick Start: [QUICK_START.md](QUICK_START.md)
+- Demo workflow: [DEMO.md](DEMO.md)
+- GPT Actions: [GPT_ACTIONS.md](GPT_ACTIONS.md)
+- Security: [../SECURITY.md](../SECURITY.md)

@@ -2,175 +2,179 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-WebCodex 在以下地址为 ChatGPT GPT Actions 暴露精简的 OpenAPI schema：
+如果 client 支持 remote MCP，使用 MCP。
+如果你在构建 Custom GPT，使用 GPT Actions。
+两者调用同一个 WebCodex ToolRuntime。
+
+GPT Actions 给 Custom GPT 提供一个聚焦的 WebCodex runtime OpenAPI surface。当你要构建 ChatGPT Custom GPT，而不是通用 remote MCP connector 时，选择这条路径。
+
+## Schema URL
 
 ```text
-GET /openapi.json
+https://your-domain.example/openapi.json
 ```
 
-GPT Actions 和 MCP 共享同一个 `ToolRuntime`。GPT Actions 提供 typed REST operations；MCP 提供 MCP framing。
+本地检查：
+
+```text
+http://127.0.0.1:8080/openapi.json
+```
+
+真正用于 ChatGPT Actions 时，需要公网 HTTPS URL。
 
 ## 在 ChatGPT 中创建 GPT Action
 
-现有 `docs/assets/gpt-action-*.png` 截图适合当前部署说明：它们覆盖了 ChatGPT GPT builder 的完整路径，包括打开 editor、配置 GPT、添加 Action、设置 Bearer authentication，以及导入 WebCodex OpenAPI schema。请把这些截图视为 UI 路标，而不是固定按钮位置；ChatGPT 可能随时间调整控件名称或位置。
-
-按下面的截图和核对清单配置：
+`docs/assets/gpt-action-*.png` 截图是 UI 路标。ChatGPT 可能移动按钮，但流程相同。
 
 1. **打开或创建 GPT。**
 
    ![打开 GPT editor](assets/gpt-action-1.png)
 
-   从 ChatGPT 的 GPT 创建或编辑流程开始。
-
 2. **进入 GPT 配置页面。**
 
    ![配置 GPT](assets/gpt-action-2.png)
-
-   确认你正在编辑 GPT configuration，而不是普通聊天。
 
 3. **打开 Actions 并添加 Action。**
 
    ![添加 Action](assets/gpt-action-3.png)
 
-   使用 GPT builder 的 Actions 区域；不要把 OpenAPI schema 粘贴到 GPT instructions 中。
-
 4. **配置 Action authentication。**
 
    ![设置 Action 认证](assets/gpt-action-4.png)
 
-   选择 API key / HTTP authentication，把 auth type 设置为 **Bearer**。quick start 粘贴 shared key；managed mode 粘贴 `wc_pat_xxx` personal API token。shared-key quick start 不要选择 OAuth。不要使用 `WEBCODEX_TOKEN`、`wc_acct_xxx` 或 `wc_agent_xxx`。
+   选择 API-key 或 HTTP authentication，把 auth type 设为 Bearer，并使用 quick-start shared key 或 managed user token。不要使用 server bootstrap/admin credential、account credential 或 agent token。
 
-5. **导入 OpenAPI schema 并填写必要 metadata。**
+5. **导入 OpenAPI schema。**
 
    ![导入 OpenAPI schema](assets/gpt-action-5.png)
 
-   导入或粘贴 schema URL：
+   从你的 WebCodex server 导入 schema URL。如果 ChatGPT 要求 privacy policy URL，填写你自己的产品或部署 policy URL，不要在其中放 secrets。
 
-   ```text
-   https://your-domain.example/openapi.json
-   ```
-
-   如果 ChatGPT UI 要求填写 privacy policy URL，请填写你自己的产品或部署隐私链接；不要在该 URL 中放 secrets。
-
-6. 保存 Action，然后先测试无破坏性的 discovery call，例如 `getRuntimeStatus`，再测试 `listProjects` 和只读 project call，例如 `getProjectGitStatus`。
-7. 在 GPT 验证完成前，mutation tools 只应对已知 disposable project 使用。
+6. 保存 Action。
+7. 先测试 `getRuntimeStatus`，再测试 `listProjects`，最后测试只读 project call。
+8. 只读任务能干净结束后，再使用 mutation tools。
 
 ## 认证
 
-在 GPT Action 设置中配置 Bearer/API-key 认证。静态 Bearer/API-key 认证既可以承载 shared key，也可以承载 managed mode 的 `wc_pat_xxx`。
+GPT Actions 使用 Bearer/API-key authentication。
 
-生产部署推荐流程：管理员签发一次性的 `wc_acct_xxx` account credential，用户再运行 `webcodex-cli token create-local`，在本地生成 `wc_pat_xxx`，服务器只登记它的 hash。
+quick start 使用 `webcodex-cli server up` 打印的 shared key。managed deployment 使用为这个 GPT 创建的 scoped user token。
 
-OAuth 是独立 flow。OAuth client 字段留空通常表示 Host 可能尝试 OAuth metadata discovery、dynamic client registration 或 client metadata discovery；它不会变成 no-auth，也不会变成静态 Bearer。
+不要把这些粘贴进 GPT Actions：
 
-不要把 `WEBCODEX_TOKEN`、`wc_acct_xxx` 或 `wc_agent_xxx` 粘贴到 GPT Actions 或 MCP 凭据中：
+- server bootstrap/admin token，
+- account credential，
+- agent token，
+- OAuth refresh token，
+- env file contents。
 
-- `WEBCODEX_TOKEN`：只用于 server bootstrap/root/admin。
-- `wc_acct_xxx`：只用于用户本地创建 PAT 和 agent token。
-- `wc_agent_xxx`：只用于 `webcodex-agent` 连接服务器。
-
-`?token=` 不是 GPT Actions 认证方式。它只允许用于 `/api/agents/ws` 的 WebSocket handshake 兼容场景。
-
-GPT Actions 要求 WebCodex server 有 public HTTPS URL。
-
-## Token 选择
-
-- GPT Actions / MCP / `/api/tools/list` / `/api/tools/call`：quick start 使用 shared key；managed mode 使用 `wc_pat_xxx`。
-- Server bootstrap 和 emergency admin：使用 `WEBCODEX_TOKEN`。
-- 本地自助注册 PAT / agent token：只在 `webcodex-cli token create-local` 或 `webcodex-cli agent-token create-local` 中使用 `wc_acct_xxx`。
-- Agent 连接：只在 `webcodex-agent` config 中使用 `wc_agent_xxx`。
-
-如果 GPT Action 配置成 `wc_acct_xxx`，它不能调用 runtime tools，而且会把错误类型的 secret 暴露到错误的 surface。managed mode 应生成 PAT：
-
-```bash
-webcodex-cli token create-local \
-  --server https://your-domain.example \
-  --user alice \
-  --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
-  --name gpt-action \
-  --scopes runtime:read,project:read,project:write,job:run
-```
+pairing、token creation、agent enrollment、server setup 和其他管理任务属于 `webcodex-cli`，不属于 GPT Actions。
 
 ## 工具面
 
-GPT Actions surface 有意小于完整 admin API。它包含 runtime、project、git、patch、file、shell/job、artifact 和 session operations。
+GPT Actions 暴露聚焦的 public operation surface，并通过 generic `callRuntimeTool` 调用 runtime tools。它有意不暴露 admin、setup、pairing、token-management、agent-token、server-management 或 audit endpoints。
 
-GPT workflows 通过 dedicated `/api/projects/*` Actions 或 `callRuntimeTool` 操作 agent-registered projects。
+使用 `callRuntimeTool` 时，传入 runtime tool name，以及 OpenAPI schema 期望的 flattened top-level fields。使用 focused discovery，不要把完整工具目录塞进模型 prompt。
 
-它不暴露 user、API-token、agent-token、pairing/enrollment、setup、doctor、npm、server management 或 audit endpoints，例如：
+MCP 和 GPT Actions 共享同一个 runtime、project ids、session recording、agent bridge 和 safety boundaries。
+
+## 默认 Coding Loop
+
+Custom GPT coding task 使用这个 loop：
 
 ```text
-/api/users/create
-/api/tokens/create
-/api/agent-tokens/create
-/api/pairing/create
-/api/pairing/enroll
-/api/audit/sessions
+startup:
+  start_coding_task
+
+inspect:
+  list_project_files
+  search_project_text
+  read_file
+
+edit:
+  replace_line_range
+  insert_at_line
+  delete_line_range
+  apply_text_edits
+  apply_patch_checked
+
+validate:
+  validate_patch
+  cargo_check
+  cargo_test
+  cargo_fmt
+
+review:
+  show_changes
+  git_diff_hunks
+  workspace_hygiene_check
+
+finish:
+  finish_coding_task
+  session_handoff_summary
 ```
 
-这些管理任务应使用 `webcodex-cli`。
+期望的收口顺序：
 
-## 推荐使用流程
+```text
+start_coding_task -> inspect -> edit -> validate -> show_changes -> workspace_hygiene_check -> finish_coding_task
+```
 
-1. `getRuntimeStatus` — 检查 runtime health 和 redacted agent policy summary。
-2. `getRuntimeStatus`，或通过 `callRuntimeTool` 调用 `list_agents` — 确认有 online agent，并查看 redacted policy summary 或 `agent_instance_id`。
-3. `listProjects` — 选择 `agent:<client_id>:<project_id>`。
-4. `getProjectGitStatus`、`listProjectFiles`、`readProjectFile`、`searchProjectText` — 编辑前先检查。
-5. 已知目标行号时，使用 `callRuntimeTool` 调用 structured line edit tools：`replace_line_range`、`insert_at_line`、`delete_line_range`。
-6. 多文件/大范围修改时，先 `validateProjectPatch`，确认后再 `applyProjectPatchChecked`。
-7. 兼容编辑工具 `write_project_file` 和 `replace_in_file` 仍可通过 `callRuntimeTool` 使用，但不再是 dedicated GPT Action；源码编辑优先使用 structured line edit tools、`apply_text_edits` 或 `apply_patch_checked`。
-8. `runProjectShellCommand` 或 `startProjectShellJob` 只在文件编辑完成后运行受限命令。
-9. 编码任务优先使用 structured edit tools，并通过受控的 `runProjectShellCommand` / `startProjectShellJob` 验证流程执行检查。
+需要另一个 operator 或 client 接手时，使用 `session_handoff_summary`。
 
-WebCodex 不再暴露 `run_codex` 或 legacy `/api/codex/*` routes。GPT Actions clients 应使用 structured edit tools、patch validation、cargo validation、受限 `run_shell` / `run_job` escape hatches、`show_changes`、`workspace_hygiene_check` 和 `finish_coding_task`。需要 Codex-specific workflows 的 operator 应在 WebCodex 外部运行 Codex。
+## Advanced / Escape-Hatch Tools
 
-## 可观测性
+```text
+run_shell:
+  bounded escape hatch, not default editing or validation path
 
-`getRuntimeStatus` 和通过 `callRuntimeTool` 调用 `list_agents` 可能显示 redacted policy summary：
+run_job:
+  for explicit async jobs, not default coding loop
 
-- `allow_raw_shell`
-- `allow_cwd_anywhere`
-- `allowed_roots`
-- `max_timeout_secs`
-- `max_output_bytes`
+artifact / checkpoint / cleanup:
+  advanced workflow tools
+```
 
-它们不应暴露 tokens、env values、`Authorization` headers、完整 `agent.toml` 或 shell `init_script` values。
+shell 和 job tools 可以通过 agent 执行项目命令。只有结构化 validation helper 不够时才使用，并在 finish 前 review workspace state。
 
-## 兼容说明
+artifact、checkpoint 和 cleanup tools 支持 advanced workflow。它们不是结构化源码编辑或常规 code review 的替代品。
 
-`webcodex users`、`webcodex tokens`、`webcodex agent-tokens` 等管理 CLI 兼容命令仍然可用，但当前 setup 和 operations 文档应优先使用 `webcodex-cli`。
+## 第一个安全 Prompt
 
-## 会话文件导入 / 生图保存
+```text
+Use WebCodex on project agent:<client_id>:<project_id>.
+Start a coding task, inspect README.md, summarize the project, show changes
+without a diff, run workspace hygiene, and finish. Do not edit files.
+```
 
-GPT Action OpenAPI operations 和 MCP/runtime tools 相关但不完全一样。runtime 侧暴露更多 tools，`callRuntimeTool` 是 runtime-only tools 的 generic entry point。为避免接近 GPT Actions operation 数量限制，WebCodex 只暴露一个 dedicated 会话文件导入 Action：`POST /api/artifacts/import`，`operationId=importConversationFilesToProject`。
+这一步成功后，再在 disposable branch 上尝试一个小而可回滚的修改。
 
-该单一 Action 用于导入当前 ChatGPT 会话里的生成图片、用户上传文件、Code Interpreter 产物、PDF、zip、CSV、JSON、文本文件以及其它受支持的有界二进制 artifact。推荐路径仍然是 `importConversationFilesToProject` + `openaiFileIdRefs`。不要为图片、zip、PDF 分别新增 dedicated GPT Actions。
+## 常见错误
 
-推荐生图保存流程：
+### Schema Import Fails
 
-1. GPT 在当前 ChatGPT 会话中使用内置 image generation 生成图片；
-2. GPT 调用 `importConversationFilesToProject`，传入 `openaiFileIdRefs`、`project`，以及可选 `output_dir`，例如 `docs/assets` 或 `artifacts/imports`。如果模型已经从当前会话拿到了生成图片、用户上传文件或 Code Interpreter 产物的文件引用，应把该文件引用作为 `openaiFileIdRefs` 传入；不要用空数组调用 import Action；
-3. WebCodex 立即下载每个 `download_link`，校验 MIME type 和 project-relative 输出路径，并保存到对应 agent/project 目录；
-4. 响应返回每个保存文件的 `source_name`、`project`、`path`、`bytes_written`、`mime_type`、`sha256`。
+确认 server 可通过公网 HTTPS 访问，并且 `/openapi.json` 返回 WebCodex schema。
 
+### Auth Fails
 
-不要用 shell/base64 作为大文件兜底方案。通过 `callRuntimeTool` 调用 `save_project_artifact` 只适合小型二进制 payload，或已经明确持有可信 base64 字符串的情况；ChatGPT 会话文件应优先使用带 `openaiFileIdRefs` 的 import Action。
+确认 Action 使用 Bearer/API-key auth，且 token 是用于 GPT Actions 或 runtime access 的凭据。
 
-artifact runtime tools 组成项目内读写闭环：
+### GPT Chose The Wrong Project
 
-- `save_project_artifact` 用于把有界 base64 payload 保存到项目内 artifact path；
-- `read_project_artifact_metadata` 用于查看 artifact 元数据，例如 bytes、MIME type、sha256、图片尺寸、zip entry count，但不返回文件内容；
-- `read_project_artifact` 用于从非敏感项目路径读取小型 artifact 内容，返回 `content_base64` 以及 `bytes`、`mime_type`、`sha256`。它默认使用较小的 1 MiB `max_bytes` 上限，适合缩略图、小型 JSON/zip 测试夹具和其它小型二进制 artifact。
+在 prompt 中写完整 `agent:<client_id>:<project_id>`。让 GPT 在读取或编辑前先调用 `listProjects` 或 `list_projects`。
 
-不要用 `read_project_artifact` 直接读取大文件。大文件应优先使用 metadata-only inspection、targeted source reads，或其它外部 artifact transfer flow，避免通过 `callRuntimeTool` 返回大型 base64 payload。
+### Response Too Large
 
-该流程不由 WebCodex 调用 OpenAI Images API，因此不消耗 `gpt-image-2` API 生图费用。图片生成发生在 ChatGPT 内置生图能力中；WebCodex 只通过 GPT Actions 文件传递机制导入会话文件。
+使用 compact runtime status、focused tool manifest discovery、有界 file reads、`show_changes(include_diff=false)`，以及 summary-only finish 或 handoff outputs。
 
-安全约束：单次最多导入 10 个文件，单文件最多 10 MiB。输出路径必须位于 project root 内；拒绝 `..`、绝对路径、`.git`、`.env*`、`*.pem`、`secrets`、`tokens`、`node_modules`、`target`。`overwrite` 默认是 `false`。zip 第一版只保存，不自动解压。
+### Shell Is Suggested Too Early
 
+把 GPT 拉回默认 loop：inspect、structured edit、structured validation、review 和 finish。shell/job 只作为显式 escape hatch。
 
-## Artifact metadata 与分段内容读取
+## 相关文档
 
-对于已有 project artifacts，应优先调用 `read_project_artifact_metadata`。它会返回 size、sha256、MIME type，以及可用时的图片尺寸，不会把文件内容嵌入 GPT Action 响应。
-
-不要一次性把大文件作为 base64 响应读取。确实需要内容时，使用 `read_project_artifact` 做分段读取：传入 `offset` 和 `length`（默认 32768 bytes，最大 65536 bytes），并在 `truncated` 为 true 时从 `next_offset` 继续读取。返回的 `content_base64` 只包含当前分段；`sha256` 和 `file_bytes` 描述完整 artifact 文件。该工具用于定向检查或小型二进制传输，不是大文件传输机制。
+- 快速开始：[QUICK_START.zh-CN.md](QUICK_START.zh-CN.md)
+- Demo 工作流：[DEMO.zh-CN.md](DEMO.zh-CN.md)
+- MCP：[MCP.zh-CN.md](MCP.zh-CN.md)
+- 概念：[CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md)
+- 安全：[../SECURITY.md](../SECURITY.md)

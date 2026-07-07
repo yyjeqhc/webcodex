@@ -403,6 +403,15 @@ not change authorization, permission decisions, hard guards, execution,
 while keeping unexpected failures, expectation mismatches, and unexpected
 successes visible in `tool_failures` and `suggested_next_actions`.
 
+For expected Cargo validation failures, callers may use
+`expected_failure=true` with `expected_failure_kind=validation_failed`.
+`cargo_fmt`, `cargo_check`, and `cargo_test` set
+`failure_kind="validation_failed"` only when the underlying Cargo command
+started and returned a nonzero exit code. Permission denials, session/project
+mismatches, guard denials, timeouts, malformed arguments, disconnected agents,
+commands that did not start, and runtime errors keep their existing failure or
+error kind. Zero-tests detection is not implemented by this classification.
+
 In GPT Actions, an expected negative path through `callRuntimeTool` may still
 appear as an outer `tool_error`. This usually happens because REST
 `/api/tools/call` returns HTTP 400 when the concrete runtime result has

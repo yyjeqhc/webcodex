@@ -34,6 +34,13 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "Whether exit_code was zero."),
             ),
             (
+                "failure_kind",
+                schema_type(
+                    "string",
+                    "Stable failure kind. Non-zero cargo_fmt, cargo_check, and cargo_test command exits use validation_failed; pre-start rejection, guard denial, timeout, and runtime errors do not.",
+                ),
+            ),
+            (
                 "warnings_count",
                 nullable_schema("integer", "Heuristic warning count for cargo_check."),
             ),

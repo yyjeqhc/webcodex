@@ -181,6 +181,7 @@ async fn cargo_check_failure_includes_stderr_tail_or_guidance() {
     assert!(error.contains("stdout_tail/stderr_tail"));
     assert!(error.contains("narrower cargo filter"));
     assert_eq!(result.output["passed"], false);
+    assert_eq!(result.output["failure_kind"], "validation_failed");
     assert!(result.output["stderr_tail"]
         .as_str()
         .unwrap_or("")
@@ -231,10 +232,59 @@ async fn cargo_test_failure_includes_stderr_tail_or_guidance() {
     assert!(error.contains("command was started"));
     assert!(error.contains("stdout_tail/stderr_tail"));
     assert_eq!(result.output["passed"], false);
+    assert_eq!(result.output["failure_kind"], "validation_failed");
     assert!(result.output["stdout_tail"]
         .as_str()
         .unwrap_or("")
         .contains("cargo-test-stdout-tail"));
+}
+
+#[tokio::test]
+async fn cargo_test_agent_timeout_is_not_validation_failed() {
+    let runtime = runtime_with_agent_project("cargo-timeout");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "cargo-timeout", None, caps).await;
+    let project = agent_test_project_id("cargo-timeout");
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .cargo_test(
+                project,
+                None,
+                Some("slow".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(60),
+            )
+            .await
+    });
+    let req = next_patch_agent_request(&runtime, "cargo-timeout")
+        .await
+        .expect("cargo_test should enqueue a cargo command");
+    assert_eq!(req.command, "cargo test 'slow'");
+    runtime
+        .shell_clients
+        .complete(ShellAgentResultRequest {
+            client_id: "cargo-timeout".to_string(),
+            agent_instance_id: "inst".to_string(),
+            request_id: req.request_id,
+            exit_code: Some(-1),
+            stdout: Some("partial cargo output\n".to_string()),
+            stderr: Some("Command timed out after 60 seconds".to_string()),
+            duration_ms: Some(60_000),
+            error: Some("command timed out".to_string()),
+        })
+        .await
+        .unwrap();
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_ne!(result.output["failure_kind"], "validation_failed");
 }
 
 #[tokio::test]
@@ -270,6 +320,7 @@ async fn cargo_fmt_failure_includes_stderr_tail_or_guidance() {
     assert!(error.contains("command was started"));
     assert!(error.contains("stdout_tail/stderr_tail"));
     assert_eq!(result.output["passed"], false);
+    assert_eq!(result.output["failure_kind"], "validation_failed");
     assert!(result.output["stdout_tail"].is_string());
     assert!(result.output["stderr_tail"].is_string());
 }

@@ -14,6 +14,7 @@ pub(crate) struct ProjectCommandOutput {
     pub(crate) stdout: String,
     pub(crate) stderr: String,
     pub(crate) duration_ms: u64,
+    pub(crate) error: Option<String>,
 }
 
 impl ToolRuntime {
@@ -151,6 +152,7 @@ impl ToolRuntime {
                     stdout: response.stdout.unwrap_or_default(),
                     stderr: response.stderr.unwrap_or_default(),
                     duration_ms: response.duration_ms.unwrap_or_default(),
+                    error: response.error,
                 }),
                 Ok(Err(_)) => {
                     self.shell_clients.cancel_request(&request_id).await;
@@ -177,6 +179,7 @@ impl ToolRuntime {
                 stdout: result.1,
                 stderr: result.2,
                 duration_ms: result.3,
+                error: None,
             })
         }
     }

@@ -704,6 +704,157 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
 }
 
 #[tokio::test]
+async fn real_cargo_nonzero_failures_match_validation_failed_expectations() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "cargo-expected-kind", "demo", tmp.path()).await;
+    let auth = bootstrap_auth_context();
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("cargo expected validation failures".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    let cases = vec![
+        (
+            "cargo_test",
+            json!({
+                "project": &project,
+                "session_id": &sid,
+                "filter": "failing",
+                "timeout_secs": 60,
+                "expected_failure": true,
+                "expected_failure_kind": "validation_failed",
+                "assertion_name": "cargo_test expected validation failure"
+            }),
+            "cargo test 'failing'",
+            101,
+            "test result: FAILED. 0 passed; 1 failed\n",
+            "",
+            "cargo_test expected validation failure",
+        ),
+        (
+            "cargo_fmt",
+            json!({
+                "project": &project,
+                "session_id": &sid,
+                "check": true,
+                "timeout_secs": 60,
+                "expected_failure": true,
+                "expected_failure_kind": "validation_failed",
+                "assertion_name": "cargo_fmt expected validation failure"
+            }),
+            "cargo fmt -- --check",
+            1,
+            "Diff in src/lib.rs\n",
+            "",
+            "cargo_fmt expected validation failure",
+        ),
+        (
+            "cargo_check",
+            json!({
+                "project": &project,
+                "session_id": &sid,
+                "timeout_secs": 60,
+                "expected_failure": true,
+                "expected_failure_kind": "validation_failed",
+                "assertion_name": "cargo_check expected validation failure"
+            }),
+            "cargo check --all-targets",
+            101,
+            "",
+            "error: simulated compile failure\n",
+            "cargo_check expected validation failure",
+        ),
+    ];
+
+    for (tool_name, arguments, expected_command, exit_code, stdout, stderr, assertion_name) in
+        &cases
+    {
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            let tool_name = (*tool_name).to_string();
+            let arguments = arguments.clone();
+            async move {
+                call_typed_tool_with_metadata(&runtime, &tool_name, arguments, Some(&auth)).await
+            }
+        });
+        let mut req = None;
+        for _ in 0..200 {
+            req = next_patch_agent_request(&runtime, "cargo-expected-kind").await;
+            if req.is_some() || task.is_finished() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let req = match req {
+            Some(req) => req,
+            None => {
+                let result = task.await.unwrap();
+                panic!("cargo tool finished before enqueueing an agent shell request: {result:?}");
+            }
+        };
+        assert_eq!(req.command, *expected_command);
+        complete_patch_agent_request(
+            &runtime,
+            "cargo-expected-kind",
+            &req.request_id,
+            *exit_code,
+            stdout,
+            stderr,
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(!result.success, "{tool_name} should fail");
+        assert_eq!(result.output["passed"], false);
+        assert_eq!(
+            result.output["failure_kind"], "validation_failed",
+            "{tool_name} should expose a stable validation failure kind"
+        );
+
+        let summary = runtime.sessions.summary(&sid, Some(50)).unwrap();
+        let event = summary
+            .events
+            .iter()
+            .find(|event| {
+                event.kind == "tool_call_finished"
+                    && event.assertion_name.as_deref() == Some(*assertion_name)
+            })
+            .unwrap_or_else(|| panic!("missing finished event for {assertion_name}"));
+        assert_eq!(event.failure_kind.as_deref(), Some("validation_failed"));
+        assert_eq!(event.error_kind.as_deref(), Some("validation_failed"));
+        assert_eq!(
+            event.actual_failure_kind.as_deref(),
+            Some("validation_failed")
+        );
+        assert_eq!(
+            event.failure_expectation_result.as_deref(),
+            Some("matched_expected_failure")
+        );
+    }
+
+    let handoff = handoff_summary_only(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 3);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(
+        handoff.output["tool_failures"]["expectation_mismatch_count"],
+        0
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["unexpected_success_count"],
+        0
+    );
+    assert_reason_list_contains(
+        &handoff.output["verdict"],
+        "warning_reasons",
+        "expected_failures_matched",
+    );
+}
+
+#[tokio::test]
 async fn generic_call_runtime_tool_preserves_flattened_failure_expectations() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
@@ -970,6 +1121,10 @@ async fn early_failure_paths_preserve_failure_expectation_metadata() {
         event.actual_failure_kind.as_deref(),
         Some("invalid_arguments")
     );
+    assert_ne!(
+        event.actual_failure_kind.as_deref(),
+        Some("validation_failed")
+    );
     assert_eq!(
         event.failure_expectation_result.as_deref(),
         Some("matched_expected_failure")
@@ -999,6 +1154,7 @@ async fn early_failure_paths_preserve_failure_expectation_metadata() {
     .await;
     assert!(!guard.success);
     assert_eq!(guard.output["error_kind"], "session_guard_denied");
+    assert_ne!(guard.output["error_kind"], "validation_failed");
 
     let summary = runtime.sessions.summary(&guard_sid, Some(20)).unwrap();
     let event = summary
@@ -1013,6 +1169,10 @@ async fn early_failure_paths_preserve_failure_expectation_metadata() {
     assert_eq!(
         event.actual_failure_kind.as_deref(),
         Some("session_guard_denied")
+    );
+    assert_ne!(
+        event.actual_failure_kind.as_deref(),
+        Some("validation_failed")
     );
     assert_eq!(
         event.failure_expectation_result.as_deref(),

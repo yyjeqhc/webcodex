@@ -675,6 +675,15 @@ mismatches, or unexpected successes should trigger "review failed tool calls"
 style next actions; matched expected failures may produce an informational
 `expected failure assertions matched` action.
 
+For expected Cargo validation failures, use `expected_failure=true` with
+`expected_failure_kind=validation_failed`. `cargo_fmt`, `cargo_check`, and
+`cargo_test` set `failure_kind="validation_failed"` only when the underlying
+Cargo command started and returned a nonzero exit code. Permission denials,
+session/project mismatches, guard denials, timeouts, malformed arguments,
+disconnected agents, commands that did not start, and runtime errors keep their
+existing failure or error kind. Zero-tests detection is not implemented by this
+classification.
+
 In GPT Actions, that same expected negative path may still show an outer
 `tool_error` because `/api/tools/call` returns HTTP 400 for a concrete runtime
 `ToolResult.success=false`. Do not treat the outer GPT Action label alone as a

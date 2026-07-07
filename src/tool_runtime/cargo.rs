@@ -1,12 +1,15 @@
 use serde_json::json;
 
 use super::helpers::{
-    bounded_tail, command_rejected_message, shell_escape_simple, validate_project_relative_path,
+    bounded_tail, command_rejected_message, looks_like_command_timeout, shell_escape_simple,
+    validate_project_relative_path,
 };
+use super::shell::ProjectCommandOutput;
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
+const CARGO_VALIDATION_FAILURE_KIND: &str = "validation_failed";
 const CARGO_FAILURE_GUIDANCE: &str =
     "command was started; inspect stdout_tail/stderr_tail in output, then fix the reported issue or rerun with a narrower cargo filter.";
 
@@ -142,6 +145,19 @@ pub(crate) fn parse_cargo_test_counts(text: &str) -> (Option<u64>, Option<u64>) 
         }
     }
     (passed, failed)
+}
+
+fn is_cargo_validation_failure(output: &ProjectCommandOutput, timeout_secs: u64) -> bool {
+    output.exit_code.is_some_and(|exit_code| exit_code != 0)
+        && !looks_like_command_timeout(output.exit_code, &output.stderr, timeout_secs)
+        && !looks_like_command_infrastructure_failure(&output.stderr)
+}
+
+fn looks_like_command_infrastructure_failure(stderr: &str) -> bool {
+    let trimmed = stderr.trim_start();
+    trimmed.starts_with("Failed to execute command:")
+        || trimmed.starts_with("Failed to wait for command:")
+        || trimmed.starts_with("Failed to collect command output:")
 }
 
 impl ToolRuntime {
@@ -282,9 +298,16 @@ impl ToolRuntime {
                 ))
             }
         };
+        if let Some(error) = output.error {
+            return ToolResult::err(command_rejected_message(
+                error,
+                "verify the project id/cwd and agent connectivity, then retry or use run_shell for custom diagnostics.",
+            ));
+        }
         let (stdout_tail, stdout_truncated) = bounded_tail(&output.stdout, CARGO_STDIO_TAIL_CHARS);
         let (stderr_tail, stderr_truncated) = bounded_tail(&output.stderr, CARGO_STDIO_TAIL_CHARS);
         let passed = output.exit_code == Some(0);
+        let validation_failed = is_cargo_validation_failure(&output, timeout_secs);
         let combined = format!("{}\n{}", output.stdout, output.stderr);
         let mut payload = json!({
             "project": project,
@@ -313,6 +336,9 @@ impl ToolRuntime {
         if passed {
             ToolResult::ok(payload)
         } else {
+            if validation_failed {
+                payload["failure_kind"] = json!(CARGO_VALIDATION_FAILURE_KIND);
+            }
             ToolResult {
                 success: false,
                 output: payload,

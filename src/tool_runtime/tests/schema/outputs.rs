@@ -86,6 +86,19 @@ fn key_tool_output_schemas_include_expected_fields() {
             "run_shell missing {field}"
         );
     }
+    for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+        assert!(
+            has_output_field(name, "failure_kind"),
+            "{name} missing failure_kind"
+        );
+        let description = output_schema_property(&specs, name, "failure_kind")["description"]
+            .as_str()
+            .expect("cargo failure_kind description");
+        assert!(
+            description.contains("validation_failed"),
+            "{name} failure_kind description should mention validation_failed: {description}"
+        );
+    }
     for field in [
         "content",
         "start_line",

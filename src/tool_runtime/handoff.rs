@@ -520,7 +520,15 @@ pub(crate) fn compact_validation(validation: &Value) -> Value {
             .get("historical_failures")
             .cloned()
             .unwrap_or_else(compact_validation_historical_failures_fallback),
+        "cargo_test_zero_tests_run": validation_has_cargo_test_zero_tests(validation),
     })
+}
+
+pub(crate) fn validation_has_cargo_test_zero_tests(validation: &Value) -> bool {
+    validation
+        .get("cargo_test_zero_tests_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub(crate) fn review_evidence_summary_for_session(summary: &SessionSummary) -> Value {
@@ -811,6 +819,13 @@ pub(crate) fn compact_workflow_verdict(
         }
         Some(_) => {}
     }
+    if validation_has_cargo_test_zero_tests(validation) {
+        push_unique(&mut warning_reasons, "cargo_test_zero_tests");
+        push_unique_action(
+            &mut actions,
+            "cargo_test ran zero tests; verify the test filter or command",
+        );
+    }
 
     if actions.is_empty() {
         actions.push("proceed with handoff or closeout".to_string());
@@ -996,6 +1011,12 @@ fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
                 "consider creating a last_known_good checkpoint",
             );
         }
+    }
+    if validation_has_cargo_test_zero_tests(output.get("validation").unwrap_or(&Value::Null)) {
+        push(
+            &mut actions,
+            "cargo_test ran zero tests; verify the test filter or command",
+        );
     }
     if actions.is_empty() {
         push(

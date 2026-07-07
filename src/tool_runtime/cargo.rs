@@ -147,6 +147,54 @@ pub(crate) fn parse_cargo_test_counts(text: &str) -> (Option<u64>, Option<u64>) 
     (passed, failed)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CargoTestRunMetadata {
+    pub(crate) tests_detected: bool,
+    pub(crate) tests_run_count: Option<u64>,
+    pub(crate) zero_tests_run: Option<bool>,
+}
+
+pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata {
+    let mut tests_run_count = 0_u64;
+    let mut tests_detected = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("running ") else {
+            continue;
+        };
+        let mut parts = rest.split_whitespace();
+        let Some(raw_count) = parts.next() else {
+            continue;
+        };
+        let Some(label) = parts.next() else {
+            continue;
+        };
+        if label != "test" && label != "tests" {
+            continue;
+        }
+        let Ok(count) = raw_count.parse::<u64>() else {
+            continue;
+        };
+        tests_detected = true;
+        tests_run_count = tests_run_count.saturating_add(count);
+    }
+
+    if tests_detected {
+        CargoTestRunMetadata {
+            tests_detected,
+            tests_run_count: Some(tests_run_count),
+            zero_tests_run: Some(tests_run_count == 0),
+        }
+    } else {
+        CargoTestRunMetadata {
+            tests_detected,
+            tests_run_count: None,
+            zero_tests_run: None,
+        }
+    }
+}
+
 fn is_cargo_validation_failure(output: &ProjectCommandOutput, timeout_secs: u64) -> bool {
     output.exit_code.is_some_and(|exit_code| exit_code != 0)
         && !looks_like_command_timeout(output.exit_code, &output.stderr, timeout_secs)
@@ -328,8 +376,12 @@ impl ToolRuntime {
             }
             Some("test") => {
                 let (tests_passed, tests_failed) = parse_cargo_test_counts(&combined);
+                let run_metadata = parse_cargo_test_run_metadata(&combined);
                 payload["tests_passed"] = json!(tests_passed);
                 payload["tests_failed"] = json!(tests_failed);
+                payload["tests_detected"] = json!(run_metadata.tests_detected);
+                payload["tests_run_count"] = json!(run_metadata.tests_run_count);
+                payload["zero_tests_run"] = json!(run_metadata.zero_tests_run);
             }
             _ => {}
         }

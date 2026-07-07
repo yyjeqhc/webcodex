@@ -4,7 +4,14 @@ use super::common::{nullable_schema, schema_type, wrapped_output_schema};
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "cargo_fmt" | "cargo_check" | "cargo_test" => Some(wrapped_output_schema(vec![
+        "cargo_fmt" | "cargo_check" => Some(cargo_output_schema(false)),
+        "cargo_test" => Some(cargo_output_schema(true)),
+        _ => None,
+    }
+}
+
+fn cargo_output_schema(include_zero_tests_metadata: bool) -> Value {
+    let mut fields = vec![
             ("project", schema_type("string", "Runtime project id.")),
             ("command", schema_type("string", "Cargo command executed.")),
             (
@@ -56,7 +63,31 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "tests_failed",
                 nullable_schema("integer", "Parsed failed test count for cargo_test."),
             ),
-        ])),
-        _ => None,
+    ];
+    if include_zero_tests_metadata {
+        fields.extend([
+            (
+                "tests_detected",
+                schema_type(
+                    "boolean",
+                    "Whether cargo_test parsed at least one Rust test harness running N test(s) section.",
+                ),
+            ),
+            (
+                "tests_run_count",
+                nullable_schema(
+                    "integer",
+                    "Total tests from all parsed cargo_test Rust test harness running N test(s) sections.",
+                ),
+            ),
+            (
+                "zero_tests_run",
+                nullable_schema(
+                    "boolean",
+                    "True when cargo_test parsed test harness sections and their summed tests_run_count is zero.",
+                ),
+            ),
+        ]);
     }
+    wrapped_output_schema(fields)
 }

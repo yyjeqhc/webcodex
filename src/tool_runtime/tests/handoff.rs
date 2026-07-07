@@ -855,6 +855,158 @@ async fn real_cargo_nonzero_failures_match_validation_failed_expectations() {
 }
 
 #[tokio::test]
+async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "cargo-zero-tests", "demo", tmp.path()).await;
+    let auth = bootstrap_auth_context();
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("cargo zero tests".to_string()));
+    let sid = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let sid = sid.clone();
+        async move {
+            call_typed_tool_with_metadata(
+                &runtime,
+                "cargo_test",
+                json!({
+                    "project": project,
+                    "session_id": sid,
+                    "filter": "missing_filter",
+                    "timeout_secs": 60,
+                    "expected_failure": true,
+                    "expected_failure_kind": "validation_failed",
+                    "assertion_name": "cargo_test expected failure but ran zero tests"
+                }),
+                Some(&auth),
+            )
+            .await
+        }
+    });
+
+    let mut req = None;
+    for _ in 0..200 {
+        req = next_patch_agent_request(&runtime, "cargo-zero-tests").await;
+        if req.is_some() || task.is_finished() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let req = req.expect("cargo_test should enqueue an agent shell request");
+    assert_eq!(req.command, "cargo test 'missing_filter'");
+    complete_patch_agent_request(
+        &runtime,
+        "cargo-zero-tests",
+        &req.request_id,
+        0,
+        "running 0 tests\n\n\
+         test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        "",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["passed"], true);
+    assert_eq!(result.output["tests_detected"], true);
+    assert_eq!(result.output["tests_run_count"], 0);
+    assert_eq!(result.output["zero_tests_run"], true);
+
+    let summary = runtime.sessions.summary(&sid, Some(50)).unwrap();
+    let event = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.assertion_name.as_deref()
+                    == Some("cargo_test expected failure but ran zero tests")
+        })
+        .expect("missing cargo_test finished event");
+    assert_eq!(
+        event.failure_expectation_result.as_deref(),
+        Some("unexpected_success")
+    );
+
+    let handoff = handoff_summary_only(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(
+        handoff.output["tool_failures"]["unexpected_success_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["expectation_mismatch_count"],
+        0
+    );
+    assert_eq!(handoff.output["validation"]["status"], "passed");
+    assert_eq!(
+        handoff.output["validation"]["cargo_test_zero_tests_run"],
+        true
+    );
+    let verdict = &handoff.output["verdict"];
+    assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_successes");
+    assert_reason_list_contains(verdict, "warning_reasons", "cargo_test_zero_tests");
+    assert!(verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str()
+            == Some("cargo_test ran zero tests; verify the test filter or command")));
+}
+
+#[tokio::test]
+async fn cargo_test_success_with_tests_does_not_emit_zero_tests_warning() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("cargo nonzero tests handoff".to_string()));
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\n\
+                test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n\n\
+                running 1 test\n\
+                test archived_items_do_not_count_toward_total_quantity ... ok\n\n\
+                test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "zero_tests_run": false
+        }),
+    );
+
+    let handoff = handoff_summary_only(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["validation"]["status"], "passed");
+    assert_ne!(
+        handoff.output["validation"]["cargo_test_zero_tests_run"],
+        true
+    );
+    let verdict = &handoff.output["verdict"];
+    assert_reason_list_not_contains(verdict, "warning_reasons", "cargo_test_zero_tests");
+    assert!(!verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str()
+            == Some("cargo_test ran zero tests; verify the test filter or command")));
+}
+
+#[tokio::test]
 async fn generic_call_runtime_tool_preserves_flattened_failure_expectations() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();

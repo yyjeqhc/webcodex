@@ -99,6 +99,20 @@ fn key_tool_output_schemas_include_expected_fields() {
             "{name} failure_kind description should mention validation_failed: {description}"
         );
     }
+    for field in ["tests_detected", "tests_run_count", "zero_tests_run"] {
+        assert!(
+            has_output_field("cargo_test", field),
+            "cargo_test missing {field}"
+        );
+        assert!(
+            !has_output_field("cargo_fmt", field),
+            "cargo_fmt should not expose cargo_test zero-tests metadata field {field}"
+        );
+        assert!(
+            !has_output_field("cargo_check", field),
+            "cargo_check should not expose cargo_test zero-tests metadata field {field}"
+        );
+    }
     for field in [
         "content",
         "start_line",

@@ -40,6 +40,12 @@ pub(crate) struct ValidationEvent {
     pub(crate) input_summary: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) diagnostics: Option<ValidationDiagnostics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tests_detected: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tests_run_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) zero_tests_run: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,6 +78,7 @@ struct ValidationSummary {
     latest_failure: Option<ValidationEvent>,
     events: Vec<ValidationEvent>,
     parser: ValidationParserSummary,
+    cargo_test_zero_tests_run: bool,
     #[serde(skip_serializing_if = "is_false")]
     skipped: bool,
 }
@@ -103,6 +110,7 @@ pub(crate) fn skipped_validation_summary() -> Value {
         latest_failure: None,
         events: Vec::new(),
         parser: parser_unavailable(),
+        cargo_test_zero_tests_run: false,
         skipped: true,
     })
 }
@@ -126,6 +134,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
             latest_failure: None,
             events: Vec::new(),
             parser: parser_unavailable(),
+            cargo_test_zero_tests_run: false,
             skipped: false,
         });
     }
@@ -137,6 +146,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
     let failures = events_total.saturating_sub(successes);
     let status = validation_status(successes, failures);
     let parser = parser_summary_for_events(&validation_events);
+    let cargo_test_zero_tests_run = validation_events.iter().any(cargo_test_zero_tests_success);
     let latest = validation_events.last().cloned();
     let latest_status = validation_latest_status(latest.as_ref());
     let historical_failures = validation_historical_failures(failures, latest.as_ref());
@@ -168,6 +178,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
         latest_failure,
         events,
         parser,
+        cargo_test_zero_tests_run,
         skipped: false,
     })
 }
@@ -274,6 +285,7 @@ fn validation_event_from_finished(
     };
     let input_summary = started.and_then(|event| event.input_summary.clone());
     let diagnostics = validation_diagnostics_from_summary(finished);
+    let (tests_detected, tests_run_count, zero_tests_run) = cargo_test_run_metadata(finished);
     let outcome = if success { "succeeded" } else { "failed" };
 
     Some(ValidationEvent {
@@ -290,6 +302,9 @@ fn validation_event_from_finished(
         affected_paths,
         input_summary,
         diagnostics,
+        tests_detected,
+        tests_run_count,
+        zero_tests_run,
     })
 }
 
@@ -367,6 +382,23 @@ fn validation_diagnostics_from_summary(finished: &SessionEvent) -> Option<Valida
     }
 }
 
+fn cargo_test_run_metadata(finished: &SessionEvent) -> (Option<bool>, Option<u64>, Option<bool>) {
+    if finished.tool_name != "cargo_test" {
+        return (None, None, None);
+    }
+    let Some(summary) = finished.validation_output_summary.as_ref() else {
+        return (None, None, None);
+    };
+    let tests_detected = summary.get("tests_detected").and_then(Value::as_bool);
+    let tests_run_count = summary.get("tests_run_count").and_then(Value::as_u64);
+    let zero_tests_run = summary.get("zero_tests_run").and_then(Value::as_bool);
+    (tests_detected, tests_run_count, zero_tests_run)
+}
+
+fn cargo_test_zero_tests_success(event: &ValidationEvent) -> bool {
+    event.tool_name == "cargo_test" && event.success && event.zero_tests_run == Some(true)
+}
+
 fn to_value(summary: ValidationSummary) -> Value {
     serde_json::to_value(summary).unwrap_or_else(|_| {
         json!({
@@ -389,7 +421,8 @@ fn to_value(summary: ValidationSummary) -> Value {
                 "version": PARSER_VERSION,
                 "limitations": PARSER_LIMITATIONS,
                 "reason": VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
-            }
+            },
+            "cargo_test_zero_tests_run": false
         })
     })
 }

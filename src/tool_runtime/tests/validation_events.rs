@@ -1,4 +1,5 @@
 use super::support::*;
+use crate::tool_runtime::cargo::parse_cargo_test_run_metadata;
 use crate::tool_runtime::sessions::{SessionStore, SessionTransport, MAX_VALIDATION_EXCERPT_CHARS};
 use crate::tool_runtime::validation_events::{
     validation_kind_for_tool, validation_summary_for_session,
@@ -297,6 +298,56 @@ fn validation_summary_wires_cargo_test_summary_from_captured_excerpt() {
     assert_eq!(diagnostics["test_summary"]["ignored"], 0);
     assert_eq!(diagnostics["first_failed_test"], "tests::fails");
     assert_eq!(diagnostics["truncated"], false);
+}
+
+#[test]
+fn cargo_test_run_metadata_sums_mixed_rust_test_harness_sections() {
+    let metadata = parse_cargo_test_run_metadata(
+        "running 0 tests\n\
+         test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n\n\
+         running 1 test\n\
+         test archived_items_do_not_count_toward_total_quantity ... ok\n\
+         test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+    );
+
+    assert_eq!(metadata.tests_detected, true);
+    assert_eq!(metadata.tests_run_count, Some(1));
+    assert_eq!(metadata.zero_tests_run, Some(false));
+}
+
+#[test]
+fn validation_summary_exposes_cargo_test_zero_tests_metadata() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let event = &validation["latest_success"];
+
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["cargo_test_zero_tests_run"], true);
+    assert_eq!(event["tool_name"], "cargo_test");
+    assert_eq!(event["tests_detected"], true);
+    assert_eq!(event["tests_run_count"], 0);
+    assert_eq!(event["zero_tests_run"], true);
+    assert_no_raw_validation_output_fields(&validation, "validation summary");
 }
 
 #[test]

@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use super::handoff::{
     compact_jobs, compact_permissions, compact_review_evidence, compact_tool_failures,
     compact_validation, compact_workflow_verdict, review_evidence_summary_for_session,
+    validation_has_cargo_test_zero_tests,
 };
 use super::permissions::{permission_profile_payload, permission_summary_from_events};
 use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSnapshot};
@@ -976,6 +977,12 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
         > 0
     {
         push(&mut actions, "stop or await blocking active jobs");
+    }
+    if validation_has_cargo_test_zero_tests(output.get("validation").unwrap_or(&Value::Null)) {
+        push(
+            &mut actions,
+            "cargo_test ran zero tests; verify the test filter or command",
+        );
     }
     actions
 }

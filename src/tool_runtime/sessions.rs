@@ -2018,14 +2018,20 @@ fn validation_output_summary_for_tool_result(tool_name: &str, output: &Value) ->
         .unwrap_or(false)
         || stderr_excerpt.filtered;
 
-    Some(json!({
+    let mut summary = json!({
         "tool_name": tool_name,
         "stdout_tail_excerpt": stdout_excerpt.text,
         "stderr_tail_excerpt": stderr_excerpt.text,
         "stdout_truncated": stdout_truncated,
         "stderr_truncated": stderr_truncated,
         "max_excerpt_chars": MAX_VALIDATION_EXCERPT_CHARS,
-    }))
+    });
+    if tool_name == "cargo_test" {
+        summary["tests_detected"] = cargo_test_tests_detected(output);
+        summary["tests_run_count"] = cargo_test_tests_run_count(output);
+        summary["zero_tests_run"] = cargo_test_zero_tests_run(output);
+    }
+    Some(summary)
 }
 
 fn sanitize_persisted_validation_output_summary(tool_name: &str, value: &Value) -> Option<Value> {
@@ -2054,18 +2060,66 @@ fn sanitize_persisted_validation_output_summary(tool_name: &str, value: &Value) 
         .unwrap_or(false)
         || stderr_excerpt.filtered;
 
-    Some(json!({
+    let mut summary = json!({
         "tool_name": tool_name,
         "stdout_tail_excerpt": stdout_excerpt.text,
         "stderr_tail_excerpt": stderr_excerpt.text,
         "stdout_truncated": stdout_truncated,
         "stderr_truncated": stderr_truncated,
         "max_excerpt_chars": MAX_VALIDATION_EXCERPT_CHARS,
-    }))
+    });
+    if tool_name == "cargo_test" {
+        summary["tests_detected"] = persisted_cargo_test_tests_detected(object);
+        summary["tests_run_count"] = persisted_cargo_test_tests_run_count(object);
+        summary["zero_tests_run"] = persisted_cargo_test_zero_tests_run(object);
+    }
+    Some(summary)
 }
 
 fn is_cargo_validation_tool(tool_name: &str) -> bool {
     runtime_tool_captures_validation_output(tool_name)
+}
+
+fn cargo_test_tests_detected(output: &Value) -> Value {
+    output
+        .get("tests_detected")
+        .and_then(Value::as_bool)
+        .map_or(Value::Null, Value::Bool)
+}
+
+fn cargo_test_tests_run_count(output: &Value) -> Value {
+    output
+        .get("tests_run_count")
+        .and_then(Value::as_u64)
+        .map_or(Value::Null, |count| json!(count))
+}
+
+fn cargo_test_zero_tests_run(output: &Value) -> Value {
+    output
+        .get("zero_tests_run")
+        .and_then(Value::as_bool)
+        .map_or(Value::Null, Value::Bool)
+}
+
+fn persisted_cargo_test_tests_detected(object: &serde_json::Map<String, Value>) -> Value {
+    object
+        .get("tests_detected")
+        .and_then(Value::as_bool)
+        .map_or(Value::Null, Value::Bool)
+}
+
+fn persisted_cargo_test_tests_run_count(object: &serde_json::Map<String, Value>) -> Value {
+    object
+        .get("tests_run_count")
+        .and_then(Value::as_u64)
+        .map_or(Value::Null, |count| json!(count))
+}
+
+fn persisted_cargo_test_zero_tests_run(object: &serde_json::Map<String, Value>) -> Value {
+    object
+        .get("zero_tests_run")
+        .and_then(Value::as_bool)
+        .map_or(Value::Null, Value::Bool)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

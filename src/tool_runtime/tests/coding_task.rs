@@ -1374,6 +1374,74 @@ async fn finish_coding_task_summary_only_does_not_block_resolved_cargo_fmt_failu
 }
 
 #[tokio::test]
+async fn finish_coding_task_summary_only_warns_for_cargo_test_zero_tests_success() {
+    let fixture = finish_summary_fixture("coding-finish-zero-tests").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_test",
+        json!({
+            "project": fixture.project.clone(),
+            "expected_failure": true,
+            "expected_failure_kind": "validation_failed",
+            "assertion_name": "negative assertion accidentally ran zero tests"
+        }),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\n\
+                test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(
+        result.output["tool_failures"]["unexpected_success_count"],
+        1
+    );
+    assert_eq!(
+        result.output["tool_failures"]["expectation_mismatch_count"],
+        0
+    );
+    assert_eq!(result.output["validation"]["status"], "passed");
+    assert_eq!(
+        result.output["validation"]["cargo_test_zero_tests_run"],
+        true
+    );
+    let verdict = &result.output["finish_verdict"];
+    assert_workflow_verdict_shape(verdict);
+    assert_eq!(verdict["status"], "fail");
+    assert_eq!(verdict["blocking"], true);
+    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
+    assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_successes");
+    assert_reason_list_contains(verdict, "warning_reasons", "cargo_test_zero_tests");
+    assert!(verdict["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str()
+            == Some("cargo_test ran zero tests; verify the test filter or command")));
+}
+
+#[tokio::test]
 async fn finish_coding_task_summary_only_blocks_unresolved_cargo_fmt_failure() {
     let fixture = finish_summary_fixture("coding-finish-unresolved-fmt").await;
 

@@ -681,8 +681,18 @@ For expected Cargo validation failures, use `expected_failure=true` with
 Cargo command started and returned a nonzero exit code. Permission denials,
 session/project mismatches, guard denials, timeouts, malformed arguments,
 disconnected agents, commands that did not start, and runtime errors keep their
-existing failure or error kind. Zero-tests detection is not implemented by this
-classification.
+existing failure or error kind.
+
+`cargo_test` reports zero-tests metadata when it can parse Rust test harness
+output: `tests_detected`, `tests_run_count`, and `zero_tests_run`. The parser
+sums all `running N test` / `running N tests` sections, so a mixed lib
+`running 0 tests` plus integration `running 1 test` run is not considered
+zero-tests. A successful `cargo_test` with `zero_tests_run=true` should not be
+treated as strong validation; closeout summaries warn with
+`cargo_test_zero_tests` and suggest checking the filter or command. If
+`expected_failure=true` but `cargo_test` exits successfully after running zero
+tests, it is still an unexpected success / invalid negative assertion.
+`cargo_fmt` and `cargo_check` do not report zero-tests metadata.
 
 In GPT Actions, that same expected negative path may still show an outer
 `tool_error` because `/api/tools/call` returns HTTP 400 for a concrete runtime
@@ -712,6 +722,10 @@ workspace/hygiene checks are clean. Non-validation tool failures and unresolved
 validation failures remain blocking. `not_run` means no structured validation
 tool was invoked, so docs-only or read-only work should interpret it with task
 context.
+
+For `cargo_test`, validation events preserve parsed zero-tests metadata when
+available. A successful zero-test run remains visible through closeout warnings
+rather than counting as strong test coverage.
 
 `finish_coding_task.review_evidence` and
 `session_handoff_summary.review_evidence` are separate ledger-derived,

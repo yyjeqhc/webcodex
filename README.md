@@ -4,28 +4,12 @@
 
 Connect ChatGPT to private code that stays on your machine.
 
-WebCodex is a self-hosted coding bridge for MCP and GPT Actions. It lets an online model inspect a real repo, make scoped edits, run validation, and hand back a compact task summary without giving the model raw filesystem access or moving your repository into a hosted coding service.
+WebCodex runs a small server and an agent next to your repo. ChatGPT can inspect files, request scoped edits, and run validation through WebCodex while your repository stays where it is.
 
-- Work on real local or private-hosted repositories from ChatGPT, Custom GPTs, or other MCP-capable clients.
-- Register only the project directories you choose through a long-running WebCodex agent.
-- Prefer structured read, edit, diff, and validation tools before falling back to shell commands.
-- Keep execution on the agent machine while the server handles auth, policy, sessions, and client protocols.
-- Finish tasks with changed files, validation results, workspace hygiene, and handoff evidence for your normal Git review flow.
-
-```text
-ChatGPT / MCP clients / Custom GPTs
-        |
-        | MCP / GPT Actions
-        v
-WebCodex Server
-        |
-        | authenticated agent bridge
-        v
-WebCodex Agent
-        |
-        v
-Private Codebase / Git / Tests / Shell
-```
+- Choose exactly which project directories are available.
+- Keep test and shell execution on the agent machine.
+- Review changed files, validation output, and task summaries before accepting work.
+- Start locally, then put the server behind HTTPS when using hosted ChatGPT clients.
 
 ## Install
 
@@ -46,10 +30,10 @@ See [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) for platform support and inst
 
 ## Quick Start
 
-The commands below assume the npm-installed binaries are on your `PATH`.
+For a first local run, use two terminals. The commands below assume the npm-installed binaries are on your `PATH`.
 If you built from source, export `PATH="$PWD/target/release:$PATH"` first.
 
-Terminal 1 - start the server:
+Terminal 1 - create the server config and start the server:
 
 ```bash
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
@@ -59,13 +43,12 @@ webcodex-cli server up \
   --listen 127.0.0.1:8080 \
   --public-url http://127.0.0.1:8080
 
-set -a
-. "$WEBCODEX_ENV"
-set +a
-webcodex
+WEBCODEX_ENV_FILE="$WEBCODEX_ENV" webcodex
 ```
 
-Terminal 2 - generate one evaluation key, connect an agent, and start it from the repo you want WebCodex to operate:
+`server up` creates `$WEBCODEX_ENV` if it does not exist, including the parent directory. That file stores server settings and a server admin key. It is not the evaluation key you paste into clients.
+
+Terminal 2 - create one evaluation key, register a repo, and start the agent:
 
 ```bash
 export WEBCODEX_KEY="$(openssl rand -base64 32)"
@@ -80,8 +63,7 @@ webcodex-cli connect http://127.0.0.1:8080 \
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
 
-Copy the printed key into your MCP client or GPT Action Bearer/API-key auth field.
-The server does not pre-enroll that value; quick-start shared-key mode groups non-managed Bearer values by hash.
+Use the same key in three places: `webcodex-cli connect --key`, the Verify curl commands below, and your MCP/GPT Actions Bearer/API-key auth field. The server does not need the value ahead of time; quick-start mode matches clients and agents by the key's hash.
 
 ## Verify
 
@@ -109,9 +91,26 @@ For the full walkthrough, see [docs/QUICK_START.md](docs/QUICK_START.md).
 
 ## Client Access
 
-- ChatGPT-hosted clients, including GPT Actions and ChatGPT remote MCP, require a public HTTPS URL with a valid certificate. Put WebCodex behind Nginx, Caddy, or a tunnel, start the server with `--public-url https://your-domain.example`, then use `https://your-domain.example/openapi.json` or `https://your-domain.example/mcp`.
-- Local or self-hosted clients that can reach the server directly can use `http://127.0.0.1:8080` or a private network URL without public HTTPS.
-- Claude or other MCP-capable clients use the `/mcp` endpoint. The first evaluation path uses the shared Bearer key; production deployments should move to scoped user tokens or OAuth when the client supports it.
+- Local clients can use `http://127.0.0.1:8080`.
+- ChatGPT-hosted clients need a public HTTPS URL. Put WebCodex behind Nginx, Caddy, or a tunnel, start the server with `--public-url https://your-domain.example`, then use `https://your-domain.example/openapi.json` or `https://your-domain.example/mcp`.
+- MCP clients use `/mcp`; GPT Actions use `/openapi.json`. For the first run, paste the same evaluation key into the Bearer/API-key auth field.
+
+## How It Fits Together
+
+```text
+ChatGPT / MCP clients / Custom GPTs
+        |
+        | MCP / GPT Actions
+        v
+WebCodex Server
+        |
+        | authenticated agent bridge
+        v
+WebCodex Agent
+        |
+        v
+Private Codebase / Git / Tests / Shell
+```
 
 ## What ChatGPT Can Do
 

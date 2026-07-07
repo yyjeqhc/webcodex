@@ -4,28 +4,12 @@
 
 把 ChatGPT 接到仍然留在你机器上的私有代码。
 
-WebCodex 是一个面向 MCP 和 GPT Actions 的自托管代码桥接层。它让线上模型可以查看真实仓库、做局部修改、运行验证，并返回紧凑的任务总结；同时不把裸文件系统权限交给模型，也不需要把仓库搬到托管式 AI 编程服务。
+WebCodex 会在你的机器上运行一个小型 server 和一个靠近仓库的 agent。ChatGPT 可以通过 WebCodex 查看文件、请求局部修改、运行验证；你的仓库仍然留在原地。
 
-- 让 ChatGPT、Custom GPT 或其他支持 MCP 的客户端操作真实的本地/私有主机仓库。
-- 通过长驻 WebCodex agent，只注册你明确允许的项目目录。
-- 优先使用结构化读取、编辑、diff 和验证工具，再把 shell 作为受限兜底能力。
-- 代码执行留在 agent 所在机器；server 负责认证、权限、会话记录和客户端协议。
-- 任务收口时给出 changed files、validation results、workspace hygiene 和交接信息，接入你平时的 Git 检查流程。
-
-```text
-ChatGPT / MCP clients / Custom GPTs
-        |
-        | MCP / GPT Actions
-        v
-WebCodex Server
-        |
-        | authenticated agent bridge
-        v
-WebCodex Agent
-        |
-        v
-Private Codebase / Git / Tests / Shell
-```
+- 只开放你明确选择的项目目录。
+- 测试和 shell 执行留在 agent 所在机器。
+- 接受修改前，先检查 changed files、validation output 和任务总结。
+- 本地可以直接试用；接入 ChatGPT 托管客户端时，再把 server 放到 HTTPS 后面。
 
 ## 安装
 
@@ -46,10 +30,10 @@ export PATH="$PWD/target/release:$PATH"
 
 ## 快速开始
 
-下面命令假设 npm 安装后的 binaries 已经在 `PATH` 中。
+第一次本地运行需要两个终端。下面命令假设 npm 安装后的 binaries 已经在 `PATH` 中。
 如果你从源码构建，请先执行 `export PATH="$PWD/target/release:$PATH"`。
 
-终端 1 - 启动 server：
+终端 1 - 创建 server 配置并启动 server：
 
 ```bash
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
@@ -59,13 +43,12 @@ webcodex-cli server up \
   --listen 127.0.0.1:8080 \
   --public-url http://127.0.0.1:8080
 
-set -a
-. "$WEBCODEX_ENV"
-set +a
-webcodex
+WEBCODEX_ENV_FILE="$WEBCODEX_ENV" webcodex
 ```
 
-终端 2 - 在你想让 WebCodex 操作的仓库中生成一个评估 key、连接 agent 并启动它：
+`server up` 会在 `$WEBCODEX_ENV` 不存在时创建它，也会创建父目录。这个文件保存 server 设置和 server admin key。它不是要复制到客户端里的 evaluation key。
+
+终端 2 - 创建一个 evaluation key、注册仓库并启动 agent：
 
 ```bash
 export WEBCODEX_KEY="$(openssl rand -base64 32)"
@@ -80,8 +63,7 @@ webcodex-cli connect http://127.0.0.1:8080 \
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
 
-把打印出来的 key 复制到 MCP client 或 GPT Action 的 Bearer/API-key auth 配置里。
-server 不会预登记这个 key；quick-start shared-key mode 会按 Bearer 值的 hash 把 agent 和 client 分到同一个 shared-key group。
+同一个 key 用在三个地方：`webcodex-cli connect --key`、下面“验证”里的 curl 命令，以及 MCP/GPT Actions 的 Bearer/API-key auth 配置。server 不需要提前拿到这个值；quick-start mode 会按 key 的 hash 匹配 client 和 agent。
 
 ## 验证
 
@@ -109,9 +91,26 @@ curl -sS \
 
 ## 客户端接入
 
-- ChatGPT 托管的客户端，包括 GPT Actions 和 ChatGPT remote MCP，都需要公网 HTTPS URL 和有效证书。你需要把 WebCodex 放到 Nginx、Caddy 或 tunnel 后面，并用 `--public-url https://your-domain.example` 启动 server，然后使用 `https://your-domain.example/openapi.json` 或 `https://your-domain.example/mcp`。
-- 本地或自建客户端如果能直接访问 server，可以使用 `http://127.0.0.1:8080` 或内网 URL，不需要公网 HTTPS。
-- Claude 或其他支持 MCP 的客户端使用 `/mcp` endpoint。第一次评估可以用 shared Bearer key；生产部署应切到 scoped user token，或在客户端支持时使用 OAuth。
+- 本地客户端可以直接使用 `http://127.0.0.1:8080`。
+- ChatGPT 托管的客户端需要公网 HTTPS URL。你可以把 WebCodex 放到 Nginx、Caddy 或 tunnel 后面，并用 `--public-url https://your-domain.example` 启动 server，然后使用 `https://your-domain.example/openapi.json` 或 `https://your-domain.example/mcp`。
+- MCP client 使用 `/mcp`；GPT Actions 使用 `/openapi.json`。第一次运行时，把同一个 evaluation key 填到 Bearer/API-key auth 配置里。
+
+## 整体结构
+
+```text
+ChatGPT / MCP clients / Custom GPTs
+        |
+        | MCP / GPT Actions
+        v
+WebCodex Server
+        |
+        | authenticated agent bridge
+        v
+WebCodex Agent
+        |
+        v
+Private Codebase / Git / Tests / Shell
+```
 
 ## ChatGPT 可以做什么？
 

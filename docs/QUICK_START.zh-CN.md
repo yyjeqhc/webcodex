@@ -50,7 +50,7 @@ export PATH="$PWD/target/release:$PATH"
 
 ## 2. 启动 server
 
-`server up` 会启用 shared-key quick-start mode。它不需要 evaluation key。
+`server up` 会创建 server env file，并启用 shared-key quick-start mode。它不需要 evaluation key。
 
 终端 1：
 
@@ -62,13 +62,10 @@ webcodex-cli server up \
   --listen 127.0.0.1:8080 \
   --public-url http://127.0.0.1:8080
 
-set -a
-. "$WEBCODEX_ENV"
-set +a
-webcodex
+WEBCODEX_ENV_FILE="$WEBCODEX_ENV" webcodex
 ```
 
-`server up` 会写入 server env file。它没有 `--key` 参数，也会故意隐藏完整 server bootstrap key。
+运行这条命令前，env file 不需要存在。`server up` 会创建 `$WEBCODEX_ENV` 和它的父目录，并写入 server 设置和 server admin key。它没有 `--key` 参数，也会故意隐藏完整 server bootstrap key。
 
 `--open` 不同：它允许 anonymous access，只应该用于明确的临时 localhost / trusted-network demo。
 

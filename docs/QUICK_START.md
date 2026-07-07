@@ -50,7 +50,7 @@ export PATH="$PWD/target/release:$PATH"
 
 ## 2. Start The Server
 
-`server up` enables shared-key quick-start mode. It does not need the evaluation key.
+`server up` creates the server env file and enables shared-key quick-start mode. It does not need the evaluation key.
 
 In terminal 1:
 
@@ -62,13 +62,10 @@ webcodex-cli server up \
   --listen 127.0.0.1:8080 \
   --public-url http://127.0.0.1:8080
 
-set -a
-. "$WEBCODEX_ENV"
-set +a
-webcodex
+WEBCODEX_ENV_FILE="$WEBCODEX_ENV" webcodex
 ```
 
-`server up` writes the server env file. It does not take a `--key` flag, and it intentionally does not print the full server bootstrap key.
+The env file does not need to exist before this command. `server up` creates `$WEBCODEX_ENV`, including the parent directory, and writes server settings plus a server admin key. It does not take a `--key` flag, and it intentionally does not print the full server bootstrap key.
 
 `--open` is different: it allows anonymous access and should only be used for explicit temporary localhost/trusted-network demos.
 

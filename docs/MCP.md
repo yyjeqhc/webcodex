@@ -27,18 +27,12 @@ Hosted clients usually require HTTPS. Use your own WebCodex domain in place of `
 Configure the MCP client with Bearer/API-key authentication:
 
 ```text
-Authorization: Bearer <shared-key-or-user-token>
+Authorization: Bearer <shared key>
 ```
 
-For the quick start, use the shared key printed by `webcodex-cli server up`. For managed deployments, use a scoped user token.
+For the first evaluation, use the same shared key that you passed to `webcodex-cli connect --key`. Do not use bootstrap/admin, account, or agent tokens for MCP.
 
-Do not use these credentials for MCP:
-
-- server bootstrap/admin token,
-- account credential,
-- agent token,
-- OAuth refresh token,
-- raw env file values.
+For production, use scoped user tokens or OAuth. See [AUTH_MODEL.md](AUTH_MODEL.md) for the full credential model.
 
 Do not paste real tokens into committed MCP config files. Prefer environment variables or your client secret store.
 
@@ -151,7 +145,7 @@ The exact shape depends on your MCP client:
 }
 ```
 
-`WEBCODEX_TOKEN_FOR_MCP` should contain the quick-start shared key or a managed user token. It should not contain server bootstrap/admin credentials, account credentials, or agent tokens.
+`WEBCODEX_TOKEN_FOR_MCP` should contain the first-evaluation shared key or a production user token. It should not contain bootstrap/admin, account, or agent tokens.
 
 ## Common Errors
 
@@ -180,4 +174,5 @@ Use compact runtime status, focused manifest discovery, bounded file ranges, `sh
 - Quick Start: [QUICK_START.md](QUICK_START.md)
 - Demo workflow: [DEMO.md](DEMO.md)
 - GPT Actions: [GPT_ACTIONS.md](GPT_ACTIONS.md)
+- Auth model: [AUTH_MODEL.md](AUTH_MODEL.md)
 - Security: [../SECURITY.md](../SECURITY.md)

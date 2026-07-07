@@ -42,7 +42,7 @@ The screenshots in `docs/assets/gpt-action-*.png` are UI landmarks. ChatGPT may 
 
    ![Set Action authentication](assets/gpt-action-4.png)
 
-   Choose API-key or HTTP authentication, set the auth type to Bearer, and use the quick-start shared key or a managed user token. Do not use server bootstrap/admin credentials, account credentials, or agent tokens.
+   Choose API-key or HTTP authentication, set the auth type to Bearer, and paste the first-evaluation shared key. Do not use bootstrap/admin, account, or agent tokens.
 
 5. **Import the OpenAPI schema.**
 
@@ -58,15 +58,9 @@ The screenshots in `docs/assets/gpt-action-*.png` are UI landmarks. ChatGPT may 
 
 Configure GPT Actions with Bearer/API-key authentication.
 
-For the quick start, use the shared key printed by `webcodex-cli server up`. For managed deployments, use a scoped user token created for this GPT.
+For the first evaluation, paste the same shared key that you passed to `webcodex-cli connect --key`. For production, use scoped user tokens or OAuth. See [AUTH_MODEL.md](AUTH_MODEL.md) for the full credential model.
 
-Do not paste these into GPT Actions:
-
-- server bootstrap/admin token,
-- account credential,
-- agent token,
-- OAuth refresh token,
-- env file contents.
+Do not paste bootstrap/admin, account, or agent tokens into GPT Actions.
 
 Pairing, token creation, agent enrollment, server setup, and other management tasks belong in `webcodex-cli`, not GPT Actions.
 
@@ -177,4 +171,5 @@ Redirect the GPT to the default loop: inspect, structured edit, structured valid
 - Demo workflow: [DEMO.md](DEMO.md)
 - MCP: [MCP.md](MCP.md)
 - Concepts: [CONCEPTS.md](CONCEPTS.md)
+- Auth model: [AUTH_MODEL.md](AUTH_MODEL.md)
 - Security: [../SECURITY.md](../SECURITY.md)

@@ -42,7 +42,7 @@ http://127.0.0.1:8080/openapi.json
 
    ![设置 Action 认证](assets/gpt-action-4.png)
 
-   选择 API-key 或 HTTP authentication，把 auth type 设为 Bearer，并使用 quick-start shared key 或 managed user token。不要使用 server bootstrap/admin credential、account credential 或 agent token。
+   选择 API-key 或 HTTP authentication，把 auth type 设为 Bearer，并粘贴第一次评估用的 shared key。不要使用 bootstrap/admin、account 或 agent tokens。
 
 5. **导入 OpenAPI schema。**
 
@@ -58,15 +58,9 @@ http://127.0.0.1:8080/openapi.json
 
 GPT Actions 使用 Bearer/API-key authentication。
 
-quick start 使用 `webcodex-cli server up` 打印的 shared key。managed deployment 使用为这个 GPT 创建的 scoped user token。
+第一次评估使用传给 `webcodex-cli connect --key` 的同一个 shared key。生产环境使用 scoped user tokens 或 OAuth。完整 credential model 见 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)。
 
-不要把这些粘贴进 GPT Actions：
-
-- server bootstrap/admin token，
-- account credential，
-- agent token，
-- OAuth refresh token，
-- env file contents。
+不要把 bootstrap/admin、account 或 agent tokens 粘贴进 GPT Actions。
 
 pairing、token creation、agent enrollment、server setup 和其他管理任务属于 `webcodex-cli`，不属于 GPT Actions。
 
@@ -177,4 +171,5 @@ without a diff, run workspace hygiene, and finish. Do not edit files.
 - Demo 工作流：[DEMO.zh-CN.md](DEMO.zh-CN.md)
 - MCP：[MCP.zh-CN.md](MCP.zh-CN.md)
 - 概念：[CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md)
+- 认证模型：[AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)
 - 安全：[../SECURITY.md](../SECURITY.md)

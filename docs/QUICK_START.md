@@ -2,9 +2,13 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-This is the recommended local-first path for trying WebCodex. It gets one server, one agent, one registered project, and one MCP or GPT Action client working before you choose a production deployment shape.
+This is the recommended local-first path for trying WebCodex.
 
 For vocabulary, read [CONCEPTS.md](CONCEPTS.md). For a realistic tool flow, read [DEMO.md](DEMO.md).
+
+## Fastest Path
+
+Use one shared key for the first evaluation: server runtime calls, agent connect, and MCP/GPT Actions all use the same key. Move to scoped tokens, OAuth, and production deployment later.
 
 ## What You Will Run
 
@@ -26,9 +30,7 @@ MCP and GPT Actions call the same WebCodex ToolRuntime. The client changes the p
 
 Do not use real secrets, production repositories, or privileged shell profiles for the first run.
 
-## Recommended Local-First Path
-
-### 1. Build The Binaries
+## 1. Build The Binaries
 
 From the WebCodex checkout:
 
@@ -43,26 +45,47 @@ webcodex-agent -h
 
 Released binary artifacts can replace the `cargo build` step once the matching release is available.
 
-### 2. Start The Server
+## 2. Choose One Shared Key And Start The Server
 
-In terminal 1:
+In terminal 1, choose one long random key for this evaluation:
+
+```bash
+export WEBCODEX_KEY="$(openssl rand -base64 32)"
+export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
+```
+
+Use the same `WEBCODEX_KEY` value later for `webcodex-cli connect`, `curl`, MCP, and GPT Actions. Do not paste real key values into committed files.
+
+Prepare the server env:
 
 ```bash
 webcodex-cli server up \
+  --env-file "$WEBCODEX_ENV" \
   --listen 127.0.0.1:8080 \
   --public-url http://127.0.0.1:8080
 ```
 
-Keep this process running. Copy the shared key printed by the command. Use placeholders in notes and docs; do not paste real token values into committed files.
+`server up` enables shared-key quick-start mode and writes the server env file. It does not take a `--key` flag, and it intentionally does not print the full server bootstrap key.
+
+Load the env and start the server:
+
+```bash
+set -a
+. "$WEBCODEX_ENV"
+set +a
+webcodex
+```
+
+Keep the `webcodex` process running.
 
 For a public ChatGPT connection, put the server behind HTTPS and use that public URL instead. Localhost is enough for a local runtime sanity check.
 
-### 3. Connect An Agent And Register A Project
+## 3. Connect An Agent And Register A Project
 
 In terminal 2, from the repository you want WebCodex to operate:
 
 ```bash
-export WEBCODEX_KEY=<shared key from server up>
+export WEBCODEX_KEY="<same evaluation shared key>"
 
 webcodex-cli connect http://127.0.0.1:8080 \
   --key "$WEBCODEX_KEY" \
@@ -79,12 +102,12 @@ webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 
 Projects live on the agent machine. The agent registers allowed directories with the server. The server does not scan your filesystem.
 
-### 4. Verify Runtime Health
+## 4. Verify Runtime Health
 
 In terminal 3:
 
 ```bash
-export WEBCODEX_KEY=<shared key from server up>
+export WEBCODEX_KEY="<same evaluation shared key>"
 
 curl -sS \
   -H "Authorization: Bearer $WEBCODEX_KEY" \
@@ -111,7 +134,7 @@ agent:local-dev:<project_id>
 
 If you used `connect` from a repository root, the generated project id is printed by that command. Use the full runtime project id in client prompts and tool calls.
 
-### 5. Connect MCP
+## 5. Connect ChatGPT MCP
 
 Use MCP if your client supports remote MCP.
 
@@ -128,9 +151,9 @@ For ChatGPT or another hosted client, replace localhost with the public HTTPS se
 https://your-domain.example/mcp
 ```
 
-See [MCP.md](MCP.md) for screenshots, token guidance, and common MCP errors.
+For the first evaluation, use `Bearer <shared key>`. Production auth comes later. See [MCP.md](MCP.md) for screenshots and common MCP errors.
 
-### 6. Or Connect GPT Actions
+## 6. Or Connect GPT Actions
 
 Use GPT Actions if you are building a Custom GPT.
 
@@ -146,9 +169,9 @@ For ChatGPT, use a public HTTPS URL:
 https://your-domain.example/openapi.json
 ```
 
-Configure Action authentication as Bearer/API-key auth and use the same shared key for this first evaluation. See [GPT_ACTIONS.md](GPT_ACTIONS.md) for the full setup guide.
+Configure Action authentication as Bearer/API-key auth and use the same shared key for this first evaluation. See [GPT_ACTIONS.md](GPT_ACTIONS.md) for the setup guide.
 
-### 7. Run A Read-Only Task
+## 7. Run A Read-Only Task
 
 Ask the client to stay read-only first:
 
@@ -167,7 +190,7 @@ Expected flow:
 4. `workspace_hygiene_check`
 5. `finish_coding_task`
 
-### 8. Run A Small Edit Task
+## 8. Run A Small Reversible Edit
 
 Use a disposable branch or a tiny documentation edit:
 
@@ -190,6 +213,10 @@ You are set up when:
 - A read-only coding task finishes cleanly.
 - A small edit can be reviewed and reverted.
 
+## Production Auth Comes Later
+
+This shared-key path is for first evaluation. For production, read [AUTH_MODEL.md](AUTH_MODEL.md), [DEPLOYMENT.md](DEPLOYMENT.md), and [OPERATIONS.md](OPERATIONS.md), then move to scoped user tokens or OAuth, reverse proxy HTTPS, service management, and token rotation.
+
 ## MCP Vs GPT Actions
 
 - Use MCP if your client supports remote MCP.
@@ -205,7 +232,7 @@ The safest first prompt should name the exact project id and ask for a read-only
 - The model can only call exposed tools.
 - Structured edit and validation tools are preferred.
 - `run_shell` is a bounded escape hatch, not the default editing or validation path.
-- Use scoped tokens or shared keys only for the intended client. Do not paste bootstrap, account, or agent credentials into MCP or GPT Actions.
+- Do not paste bootstrap, account, or agent credentials into MCP or GPT Actions.
 
 For the full boundary model, read [../SECURITY.md](../SECURITY.md).
 
@@ -221,7 +248,7 @@ Run `list_projects`. If the project is missing, rerun `webcodex-cli connect` fro
 
 ### Auth Failed
 
-Use the same shared key for the first server, agent connection, MCP client, or GPT Action. For managed deployments, use a `wc_pat_xxx` token for MCP/GPT Actions and a `wc_agent_xxx` token only for the agent.
+Use the same `WEBCODEX_KEY` value for agent connect, runtime checks, MCP, and GPT Actions. For production auth, switch to [AUTH_MODEL.md](AUTH_MODEL.md) instead of reusing bootstrap, account, or agent credentials.
 
 ### Model Chose The Wrong Project Id
 
@@ -241,6 +268,7 @@ Prefer structured tools first: `read_file`, `search_project_text`, line edits, `
 - Concepts: [CONCEPTS.md](CONCEPTS.md)
 - MCP setup: [MCP.md](MCP.md)
 - GPT Actions setup: [GPT_ACTIONS.md](GPT_ACTIONS.md)
+- Auth model: [AUTH_MODEL.md](AUTH_MODEL.md)
 - Deployment details: [DEPLOYMENT.md](DEPLOYMENT.md)
 - Operations: [OPERATIONS.md](OPERATIONS.md)
 - Troubleshooting: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)

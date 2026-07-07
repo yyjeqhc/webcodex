@@ -27,18 +27,12 @@ Hosted client 通常要求 HTTPS。把 `your-domain.example` 换成你自己的 
 MCP client 使用 Bearer/API-key authentication：
 
 ```text
-Authorization: Bearer <shared-key-or-user-token>
+Authorization: Bearer <shared key>
 ```
 
-quick start 使用 `webcodex-cli server up` 打印的 shared key。managed deployment 使用 scoped user token。
+第一次评估使用传给 `webcodex-cli connect --key` 的同一个 shared key。MCP 不要使用 bootstrap/admin、account 或 agent tokens。
 
-MCP 不要使用这些凭据：
-
-- server bootstrap/admin token，
-- account credential，
-- agent token，
-- OAuth refresh token，
-- raw env file values。
+生产环境使用 scoped user tokens 或 OAuth。完整 credential model 见 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)。
 
 不要把真实 token 写进提交的 MCP config。优先使用环境变量或 client secret store。
 
@@ -151,7 +145,7 @@ MCP 可以直接暴露 runtime tools。不要把完整工具目录塞进每个 p
 }
 ```
 
-`WEBCODEX_TOKEN_FOR_MCP` 应保存 quick-start shared key 或 managed user token。不要放 server bootstrap/admin credential、account credential 或 agent token。
+`WEBCODEX_TOKEN_FOR_MCP` 应保存第一次评估用的 shared key，或生产 user token。不要放 bootstrap/admin、account 或 agent tokens。
 
 ## 常见错误
 
@@ -180,4 +174,5 @@ agent 在线，但请求的 `agent:<client_id>:<project_id>` 不存在。通过 
 - 快速开始：[QUICK_START.zh-CN.md](QUICK_START.zh-CN.md)
 - Demo 工作流：[DEMO.zh-CN.md](DEMO.zh-CN.md)
 - GPT Actions：[GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md)
+- 认证模型：[AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)
 - 安全：[../SECURITY.md](../SECURITY.md)

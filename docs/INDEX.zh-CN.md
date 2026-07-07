@@ -2,54 +2,51 @@
 
 [English](INDEX.md) | [简体中文](INDEX.zh-CN.md)
 
-从 [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) 和
-[CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md) 开始。README 是产品概览；这个索引是 setup、operation、security 和 developer maintenance 文档的精简地图。
-
-语言策略：英文文档是 canonical。主要 onboarding、部署、GPT Actions、MCP、
-agent 和 troubleshooting 文档维护中文版本；深层 internals、release procedure
-和 developer-maintenance 文档可以只保留英文版本。
+先看 README、[QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) 和 [DEMO.zh-CN.md](DEMO.zh-CN.md)。这个索引是 setup、client integration、security、release 和 maintenance 文档的精简地图。
 
 ## 从这里开始
 
-1. [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) / [QUICK_START.md](QUICK_START.md) - onboarding、决策树、shared-key/open/managed 路径、service vs manual mode，以及第一次 runtime 检查。
-2. [CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md) / [CONCEPTS.md](CONCEPTS.md) - server、agent、project id、runtime tools、GPT Actions、MCP、credentials、sessions 和运行模式。
-3. [../README.zh-CN.md](../README.zh-CN.md) / [../README.md](../README.md) - 产品概览、单机本地 demo、GPT/MCP 入口、凭据摘要和安全提示。
+1. [../README.zh-CN.md](../README.zh-CN.md) / [../README.md](../README.md) - 产品概览和定位。
+2. [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) / [QUICK_START.md](QUICK_START.md) - local-first setup，跑通一个 server、一个 agent、一个 project 和一个 client。
+3. [DEMO.zh-CN.md](DEMO.zh-CN.md) / [DEMO.md](DEMO.md) - 预期的安全 coding workflow。
+4. [CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md) / [CONCEPTS.md](CONCEPTS.md) - 术语和心智模型。
+5. [ARCHITECTURE.md](ARCHITECTURE.md) - 产品架构和 Rust module map。
+
+## Client Integration
+
+6. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、默认 coding loop 和常见 MCP 错误。
+7. [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) / [GPT_ACTIONS.md](GPT_ACTIONS.md) - Custom GPT 设置、OpenAPI 导入、认证和 workflow guidance。
+8. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) - MCP 和 GPT Actions 指南使用的截图。
 
 ## 安装与运维
 
-4. [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) / [BUILD_INSTALL.md](BUILD_INSTALL.md) - build/install 命令参考，以及 npm wrapper / artifact 细节。
-5. [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) / [DEPLOYMENT.md](DEPLOYMENT.md) - 生产 server bootstrap、HTTPS、systemd、account onboarding、OAuth2、QUIC 和 smoke checks。
-6. [OPERATIONS.md](OPERATIONS.md) - 日常 server 初始化、client enrollment、pairing、token 模型、项目注册、session workflow 和 smoke testing。
-7. [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) / [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - 常见部署和集成问题。
-
-## GPT Actions 和 MCP
-
-8. [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) / [GPT_ACTIONS.md](GPT_ACTIONS.md) - 创建 GPT Action、导入 OpenAPI、配置 Bearer/API-key auth，并使用 runtime tools。
-9. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、runtime surface、客户端配置示例和常见 MCP 错误。
-10. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) - GPT Actions 和 MCP 设置指南使用的截图。
+9. [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) / [BUILD_INSTALL.md](BUILD_INSTALL.md) - build/install 命令参考和 artifact 细节。
+10. [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) / [DEPLOYMENT.md](DEPLOYMENT.md) - 生产 server bootstrap、HTTPS、systemd、OAuth、QUIC 和 smoke checks。
+11. [OPERATIONS.md](OPERATIONS.md) - 日常运维、token model、project registration、session workflow 和 smoke testing。
+12. [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) / [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - 常见部署和集成问题。
 
 ## 安全与认证
 
-11. [../SECURITY.md](../SECURITY.md) - security policy、漏洞报告、secret handling 和 threat-model 摘要。
-12. [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md) / [AUTH_MODEL.md](AUTH_MODEL.md) - shared key、bootstrap token、account credential、PAT、agent token、client id、runtime project id 和 hash storage。
-13. [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) - OAuth2 storage、client management、authorize flow、token exchange、revocation 和 delegated scope enforcement。
-14. [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) - 手动端到端 OAuth2 validation。
-15. [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md) - shared-key OAuth bridge threat model 和 subject model constraints。
+13. [../SECURITY.md](../SECURITY.md) - security model、模型能力、project boundary、shell/job risk、token handling、audit evidence、revocation 和 vulnerability reporting。
+14. [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md) / [AUTH_MODEL.md](AUTH_MODEL.md) - shared key、bootstrap token、account credential、PAT、OAuth token、agent token 和 hash storage。
+15. [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) - OAuth2 storage、client management、authorize flow、token exchange、revocation 和 delegated scope enforcement。
+16. [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) - 手动端到端 OAuth2 validation。
+17. [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md) - shared-key OAuth bridge threat model 和 subject model constraints。
 
 ## Agent 和 Runtime
 
-16. [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) / [AGENT_PROJECTS.md](AGENT_PROJECTS.md) - agent `projects.d/*.toml` 格式、顶层 `id/path`、项目管理工具和 runtime project id。
-17. [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) / [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) - QUIC、WebSocket、polling、`auto` fallback 和 transport validation。
-18. [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) / [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) - agent auth、identity、protocol 和 redacted policy summaries。
-19. [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) / [SHELL_PROFILES.md](SHELL_PROFILES.md) - prepared shell environment snapshots、profile 配置、解析规则和安全边界。
+18. [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) / [AGENT_PROJECTS.md](AGENT_PROJECTS.md) - agent project registry 格式和 runtime project ids。
+19. [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) / [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) - QUIC、WebSocket、polling、fallback 和 transport validation。
+20. [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) / [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) - agent auth、identity、protocol 和 redacted policy summaries。
+21. [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) / [SHELL_PROFILES.md](SHELL_PROFILES.md) - prepared shell environment snapshots 和 safety boundaries。
+
+## Release And Roadmap
+
+22. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - 面向外部用户的 0.2.0 release notes。
+23. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness 和 acceptance procedure。
+24. [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) / [ROADMAP.md](ROADMAP.md) - 短 roadmap。
 
 ## Developer Maintenance
 
-20. [ARCHITECTURE.md](ARCHITECTURE.md) - 当前 Rust module boundary map 和维护规则。
-21. [TESTING.md](TESTING.md) - test lane definitions、默认测试原则、当前 test layout 和 ignored-test inventory。
-22. [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) / [E2E_VALIDATION.md](E2E_VALIDATION.md) - 本地端到端验证脚本和文档扫描建议。
-
-## Release Procedure
-
-23. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - 最终 release readiness 和部署后 acceptance procedure。
-24. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - v0.2.0 release notes。
+25. [TESTING.md](TESTING.md) - test lanes、test layout 和 ignored-test inventory。
+26. [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) / [E2E_VALIDATION.md](E2E_VALIDATION.md) - 本地端到端验证脚本和文档扫描建议。

@@ -2,56 +2,51 @@
 
 [English](INDEX.md) | [简体中文](INDEX.zh-CN.md)
 
-Start with [QUICK_START.md](QUICK_START.md) and [CONCEPTS.md](CONCEPTS.md).
-The README is the product overview; this index is the compact map for setup,
-operation, security, and developer maintenance docs.
-
-Language policy: English docs are canonical. Chinese translations are maintained
-for the main onboarding, deployment, GPT Actions, MCP, agent, and troubleshooting
-guides. Deep internals, release procedure, and developer-maintenance docs may be
-English-only.
+Start with the README, [QUICK_START.md](QUICK_START.md), and [DEMO.md](DEMO.md). This index is the compact map for setup, client integration, security, release, and maintenance docs.
 
 ## Start Here
 
-1. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) - onboarding, decision tree, shared-key/open/managed paths, service vs manual mode, and first runtime check.
-2. [CONCEPTS.md](CONCEPTS.md) / [CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md) - server, agent, project ids, runtime tools, GPT Actions, MCP, credentials, sessions, and operating modes.
-3. [../README.md](../README.md) / [../README.zh-CN.md](../README.zh-CN.md) - product overview, local one-machine demo, GPT/MCP entry points, credential summary, and safety notes.
+1. [../README.md](../README.md) / [../README.zh-CN.md](../README.zh-CN.md) - product overview and positioning.
+2. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) - local-first setup for one server, one agent, one project, and one client.
+3. [DEMO.md](DEMO.md) / [DEMO.zh-CN.md](DEMO.zh-CN.md) - expected safe coding workflow.
+4. [CONCEPTS.md](CONCEPTS.md) / [CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md) - vocabulary and mental model.
+5. [ARCHITECTURE.md](ARCHITECTURE.md) - product architecture and Rust module map.
+
+## Client Integration
+
+6. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) - remote MCP endpoint, authentication, default coding loop, and common MCP errors.
+7. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) - Custom GPT setup, OpenAPI import, authentication, and workflow guidance.
+8. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) - screenshots used by MCP and GPT Actions guides.
 
 ## Setup And Operation
 
-4. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) - build/install command reference and npm wrapper / artifact details.
-5. [DEPLOYMENT.md](DEPLOYMENT.md) / [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) - production server bootstrap, HTTPS, systemd, account onboarding, OAuth2, QUIC, and smoke checks.
-6. [OPERATIONS.md](OPERATIONS.md) - day-to-day server initialization, client enrollment, pairing, token model, project registration, session workflow, and smoke testing.
-7. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) / [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) - common deployment and integration failures.
-
-## GPT Actions And MCP
-
-8. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) - create a GPT Action, import OpenAPI, configure Bearer/API-key auth, and use runtime tools.
-9. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) - remote MCP endpoint, authentication, runtime surface, example client config, and common MCP errors.
-10. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) - screenshots used by the GPT Actions and MCP setup guides.
+9. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) - build/install command reference and artifact details.
+10. [DEPLOYMENT.md](DEPLOYMENT.md) / [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) - production server bootstrap, HTTPS, systemd, OAuth, QUIC, and smoke checks.
+11. [OPERATIONS.md](OPERATIONS.md) - day-to-day operations, token model, project registration, session workflow, and smoke testing.
+12. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) / [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) - common deployment and integration failures.
 
 ## Security And Auth
 
-11. [../SECURITY.md](../SECURITY.md) - security policy, vulnerability reporting, secret handling, and threat-model summary.
-12. [AUTH_MODEL.md](AUTH_MODEL.md) / [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md) - shared key, bootstrap token, account credential, PAT, agent token, client id, runtime project ids, and hash storage.
-13. [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) - OAuth2 storage, client management, authorize flow, token exchange, revocation, and delegated scope enforcement.
-14. [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) - manual end-to-end OAuth2 validation.
-15. [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md) - shared-key OAuth bridge threat model and subject model constraints.
+13. [../SECURITY.md](../SECURITY.md) - security model, model capabilities, project boundary, shell/job risk, token handling, audit evidence, revocation, and vulnerability reporting.
+14. [AUTH_MODEL.md](AUTH_MODEL.md) / [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md) - shared key, bootstrap token, account credential, PAT, OAuth token, agent token, and hash storage.
+15. [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) - OAuth2 storage, client management, authorize flow, token exchange, revocation, and delegated scope enforcement.
+16. [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) - manual end-to-end OAuth2 validation.
+17. [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md) - shared-key OAuth bridge threat model and subject model constraints.
 
 ## Agent And Runtime
 
-16. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) / [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) - agent `projects.d/*.toml` format, top-level `id/path`, project management tools, and runtime project ids.
-17. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) - QUIC, WebSocket, polling, `auto` fallback, and transport validation.
-18. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) - agent auth, identity, protocol, and redacted policy summaries.
-19. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) - prepared shell environment snapshots, profile config, resolution rules, and safety boundaries.
+18. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) / [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) - agent project registry format and runtime project ids.
+19. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) - QUIC, WebSocket, polling, fallback, and transport validation.
+20. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) - agent auth, identity, protocol, and redacted policy summaries.
+21. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) - prepared shell environment snapshots and safety boundaries.
+
+## Release And Roadmap
+
+22. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - external-facing 0.2.0 release notes.
+23. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness and acceptance procedure.
+24. [ROADMAP.md](ROADMAP.md) / [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) - short roadmap.
 
 ## Developer Maintenance
 
-20. [ARCHITECTURE.md](ARCHITECTURE.md) - current Rust module boundary map and maintenance rules.
-21. [TESTING.md](TESTING.md) - test lane definitions, default test principles, current test layout, and ignored-test inventory.
-22. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) - local end-to-end validation scripts and documentation scan guidance.
-
-## Release Procedure
-
-23. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - final release readiness and post-deployment acceptance procedure.
-24. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - v0.2.0 release notes.
+25. [TESTING.md](TESTING.md) - test lanes, test layout, and ignored-test inventory.
+26. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) - local end-to-end validation scripts and documentation scan guidance.

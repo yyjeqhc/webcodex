@@ -1,144 +1,92 @@
-# WebCodex v0.2.0
+# WebCodex 0.2.0
 
 [English](RELEASE_NOTES_v0.2.0.md)
 
-**Status:** GitHub release preparation. This is a planned binary release from the `v0.1.0` tag to the final v0.2.0 release commit. npm publish is intentionally out of scope for this release.
+WebCodex lets ChatGPT and other MCP/GPT Action clients safely operate your private codebase through a self-hosted, auditable tool runtime.
 
-## Upgrade from v0.1.0
-
-Binary users: download new platform artifacts from the GitHub release and replace existing `webcodex`, `webcodex-cli`, and `webcodex-agent` binaries.
-
-npm wrapper users: the npm `@yyjeqhc/webcodex` package version remains at `0.1.0` for this release. Running `npm install -g @yyjeqhc/webcodex` currently installs v0.1.0 binaries. The npm wrapper will be updated in a later release. To use v0.2.0, download GitHub release binaries directly instead of using npm install.
-
-Rust crate version: `Cargo.toml` is updated from `0.1.0` to `0.2.0`.
+It turns online AI coding from blind file edits into a permissioned, validated, reviewable engineering workflow.
 
 ## Highlights
 
-- OAuth2 authorization code flow with client management, PKCE, browser consent, refresh token rotation, and token revocation.
-- Structured line edit tools: `replace_line_range`, `insert_at_line`, `delete_line_range` for scoped source edits with known line numbers.
-- `show_changes` tool for worktree inspection, session activity summary, and diff review.
-- Session event recorder foundation: `start_session` and `session_summary` for task tracking.
-- Session-aware `show_changes`: pass `session_id` to include session activity alongside git state.
-- `ToolMetadata` foundation: centralized risk, OAuth scope, read-only/destructive hints, and path hints for each tool.
-- `ToolKernel` facade: unified dispatch layer for both REST `callRuntimeTool` and MCP `tools/call` with metadata-backed OAuth scope checks and session recording.
-- Client profile isolation: agent enrollment files are isolated by profile under `/etc/webcodex/clients/<profile>/`.
-- QUIC agent transport: experimental QUIC transport with auto-fallback to WebSocket and polling.
-- Build revision metadata: `runtime_status` reports `git_commit`, `git_dirty`, and `built_at` for server and CLI.
-- Shell profile support: prepared environment snapshots for Rust/Cargo, Python venv, and Conda project development.
-- Chinese (zh-CN) documentation for most guides.
+- ChatGPT, MCP, and GPT Actions can use one self-hosted coding runtime.
+- MCP and GPT Actions call the same WebCodex ToolRuntime.
+- Projects are registered by agents, with runtime ids shaped like `agent:<client_id>:<project_id>`.
+- The recommended coding workflow is structured: start, inspect, edit, validate, review, finish.
+- Sessions, handoff summaries, finish verdicts, hygiene checks, and validation summaries provide review evidence.
+- Structured edit tools support scoped line edits and checked patch application.
+- Runtime health, project discovery, Git status/diff, Cargo validation helpers, bounded shell/job execution, and artifact workflows are available through the runtime.
+- Legacy server-side `projects.toml` onboarding, legacy `/api/codex/*` routes, and `run_codex` are removed from the model-facing runtime.
 
-## New tools and runtime capabilities
+## Who Should Try This
 
-### Structured line edit tools
+Try WebCodex 0.2.0 if you want an online AI coding client to work on private code while repository execution stays on a machine you control.
 
-Preferred for scoped source edits when line numbers are known:
+Good fit:
 
-- `replace_line_range` — replace a range of lines in a file.
-- `insert_at_line` — insert content at a specific line.
-- `delete_line_range` — delete a range of lines.
+- Solo developers and small teams comfortable self-hosting a server and agent.
+- Teams evaluating ChatGPT MCP or Custom GPT Actions for private repositories.
+- Operators who want auditable coding tasks with explicit validation and review evidence.
 
-These tools go through the agent dispatch path and respect project boundaries.
+Not yet a fit:
 
-### show_changes
+- Teams looking for hosted SaaS.
+- Teams requiring first-class IDE/LSP semantics in the first setup.
+- Operators who cannot manage token, HTTPS, agent, and shell boundaries.
 
-A read-only project inspection tool that summarizes:
+## What Changed
 
-- Branch, HEAD, and commit state.
-- Modified, added, deleted, renamed, and untracked files.
-- `git diff --stat` and optional bounded hunks.
-- Simple warnings for untracked smoke/tmp/test/anchor files.
-- Optional session activity summary when `session_id` is provided.
-- Suggested next actions.
+- Added a productized online coding loop around `start_coding_task`, structured inspection, structured edits, validation helpers, review/hygiene tools, and `finish_coding_task`.
+- Improved agent-registered project discovery and runtime project id guidance.
+- Aligned MCP and GPT Actions around the same ToolRuntime and safety model.
+- Added or refined session/handoff/finish summaries for reviewable closeout.
+- Added structured line edit and patch workflows for safer source changes.
+- Added runtime health and compact discovery patterns for model-facing clients.
+- Added OAuth/PAT/shared-key documentation for deployment paths while keeping README and Quick Start focused on first setup.
+- Expanded Chinese onboarding docs for README, Quick Start, Concepts, MCP, and GPT Actions.
 
-Requires `project:read`. Never modifies, cleans, stages, commits, or restores the worktree.
+## Breaking Changes
 
-### Session tracking foundation
+- Server-side `projects.toml` project onboarding is removed.
+- Projects must be registered by agents.
+- `PROJECTS_CONFIG` is not the runtime project source.
+- Legacy `/api/codex/*` routes are removed.
+- `run_codex` is removed from the model-facing runtime surface.
+- Operators who need Codex-specific workflows should run them outside WebCodex.
 
-- `start_session` creates a bounded in-memory session recorder with a `wc_sess_*` id.
-- `session_summary` returns recorded tool calls, success/failure status, project ids, inferred write-like paths, and returned job ids.
-- `show_changes` accepts `session_id` to include session activity alongside git state.
-- Sessions are in-memory and bounded; server restart loses session data.
+## Security Model
 
-### ToolMetadata and ToolKernel
+- The model can only call exposed tools.
+- Project access is agent-registered.
+- The server does not scan the filesystem.
+- Shell/job tools are bounded but powerful and should be treated as escape hatches.
+- Tokens, shared keys, env files, Authorization headers, and complete agent configs must not be exposed in prompts, logs, examples, or committed files.
+- Session and finish outputs provide bounded review evidence, not a replacement for normal code review or infrastructure logging.
 
-`ToolMetadata` centralizes per-tool facts:
+See [../SECURITY.md](../SECURITY.md) and [CONCEPTS.md](CONCEPTS.md).
 
-- Risk class (`ReadOnly`, `ProjectWrite`, `JobRun`, `AccountManage`).
-- OAuth scope requirement.
-- Read-only, destructive, and open-world hints.
-- Project requirement and path hints.
+## Known Limitations
 
-`ToolKernel` is a lightweight facade used by both REST `callRuntimeTool` and MCP `tools/call`. It performs:
+- WebCodex is self-hosted infrastructure, not hosted SaaS.
+- First setup is still technical and assumes command-line comfort.
+- Semantic code intelligence, LSP diagnostics, references, and symbol outline are not first-class in 0.2.0.
+- The UI/dashboard is minimal and not the primary workflow.
+- Shell/job tools require trust, scoped configuration, and operator discipline.
+- Full production hardening still depends on your HTTPS, token, OS-user, reverse-proxy, and agent deployment choices.
 
-- Metadata-backed OAuth scope checks before dispatch.
-- Session event recording (start and finish events).
-- `ToolCall` parsing and dispatch to existing `ToolRuntime` handlers.
+## Upgrade Notes
 
-This is preparation for a later provider system. It does not change runtime dispatch behavior, OAuth grant management, or the existing tool API. No external MCP provider system is included yet.
+- Binary users should replace `webcodex`, `webcodex-cli`, and `webcodex-agent` with matching 0.2.0 artifacts when the release artifacts are published.
+- If using an npm wrapper, confirm which binary version its manifest installs before assuming it is 0.2.0.
+- Re-register projects through agents instead of relying on removed server-side project configuration.
+- Refresh GPT Actions schemas from `/openapi.json` after upgrading.
+- Reconnect or restart agents after changing project registrations, tokens, or shell profiles.
 
-## GPT Action and MCP improvements
+## Validation
 
-- OAuth2 authorization code flow: clients can obtain delegated `wc_oat_*` access tokens via browser consent or direct Bearer issuance.
-- OAuth2 client management API: create, list, and revoke OAuth clients with `allowed_scopes`.
-- Protected resource metadata at `/.well-known/oauth-protected-resource`.
-- Authorization server metadata at `/.well-known/oauth-authorization-server`.
-- Route scope policy enforcement: OAuth tokens are checked against per-route scope requirements.
-- Refresh token rotation with one-time-use enforcement.
-- Token revocation endpoint.
-- `ToolKernel` facade ensures consistent OAuth scope checks across REST and MCP.
-- Tool annotations in `tools/list` responses derived from `ToolMetadata`.
+Before publishing or deploying 0.2.0 artifacts, run the current procedure in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md). At minimum, verify formatting, cargo check, markdown links, OpenAPI/MCP smoke discovery, agent project discovery, a read-only coding task, and a small reversible edit task.
 
-## Session-aware workflow
+This release note is not a substitute for fresh validation output from the final release commit.
 
-The recommended session workflow for GPT Actions and MCP:
+## Next
 
-1. `start_session` — create a session and keep the `wc_sess_*` id.
-2. `list_projects` / `runtime_status` — discover projects and verify agent health.
-3. `read_file` / `search_project_text` / `list_project_files` — inspect before editing.
-4. `replace_line_range` / `insert_at_line` / `delete_line_range` — preferred structured edits.
-5. `cargo_fmt` / `cargo_check` / `cargo_test` / `run_shell` — validate changes.
-6. `show_changes` with `session_id` — review worktree state and session activity.
-7. `session_summary` — inspect recorded tool calls.
-
-**REST / GPT Action session id semantics:**
-
-- Top-level `session_id` in the request body is recorder metadata for the current call.
-- `params.session_id` is the `show_changes` or `session_summary` business argument that selects which session to summarize.
-- The two ids may be the same or different.
-
-**MCP session id semantics:**
-
-- `_session_id` in `arguments` is reserved recorder metadata. WebCodex strips it before dispatch.
-- `session_id` in `arguments` is the business parameter for `show_changes` or `session_summary`.
-
-## Deployment and operations changes
-
-- Client profile isolation: `webcodex-cli client enroll --profile <name>` stores agent config, tokens, and project files under `/etc/webcodex/clients/<profile>/`.
-- `webcodex-cli agent install-service --profile <name>` installs a profile-specific systemd unit.
-- `webcodex-cli doctor --profile <name>` validates a profile-specific agent setup.
-- `webcodex-cli server install-service` installs the server systemd unit.
-- Build revision mismatch detection: `webcodex-cli` warns when the CLI and server binaries report different git commits.
-- Artifact chunked content reads: `read_project_artifact` supports `offset`/`length` for bounded binary reads.
-- Conversation file import: `importConversationFilesToProject` for ChatGPT file-passing (images, uploads, Code Interpreter outputs).
-
-## Known issues
-
-- **4 import HTTP tests are currently ignored.** These tests exercise HTTP redirect and import safety behavior and exhibit flaky or full-suite interaction behavior. They should be stabilized in a later hardening pass. The full test suite otherwise passes with 0 failures.
-- **npm package version is not updated.** The `@yyjeqhc/webcodex` npm package remains at `0.1.0`. npm publish is out of scope for this release.
-- **npm manifest.json points to v0.1.0 artifact URLs.** The manifest will be updated when v0.2.0 binaries are built and published.
-- **Sessions are in-memory only.** Server restart loses all session data. Persistent session storage is future work.
-- **ToolKernel is a facade, not a full provider system.** Concrete tool handlers and schemas remain in `ToolRuntime`. External MCP provider registration is not implemented.
-- **No external MCP host/provider system.** The current MCP endpoint exposes WebCodex runtime tools only.
-- **Dynamic client registration, OIDC, JWKS/JWT, `client_credentials` grant, and device code flow are not implemented.**
-
-## Release validation
-
-Run the current release readiness procedure in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
-against the final v0.2.0 release commit before publishing artifacts. Do not treat
-this release-note draft as a substitute for fresh validation output.
-
-## Scope since v0.1.0
-
-This release covers OAuth2, structured edits, session tracking, tool metadata,
-transport improvements, documentation, and operational tooling added after the
-`v0.1.0` tag. Use the final git tag comparison for the exact commit list.
+The 0.2.x line focuses on making the online coding loop easier to try, validate, review, and roll back. See [ROADMAP.md](ROADMAP.md) for the short roadmap.

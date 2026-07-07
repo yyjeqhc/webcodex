@@ -19,7 +19,7 @@ The command shapes below were checked against the current binary help output for
 | MCP connection | Finish a server + online agent path, then use [MCP.md](MCP.md) | [AUTH_MODEL.md](AUTH_MODEL.md), [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) if using OAuth |
 | systemd service deployment | Sections 1-3 below | [DEPLOYMENT.md](DEPLOYMENT.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
 | Manual/no-service agent run | Section 4 below | [SHELL_PROFILES.md](SHELL_PROFILES.md), [AGENT_PROJECTS.md](AGENT_PROJECTS.md) |
-| OAuth-only host with low-config shared-key onboarding | OAuth2 plus the shared-key bridge, when explicitly enabled | [DEPLOYMENT.md](DEPLOYMENT.md#oauth2), [OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md#bearer-like-oauth-bridge) |
+| OAuth-only host with low-config shared-key onboarding | OAuth2 plus the shared-key bridge, when explicitly enabled | [DEPLOYMENT.md](DEPLOYMENT.md#oauth2), [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md) |
 
 ## Quick start: three paths
 
@@ -496,5 +496,5 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
 - Agent projects: [AGENT_PROJECTS.md](AGENT_PROJECTS.md)
 - Shell profiles and PATH handling: [SHELL_PROFILES.md](SHELL_PROFILES.md)
 - Transport details and QUIC validation: [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md)
-- Testing and CI lanes: [TESTING.md](TESTING.md), [CI_LANES.md](CI_LANES.md)
+- Testing and validation: [TESTING.md](TESTING.md), [E2E_VALIDATION.md](E2E_VALIDATION.md)
 - Troubleshooting: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)

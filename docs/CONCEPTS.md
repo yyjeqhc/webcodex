@@ -81,10 +81,6 @@ The recommended coding workflow is:
 `run_shell` and `run_job` remain bounded command/job escape hatches. They are not
 the default validation source and are not the primary source-editing path.
 
-For developer architecture details on migrating runtime tool declarations toward
-a `ToolDefinition` registry, see
-[TOOL_DEFINITION_REGISTRY.md](TOOL_DEFINITION_REGISTRY.md).
-
 Codex delegation (`run_codex`) is currently hidden/disabled from model-facing
 surfaces: GPT Actions, MCP `tools/list`, runtime tool discovery, and generic
 model-facing dispatch. The legacy `/api/codex/run` endpoint is default-off and
@@ -256,5 +252,5 @@ is only for `webcodex-agent` connectivity.
 - Deployment and systemd: [DEPLOYMENT.md](DEPLOYMENT.md)
 - Authentication model: [AUTH_MODEL.md](AUTH_MODEL.md)
 - OAuth2 smoke test: [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md)
-- Testing and CI lanes: [TESTING.md](TESTING.md), [CI_LANES.md](CI_LANES.md)
-- Security: [../SECURITY.md](../SECURITY.md), [AUTH_ARCHITECTURE.md](AUTH_ARCHITECTURE.md)
+- Testing: [TESTING.md](TESTING.md), [E2E_VALIDATION.md](E2E_VALIDATION.md)
+- Security: [../SECURITY.md](../SECURITY.md), [AUTH_MODEL.md](AUTH_MODEL.md)

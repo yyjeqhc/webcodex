@@ -249,8 +249,6 @@ The server stores only hashes for user-created PATs and agent tokens. See [docs/
 - Agent transports: [docs/AGENT_TRANSPORTS.md](docs/AGENT_TRANSPORTS.md) / [简体中文](docs/AGENT_TRANSPORTS.zh-CN.md)
 - Shell profiles: [docs/SHELL_PROFILES.md](docs/SHELL_PROFILES.md) / [简体中文](docs/SHELL_PROFILES.zh-CN.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) / [简体中文](docs/TROUBLESHOOTING.zh-CN.md)
-- Release notes: [docs/RELEASE_NOTES_v0.2.0.md](docs/RELEASE_NOTES_v0.2.0.md)
-- Release readiness checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
 - Full documentation index: [docs/INDEX.md](docs/INDEX.md) / [简体中文](docs/INDEX.zh-CN.md)
 
 ## Security notes

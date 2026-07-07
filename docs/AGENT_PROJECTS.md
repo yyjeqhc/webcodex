@@ -94,6 +94,24 @@ registry, not the server-side file. If a project seems to flicker in and out of
 `last_seen`): a `stale` or disconnected agent's projects are listed but cannot
 execute until the agent reconnects.
 
+If `runtime_status.projects.server_static.status = "not_configured"` and the
+message says `projects.toml not configured; using agent-registered projects`,
+the server is reporting that this optional metadata file is absent. It is normal
+for agent-only deployments. If an operator still wants a server-side metadata
+file, use `PROJECTS_CONFIG=/path/to/projects.toml` and keep the file minimal:
+
+```toml
+[projects.webcodex]
+path = "/root/git/private-drop"
+executor = "agent"
+client_id = "workstation"
+allow_patch = true
+```
+
+This file can quiet the server-static status and support legacy metadata paths,
+but runtime tools should still use the `agent:<client_id>:<project_id>` id
+returned by `listProjects`.
+
 ## Troubleshooting
 
 If `createProject` or `registerProject` returns a policy error, check whether the requested path is under the agent's effective `allowed_roots`.

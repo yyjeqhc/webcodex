@@ -83,6 +83,24 @@ Server-side `projects.toml` config 是 legacy/metadata only。Runtime tool execu
 
 如果某个项目在 `runtime_status` 中出现，但 tool call 报 “Unknown project” / “projects.toml” 相关错误，通常说明可执行项目集来自 connected agent registry，而不是 server-side file。
 
+如果 `runtime_status.projects.server_static.status = "not_configured"`，并且
+message 是 `projects.toml not configured; using agent-registered projects`，
+意思只是这个可选 metadata 文件不存在。Agent-only deployment 中这是正常状态。
+如果 operator 仍然想保留 server-side metadata file，可以设置
+`PROJECTS_CONFIG=/path/to/projects.toml`，并使用一个很小的内联格式：
+
+```toml
+[projects.webcodex]
+path = "/root/git/private-drop"
+executor = "agent"
+client_id = "workstation"
+allow_patch = true
+```
+
+这个文件可以让 server-static 状态不再显示 not_configured，也可兼容 legacy
+metadata path；但 runtime tools 仍应使用 `listProjects` 返回的
+`agent:<client_id>:<project_id>` id。
+
 ## Troubleshooting
 
 如果 `createProject` 或 `registerProject` 返回 policy error，请确认请求路径在 agent effective `allowed_roots` 下。

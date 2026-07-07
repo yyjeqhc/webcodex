@@ -1,5 +1,5 @@
 id = "webcodex"
-path = "/root/git/webcodex"
+path = "/path/to/webcodex"
 name = "webcodex"
 kind = "rust"
 shell_profile = "rust"

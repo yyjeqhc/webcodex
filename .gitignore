@@ -25,3 +25,6 @@ data*
 /docs-generated/
 /docs-tmp/
 /site/
+
+# Local-only documentation archive for notes intentionally removed from git.
+/docs-local-archive/

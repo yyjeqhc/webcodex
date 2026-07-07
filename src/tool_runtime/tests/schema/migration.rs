@@ -1398,7 +1398,7 @@ fn tool_definition_dead_code_residue_is_narrow_and_documented() {
         "tool_definition.rs must not use a module-wide dead_code allowance"
     );
 
-    let docs = include_str!("../../../../docs/TOOL_DEFINITION_REGISTRY.md");
+    let docs = include_str!("../../../../docs/ARCHITECTURE.md");
     for phrase in [
         "module-wide `#![allow(dead_code)]`",
         "removed",

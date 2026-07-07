@@ -242,7 +242,6 @@ WebCodex 暴露一个远程 MCP endpoint，背后使用与 GPT Actions 相同的
 - Agent transports：[docs/AGENT_TRANSPORTS.zh-CN.md](docs/AGENT_TRANSPORTS.zh-CN.md) / [English](docs/AGENT_TRANSPORTS.md)
 - Shell profiles：[docs/SHELL_PROFILES.zh-CN.md](docs/SHELL_PROFILES.zh-CN.md) / [English](docs/SHELL_PROFILES.md)
 - 排障：[docs/TROUBLESHOOTING.zh-CN.md](docs/TROUBLESHOOTING.zh-CN.md) / [English](docs/TROUBLESHOOTING.md)
-- Release notes：[docs/RELEASE_NOTES_v0.2.0.md](docs/RELEASE_NOTES_v0.2.0.md)
 - 完整文档索引：[docs/INDEX.zh-CN.md](docs/INDEX.zh-CN.md) / [English](docs/INDEX.md)
 
 ## 安全提示

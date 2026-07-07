@@ -152,5 +152,5 @@ agent transport 使用 `transport = "auto"` 时，只有配置了 `[quic]` secti
 - Deployment 和 systemd：[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)
 - 认证模型：[AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)
 - OAuth2 smoke test：[OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md)
-- Testing 和 CI lanes：[TESTING.md](TESTING.md)、[CI_LANES.md](CI_LANES.md)
-- Security：[../SECURITY.md](../SECURITY.md)、[AUTH_ARCHITECTURE.md](AUTH_ARCHITECTURE.md)
+- Testing：[TESTING.md](TESTING.md)、[E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md)
+- Security：[../SECURITY.md](../SECURITY.md)、[AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)

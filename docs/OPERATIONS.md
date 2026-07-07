@@ -4,9 +4,6 @@
 
 This guide covers day-to-day WebCodex operations: server initialization, client enrollment, pairing, project registration, token management, and smoke testing. For first deployment, see [QUICK_START.md](QUICK_START.md). For production hardening, Nginx, QUIC, and OAuth2 details, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
-For the proposed ops health, deployment smoke, and agent fleet observability
-roadmap, see [OPS_OBSERVABILITY_ROADMAP.md](OPS_OBSERVABILITY_ROADMAP.md).
-
 Operator-friendly read-only checks are available through:
 
 ```bash
@@ -1006,7 +1003,6 @@ expected read failure to prove absence. In session summaries,
 - [DEPLOYMENT.md](DEPLOYMENT.md) — production hardening, Nginx, QUIC, OAuth2.
 - [QUICK_START.md](QUICK_START.md) — first deployment walkthrough.
 - [AUTH_MODEL.md](AUTH_MODEL.md) — credential model summary.
-- [AUTH_ARCHITECTURE.md](AUTH_ARCHITECTURE.md) — internal auth pipeline.
 - [GPT_ACTIONS.md](GPT_ACTIONS.md) — GPT Action setup and tool surface.
 - [MCP.md](MCP.md) — MCP endpoint, client config, and troubleshooting.
 - [AGENT_PROJECTS.md](AGENT_PROJECTS.md) — agent project registry format.

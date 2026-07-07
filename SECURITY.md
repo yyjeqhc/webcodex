@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-WebCodex v0.1.x is an early release. Security fixes are expected to target the latest v0.1.x release unless stated otherwise.
+WebCodex v0.2.x is an early release. Security fixes are expected to target the latest v0.2.x release unless stated otherwise.
 
 ## Reporting vulnerabilities
 
@@ -27,4 +27,4 @@ WebCodex is a remote tool execution system. Deploy it as if connected clients ca
 
 ## Known limitations
 
-v0.1.x is an early release intended for controlled environments. Review agent policy, reverse proxy configuration, token storage, and exposed GPT Actions before using it with sensitive repositories.
+v0.2.x is an early release intended for controlled environments. Review agent policy, reverse proxy configuration, token storage, and exposed GPT Actions before using it with sensitive repositories.

@@ -5,8 +5,8 @@ a product architecture narrative. Its purpose is to keep new code inside the
 right boundary and prevent recently split root files from becoming large mixed
 responsibility files again.
 
-For the strategic UI, MCP client/server, and LSP direction, see
-[UI_MCP_LSP_ROADMAP.md](UI_MCP_LSP_ROADMAP.md).
+For product vocabulary and the runtime surface overview, see
+[CONCEPTS.md](CONCEPTS.md).
 
 ## Maintenance Rules
 
@@ -23,6 +23,9 @@ For the strategic UI, MCP client/server, and LSP direction, see
   or renamed.
 - Do not create compatibility layers by default. Keep them only for an external
   public contract, release artifact, documented API, or explicit migration path.
+- Do not use module-wide `#![allow(dead_code)]` in runtime registry modules.
+  Removed dead-code residue should stay removed; unavoidable test-only helpers
+  should use `#[cfg(test)]` or item-scoped allowances.
 
 ## Runtime HTTP
 

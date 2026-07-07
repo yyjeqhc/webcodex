@@ -19,7 +19,7 @@
 | 接入 MCP | 先完成 server + online agent，再看 [MCP.zh-CN.md](MCP.zh-CN.md) | 使用 OAuth 时看 [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) |
 | systemd service 部署 | 下方第 1-3 节 | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)、[TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) |
 | manual/no-service agent 运行 | 下方第 4 节 | [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md)、[AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) |
-| OAuth-only Host 但希望 low-config shared-key onboarding | 显式启用 OAuth2 和 shared-key bridge | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md#oauth2)、[OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md#bearer-like-oauth-bridge) |
+| OAuth-only Host 但希望 low-config shared-key onboarding | 显式启用 OAuth2 和 shared-key bridge | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md#oauth2)、[OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md) |
 
 ## 快速开始：三条路径
 
@@ -436,5 +436,5 @@ curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
 - Agent projects：[AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md)
 - Shell profiles 和 PATH 处理：[SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md)
 - Transport 细节与 QUIC 验证：[AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md)
-- Testing 和 CI lanes：[TESTING.md](TESTING.md)、[CI_LANES.md](CI_LANES.md)
+- Testing 和 validation：[TESTING.md](TESTING.md)、[E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md)
 - 排障：[TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md)

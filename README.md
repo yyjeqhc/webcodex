@@ -2,263 +2,121 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Self-hosted runtime for letting ChatGPT GPT Actions and MCP clients work on private code through a controlled server and a local execution agent.
+WebCodex lets ChatGPT and other MCP/GPT Action clients safely operate your private codebase through a self-hosted, auditable tool runtime.
 
-WebCodex is for developers and teams who want an AI assistant to inspect repositories, edit files, and run controlled Git/test/build commands without handing project execution to a hosted black box.
+It turns online AI coding from blind file edits into a permissioned, validated, reviewable engineering workflow.
 
-Start here: [docs/QUICK_START.md](docs/QUICK_START.md) for onboarding and [docs/CONCEPTS.md](docs/CONCEPTS.md) for vocabulary.
-
-## Why it exists
-
-Most AI coding integrations force a trade-off:
-
-| Common approach | Problem |
-| --- | --- |
-| One-off scripts behind an HTTP endpoint | Hard to discover, audit, scope, or reuse safely. |
-| Local-only MCP servers | Good for desktop clients, but not enough for ChatGPT GPT Actions or remote workflows. |
-| Temporary tunnels to a laptop | URL churn, weak lifecycle control, and awkward client reconfiguration. |
-| Hosted coding agents | Convenient, but project execution leaves your machine or trusted host. |
-
-WebCodex provides a stable remote entry point while keeping the actual repository and command execution on a machine you control.
-
-## How it works
+- Give an online model bounded tools for reading, editing, validating, and reviewing a private repository.
+- Keep code execution on your machine or trusted host through a connected WebCodex agent.
+- Expose projects only after the agent registers allowed directories with the server.
+- Capture session, validation, handoff, and finish evidence so changes can be reviewed.
+- Use MCP or GPT Actions without changing the underlying WebCodex runtime.
 
 ```text
-ChatGPT GPT Action / MCP client
+ChatGPT / Claude / Grok
         |
-        | HTTPS + wc_pat_xxx
+        | MCP / GPT Actions
         v
-WebCodex server
+WebCodex Server
         |
-        | agent transport + wc_agent_xxx
+        | authenticated agent bridge
         v
-webcodex-agent
+WebCodex Agent
         |
         v
-registered project directory
+Private Codebase / Git / Tests / Shell
 ```
 
-The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back to the server and performs allowed work inside registered project directories. GPT Actions and MCP use a personal API token; the agent uses a separate agent token bound to its `client_id`.
+## Why WebCodex?
 
-## What it can do
+Online models cannot directly access your local files, Git state, test runner, or shell. The usual workaround is to paste snippets into chat, expose ad hoc scripts, or hand a repository to a hosted coding agent.
 
-- Expose controlled project tools to ChatGPT GPT Actions.
-- Expose the same runtime through an MCP endpoint.
-- Route tool calls to connected agents instead of reading private project paths directly from the server.
-- Read files, list files, search text, inspect Git status/diffs, validate/apply patches, and run bounded project commands.
-- Drive coding tasks with `start_coding_task`, explicit inspection, structured
-  edits, validation, review, and `finish_coding_task` / handoff closeout.
-- Prefer structured source edits with `replace_line_range`, `insert_at_line`,
-  `delete_line_range`, `apply_text_edits`, and `apply_patch_checked` when line
-  numbers or patch context are known.
-- Run Rust-oriented checks through structured Cargo helpers when configured;
-  `run_shell` remains a bounded escape hatch, not the default validation source.
-- WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes; run Codex outside WebCodex for Codex-specific workflows.
-- Track task sessions with `start_session`, `start_coding_task`,
-  `finish_coding_task`, `session_summary`, `session_handoff_summary`, and
-  session-aware `show_changes`.
-- Use `ToolMetadata` and `ToolKernel` foundation for consistent OAuth scope checks and session recording across REST and MCP.
-- Separate credentials for admins, account onboarding, GPT/MCP tokens, and agents.
+WebCodex gives the model a narrower interface:
 
-## What WebCodex is not
+- The server exposes authenticated runtime tools, not raw filesystem access.
+- The agent registers project directories from the machine that owns the code.
+- Project ids are explicit, for example `agent:<client_id>:<project_id>`.
+- Edits go through structured file and patch tools when possible.
+- Validation tools and finish summaries create evidence before handoff.
+- Review tools show the diff and workspace state before the user accepts work.
 
-- It is not a hosted code runner. The agent performs project execution on your own machine or server.
-- It is not a raw tunnel replacement. The server keeps a stable GPT/MCP-facing API and applies its own auth/tool boundaries.
-- It is not a reason to put root/admin credentials into GPT Actions. GPT Actions and MCP should use `wc_pat_xxx` only.
-- It is not a complete external MCP marketplace. The current runtime exposes WebCodex tools; broker-style registration of arbitrary external MCP servers is future work.
+## Quick Start
 
-## Current status
+Start with the local-first path in [docs/QUICK_START.md](docs/QUICK_START.md). It walks through one server, one agent, one registered project, and either an MCP or GPT Action client.
 
-| Capability | Status |
-| --- | --- |
-| GPT Actions runtime tools | Working; use `/openapi.json` with Bearer/API-key auth. |
-| MCP endpoint | Working; uses the same `ToolRuntime` as GPT Actions. |
-| Agent-backed project registry | Working; project ids use `agent:<client_id>:<project_id>`. |
-| Structured line edits | Working; preferred for scoped source edits with known line numbers. |
-| Git/file/patch/shell/Cargo tools | Working; shell execution should remain bounded and project-scoped. |
-| Codex CLI workflows | Run outside WebCodex; `run_codex` and legacy `/api/codex/*` routes are removed. |
-| Release artifacts | Planned v0.2.0 GitHub release will publish `linux-x64`, `linux-arm64`, and `darwin-arm64` artifacts. |
-| Windows and `darwin-x64` binaries | Not planned for v0.2.0 release artifacts. |
+The first success criteria are simple: `runtime_status` works, `list_projects` shows an `agent:<client_id>:<project_id>` project, the client can read `README.md`, and a small edit can be reviewed and reverted.
 
-## Quick start
+For a walkthrough of the expected tool flow, see [docs/DEMO.md](docs/DEMO.md).
 
-This local demo runs on one machine without `sudo`, `/etc`, systemd, HTTPS, Nginx, or QUIC. It is meant for evaluation. For shared-key quick start, temporary open demo mode, managed services, HTTPS, remote agents, and GPT Actions, use [docs/QUICK_START.md](docs/QUICK_START.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+## Choose A Client
 
-### 1. Install
+- Use MCP if your client supports remote MCP.
+- Use GPT Actions if you are building a Custom GPT.
+- Both surfaces call the same WebCodex ToolRuntime.
 
-```bash
-npm install -g @yyjeqhc/webcodex
+MCP clients connect to:
+
+```text
+https://your-domain.example/mcp
 ```
 
-Or use platform binaries from the matching GitHub release when they are published. The npm wrapper currently installs v0.1.0 binaries; do not expect `npm install -g @yyjeqhc/webcodex` to install v0.2.0 until a later npm wrapper and manifest update.
+GPT Actions import:
 
-### 2. Start a local server
-
-```bash
-mkdir -p .webcodex/data .webcodex/projects.d
-
-webcodex-cli server init \
-  --listen 127.0.0.1:8080 \
-  --data-dir "$PWD/.webcodex/data" \
-  --env-file "$PWD/.webcodex/server.env" \
-  --public-url http://127.0.0.1:8080
-
-set -a
-. "$PWD/.webcodex/server.env"
-set +a
-
-WEBCODEX_ENV_FILE="$PWD/.webcodex/server.env" webcodex
+```text
+https://your-domain.example/openapi.json
 ```
 
-Keep that server process running. `server init` created `.webcodex/server.env`, including the bootstrap/admin `WEBCODEX_TOKEN`. Do not use this token for GPT Actions, MCP, or agents.
+## Default Coding Loop
 
-### 3. Create local user, PAT, and agent token
+WebCodex is designed around a conservative coding loop:
 
-In another terminal from the same directory:
+1. `start_coding_task` - create an explicit session and collect bounded startup context.
+2. Inspect - use `list_project_files`, `search_project_text`, `read_file`, and Git review tools.
+3. Edit - prefer `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
+4. Validate - run `validate_patch`, `cargo_fmt`, `cargo_check`, or `cargo_test` where appropriate.
+5. Review - use `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`.
+6. Finish - use `finish_coding_task` or `session_handoff_summary` for a compact closeout.
 
-```bash
-set -a
-. "$PWD/.webcodex/server.env"
-set +a
+`run_shell` and `run_job` exist for bounded escape hatches. They are powerful and should not be the default editing or validation path.
 
-webcodex-cli users create \
-  --server-url http://127.0.0.1:8080 \
-  --token "$WEBCODEX_TOKEN" \
-  --username alice \
-  --display-name "Alice" \
-  --role user \
-  --issue-credential
-```
+## Safety Model
 
-Copy the returned `wc_acct_xxx` account credential, then create a PAT and an agent token:
+WebCodex does not make an online model a trusted local user. The model can only call exposed tools, those tools run through server policy and agent project boundaries, and shell/job tools remain explicit high-risk operations.
 
-```bash
-export WEBCODEX_ACCOUNT_CREDENTIAL=<wc_acct_xxx from the previous command>
+Projects live on the agent machine. The agent registers allowed directories with the server. The server does not scan your filesystem.
 
-webcodex-cli token create-local \
-  --server http://127.0.0.1:8080 \
-  --user alice \
-  --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
-  --name local-demo \
-  --scopes runtime:read,project:read,project:write,job:run
+Do not expose secrets in prompts, examples, tool output, docs, or committed config files. For the full boundary model, read [SECURITY.md](SECURITY.md) and [docs/CONCEPTS.md](docs/CONCEPTS.md).
 
-webcodex-cli agent-token create-local \
-  --server http://127.0.0.1:8080 \
-  --user alice \
-  --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
-  --client-id local-dev \
-  --name local-dev
-```
+## What 0.2.0 Includes
 
-Save the returned `wc_pat_xxx` as `WEBCODEX_PAT` and the returned `wc_agent_xxx` as `WEBCODEX_AGENT_TOKEN`.
+- Remote MCP endpoint and GPT Actions OpenAPI surface backed by one ToolRuntime.
+- Agent-registered project model with `agent:<client_id>:<project_id>` ids.
+- Structured source editing tools for scoped changes.
+- Patch validation, Cargo validation helpers, Git diff/status tools, and bounded shell/job execution.
+- Coding-task sessions with handoff, finish verdicts, review evidence, and hygiene summaries.
+- Authentication paths for quick shared-key evaluation and managed token deployments.
+- Documentation for first setup, concepts, MCP, GPT Actions, security, release notes, and roadmap.
 
-### 4. Register this repo and start a local agent
+## Known Limitations
 
-```bash
-export WEBCODEX_AGENT_TOKEN=<wc_agent_xxx from the previous step>
+- WebCodex is self-hosted infrastructure, not a hosted SaaS.
+- Setup is still technical and assumes comfort with a terminal, server URL, and agent process.
+- Semantic code intelligence, LSP diagnostics, and symbol navigation are not first-class in 0.2.0.
+- The UI/dashboard is minimal; MCP, GPT Actions, and CLI workflows are the primary paths.
+- Shell and job tools require operator trust, bounded configuration, and review discipline.
 
-webcodex-agent init \
-  --server-url http://127.0.0.1:8080 \
-  --token "$WEBCODEX_AGENT_TOKEN" \
-  --client-id local-dev \
-  --owner alice \
-  --display-name "Local Dev" \
-  --transport auto \
-  --projects-dir "$PWD/.webcodex/projects.d" \
-  --allowed-root "$PWD" \
-  --output "$PWD/.webcodex/agent.toml" \
-  --overwrite
+## Docs Map
 
-cat > "$PWD/.webcodex/projects.d/webcodex.toml" <<EOF
-id = "webcodex"
-path = "$PWD"
-name = "WebCodex"
-kind = "repo"
-allow_patch = true
-
-[hooks]
-status = ["git status --short"]
-EOF
-
-webcodex-agent --config "$PWD/.webcodex/agent.toml"
-```
-
-`auto` tries QUIC only when `[quic]` is configured. This local demo has no `[quic]` section, so the agent starts on the WebSocket fallback.
-
-### 5. Test the runtime API
-
-In a third terminal:
-
-```bash
-export WEBCODEX_PAT=<wc_pat_xxx from step 3>
-
-curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
-  -H 'Content-Type: application/json' \
-  http://127.0.0.1:8080/api/tools/list \
-  -d '{}'
-```
-
-The demo project id is `agent:local-dev:webcodex`. For service mode, no-service background mode, HTTPS, GPT Actions, MCP, and QUIC, continue with [docs/QUICK_START.md](docs/QUICK_START.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-
-## Create your own GPT
-
-GPT Actions are one of the main reasons to use WebCodex: your GPT gets a structured, scoped runtime instead of a pile of custom scripts.
-
-1. Create a GPT in ChatGPT.
-2. Add an Action.
-3. Import the OpenAPI schema from `https://your-domain.example/openapi.json`.
-4. Configure authentication as Bearer/API key in the GPT Action settings.
-5. Use a `wc_pat_xxx` personal API token. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
-6. Test `listRuntimeTools` and `callRuntimeTool` against a registered project such as `agent:workstation:my-repo`.
-
-See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the full GPT Action setup guide and supported tool surface.
-
-## Use with MCP
-
-WebCodex exposes a remote MCP endpoint backed by the same runtime used by GPT Actions.
-
-- Endpoint: `https://your-domain.example/mcp`
-- Auth: Bearer `wc_pat_xxx`
-- Runtime: the same `ToolRuntime` used by GPT Actions
-- Project ids: `agent:<client_id>:<project_id>`
-- Token boundary: do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx` for MCP
-
-See [docs/MCP.md](docs/MCP.md) for client configuration examples and troubleshooting.
-
-## Credential model
-
-| Credential | Used by | Purpose | Do not use for |
-| --- | --- | --- | --- |
-| `WEBCODEX_TOKEN` | server admin | bootstrap/root admin | GPT/MCP/agent daily use |
-| `wc_acct_xxx` | user CLI | create local PAT/agent token | GPT/MCP/agent |
-| `wc_pat_xxx` | GPT Action/MCP/API | runtime tools | agent connection |
-| `wc_agent_xxx` | `webcodex-agent` | connect agent to server | GPT/MCP/runtime API |
-
-The server stores only hashes for user-created PATs and agent tokens. See [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) for the full credential model.
-
-## Documentation
-
-- Start here: [docs/QUICK_START.md](docs/QUICK_START.md) / [简体中文](docs/QUICK_START.zh-CN.md)
-- Concepts: [docs/CONCEPTS.md](docs/CONCEPTS.md) / [简体中文](docs/CONCEPTS.zh-CN.md)
-- Operations guide: [docs/OPERATIONS.md](docs/OPERATIONS.md)
-- Install and deploy: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) / [简体中文](docs/DEPLOYMENT.zh-CN.md)
-- Create a GPT Action: [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) / [简体中文](docs/GPT_ACTIONS.zh-CN.md)
-- Use with MCP: [docs/MCP.md](docs/MCP.md) / [简体中文](docs/MCP.zh-CN.md)
-- Credential model: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) / [简体中文](docs/AUTH_MODEL.zh-CN.md)
-- Agent projects: [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md) / [简体中文](docs/AGENT_PROJECTS.zh-CN.md)
-- Agent transports: [docs/AGENT_TRANSPORTS.md](docs/AGENT_TRANSPORTS.md) / [简体中文](docs/AGENT_TRANSPORTS.zh-CN.md)
-- Shell profiles: [docs/SHELL_PROFILES.md](docs/SHELL_PROFILES.md) / [简体中文](docs/SHELL_PROFILES.zh-CN.md)
-- Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) / [简体中文](docs/TROUBLESHOOTING.zh-CN.md)
-- Full documentation index: [docs/INDEX.md](docs/INDEX.md) / [简体中文](docs/INDEX.zh-CN.md)
-
-## Security notes
-
-- Put the server behind HTTPS before connecting GPT Actions, MCP clients, or remote agents.
-- Keep `WEBCODEX_TOKEN` server-side. It is a bootstrap/admin credential, not an integration token.
-- Prefer one `wc_pat_xxx` per GPT Action, MCP client, or automation surface.
-- Prefer one `wc_agent_xxx` per agent `client_id`.
-- Use structured file edit tools before falling back to shell-based edits.
-- Review [SECURITY.md](SECURITY.md) before exposing a server on the public internet.
+- First setup: [docs/QUICK_START.md](docs/QUICK_START.md)
+- Demo workflow: [docs/DEMO.md](docs/DEMO.md)
+- Concepts: [docs/CONCEPTS.md](docs/CONCEPTS.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- MCP: [docs/MCP.md](docs/MCP.md)
+- GPT Actions: [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md)
+- Security: [SECURITY.md](SECURITY.md)
+- Release notes: [docs/RELEASE_NOTES_v0.2.0.md](docs/RELEASE_NOTES_v0.2.0.md)
+- Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
+- Full index: [docs/INDEX.md](docs/INDEX.md)
 
 ## License
 

@@ -2,499 +2,245 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-This is the canonical onboarding entry point for WebCodex. It helps a first-time operator choose a path, install the matching binaries, connect a server and agent, and then continue into GPT Actions, MCP, Deployment, OAuth, or Testing docs without learning every subsystem at once.
+This is the recommended local-first path for trying WebCodex. It gets one server, one agent, one registered project, and one MCP or GPT Action client working before you choose a production deployment shape.
 
-For vocabulary before commands, see [CONCEPTS.md](CONCEPTS.md). For the tiny one-machine demo that avoids `sudo`, `/etc`, systemd, HTTPS, Nginx, and QUIC, see the README quick start first.
+For vocabulary, read [CONCEPTS.md](CONCEPTS.md). For a realistic tool flow, read [DEMO.md](DEMO.md).
 
-The command shapes below were checked against the current binary help output for `webcodex-cli`, `webcodex-agent`, and `webcodex`.
+## What You Will Run
 
-## Decision tree
+- A WebCodex server reachable at a local or HTTPS URL.
+- A WebCodex agent running on the machine that has the code.
+- One project registered by the agent.
+- One online client: remote MCP if your client supports it, or GPT Actions if you are building a Custom GPT.
 
-| Goal | Start with | Then read |
-| --- | --- | --- |
-| Local quick experience on one machine | README quick start | This guide when you want shared-key, service, GPT Actions, MCP, or remote-agent setup |
-| Fast server + agent evaluation with one shared secret | Section A below | [AUTH_MODEL.md](AUTH_MODEL.md), [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) |
-| Single-user self-hosted deployment with revocable tokens | Sections 1-3 below | [DEPLOYMENT.md](DEPLOYMENT.md), [OPERATIONS.md](OPERATIONS.md) |
-| GPT Actions connection | Finish a server + online agent path, then use [GPT_ACTIONS.md](GPT_ACTIONS.md) | [AUTH_MODEL.md](AUTH_MODEL.md), [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) if using OAuth |
-| MCP connection | Finish a server + online agent path, then use [MCP.md](MCP.md) | [AUTH_MODEL.md](AUTH_MODEL.md), [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) if using OAuth |
-| systemd service deployment | Sections 1-3 below | [DEPLOYMENT.md](DEPLOYMENT.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
-| Manual/no-service agent run | Section 4 below | [SHELL_PROFILES.md](SHELL_PROFILES.md), [AGENT_PROJECTS.md](AGENT_PROJECTS.md) |
-| OAuth-only host with low-config shared-key onboarding | OAuth2 plus the shared-key bridge, when explicitly enabled | [DEPLOYMENT.md](DEPLOYMENT.md#oauth2), [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md) |
+MCP and GPT Actions call the same WebCodex ToolRuntime. The client changes the protocol framing, not the project boundary or tool behavior.
 
-## Quick start: three paths
+## Prerequisites
 
-### A. Shared key (recommended for early evaluation)
+- Rust and Cargo if you are running from this checkout.
+- A machine that can run both the server and the agent for the first test.
+- A code repository you are willing to inspect and edit in a controlled way.
+- A client:
+  - ChatGPT MCP / remote MCP client, preferred when available.
+  - ChatGPT Custom GPT with GPT Actions when MCP is not the target.
 
-Start the server. `server up` keeps anonymous access off by default and enables the shared-key quick-start path:
+Do not use real secrets, production repositories, or privileged shell profiles for the first run.
 
-```bash
-webcodex-cli server up --public-url <URL>
-```
+## Recommended Local-First Path
 
-Connect an agent from a project directory with the same shared key you will give GPT Actions or MCP:
+### 1. Build The Binaries
 
-```bash
-webcodex-cli connect <URL> --key <KEY> --root <PROJECT>
-```
-
-Configure GPT Action / MCP with that key when the host supports static bearer/API-key authentication:
-
-```text
-Authorization: Bearer <KEY>
-```
-
-In ChatGPT custom connectors, choose **Access token / API key** for this path, not OAuth. The server groups shared-key callers by `shared_key_hash`: the agent and GPT/MCP caller using the same key can see each other, while different keys cannot. A shared key is non-admin quick-start auth; it is not a managed user and should not be treated as production IAM.
-
-### B. Open demo mode (anonymous, temporary only)
+From the WebCodex checkout:
 
 ```bash
-webcodex-cli server up --open --public-url <URL>
-webcodex-cli connect <URL> --open --root <PROJECT>
-webcodex-agent --config <generated-agent.toml>
-```
-
-`--open` must be explicit on the server (`WEBCODEX_ALLOW_ANONYMOUS=true`) and on the client (`connect --open`). The generated agent config uses `token = ""`; `webcodex-agent` treats that as no Authorization. For GPT Actions / MCP hosts, use this path only when the host has an explicit **None**, **No authentication**, or no-auth setting. Leaving OAuth client fields blank is not the same as no auth.
-
-Open demo mode is only for localhost, trusted LANs, and temporary demos. Do not use it as a long-running public internet mode. Anonymous open callers share one demo current-session principal, so session state is shared within the open group.
-
-### C. Managed self-hosted mode
-
-Use pairing or account credentials, `wc_pat_*` user tokens, and `wc_agent_*` agent tokens for long-running self-hosted deployments. Managed mode gives you revocable credentials, scoped PATs, and clearer ownership records. It is not hosted SaaS, tenant isolation, or an external identity provider. The full managed flow is preserved in Sections 1-4 below.
-
-## GPT Action / MCP host authentication compatibility
-
-Hosts do not present authentication settings the same way.
-
-| Host UI option | WebCodex mode | Notes |
-| --- | --- | --- |
-| Access token / API key, static bearer, or custom `Authorization` header | Shared-key quick start or managed PAT | Use the shared key for quick start, or `wc_pat_*` for managed mode. The token is sent as `Authorization: Bearer ...`. |
-| None, No authentication, or unauthenticated access | Open demo mode | Requires the server to be started with `--open`; do not expose this as a long-running public mode. |
-| OAuth | Managed OAuth, or shared-key OAuth bridge when explicitly enabled | Use only when WebCodex is configured for the OAuth flow expected by that host. |
-
-Do not select OAuth and leave the client fields blank expecting shared-key or open behavior. Blank OAuth client fields usually mean the host will try OAuth metadata discovery, dynamic client registration, or client metadata discovery.
-
-If a host is OAuth-only and you want low-config shared-key onboarding, enable OAuth2 and the explicit shared-key bridge (`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true`) on the WebCodex server. The bridge lets the user enter a shared key on the WebCodex OAuth page and receive OAuth tokens after the authorization-code exchange. It still enforces OAuth semantics and scopes, stores only the shared-key hash, does not turn open anonymous mode into OAuth, and does not grant `admin`, `account:manage`, or `agent:*` scopes.
-
-## 0. Install binaries
-
-On every machine that will run the server or agent:
-
-```bash
-npm install -g @yyjeqhc/webcodex
+cargo build --release --bins
+export PATH="$PWD/target/release:$PATH"
 
 webcodex -h
 webcodex-cli -h
 webcodex-agent -h
 ```
 
-Current install path and release transition:
+Released binary artifacts can replace the `cargo build` step once the matching release is available.
 
-- `npm install -g @yyjeqhc/webcodex` is the current public npm wrapper path and installs the package/manifest currently published there.
-- In this repository, the npm wrapper is still `0.1.0` and its manifest points at v0.1.0 GitHub release artifacts.
-- The v0.2.0 release-prep path uses GitHub release artifacts for `linux-x64`, `linux-arm64`, and `darwin-arm64` when those artifacts are published. Do not assume `npm install -g @yyjeqhc/webcodex` installs v0.2.0 until the npm wrapper and manifest are updated.
-- Windows and `darwin-x64` artifacts are not planned for v0.2.0.
-- During development from a checkout, build the binaries from this repository instead of relying on the npm wrapper to represent unreleased code.
+### 2. Start The Server
 
-## 1. First server deployment
-
-Run this on the server host.
-
-### 1.1 Initialize server env
+In terminal 1:
 
 ```bash
-sudo webcodex-cli server init \
+webcodex-cli server up \
   --listen 127.0.0.1:8080 \
-  --data-dir /var/lib/webcodex \
-  --env-file /etc/webcodex/webcodex.env \
-  --public-url https://your-domain.example
+  --public-url http://127.0.0.1:8080
 ```
 
-This creates `/etc/webcodex/webcodex.env` and writes the bootstrap/admin `WEBCODEX_TOKEN`, `WEBCODEX_ADDR`, `WEBCODEX_DATA`, and `WEBCODEX_PUBLIC_URL`. It does not create `wc_pat_xxx` user tokens or `wc_agent_xxx` agent tokens.
+Keep this process running. Copy the shared key printed by the command. Use placeholders in notes and docs; do not paste real token values into committed files.
 
-For admin commands in the same shell, use `--env-file /etc/webcodex/webcodex.env` when available, or load the env file first:
+For a public ChatGPT connection, put the server behind HTTPS and use that public URL instead. Localhost is enough for a local runtime sanity check.
+
+### 3. Connect An Agent And Register A Project
+
+In terminal 2, from the repository you want WebCodex to operate:
 
 ```bash
-set -a
-. /etc/webcodex/webcodex.env
-set +a
+export WEBCODEX_KEY=<shared key from server up>
+
+webcodex-cli connect http://127.0.0.1:8080 \
+  --key "$WEBCODEX_KEY" \
+  --root "$PWD" \
+  --client-id local-dev \
+  --overwrite
 ```
 
-### 1.2 Put the server behind HTTPS
-
-Configure your reverse proxy so the public URL reaches the local HTTP server:
-
-```text
-https://your-domain.example  ->  http://127.0.0.1:8080
-```
-
-GPT Actions and MCP require a public HTTPS URL. WebCodex CLI does not automate DNS, TLS, reverse proxy, or tunnel setup. A minimal Nginx configuration is included in [DEPLOYMENT.md](DEPLOYMENT.md#public-https-url).
-
-### 1.3 Install and start the server service
+The command generates an agent config and a project registry entry for the selected root. Start the agent with the config path printed by `connect`; with the default client id it is:
 
 ```bash
-sudo webcodex-cli server install-service \
-  --env-file /etc/webcodex/webcodex.env \
-  --bin "$(command -v webcodex)"
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex
-
-webcodex-cli server status \
-  --env-file /etc/webcodex/webcodex.env \
-  --url http://127.0.0.1:8080
+webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
 
-Use `--overwrite` with `server install-service` only when replacing an existing unit.
+Projects live on the agent machine. The agent registers allowed directories with the server. The server does not scan your filesystem.
 
-### 1.4 Optional: enable QUIC for agents
+### 4. Verify Runtime Health
 
-QUIC is only for `webcodex-agent` connectivity. GPT Actions and MCP still use HTTPS.
-
-Add these values to `/etc/webcodex/webcodex.env` when you want QUIC enabled:
+In terminal 3:
 
 ```bash
-WEBCODEX_QUIC_ENABLED=true
-WEBCODEX_QUIC_LISTEN=0.0.0.0:8443
-WEBCODEX_QUIC_CERT=/etc/letsencrypt/live/your-domain.example/fullchain.pem
-WEBCODEX_QUIC_KEY=/etc/letsencrypt/live/your-domain.example/privkey.pem
-WEBCODEX_QUIC_ALPN=webcodex-agent/1
-```
+export WEBCODEX_KEY=<shared key from server up>
 
-Then restart the server and open UDP 8443 from agent hosts:
-
-```bash
-sudo systemctl restart webcodex
-webcodex-cli doctor --quic --server-only \
-  --server-url https://your-domain.example \
-  --env-file /etc/webcodex/webcodex.env \
-  --strict
-```
-
-If QUIC is not ready, keep `--transport auto` without a `[quic]` section; the agent starts on the WebSocket fallback and can later use QUIC when the `[quic]` section is added.
-
-## 2. Invite or enroll a first client
-
-The easiest first-client flow is pairing. Run this on the server/admin side:
-
-```bash
-webcodex-cli pairing create \
-  --server-url https://your-domain.example \
-  --env-file /etc/webcodex/webcodex.env \
-  --username alice \
-  --client-id alice-laptop \
-  --display-name "Alice" \
-  --ttl-secs 600
-```
-
-Copy only the short-lived `wc_pair_xxx` code to the client. Do not copy `WEBCODEX_TOKEN`, `wc_pat_xxx`, `wc_agent_xxx`, `/etc/webcodex/webcodex.env`, or a complete `agent.toml` to another machine.
-
-## 3. First client deployment: system service mode
-
-Run this on the client/agent machine.
-
-### 3.1 Enroll the client
-
-```bash
-sudo webcodex-cli client enroll \
-  --server-url https://your-domain.example \
-  --pairing-code <wc_pair_...> \
-  --client-id alice-laptop \
-  --display-name "Alice Laptop" \
-  --transport auto \
-  --output-dir /etc/webcodex/clients/alice-laptop \
-  --agent-config /etc/webcodex/clients/alice-laptop/agent.toml \
-  --projects-dir /etc/webcodex/clients/alice-laptop/projects.d \
-  --allowed-root /home/alice/git
-```
-
-`client enroll` receives `wc_pat_xxx` and `wc_agent_xxx` over HTTPS and writes them locally with restrictive file permissions. By default the profile is the `client_id`, so root enrollment writes under `/etc/webcodex/clients/alice-laptop/`; an explicit `--output-dir` still wins and should point at the intended profile directory.
-
-If your server QUIC listener is enabled, add a `[quic]` section to `/etc/webcodex/clients/alice-laptop/agent.toml`:
-
-```toml
-transport = "auto"
-
-[quic]
-server_addr = "your-domain.example:8443"
-server_name = "your-domain.example"
-alpn = "webcodex-agent/1"
-connect_timeout_secs = 10
-keepalive_interval_secs = 20
-```
-
-With `transport = "auto"`, the agent tries QUIC first when `[quic]` is configured, then WebSocket, then polling.
-
-### 3.2 Register a project
-
-Create a project registry file under the configured `projects_dir`:
-
-```bash
-sudo mkdir -p /etc/webcodex/clients/alice-laptop/projects.d
-sudo tee /etc/webcodex/clients/alice-laptop/projects.d/my-repo.toml >/dev/null <<'EOF'
-id = "my-repo"
-path = "/home/alice/git/my-repo"
-name = "My Repo"
-kind = "repo"
-allow_patch = true
-shell_profile = "rust"
-
-[hooks]
-status = ["git status --short"]
-check = ["cargo check --all-targets"]
-EOF
-```
-
-Runtime project ids use this form:
-
-```text
-agent:<client_id>:<project_id>
-```
-
-For the example above: `agent:alice-laptop:my-repo`.
-
-### 3.3 Configure project command environment
-
-systemd services do not read interactive shell files such as `~/.bashrc`. Configure project command environment through agent shell profiles instead of relying on login-shell state.
-
-Add or adjust this in `/etc/webcodex/clients/alice-laptop/agent.toml`:
-
-```toml
-[shell]
-default_profile = "rust"
-
-[shell.profiles.rust]
-description = "Rust development tools"
-program = "bash"
-args = ["-lc"]
-
-[shell.profiles.rust.env]
-PATH = "/home/alice/.cargo/bin:/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin"
-CARGO_HOME = "/home/alice/.cargo"
-RUSTUP_HOME = "/home/alice/.rustup"
-```
-
-If you use Python, Conda, Node, or Codex CLI, put their required `PATH` entries and environment variables in the selected shell profile. Restart the agent after changing `agent.toml`.
-
-### 3.4 Install and start the agent service
-
-```bash
-sudo webcodex-cli agent install-service \
-  --profile alice-laptop \
-  --bin "$(command -v webcodex-agent)"
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent-alice-laptop
-
-webcodex-cli agent status \
-  --profile alice-laptop \
-  --server-url https://your-domain.example
-
-webcodex-cli doctor --strict \
-  --profile alice-laptop \
-  --server-url https://your-domain.example
-```
-
-Use `--overwrite` with `agent install-service` only when replacing an existing unit.
-
-## 4. First client deployment: no service, foreground or background
-
-This is useful for quick tests, containers, temporary clients, or hosts where you do not want systemd. Service mode is preferred for long-running production agents; no-service mode is easier to inspect and stop manually.
-
-### 4.1 Enroll into a user config directory
-
-```bash
-webcodex-cli client enroll \
-  --server-url https://your-domain.example \
-  --pairing-code <wc_pair_...> \
-  --client-id alice-laptop \
-  --display-name "Alice Laptop" \
-  --transport auto \
-  --output-dir "$HOME/.config/webcodex/clients/alice-laptop" \
-  --agent-config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
-  --projects-dir "$HOME/.config/webcodex/clients/alice-laptop/projects.d" \
-  --allowed-root "$HOME/git"
-```
-
-Create a project file:
-
-```bash
-mkdir -p "$HOME/.config/webcodex/clients/alice-laptop/projects.d"
-cat > "$HOME/.config/webcodex/clients/alice-laptop/projects.d/my-repo.toml" <<'EOF'
-id = "my-repo"
-path = "/home/alice/git/my-repo"
-name = "My Repo"
-kind = "repo"
-allow_patch = true
-shell_profile = "rust"
-EOF
-```
-
-Edit the `path` to match the actual user and repository.
-
-### 4.2 Add a shell profile to agent.toml
-
-Add or adjust this in `$HOME/.config/webcodex/clients/alice-laptop/agent.toml`:
-
-```toml
-[shell]
-default_profile = "rust"
-
-[shell.profiles.rust]
-description = "Rust development tools"
-program = "bash"
-args = ["-lc"]
-
-[shell.profiles.rust.env]
-PATH = "/home/alice/.cargo/bin:/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin"
-CARGO_HOME = "/home/alice/.cargo"
-RUSTUP_HOME = "/home/alice/.rustup"
-```
-
-Use absolute paths in `agent.toml`; do not rely on `$HOME` expansion inside TOML strings. Project command environments should be configured in `[shell.profiles.*]`, not in your interactive `.bashrc`.
-
-### 4.3 Start in the foreground for inspection
-
-Foreground mode is the simplest no-service mode. It prints logs directly and exits when you press `Ctrl-C`:
-
-```bash
-webcodex-agent --profile alice-laptop
-```
-
-In another terminal, check status:
-
-```bash
-webcodex-cli agent status \
-  --profile alice-laptop \
-  --server-url https://your-domain.example
-```
-
-### 4.4 Or start in the background with nohup
-
-Use this after the foreground run works and you want the agent to keep running after the terminal closes:
-
-```bash
-mkdir -p "$HOME/.local/state/webcodex"
-nohup webcodex-agent --profile alice-laptop \
-  >> "$HOME/.local/state/webcodex/agent.log" 2>&1 &
-
-echo $! > "$HOME/.local/state/webcodex/agent.pid"
-```
-
-Check logs and status:
-
-```bash
-tail -f "$HOME/.local/state/webcodex/agent.log"
-
-webcodex-cli agent status \
-  --profile alice-laptop \
-  --server-url https://your-domain.example
-```
-
-Stop the background agent:
-
-```bash
-kill "$(cat "$HOME/.local/state/webcodex/agent.pid")"
-```
-
-## 5. Test from the server/API side
-
-After the agent is online, use a user PAT, not `WEBCODEX_TOKEN`, for runtime calls:
-
-```bash
-export WEBCODEX_PAT="$(cat /etc/webcodex/clients/alice-laptop/webcodex-user-token 2>/dev/null || cat "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token")"
-
-curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
+curl -sS \
+  -H "Authorization: Bearer $WEBCODEX_KEY" \
   -H 'Content-Type: application/json' \
-  https://your-domain.example/api/tools/list \
-  -d '{}'
+  http://127.0.0.1:8080/api/tools/call \
+  -d '{"tool":"runtime_status","summary_only":true}'
 ```
 
-Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
+Then verify projects:
 
-## 6. Runtime notes
+```bash
+curl -sS \
+  -H "Authorization: Bearer $WEBCODEX_KEY" \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:8080/api/tools/call \
+  -d '{"tool":"list_projects"}'
+```
 
-- For coding tasks, prefer this loop: `start_coding_task` -> inspect with
-  `read_file`, `search_project_text`, and `show_changes` -> edit with
-  `replace_line_range`, `insert_at_line`, `delete_line_range`,
-  `apply_text_edits`, or `apply_patch_checked` -> validate with `cargo_fmt`,
-  `cargo_check`, `cargo_test`, `validate_patch`, or `apply_patch_checked` ->
-  review with `show_changes`, `git_diff_hunks`, and
-  `workspace_hygiene_check` -> hand off with `session_handoff_summary` when
-  needed -> close out with `finish_coding_task`.
-- Tool taxonomy: `start_coding_task` and `finish_coding_task` are `workflow`
-  tools. `start_session`, `bind_current_session`, `session_summary`, and
-  `session_handoff_summary` are `session` tools. Use `category=workflow` to
-  discover the coding task lifecycle and `category=session` for raw session
-  ledger/control tools.
-- For lightweight GPT Action or MCP sanity, call `start_coding_task` with
-  `include_runtime_status=true`, `compact_startup=true`,
-  `include_tool_manifest=true`, and a small `tool_manifest_limit`. Limit-driven
-  `truncated=true` with
-  `truncation_reason="limit"` is normal bounded output, not `ResponseTooLarge`.
-  Read `startup_verdict.status` first, then its `checks` and
-  `suggested_next_actions` when attention is needed.
-- Standalone runtime health sanity can call `runtime_status` with
-  `summary_only=true` or `compact=true` for the same compact status shape.
-- For compact handoff sanity, call `session_handoff_summary` with
-  `summary_only=true`, `include_workspace=true`, and `include_validation=true`;
-  call `finish_coding_task` with `summary_only=true`, `include_hygiene=true`,
-  `include_validation_summary=true`, `include_workspace=true`, and
-  `include_diff=false`. In finish, `include_workspace` is a compatibility flag
-  for the nested handoff workspace block; the top-level finish workspace check
-  keeps its existing default behavior. Read `verdict.status`, `blocking`, and
-  `blocking_reasons` first; detailed fields remain the audit source. The verdict
-  is additive UX only and does not change safety or expected-failure semantics.
-- PASS means clean workspace, clean hygiene, no blocking jobs, no unexpected
-  tool failures, no expected-failure mismatches or unexpected successes, and
-  successful or intentionally skipped validation context. WARN covers validation
-  not run, matched expected failures only, non-git/git-unavailable review
-  context, terminal-pending nonblocking jobs, and explicit bounded truncation.
-  FAIL covers dirty workspace, hygiene failure, blocking jobs, unexpected
-  failures, expectation mismatches, unexpected successes, or failed validation.
-- During review, read `show_changes.clean`, `warnings`, `hunks_truncated`, and
-  `suggested_next_actions`, then read `workspace_hygiene_check.clean`,
-  `findings`, `warnings`, and `suggested_next_actions`. Both review tools also
-  expose top-level `verdict` summaries using the same additive UX convention.
-  The finish/handoff compact verdict remains the closeout aggregate and does not
-  change safety semantics.
-- `start_session` creates a session record but does not automatically bind future
-  calls. For reliable handoff, keep and pass explicit `session_id` or
-  `recording_session_id` values. Current-session binding is process-local
-  in-memory convenience state, not the durable session ledger.
-- `session_handoff_summary` requires an explicit `session_id`. Its validation
-  section is ledger-derived and does not expose raw stdout/stderr,
-  `validation_output_summary`, or excerpt fields.
-- For `summary_only=true` finish/handoff outputs, sanity checks should reject
-  stdout/stderr bodies, command text, tails, and excerpts. Raw diagnostic/status
-  payloads may still contain empty fields such as `stderr: ""`; non-empty
-  stdout/stderr bodies are high-noise unless explicitly requested and must never
-  include env values, tokens, or secrets.
-- `run_shell` is a bounded escape hatch, not the default validation source.
-- For project-scoped current sessions, call `start_session` with `project`. A
-  session created with `project = null` cannot later be bound to a specific
-  project; `session_project_mismatch` is the expected audit result, not a
-  runtime outage.
-- Projects are registered by agents, not by server-side projects.toml. Use `list_projects` to see the active runtime surface.
-- The recommended model workflow is structured edit tools, patch validation, bounded shell/job validation, `show_changes`, and sessions/handoff.
-- With `transport = "auto"`, the agent tries QUIC first only when a `[quic]` section is configured, then falls back to WebSocket and then polling. Without `[quic]`, `auto` starts at WebSocket.
+You should see a project id shaped like:
 
-## 7. Which mode should you choose?
+```text
+agent:local-dev:<project_id>
+```
 
-| Mode | Use when | Notes |
-| --- | --- | --- |
-| Server systemd service | Production server | Recommended. Keeps server running after reboot. |
-| Agent systemd service | Long-running trusted client or server-side worker | Recommended for stable machines. Configure shell profiles because systemd does not read `.bashrc`. |
-| Agent no-service foreground/background | Temporary client, container, smoke test, or machine without systemd | Start in the foreground first for logs; use `nohup` when you want it to continue after the terminal closes. |
+If you used `connect` from a repository root, the generated project id is printed by that command. Use the full runtime project id in client prompts and tool calls.
 
-## 8. Next docs
+### 5. Connect MCP
 
-- Concepts and vocabulary: [CONCEPTS.md](CONCEPTS.md)
-- Full deployment details: [DEPLOYMENT.md](DEPLOYMENT.md)
-- GPT Actions setup: [GPT_ACTIONS.md](GPT_ACTIONS.md)
+Use MCP if your client supports remote MCP.
+
+Configure the client with:
+
+```text
+URL:  http://127.0.0.1:8080/mcp
+Auth: Bearer <shared key>
+```
+
+For ChatGPT or another hosted client, replace localhost with the public HTTPS server URL:
+
+```text
+https://your-domain.example/mcp
+```
+
+See [MCP.md](MCP.md) for screenshots, token guidance, and common MCP errors.
+
+### 6. Or Connect GPT Actions
+
+Use GPT Actions if you are building a Custom GPT.
+
+Import the schema:
+
+```text
+http://127.0.0.1:8080/openapi.json
+```
+
+For ChatGPT, use a public HTTPS URL:
+
+```text
+https://your-domain.example/openapi.json
+```
+
+Configure Action authentication as Bearer/API-key auth and use the same shared key for this first evaluation. See [GPT_ACTIONS.md](GPT_ACTIONS.md) for the full setup guide.
+
+### 7. Run A Read-Only Task
+
+Ask the client to stay read-only first:
+
+```text
+Use WebCodex on project agent:local-dev:<project_id>.
+Start a coding task, inspect README.md, summarize what the project does,
+show changes without a diff, run workspace hygiene, and finish the task.
+Do not edit files.
+```
+
+Expected flow:
+
+1. `start_coding_task`
+2. `read_file` or `search_project_text`
+3. `show_changes`
+4. `workspace_hygiene_check`
+5. `finish_coding_task`
+
+### 8. Run A Small Edit Task
+
+Use a disposable branch or a tiny documentation edit:
+
+```text
+Use WebCodex on project agent:local-dev:<project_id>.
+Make one small documentation edit, validate what is appropriate for a docs-only
+change, show changes, run workspace hygiene, and finish with a clear verdict.
+Prefer structured edit tools. Do not use run_shell unless needed.
+```
+
+Review the changed files and diff before accepting the result. Revert the edit manually or with your usual Git workflow if it was only a smoke test.
+
+## First Success Criteria
+
+You are set up when:
+
+- `runtime_status` works.
+- `list_projects` shows an `agent:<client_id>:<project_id>` project.
+- The client can read `README.md`.
+- A read-only coding task finishes cleanly.
+- A small edit can be reviewed and reverted.
+
+## MCP Vs GPT Actions
+
+- Use MCP if your client supports remote MCP.
+- Use GPT Actions if you are building a Custom GPT.
+- Both surfaces call the same WebCodex ToolRuntime.
+
+The safest first prompt should name the exact project id and ask for a read-only task. Move to write tasks only after the client can inspect and finish cleanly.
+
+## Safety Defaults
+
+- Project access is agent-registered.
+- The server does not scan the filesystem.
+- The model can only call exposed tools.
+- Structured edit and validation tools are preferred.
+- `run_shell` is a bounded escape hatch, not the default editing or validation path.
+- Use scoped tokens or shared keys only for the intended client. Do not paste bootstrap, account, or agent credentials into MCP or GPT Actions.
+
+For the full boundary model, read [../SECURITY.md](../SECURITY.md).
+
+## Troubleshooting
+
+### Agent Not Connected
+
+Check the agent process logs and confirm it was started with the generated config. Run `runtime_status` and look for online agent counts before asking the model to edit.
+
+### Project Not Listed
+
+Run `list_projects`. If the project is missing, rerun `webcodex-cli connect` from the intended repository root or inspect the generated agent project registry. No server-side project registry is required.
+
+### Auth Failed
+
+Use the same shared key for the first server, agent connection, MCP client, or GPT Action. For managed deployments, use a `wc_pat_xxx` token for MCP/GPT Actions and a `wc_agent_xxx` token only for the agent.
+
+### Model Chose The Wrong Project Id
+
+Put the full `agent:<client_id>:<project_id>` value in the prompt. Ask the client to call `list_projects` and confirm the selected project before reading or editing files.
+
+### Response Too Large
+
+Use compact summaries: `runtime_status(summary_only=true)`, focused `tool_manifest` discovery, bounded file ranges, `show_changes(include_diff=false)`, and `finish_coding_task(summary_only=true)`.
+
+### Shell Or Job Feels Too Broad
+
+Prefer structured tools first: `read_file`, `search_project_text`, line edits, `apply_text_edits`, `validate_patch`, `cargo_fmt`, `cargo_check`, `cargo_test`, `show_changes`, and `workspace_hygiene_check`.
+
+## Next Docs
+
+- Demo workflow: [DEMO.md](DEMO.md)
+- Concepts: [CONCEPTS.md](CONCEPTS.md)
 - MCP setup: [MCP.md](MCP.md)
-- OAuth2 smoke test: [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md)
-- Agent projects: [AGENT_PROJECTS.md](AGENT_PROJECTS.md)
-- Shell profiles and PATH handling: [SHELL_PROFILES.md](SHELL_PROFILES.md)
-- Transport details and QUIC validation: [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md)
-- Testing and validation: [TESTING.md](TESTING.md), [E2E_VALIDATION.md](E2E_VALIDATION.md)
+- GPT Actions setup: [GPT_ACTIONS.md](GPT_ACTIONS.md)
+- Deployment details: [DEPLOYMENT.md](DEPLOYMENT.md)
+- Operations: [OPERATIONS.md](OPERATIONS.md)
 - Troubleshooting: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)

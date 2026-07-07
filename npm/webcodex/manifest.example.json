@@ -1,16 +1,8 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "artifacts": {
     "linux-x64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.1.0/webcodex-v0.1.0-linux-x64.tar.gz",
-      "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
-    },
-    "linux-arm64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.1.0/webcodex-v0.1.0-linux-arm64.tar.gz",
-      "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
-    },
-    "darwin-arm64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.1.0/webcodex-v0.1.0-darwin-arm64.tar.gz",
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.2.0/webcodex-v0.2.0-linux-x64.tar.gz",
       "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
     }
   }

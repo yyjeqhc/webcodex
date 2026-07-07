@@ -14,15 +14,15 @@ npm install -g @yyjeqhc/webcodex
 
 The package does not commit compiled binaries to git. During installation, `install.js` detects the current platform/architecture, reads `manifest.json`, downloads the matching `.tar.gz` artifact from the GitHub Release, verifies its SHA-256 checksum, and installs the native binaries into `vendor/bin`.
 
-## Supported platforms in v0.1.0
+## Supported platforms in v0.2.0
 
 Current release artifacts include:
 
 - `linux-x64`
-- `linux-arm64`
-- `darwin-arm64`
 
-`darwin-x64`, Windows, and other platforms are not included in v0.1.0. They are future targets unless a later release adds matching artifacts.
+`linux-arm64`, `darwin-arm64`, `darwin-x64`, Windows, and other platforms are not included in v0.2.0. They are future targets unless a later release adds matching artifacts.
+
+Do not publish the npm package until `manifest.json` contains the real SHA-256 checksums for the v0.2.0 GitHub Release artifacts. The package includes a `prepublishOnly` check that rejects placeholder checksums.
 
 ## Development switches
 
@@ -34,6 +34,20 @@ The wrappers preserve arguments and execute the package-local native binary. If 
 
 ```text
 Run npm install again or set WEBCODEX_BINARY_DIR=...
+```
+
+## Local package smoke
+
+From the repository root, build local binaries, pack this npm package, install the tarball into a temporary prefix, and verify the wrapper commands without publishing:
+
+```bash
+bash scripts/npm_package_smoke.sh
+```
+
+For a faster debug-build smoke:
+
+```bash
+WEBCODEX_NPM_SMOKE_PROFILE=debug bash scripts/npm_package_smoke.sh
 ```
 
 ## Enrollment flow

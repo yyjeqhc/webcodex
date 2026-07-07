@@ -44,9 +44,13 @@ webcodex-cli
 npm install -g @yyjeqhc/webcodex
 ```
 
-计划发布的 v0.2.0 GitHub release artifacts 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.2.0 暂不计划包含 `darwin-x64`、Windows 和其他 targets。npm wrapper 当前安装的是 v0.1.0 二进制文件；只有在 v0.2.0 GitHub release artifacts 发布后才使用对应 artifacts，在 wrapper 和 manifest 更新前不要假设 npm 会安装 v0.2.0。
+v0.2.0 npm wrapper 只按 `linux-x64` 准备。除非后续 release 增加 artifacts，否则 v0.2.0 暂不计划包含 `linux-arm64`、`darwin-arm64`、`darwin-x64`、Windows 和其他 targets。不要在 v0.2.0 GitHub Release artifact 存在且 `npm/webcodex/manifest.json` 写入真实 SHA-256 checksum 之前发布 npm package。
 
-npm package 是 native release artifacts 的 thin wrapper。安装时会下载匹配的 GitHub Release artifact，并使用 manifest 中的 SHA-256 checksum 验证。
+npm package 是 native release artifacts 的 thin wrapper。安装时会下载匹配的 GitHub Release artifact，并使用 manifest 中的 SHA-256 checksum 验证。发布前先运行本地 package smoke；它不会发布：
+
+```bash
+bash scripts/npm_package_smoke.sh
+```
 
 ## 示例文件
 

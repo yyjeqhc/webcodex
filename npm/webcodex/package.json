@@ -1,6 +1,6 @@
 {
   "name": "@yyjeqhc/webcodex",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Thin npm installer/wrapper for WebCodex native binaries.",
   "license": "Apache-2.0",
   "bin": {
@@ -10,7 +10,10 @@
   },
   "scripts": {
     "postinstall": "node install.js",
-    "test": "node test/self-test.js"
+    "test": "node test/self-test.js",
+    "pack:dry-run": "npm pack --dry-run",
+    "smoke:local": "bash ../../scripts/npm_package_smoke.sh",
+    "prepublishOnly": "node test/release-manifest-check.js"
   },
   "files": [
     "bin",
@@ -18,6 +21,7 @@
     "manifest.json",
     "manifest.example.json",
     "README.md",
+    "test",
     "vendor/.gitkeep"
   ],
   "engines": {

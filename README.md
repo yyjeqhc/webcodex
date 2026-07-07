@@ -44,7 +44,7 @@ WebCodex gives the model a narrower interface:
 
 Start with the local-first path in [docs/QUICK_START.md](docs/QUICK_START.md). It walks through one server, one agent, one registered project, and either an MCP or GPT Action client.
 
-The fastest evaluation path uses one shared key for server runtime calls, agent connect, and MCP/GPT Actions. Production auth uses scoped tokens or OAuth later; see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+The fastest evaluation path uses one long random Bearer value as a shared-key group: use the same value for agent connect and MCP/GPT Actions. The server does not pre-enroll that value; quick-start mode groups non-managed Bearer values by `shared_key_hash`. Production auth uses scoped tokens or OAuth later; see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 The first success criteria are simple: `runtime_status` works, `list_projects` shows an `agent:<client_id>:<project_id>` project, the client can read `README.md`, and a small edit can be reviewed and reverted.
 

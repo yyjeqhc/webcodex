@@ -97,6 +97,8 @@ Use the right credential for the right surface:
 - Server bootstrap/admin credentials stay server-side.
 - Account credentials are for local token creation, not for model-facing clients.
 
+Shared-key quick-start is a lightweight grouping mechanism, not production IAM.
+
 Detailed PAT, shared-key, and OAuth behavior belongs in [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md), not in prompts or README examples.
 
 ## Session And Audit Evidence
@@ -116,7 +118,7 @@ These records are intentionally bounded and redacted. They are not a substitute 
 
 Use the narrowest revocation that matches the risk:
 
-- Remove or rotate the shared key used for quick evaluation.
+- For shared-key quick-start, replace the Bearer value used by both agent and client, or disable shared-key quick-start.
 - Revoke or rotate a user token used by MCP, GPT Actions, or REST clients.
 - Revoke OAuth tokens when using OAuth.
 - Remove a project from the agent registry or narrow its allowed root.

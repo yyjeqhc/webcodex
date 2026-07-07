@@ -42,7 +42,7 @@ http://127.0.0.1:8080/openapi.json
 
    ![设置 Action 认证](assets/gpt-action-4.png)
 
-   选择 API-key 或 HTTP authentication，把 auth type 设为 Bearer，并粘贴第一次评估用的 shared key。不要使用 bootstrap/admin、account 或 agent tokens。
+   选择 API-key 或 HTTP authentication，把 auth type 设为 Bearer，并粘贴第一次评估用的 shared key。在 shared-key quick-start 模式下，这个值会通过 hash 标识和 agent key 相同的轻量 group。不要使用 bootstrap/admin、account 或 agent tokens。
 
 5. **导入 OpenAPI schema。**
 
@@ -58,7 +58,7 @@ http://127.0.0.1:8080/openapi.json
 
 GPT Actions 使用 Bearer/API-key authentication。
 
-第一次评估使用传给 `webcodex-cli connect --key` 的同一个 shared key。生产环境使用 scoped user tokens 或 OAuth。完整 credential model 见 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)。
+第一次评估时，使用和 `webcodex-cli connect --key` 相同的长随机 Bearer 值。在 shared-key quick-start 模式下，这个值不会被预先登记；它会通过 hash 标识一个轻量 shared-key group。agent 和客户端必须使用同一个值。生产环境使用 scoped user tokens 或 OAuth。完整 credential model 见 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)。
 
 不要把 bootstrap/admin、account 或 agent tokens 粘贴进 GPT Actions。
 

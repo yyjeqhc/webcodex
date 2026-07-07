@@ -30,7 +30,7 @@ MCP client 使用 Bearer/API-key authentication：
 Authorization: Bearer <shared key>
 ```
 
-第一次评估使用传给 `webcodex-cli connect --key` 的同一个 shared key。MCP 不要使用 bootstrap/admin、account 或 agent tokens。
+第一次评估时，使用和 `webcodex-cli connect --key` 相同的长随机 Bearer 值。在 shared-key quick-start 模式下，这个值不会被预先登记；它会通过 hash 标识一个轻量 shared-key group。agent 和客户端必须使用同一个值。MCP 不要使用 bootstrap/admin、account 或 agent tokens。
 
 生产环境使用 scoped user tokens 或 OAuth。完整 credential model 见 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)。
 

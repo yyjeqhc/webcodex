@@ -8,7 +8,7 @@
 
 ## 最快路径
 
-第一次评估时使用一个 shared key：server runtime calls、agent connect、MCP/GPT Actions 都使用同一个 key。scoped token、OAuth 和生产部署后面再看。
+为本次评估选择一个长随机 shared key。quick-start shared-key 模式不会把这个值预先登记成 server 唯一允许的 key。相反，任意非 managed Bearer 值都会成为一个轻量 shared-key principal。WebCodex 会把该值 hash 成 `shared_key_hash`，所以 agent 和客户端必须使用同一个 key，才能落到同一个 shared-key group。scoped token、OAuth 和生产部署后面再看。
 
 ## 你会运行什么
 
@@ -54,7 +54,7 @@ export WEBCODEX_KEY="$(openssl rand -base64 32)"
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
 ```
 
-后续 `webcodex-cli connect`、`curl`、MCP 和 GPT Actions 都使用同一个 `WEBCODEX_KEY`。不要把真实 key 值写入提交文件。
+后续 `webcodex-cli connect`、`curl`、MCP 和 GPT Actions 都使用同一个 `WEBCODEX_KEY`。在 quick-start shared-key 模式下，这个值通过 hash 标识 shared-key group；它不是 server-side allowlist entry。不要把真实 key 值写入提交文件。
 
 准备 server env：
 
@@ -65,7 +65,9 @@ webcodex-cli server up \
   --public-url http://127.0.0.1:8080
 ```
 
-`server up` 会启用 shared-key quick-start mode，并写入 server env file。它没有 `--key` 参数，也会故意隐藏完整 server bootstrap key。
+`server up` 会启用 shared-key quick-start mode，并写入 server env file。它没有 `--key` 参数，也会故意隐藏完整 server bootstrap key。`WEBCODEX_KEY` 值稍后由 agent connect、curl、MCP 和 GPT Actions 提供。
+
+`--open` 不同：它允许 anonymous access，只应该用于明确的临时 localhost / trusted-network demo。
 
 加载 env 并启动 server：
 
@@ -151,7 +153,7 @@ Auth: Bearer <shared key>
 https://your-domain.example/mcp
 ```
 
-第一次评估使用 `Bearer <shared key>`。生产认证后面再看。截图和常见 MCP 错误见 [MCP.zh-CN.md](MCP.zh-CN.md)。
+第一次评估使用和 `webcodex-cli connect --key` 相同的 `Bearer <shared key>`。生产认证后面再看。截图和常见 MCP 错误见 [MCP.zh-CN.md](MCP.zh-CN.md)。
 
 ## 6. 或连接 GPT Actions
 
@@ -215,7 +217,7 @@ Prefer structured edit tools. Do not use run_shell unless needed.
 
 ## 生产认证后面再看
 
-这条 shared-key 路径只用于第一次评估。生产环境请阅读 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)、[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) 和 [OPERATIONS.md](OPERATIONS.md)，再迁移到 scoped user tokens 或 OAuth、反向代理 HTTPS、服务管理和 token rotation。
+不要把 shared-key quick-start 当成生产 IAM。它是第一次评估用的简单分组机制。生产环境请阅读 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)、[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) 和 [OPERATIONS.md](OPERATIONS.md)，再切到 scoped user tokens、OAuth、HTTPS、服务管理和 token rotation。
 
 ## MCP vs GPT Actions
 

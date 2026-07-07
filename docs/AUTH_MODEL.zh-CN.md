@@ -28,7 +28,9 @@ shared key 是 quick-start secret：agent 通过 `connect --key <KEY>` 使用它
 Authorization: Bearer <KEY>
 ```
 
-server 按 `shared_key_hash` 给 shared-key caller 分组。shared key 不是 admin credential，不是 managed user identity，也不是 production IAM。
+当 `WEBCODEX_SHARED_KEY_ENABLED=true` 时，未知且非 `wc_` 开头的 Bearer 值会被接受为 shared-key principal。该明文值不会作为 server-side allowlist entry 预先登记；WebCodex 按 `shared_key_hash` 对调用者分组。不同值会形成不同的轻量 group。
+
+shared key 不是 admin credential，不是 managed user identity，也不是 production IAM。
 
 静态 Bearer/API-key 认证既可以承载 shared key，也可以承载 managed mode 的 `wc_pat_xxx`。OAuth 是独立 flow；OAuth client 字段留空不会变成 no-auth，也不会变成静态 Bearer。
 

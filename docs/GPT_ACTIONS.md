@@ -42,7 +42,7 @@ The screenshots in `docs/assets/gpt-action-*.png` are UI landmarks. ChatGPT may 
 
    ![Set Action authentication](assets/gpt-action-4.png)
 
-   Choose API-key or HTTP authentication, set the auth type to Bearer, and paste the first-evaluation shared key. Do not use bootstrap/admin, account, or agent tokens.
+   Choose API-key or HTTP authentication, set the auth type to Bearer, and paste the first-evaluation shared key. In shared-key quick-start mode, this value identifies the same lightweight group as the agent key by hash. Do not use bootstrap/admin, account, or agent tokens.
 
 5. **Import the OpenAPI schema.**
 
@@ -58,7 +58,7 @@ The screenshots in `docs/assets/gpt-action-*.png` are UI landmarks. ChatGPT may 
 
 Configure GPT Actions with Bearer/API-key authentication.
 
-For the first evaluation, paste the same shared key that you passed to `webcodex-cli connect --key`. For production, use scoped user tokens or OAuth. See [AUTH_MODEL.md](AUTH_MODEL.md) for the full credential model.
+For the first evaluation, use the same long random Bearer value that you used with `webcodex-cli connect --key`. In shared-key quick-start mode, this value is not pre-enrolled; it identifies a lightweight shared-key group by hash. Use the same value for the agent and the client. For production, use scoped user tokens or OAuth. See [AUTH_MODEL.md](AUTH_MODEL.md) for the full credential model.
 
 Do not paste bootstrap/admin, account, or agent tokens into GPT Actions.
 

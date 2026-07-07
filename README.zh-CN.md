@@ -44,7 +44,7 @@ WebCodex 提供的是更窄的接口：
 
 先走 [docs/QUICK_START.zh-CN.md](docs/QUICK_START.zh-CN.md) 的 local-first 路径。它会带你启动一个 server、一个 agent、注册一个项目，并连接 MCP 或 GPT Action client。
 
-最快评估路径使用一个 shared key：server runtime calls、agent connect、MCP/GPT Actions 都用这同一个 key。生产认证后续再切到 scoped token 或 OAuth；见 [docs/AUTH_MODEL.zh-CN.md](docs/AUTH_MODEL.zh-CN.md) 和 [docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md)。
+最快评估路径使用一个长随机 Bearer 值作为 shared-key group：agent connect 和 MCP/GPT Actions 使用同一个值。server 不会预先登记该值；quick-start 模式会按 `shared_key_hash` 对非 managed Bearer 值分组。生产认证后续再切到 scoped token 或 OAuth；见 [docs/AUTH_MODEL.zh-CN.md](docs/AUTH_MODEL.zh-CN.md) 和 [docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md)。
 
 第一次成功的标准很具体：`runtime_status` 可用，`list_projects` 能看到一个 `agent:<client_id>:<project_id>` 项目，client 能读取 `README.md`，一个只读 coding task 能正常结束，并且一个小修改可以被 review 和回滚。
 

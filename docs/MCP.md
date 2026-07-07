@@ -30,7 +30,7 @@ Configure the MCP client with Bearer/API-key authentication:
 Authorization: Bearer <shared key>
 ```
 
-For the first evaluation, use the same shared key that you passed to `webcodex-cli connect --key`. Do not use bootstrap/admin, account, or agent tokens for MCP.
+For the first evaluation, use the same long random Bearer value that you used with `webcodex-cli connect --key`. In shared-key quick-start mode, this value is not pre-enrolled; it identifies a lightweight shared-key group by hash. Use the same value for the agent and the client. Do not use bootstrap/admin, account, or agent tokens for MCP.
 
 For production, use scoped user tokens or OAuth. See [AUTH_MODEL.md](AUTH_MODEL.md) for the full credential model.
 

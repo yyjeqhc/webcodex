@@ -8,7 +8,7 @@ For vocabulary, read [CONCEPTS.md](CONCEPTS.md). For a realistic tool flow, read
 
 ## Fastest Path
 
-Use one shared key for the first evaluation: server runtime calls, agent connect, and MCP/GPT Actions all use the same key. Move to scoped tokens, OAuth, and production deployment later.
+Choose one long random shared key for this evaluation. In quick-start shared-key mode, the server does not pre-enroll that value as a single allowed key. Instead, any non-managed Bearer value becomes a lightweight shared-key principal. WebCodex hashes that value into `shared_key_hash`, so the agent and the client must use the same key to land in the same shared-key group. Move to scoped tokens, OAuth, and production deployment later.
 
 ## What You Will Run
 
@@ -54,7 +54,7 @@ export WEBCODEX_KEY="$(openssl rand -base64 32)"
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
 ```
 
-Use the same `WEBCODEX_KEY` value later for `webcodex-cli connect`, `curl`, MCP, and GPT Actions. Do not paste real key values into committed files.
+Use the same `WEBCODEX_KEY` value later for `webcodex-cli connect`, `curl`, MCP, and GPT Actions. In quick-start shared-key mode, this value identifies the shared-key group by hash; it is not a server-side allowlist entry. Do not paste real key values into committed files.
 
 Prepare the server env:
 
@@ -65,7 +65,9 @@ webcodex-cli server up \
   --public-url http://127.0.0.1:8080
 ```
 
-`server up` enables shared-key quick-start mode and writes the server env file. It does not take a `--key` flag, and it intentionally does not print the full server bootstrap key.
+`server up` enables shared-key quick-start mode and writes the server env file. It does not take a `--key` flag, and it intentionally does not print the full server bootstrap key. The `WEBCODEX_KEY` value is supplied later by agent connect, curl, MCP, and GPT Actions.
+
+`--open` is different: it allows anonymous access and should only be used for explicit temporary localhost/trusted-network demos.
 
 Load the env and start the server:
 
@@ -151,7 +153,7 @@ For ChatGPT or another hosted client, replace localhost with the public HTTPS se
 https://your-domain.example/mcp
 ```
 
-For the first evaluation, use `Bearer <shared key>`. Production auth comes later. See [MCP.md](MCP.md) for screenshots and common MCP errors.
+For the first evaluation, use the same `Bearer <shared key>` value that you used with `webcodex-cli connect --key`. Production auth comes later. See [MCP.md](MCP.md) for screenshots and common MCP errors.
 
 ## 6. Or Connect GPT Actions
 
@@ -215,7 +217,7 @@ You are set up when:
 
 ## Production Auth Comes Later
 
-This shared-key path is for first evaluation. For production, read [AUTH_MODEL.md](AUTH_MODEL.md), [DEPLOYMENT.md](DEPLOYMENT.md), and [OPERATIONS.md](OPERATIONS.md), then move to scoped user tokens or OAuth, reverse proxy HTTPS, service management, and token rotation.
+Do not treat shared-key quick-start as production IAM. It is a simple grouping mechanism for first evaluation. For production, read [AUTH_MODEL.md](AUTH_MODEL.md), [DEPLOYMENT.md](DEPLOYMENT.md), and [OPERATIONS.md](OPERATIONS.md), then move to scoped user tokens, OAuth, HTTPS, service management, and token rotation.
 
 ## MCP Vs GPT Actions
 

@@ -39,6 +39,7 @@ npm install -g @yyjeqhc/webcodex
 
 ```bash
 cargo build --release --bins
+export PATH="$PWD/target/release:$PATH"
 ```
 
 平台支持和安装细节见 [docs/BUILD_INSTALL.zh-CN.md](docs/BUILD_INSTALL.zh-CN.md)。
@@ -46,11 +47,11 @@ cargo build --release --bins
 ## 快速开始
 
 下面命令假设 npm 安装后的 binaries 已经在 `PATH` 中。
+如果你从源码构建，请先执行 `export PATH="$PWD/target/release:$PATH"`。
 
-终端 1 - 生成一个评估用 key 并启动 server：
+终端 1 - 启动 server：
 
 ```bash
-export WEBCODEX_KEY="$(openssl rand -base64 32)"
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
 
 webcodex-cli server up \
@@ -64,10 +65,11 @@ set +a
 webcodex
 ```
 
-终端 2 - 在你想让 WebCodex 操作的仓库中连接 agent：
+终端 2 - 在你想让 WebCodex 操作的仓库中生成一个评估 key、连接 agent 并启动它：
 
 ```bash
-export WEBCODEX_KEY="<同一个评估 key>"
+export WEBCODEX_KEY="$(openssl rand -base64 32)"
+printf 'Use this value as your MCP/GPT Actions Bearer key: %s\n' "$WEBCODEX_KEY"
 
 webcodex-cli connect http://127.0.0.1:8080 \
   --key "$WEBCODEX_KEY" \
@@ -78,7 +80,32 @@ webcodex-cli connect http://127.0.0.1:8080 \
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
 
-把同一个 `WEBCODEX_KEY` 作为 Bearer key 填到 MCP client 或 GPT Action 里。完整步骤见 [docs/QUICK_START.zh-CN.md](docs/QUICK_START.zh-CN.md)。
+把打印出来的 key 复制到 MCP client 或 GPT Action 的 Bearer/API-key auth 配置里。
+server 不会预登记这个 key；quick-start shared-key mode 会按 Bearer 值的 hash 把 agent 和 client 分到同一个 shared-key group。
+
+## 验证
+
+在另一个终端中，手动粘贴同一个评估 key：
+
+```bash
+export WEBCODEX_KEY="<同一个评估 key>"
+
+curl -sS \
+  -H "Authorization: Bearer $WEBCODEX_KEY" \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:8080/api/tools/call \
+  -d '{"tool":"runtime_status","summary_only":true}'
+
+curl -sS \
+  -H "Authorization: Bearer $WEBCODEX_KEY" \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:8080/api/tools/call \
+  -d '{"tool":"list_projects"}'
+```
+
+把返回的 `agent:<client_id>:<project_id>` 值用在 MCP 或 GPT Actions prompts 中。
+
+完整步骤见 [docs/QUICK_START.zh-CN.md](docs/QUICK_START.zh-CN.md)。
 
 ## 客户端接入
 

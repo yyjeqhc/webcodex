@@ -22,7 +22,7 @@ Current release artifacts include:
 
 `linux-arm64`, `darwin-arm64`, `darwin-x64`, Windows, and other platforms are not included in v0.2.0. They are future targets unless a later release adds matching artifacts.
 
-Do not publish the npm package until `manifest.json` contains the real SHA-256 checksums for the v0.2.0 GitHub Release artifacts. The package includes a `prepublishOnly` check that rejects placeholder checksums.
+The published v0.2.0 manifest contains the SHA-256 checksum for the Linux x64 GitHub Release artifact. The `prepublishOnly` check rejects placeholder checksums during future release preparation.
 
 ## Development switches
 

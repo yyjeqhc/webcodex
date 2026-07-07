@@ -39,6 +39,7 @@ Or build from source:
 
 ```bash
 cargo build --release --bins
+export PATH="$PWD/target/release:$PATH"
 ```
 
 See [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) for platform support and install details.
@@ -46,11 +47,11 @@ See [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) for platform support and inst
 ## Quick Start
 
 The commands below assume the npm-installed binaries are on your `PATH`.
+If you built from source, export `PATH="$PWD/target/release:$PATH"` first.
 
-Terminal 1 - choose one evaluation key and start the server:
+Terminal 1 - start the server:
 
 ```bash
-export WEBCODEX_KEY="$(openssl rand -base64 32)"
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
 
 webcodex-cli server up \
@@ -64,10 +65,11 @@ set +a
 webcodex
 ```
 
-Terminal 2 - connect an agent from the repo you want WebCodex to operate:
+Terminal 2 - generate one evaluation key, connect an agent, and start it from the repo you want WebCodex to operate:
 
 ```bash
-export WEBCODEX_KEY="<same evaluation key>"
+export WEBCODEX_KEY="$(openssl rand -base64 32)"
+printf 'Use this value as your MCP/GPT Actions Bearer key: %s\n' "$WEBCODEX_KEY"
 
 webcodex-cli connect http://127.0.0.1:8080 \
   --key "$WEBCODEX_KEY" \
@@ -78,7 +80,32 @@ webcodex-cli connect http://127.0.0.1:8080 \
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
 
-Use the same `WEBCODEX_KEY` as the Bearer key in your MCP client or GPT Action. For the full walkthrough, see [docs/QUICK_START.md](docs/QUICK_START.md).
+Copy the printed key into your MCP client or GPT Action Bearer/API-key auth field.
+The server does not pre-enroll that value; quick-start shared-key mode groups non-managed Bearer values by hash.
+
+## Verify
+
+In another terminal, paste the same evaluation key:
+
+```bash
+export WEBCODEX_KEY="<same evaluation key>"
+
+curl -sS \
+  -H "Authorization: Bearer $WEBCODEX_KEY" \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:8080/api/tools/call \
+  -d '{"tool":"runtime_status","summary_only":true}'
+
+curl -sS \
+  -H "Authorization: Bearer $WEBCODEX_KEY" \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:8080/api/tools/call \
+  -d '{"tool":"list_projects"}'
+```
+
+Use the returned `agent:<client_id>:<project_id>` value in MCP or GPT Actions prompts.
+
+For the full walkthrough, see [docs/QUICK_START.md](docs/QUICK_START.md).
 
 ## Client Access
 

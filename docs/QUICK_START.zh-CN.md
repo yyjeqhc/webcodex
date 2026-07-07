@@ -8,7 +8,7 @@
 
 ## 最快路径
 
-为本次评估选择一个长随机 shared key。quick-start shared-key 模式不会把这个值预先登记成 server 唯一允许的 key。相反，任意非 managed Bearer 值都会成为一个轻量 shared-key principal。WebCodex 会把该值 hash 成 `shared_key_hash`，所以 agent 和客户端必须使用同一个 key，才能落到同一个 shared-key group。scoped token、OAuth 和生产部署后面再看。
+server 启动后，在 client/operator 侧生成一个长随机评估 key。后续 `webcodex-cli connect`、`curl`、MCP 和 GPT Actions 都使用同一个 evaluation key。quick-start shared-key 模式不会把这个值预先登记成 server 唯一允许的 key。相反，任意非 managed Bearer 值都会成为一个轻量 shared-key principal，并按 `shared_key_hash` 分组；agent 和客户端必须使用同一个 key，才能落到同一个 shared-key group。scoped token、OAuth 和生产部署后面再看。
 
 ## 你会运行什么
 
@@ -48,71 +48,65 @@ cargo build --release --bins
 export PATH="$PWD/target/release:$PATH"
 ```
 
-## 2. 选择一个 shared key 并启动 server
+## 2. 启动 server
 
-终端 1，先为这次评估选择一个长随机 key：
+`server up` 会启用 shared-key quick-start mode。它不需要 evaluation key。
+
+终端 1：
 
 ```bash
-export WEBCODEX_KEY="$(openssl rand -base64 32)"
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
-```
 
-后续 `webcodex-cli connect`、`curl`、MCP 和 GPT Actions 都使用同一个 `WEBCODEX_KEY`。在 quick-start shared-key 模式下，这个值通过 hash 标识 shared-key group；它不是 server-side allowlist entry。不要把真实 key 值写入提交文件。
-
-准备 server env：
-
-```bash
 webcodex-cli server up \
   --env-file "$WEBCODEX_ENV" \
   --listen 127.0.0.1:8080 \
   --public-url http://127.0.0.1:8080
-```
 
-`server up` 会启用 shared-key quick-start mode，并写入 server env file。它没有 `--key` 参数，也会故意隐藏完整 server bootstrap key。`WEBCODEX_KEY` 值稍后由 agent connect、curl、MCP 和 GPT Actions 提供。
-
-`--open` 不同：它允许 anonymous access，只应该用于明确的临时 localhost / trusted-network demo。
-
-加载 env 并启动 server：
-
-```bash
 set -a
 . "$WEBCODEX_ENV"
 set +a
 webcodex
 ```
 
+`server up` 会写入 server env file。它没有 `--key` 参数，也会故意隐藏完整 server bootstrap key。
+
+`--open` 不同：它允许 anonymous access，只应该用于明确的临时 localhost / trusted-network demo。
+
 保持 `webcodex` 进程运行。
 
 ChatGPT 托管的客户端，包括 GPT Actions 和 ChatGPT remote MCP，需要公网 HTTPS URL 和有效证书。WebCodex 不会自动配置 Nginx、Caddy 或 tunnel；相关说明见 [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)。本地或自建客户端如果能直接访问 server，可以使用 localhost 或内网 HTTP URL。
 
-## 3. 连接 agent 并注册项目
+## 3. 生成一个评估 key、连接 agent 并注册项目
 
 终端 2，在你希望 WebCodex 操作的仓库中运行：
 
 ```bash
-export WEBCODEX_KEY="<同一个评估 shared key>"
+export WEBCODEX_KEY="$(openssl rand -base64 32)"
+printf 'Use this value as your MCP/GPT Actions Bearer key: %s\n' "$WEBCODEX_KEY"
 
 webcodex-cli connect http://127.0.0.1:8080 \
   --key "$WEBCODEX_KEY" \
   --root "$PWD" \
   --client-id local-dev \
   --overwrite
-```
 
-该命令会生成 agent config，并为所选 root 生成项目注册条目。使用 `connect` 打印的 config 路径启动 agent；如果 client id 使用默认示例，则是：
-
-```bash
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
+
+把打印出来的 key 复制到 MCP client 或 GPT Action 的 Bearer/API-key auth 配置里。agent connect、curl 验证、MCP 和 GPT Actions 都使用同一个 `WEBCODEX_KEY`。
+
+server 不会预登记这个 key；quick-start shared-key mode 会按 Bearer 值的 hash 把 agent 和 client 分到同一个 shared-key group。不要把真实 key 值写入提交文件。
+
+`connect` 命令会生成 agent config，并为所选 root 生成项目注册条目。默认 client id 使用上面展示的 config path；如果你修改了 client id，请使用 `connect` 打印的 config 路径。
 
 项目在 agent 所在机器上。agent 只把被允许的目录注册给 server；server 不扫描你的文件系统。
 
 ## 4. 验证 runtime health
 
-终端 3：
+终端 3，手动粘贴同一个评估 key：
 
 ```bash
-export WEBCODEX_KEY="<同一个评估 shared key>"
+export WEBCODEX_KEY="<同一个评估 key>"
 
 curl -sS \
   -H "Authorization: Bearer $WEBCODEX_KEY" \
@@ -147,7 +141,7 @@ client 支持 remote MCP 时，使用 MCP。
 
 ```text
 URL:  http://127.0.0.1:8080/mcp
-Auth: Bearer <shared key>
+Auth: Bearer <同一个评估 key>
 ```
 
 对 ChatGPT 或其他 hosted client，把 localhost 换成公网 HTTPS server URL：
@@ -156,7 +150,7 @@ Auth: Bearer <shared key>
 https://your-domain.example/mcp
 ```
 
-第一次评估使用和 `webcodex-cli connect --key` 相同的 `Bearer <shared key>`。生产认证后面再看。截图和常见 MCP 错误见 [MCP.zh-CN.md](MCP.zh-CN.md)。
+第一次评估使用终端 2 生成、并传给 `webcodex-cli connect --key` 的同一个 evaluation key。生产认证后面再看。截图和常见 MCP 错误见 [MCP.zh-CN.md](MCP.zh-CN.md)。
 
 ## 6. 或连接 GPT Actions
 
@@ -174,7 +168,7 @@ http://127.0.0.1:8080/openapi.json
 https://your-domain.example/openapi.json
 ```
 
-Action authentication 选择 Bearer/API-key auth，首次体验使用同一个 shared key。设置说明见 [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md)。
+Action authentication 选择 Bearer/API-key auth，首次体验使用同一个 evaluation key。设置说明见 [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md)。
 
 ## 7. 运行只读任务
 

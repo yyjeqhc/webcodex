@@ -8,7 +8,7 @@ For vocabulary, read [CONCEPTS.md](CONCEPTS.md). For a realistic tool flow, read
 
 ## Fastest Path
 
-Choose one long random shared key for this evaluation. In quick-start shared-key mode, the server does not pre-enroll that value as a single allowed key. Instead, any non-managed Bearer value becomes a lightweight shared-key principal. WebCodex hashes that value into `shared_key_hash`, so the agent and the client must use the same key to land in the same shared-key group. Move to scoped tokens, OAuth, and production deployment later.
+Generate one long random evaluation key on the client/operator side after the server is running. Use that same evaluation key for `webcodex-cli connect`, `curl`, MCP, and GPT Actions. In quick-start shared-key mode, the server does not pre-enroll that value as a single allowed key. Instead, any non-managed Bearer value becomes a lightweight shared-key principal grouped by `shared_key_hash`, so the agent and the client must use the same key to land in the same shared-key group. Move to scoped tokens, OAuth, and production deployment later.
 
 ## What You Will Run
 
@@ -48,71 +48,65 @@ cargo build --release --bins
 export PATH="$PWD/target/release:$PATH"
 ```
 
-## 2. Choose One Shared Key And Start The Server
+## 2. Start The Server
 
-In terminal 1, choose one long random key for this evaluation:
+`server up` enables shared-key quick-start mode. It does not need the evaluation key.
+
+In terminal 1:
 
 ```bash
-export WEBCODEX_KEY="$(openssl rand -base64 32)"
 export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
-```
 
-Use the same `WEBCODEX_KEY` value later for `webcodex-cli connect`, `curl`, MCP, and GPT Actions. In quick-start shared-key mode, this value identifies the shared-key group by hash; it is not a server-side allowlist entry. Do not paste real key values into committed files.
-
-Prepare the server env:
-
-```bash
 webcodex-cli server up \
   --env-file "$WEBCODEX_ENV" \
   --listen 127.0.0.1:8080 \
   --public-url http://127.0.0.1:8080
-```
 
-`server up` enables shared-key quick-start mode and writes the server env file. It does not take a `--key` flag, and it intentionally does not print the full server bootstrap key. The `WEBCODEX_KEY` value is supplied later by agent connect, curl, MCP, and GPT Actions.
-
-`--open` is different: it allows anonymous access and should only be used for explicit temporary localhost/trusted-network demos.
-
-Load the env and start the server:
-
-```bash
 set -a
 . "$WEBCODEX_ENV"
 set +a
 webcodex
 ```
 
+`server up` writes the server env file. It does not take a `--key` flag, and it intentionally does not print the full server bootstrap key.
+
+`--open` is different: it allows anonymous access and should only be used for explicit temporary localhost/trusted-network demos.
+
 Keep the `webcodex` process running.
 
 For ChatGPT-hosted clients, including GPT Actions and ChatGPT remote MCP, put the server behind a public HTTPS URL with a valid certificate and use that public URL instead. WebCodex does not configure Nginx, Caddy, or tunnels for you; see [DEPLOYMENT.md](DEPLOYMENT.md). Local or self-hosted clients that can reach the server directly can use localhost or a private HTTP URL.
 
-## 3. Connect An Agent And Register A Project
+## 3. Generate One Evaluation Key, Connect An Agent, And Register A Project
 
 In terminal 2, from the repository you want WebCodex to operate:
 
 ```bash
-export WEBCODEX_KEY="<same evaluation shared key>"
+export WEBCODEX_KEY="$(openssl rand -base64 32)"
+printf 'Use this value as your MCP/GPT Actions Bearer key: %s\n' "$WEBCODEX_KEY"
 
 webcodex-cli connect http://127.0.0.1:8080 \
   --key "$WEBCODEX_KEY" \
   --root "$PWD" \
   --client-id local-dev \
   --overwrite
-```
 
-The command generates an agent config and a project registry entry for the selected root. Start the agent with the config path printed by `connect`; with the default client id it is:
-
-```bash
 webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
 ```
+
+Copy the printed key into your MCP client or GPT Action Bearer/API-key auth field. Use the same `WEBCODEX_KEY` value for agent connect, curl verification, MCP, and GPT Actions.
+
+The server does not pre-enroll the key; non-managed Bearer values become lightweight shared-key principals grouped by `shared_key_hash`. Do not paste real key values into committed files.
+
+The `connect` command generates an agent config and a project registry entry for the selected root. The default client id uses the config path shown above; use the config path printed by `connect` if you change it.
 
 Projects live on the agent machine. The agent registers allowed directories with the server. The server does not scan your filesystem.
 
 ## 4. Verify Runtime Health
 
-In terminal 3:
+In terminal 3, paste the same evaluation key:
 
 ```bash
-export WEBCODEX_KEY="<same evaluation shared key>"
+export WEBCODEX_KEY="<same evaluation key>"
 
 curl -sS \
   -H "Authorization: Bearer $WEBCODEX_KEY" \
@@ -147,7 +141,7 @@ Configure the client with:
 
 ```text
 URL:  http://127.0.0.1:8080/mcp
-Auth: Bearer <shared key>
+Auth: Bearer <same evaluation key>
 ```
 
 For ChatGPT or another hosted client, replace localhost with the public HTTPS server URL:
@@ -156,7 +150,7 @@ For ChatGPT or another hosted client, replace localhost with the public HTTPS se
 https://your-domain.example/mcp
 ```
 
-For the first evaluation, use the same `Bearer <shared key>` value that you used with `webcodex-cli connect --key`. Production auth comes later. See [MCP.md](MCP.md) for screenshots and common MCP errors.
+For the first evaluation, use the same evaluation key that you generated in terminal 2 and used with `webcodex-cli connect --key`. Production auth comes later. See [MCP.md](MCP.md) for screenshots and common MCP errors.
 
 ## 6. Or Connect GPT Actions
 
@@ -174,7 +168,7 @@ For ChatGPT, use a public HTTPS URL:
 https://your-domain.example/openapi.json
 ```
 
-Configure Action authentication as Bearer/API-key auth and use the same shared key for this first evaluation. See [GPT_ACTIONS.md](GPT_ACTIONS.md) for the setup guide.
+Configure Action authentication as Bearer/API-key auth and use the same evaluation key for this first evaluation. See [GPT_ACTIONS.md](GPT_ACTIONS.md) for the setup guide.
 
 ## 7. Run A Read-Only Task
 

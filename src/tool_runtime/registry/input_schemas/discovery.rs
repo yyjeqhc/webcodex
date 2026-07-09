@@ -38,7 +38,11 @@ pub(crate) fn tool_manifest_input_schema() -> Value {
         "properties": {
             "category": {
                 "type": "string",
-                "description": "Optional category filter (e.g. session, edit, git, checkpoint, runtime, job, validation)."
+                "description": "Optional category filter (e.g. session, edit, git, checkpoint, runtime, job, validation). Distinct from intent."
+            },
+            "intent": {
+                "type": "string",
+                "description": "Optional task-intent view for compact discovery: coding, audit, exploration, release, or discovery. Distinct from category; unknown values return a structured error. Intent views only filter and rank discovery output; they do not change tool behavior, policy, permissions, execution, or finish verdict semantics."
             },
             "include_recommended_flows": {
                 "type": "boolean",
@@ -99,6 +103,7 @@ pub(crate) const ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER: &[&str] = &[
     "include_workspace",
     "include_checkpoints",
     "category",
+    "intent",
     "features",
     "summary_only",
     "limit",

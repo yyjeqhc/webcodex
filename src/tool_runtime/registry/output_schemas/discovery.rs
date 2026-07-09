@@ -174,10 +174,24 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             (
+                "intent",
+                nullable_schema(
+                    "string",
+                    "Resolved task-intent view such as coding, audit, exploration, release, or discovery; null when no intent was requested. Intent views only filter and rank discovery output; they do not change tool behavior, policy, permissions, execution, or finish verdict semantics.",
+                ),
+            ),
+            (
+                "available_intents",
+                array_schema(
+                    schema_type("string", "Supported tool_manifest intent name."),
+                    "Stable list of supported tool_manifest intent names used for discovery filtering only.",
+                ),
+            ),
+            (
                 "filtered",
                 schema_type(
                     "boolean",
-                    "True when category filtering or limit was applied.",
+                    "True when intent, category filtering, or limit was applied.",
                 ),
             ),
             (

@@ -863,13 +863,21 @@ pub enum ToolCall {
     },
 
     /// Return a compact, bounded tool manifest with categories, risk summary,
-    /// and recommended flows. Intended as a lightweight alternative to
-    /// `list_tools` for long-running tasks where the full input/output schemas
-    /// cause ResponseTooLargeError. Read-only runtime introspection; never
-    /// exposes schemas, tokens, secrets, or internal paths.
+    /// recommended flows, and optional intent-shaped tool views. Intent views
+    /// only filter and rank discovery output; they do not change tool behavior,
+    /// policy, permissions, execution, or finish verdict semantics. Intended as
+    /// a lightweight alternative to `list_tools` for long-running tasks where
+    /// the full input/output schemas cause ResponseTooLargeError. Read-only
+    /// runtime introspection; never exposes schemas, tokens, secrets, or
+    /// internal paths.
     ToolManifest {
         #[serde(default)]
         category: Option<String>,
+        /// Optional task intent view such as coding, audit, exploration,
+        /// release, or discovery. Distinct from `category`. Discovery filtering
+        /// only; does not change tool behavior or finish verdict semantics.
+        #[serde(default)]
+        intent: Option<String>,
         #[serde(default = "default_true")]
         include_recommended_flows: bool,
         #[serde(default = "default_true")]

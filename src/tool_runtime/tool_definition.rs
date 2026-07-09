@@ -22,7 +22,12 @@ use super::metadata::{
     metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, RUNTIME_READ,
     TOOL_PROVIDER_CONTROL,
 };
-pub(crate) use super::tool_catalog::{TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS};
+#[cfg(test)]
+pub(crate) use super::tool_catalog::TOOL_MANIFEST_INTENTS;
+pub(crate) use super::tool_catalog::{
+    available_tool_manifest_intent_names, resolve_tool_manifest_intent, TOOL_DISCOVERY_GROUPS,
+    TOOL_RECOMMENDED_FLOWS,
+};
 #[cfg(test)]
 pub(crate) use super::tool_catalog::{
     TOOL_DISCOVERY_GROUP_CHECKPOINT, TOOL_DISCOVERY_GROUP_CLEANUP, TOOL_DISCOVERY_GROUP_EDIT,
@@ -200,6 +205,15 @@ pub(crate) struct ToolRecommendedFlow {
     pub(crate) name: &'static str,
     pub(crate) summary: &'static str,
     pub(crate) manifest_purpose: &'static str,
+    pub(crate) tools: &'static [&'static str],
+}
+
+/// Model-facing task intent for compact `tool_manifest` discovery views.
+/// Distinct from `category` (taxonomy) and recommended flows (short loop hints).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolManifestIntent {
+    pub(crate) name: &'static str,
+    pub(crate) purpose: &'static str,
     pub(crate) tools: &'static [&'static str],
 }
 

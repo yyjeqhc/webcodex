@@ -955,6 +955,7 @@ async fn tool_manifest_hides_run_codex_from_model_facing_surface() {
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
             category: None,
+            intent: None,
             include_recommended_flows: true,
             include_risk_summary: true,
         })
@@ -980,6 +981,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
             category: None,
+            intent: None,
             include_recommended_flows: true,
             include_risk_summary: true,
         })
@@ -1015,6 +1017,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
 
     for field in [
         "category",
+        "intent",
         "include_recommended_flows",
         "include_risk_summary",
         TOOL_CALL_RECORDING_SESSION_ID_FIELD,
@@ -1139,6 +1142,7 @@ async fn tool_manifest_flattened_args_are_declared_in_action_schema() {
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
             category: None,
+            intent: None,
             include_recommended_flows: false,
             include_risk_summary: false,
         })
@@ -1259,6 +1263,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
             category: None,
+            intent: None,
             include_recommended_flows: true,
             include_risk_summary: true,
         })

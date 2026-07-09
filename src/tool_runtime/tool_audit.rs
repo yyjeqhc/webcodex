@@ -815,10 +815,12 @@ impl ToolCall {
             }),
             Self::ToolManifest {
                 category,
+                intent,
                 include_recommended_flows,
                 include_risk_summary,
             } => serde_json::json!({
                 "category": category,
+                "intent": intent,
                 "include_recommended_flows": include_recommended_flows,
                 "include_risk_summary": include_risk_summary,
             }),

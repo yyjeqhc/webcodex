@@ -34,6 +34,7 @@ async fn session_handoff_summary_is_known_and_in_specs() {
     let manifest = runtime
         .dispatch(ToolCall::ToolManifest {
             category: Some("session".to_string()),
+            intent: None,
             include_recommended_flows: false,
             include_risk_summary: false,
         })

@@ -43,6 +43,7 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
     let props = spec.input_schema["properties"].as_object().unwrap();
     for field in [
         "category",
+        "intent",
         "include_recommended_flows",
         "include_risk_summary",
     ] {
@@ -60,6 +61,8 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
         "tool_count",
         "filtered_count",
         "category",
+        "intent",
+        "available_intents",
         "filtered",
         "categories_requested",
         "limit",
@@ -886,6 +889,7 @@ async fn tool_manifest_omits_recommended_flows_when_disabled() {
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
             category: None,
+            intent: None,
             include_recommended_flows: false,
             include_risk_summary: true,
         })
@@ -1039,4 +1043,305 @@ fn tool_categories_include_projects_with_management_tools() {
         projects.iter().any(|v| v == "create_project"),
         "projects category must include create_project"
     );
+}
+
+#[test]
+fn tool_manifest_intents_reference_only_known_model_visible_tools() {
+    use crate::tool_runtime::tool_definition::{
+        is_known_tool_name, is_model_visible_tool_name, TOOL_MANIFEST_INTENTS,
+    };
+    use std::collections::BTreeSet;
+
+    let expected = ["coding", "audit", "exploration", "release", "discovery"];
+    let names: Vec<&str> = TOOL_MANIFEST_INTENTS
+        .iter()
+        .map(|intent| intent.name)
+        .collect();
+    assert_eq!(
+        names, expected,
+        "intent set must stay stable for this release"
+    );
+
+    let mut seen = BTreeSet::new();
+    for intent in TOOL_MANIFEST_INTENTS {
+        assert!(!intent.tools.is_empty(), "{} must list tools", intent.name);
+        assert!(
+            seen.insert(intent.name),
+            "duplicate tool_manifest intent {}",
+            intent.name
+        );
+        for tool in intent.tools {
+            assert!(
+                is_known_tool_name(tool),
+                "{} intent references unknown tool {}",
+                intent.name,
+                tool
+            );
+            assert!(
+                is_model_visible_tool_name(tool),
+                "{} intent references hidden tool {}",
+                intent.name,
+                tool
+            );
+            assert_ne!(
+                *tool, "run_shell",
+                "{} intent must not default to run_shell",
+                intent.name
+            );
+            if matches!(intent.name, "audit" | "exploration" | "release") {
+                assert_ne!(
+                    *tool, "run_job",
+                    "{} intent must not default to run_job",
+                    intent.name
+                );
+            }
+            if intent.name == "release" {
+                assert_ne!(
+                    *tool, "run_shell",
+                    "release intent must not default to run_shell"
+                );
+                assert_ne!(
+                    *tool, "run_job",
+                    "release intent must not default to run_job"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn tool_manifest_without_intent_keeps_compat_shape_and_lists_available_intents() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            intent: None,
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["schema_version"], 1);
+    assert_eq!(result.output["intent"], Value::Null);
+    assert_eq!(result.output["filtered"], false);
+    assert!(
+        result.output["count"].as_u64().unwrap() > 20,
+        "unfiltered tool_manifest should still return the broad compact tool set"
+    );
+    let available = string_array(&result.output["available_intents"], "available_intents");
+    assert_eq!(
+        available,
+        vec![
+            "coding".to_string(),
+            "audit".to_string(),
+            "exploration".to_string(),
+            "release".to_string(),
+            "discovery".to_string(),
+        ]
+    );
+    assert_payload_keys_declared(
+        "tool_manifest",
+        &result.output,
+        output_schema_properties(spec_named(&registered_tool_specs(), "tool_manifest")),
+    );
+}
+
+#[tokio::test]
+async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
+    use crate::tool_runtime::tool_definition::TOOL_MANIFEST_INTENTS;
+
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            intent: Some("coding".to_string()),
+            include_recommended_flows: false,
+            include_risk_summary: true,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["intent"], "coding");
+    assert_eq!(result.output["filtered"], true);
+    assert_eq!(result.output["schema_version"], 1);
+
+    let expected: Vec<&str> = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == "coding")
+        .unwrap()
+        .tools
+        .to_vec();
+    let names: Vec<&str> = result.output["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names, expected,
+        "coding intent tools must be ranked in table order"
+    );
+    assert_eq!(result.output["count"], expected.len() as u64);
+    assert_eq!(result.output["filtered_count"], expected.len() as u64);
+    assert!(
+        result.output["total_count"].as_u64().unwrap() > expected.len() as u64,
+        "total_count should remain the full runtime tool count"
+    );
+    assert!(result.output.get("recommended_flows").is_none());
+    assert!(result.output["risk_summary"].is_object());
+    for forbidden in ["run_shell", "run_job"] {
+        assert!(
+            !names.contains(&forbidden),
+            "coding intent should not include {forbidden}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn tool_manifest_accepts_hyphenated_intent_alias() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            intent: Some("Discovery".to_string()),
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["intent"], "discovery");
+    let names: Vec<&str> = result.output["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "tool_manifest",
+            "list_tools",
+            "runtime_status",
+            "list_agents",
+            "list_projects",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn tool_manifest_unknown_intent_returns_structured_error() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            intent: Some("not_a_real_intent".to_string()),
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
+    assert!(!result.success, "unknown intent must fail");
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unknown tool_manifest intent"),
+        "{:?}",
+        result.error
+    );
+    assert_eq!(result.output["code"], "unknown_tool_manifest_intent");
+    assert_eq!(result.output["intent"], "not_a_real_intent");
+    let available = string_array(&result.output["available_intents"], "available_intents");
+    assert!(available.contains(&"coding".to_string()));
+    assert!(
+        result.output.get("tools").is_none(),
+        "unknown intent must not return a silent empty tool list: {:?}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn tool_manifest_intent_can_combine_with_category_filter() {
+    // category is a strict ToolDefinition.category filter, not a flow/group filter.
+    // validate_patch and apply_patch_checked remain patch-category tools, even
+    // though they can participate in validation flows. Intent only ranks/filters
+    // discovery output and does not change tool behavior.
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: Some("validation".to_string()),
+            intent: Some("coding".to_string()),
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["intent"], "coding");
+    assert_eq!(result.output["category"], "validation");
+    let names: Vec<&str> = result.output["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    // cargo_* are validation; validate_patch/apply_patch_checked are patch.
+    assert_eq!(names, vec!["cargo_fmt", "cargo_check", "cargo_test"]);
+}
+
+#[tokio::test]
+async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
+    for intent in ["audit", "exploration"] {
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::ToolManifest {
+                category: None,
+                intent: Some(intent.to_string()),
+                include_recommended_flows: false,
+                include_risk_summary: false,
+            })
+            .await;
+        assert!(result.success, "{intent}: {:?}", result.error);
+        let names: Vec<&str> = result.output["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        for forbidden in ["run_shell", "run_job"] {
+            assert!(
+                !names.contains(&forbidden),
+                "{intent} must not include {forbidden}: {names:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn release_intent_includes_list_jobs_but_not_run_shell_or_run_job() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            intent: Some("release".to_string()),
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["intent"], "release");
+    let names: Vec<&str> = result.output["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"list_jobs"),
+        "release intent should keep read-only list_jobs: {names:?}"
+    );
+    for forbidden in ["run_shell", "run_job"] {
+        assert!(
+            !names.contains(&forbidden),
+            "release intent must not include {forbidden}: {names:?}"
+        );
+    }
 }

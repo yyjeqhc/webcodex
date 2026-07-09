@@ -32,11 +32,17 @@ impl ToolRuntime {
             }
             ToolCall::ToolManifest {
                 category,
+                intent,
                 include_recommended_flows,
                 include_risk_summary,
             } => {
-                self.tool_manifest(category, include_recommended_flows, include_risk_summary)
-                    .await
+                self.tool_manifest(
+                    category,
+                    intent,
+                    include_recommended_flows,
+                    include_risk_summary,
+                )
+                .await
             }
             _ => unreachable!("non-discovery tool routed to discovery dispatcher"),
         }

@@ -1,6 +1,6 @@
-//! Model-facing runtime tool discovery groups and recommended flows.
+//! Model-facing runtime tool discovery groups, recommended flows, and intents.
 
-use super::tool_definition::{ToolDiscoveryGroup, ToolRecommendedFlow};
+use super::tool_definition::{ToolDiscoveryGroup, ToolManifestIntent, ToolRecommendedFlow};
 
 pub(crate) const TOOL_DISCOVERY_GROUP_CHECKPOINT: &str = "checkpoint";
 pub(crate) const TOOL_DISCOVERY_GROUP_CLEANUP: &str = "cleanup";
@@ -234,3 +234,117 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         ],
     },
 ];
+
+/// Stable task-intent views for `tool_manifest(intent=...)`.
+/// Ordered lists are ranked for model selection; not a substitute for category.
+/// Intent views only filter and rank discovery output; they do not change tool
+/// behavior, policy, permissions, execution, or finish verdict semantics.
+pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
+    ToolManifestIntent {
+        name: "coding",
+        purpose: "Default coding loop: start, inspect, structured edit, validate, review, finish.",
+        tools: &[
+            "start_coding_task",
+            "read_file",
+            "search_project_text",
+            "list_project_files",
+            "apply_text_edits",
+            "apply_patch_checked",
+            "validate_patch",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "show_changes",
+            "git_diff_hunks",
+            "workspace_hygiene_check",
+            "finish_coding_task",
+        ],
+    },
+    ToolManifestIntent {
+        name: "audit",
+        purpose: "Read-only review/audit: inspect, git history/diff, hygiene, finish or handoff.",
+        tools: &[
+            "start_coding_task",
+            "read_file",
+            "search_project_text",
+            "list_project_files",
+            "git_status",
+            "git_log",
+            "git_diff_summary",
+            "git_diff_hunks",
+            "show_changes",
+            "workspace_hygiene_check",
+            "finish_coding_task",
+            "session_handoff_summary",
+        ],
+    },
+    ToolManifestIntent {
+        name: "exploration",
+        purpose: "Light repository exploration without shell/jobs or default write paths.",
+        tools: &[
+            "list_projects",
+            "runtime_status",
+            "list_project_files",
+            "search_project_text",
+            "read_file",
+            "git_status",
+            "git_log",
+            "tool_manifest",
+        ],
+    },
+    ToolManifestIntent {
+        name: "release",
+        purpose: "Release closeout checks: hygiene, validation, jobs status, changes, finish.",
+        tools: &[
+            "runtime_status",
+            "git_status",
+            "git_diff_summary",
+            "workspace_hygiene_check",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "list_jobs",
+            "show_changes",
+            "finish_coding_task",
+        ],
+    },
+    ToolManifestIntent {
+        name: "discovery",
+        purpose: "Runtime and project discovery before choosing a work intent.",
+        tools: &[
+            "tool_manifest",
+            "list_tools",
+            "runtime_status",
+            "list_agents",
+            "list_projects",
+        ],
+    },
+];
+
+pub(crate) fn available_tool_manifest_intent_names() -> Vec<&'static str> {
+    TOOL_MANIFEST_INTENTS
+        .iter()
+        .map(|intent| intent.name)
+        .collect()
+}
+
+/// Resolve a caller-supplied intent name.
+///
+/// Returns `Ok(None)` for empty/whitespace input (treated as no intent).
+/// Returns `Err(raw)` when a non-empty name does not match a known intent.
+pub(crate) fn resolve_tool_manifest_intent(
+    name: &str,
+) -> Result<Option<&'static ToolManifestIntent>, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let normalized = trimmed.to_ascii_lowercase().replace('-', "_");
+    match TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == normalized)
+    {
+        Some(intent) => Ok(Some(intent)),
+        None => Err(trimmed.to_string()),
+    }
+}

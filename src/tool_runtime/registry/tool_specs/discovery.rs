@@ -53,8 +53,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "tool_manifest",
             "Return a compact, bounded tool manifest with categories, accepted flattened args, risk "
                 .to_string()
-                + "summary, and recommended flows. Lightweight alternative to list_tools for "
-                + "long tasks. Read-only; never exposes schemas, tokens, or internal paths.",
+                + "summary, recommended flows, and optional intent views (coding, audit, "
+                + "exploration, release, discovery). Intent views only filter and rank discovery "
+                + "output; they do not change tool behavior, policy, permissions, execution, or "
+                + "finish verdict semantics. Lightweight alternative to list_tools for long tasks. "
+                + "Read-only; never exposes schemas, tokens, or internal paths.",
             tool_manifest_input_schema(),
         ),
     ]

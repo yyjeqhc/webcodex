@@ -1186,6 +1186,10 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Flattened list_tools/tool_manifest category filter. Used only when `params` and `arguments` are absent."
                 },
+                "intent": {
+                    "type": "string",
+                    "description": "Flattened tool_manifest task-intent view such as coding, audit, exploration, release, or discovery. Distinct from category. Intent views only filter and rank discovery output; they do not change tool behavior, policy, permissions, execution, or finish verdict semantics. Used only when `params` and `arguments` are absent."
+                },
                 "include_recommended_flows": {
                     "type": "boolean",
                     "description": "Flattened tool_manifest flag. Defaults to true and controls recommended_flows in compact discovery output. Used only when `params` and `arguments` are absent."
@@ -3257,6 +3261,7 @@ mod tests {
         );
         for field in [
             "category",
+            "intent",
             "features",
             "summary_only",
             "limit",

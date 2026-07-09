@@ -7,16 +7,16 @@
 use super::registry::{accepted_flattened_args_for_spec, registered_tool_specs};
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
-    is_model_visible_tool_name, runtime_tool_category, runtime_tool_metadata,
-    TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT, TOOL_CATEGORY_GIT, TOOL_CATEGORY_PATCH,
-    TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION, TOOL_DISCOVERY_GROUPS,
-    TOOL_RECOMMENDED_FLOWS,
+    available_tool_manifest_intent_names, is_model_visible_tool_name, resolve_tool_manifest_intent,
+    runtime_tool_category, runtime_tool_metadata, ToolManifestIntent, TOOL_CATEGORY_ARTIFACT,
+    TOOL_CATEGORY_EDIT, TOOL_CATEGORY_GIT, TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME,
+    TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION, TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
 };
 use super::tool_inputs::ListToolsOptions;
 use super::tool_result::ToolResult;
 use super::tool_spec::ToolSpec;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 pub(crate) fn registered_tool_categories() -> Value {
     let mut categories = serde_json::Map::new();
@@ -123,25 +123,34 @@ impl ToolRuntime {
     }
 
     /// Return a compact, bounded tool manifest with categories, risk summary,
-    /// and recommended flows. Read-only runtime introspection; never exposes
-    /// full input/output schemas, tokens, secrets, or internal paths.
-    /// Intended as a lightweight alternative to `list_tools` for long-running
-    /// tasks where the full schemas cause ResponseTooLargeError.
+    /// recommended flows, and optional intent-shaped tool views. Read-only
+    /// runtime introspection; never exposes full input/output schemas, tokens,
+    /// secrets, or internal paths. Intent views only filter and rank discovery
+    /// output; they do not change tool behavior, policy, permissions,
+    /// execution, or finish verdict semantics. Intended as a lightweight
+    /// alternative to `list_tools` for long-running tasks where the full
+    /// schemas cause ResponseTooLargeError.
     pub(super) async fn tool_manifest(
         &self,
         category: Option<String>,
+        intent: Option<String>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
     ) -> ToolResult {
-        ToolResult::ok(self.tool_manifest_payload(
+        match self.tool_manifest_payload(
             category,
+            intent,
             include_recommended_flows,
             include_risk_summary,
-        ))
+        ) {
+            Ok(payload) => ToolResult::ok(payload),
+            Err(result) => result,
+        }
     }
 
     pub(crate) fn compact_tool_manifest_payload(&self) -> Value {
-        self.tool_manifest_payload(None, true, true)
+        self.tool_manifest_payload(None, None, true, true)
+            .expect("default tool_manifest payload without intent must succeed")
     }
 
     pub(crate) fn compact_tool_manifest_payload_bounded(
@@ -152,17 +161,20 @@ impl ToolRuntime {
         if categories.is_none() && limit.is_none() {
             return self.compact_tool_manifest_payload();
         }
-        self.tool_manifest_payload_for_categories(categories, limit, true, true)
+        self.tool_manifest_payload_for_categories(categories, None, limit, true, true)
+            .expect("category-bounded tool_manifest payload without intent must succeed")
     }
 
     fn tool_manifest_payload(
         &self,
         category: Option<String>,
+        intent: Option<String>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
-    ) -> Value {
+    ) -> Result<Value, ToolResult> {
         self.tool_manifest_payload_for_categories(
             category.map(|category| vec![category]),
+            intent,
             None,
             include_recommended_flows,
             include_risk_summary,
@@ -172,10 +184,21 @@ impl ToolRuntime {
     fn tool_manifest_payload_for_categories(
         &self,
         categories: Option<Vec<String>>,
+        intent: Option<String>,
         limit: Option<usize>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
-    ) -> Value {
+    ) -> Result<Value, ToolResult> {
+        let resolved_intent = match intent {
+            None => None,
+            Some(raw) => match resolve_tool_manifest_intent(&raw) {
+                Ok(intent) => intent,
+                Err(unknown) => {
+                    return Err(unknown_tool_manifest_intent_result(&unknown));
+                }
+            },
+        };
+
         let specs = registered_tool_specs();
         let tool_count = specs.len();
         let categories_requested = normalize_tool_manifest_categories(categories);
@@ -186,23 +209,19 @@ impl ToolRuntime {
         // Build the categories map from the full tool set so the caller can
         // always see valid categories even when filtering.
         let categories = build_manifest_categories(&specs);
+        let available_intents = available_tool_manifest_intent_names();
 
-        // Apply the optional category filter and startup limit.
-        let filtered_specs: Vec<&ToolSpec> = match &categories_requested {
-            Some(requested) => specs
-                .iter()
-                .filter(|spec| {
-                    let category = runtime_tool_category(spec.name.as_str());
-                    requested.iter().any(|requested| requested == category)
-                })
-                .collect(),
-            None => specs.iter().collect(),
-        };
+        // Apply optional intent ranking, then optional category filter, then limit.
+        let filtered_specs: Vec<&ToolSpec> =
+            filter_manifest_specs(&specs, resolved_intent, categories_requested.as_ref());
         let filtered_count = filtered_specs.len();
         let requested_limit = limit;
         let limit = limit.map(|limit| limit.clamp(1, 100));
         let truncated = limit.is_some_and(|limit| filtered_count > limit);
         let limit_applied = requested_limit.is_some();
+        let filtered =
+            categories_requested.is_some() || resolved_intent.is_some() || limit.is_some();
+        let intent_name = resolved_intent.map(|intent| intent.name);
         let returned_specs: Vec<&ToolSpec> = match limit {
             Some(limit) => filtered_specs.into_iter().take(limit).collect(),
             None => filtered_specs,
@@ -221,7 +240,9 @@ impl ToolRuntime {
             "total_count": tool_count,
             "filtered_count": filtered_count,
             "category": category,
-            "filtered": categories_requested.is_some() || limit.is_some(),
+            "intent": intent_name,
+            "available_intents": available_intents,
+            "filtered": filtered,
             "categories_requested": categories_requested,
             "limit": limit,
             "truncated": truncated,
@@ -240,8 +261,60 @@ impl ToolRuntime {
             output["recommended_flows"] = Value::Array(tool_manifest_recommended_flows());
         }
 
-        output
+        Ok(output)
     }
+}
+
+fn filter_manifest_specs<'a>(
+    specs: &'a [ToolSpec],
+    intent: Option<&'static ToolManifestIntent>,
+    categories_requested: Option<&Vec<String>>,
+) -> Vec<&'a ToolSpec> {
+    let by_name: HashMap<&str, &ToolSpec> = specs
+        .iter()
+        .map(|spec| (spec.name.as_str(), spec))
+        .collect();
+
+    let ordered: Vec<&ToolSpec> = match intent {
+        Some(intent) => intent
+            .tools
+            .iter()
+            .filter_map(|name| by_name.get(*name).copied())
+            .collect(),
+        None => specs.iter().collect(),
+    };
+
+    match categories_requested {
+        Some(requested) => ordered
+            .into_iter()
+            .filter(|spec| {
+                let category = runtime_tool_category(spec.name.as_str());
+                requested.iter().any(|requested| requested == category)
+            })
+            .collect(),
+        None => ordered,
+    }
+}
+
+fn unknown_tool_manifest_intent_result(unknown: &str) -> ToolResult {
+    let available_intents = available_tool_manifest_intent_names();
+    ToolResult::err_with_output(
+        format!(
+            "unknown tool_manifest intent '{}'. Available intents: {}.",
+            unknown,
+            available_intents.join(", ")
+        ),
+        json!({
+            "code": "unknown_tool_manifest_intent",
+            "intent": unknown,
+            "available_intents": available_intents,
+            "message": format!(
+                "unknown tool_manifest intent '{}'; use one of: {}",
+                unknown,
+                available_intents.join(", ")
+            ),
+        }),
+    )
 }
 
 pub(super) fn list_tools_filtered_indexes(

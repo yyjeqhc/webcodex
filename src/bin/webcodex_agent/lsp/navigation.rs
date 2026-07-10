@@ -14,10 +14,10 @@ use super::supervisor::{
     PositionEncoding, ProjectUriClassification,
 };
 use crate::lsp_bridge::{
-    bound_error_message, bound_symbol_detail, bound_symbol_name, error_codes, symbol_kind_name,
-    AgentLspPayload, AgentLspRequest, AgentLspResultEnvelope, DocumentSymbolsResult,
-    LocationsResult, LspServerStatusEntry, LspStatusResult, PublicLocation, PublicPosition,
-    PublicRange, PublicSymbol, AGENT_LSP_REQUEST_KIND,
+    bound_error_message, error_codes, AgentLspPayload, AgentLspRequest, AgentLspResultEnvelope,
+    DocumentSymbolsResult, LocationsResult, LspAvailabilityStatus, LspServerStatusEntry,
+    LspStatusResult, PublicLocation, PublicPosition, PublicRange, PublicSymbol,
+    AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::ShellAgentShellRequest;
 use serde_json::{json, Value};
@@ -25,6 +25,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use url::Url;
+
+const MAX_SYMBOL_NAME_CHARS: usize = 256;
+const MAX_SYMBOL_DETAIL_CHARS: usize = 512;
 
 pub(crate) fn is_lsp_request_kind(kind: &str) -> bool {
     kind == AGENT_LSP_REQUEST_KIND
@@ -183,19 +186,19 @@ fn lsp_status(
             let encoding = supervisor
                 .project_position_encoding(project_root, LspServerKind::RustAnalyzer)
                 .map(|encoding| encoding.as_public_label().to_string());
-            (true, "running".to_string(), encoding)
+            (true, LspAvailabilityStatus::Running, encoding)
         }
-        Some(LspServerStatus::Initializing) => (false, "initializing".to_string(), None),
-        Some(LspServerStatus::Crashed) => (false, "crashed".to_string(), None),
+        Some(LspServerStatus::Initializing) => (false, LspAvailabilityStatus::Initializing, None),
+        Some(LspServerStatus::Crashed) => (false, LspAvailabilityStatus::Crashed, None),
         Some(LspServerStatus::Available) | Some(LspServerStatus::Unavailable) | None => {
             if available {
-                (false, "available".to_string(), None)
+                (false, LspAvailabilityStatus::Available, None)
             } else {
-                (false, "unavailable".to_string(), None)
+                (false, LspAvailabilityStatus::Unavailable, None)
             }
         }
     };
-    let source = info.as_ref().map(|entry| entry.source.as_str().to_string());
+    let source = info.as_ref().map(|entry| entry.source);
     LspStatusResult {
         project: project_id.to_string(),
         detected_languages,
@@ -222,11 +225,16 @@ fn document_symbols(
     let limit = limit.clamp(1, 500);
     let file = resolve_rust_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
-    ensure_document_open(supervisor, project_root, &uri, &file)?;
+    let text = fs::read_to_string(&file).map_err(|_| {
+        AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
+    })?;
     let value = supervisor
-        .request(
+        .request_with_document(
             project_root,
             LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
             "textDocument/documentSymbol",
             json!({ "textDocument": { "uri": uri } }),
         )
@@ -235,9 +243,7 @@ fn document_symbols(
         .project_position_encoding(project_root, LspServerKind::RustAnalyzer)
         .unwrap_or(PositionEncoding::Utf16);
     let mut cache = LineCache::new();
-    if let Ok(text) = fs::read_to_string(&file) {
-        cache.seed(&file, text);
-    }
+    cache.seed(&file, text);
     let mut invalid = 0usize;
     let mut external = 0usize;
     let all = normalize_document_symbols(
@@ -281,19 +287,24 @@ fn goto_definition(
     let text = fs::read_to_string(&file).map_err(|_| {
         AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
     })?;
-    let encoding = {
-        // Ensure server is up for encoding negotiation via open + request path.
-        ensure_document_open(supervisor, project_root, &uri, &file)?;
-        supervisor
-            .project_position_encoding(project_root, LspServerKind::RustAnalyzer)
-            .unwrap_or(PositionEncoding::Utf16)
-    };
+    let encoding = supervisor
+        .prepare_document(
+            project_root,
+            LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
+        )
+        .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
         .map_err(|msg| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
     let value = supervisor
-        .request(
+        .request_with_document(
             project_root,
             LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
             "textDocument/definition",
             json!({
                 "textDocument": { "uri": uri },
@@ -334,16 +345,24 @@ fn find_references(
     let text = fs::read_to_string(&file).map_err(|_| {
         AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
     })?;
-    ensure_document_open(supervisor, project_root, &uri, &file)?;
     let encoding = supervisor
-        .project_position_encoding(project_root, LspServerKind::RustAnalyzer)
-        .unwrap_or(PositionEncoding::Utf16);
+        .prepare_document(
+            project_root,
+            LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
+        )
+        .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
         .map_err(|msg| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
     let value = supervisor
-        .request(
+        .request_with_document(
             project_root,
             LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
             "textDocument/references",
             json!({
                 "textDocument": { "uri": uri },
@@ -411,31 +430,6 @@ fn finish_locations_result(
         external_results_omitted,
         invalid_results_omitted,
     })
-}
-
-fn ensure_document_open(
-    supervisor: &LspSupervisor,
-    project_root: &Path,
-    uri: &str,
-    file: &Path,
-) -> Result<(), AgentLspResultEnvelope> {
-    // Navigation tools use request methods only; opening is best-effort via
-    // didOpen notification so rust-analyzer has content without a write path.
-    let text = fs::read_to_string(file).unwrap_or_default();
-    let _ = supervisor.notify(
-        project_root,
-        LspServerKind::RustAnalyzer,
-        "textDocument/didOpen",
-        json!({
-            "textDocument": {
-                "uri": uri,
-                "languageId": "rust",
-                "version": 1,
-                "text": text
-            }
-        }),
-    );
-    Ok(())
 }
 
 fn resolve_rust_file(
@@ -765,6 +759,58 @@ fn normalize_symbol_information(
             children: Vec::new(),
         }),
         _ => None,
+    }
+}
+
+fn bound_symbol_name(name: &str) -> String {
+    bound_symbol_field(name, MAX_SYMBOL_NAME_CHARS)
+}
+
+fn bound_symbol_detail(detail: &str) -> String {
+    bound_symbol_field(detail, MAX_SYMBOL_DETAIL_CHARS)
+}
+
+fn bound_symbol_field(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>()
+        + "…"
+}
+
+/// Map LSP SymbolKind integer to a stable lowercase name.
+fn symbol_kind_name(kind_code: i64) -> &'static str {
+    match kind_code {
+        1 => "file",
+        2 => "module",
+        3 => "namespace",
+        4 => "package",
+        5 => "class",
+        6 => "method",
+        7 => "property",
+        8 => "field",
+        9 => "constructor",
+        10 => "enum",
+        11 => "interface",
+        12 => "function",
+        13 => "variable",
+        14 => "constant",
+        15 => "string",
+        16 => "number",
+        17 => "boolean",
+        18 => "array",
+        19 => "object",
+        20 => "key",
+        21 => "null",
+        22 => "enum_member",
+        23 => "struct",
+        24 => "event",
+        25 => "operator",
+        26 => "type_parameter",
+        _ => "unknown",
     }
 }
 

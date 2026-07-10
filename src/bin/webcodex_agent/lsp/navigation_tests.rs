@@ -43,6 +43,7 @@ struct NavFixture {
     _temp: tempfile::TempDir,
     root: PathBuf,
     projects_dir: PathBuf,
+    marker: PathBuf,
     supervisor: LspSupervisor,
     policy: AgentPolicy,
 }
@@ -102,6 +103,7 @@ impl NavFixture {
             _temp: temp,
             root,
             projects_dir,
+            marker,
             supervisor,
             policy,
         }
@@ -257,6 +259,79 @@ fn document_symbols_symbol_information_fallback() {
     assert_eq!(envelope["success"], true);
     assert_eq!(envelope["result"]["symbols"][0]["name"], "main");
     assert_eq!(envelope["result"]["symbols"][0]["kind"], "function");
+}
+
+#[test]
+fn navigation_reuses_one_did_open_for_the_same_document() {
+    let fixture = NavFixture::new("normal");
+    let requests = [
+        AgentLspRequest::DocumentSymbols {
+            path: "src/main.rs".into(),
+            limit: 10,
+        },
+        AgentLspRequest::GotoDefinition {
+            path: "src/main.rs".into(),
+            line: 1,
+            column: 1,
+            limit: 10,
+        },
+        AgentLspRequest::FindReferences {
+            path: "src/main.rs".into(),
+            line: 1,
+            column: 1,
+            include_declaration: true,
+            limit: 10,
+        },
+    ];
+    for _ in 0..2 {
+        for request in &requests {
+            let envelope = fixture.request(AgentLspPayload {
+                project_id: "demo".into(),
+                request: request.clone(),
+            });
+            assert_eq!(envelope["success"], true, "{envelope}");
+        }
+    }
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    assert_eq!(
+        marker
+            .lines()
+            .filter(|line| line.starts_with("didOpen:"))
+            .count(),
+        1,
+        "{marker}"
+    );
+}
+
+#[test]
+fn navigation_restart_opens_the_document_on_the_new_server_instance() {
+    let fixture = NavFixture::new("restart_then_success");
+    let envelope = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentSymbols {
+            path: "src/main.rs".into(),
+            limit: 10,
+        },
+    });
+    assert_eq!(envelope["success"], true, "{envelope}");
+
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    let start_pids = marker
+        .lines()
+        .filter_map(|line| line.strip_prefix("start:"))
+        .filter_map(|line| line.split(':').next())
+        .collect::<Vec<_>>();
+    assert_eq!(start_pids.len(), 2, "{marker}");
+    for pid in start_pids {
+        assert_eq!(
+            marker
+                .lines()
+                .filter(|line| line.starts_with(&format!("didOpen:{pid}:")))
+                .count(),
+            1,
+            "{marker}"
+        );
+    }
 }
 
 #[test]

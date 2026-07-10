@@ -4,7 +4,7 @@
 
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -94,6 +94,14 @@ fn run() -> io::Result<()> {
                 }
             }
             Some("initialized") => {}
+            Some("textDocument/didOpen") => {
+                if let Some(marker) = &marker {
+                    append_marker(
+                        marker,
+                        &format!("didOpen:{}:{body}\n", std::process::id()),
+                    )?;
+                }
+            }
             Some("shutdown") => {
                 if scenario == "shutdown_hang" {
                     // Acknowledge nothing and never exit on its own.

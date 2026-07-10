@@ -3,8 +3,11 @@
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::lsp_bridge::{
     clamp_document_symbols_limit, clamp_find_references_limit, clamp_goto_definition_limit,
-    error_codes, parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest,
+    error_codes, is_known_error_code, parse_agent_lsp_result_envelope, AgentLspPayload,
+    AgentLspRequest, DocumentSymbolsResult, LocationsResult, LspStatusResult,
 };
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -113,6 +116,7 @@ impl ToolRuntime {
                 ))
             }
         };
+        let expected_result = request.clone();
         let payload = AgentLspPayload {
             project_id: agent_project_id,
             request,
@@ -143,16 +147,13 @@ impl ToolRuntime {
                 let stdout = resp.stdout.unwrap_or_default();
                 match parse_agent_lsp_result_envelope(&stdout) {
                     Ok(envelope) if envelope.success => {
-                        let mut result = envelope.result.unwrap_or(Value::Null);
+                        let result = envelope.result.unwrap_or(Value::Null);
+                        let mut result = match validate_agent_lsp_result(&expected_result, result) {
+                            Ok(result) => result,
+                            Err(error) => return ToolResult::err(error),
+                        };
                         if let Some(obj) = result.as_object_mut() {
                             obj.insert("project".to_string(), json!(resolved.resolved_id));
-                        }
-                        let serialized = result.to_string();
-                        if serialized.contains("file://") {
-                            return ToolResult::err(format!(
-                                "{}: agent result contained forbidden path material",
-                                error_codes::MALFORMED_AGENT_LSP_RESULT
-                            ));
                         }
                         ToolResult::ok(result)
                     }
@@ -164,6 +165,12 @@ impl ToolRuntime {
                                     code: error_codes::LSP_SERVER_FAILED.to_string(),
                                     message: "LSP request failed".to_string(),
                                 });
+                        if !is_known_error_code(&err.code) {
+                            return ToolResult::err(format!(
+                                "{}: agent result contained an unknown error code",
+                                error_codes::MALFORMED_AGENT_LSP_RESULT
+                            ));
+                        }
                         ToolResult::err_with_output(
                             format!("{}: {}", err.code, err.message),
                             json!({
@@ -188,6 +195,60 @@ impl ToolRuntime {
             }
         }
     }
+}
+
+fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result<Value, String> {
+    let result = match request {
+        AgentLspRequest::Status => roundtrip_typed_result::<LspStatusResult>(result),
+        AgentLspRequest::DocumentSymbols { .. } => {
+            roundtrip_typed_result::<DocumentSymbolsResult>(result)
+        }
+        AgentLspRequest::GotoDefinition { .. } | AgentLspRequest::FindReferences { .. } => {
+            roundtrip_typed_result::<LocationsResult>(result)
+        }
+    }
+    .map_err(|_| {
+        format!(
+            "{}: agent result did not match the expected LSP result shape",
+            error_codes::MALFORMED_AGENT_LSP_RESULT
+        )
+    })?;
+    if contains_forbidden_path_material(&result) {
+        return Err(format!(
+            "{}: agent result contained forbidden path material",
+            error_codes::MALFORMED_AGENT_LSP_RESULT
+        ));
+    }
+    Ok(result)
+}
+
+fn roundtrip_typed_result<T>(result: Value) -> Result<Value, serde_json::Error>
+where
+    T: DeserializeOwned + Serialize,
+{
+    serde_json::from_value::<T>(result).and_then(serde_json::to_value)
+}
+
+fn contains_forbidden_path_material(value: &Value) -> bool {
+    match value {
+        Value::String(value) => string_contains_forbidden_path_material(value),
+        Value::Array(values) => values.iter().any(contains_forbidden_path_material),
+        Value::Object(values) => values.values().any(contains_forbidden_path_material),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
+    }
+}
+
+fn string_contains_forbidden_path_material(value: &str) -> bool {
+    let value = value.trim();
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("file://") || value.starts_with('/') || value.starts_with(r"\\") {
+        return true;
+    }
+    let bytes = value.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
 }
 
 fn agent_local_project_id(resolved_id: &str) -> Option<&str> {

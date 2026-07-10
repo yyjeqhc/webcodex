@@ -22,8 +22,6 @@ pub const DEFAULT_FIND_REFERENCES_LIMIT: usize = 50;
 pub const MIN_FIND_REFERENCES_LIMIT: usize = 1;
 pub const MAX_FIND_REFERENCES_LIMIT: usize = 200;
 
-pub const MAX_SYMBOL_NAME_CHARS: usize = 256;
-pub const MAX_SYMBOL_DETAIL_CHARS: usize = 512;
 pub const MAX_ERROR_MESSAGE_CHARS: usize = 240;
 
 /// Stable error codes for the agent LSP bridge and public tools.
@@ -41,6 +39,25 @@ pub mod error_codes {
     pub const MALFORMED_AGENT_LSP_RESULT: &str = "malformed_agent_lsp_result";
     pub const UNKNOWN_PROJECT: &str = "unknown_project";
     pub const MISSING_LSP_PAYLOAD: &str = "missing_lsp_payload";
+}
+
+pub fn is_known_error_code(code: &str) -> bool {
+    matches!(
+        code,
+        error_codes::AGENT_CAPABILITY_UNAVAILABLE
+            | error_codes::LSP_SERVER_UNAVAILABLE
+            | error_codes::LSP_SERVER_FAILED
+            | error_codes::LSP_REQUEST_TIMEOUT
+            | error_codes::LSP_PROTOCOL_ERROR
+            | error_codes::INVALID_PROJECT_PATH
+            | error_codes::UNSUPPORTED_LANGUAGE
+            | error_codes::FILE_NOT_FOUND
+            | error_codes::INVALID_POSITION
+            | error_codes::INVALID_ARGUMENTS
+            | error_codes::MALFORMED_AGENT_LSP_RESULT
+            | error_codes::UNKNOWN_PROJECT
+            | error_codes::MISSING_LSP_PAYLOAD
+    )
 }
 
 /// Typed LSP navigation request carried on agent requests.
@@ -136,7 +153,7 @@ pub struct PublicSymbol {
     pub children: Vec<PublicSymbol>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LspAvailabilityStatus {
     Unavailable,
@@ -144,18 +161,6 @@ pub enum LspAvailabilityStatus {
     Initializing,
     Running,
     Crashed,
-}
-
-impl LspAvailabilityStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Unavailable => "unavailable",
-            Self::Available => "available",
-            Self::Initializing => "initializing",
-            Self::Running => "running",
-            Self::Crashed => "crashed",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,25 +171,15 @@ pub enum LspCommandSource {
     Path,
 }
 
-impl LspCommandSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Configured => "configured",
-            Self::Environment => "environment",
-            Self::Path => "path",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LspServerStatusEntry {
     pub language: String,
     pub server: String,
     pub available: bool,
     pub running: bool,
-    pub status: String,
+    pub status: LspAvailabilityStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<LspCommandSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position_encoding: Option<String>,
 }
@@ -241,6 +236,7 @@ pub struct AgentLspResultEnvelope {
 }
 
 impl AgentLspResultEnvelope {
+    #[allow(dead_code)] // Constructed by the webcodex-agent production target.
     pub fn ok(result: impl Serialize) -> Self {
         Self {
             format: AGENT_LSP_RESULT_FORMAT.to_string(),
@@ -250,6 +246,7 @@ impl AgentLspResultEnvelope {
         }
     }
 
+    #[allow(dead_code)] // Constructed by the webcodex-agent production target.
     pub fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             format: AGENT_LSP_RESULT_FORMAT.to_string(),
@@ -262,6 +259,7 @@ impl AgentLspResultEnvelope {
         }
     }
 
+    #[allow(dead_code)] // Serialized by the webcodex-agent production target.
     pub fn to_stdout_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| {
             r#"{"format":"webcodex.agent_lsp_result.v1","success":false,"error":{"code":"lsp_protocol_error","message":"failed to serialize result"}}"#.to_string()
@@ -342,58 +340,6 @@ pub fn bound_error_message(message: impl Into<String>) -> String {
         .take(MAX_ERROR_MESSAGE_CHARS.saturating_sub(1))
         .collect::<String>()
         + "…"
-}
-
-pub fn bound_symbol_name(name: &str) -> String {
-    bound_field(name, MAX_SYMBOL_NAME_CHARS)
-}
-
-pub fn bound_symbol_detail(detail: &str) -> String {
-    bound_field(detail, MAX_SYMBOL_DETAIL_CHARS)
-}
-
-fn bound_field(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    value
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>()
-        + "…"
-}
-
-/// Map LSP SymbolKind integer to a stable lowercase name.
-pub fn symbol_kind_name(kind_code: i64) -> &'static str {
-    match kind_code {
-        1 => "file",
-        2 => "module",
-        3 => "namespace",
-        4 => "package",
-        5 => "class",
-        6 => "method",
-        7 => "property",
-        8 => "field",
-        9 => "constructor",
-        10 => "enum",
-        11 => "interface",
-        12 => "function",
-        13 => "variable",
-        14 => "constant",
-        15 => "string",
-        16 => "number",
-        17 => "boolean",
-        18 => "array",
-        19 => "object",
-        20 => "key",
-        21 => "null",
-        22 => "enum_member",
-        23 => "struct",
-        24 => "event",
-        25 => "operator",
-        26 => "type_parameter",
-        _ => "unknown",
-    }
 }
 
 #[cfg(test)]
@@ -490,12 +436,5 @@ mod tests {
             r#"{"format":"webcodex.agent_lsp_result.v1","success":true}"#
         )
         .is_err());
-    }
-
-    #[test]
-    fn symbol_kind_mapping_is_stable() {
-        assert_eq!(symbol_kind_name(12), "function");
-        assert_eq!(symbol_kind_name(23), "struct");
-        assert_eq!(symbol_kind_name(999), "unknown");
     }
 }

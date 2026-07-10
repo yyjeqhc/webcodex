@@ -1,11 +1,12 @@
 use super::support::*;
 use crate::lsp_bridge::{
-    parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, AgentLspResultEnvelope,
-    DocumentSymbolsResult, LocationsResult, LspStatusResult, PublicLocation, PublicPosition,
-    PublicRange, PublicSymbol, AGENT_LSP_REQUEST_KIND,
+    parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspResultEnvelope,
+    DocumentSymbolsResult, LocationsResult, LspAvailabilityStatus, LspCommandSource,
+    LspStatusResult, PublicLocation, PublicPosition, PublicRange, PublicSymbol,
+    AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::{
-    ShellAgentResultRequest, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellClientCapabilities, ShellClientRegisterRequest,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
 };
 use crate::tool_runtime::tool_definition::{
@@ -170,6 +171,44 @@ async fn complete_lsp_agent_request(
     .await;
 }
 
+fn document_symbols_result(path: &str) -> DocumentSymbolsResult {
+    DocumentSymbolsResult {
+        project: "demo".into(),
+        path: path.into(),
+        language: "rust".into(),
+        symbols: vec![],
+        total_count: 0,
+        returned_count: 0,
+        truncated: false,
+        external_results_omitted: 0,
+        invalid_results_omitted: 0,
+    }
+}
+
+async fn dispatch_document_symbols_with_result_path(client_id: &str, path: &str) -> ToolResult {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent(&runtime, client_id, "demo", tmp.path(), true).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::DocumentSymbols {
+                        project,
+                        path: "src/main.rs".into(),
+                        limit: Some(10),
+                        session_id: None,
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    complete_lsp_agent_request(&runtime, client_id, document_symbols_result(path)).await;
+    task.await.unwrap()
+}
+
 #[tokio::test]
 async fn capability_missing_blocks_dispatch() {
     let runtime = test_runtime();
@@ -226,7 +265,7 @@ async fn lsp_status_unavailable_still_succeeds() {
                 server: "rust-analyzer".into(),
                 available: false,
                 running: false,
-                status: "unavailable".into(),
+                status: LspAvailabilityStatus::Unavailable,
                 source: None,
                 position_encoding: None,
             }],
@@ -370,6 +409,40 @@ async fn goto_definition_multiple_locations() {
 }
 
 #[tokio::test]
+async fn lsp_result_boundary_rejects_absolute_paths_and_file_uris() {
+    for (index, path) in [
+        "/tmp/main.rs",
+        r"C:\repo\src\main.rs",
+        r"\\server\share\main.rs",
+        "file:///tmp/main.rs",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result =
+            dispatch_document_symbols_with_result_path(&format!("lsp-path-reject-{index}"), path)
+                .await;
+        assert!(!result.success, "path must be rejected: {path:?}");
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("malformed_agent_lsp_result"),
+            "{result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn lsp_result_boundary_accepts_project_relative_paths() {
+    let result =
+        dispatch_document_symbols_with_result_path("lsp-path-relative", "src/main.rs").await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["path"], "src/main.rs");
+}
+
+#[tokio::test]
 async fn read_only_session_allows_lsp_tools() {
     let runtime = test_runtime();
     let tmp = tempfile::tempdir().unwrap();
@@ -417,8 +490,8 @@ async fn read_only_session_allows_lsp_tools() {
                 server: "rust-analyzer".into(),
                 available: true,
                 running: false,
-                status: "available".into(),
-                source: Some("path".into()),
+                status: LspAvailabilityStatus::Available,
+                source: Some(LspCommandSource::Path),
                 position_encoding: None,
             }],
             warnings: vec![],

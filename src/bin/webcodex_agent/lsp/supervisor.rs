@@ -1,6 +1,6 @@
 use super::protocol::{read_message, write_message, FramingError, MAX_LSP_MESSAGE_BYTES};
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -357,6 +357,7 @@ impl LspSupervisor {
         }
     }
 
+    #[allow(dead_code)] // Generic request API retained for supervisor diagnostics and tests.
     pub(crate) fn request(
         &self,
         validated_project_root: &Path,
@@ -373,20 +374,74 @@ impl LspSupervisor {
         )
     }
 
-    /// Best-effort notification on a running/startable server (e.g. didOpen).
-    pub(crate) fn notify(
+    pub(crate) fn request_with_document(
         &self,
         validated_project_root: &Path,
         kind: LspServerKind,
+        document_uri: &str,
+        language_id: &str,
+        text: &str,
         method: &str,
         params: Value,
-    ) -> Result<(), LspError> {
+    ) -> Result<Value, LspError> {
+        self.request_with_timeout_inner(
+            validated_project_root,
+            kind,
+            method,
+            params,
+            self.inner.config.request_timeout,
+            Some(DocumentOpen {
+                uri: document_uri,
+                language_id,
+                text,
+            }),
+        )
+    }
+
+    pub(crate) fn prepare_document(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        document_uri: &str,
+        language_id: &str,
+        text: &str,
+    ) -> Result<PositionEncoding, LspError> {
         let key = ProcessKey {
             project_root: canonical_project_root(validated_project_root)?,
             kind,
         };
-        let server = self.get_or_start(&key, false)?;
-        server.notify(method, params)
+        let document = DocumentOpen {
+            uri: document_uri,
+            language_id,
+            text,
+        };
+        for attempt in 0..=1 {
+            let server = match self.get_or_start(&key, attempt == 1) {
+                Ok(server) => server,
+                Err(error) if attempt == 0 && error.permits_restart() => continue,
+                Err(error) if attempt == 1 && error.permits_restart() => {
+                    return Err(LspError::RestartExhausted(error.to_string()));
+                }
+                Err(error) => return Err(error),
+            };
+            match server.ensure_document_open(document) {
+                Ok(()) => return Ok(server.position_encoding()),
+                Err(error) if attempt == 0 && error.permits_restart() => continue,
+                Err(error) if attempt == 1 && error.permits_restart() => {
+                    self.evict_unusable(&key);
+                    return Err(LspError::RestartExhausted(error.to_string()));
+                }
+                Err(error) => {
+                    if !server.is_usable() {
+                        self.evict_unusable(&key);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Err(LspError::RestartExhausted(
+            "document open restart failed".to_string(),
+        ))
     }
 
     #[allow(dead_code)] // Commit 2 tools may override per-call timeouts.
@@ -397,6 +452,18 @@ impl LspSupervisor {
         method: &str,
         params: Value,
         timeout: Duration,
+    ) -> Result<Value, LspError> {
+        self.request_with_timeout_inner(validated_project_root, kind, method, params, timeout, None)
+    }
+
+    fn request_with_timeout_inner(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+        document: Option<DocumentOpen<'_>>,
     ) -> Result<Value, LspError> {
         let key = ProcessKey {
             project_root: canonical_project_root(validated_project_root)?,
@@ -415,6 +482,22 @@ impl LspSupervisor {
                 }
                 Err(error) => return Err(error),
             };
+            if let Some(document) = document {
+                if let Err(error) = server.ensure_document_open(document) {
+                    if attempt == 0 && error.permits_restart() {
+                        last_error = Some(error);
+                        continue;
+                    }
+                    if attempt == 1 && error.permits_restart() {
+                        self.evict_unusable(&key);
+                        return Err(LspError::RestartExhausted(error.to_string()));
+                    }
+                    if !server.is_usable() {
+                        self.evict_unusable(&key);
+                    }
+                    return Err(error);
+                }
+            }
             match server.request(method, params.clone(), timeout) {
                 Ok(value) => return Ok(value),
                 Err(error) if attempt == 0 && error.permits_restart() => {
@@ -852,6 +935,13 @@ impl BoundedStderr {
     }
 }
 
+#[derive(Clone, Copy)]
+struct DocumentOpen<'a> {
+    uri: &'a str,
+    language_id: &'a str,
+    text: &'a str,
+}
+
 struct ServerInstance {
     key: ProcessKey,
     child: Mutex<Child>,
@@ -859,6 +949,7 @@ struct ServerInstance {
     connection: Arc<ConnectionState>,
     next_id: AtomicU64,
     position_encoding: Mutex<PositionEncoding>,
+    opened_documents: Mutex<HashSet<String>>,
     last_used: Mutex<Instant>,
     #[allow(dead_code)] // Bounded capture retained for Commit 2 diagnostics/status.
     stderr: Arc<Mutex<BoundedStderr>>,
@@ -945,6 +1036,7 @@ impl ServerInstance {
             connection,
             next_id: AtomicU64::new(1),
             position_encoding: Mutex::new(PositionEncoding::Utf16),
+            opened_documents: Mutex::new(HashSet::new()),
             last_used: Mutex::new(Instant::now()),
             stderr: stderr_buffer,
             reader_thread: Mutex::new(Some(reader_thread)),
@@ -1016,6 +1108,10 @@ impl ServerInstance {
             }
             result => result,
         }
+    }
+
+    fn position_encoding(&self) -> PositionEncoding {
+        *lock_unpoison(&self.position_encoding)
     }
 
     fn request_raw(
@@ -1091,6 +1187,26 @@ impl ServerInstance {
             "method": method,
             "params": params,
         }))
+    }
+
+    fn ensure_document_open(&self, document: DocumentOpen<'_>) -> Result<(), LspError> {
+        let mut opened = lock_unpoison(&self.opened_documents);
+        if opened.contains(document.uri) {
+            return Ok(());
+        }
+        self.notify(
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": document.uri,
+                    "languageId": document.language_id,
+                    "version": 1,
+                    "text": document.text,
+                }
+            }),
+        )?;
+        opened.insert(document.uri.to_string());
+        Ok(())
     }
 
     fn write(&self, message: &Value) -> Result<(), LspError> {
@@ -1226,11 +1342,6 @@ impl ServerInstance {
             }
         }
         matches!(lock_unpoison(&self.child).try_wait(), Ok(Some(_)) | Err(_))
-    }
-
-    #[cfg(test)]
-    fn position_encoding(&self) -> PositionEncoding {
-        *lock_unpoison(&self.position_encoding)
     }
 
     #[cfg(test)]

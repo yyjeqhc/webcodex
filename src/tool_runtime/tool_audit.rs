@@ -20,6 +20,35 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
             copy_keys(obj, &mut out, &["timeout_secs", "cwd"]);
         }
+        "search_project_text" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "path",
+                    "limit",
+                    "context_before",
+                    "context_after",
+                    "result_mode",
+                    "timeout_secs",
+                ],
+            );
+            out.insert(
+                "pattern_present".to_string(),
+                Value::Bool(obj.contains_key("pattern")),
+            );
+            for (field, summary_field) in [
+                ("include_globs", "include_glob_count"),
+                ("exclude_globs", "exclude_glob_count"),
+            ] {
+                let count = obj
+                    .get(field)
+                    .and_then(Value::as_array)
+                    .map(|items| items.len())
+                    .unwrap_or(0);
+                out.insert(summary_field.to_string(), serde_json::json!(count));
+            }
+        }
         "write_project_file" => {
             copy_keys(
                 obj,
@@ -406,6 +435,10 @@ impl ToolCall {
                 limit,
                 context_before,
                 context_after,
+                include_globs,
+                exclude_globs,
+                result_mode,
+                timeout_secs,
                 ..
             } => serde_json::json!({
                 "project": project,
@@ -414,6 +447,10 @@ impl ToolCall {
                 "limit": limit,
                 "context_before": context_before,
                 "context_after": context_after,
+                "include_glob_count": include_globs.as_ref().map(Vec::len).unwrap_or(0),
+                "exclude_glob_count": exclude_globs.as_ref().map(Vec::len).unwrap_or(0),
+                "result_mode": result_mode,
+                "timeout_secs": timeout_secs,
             }),
             Self::ShowChanges {
                 project,

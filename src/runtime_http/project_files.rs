@@ -154,6 +154,14 @@ struct SearchProjectTextRequest {
     pub context_before: Option<usize>,
     #[serde(default)]
     pub context_after: Option<usize>,
+    #[serde(default)]
+    pub include_globs: Option<Vec<String>>,
+    #[serde(default)]
+    pub exclude_globs: Option<Vec<String>>,
+    #[serde(default)]
+    pub result_mode: Option<crate::tool_runtime::SearchResultMode>,
+    #[serde(default)]
+    pub timeout_secs: Option<i64>,
 }
 
 #[handler]
@@ -719,6 +727,10 @@ pub async fn projects_search_text(req: &mut Request, depot: &mut Depot, res: &mu
                 limit: body.limit,
                 context_before: body.context_before,
                 context_after: body.context_after,
+                include_globs: body.include_globs,
+                exclude_globs: body.exclude_globs,
+                result_mode: body.result_mode,
+                timeout_secs: body.timeout_secs,
             },
             auth.as_ref(),
         )

@@ -6,9 +6,9 @@ use super::super::patch::*;
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
+    ShellAgentPollRequest, ShellAgentResultRequest, ShellAgentShellRequest, ShellClientCapabilities,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -625,9 +625,15 @@ fn validate_project_relative_path_rejects_absolute_and_parent_traversal() {
 #[test]
 fn parse_search_matches_is_bounded_and_strips_dot_slash() {
     let stdout = "./src/main.rs:10:fn main() {}\n./src/lib.rs:3:pub fn x()\n./src/a:1:1\n";
-    let (matches, truncated) = parse_search_matches(stdout, 2);
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(2),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+    let matches = result.output["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 2);
-    assert!(truncated);
+    assert_eq!(result.output["truncated"], true);
     assert_eq!(matches[0]["path"], "src/main.rs");
     assert_eq!(matches[0]["line"], 10);
     assert_eq!(matches[0]["preview"], "fn main() {}");
@@ -640,14 +646,32 @@ fn parse_search_matches_is_bounded_and_strips_dot_slash() {
 fn parse_search_matches_skips_lines_without_line_number() {
     // Binary file matches or malformed lines are skipped, not counted.
     let stdout = "binary:file\nsrc/main.rs:5:hit\n";
-    let (matches, _truncated) = parse_search_matches(stdout, 10);
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(10),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+    let matches = result.output["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0]["path"], "src/main.rs");
 }
 
 #[test]
 fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
-    let cmd = search_project_text_command("fn main", "src", 25);
+    let options = SearchOptions::normalize(SearchRequest {
+        pattern: "fn main".to_string(),
+        path: Some("src".to_string()),
+        limit: Some(25),
+        context_before: None,
+        context_after: None,
+        include_globs: None,
+        exclude_globs: None,
+        result_mode: None,
+        timeout_secs: None,
+    })
+    .unwrap();
+    let cmd = search_project_text_command(&options);
     assert!(cmd.contains("command -v rg"));
     assert!(cmd.contains("\"backend\":\"rg\""));
     assert!(cmd.contains("\"backend\":\"grep\""));
@@ -661,8 +685,12 @@ fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
     assert!(cmd.contains("--exclude-dir=secrets"));
     assert!(cmd.contains("--exclude=.env"));
     assert!(cmd.contains("--exclude=*.key"));
-    assert!(cmd.contains("head -n 26"));
+    assert!(cmd.contains("\"$head_cmd\" -n 26") || cmd.contains("$head_cmd -n 26"));
+    assert!(cmd.contains("trap 'cleanup_search_status' EXIT"));
+    assert!(cmd.contains("trap 'cleanup_search_status; exit 143' HUP INT TERM"));
     assert!(cmd.contains("grep -rnI"));
+    assert!(cmd.contains("command -v head"));
+    assert!(cmd.contains("/usr/bin/head") || cmd.contains("/bin/head"));
 }
 
 #[cfg(unix)]
@@ -695,18 +723,30 @@ fn search_project_text_command_prefers_rg_backend_when_available() {
     let cmd = format!(
         "PATH={}; export PATH\n{}",
         shell_escape_simple(&bin.to_string_lossy()),
-        search_project_text_command("needle", ".", 5)
+        search_project_text_command(
+            &SearchOptions::normalize(SearchRequest {
+                limit: Some(5),
+                ..raw_search_request()
+            })
+            .unwrap(),
+        )
     );
     let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
     assert_eq!(exit_code, 0, "stderr: {stderr}");
-    let (matches, truncated, backend) = parse_search_project_text_output(&stdout, 5, 0, 0, false);
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), "");
 
-    assert_eq!(backend, "rg");
-    assert!(!truncated);
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0]["path"], "src/lib.rs");
-    assert_eq!(matches[0]["line"], 2);
-    assert_eq!(matches[0]["preview"], "needle from rg");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["truncated"], false);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(result.output["matches"][0]["path"], "src/lib.rs");
+    assert_eq!(result.output["matches"][0]["line"], 2);
+    assert_eq!(result.output["matches"][0]["preview"], "needle from rg");
 }
 
 #[cfg(unix)]
@@ -726,18 +766,30 @@ fn search_project_text_command_falls_back_to_grep_without_rg() {
     let cmd = format!(
         "PATH={}; export PATH\n{}",
         shell_escape_simple(&bin.to_string_lossy()),
-        search_project_text_command("needle", ".", 5)
+        search_project_text_command(
+            &SearchOptions::normalize(SearchRequest {
+                limit: Some(5),
+                ..raw_search_request()
+            })
+            .unwrap(),
+        )
     );
     let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
     assert_eq!(exit_code, 0, "stderr: {stderr}");
-    let (matches, truncated, backend) = parse_search_project_text_output(&stdout, 5, 0, 0, false);
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), "");
 
-    assert_eq!(backend, "grep");
-    assert!(!truncated);
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0]["path"], "src/lib.rs");
-    assert_eq!(matches[0]["line"], 3);
-    assert_eq!(matches[0]["preview"], "needle from grep");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "grep");
+    assert_eq!(result.output["truncated"], false);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(result.output["matches"][0]["path"], "src/lib.rs");
+    assert_eq!(result.output["matches"][0]["line"], 3);
+    assert_eq!(result.output["matches"][0]["preview"], "needle from grep");
 }
 
 #[test]
@@ -748,12 +800,1384 @@ fn parse_search_project_text_output_reports_backend_and_limit_truncation() {
         "src/b.rs:2:needle two\n",
         "{\"backend\":\"rg\"}\n",
     );
-    let (matches, truncated, backend) = parse_search_project_text_output(stdout, 1, 0, 0, false);
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(1),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let result = search_project_text_output("demo", &options, stdout, Some(0), "");
 
-    assert_eq!(backend, "rg");
-    assert!(truncated);
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0]["path"], "src/a.rs");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["truncated"], true);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(result.output["matches"][0]["path"], "src/a.rs");
+}
+
+fn raw_search_request() -> SearchRequest {
+    SearchRequest {
+        pattern: "needle".to_string(),
+        path: None,
+        limit: None,
+        context_before: None,
+        context_after: None,
+        include_globs: None,
+        exclude_globs: None,
+        result_mode: None,
+        timeout_secs: None,
+    }
+}
+
+fn search_call(project: String, request: SearchRequest) -> ToolCall {
+    ToolCall::SearchProjectText {
+        project,
+        pattern: request.pattern,
+        session_id: None,
+        path: request.path,
+        limit: request.limit,
+        context_before: request.context_before,
+        context_after: request.context_after,
+        include_globs: request.include_globs,
+        exclude_globs: request.exclude_globs,
+        result_mode: request.result_mode,
+        timeout_secs: request.timeout_secs,
+    }
+}
+
+fn assert_search_output_keys_are_declared(output: &Value) {
+    let properties = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "search_project_text")
+        .expect("search_project_text spec")
+        .output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .expect("search_project_text output properties")
+        .clone();
+    let Some(output) = output.as_object() else {
+        return;
+    };
+    for key in output.keys() {
+        assert!(
+            properties.contains_key(key),
+            "runtime search output key {key} is not declared in output schema"
+        );
+    }
+}
+
+async fn execute_agent_search(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    request: SearchRequest,
+) -> (ToolResult, ShellAgentShellRequest) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(search_call(project, request), Some(&bootstrap))
+                .await
+        }
+    });
+    let req = next_patch_agent_request(runtime, client_id)
+        .await
+        .expect("search_project_text agent request");
+    let inspected = req.clone();
+    complete_agent_request_by_running_locally(runtime, client_id, req).await;
+    let result = task.await.unwrap();
+    assert_search_output_keys_are_declared(&result.output);
+    (result, inspected)
+}
+
+#[test]
+fn search_options_default_to_compatible_matches_contract() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+
+    assert_eq!(options.path, ".");
+    assert_eq!(options.limit, 50);
+    assert_eq!(options.context_before, 0);
+    assert_eq!(options.context_after, 0);
+    assert_eq!(options.result_mode, SearchResultMode::Matches);
+    assert_eq!(options.timeout_secs, 30);
+    assert!(options.include_globs.is_empty());
+    assert!(options.exclude_globs.is_empty());
+    assert!(!options.requires_ripgrep());
+}
+
+#[test]
+fn search_options_clamp_timeout_and_context() {
+    let mut low = raw_search_request();
+    low.timeout_secs = Some(0);
+    low.context_before = Some(usize::MAX);
+    let low = SearchOptions::normalize(low).unwrap();
+    assert_eq!(low.timeout_secs, 1);
+    assert_eq!(low.context_before, MAX_SEARCH_CONTEXT_LINES);
+
+    let high = SearchOptions::normalize(SearchRequest {
+        timeout_secs: Some(999),
+        context_after: Some(usize::MAX),
+        ..raw_search_request()
+    })
+    .unwrap();
+    assert_eq!(high.timeout_secs, 120);
+    assert_eq!(high.context_after, MAX_SEARCH_CONTEXT_LINES);
+}
+
+#[test]
+fn search_timeout_uses_structured_failure_with_effective_timeout() {
+    let options = SearchOptions::normalize(SearchRequest {
+        timeout_secs: Some(0),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let result = search_project_text_output(
+        "demo",
+        &options,
+        "{\"webcodex_search\":{\"backend\":\"rg\"}}\n",
+        Some(-1),
+        "Command timed out after 1 seconds",
+    );
+
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_timeout");
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["effective_timeout_secs"], 1);
+    assert_eq!(result.output["result_mode"], "matches");
+}
+
+#[test]
+fn search_agent_timeout_budget_keeps_outer_above_command_at_max() {
+    // At max configured timeout, shell-client wait is capped at 120 so it may
+    // equal command timeout; outer wait must still exceed command timeout.
+    let (command, wait, outer) = search_agent_timeout_budget(120);
+    assert_eq!(command, 120);
+    assert_eq!(wait, 120);
+    assert!(outer > command, "outer={outer} command={command}");
+    assert!(outer >= wait, "outer={outer} wait={wait}");
+
+    let (command, wait, outer) = search_agent_timeout_budget(30);
+    assert_eq!(command, 30);
+    assert_eq!(wait, 32);
+    assert_eq!(outer, 34);
+    assert!(command < wait && wait < outer);
+
+    let (command, wait, outer) = search_agent_timeout_budget(118);
+    assert_eq!(command, 118);
+    assert_eq!(wait, 120);
+    assert!(command < wait);
+    assert!(wait < outer || outer > command);
+}
+
+#[test]
+fn search_backend_exit_1_is_successful_empty_result() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    let stdout = concat!(
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+    );
+    let result = search_project_text_output("demo", &options, stdout, Some(1), "");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["matches"], json!([]));
+    assert_eq!(result.output["count"], 0);
+    assert_eq!(result.output["exit_code"], 1);
+}
+
+#[test]
+fn search_backend_exit_2_is_structured_execution_failure() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    let stdout = concat!(
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+    );
+    let result = search_project_text_output("demo", &options, stdout, Some(2), "");
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["result_mode"], "matches");
+}
+
+#[test]
+fn search_backend_exit_0_parses_matches() {
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let stdout = concat!(
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+        "src/lib.rs:2:needle from rg\n",
+        "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n",
+    );
+    let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn search_grep_exit_1_is_successful_empty_result() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    let stdout = concat!(
+        "{\"webcodex_search\":{\"backend\":\"grep\",\"feature_unavailable\":false}}\n",
+        "{\"webcodex_search\":{\"backend\":\"grep\",\"feature_unavailable\":false}}\n",
+    );
+    let result = search_project_text_output("demo", &options, stdout, Some(1), "");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "grep");
+    assert_eq!(result.output["matches"], json!([]));
+}
+
+#[test]
+fn search_grep_exit_2_is_structured_execution_failure() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    let stdout = concat!(
+        "{\"webcodex_search\":{\"backend\":\"grep\",\"feature_unavailable\":false}}\n",
+        "{\"webcodex_search\":{\"backend\":\"grep\",\"feature_unavailable\":false}}\n",
+    );
+    let result = search_project_text_output("demo", &options, stdout, Some(2), "");
+    assert!(!result.success);
+    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["backend"], "grep");
+}
+
+#[cfg(unix)]
+#[test]
+fn search_command_preserves_rg_exit_2_despite_head() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    // Fake rg always exits 2 (regex/execution error); head would mask this in a bare pipeline.
+    write_executable_script(&bin.join("rg"), "#!/bin/sh\nexit 2\n");
+    write_executable_script(&bin.join("head"), fake_head_script());
+
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(!result.success);
+    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["backend"], "rg");
+}
+
+#[cfg(unix)]
+#[test]
+fn search_command_preserves_rg_exit_1_as_success_empty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    write_executable_script(&bin.join("rg"), "#!/bin/sh\nexit 1\n");
+    write_executable_script(&bin.join("head"), fake_head_script());
+
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 1, "stderr={stderr} stdout={stdout}");
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["matches"], json!([]));
+    assert_eq!(result.output["backend"], "rg");
+}
+
+#[cfg(unix)]
+#[test]
+fn search_command_preserves_grep_exit_2_despite_head() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    // No rg → grep path.
+    write_executable_script(&bin.join("grep"), "#!/bin/sh\nexit 2\n");
+    write_executable_script(&bin.join("head"), fake_head_script());
+
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(!result.success);
+    assert_eq!(result.output["code"], "search_execution_failed");
+    assert_eq!(result.output["backend"], "grep");
+}
+
+#[cfg(unix)]
+#[test]
+fn search_command_illegal_regex_is_not_swallowed_by_head() {
+    // Real rg with an illegal regex should surface exit >= 2 through the generated shell.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+    let options = SearchOptions::normalize(SearchRequest {
+        pattern: "[invalid".to_string(),
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    // Prefer system rg if available; otherwise skip with a clear message path via fake.
+    if std::process::Command::new("rg")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        let (exit_code, stdout, stderr, _) =
+            run_command_sync(&search_project_text_command(&options), &root, 10);
+        assert!(
+            exit_code >= 2,
+            "illegal regex should fail backend: exit={exit_code} stderr={stderr} stdout={stdout}"
+        );
+        let result =
+            search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+        assert!(!result.success);
+        assert_eq!(result.output["code"], "search_execution_failed");
+    }
+}
+
+#[cfg(unix)]
+fn count_webcodex_search_status_files(dir: &std::path::Path) -> usize {
+    let mut count = 0usize;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("webcodex-search-") {
+            count += 1;
+        }
+        if entry.path().is_dir() {
+            count += count_webcodex_search_status_files(&entry.path());
+        }
+    }
+    count
+}
+
+#[cfg(unix)]
+#[test]
+fn search_status_tmpdir_relative_does_not_use_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    let rel_tmp = root.join("rel-status-tmp");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&rel_tmp).unwrap();
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    // Relative TMPDIR must fall back to /tmp — never create status files under project.
+    let cmd = format!(
+        "PATH={}; export PATH\nTMPDIR=rel-status-tmp; export TMPDIR\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr={stderr} stdout={stdout}");
+    assert_eq!(count_webcodex_search_status_files(&root), 0);
+    assert_eq!(count_webcodex_search_status_files(&rel_tmp), 0);
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(result.success, "{:?}", result.error);
+}
+
+#[cfg(unix)]
+#[test]
+fn search_status_tmpdir_project_root_does_not_use_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    let safe_tmp = tmp.path().join("safe-tmp");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&safe_tmp).unwrap();
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    // Absolute TMPDIR equal to project root is rejected; files must not land in worktree.
+    let cmd = format!(
+        "PATH={}; export PATH\nTMPDIR={}; export TMPDIR\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        shell_escape_simple(&root.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr={stderr} stdout={stdout}");
+    assert_eq!(count_webcodex_search_status_files(&root), 0);
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(result.success, "{:?}", result.error);
+}
+
+#[cfg(unix)]
+#[test]
+fn search_status_tmpdir_symlink_into_worktree_is_rejected() {
+    // Outside symlink → inside worktree dir must not bypass physical-path checks.
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    let inside = root.join("inner-tmp");
+    let outside_link = tmp.path().join("outside-link-to-inner");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&inside).unwrap();
+    std::os::unix::fs::symlink(&inside, &outside_link).expect("create symlink");
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\nTMPDIR={}; export TMPDIR\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        shell_escape_simple(&outside_link.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr={stderr} stdout={stdout}");
+    assert_eq!(
+        count_webcodex_search_status_files(&root),
+        0,
+        "symlink-into-worktree TMPDIR must not create status files under the project"
+    );
+    assert_eq!(count_webcodex_search_status_files(&inside), 0);
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(result.success, "{:?}", result.error);
+}
+
+#[cfg(unix)]
+#[test]
+fn search_status_file_is_removed_after_successful_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    let safe_tmp = tmp.path().join("safe-tmp");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&safe_tmp).unwrap();
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\nTMPDIR={}; export TMPDIR\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        shell_escape_simple(&safe_tmp.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let before = count_webcodex_search_status_files(&safe_tmp);
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr={stderr} stdout={stdout}");
+    let after = count_webcodex_search_status_files(&safe_tmp);
+    assert_eq!(before, 0);
+    assert_eq!(after, 0, "status files must be cleaned after success");
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(result.success, "{:?}", result.error);
+}
+
+#[cfg(unix)]
+#[test]
+fn search_status_cleanup_trap_removes_file_on_term() {
+    // Mirrors production cleanup_search_status + signal trap; verifies TERM path
+    // without a long sleep. File removal is the contract.
+    let tmp = tempfile::tempdir().unwrap();
+    let status = tmp.path().join("webcodex-search-term-test");
+    let script = format!(
+        r#"status_file={path}
+cleanup_search_status() {{
+  if [ -n "${{status_file:-}}" ]; then
+    /bin/rm -f "$status_file" 2>/dev/null || /usr/bin/rm -f "$status_file" 2>/dev/null || rm -f "$status_file" 2>/dev/null || true
+    status_file=
+  fi
+}}
+trap 'cleanup_search_status' EXIT
+trap 'cleanup_search_status; exit 143' HUP INT TERM
+: > "$status_file"
+kill -s TERM $$
+exit 1
+"#,
+        path = shell_escape_simple(&status.to_string_lossy())
+    );
+    let (exit_code, _stdout, stderr, _) = run_command_sync(&script, tmp.path(), 5);
+    assert!(
+        !status.exists(),
+        "TERM trap must remove status file; exit={exit_code} stderr={stderr}"
+    );
+}
+
+#[test]
+fn resolve_search_head_command_prefers_path_then_absolute() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    #[cfg(unix)]
+    {
+        write_executable_script(&bin.join("head"), fake_head_script());
+        let path = format!("{}:/usr/bin", bin.display());
+        let resolved = resolve_search_head_command(Some(&path), &["/usr/bin/head", "/bin/head"])
+            .expect("path head");
+        assert!(resolved.contains("bin"), "{resolved}");
+        assert!(resolved.ends_with("head"), "{resolved}");
+    }
+    let missing = resolve_search_head_command(Some("/nonexistent/path/for/head"), &[]);
+    assert!(missing.is_none());
+    let absolute = resolve_search_head_command(
+        Some("/nonexistent/path/for/head"),
+        DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES,
+    );
+    // System may or may not have /usr/bin/head; when present, absolute resolves.
+    if std::path::Path::new("/usr/bin/head").is_file()
+        || std::path::Path::new("/bin/head").is_file()
+    {
+        assert!(absolute.is_some());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn search_command_fails_when_head_unavailable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
+    );
+    // No head in PATH and no absolute fallbacks → fail closed (no unbounded output).
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command_with_head_fallbacks(&options, &[])
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(!result.success);
+    assert_eq!(result.output["code"], "search_execution_failed");
+}
+
+#[cfg(unix)]
+#[test]
+fn search_command_fails_when_head_exits_nonzero_even_if_backend_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), "#!/bin/sh\nexit 2\n");
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    // Prefer PATH head (broken) over absolute system head by using empty absolute fallbacks.
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command_with_head_fallbacks(&options, &[])
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 2, "stderr={stderr} stdout={stdout}");
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(!result.success);
+    assert_eq!(result.output["code"], "search_execution_failed");
+}
+
+#[cfg(unix)]
+#[test]
+fn search_command_keeps_success_when_head_is_available() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nprintf 'src/a.rs:1:needle\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr={stderr}");
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn search_requires_ripgrep_based_on_effective_features_not_field_presence() {
+    let empty_globs = SearchOptions::normalize(SearchRequest {
+        include_globs: Some(vec![]),
+        exclude_globs: Some(vec![]),
+        timeout_secs: Some(5),
+        ..raw_search_request()
+    })
+    .unwrap();
+    assert!(!empty_globs.requires_ripgrep());
+    assert!(empty_globs.include_globs.is_empty());
+    assert!(empty_globs.exclude_globs.is_empty());
+    assert_eq!(empty_globs.timeout_secs, 5);
+
+    let timeout_only = SearchOptions::normalize(SearchRequest {
+        timeout_secs: Some(5),
+        result_mode: Some(SearchResultMode::Matches),
+        ..raw_search_request()
+    })
+    .unwrap();
+    assert!(!timeout_only.requires_ripgrep());
+
+    let with_include = SearchOptions::normalize(SearchRequest {
+        include_globs: Some(vec!["**/*.rs".to_string()]),
+        ..raw_search_request()
+    })
+    .unwrap();
+    assert!(with_include.requires_ripgrep());
+
+    let count_mode = SearchOptions::normalize(SearchRequest {
+        result_mode: Some(SearchResultMode::Count),
+        ..raw_search_request()
+    })
+    .unwrap();
+    assert!(count_mode.requires_ripgrep());
+}
+
+#[test]
+fn search_validation_errors_are_structured_without_raw_secrets() {
+    let secret_pattern = "SUPER_SECRET_PATTERN_VALUE_XYZ";
+    let secret_glob = "private-secret-name/**/*.rs";
+
+    let empty = SearchOptions::normalize(SearchRequest {
+        pattern: "   ".to_string(),
+        ..raw_search_request()
+    })
+    .unwrap_err();
+    assert_eq!(empty.field, "pattern");
+    assert_eq!(empty.reason, Some("empty"));
+
+    let nul = SearchOptions::normalize(SearchRequest {
+        pattern: format!("a{secret_pattern}\0b"),
+        ..raw_search_request()
+    })
+    .unwrap_err();
+    assert_eq!(nul.field, "pattern");
+    assert!(!nul.message.contains(secret_pattern));
+
+    let path = SearchOptions::normalize(SearchRequest {
+        path: Some("../outside".to_string()),
+        ..raw_search_request()
+    })
+    .unwrap_err();
+    assert_eq!(path.field, "path");
+
+    let glob = SearchOptions::normalize(SearchRequest {
+        include_globs: Some(vec![format!("!{secret_glob}")]),
+        ..raw_search_request()
+    })
+    .unwrap_err();
+    assert_eq!(glob.field, "include_globs");
+    assert_eq!(glob.reason, Some("negated"));
+    assert_eq!(glob.index, Some(0));
+    assert!(!glob.message.contains(secret_glob));
+}
+
+#[tokio::test]
+async fn search_invalid_request_dispatch_returns_structured_error() {
+    // Authorization runs before the tool body; register shell capability so
+    // normalize validation is reached and returns structured output.
+    let runtime = runtime_with_agent_project("search-invalid");
+    register_agent(
+        &runtime,
+        "search-invalid",
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let secret_glob = "NEVER_ECHO_THIS_GLOB_VALUE/**";
+    let result = runtime
+        .dispatch_with_auth(
+            search_call(
+                agent_test_project_id("search-invalid"),
+                SearchRequest {
+                    include_globs: Some(vec![format!("!{secret_glob}")]),
+                    ..raw_search_request()
+                },
+            ),
+            Some(&auth_context(None, true)),
+        )
+        .await;
+
+    // Validation fails before any agent search request is enqueued.
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "invalid_search_request");
+    assert_eq!(result.output["field"], "include_globs");
+    assert_eq!(result.output["reason"], "negated");
+    let rendered = serde_json::to_string(&result.output).unwrap();
+    assert!(!rendered.contains("NEVER_ECHO_THIS_GLOB_VALUE"));
+    assert!(!result.error.as_deref().unwrap_or("").contains("NEVER_ECHO"));
+}
+
+#[tokio::test]
+async fn search_agent_command_timeout_returns_search_timeout() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "needle\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-cmd-timeout", "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    search_call(
+                        project,
+                        SearchRequest {
+                            timeout_secs: Some(1),
+                            ..raw_search_request()
+                        },
+                    ),
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "search-cmd-timeout")
+        .await
+        .expect("search request");
+    assert_eq!(req.timeout_secs, 1);
+    // Simulate agent-side command timeout response (lowercase message + error field).
+    runtime
+        .shell_clients
+        .complete(ShellAgentResultRequest {
+            client_id: "search-cmd-timeout".to_string(),
+            agent_instance_id: "inst".to_string(),
+            request_id: req.request_id,
+            exit_code: Some(-1),
+            stdout: Some(
+                "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n"
+                    .to_string(),
+            ),
+            stderr: Some("command timed out after 1 seconds".to_string()),
+            duration_ms: Some(1000),
+            error: Some("command timed out".to_string()),
+        })
+        .await
+        .unwrap();
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_timeout");
+    assert_eq!(result.output["result_mode"], "matches");
+    assert_eq!(result.output["effective_timeout_secs"], 1);
+    assert_eq!(result.output["backend"], "rg");
+}
+
+#[tokio::test]
+async fn search_agent_outer_timeout_returns_search_timeout_and_cancels() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "needle\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-outer-timeout", "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    search_call(
+                        project,
+                        SearchRequest {
+                            // Outer wait is command+4 seconds; leave request unanswered.
+                            timeout_secs: Some(1),
+                            ..raw_search_request()
+                        },
+                    ),
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "search-outer-timeout")
+        .await
+        .expect("search request");
+    let request_id = req.request_id.clone();
+    assert_eq!(req.timeout_secs, 1);
+    // Do not complete the agent request; outer tokio timeout should fire.
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_timeout");
+    assert_eq!(result.output["result_mode"], "matches");
+    assert_eq!(result.output["effective_timeout_secs"], 1);
+    assert!(
+        result.output.get("backend").is_none() || result.output["backend"].is_null(),
+        "outer timeout should not invent backend: {}",
+        result.output
+    );
+    // Request should have been cancelled (no longer pending for completion).
+    let complete = runtime
+        .shell_clients
+        .complete(ShellAgentResultRequest {
+            client_id: "search-outer-timeout".to_string(),
+            agent_instance_id: "inst".to_string(),
+            request_id,
+            exit_code: Some(0),
+            stdout: Some(String::new()),
+            stderr: Some(String::new()),
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await;
+    assert!(
+        complete.is_err(),
+        "cancelled request should reject late complete: {complete:?}"
+    );
+}
+
+#[tokio::test]
+async fn search_agent_request_dropped_returns_structured_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "needle\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-dropped", "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    search_call(
+                        project,
+                        SearchRequest {
+                            timeout_secs: Some(30),
+                            ..raw_search_request()
+                        },
+                    ),
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "search-dropped")
+        .await
+        .expect("search request");
+    // Drop the oneshot waiter without completing — agent disconnect / channel drop.
+    runtime.shell_clients.cancel_request(&req.request_id).await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_request_dropped");
+    assert_eq!(result.output["result_mode"], "matches");
+    assert_eq!(result.output["effective_timeout_secs"], 30);
+    assert_ne!(result.output["code"], "search_timeout");
+    assert!(
+        result.error.as_deref().unwrap_or("").contains("dropped"),
+        "{:?}",
+        result.error
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn search_timeout_only_without_rg_still_allows_grep_fallback() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(root.join("a.rs"), "timeout_fallback_needle\n").unwrap();
+    write_executable_script(
+        &bin.join("grep"),
+        "#!/bin/sh\nprintf 'a.rs:1:timeout_fallback_needle\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-timeout-fallback", "demo", &root).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    search_call(
+                        project,
+                        SearchRequest {
+                            pattern: "timeout_fallback_needle".to_string(),
+                            result_mode: Some(SearchResultMode::Matches),
+                            timeout_secs: Some(5),
+                            ..raw_search_request()
+                        },
+                    ),
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let mut req = next_patch_agent_request(&runtime, "search-timeout-fallback")
+        .await
+        .expect("search request");
+    // Force grep path (no rg in PATH).
+    req.command = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        req.command
+    );
+    assert_eq!(req.timeout_secs, 5);
+    complete_agent_request_by_running_locally(&runtime, "search-timeout-fallback", req).await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "grep");
+    assert_eq!(result.output["effective_timeout_secs"], 5);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn search_glob_validation_rejects_invalid_and_protected_inputs() {
+    let invalid = [
+        "",
+        "!**/*.rs",
+        "docs/\n*.md",
+        "docs/\t*.md",
+        "docs/\0*.md",
+        "**/.env",
+        "secrets/**",
+        "**/*.key",
+    ];
+    for glob in invalid {
+        let result = SearchOptions::normalize(SearchRequest {
+            include_globs: Some(vec![glob.to_string()]),
+            ..raw_search_request()
+        });
+        assert!(result.is_err(), "include glob {glob:?} should be rejected");
+        let err = result.unwrap_err();
+        assert_eq!(err.field, "include_globs");
+        assert!(!err.message.contains(glob) || glob.is_empty());
+    }
+
+    for glob in ["", "!vendor/**", "vendor/\n**"] {
+        let result = SearchOptions::normalize(SearchRequest {
+            exclude_globs: Some(vec![glob.to_string()]),
+            ..raw_search_request()
+        });
+        assert!(result.is_err(), "exclude glob {glob:?} should be rejected");
+        assert_eq!(result.unwrap_err().field, "exclude_globs");
+    }
+}
+
+#[test]
+fn search_glob_validation_enforces_count_and_byte_limits() {
+    let too_many = (0..=MAX_SEARCH_GLOBS)
+        .map(|index| format!("src/{index}/**"))
+        .collect::<Vec<_>>();
+    let count_error = SearchOptions::normalize(SearchRequest {
+        include_globs: Some(too_many),
+        ..raw_search_request()
+    })
+    .unwrap_err();
+    assert_eq!(count_error.field, "include_globs");
+    assert_eq!(count_error.reason, Some("too_many"));
+    assert!(
+        count_error.message.contains("at most 32"),
+        "{}",
+        count_error.message
+    );
+
+    let length_error = SearchOptions::normalize(SearchRequest {
+        exclude_globs: Some(vec!["a".repeat(MAX_SEARCH_GLOB_BYTES + 1)]),
+        ..raw_search_request()
+    })
+    .unwrap_err();
+    assert_eq!(length_error.field, "exclude_globs");
+    assert_eq!(length_error.reason, Some("too_long"));
+    assert_eq!(length_error.index, Some(0));
+    assert!(
+        length_error.message.contains("256 bytes"),
+        "{}",
+        length_error.message
+    );
+}
+
+#[test]
+fn search_audit_arguments_record_bounded_feature_summary_without_pattern_or_globs() {
+    let raw = json!({
+        "project": "agent:demo:project",
+        "pattern": "NEVER_LOG_PATTERN_VALUE",
+        "path": "src",
+        "limit": 7,
+        "context_before": 1,
+        "context_after": 2,
+        "include_globs": ["private name/**/*.rs"],
+        "exclude_globs": ["generated secret name/**"],
+        "result_mode": "count",
+        "timeout_secs": 45
+    });
+    let raw_summary = super::super::tool_audit::session_log_arguments_for_tool_request(
+        "search_project_text",
+        &raw,
+    );
+    assert_eq!(raw_summary["pattern_present"], true);
+    assert_eq!(raw_summary["include_glob_count"], 1);
+    assert_eq!(raw_summary["exclude_glob_count"], 1);
+    assert_eq!(raw_summary["result_mode"], "count");
+    assert_eq!(raw_summary["timeout_secs"], 45);
+    let raw_json = serde_json::to_string(&raw_summary).unwrap();
+    assert!(!raw_json.contains("NEVER_LOG_PATTERN_VALUE"));
+    assert!(!raw_json.contains("private name"));
+    assert!(!raw_json.contains("generated secret name"));
+
+    let call_summary = search_call(
+        "agent:demo:project".to_string(),
+        SearchRequest {
+            pattern: "NEVER_LOG_PATTERN_VALUE".to_string(),
+            include_globs: Some(vec!["private name/**/*.rs".to_string()]),
+            exclude_globs: Some(vec!["generated secret name/**".to_string()]),
+            result_mode: Some(SearchResultMode::Count),
+            timeout_secs: Some(45),
+            ..raw_search_request()
+        },
+    )
+    .session_log_arguments();
+    assert_eq!(call_summary["include_glob_count"], 1);
+    assert_eq!(call_summary["exclude_glob_count"], 1);
+    assert_eq!(call_summary["result_mode"], "count");
+    assert_eq!(call_summary["timeout_secs"], 45);
+    let call_json = serde_json::to_string(&call_summary).unwrap();
+    assert!(!call_json.contains("NEVER_LOG_PATTERN_VALUE"));
+    assert!(!call_json.contains("private name"));
+    assert!(!call_json.contains("generated secret name"));
+}
+
+#[cfg(unix)]
+#[test]
+fn search_command_passes_shell_metacharacter_globs_as_one_literal_argument() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nfor arg do printf 'ARG=%s\\n' \"$arg\"; done\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+    let literal = "src/**/space $HOME; 'double\" `tick`";
+    let options = SearchOptions::normalize(SearchRequest {
+        include_globs: Some(vec![literal.to_string()]),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr: {stderr}");
+    assert!(stdout.contains(&format!("ARG={literal}")), "{stdout}");
+    assert!(
+        stdout.contains("$HOME"),
+        "environment expansion leaked into argv: {stdout}"
+    );
+    assert!(
+        !stdout.contains("\ndouble\" `tick`\n"),
+        "glob split into a command: {stdout}"
+    );
+}
+
+#[tokio::test]
+async fn search_project_text_include_and_exclude_globs_are_additive() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("docs")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("vendor")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("secrets")).unwrap();
+    std::fs::write(tmp.path().join("src/lib.rs"), "SCOPE_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("docs/guide.md"), "SCOPE_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("vendor/generated.rs"), "SCOPE_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("secrets/hidden.rs"), "SCOPE_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("notes.txt"), "SCOPE_NEEDLE\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-globs", "demo", tmp.path()).await;
+
+    let (result, _) = execute_agent_search(
+        &runtime,
+        "search-globs",
+        project,
+        SearchRequest {
+            pattern: "SCOPE_NEEDLE".to_string(),
+            include_globs: Some(vec!["**/*.rs".to_string(), "docs/**/*.md".to_string()]),
+            exclude_globs: Some(vec!["vendor/**".to_string()]),
+            limit: Some(10),
+            ..raw_search_request()
+        },
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let paths = result.output["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["docs/guide.md", "src/lib.rs"]);
+    assert_eq!(result.output["result_mode"], "matches");
+}
+
+#[tokio::test]
+async fn search_project_text_files_with_matches_is_unique_stable_and_bounded() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("b.rs"), "FILE_NEEDLE\nFILE_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "FILE_NEEDLE\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-files", "demo", tmp.path()).await;
+
+    let (result, _) = execute_agent_search(
+        &runtime,
+        "search-files",
+        project,
+        SearchRequest {
+            pattern: "FILE_NEEDLE".to_string(),
+            limit: Some(1),
+            result_mode: Some(SearchResultMode::FilesWithMatches),
+            ..raw_search_request()
+        },
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["result_mode"], "files_with_matches");
+    assert_eq!(result.output["files"], json!([{"path": "a.rs"}]));
+    assert_eq!(result.output["returned_file_count"], 1);
+    assert_eq!(result.output["truncated"], true);
+    assert_eq!(result.output["truncation_reason"], "limit");
+}
+
+#[tokio::test]
+async fn search_project_text_count_distinguishes_complete_and_truncated_totals() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "COUNT_NEEDLE\nCOUNT_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("b.rs"), "COUNT_NEEDLE\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-count", "demo", tmp.path()).await;
+
+    let (truncated, _) = execute_agent_search(
+        &runtime,
+        "search-count",
+        project.clone(),
+        SearchRequest {
+            pattern: "COUNT_NEEDLE".to_string(),
+            limit: Some(1),
+            result_mode: Some(SearchResultMode::Count),
+            ..raw_search_request()
+        },
+    )
+    .await;
+    assert!(truncated.success, "{:?}", truncated.error);
+    assert_eq!(
+        truncated.output["files"],
+        json!([{"path": "a.rs", "match_count": 2}])
+    );
+    assert_eq!(truncated.output["returned_file_count"], 1);
+    assert_eq!(truncated.output["returned_match_count"], 2);
+    assert_eq!(truncated.output["count_complete"], false);
+    assert_eq!(truncated.output["total_matches"], Value::Null);
+    assert_eq!(truncated.output["truncated"], true);
+
+    let (complete, _) = execute_agent_search(
+        &runtime,
+        "search-count",
+        project,
+        SearchRequest {
+            pattern: "COUNT_NEEDLE".to_string(),
+            limit: Some(10),
+            result_mode: Some(SearchResultMode::Count),
+            ..raw_search_request()
+        },
+    )
+    .await;
+    assert!(complete.success, "{:?}", complete.error);
+    assert_eq!(complete.output["returned_file_count"], 2);
+    assert_eq!(complete.output["returned_match_count"], 3);
+    assert_eq!(complete.output["count_complete"], true);
+    assert_eq!(complete.output["total_matches"], 3);
+    assert_eq!(complete.output["truncated"], false);
+}
+
+#[tokio::test]
+async fn search_project_text_reports_effective_clamped_timeout() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.rs"), "TIMEOUT_NEEDLE\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-timeout", "demo", tmp.path()).await;
+
+    let (low, low_req) = execute_agent_search(
+        &runtime,
+        "search-timeout",
+        project.clone(),
+        SearchRequest {
+            pattern: "TIMEOUT_NEEDLE".to_string(),
+            timeout_secs: Some(0),
+            ..raw_search_request()
+        },
+    )
+    .await;
+    assert!(low.success, "{:?}", low.error);
+    assert_eq!(low_req.timeout_secs, 1);
+    assert_eq!(low.output["effective_timeout_secs"], 1);
+
+    let (high, high_req) = execute_agent_search(
+        &runtime,
+        "search-timeout",
+        project,
+        SearchRequest {
+            pattern: "TIMEOUT_NEEDLE".to_string(),
+            timeout_secs: Some(999),
+            ..raw_search_request()
+        },
+    )
+    .await;
+    assert!(high.success, "{:?}", high.error);
+    assert_eq!(high_req.timeout_secs, 120);
+    assert_eq!(high.output["effective_timeout_secs"], 120);
+}
+
+#[tokio::test]
+async fn advanced_search_without_rg_returns_structured_capability_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(root.join("a.rs"), "needle\n").unwrap();
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(&runtime, "search-no-rg", "demo", &root).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    search_call(
+                        project,
+                        SearchRequest {
+                            result_mode: Some(SearchResultMode::Count),
+                            ..raw_search_request()
+                        },
+                    ),
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let mut req = next_patch_agent_request(&runtime, "search-no-rg")
+        .await
+        .expect("advanced search agent request");
+    req.command = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        req.command
+    );
+    complete_agent_request_by_running_locally(&runtime, "search-no-rg", req).await;
+    let result = task.await.unwrap();
+
+    assert!(!result.success);
+    assert_search_output_keys_are_declared(&result.output);
+    assert_eq!(result.output["code"], "search_backend_feature_unavailable");
+    assert_eq!(result.output["backend"], "grep");
+    assert_eq!(
+        result.output["requested_features"],
+        json!(["result_mode=count"])
+    );
+    assert!(result.error.unwrap().contains("ripgrep"));
 }
 
 #[tokio::test]
@@ -778,6 +2202,10 @@ async fn search_project_text_no_matches_returns_empty_matches() {
                         limit: Some(5),
                         context_before: None,
                         context_after: None,
+                        include_globs: None,
+                        exclude_globs: None,
+                        result_mode: None,
+                        timeout_secs: None,
                     },
                     Some(&bootstrap),
                 )
@@ -787,6 +2215,7 @@ async fn search_project_text_no_matches_returns_empty_matches() {
     let req = next_patch_agent_request(&runtime, "search-empty")
         .await
         .expect("search_project_text should enqueue an agent search request");
+    assert_eq!(req.timeout_secs, 30);
     complete_agent_request_by_running_locally(&runtime, "search-empty", req).await;
     let result = task.await.unwrap();
 
@@ -798,6 +2227,9 @@ async fn search_project_text_no_matches_returns_empty_matches() {
     assert_eq!(result.output["matches"], json!([]));
     assert_eq!(result.output["count"], 0);
     assert_eq!(result.output["truncated"], false);
+    assert_eq!(result.output["result_mode"], "matches");
+    assert_eq!(result.output["effective_timeout_secs"], 30);
+    assert_eq!(result.output["truncation_reason"], Value::Null);
 }
 
 #[tokio::test]
@@ -837,6 +2269,10 @@ async fn search_project_text_excludes_sensitive_and_build_dirs() {
                         limit: Some(10),
                         context_before: None,
                         context_after: None,
+                        include_globs: None,
+                        exclude_globs: None,
+                        result_mode: None,
+                        timeout_secs: None,
                     },
                     Some(&bootstrap),
                 )
@@ -896,6 +2332,10 @@ async fn search_project_text_requires_shell_capability() {
                 limit: None,
                 context_before: None,
                 context_after: None,
+                include_globs: None,
+                exclude_globs: None,
+                result_mode: None,
+                timeout_secs: None,
             },
             Some(&bootstrap),
         )
@@ -933,6 +2373,10 @@ async fn search_project_text_context_does_not_enqueue_python_helper() {
                         limit: Some(5),
                         context_before: Some(1),
                         context_after: Some(1),
+                        include_globs: None,
+                        exclude_globs: None,
+                        result_mode: None,
+                        timeout_secs: None,
                     },
                     Some(&bootstrap),
                 )
@@ -1056,12 +2500,18 @@ async fn search_project_text_rejects_empty_pattern() {
                 limit: None,
                 context_before: None,
                 context_after: None,
+                include_globs: None,
+                exclude_globs: None,
+                result_mode: None,
+                timeout_secs: None,
             },
             Some(&bootstrap),
         )
         .await;
     assert!(!result.success);
     assert!(result.error.unwrap().contains("pattern"));
+    assert_eq!(result.output["code"], "invalid_search_request");
+    assert_eq!(result.output["field"], "pattern");
 }
 
 #[tokio::test]
@@ -1089,6 +2539,10 @@ async fn search_project_text_rejects_absolute_or_parent_paths_before_agent_reque
                     limit: None,
                     context_before: None,
                     context_after: None,
+                    include_globs: None,
+                    exclude_globs: None,
+                    result_mode: None,
+                    timeout_secs: None,
                 },
                 Some(&bootstrap),
             )
@@ -1101,6 +2555,8 @@ async fn search_project_text_rejects_absolute_or_parent_paths_before_agent_reque
             path,
             err
         );
+        assert_eq!(result.output["code"], "invalid_search_request");
+        assert_eq!(result.output["field"], "path");
     }
 }
 

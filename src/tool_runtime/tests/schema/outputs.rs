@@ -128,9 +128,17 @@ fn key_tool_output_schemas_include_expected_fields() {
     }
     for field in [
         "backend",
+        "result_mode",
+        "effective_timeout_secs",
         "matches",
         "count",
+        "files",
+        "returned_file_count",
+        "returned_match_count",
+        "count_complete",
+        "total_matches",
         "truncated",
+        "truncation_reason",
         "context_before",
         "context_after",
     ] {

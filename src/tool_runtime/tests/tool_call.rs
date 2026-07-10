@@ -601,7 +601,11 @@ fn from_tool_name_parses_phase_a_tools() {
             "pattern": "fn main",
             "limit": 5,
             "context_before": 3,
-            "context_after": 8
+            "context_after": 8,
+            "include_globs": ["**/*.rs"],
+            "exclude_globs": ["vendor/**"],
+            "result_mode": "count",
+            "timeout_secs": 45
         }),
     )
     .unwrap();
@@ -613,6 +617,10 @@ fn from_tool_name_parses_phase_a_tools() {
             limit,
             context_before,
             context_after,
+            include_globs,
+            exclude_globs,
+            result_mode,
+            timeout_secs,
             ..
         } => {
             assert_eq!(project, "demo");
@@ -621,8 +629,33 @@ fn from_tool_name_parses_phase_a_tools() {
             assert_eq!(limit, Some(5));
             assert_eq!(context_before, Some(3));
             assert_eq!(context_after, Some(8));
+            assert_eq!(include_globs, Some(vec!["**/*.rs".to_string()]));
+            assert_eq!(exclude_globs, Some(vec!["vendor/**".to_string()]));
+            assert_eq!(result_mode, Some(SearchResultMode::Count));
+            assert_eq!(timeout_secs, Some(45));
         }
         other => panic!("expected SearchProjectText, got {:?}", other),
+    }
+
+    let legacy_call = ToolCall::from_tool_name(
+        "search_project_text",
+        json!({"project": "demo", "pattern": "ToolManifest"}),
+    )
+    .unwrap();
+    match legacy_call {
+        ToolCall::SearchProjectText {
+            result_mode,
+            include_globs,
+            exclude_globs,
+            timeout_secs,
+            ..
+        } => {
+            assert_eq!(result_mode, None);
+            assert_eq!(include_globs, None);
+            assert_eq!(exclude_globs, None);
+            assert_eq!(timeout_secs, None);
+        }
+        other => panic!("expected legacy SearchProjectText, got {other:?}"),
     }
 
     let call = ToolCall::from_tool_name("git_diff_summary", json!({"project": "demo"})).unwrap();

@@ -24,6 +24,14 @@ pub(crate) const TOOL_CALL_WRAPPER_FIELDS: &[&str] = &[
     TOOL_CALL_ARGUMENTS_FIELD,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchResultMode {
+    Matches,
+    FilesWithMatches,
+    Count,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "params", rename_all = "snake_case")]
 pub enum ToolCall {
@@ -505,6 +513,14 @@ pub enum ToolCall {
         context_before: Option<usize>,
         #[serde(default)]
         context_after: Option<usize>,
+        #[serde(default)]
+        include_globs: Option<Vec<String>>,
+        #[serde(default)]
+        exclude_globs: Option<Vec<String>>,
+        #[serde(default)]
+        result_mode: Option<SearchResultMode>,
+        #[serde(default)]
+        timeout_secs: Option<i64>,
     },
 
     /// Read-only git diff summary for a project: `git status --porcelain`,

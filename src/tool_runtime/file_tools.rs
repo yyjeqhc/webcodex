@@ -35,6 +35,10 @@ impl ToolRuntime {
                 limit,
                 context_before,
                 context_after,
+                include_globs,
+                exclude_globs,
+                result_mode,
+                timeout_secs,
             } => {
                 self.search_project_text(
                     project,
@@ -43,6 +47,10 @@ impl ToolRuntime {
                     limit,
                     context_before,
                     context_after,
+                    include_globs,
+                    exclude_globs,
+                    result_mode,
+                    timeout_secs,
                 )
                 .await
             }

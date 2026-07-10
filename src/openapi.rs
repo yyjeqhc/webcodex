@@ -22,26 +22,22 @@ fn flattened_tool_arg_schema(schema_type: &str) -> Value {
     })
 }
 
-fn flattened_string_array_tool_arg_schema() -> Value {
-    json!({
-        "type": "array",
-        "items": {"type": "string"},
-        "description": FLATTENED_TOOL_ARG_DESCRIPTION
-    })
-}
-
 fn flattened_tool_arg_schema_from_input(input_schema: &Value) -> Option<Value> {
-    match input_schema.get("type").and_then(Value::as_str) {
+    let supported = match input_schema.get("type").and_then(Value::as_str) {
         Some("array")
             if input_schema.pointer("/items/type").and_then(Value::as_str) == Some("string") =>
         {
-            Some(flattened_string_array_tool_arg_schema())
+            true
         }
-        Some(schema_type @ ("string" | "boolean" | "integer" | "number")) => {
-            Some(flattened_tool_arg_schema(schema_type))
-        }
-        _ => None,
+        Some("string" | "boolean" | "integer" | "number") => true,
+        _ => false,
+    };
+    if !supported {
+        return None;
     }
+    let mut schema = input_schema.clone();
+    schema["description"] = Value::String(FLATTENED_TOOL_ARG_DESCRIPTION.to_string());
+    Some(schema)
 }
 
 fn public_url() -> String {
@@ -1641,6 +1637,29 @@ fn schemas() -> Value {
                 "context_after": {
                     "type": "integer",
                     "description": "Optional context lines after each match; clamped server-side to 20."
+                },
+                "include_globs": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 256},
+                    "description": "Optional ripgrep include globs. Negated and protected-path globs are rejected."
+                },
+                "exclude_globs": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 256},
+                    "description": "Optional additive ripgrep exclude globs; built-in secret/build exclusions remain active."
+                },
+                "result_mode": {
+                    "type": "string",
+                    "enum": ["matches", "files_with_matches", "count"],
+                    "default": "matches",
+                    "description": "Result shape. limit applies to matches in matches mode and files in other modes."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "default": 30,
+                    "description": "Optional search timeout in seconds. Server clamps the value to 1..120; out-of-range integers are accepted and clamped rather than schema-rejected."
                 }
             }
         },
@@ -2719,6 +2738,39 @@ mod tests {
             .unwrap();
         assert!(search_props.contains_key("context_before"));
         assert!(search_props.contains_key("context_after"));
+        assert!(search_props.contains_key("include_globs"));
+        assert!(search_props.contains_key("exclude_globs"));
+        assert!(search_props.contains_key("result_mode"));
+        assert!(search_props.contains_key("timeout_secs"));
+        assert_eq!(search_props["include_globs"]["maxItems"], 32);
+        assert_eq!(search_props["include_globs"]["items"]["maxLength"], 256);
+        assert_eq!(
+            search_props["result_mode"]["enum"],
+            json!(["matches", "files_with_matches", "count"])
+        );
+        let flattened_props = schemas["ToolCallRequest"]["properties"]
+            .as_object()
+            .unwrap();
+        assert_eq!(flattened_props["include_globs"]["maxItems"], 32);
+        assert_eq!(flattened_props["include_globs"]["items"]["maxLength"], 256);
+        assert_eq!(
+            flattened_props["result_mode"]["enum"],
+            json!(["matches", "files_with_matches", "count"])
+        );
+        assert_eq!(flattened_props["timeout_secs"]["type"], "integer");
+        // Search timeout is server-clamped; schema must not reject out-of-range
+        // integers with minimum/maximum constraints.
+        assert!(search_props["timeout_secs"].get("minimum").is_none());
+        assert!(search_props["timeout_secs"].get("maximum").is_none());
+        assert!(flattened_props["timeout_secs"].get("minimum").is_none());
+        assert!(flattened_props["timeout_secs"].get("maximum").is_none());
+        let search_timeout_desc = search_props["timeout_secs"]["description"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            search_timeout_desc.to_ascii_lowercase().contains("clamp"),
+            "SearchProjectTextRequest.timeout_secs should document clamp: {search_timeout_desc}"
+        );
 
         let run_shell_description = schemas["RunShellRequest"]["description"]
             .as_str()

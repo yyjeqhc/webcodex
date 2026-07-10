@@ -115,6 +115,49 @@ fn tool_specs_input_schemas_are_objects() {
 }
 
 #[test]
+fn search_project_text_schema_declares_bounded_advanced_inputs() {
+    let specs = registered_tool_specs();
+    let search = specs
+        .iter()
+        .find(|spec| spec.name == "search_project_text")
+        .expect("search_project_text spec");
+    let properties = search.input_schema["properties"].as_object().unwrap();
+
+    for field in [
+        "include_globs",
+        "exclude_globs",
+        "result_mode",
+        "timeout_secs",
+    ] {
+        assert!(properties.contains_key(field), "missing {field}");
+    }
+    for field in ["include_globs", "exclude_globs"] {
+        assert_eq!(properties[field]["type"], "array");
+        assert_eq!(properties[field]["maxItems"], 32);
+        assert_eq!(properties[field]["items"]["type"], "string");
+        assert_eq!(properties[field]["items"]["minLength"], 1);
+        assert_eq!(properties[field]["items"]["maxLength"], 256);
+    }
+    // Timeout is integer without minimum/maximum so strict clients can send
+    // out-of-range values that the server clamps to 1..120.
+    assert!(properties["timeout_secs"].get("minimum").is_none());
+    assert!(properties["timeout_secs"].get("maximum").is_none());
+    assert_eq!(properties["timeout_secs"]["type"], "integer");
+    assert_eq!(properties["timeout_secs"]["default"], 30);
+    let timeout_desc = properties["timeout_secs"]["description"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        timeout_desc.to_ascii_lowercase().contains("clamp"),
+        "timeout_secs description should document server clamp: {timeout_desc}"
+    );
+    assert_eq!(
+        properties["result_mode"]["enum"],
+        json!(["matches", "files_with_matches", "count"])
+    );
+}
+
+#[test]
 fn tool_specs_input_schema_fields_are_declared_and_safe() {
     for spec in registered_tool_specs() {
         let properties = input_schema_properties(&spec);

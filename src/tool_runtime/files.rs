@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
+use serde::Serialize;
 use serde_json::{json, Value};
 #[cfg(test)]
 use sha2::{Digest, Sha256};
@@ -6,12 +7,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::helpers::{
-    run_command_sync, shell_escape_simple, shell_join_paths, validate_limited_cleanup_paths,
-    validate_project_relative_path,
+    looks_like_command_timeout, run_command_sync, shell_escape_simple, shell_join_paths,
+    validate_limited_cleanup_paths, validate_project_relative_path,
 };
 use super::tool_inputs::{ApplyTextEditInput, ApplyTextEditKind};
 use super::tool_result::ToolResult;
-use super::ToolRuntime;
+use super::{SearchResultMode, ToolRuntime};
 use crate::artifact_policy::{
     has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error,
 };
@@ -314,162 +315,637 @@ const SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS: &[&str] = &[
     "!**/*.key",
 ];
 
+pub(crate) const MAX_SEARCH_CONTEXT_LINES: usize = 20;
+pub(crate) const MAX_SEARCH_GLOBS: usize = 32;
+pub(crate) const MAX_SEARCH_GLOB_BYTES: usize = 256;
+const DEFAULT_SEARCH_TIMEOUT_SECS: u64 = 30;
+const MIN_SEARCH_TIMEOUT_SECS: i64 = 1;
+const MAX_SEARCH_TIMEOUT_SECS: i64 = 120;
+
+#[derive(Debug, Clone)]
+pub(crate) struct SearchRequest {
+    pub(crate) pattern: String,
+    pub(crate) path: Option<String>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) context_before: Option<usize>,
+    pub(crate) context_after: Option<usize>,
+    pub(crate) include_globs: Option<Vec<String>>,
+    pub(crate) exclude_globs: Option<Vec<String>>,
+    pub(crate) result_mode: Option<SearchResultMode>,
+    pub(crate) timeout_secs: Option<i64>,
+}
+
+/// Stable structured validation failure for `search_project_text` inputs.
+/// Messages must not echo raw pattern/glob values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SearchValidationError {
+    pub field: &'static str,
+    pub message: String,
+    pub index: Option<usize>,
+    pub reason: Option<&'static str>,
+}
+
+impl SearchValidationError {
+    fn new(field: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            field,
+            message: message.into(),
+            index: None,
+            reason: None,
+        }
+    }
+
+    fn with_index(mut self, index: usize) -> Self {
+        self.index = Some(index);
+        self
+    }
+
+    fn with_reason(mut self, reason: &'static str) -> Self {
+        self.reason = Some(reason);
+        self
+    }
+
+    pub(crate) fn into_tool_result(self) -> ToolResult {
+        let mut output = json!({
+            "code": "invalid_search_request",
+            "field": self.field,
+            "message": self.message,
+        });
+        if let Some(index) = self.index {
+            output["index"] = json!(index);
+        }
+        if let Some(reason) = self.reason {
+            output["reason"] = json!(reason);
+        }
+        ToolResult::err_with_output(self.message, output)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SearchOptions {
+    pub(crate) pattern: String,
+    pub(crate) path: String,
+    pub(crate) limit: usize,
+    pub(crate) context_before: usize,
+    pub(crate) context_after: usize,
+    pub(crate) include_globs: Vec<String>,
+    pub(crate) exclude_globs: Vec<String>,
+    pub(crate) result_mode: SearchResultMode,
+    pub(crate) timeout_secs: u64,
+    requested_features: Vec<String>,
+}
+
+impl SearchOptions {
+    pub(crate) fn normalize(request: SearchRequest) -> Result<Self, SearchValidationError> {
+        if request.pattern.trim().is_empty() {
+            return Err(
+                SearchValidationError::new("pattern", "pattern cannot be empty")
+                    .with_reason("empty"),
+            );
+        }
+        if request.pattern.contains('\0') {
+            return Err(
+                SearchValidationError::new("pattern", "pattern cannot contain NUL bytes")
+                    .with_reason("nul_byte"),
+            );
+        }
+        let path = request
+            .path
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty())
+            .unwrap_or_else(|| ".".to_string());
+        if let Err(message) = validate_project_relative_path(&path) {
+            return Err(SearchValidationError::new("path", message).with_reason("invalid_path"));
+        }
+
+        let include_globs = validate_search_globs(
+            "include_globs",
+            request.include_globs.unwrap_or_default(),
+            true,
+        )?;
+        let exclude_globs = validate_search_globs(
+            "exclude_globs",
+            request.exclude_globs.unwrap_or_default(),
+            false,
+        )?;
+        let result_mode = request.result_mode.unwrap_or(SearchResultMode::Matches);
+        let timeout_secs = request
+            .timeout_secs
+            .unwrap_or(DEFAULT_SEARCH_TIMEOUT_SECS as i64)
+            .clamp(MIN_SEARCH_TIMEOUT_SECS, MAX_SEARCH_TIMEOUT_SECS)
+            as u64;
+        // Capability features that require ripgrep. Empty glob arrays and
+        // timeout_secs are not rg-only capabilities (timeout is runner-owned).
+        let mut requested_features = Vec::new();
+        if !include_globs.is_empty() {
+            requested_features.push("include_globs".to_string());
+        }
+        if !exclude_globs.is_empty() {
+            requested_features.push("exclude_globs".to_string());
+        }
+        if result_mode != SearchResultMode::Matches {
+            requested_features.push(format!("result_mode={}", result_mode.as_str()));
+        }
+
+        Ok(Self {
+            pattern: request.pattern,
+            path,
+            limit: request.limit.unwrap_or(50).clamp(1, 200),
+            context_before: request
+                .context_before
+                .unwrap_or(0)
+                .min(MAX_SEARCH_CONTEXT_LINES),
+            context_after: request
+                .context_after
+                .unwrap_or(0)
+                .min(MAX_SEARCH_CONTEXT_LINES),
+            include_globs,
+            exclude_globs,
+            result_mode,
+            timeout_secs,
+            requested_features,
+        })
+    }
+
+    pub(crate) fn requires_ripgrep(&self) -> bool {
+        !self.include_globs.is_empty()
+            || !self.exclude_globs.is_empty()
+            || self.result_mode != SearchResultMode::Matches
+    }
+}
+
+/// Agent-path timeout layering for `search_project_text`.
+///
+/// Returns `(command_timeout_secs, wait_timeout_secs, outer_timeout_secs)`.
+/// Shell-client validation caps `wait_timeout_secs` at 120, so at the max
+/// search budget wait may equal command; the outer tokio wait always stays
+/// strictly above the command timeout so agent-reported timeouts can surface.
+pub(crate) fn search_agent_timeout_budget(effective_timeout_secs: u64) -> (u64, u64, u64) {
+    const MAX_SYNC_WAIT_SECS: u64 = 120;
+    let command_timeout = effective_timeout_secs.max(1);
+    let wait_timeout = command_timeout.saturating_add(2).min(MAX_SYNC_WAIT_SECS);
+    let outer_timeout = command_timeout
+        .saturating_add(4)
+        .max(wait_timeout.saturating_add(2));
+    (command_timeout, wait_timeout, outer_timeout)
+}
+
+impl SearchResultMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Matches => "matches",
+            Self::FilesWithMatches => "files_with_matches",
+            Self::Count => "count",
+        }
+    }
+}
+
+fn validate_search_globs(
+    field: &'static str,
+    globs: Vec<String>,
+    reject_protected: bool,
+) -> Result<Vec<String>, SearchValidationError> {
+    if globs.len() > MAX_SEARCH_GLOBS {
+        return Err(SearchValidationError::new(
+            field,
+            format!("{field} may contain at most {MAX_SEARCH_GLOBS} entries"),
+        )
+        .with_reason("too_many"));
+    }
+    for (index, glob) in globs.iter().enumerate() {
+        if glob.is_empty() {
+            return Err(SearchValidationError::new(
+                field,
+                format!("{field} entry cannot be empty"),
+            )
+            .with_index(index)
+            .with_reason("empty"));
+        }
+        if glob.len() > MAX_SEARCH_GLOB_BYTES {
+            return Err(SearchValidationError::new(
+                field,
+                format!("{field} entry must be at most {MAX_SEARCH_GLOB_BYTES} bytes"),
+            )
+            .with_index(index)
+            .with_reason("too_long"));
+        }
+        if glob.chars().any(char::is_control) {
+            return Err(SearchValidationError::new(
+                field,
+                format!("{field} entry cannot contain control characters"),
+            )
+            .with_index(index)
+            .with_reason("control_char"));
+        }
+        if glob.starts_with('!') {
+            return Err(SearchValidationError::new(
+                field,
+                format!("{field} entry cannot start with '!'"),
+            )
+            .with_index(index)
+            .with_reason("negated"));
+        }
+        if reject_protected && include_glob_explicitly_targets_protected_path(glob) {
+            return Err(SearchValidationError::new(
+                field,
+                format!("{field} entry cannot explicitly include a protected path"),
+            )
+            .with_index(index)
+            .with_reason("protected_path"));
+        }
+    }
+    Ok(globs)
+}
+
+fn include_glob_explicitly_targets_protected_path(glob: &str) -> bool {
+    const PROTECTED_GLOBS: &[&str] = &[
+        ".env",
+        "**/.env",
+        ".env.*",
+        "**/.env.*",
+        "agent.toml",
+        "**/agent.toml",
+        "webcodex.env",
+        "**/webcodex.env",
+        "*.pem",
+        "**/*.pem",
+        "*.key",
+        "**/*.key",
+    ];
+    let normalized = glob.strip_prefix("./").unwrap_or(glob);
+    if PROTECTED_GLOBS.contains(&normalized) {
+        return true;
+    }
+    normalized.split('/').any(|component| {
+        !component
+            .chars()
+            .any(|ch| matches!(ch, '*' | '?' | '[' | ']'))
+            && (matches!(
+                component,
+                ".git"
+                    | "target"
+                    | "node_modules"
+                    | "secrets"
+                    | "tokens"
+                    | "agent.toml"
+                    | "webcodex.env"
+                    | ".env"
+            ) || component.starts_with(".env.")
+                || component.ends_with(".pem")
+                || component.ends_with(".key"))
+    })
+}
+
 fn search_project_text_exclude_args() -> String {
     SEARCH_PROJECT_TEXT_EXCLUDES.join(" ")
 }
 
-fn search_project_text_rg_exclude_args() -> String {
-    SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS
+fn search_project_text_rg_glob_args(options: &SearchOptions) -> String {
+    let mut globs = options
+        .include_globs
+        .iter()
+        .map(|glob| glob.to_string())
+        .chain(options.exclude_globs.iter().map(|glob| format!("!{glob}")))
+        .collect::<Vec<_>>();
+    globs.extend(
+        SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS
+            .iter()
+            .map(|glob| (*glob).to_string()),
+    );
+    globs
         .iter()
         .map(|glob| format!("--glob {}", shell_escape_simple(glob)))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn search_project_text_backend_marker_command(backend: &str) -> String {
-    let marker = json!({ "backend": backend }).to_string();
+fn search_project_text_marker_command(backend: &str, feature_unavailable: bool) -> String {
+    let marker = json!({
+        "webcodex_search": {
+            "backend": backend,
+            "feature_unavailable": feature_unavailable,
+        }
+    })
+    .to_string();
     format!("printf '%s\\n' {}", shell_escape_simple(&marker))
 }
 
-fn wrap_search_project_text_backend_command(backend: &str, command: String) -> String {
-    let marker = search_project_text_backend_marker_command(backend);
-    format!("{marker}\n{command}\n{marker}")
+/// Default absolute `head` candidates when `command -v head` is unavailable.
+pub(crate) const DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES: &[&str] = &["/usr/bin/head", "/bin/head"];
+
+/// Resolve a bounded-output `head` binary for search commands.
+/// Prefers the first executable named `head` on `path_env`, then absolute
+/// candidates. Returns `None` when nothing is usable (caller must fail closed).
+///
+/// Runtime shell commands re-implement the same policy (agent PATH may differ
+/// from the server). This helper is the testable mirror of that policy.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn resolve_search_head_command(
+    path_env: Option<&str>,
+    absolute_candidates: &[&str],
+) -> Option<String> {
+    if let Some(path_env) = path_env {
+        for dir in std::env::split_paths(path_env) {
+            let candidate = dir.join("head");
+            if is_executable_file(&candidate) {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
+        }
+    }
+    for candidate in absolute_candidates {
+        let path = Path::new(candidate);
+        if path.is_absolute() && is_executable_file(path) {
+            return Some((*candidate).to_string());
+        }
+    }
+    None
 }
 
-fn grep_search_project_text_command(pattern: &str, rel_path: &str, max_matches: usize) -> String {
-    let escaped_pattern = shell_escape_simple(pattern);
-    let escaped_target = shell_escape_simple(rel_path);
-    let head = max_matches.saturating_add(1);
-    format!(
-        "grep -rnI {excludes} -e {pattern} {target} 2>/dev/null | head -n {head}",
-        excludes = search_project_text_exclude_args(),
-        pattern = escaped_pattern,
-        target = escaped_target,
-        head = head,
-    )
+#[cfg_attr(not(test), allow(dead_code))]
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|meta| meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
-fn rg_search_project_text_command(pattern: &str, rel_path: &str, max_matches: usize) -> String {
-    let head = max_matches.saturating_add(1);
-    format!(
-        "rg --with-filename --line-number --no-heading --color never --hidden --no-ignore {excludes} -e {pattern} {target} 2>/dev/null | head -n {head}",
-        excludes = search_project_text_rg_exclude_args(),
-        pattern = shell_escape_simple(pattern),
-        target = shell_escape_simple(rel_path),
-        head = head,
-    )
-}
-
-/// Build a bounded rg-first command for `search_project_text`. The command
-/// emits a small JSON backend marker before and after the bounded search output
-/// so the runtime can report the actual backend even when the match stream is
-/// empty.
-pub(crate) fn search_project_text_command(
-    pattern: &str,
-    rel_path: &str,
-    max_matches: usize,
-) -> String {
-    let rg = wrap_search_project_text_backend_command(
-        "rg",
-        rg_search_project_text_command(pattern, rel_path, max_matches),
+/// Shell preamble that resolves `head_cmd` at runtime (agent/local sh).
+/// Absolute fallbacks are embedded as literals for POSIX `sh`.
+fn search_head_resolution_shell(absolute_candidates: &[&str]) -> String {
+    let mut script = String::from(
+        r#"head_cmd=
+if command -v head >/dev/null 2>&1; then
+  head_cmd=$(command -v head)
+fi
+"#,
     );
-    let grep = wrap_search_project_text_backend_command(
-        "grep",
-        grep_search_project_text_command(pattern, rel_path, max_matches),
+    for candidate in absolute_candidates {
+        // Only absolute paths are considered as fallbacks.
+        if !candidate.starts_with('/') {
+            continue;
+        }
+        let escaped = shell_escape_simple(candidate);
+        script.push_str(&format!(
+            r#"if [ -z "$head_cmd" ] && [ -x {escaped} ]; then
+  head_cmd={escaped}
+fi
+"#
+        ));
+    }
+    script.push_str(
+        r#"[ -n "$head_cmd" ] || exit 2
+"#,
     );
-    format!("if command -v rg >/dev/null 2>&1; then\n{rg}\nelse\n{grep}\nfi")
+    script
 }
 
-pub(crate) const MAX_SEARCH_CONTEXT_LINES: usize = 20;
+/// Select a safe absolute temp directory for search status files.
+///
+/// Uses physical paths (`pwd -P` / `cd && pwd -P`) so a TMPDIR symlink that
+/// resolves into the project worktree cannot bypass the worktree ban.
+/// Relative, unreadable, unwritable, or worktree-scoped TMPDIR falls back to `/tmp`.
+fn search_status_tmpdir_shell() -> &'static str {
+    r#"tmp_base=/tmp
+if [ -n "${TMPDIR:-}" ]; then
+  case "$TMPDIR" in
+    /*)
+      # Physical cwd (follows Command::current_dir; not inherited $PWD).
+      pwd_phys=$(pwd -P 2>/dev/null || true)
+      # Physical TMPDIR via cd (POSIX; no realpath/readlink -f).
+      tmp_phys=$(cd "$TMPDIR" 2>/dev/null && pwd -P 2>/dev/null || true)
+      if [ -n "$pwd_phys" ] && [ -n "$tmp_phys" ]; then
+        case "$tmp_phys" in
+          "$pwd_phys"|"$pwd_phys"/*)
+            tmp_base=/tmp
+            ;;
+          *)
+            tmp_base=$tmp_phys
+            ;;
+        esac
+      else
+        # Missing, unenterable, or unresolvable TMPDIR.
+        tmp_base=/tmp
+      fi
+      ;;
+    *)
+      # Relative TMPDIR is never used for status files.
+      tmp_base=/tmp
+      ;;
+  esac
+fi
+if [ ! -d "$tmp_base" ] || [ ! -w "$tmp_base" ]; then
+  tmp_base=/tmp
+fi
+"#
+}
 
-pub(crate) fn effective_search_context(
-    context_before: Option<usize>,
-    context_after: Option<usize>,
-) -> (usize, usize) {
-    (
-        context_before.unwrap_or(0).min(MAX_SEARCH_CONTEXT_LINES),
-        context_after.unwrap_or(0).min(MAX_SEARCH_CONTEXT_LINES),
+/// Wrap a backend search invocation so POSIX `sh` preserves the backend exit
+/// status even when output is bounded by `head`. Status files live only under
+/// a safe absolute temp dir (never the project worktree) and are cleaned up via
+/// trap + explicit removal.
+///
+/// Uses pure shell noclobber file creation instead of `mktemp` so the command
+/// still works when PATH is restricted to a tool sandbox without coreutils.
+///
+/// Caller must ensure `head_cmd` is set (see `search_head_resolution_shell`).
+fn wrap_search_project_text_backend_command(
+    backend: &str,
+    backend_cmd: &str,
+    head_lines: usize,
+) -> String {
+    let marker = search_project_text_marker_command(backend, false);
+    // Capture backend status via a side-channel file so `head` cannot mask
+    // exit >= 2. SIGPIPE (141) may occur when head closes early on large
+    // successful result sets and is treated as success by the Rust layer.
+    // Head's own non-zero exit is never treated as success.
+    format!(
+        r#"{marker}
+{tmpdir}
+status_file=
+cleanup_search_status() {{
+  if [ -n "${{status_file:-}}" ]; then
+    /bin/rm -f "$status_file" 2>/dev/null || /usr/bin/rm -f "$status_file" 2>/dev/null || rm -f "$status_file" 2>/dev/null || true
+    status_file=
+  fi
+}}
+# EXIT covers normal completion; signal traps clean then exit so the shell does not resume.
+trap 'cleanup_search_status' EXIT
+trap 'cleanup_search_status; exit 143' HUP INT TERM
+i=0
+while [ "$i" -lt 100 ]; do
+  candidate="$tmp_base/webcodex-search-$$-$i"
+  if (umask 077; set -C; : > "$candidate") 2>/dev/null; then
+    status_file=$candidate
+    break
+  fi
+  i=$((i + 1))
+done
+[ -n "$status_file" ] || exit 2
+{{
+  {backend_cmd}
+  echo $? > "$status_file"
+}} | "$head_cmd" -n {head_lines}
+head_status=$?
+status=2
+# read is a shell builtin so this works even when PATH lacks coreutils.
+if [ -f "$status_file" ]; then
+  read -r status < "$status_file" || status=2
+fi
+cleanup_search_status
+case "$status" in
+  ''|*[!0-9]*) status=2 ;;
+esac
+case "$head_status" in
+  ''|*[!0-9]*) head_status=2 ;;
+esac
+if [ "$head_status" -ne 0 ]; then
+  status=2
+fi
+{marker}
+exit "$status""#,
+        marker = marker,
+        tmpdir = search_status_tmpdir_shell(),
+        backend_cmd = backend_cmd,
+        head_lines = head_lines,
     )
 }
 
-pub(crate) fn search_project_text_context_command(
-    pattern: &str,
-    rel_path: &str,
-    max_matches: usize,
-    context_before: usize,
-    context_after: usize,
-) -> String {
-    let rg = wrap_search_project_text_backend_command(
-        "rg",
-        rg_search_project_text_context_command(
-            pattern,
-            rel_path,
-            max_matches,
-            context_before,
-            context_after,
+fn search_output_line_budget(options: &SearchOptions) -> usize {
+    let result_budget = options.limit.saturating_add(1);
+    if options.result_mode != SearchResultMode::Matches {
+        return result_budget;
+    }
+    if options.context_before == 0 && options.context_after == 0 {
+        return result_budget;
+    }
+    let context_budget = options
+        .context_before
+        .saturating_add(options.context_after)
+        .saturating_add(2);
+    result_budget
+        .saturating_mul(context_budget)
+        .saturating_add(1)
+}
+
+fn ripgrep_search_command(options: &SearchOptions) -> String {
+    let globs = search_project_text_rg_glob_args(options);
+    let pattern = shell_escape_simple(&options.pattern);
+    let target = shell_escape_simple(&options.path);
+    let mode_args = match options.result_mode {
+        SearchResultMode::Matches => format!(
+            "--with-filename --null --line-number --no-heading -B {} -A {}",
+            options.context_before, options.context_after
         ),
-    );
-    let grep = wrap_search_project_text_backend_command(
-        "grep",
-        grep_search_project_text_context_command(
-            pattern,
-            rel_path,
-            max_matches,
-            context_before,
-            context_after,
-        ),
-    );
-    format!("if command -v rg >/dev/null 2>&1; then\n{rg}\nelse\n{grep}\nfi")
+        SearchResultMode::FilesWithMatches => "--files-with-matches".to_string(),
+        SearchResultMode::Count => "--count --null".to_string(),
+    };
+    format!(
+        "rg {mode_args} --color never --hidden --no-ignore --sort path {globs} -e {pattern} -- {target} 2>/dev/null"
+    )
 }
 
-fn grep_search_project_text_context_command(
-    pattern: &str,
-    rel_path: &str,
-    max_matches: usize,
-    context_before: usize,
-    context_after: usize,
-) -> String {
-    let context_line_budget = context_before
-        .saturating_add(context_after)
-        .saturating_add(1);
-    let match_budget = max_matches.saturating_add(1);
-    let head = match_budget
-        .saturating_mul(context_line_budget.saturating_add(1))
-        .saturating_add(1);
+fn grep_search_command(options: &SearchOptions) -> String {
     format!(
-        "grep -rnI --null {excludes} -B {before} -A {after} -e {pattern} {target} 2>/dev/null | head -n {head}",
+        "grep -rnI --null {excludes} -B {before} -A {after} -e {pattern} -- {target} 2>/dev/null",
         excludes = search_project_text_exclude_args(),
-        pattern = shell_escape_simple(pattern),
-        target = shell_escape_simple(rel_path),
-        before = context_before,
-        after = context_after,
-        head = head,
+        before = options.context_before,
+        after = options.context_after,
+        pattern = shell_escape_simple(&options.pattern),
+        target = shell_escape_simple(&options.path),
     )
 }
 
-fn rg_search_project_text_context_command(
-    pattern: &str,
-    rel_path: &str,
-    max_matches: usize,
-    context_before: usize,
-    context_after: usize,
-) -> String {
-    let context_line_budget = context_before
-        .saturating_add(context_after)
-        .saturating_add(1);
-    let match_budget = max_matches.saturating_add(1);
-    let head = match_budget
-        .saturating_mul(context_line_budget.saturating_add(1))
-        .saturating_add(1);
-    format!(
-        "rg --with-filename --null --line-number --no-heading --color never --hidden --no-ignore {excludes} -B {before} -A {after} -e {pattern} {target} 2>/dev/null | head -n {head}",
-        excludes = search_project_text_rg_exclude_args(),
-        pattern = shell_escape_simple(pattern),
-        target = shell_escape_simple(rel_path),
-        before = context_before,
-        after = context_after,
-        head = head,
+/// Build one bounded capability-selecting command for every search mode. Basic
+/// matches calls retain grep fallback; requests that need full capabilities
+/// emit a machine-readable marker when ripgrep is unavailable.
+pub(crate) fn search_project_text_command(options: &SearchOptions) -> String {
+    search_project_text_command_with_head_fallbacks(
+        options,
+        DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES,
     )
+}
+
+/// Like [`search_project_text_command`], but absolute `head` fallbacks are
+/// injectable so tests can simulate environments without a system head.
+pub(crate) fn search_project_text_command_with_head_fallbacks(
+    options: &SearchOptions,
+    absolute_head_candidates: &[&str],
+) -> String {
+    let head = search_output_line_budget(options);
+    let head_setup = search_head_resolution_shell(absolute_head_candidates);
+    let rg = wrap_search_project_text_backend_command("rg", &ripgrep_search_command(options), head);
+    let fallback = if options.requires_ripgrep() {
+        search_project_text_marker_command("grep", true)
+    } else {
+        wrap_search_project_text_backend_command("grep", &grep_search_command(options), head)
+    };
+    format!("{head_setup}if command -v rg >/dev/null 2>&1; then\n{rg}\nelse\n{fallback}\nfi")
+}
+
+fn search_request_dropped_tool_result(options: &SearchOptions) -> ToolResult {
+    let message = "search_project_text agent request was dropped";
+    ToolResult::err_with_output(
+        message,
+        json!({
+            "code": "search_request_dropped",
+            "result_mode": options.result_mode.as_str(),
+            "effective_timeout_secs": options.timeout_secs,
+            "message": message,
+        }),
+    )
+}
+
+/// Backend exit codes treated as successful search completion.
+/// 0 = matches found, 1 = no matches, 141 = SIGPIPE after head truncated output.
+fn is_search_backend_success_exit(code: i32) -> bool {
+    matches!(code, 0 | 1 | 141)
+}
+
+fn looks_like_search_timeout(
+    exit_code: Option<i32>,
+    stderr: &str,
+    agent_error: Option<&str>,
+    timeout_secs: u64,
+) -> bool {
+    if looks_like_command_timeout(exit_code, stderr, timeout_secs) {
+        return true;
+    }
+    let needle = format!("command timed out after {timeout_secs} seconds");
+    let stderr_l = stderr.to_ascii_lowercase();
+    if exit_code == Some(-1) && stderr_l.contains(&needle) {
+        return true;
+    }
+    agent_error.is_some_and(|error| {
+        let error_l = error.to_ascii_lowercase();
+        error_l == "command timed out" || error_l.contains(&needle)
+    })
+}
+
+fn search_timeout_tool_result(options: &SearchOptions, backend: Option<&str>) -> ToolResult {
+    let message = format!(
+        "search_project_text timed out after {} seconds",
+        options.timeout_secs
+    );
+    let mut output = json!({
+        "code": "search_timeout",
+        "result_mode": options.result_mode.as_str(),
+        "effective_timeout_secs": options.timeout_secs,
+        "message": message,
+    });
+    if let Some(backend) = backend {
+        output["backend"] = json!(backend);
+    }
+    ToolResult::err_with_output(message, output)
 }
 
 fn is_search_project_text_excluded_path(path: &str) -> bool {
@@ -493,295 +969,389 @@ fn is_search_project_text_excluded_path(path: &str) -> bool {
     })
 }
 
-/// Parse `grep -rnI` output lines (`path:lineno:content`) into bounded match
-/// objects. Strips a leading `./` so paths are project-relative. Returns the
-/// matches and whether the source exceeded `max_matches`.
-pub(crate) fn parse_search_matches(stdout: &str, max_matches: usize) -> (Vec<Value>, bool) {
-    let mut matches: Vec<Value> = Vec::new();
-    let mut truncated = false;
-    for line in stdout.lines() {
-        if matches.len() >= max_matches {
-            truncated = true;
-            break;
-        }
-        let mut parts = line.splitn(3, ':');
-        let (Some(path), Some(lineno), Some(content)) = (parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        let line_no: usize = match lineno.parse() {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
-        let clean_path = path.strip_prefix("./").unwrap_or(path).to_string();
-        matches.push(json!({
-            "path": clean_path,
-            "line": line_no,
-            "preview": content,
-            "context_before": [],
-            "context_after": [],
-        }));
-    }
-    (matches, truncated)
-}
-
 #[derive(Debug, Clone)]
-struct GrepContextLine {
+struct SearchLineRecord {
     path: String,
     line: u64,
     text: String,
     is_match: bool,
 }
 
-pub(crate) fn parse_search_context_matches(
-    stdout: &str,
-    max_matches: usize,
-    context_before: usize,
-    context_after: usize,
-) -> (Vec<Value>, bool) {
-    let mut grep_lines = Vec::new();
-    let mut matches: Vec<Value> = Vec::new();
-    let mut truncated = false;
-    for line in stdout.lines() {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            if let Some(record) = parse_grep_context_line(line) {
-                grep_lines.push(record);
-            }
-            continue;
-        };
-        if value
-            .get("truncated")
-            .and_then(|truncated| truncated.as_bool())
-            .unwrap_or(false)
-        {
-            truncated = true;
-            break;
-        }
-        if matches.len() >= max_matches {
-            truncated = true;
-            break;
-        }
-        let Some(path) = value.get("path").and_then(|path| path.as_str()) else {
-            continue;
-        };
-        let Some(line_no) = value.get("line").and_then(|line| line.as_u64()) else {
-            continue;
-        };
-        let Some(preview) = value.get("preview").and_then(|preview| preview.as_str()) else {
-            continue;
-        };
-        let context_before = parse_context_lines(value.get("context_before"));
-        let context_after = parse_context_lines(value.get("context_after"));
-        matches.push(json!({
-            "path": path,
-            "line": line_no,
-            "preview": preview,
-            "context_before": context_before,
-            "context_after": context_after,
-        }));
-    }
-    if !grep_lines.is_empty() {
-        return search_context_matches_from_grep_lines(
-            &grep_lines,
-            max_matches,
-            context_before,
-            context_after,
-        );
-    }
-    (matches, truncated)
+#[derive(Debug, Serialize)]
+struct SearchContextLine {
+    line: u64,
+    text: String,
 }
 
-fn parse_grep_context_line(line: &str) -> Option<GrepContextLine> {
-    let (path, rest) = line.split_once('\0')?;
-    let mut digits_end = 0usize;
-    for (idx, ch) in rest.char_indices() {
-        if ch.is_ascii_digit() {
-            digits_end = idx + ch.len_utf8();
-            continue;
+#[derive(Debug, Serialize)]
+struct SearchMatch {
+    path: String,
+    line: u64,
+    preview: String,
+    context_before: Vec<SearchContextLine>,
+    context_after: Vec<SearchContextLine>,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchFile {
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchFileCount {
+    path: String,
+    match_count: u64,
+}
+
+#[derive(Debug)]
+enum SearchResultData {
+    Matches(Vec<SearchMatch>),
+    FilesWithMatches(Vec<SearchFile>),
+    Count {
+        files: Vec<SearchFileCount>,
+        returned_match_count: u64,
+        count_complete: bool,
+    },
+}
+
+#[derive(Debug)]
+struct SearchResult {
+    backend: String,
+    data: SearchResultData,
+    truncated: bool,
+    truncation_reason: Option<&'static str>,
+}
+
+#[derive(Debug)]
+struct SearchBackendStatus {
+    backend: String,
+    feature_unavailable: bool,
+}
+
+fn parse_search_backend_status(stdout: &str) -> SearchBackendStatus {
+    stdout
+        .lines()
+        .find_map(|line| {
+            let value = serde_json::from_str::<Value>(line).ok()?;
+            let marker = value.get("webcodex_search").unwrap_or(&value);
+            let backend = marker.get("backend").and_then(Value::as_str)?;
+            if !matches!(backend, "rg" | "grep" | "native") {
+                return None;
+            }
+            Some(SearchBackendStatus {
+                backend: backend.to_string(),
+                feature_unavailable: marker
+                    .get("feature_unavailable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+        })
+        .unwrap_or_else(|| SearchBackendStatus {
+            backend: "grep".to_string(),
+            feature_unavailable: false,
+        })
+}
+
+fn parse_search_line_record(line: &str) -> Option<SearchLineRecord> {
+    let (path, line_no, separator, text) = if let Some((path, rest)) = line.split_once('\0') {
+        let digits_end = rest
+            .char_indices()
+            .take_while(|(_, ch)| ch.is_ascii_digit())
+            .map(|(index, ch)| index + ch.len_utf8())
+            .last()?;
+        let separator = rest[digits_end..].chars().next()?;
+        if separator != ':' && separator != '-' {
+            return None;
         }
-        break;
-    }
-    if digits_end == 0 || digits_end >= rest.len() {
+        let text_start = digits_end + separator.len_utf8();
+        (path, &rest[..digits_end], separator, &rest[text_start..])
+    } else {
+        let mut parts = line.splitn(3, ':');
+        (parts.next()?, parts.next()?, ':', parts.next()?)
+    };
+    let path = path.strip_prefix("./").unwrap_or(path).to_string();
+    if is_search_project_text_excluded_path(&path) {
         return None;
     }
-    let separator = rest[digits_end..].chars().next()?;
-    if separator != ':' && separator != '-' {
-        return None;
-    }
-    let text_start = digits_end + separator.len_utf8();
-    let line_no = rest[..digits_end].parse::<u64>().ok()?;
-    let clean_path = path.strip_prefix("./").unwrap_or(path).to_string();
-    Some(GrepContextLine {
-        path: clean_path,
-        line: line_no,
-        text: rest[text_start..].to_string(),
+    Some(SearchLineRecord {
+        path,
+        line: line_no.parse().ok()?,
+        text: text.to_string(),
         is_match: separator == ':',
     })
 }
 
-fn search_context_matches_from_grep_lines(
-    lines: &[GrepContextLine],
-    max_matches: usize,
-    context_before: usize,
-    context_after: usize,
-) -> (Vec<Value>, bool) {
+fn parse_search_line_records(stdout: &str) -> Vec<SearchLineRecord> {
+    stdout
+        .lines()
+        .filter_map(parse_search_line_record)
+        .collect()
+}
+
+fn search_matches_from_records(
+    records: &[SearchLineRecord],
+    options: &SearchOptions,
+) -> (Vec<SearchMatch>, bool) {
     let mut matches = Vec::new();
     let mut truncated = false;
-    for (idx, record) in lines.iter().enumerate() {
+    for (index, record) in records.iter().enumerate() {
         if !record.is_match {
             continue;
         }
-        if matches.len() >= max_matches {
+        if matches.len() >= options.limit {
             truncated = true;
             break;
         }
-        let before_floor = record.line.saturating_sub(context_before as u64);
-        let after_ceiling = record.line.saturating_add(context_after as u64);
-        let context_before = lines
+        let before_floor = record.line.saturating_sub(options.context_before as u64);
+        let after_ceiling = record.line.saturating_add(options.context_after as u64);
+        let context_before = records
             .iter()
-            .take(idx)
+            .take(index)
             .filter(|candidate| {
-                candidate.path.as_str() == record.path.as_str()
+                candidate.path == record.path
                     && candidate.line >= before_floor
                     && candidate.line < record.line
             })
-            .map(|candidate| {
-                json!({
-                    "line": candidate.line,
-                    "text": candidate.text.as_str(),
-                })
+            .map(|candidate| SearchContextLine {
+                line: candidate.line,
+                text: candidate.text.clone(),
             })
             .collect::<Vec<_>>();
-        let context_after = lines
+        let context_after = records
             .iter()
-            .skip(idx + 1)
+            .skip(index + 1)
             .filter(|candidate| {
-                candidate.path.as_str() == record.path.as_str()
+                candidate.path == record.path
                     && candidate.line > record.line
                     && candidate.line <= after_ceiling
             })
-            .map(|candidate| {
-                json!({
-                    "line": candidate.line,
-                    "text": candidate.text.as_str(),
-                })
+            .map(|candidate| SearchContextLine {
+                line: candidate.line,
+                text: candidate.text.clone(),
             })
             .collect::<Vec<_>>();
-        matches.push(json!({
-            "path": record.path.as_str(),
-            "line": record.line,
-            "preview": record.text.as_str(),
-            "context_before": context_before,
-            "context_after": context_after,
-        }));
+        matches.push(SearchMatch {
+            path: record.path.clone(),
+            line: record.line,
+            preview: record.text.clone(),
+            context_before,
+            context_after,
+        });
     }
     (matches, truncated)
 }
 
-fn parse_search_backend(stdout: &str) -> Option<String> {
-    stdout.lines().find_map(|line| {
-        let value = serde_json::from_str::<Value>(line).ok()?;
-        let backend = value.get("backend").and_then(Value::as_str)?;
-        match backend {
-            "rg" | "grep" | "native" => Some(backend.to_string()),
-            _ => None,
+fn parse_file_paths(stdout: &str, limit: usize) -> (Vec<SearchFile>, bool) {
+    let mut paths = Vec::<String>::new();
+    for line in stdout.lines() {
+        if line.starts_with("[output truncated to last ") {
+            continue;
         }
-    })
+        if serde_json::from_str::<Value>(line).is_ok() {
+            continue;
+        }
+        let path = line.trim_end_matches('\r');
+        let path = path.strip_prefix("./").unwrap_or(path);
+        if path.is_empty()
+            || is_search_project_text_excluded_path(path)
+            || paths.iter().any(|existing| existing == path)
+        {
+            continue;
+        }
+        paths.push(path.to_string());
+    }
+    let truncated = paths.len() > limit;
+    paths.truncate(limit);
+    (
+        paths.into_iter().map(|path| SearchFile { path }).collect(),
+        truncated,
+    )
+}
+
+fn parse_file_counts(stdout: &str, limit: usize) -> (Vec<SearchFileCount>, u64, bool) {
+    let mut counts = Vec::<(String, u64)>::new();
+    for line in stdout.lines() {
+        if serde_json::from_str::<Value>(line).is_ok() {
+            continue;
+        }
+        let parsed = line
+            .split_once('\0')
+            .or_else(|| line.rsplit_once(':'))
+            .and_then(|(path, count)| {
+                Some((path, count.trim_end_matches('\r').parse::<u64>().ok()?))
+            });
+        let Some((path, count)) = parsed else {
+            continue;
+        };
+        let path = path.strip_prefix("./").unwrap_or(path);
+        if is_search_project_text_excluded_path(path) {
+            continue;
+        }
+        if let Some((_, existing)) = counts.iter_mut().find(|(existing, _)| existing == path) {
+            *existing = existing.saturating_add(count);
+        } else {
+            counts.push((path.to_string(), count));
+        }
+    }
+    let truncated = counts.len() > limit;
+    counts.truncate(limit);
+    let returned_match_count = counts.iter().map(|(_, count)| *count).sum();
+    (
+        counts
+            .into_iter()
+            .map(|(path, match_count)| SearchFileCount { path, match_count })
+            .collect(),
+        returned_match_count,
+        truncated,
+    )
 }
 
 fn search_stdout_was_transport_truncated(stdout: &str) -> bool {
     stdout.starts_with("[output truncated to last ")
 }
 
-pub(crate) fn parse_search_project_text_output(
-    stdout: &str,
-    max_matches: usize,
-    context_before: usize,
-    context_after: usize,
-    include_context: bool,
-) -> (Vec<Value>, bool, String) {
-    let backend = parse_search_backend(stdout).unwrap_or_else(|| "grep".to_string());
-    let (matches, mut truncated) = if include_context {
-        parse_search_context_matches(stdout, max_matches, context_before, context_after)
-    } else {
-        parse_search_matches(stdout, max_matches)
+fn parse_search_result(stdout: &str, options: &SearchOptions, backend: String) -> SearchResult {
+    let transport_truncated = search_stdout_was_transport_truncated(stdout);
+    let (data, limit_truncated) = match options.result_mode {
+        SearchResultMode::Matches => {
+            let records = parse_search_line_records(stdout);
+            let (matches, truncated) = search_matches_from_records(&records, options);
+            (SearchResultData::Matches(matches), truncated)
+        }
+        SearchResultMode::FilesWithMatches => {
+            let (files, truncated) = parse_file_paths(stdout, options.limit);
+            (SearchResultData::FilesWithMatches(files), truncated)
+        }
+        SearchResultMode::Count => {
+            let (files, returned_match_count, truncated) = parse_file_counts(stdout, options.limit);
+            (
+                SearchResultData::Count {
+                    files,
+                    returned_match_count,
+                    count_complete: !truncated && !transport_truncated,
+                },
+                truncated,
+            )
+        }
     };
-    if search_stdout_was_transport_truncated(stdout) {
-        truncated = true;
+    let truncated = limit_truncated || transport_truncated;
+    SearchResult {
+        backend,
+        data,
+        truncated,
+        truncation_reason: if transport_truncated {
+            Some("transport")
+        } else if limit_truncated {
+            Some("limit")
+        } else {
+            None
+        },
     }
-    (matches, truncated, backend)
 }
 
-fn parse_context_lines(value: Option<&Value>) -> Vec<Value> {
-    value
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    let line_no = item.get("line").and_then(|line| line.as_u64())?;
-                    let text = item.get("text").and_then(|text| text.as_str())?;
-                    Some(json!({
-                        "line": line_no,
-                        "text": text,
-                    }))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn search_project_text_output(
+pub(crate) fn search_project_text_output(
     project: &str,
-    pattern: &str,
-    rel_path: &str,
+    options: &SearchOptions,
     stdout: &str,
-    max_matches: usize,
-    context_before: usize,
-    context_after: usize,
-    include_context: bool,
     exit_code: Option<i32>,
-) -> Value {
-    let (matches, truncated, backend) = parse_search_project_text_output(
-        stdout,
-        max_matches,
-        context_before,
-        context_after,
-        include_context,
-    );
-    json!({
-        "project": project,
-        "pattern": pattern,
-        "path": rel_path,
-        "backend": backend,
-        "matches": matches,
-        "count": matches.len(),
-        "truncated": truncated,
-        "exit_code": exit_code,
-        "context_before": context_before,
-        "context_after": context_after,
-    })
+    stderr: &str,
+) -> ToolResult {
+    search_project_text_output_with_agent_error(project, options, stdout, exit_code, stderr, None)
 }
 
-fn empty_search_project_text_output(
+pub(crate) fn search_project_text_output_with_agent_error(
     project: &str,
-    pattern: &str,
-    rel_path: &str,
-    context_before: usize,
-    context_after: usize,
-) -> Value {
-    json!({
+    options: &SearchOptions,
+    stdout: &str,
+    exit_code: Option<i32>,
+    stderr: &str,
+    agent_error: Option<&str>,
+) -> ToolResult {
+    let backend_status = parse_search_backend_status(stdout);
+    if backend_status.feature_unavailable {
+        let message = "ripgrep is required for the requested search_project_text features; grep fallback supports only basic matches requests";
+        return ToolResult::err_with_output(
+            message,
+            json!({
+                "code": "search_backend_feature_unavailable",
+                "backend": "grep",
+                "requested_features": options.requested_features,
+                "message": message,
+                "result_mode": options.result_mode.as_str(),
+                "effective_timeout_secs": options.timeout_secs,
+            }),
+        );
+    }
+    if looks_like_search_timeout(exit_code, stderr, agent_error, options.timeout_secs) {
+        return search_timeout_tool_result(options, Some(backend_status.backend.as_str()));
+    }
+    // 0 = matches, 1 = no matches (success empty), 141 = SIGPIPE after head bound.
+    // exit >= 2 (other) is a real backend execution failure.
+    if exit_code.is_some_and(|code| !is_search_backend_success_exit(code)) {
+        let message = "search_project_text backend execution failed";
+        return ToolResult::err_with_output(
+            message,
+            json!({
+                "code": "search_execution_failed",
+                "backend": backend_status.backend,
+                "result_mode": options.result_mode.as_str(),
+                "effective_timeout_secs": options.timeout_secs,
+                "message": message,
+            }),
+        );
+    }
+
+    let result = parse_search_result(stdout, options, backend_status.backend);
+    let mut output = json!({
         "project": project,
-        "pattern": pattern,
-        "path": rel_path,
-        "backend": "native",
-        "matches": [],
-        "count": 0,
-        "truncated": false,
-        "exit_code": null,
-        "context_before": context_before,
-        "context_after": context_after,
+        "pattern": options.pattern,
+        "path": options.path,
+        "backend": result.backend,
+        "result_mode": options.result_mode.as_str(),
+        "effective_timeout_secs": options.timeout_secs,
+        "exit_code": exit_code,
+        "context_before": options.context_before,
+        "context_after": options.context_after,
+    });
+    match result.data {
+        SearchResultData::Matches(matches) => {
+            output["count"] = json!(matches.len());
+            output["matches"] = json!(matches);
+        }
+        SearchResultData::FilesWithMatches(files) => {
+            output["returned_file_count"] = json!(files.len());
+            output["files"] = json!(files);
+        }
+        SearchResultData::Count {
+            files,
+            returned_match_count,
+            count_complete,
+        } => {
+            output["returned_file_count"] = json!(files.len());
+            output["returned_match_count"] = json!(returned_match_count);
+            output["count_complete"] = json!(count_complete);
+            output["total_matches"] = if count_complete {
+                json!(returned_match_count)
+            } else {
+                Value::Null
+            };
+            output["files"] = json!(files);
+        }
+    }
+    output["truncated"] = json!(result.truncated);
+    output["truncation_reason"] = result.truncation_reason.map_or(Value::Null, Value::from);
+    ToolResult::ok(output)
+}
+
+fn empty_search_project_text_output(project: &str, options: &SearchOptions) -> ToolResult {
+    let marker = json!({
+        "webcodex_search": {
+            "backend": "native",
+            "feature_unavailable": false,
+        }
     })
+    .to_string();
+    search_project_text_output(project, options, &marker, None, "")
 }
 
 /// Maximum accepted size for a single `replace_in_file` `old`/`new` field.
@@ -3017,48 +3587,36 @@ impl ToolRuntime {
         limit: Option<usize>,
         context_before: Option<usize>,
         context_after: Option<usize>,
+        include_globs: Option<Vec<String>>,
+        exclude_globs: Option<Vec<String>>,
+        result_mode: Option<SearchResultMode>,
+        timeout_secs: Option<i64>,
     ) -> ToolResult {
-        if pattern.trim().is_empty() {
-            return ToolResult::err("pattern cannot be empty");
-        }
-        if pattern.contains('\0') {
-            return ToolResult::err("pattern cannot contain NUL bytes");
-        }
+        let options = match SearchOptions::normalize(SearchRequest {
+            pattern,
+            path,
+            limit,
+            context_before,
+            context_after,
+            include_globs,
+            exclude_globs,
+            result_mode,
+            timeout_secs,
+        }) {
+            Ok(options) => options,
+            Err(error) => return error.into_tool_result(),
+        };
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
-        let rel_path = path
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| ".".to_string());
-        if let Err(e) = validate_project_relative_path(&rel_path) {
-            return ToolResult::err(e);
+        if is_search_project_text_excluded_path(&options.path) {
+            return empty_search_project_text_output(&project, &options);
         }
-        let max_matches = limit.unwrap_or(50).clamp(1, 200);
-        let (context_before, context_after) =
-            effective_search_context(context_before, context_after);
-        let include_context = context_before > 0 || context_after > 0;
-        if is_search_project_text_excluded_path(&rel_path) {
-            return ToolResult::ok(empty_search_project_text_output(
-                &project,
-                &pattern,
-                &rel_path,
-                context_before,
-                context_after,
-            ));
-        }
-        let cmd = if include_context {
-            search_project_text_context_command(
-                &pattern,
-                &rel_path,
-                max_matches,
-                context_before,
-                context_after,
-            )
-        } else {
-            search_project_text_command(&pattern, &rel_path, max_matches)
-        };
+        let cmd = search_project_text_command(&options);
+        let effective_timeout_secs = options.timeout_secs;
+        let (command_timeout, wait_timeout, outer_timeout) =
+            search_agent_timeout_budget(effective_timeout_secs);
         if proj.is_agent() {
             let client_id = match proj.agent_client_id() {
                 Ok(id) => id.to_string(),
@@ -3072,8 +3630,8 @@ impl ToolRuntime {
                         cwd: Some(proj.path.clone()),
                         command: cmd,
                         stdin: None,
-                        timeout_secs: 30,
-                        wait_timeout_secs: 32,
+                        timeout_secs: command_timeout,
+                        wait_timeout_secs: wait_timeout,
                     },
                     "tool_runtime".to_string(),
                 )
@@ -3082,45 +3640,60 @@ impl ToolRuntime {
                 Ok(r) => r,
                 Err(e) => return ToolResult::err(e),
             };
-            return match tokio::time::timeout(Duration::from_secs(34), rx).await {
+            return match tokio::time::timeout(Duration::from_secs(outer_timeout), rx).await {
                 Ok(Ok(resp)) => {
                     let stdout = resp.stdout.unwrap_or_default();
-                    ToolResult::ok(search_project_text_output(
-                        &project,
-                        &pattern,
-                        &rel_path,
-                        &stdout,
-                        max_matches,
-                        context_before,
-                        context_after,
-                        include_context,
+                    let stderr = resp.stderr.unwrap_or_default();
+                    let agent_error = resp.error.as_deref();
+                    if looks_like_search_timeout(
                         resp.exit_code,
-                    ))
+                        &stderr,
+                        agent_error,
+                        options.timeout_secs,
+                    ) {
+                        let backend = if stdout.contains("webcodex_search") {
+                            Some(parse_search_backend_status(&stdout).backend)
+                        } else {
+                            None
+                        };
+                        return search_timeout_tool_result(&options, backend.as_deref());
+                    }
+                    if agent_error.is_some() {
+                        let message = "search_project_text agent execution failed";
+                        return ToolResult::err_with_output(
+                            message,
+                            json!({
+                                "code": "search_execution_failed",
+                                "result_mode": options.result_mode.as_str(),
+                                "effective_timeout_secs": options.timeout_secs,
+                                "message": message,
+                            }),
+                        );
+                    }
+                    search_project_text_output(&project, &options, &stdout, resp.exit_code, &stderr)
                 }
                 Ok(Err(_)) => {
                     self.shell_clients.cancel_request(&req_id).await;
-                    ToolResult::err("request dropped")
+                    // Channel closed without a result: agent disconnect / waiter
+                    // drop — not a search timeout.
+                    search_request_dropped_tool_result(&options)
                 }
                 Err(_) => {
                     self.shell_clients.cancel_request(&req_id).await;
-                    ToolResult::err("timed out")
+                    // Outer wait timed out before the agent reported; backend is unknown.
+                    search_timeout_tool_result(&options, None)
                 }
             };
         }
         let root = proj.root();
-        let result = tokio::task::spawn_blocking(move || run_command_sync(&cmd, &root, 30)).await;
+        let result = tokio::task::spawn_blocking(move || {
+            run_command_sync(&cmd, &root, effective_timeout_secs)
+        })
+        .await;
         match result {
-            Ok((exit_code, stdout, _stderr, _)) => ToolResult::ok(search_project_text_output(
-                &project,
-                &pattern,
-                &rel_path,
-                &stdout,
-                max_matches,
-                context_before,
-                context_after,
-                include_context,
-                Some(exit_code),
-            )),
+            Ok((exit_code, stdout, stderr, _)) => {
+                search_project_text_output(&project, &options, &stdout, Some(exit_code), &stderr)
+            }
             Err(e) => ToolResult::err(format!("task join error: {}", e)),
         }
     }
@@ -3317,9 +3890,28 @@ mod tests {
 
     #[test]
     fn parse_search_matches_default_output_has_empty_context_arrays() {
-        let (matches, truncated) = parse_search_matches("src/main.rs:42:fn main() {}\n", 10);
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "main".to_string(),
+            path: None,
+            limit: Some(10),
+            context_before: None,
+            context_after: None,
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: None,
+            timeout_secs: None,
+        })
+        .unwrap();
+        let result = search_project_text_output(
+            "demo",
+            &options,
+            "src/main.rs:42:fn main() {}\n",
+            Some(0),
+            "",
+        );
+        let matches = result.output["matches"].as_array().unwrap();
 
-        assert!(!truncated);
+        assert_eq!(result.output["truncated"], false);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0]["path"], "src/main.rs");
         assert_eq!(matches[0]["line"], 42);
@@ -3330,27 +3922,23 @@ mod tests {
 
     #[test]
     fn parse_search_context_matches_returns_context_line_numbers() {
-        let stdout = serde_json::json!({
-            "path": "src/lib.rs",
-            "line": 3,
-            "preview": "needle",
-            "context_before": [
-                {"line": 1, "text": "one"},
-                {"line": 2, "text": "two"}
-            ],
-            "context_after": [
-                {"line": 4, "text": "four"},
-                {"line": 5, "text": "five"}
-            ]
+        let stdout = "src/lib.rs\01-one\nsrc/lib.rs\02-two\nsrc/lib.rs\03:needle\nsrc/lib.rs\04-four\nsrc/lib.rs\05-five\n";
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "needle".to_string(),
+            path: None,
+            limit: Some(10),
+            context_before: Some(2),
+            context_after: Some(2),
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: None,
+            timeout_secs: None,
         })
-        .to_string()
-            + "\n"
-            + &serde_json::json!({"truncated": false}).to_string()
-            + "\n";
+        .unwrap();
+        let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+        let matches = result.output["matches"].as_array().unwrap();
 
-        let (matches, truncated) = parse_search_context_matches(&stdout, 10, 2, 2);
-
-        assert!(!truncated);
+        assert_eq!(result.output["truncated"], false);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0]["path"], "src/lib.rs");
         assert_eq!(matches[0]["line"], 3);
@@ -3379,12 +3967,26 @@ mod tests {
             "needle-start\nmiddle\nneedle-end\n",
         )
         .expect("write sample");
-        let cmd = search_project_text_context_command("needle", ".", 10, 3, 3);
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "needle".to_string(),
+            path: None,
+            limit: Some(10),
+            context_before: Some(3),
+            context_after: Some(3),
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: None,
+            timeout_secs: None,
+        })
+        .unwrap();
+        let cmd = search_project_text_command(&options);
         let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
 
         assert_eq!(exit_code, 0, "stderr: {stderr}");
-        let (matches, truncated) = parse_search_context_matches(&stdout, 10, 3, 3);
-        assert!(!truncated);
+        let result =
+            search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+        let matches = result.output["matches"].as_array().unwrap();
+        assert_eq!(result.output["truncated"], false);
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0]["line"], 1);
         assert_eq!(matches[0]["context_before"], json!([]));
@@ -3408,9 +4010,19 @@ mod tests {
 
     #[test]
     fn effective_search_context_clamps_values() {
-        assert_eq!(effective_search_context(None, None), (0, 0));
-        assert_eq!(effective_search_context(Some(3), Some(8)), (3, 8));
-        assert_eq!(effective_search_context(Some(21), Some(99)), (20, 20));
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "needle".to_string(),
+            path: None,
+            limit: None,
+            context_before: Some(21),
+            context_after: Some(99),
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: None,
+            timeout_secs: None,
+        })
+        .unwrap();
+        assert_eq!((options.context_before, options.context_after), (20, 20));
     }
 
     #[test]

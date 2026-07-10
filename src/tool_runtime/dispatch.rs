@@ -301,6 +301,7 @@ impl ToolRuntime {
             call @ (ToolCall::DeleteProjectFiles { .. }
             | ToolCall::ReadFile { .. }
             | ToolCall::ListProjectFiles { .. }
+            | ToolCall::ProjectOverview { .. }
             | ToolCall::SearchProjectText { .. }
             | ToolCall::ReplaceInFile { .. }
             | ToolCall::ReplaceExactBlock { .. }

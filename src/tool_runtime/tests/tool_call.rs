@@ -578,6 +578,56 @@ fn from_tool_name_parses_finish_coding_task_include_workspace_compatibility() {
 }
 
 #[test]
+fn project_overview_tool_call_parses() {
+    let call = ToolCall::from_tool_name(
+        "project_overview",
+        json!({
+            "project": "agent:client:demo",
+            "path": "crates/example",
+            "max_depth": 3,
+            "limit": 120
+        }),
+    )
+    .unwrap();
+
+    match call {
+        ToolCall::ProjectOverview {
+            project,
+            path,
+            max_depth,
+            limit,
+            ..
+        } => {
+            assert_eq!(project, "agent:client:demo");
+            assert_eq!(path.as_deref(), Some("crates/example"));
+            assert_eq!(max_depth, Some(3));
+            assert_eq!(limit, Some(120));
+        }
+        other => panic!("expected ProjectOverview, got {other:?}"),
+    }
+
+    let audit_call = ToolCall::from_tool_name(
+        "project_overview",
+        json!({
+            "project": "agent:client:demo",
+            "path": "src",
+            "max_depth": 2,
+            "limit": 40
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        audit_call.session_log_arguments(),
+        json!({
+            "project": "agent:client:demo",
+            "path": "src",
+            "max_depth": 2,
+            "limit": 40
+        })
+    );
+}
+
+#[test]
 fn from_tool_name_parses_phase_a_tools() {
     let call = ToolCall::from_tool_name("list_project_files", json!({"project": "demo"})).unwrap();
     match call {

@@ -27,6 +27,10 @@ mod models;
 mod oauth_http;
 mod openapi;
 mod pairing_http;
+// The server uses only normalization/bounds helpers; the same module's
+// filesystem scanner is compiled for and invoked by webcodex-agent.
+#[allow(dead_code)]
+mod project_overview;
 mod projects;
 mod runtime_http;
 mod shell_client;

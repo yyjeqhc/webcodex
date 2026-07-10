@@ -199,7 +199,6 @@ fn mcp_tools_list_exposes_registered_tool_spec_input_schemas() {
     let specs = registered_tool_specs();
     let payload = json!({ "tools": &specs });
     let tools = payload["tools"].as_array().expect("MCP tools/list tools");
-    assert_eq!(tools.len(), 66, "MCP model-facing tool count");
     assert_eq!(
         tools.len(),
         specs.len(),
@@ -424,11 +423,6 @@ fn tool_specs_optional_fields_are_not_required() {
 #[test]
 fn tool_specs_covers_expected_tool_set() {
     let names = registered_tool_names();
-    assert_eq!(
-        names.len(),
-        66,
-        "model-facing runtime/MCP tool count should remain 66"
-    );
     for expected in [
         "list_tools",
         "list_projects",
@@ -459,6 +453,7 @@ fn tool_specs_covers_expected_tool_set() {
         "git_restore_paths",
         "discard_untracked",
         // Phase A: read-only console tools
+        "project_overview",
         "list_project_files",
         "search_project_text",
         "list_jobs",

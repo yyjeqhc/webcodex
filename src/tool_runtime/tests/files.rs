@@ -2316,6 +2316,147 @@ async fn list_project_files_requires_file_read_capability() {
 }
 
 #[tokio::test]
+async fn project_overview_requires_file_read_capability() {
+    let runtime = runtime_with_agent_project("overview-capability");
+    register_agent(
+        &runtime,
+        "overview-capability",
+        None,
+        ShellClientCapabilities::default(),
+    )
+    .await;
+    let bootstrap = auth_context(None, true);
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ProjectOverview {
+                project: agent_test_project_id("overview-capability"),
+                session_id: None,
+                path: None,
+                max_depth: None,
+                limit: None,
+            },
+            Some(&bootstrap),
+        )
+        .await;
+    assert!(!result.success);
+    assert!(result.error.unwrap().contains("file_read"));
+}
+
+#[tokio::test]
+async fn project_overview_routes_to_owning_agent_and_returns_structured_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    for path in [
+        "AGENTS.md",
+        "README.md",
+        "Cargo.toml",
+        "src/lib.rs",
+        "target/debug/output",
+        ".env",
+    ] {
+        let path = temp.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "private fixture content").unwrap();
+    }
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "overview-agent", "demo", temp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ProjectOverview {
+                        project,
+                        session_id: None,
+                        path: None,
+                        max_depth: Some(99),
+                        limit: Some(1),
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, "overview-agent")
+        .await
+        .expect("project_overview owning-agent request");
+    assert_eq!(request.kind, "file_project_overview");
+    assert!(
+        request.command.is_empty(),
+        "project_overview must not use shell"
+    );
+    let options: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    assert_eq!(options["max_depth"], 4);
+    assert_eq!(options["limit"], 20);
+    complete_project_overview_agent_request_locally(&runtime, "overview-agent", &request).await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["schema_version"], 1);
+    assert_eq!(result.output["project"], project);
+    assert_eq!(result.output["path"], "");
+    assert_eq!(result.output["deterministic"], true);
+    assert_eq!(result.output["scan"]["max_depth"], 4);
+    assert_eq!(result.output["scan"]["limit"], 20);
+    let declared_output = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "project_overview")
+        .expect("project_overview spec")
+        .output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .expect("project_overview output schema")
+        .clone();
+    for key in result.output.as_object().unwrap().keys() {
+        assert!(
+            declared_output.contains_key(key),
+            "runtime project_overview output key {key} is missing from schema"
+        );
+    }
+    let serialized = result.output.to_string();
+    assert!(!serialized.contains("private fixture content"));
+    assert!(!serialized.contains("target"));
+    assert!(!serialized.contains(".env"));
+    assert!(!serialized.contains(&temp.path().display().to_string()));
+}
+
+#[tokio::test]
+async fn project_overview_rejects_invalid_paths_before_agent_request() {
+    let runtime = runtime_with_agent_project("overview-path");
+    register_agent(
+        &runtime,
+        "overview-path",
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let bootstrap = auth_context(None, true);
+    for path in ["/etc", "../outside"] {
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ProjectOverview {
+                    project: agent_test_project_id("overview-path"),
+                    session_id: None,
+                    path: Some(path.to_string()),
+                    max_depth: None,
+                    limit: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success, "{path} must be rejected");
+        assert!(result.error.unwrap().contains("path"));
+    }
+    assert!(next_patch_agent_request(&runtime, "overview-path")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
 async fn search_project_text_requires_shell_capability() {
     let runtime = runtime_with_agent_project("oe");
     let mut caps = ShellClientCapabilities::default();

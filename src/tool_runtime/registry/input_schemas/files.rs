@@ -20,6 +20,33 @@ pub(crate) fn list_project_files_input_schema() -> Value {
     ]))
 }
 
+pub(crate) fn project_overview_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        ("project", "string", "Full agent runtime project id.", true),
+        (
+            "path",
+            "string",
+            "Optional project-relative directory scope (default: project root).",
+            false,
+        ),
+        (
+            "max_depth",
+            "integer",
+            "Bounded scan depth; defaults to 2 and is clamped by the runtime to 1..4.",
+            false,
+        ),
+        (
+            "limit",
+            "integer",
+            "Bounded scanned-entry limit; defaults to 200 and is clamped by the runtime to 20..500.",
+            false,
+        ),
+    ]));
+    schema["properties"]["max_depth"]["default"] = json!(2);
+    schema["properties"]["limit"]["default"] = json!(200);
+    schema
+}
+
 pub(crate) fn search_project_text_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),

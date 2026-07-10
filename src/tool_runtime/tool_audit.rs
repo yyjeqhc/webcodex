@@ -429,6 +429,18 @@ impl ToolCall {
                 "path": path,
                 "limit": limit,
             }),
+            Self::ProjectOverview {
+                project,
+                path,
+                max_depth,
+                limit,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "max_depth": max_depth,
+                "limit": limit,
+            }),
             Self::SearchProjectText {
                 project,
                 path,

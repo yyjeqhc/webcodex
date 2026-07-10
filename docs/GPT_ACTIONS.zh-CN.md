@@ -72,6 +72,11 @@ GPT Actions 暴露聚焦的 public operation surface，并通过 generic `callRu
 
 MCP 和 GPT Actions 共享同一个 runtime、project ids、session recording、agent bridge 和 safety boundaries。
 
+进入陌生项目时，在 `listProjects` 之后通过 `callRuntimeTool` 调用
+`project_overview`。它只返回有界结构和项目相对路径元数据，不读取内容，也不
+执行 semantic/LSP analysis；之后仍使用 `read_file` 查看具体 README、规则、
+manifest 或源码路径。
+
 ## 默认 Coding Loop
 
 Custom GPT coding task 使用这个 loop：
@@ -81,6 +86,7 @@ startup:
   start_coding_task
 
 inspect:
+  project_overview
   list_project_files
   search_project_text
   read_file

@@ -498,6 +498,21 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Return a deterministic, bounded, metadata-only overview of an
+    /// agent-registered project. The owning agent scans directory entries;
+    /// file contents are never read and no LLM is used.
+    ProjectOverview {
+        project: String,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        max_depth: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
     /// Search text inside a project (bounded matches, rg-first with grep
     /// fallback). Each match carries a project-relative path, 1-based line
     /// number, preview line, and bounded context arrays. Sensitive/build
@@ -1005,6 +1020,7 @@ impl ToolCall {
             Self::JobStatus { .. } => "job_status",
             Self::JobLog { .. } => "job_log",
             Self::ListProjectFiles { .. } => "list_project_files",
+            Self::ProjectOverview { .. } => "project_overview",
             Self::SearchProjectText { .. } => "search_project_text",
             Self::GitDiffSummary { .. } => "git_diff_summary",
             Self::ShowChanges { .. } => "show_changes",
@@ -1056,6 +1072,7 @@ impl ToolCall {
             | Self::RunJob { session_id, .. }
             | Self::StopJob { session_id, .. }
             | Self::ListProjectFiles { session_id, .. }
+            | Self::ProjectOverview { session_id, .. }
             | Self::SearchProjectText { session_id, .. }
             | Self::GitDiffSummary { session_id, .. }
             | Self::ShowChanges { session_id, .. }
@@ -1105,6 +1122,7 @@ impl ToolCall {
             | Self::RunJob { session_id, .. }
             | Self::StopJob { session_id, .. }
             | Self::ListProjectFiles { session_id, .. }
+            | Self::ProjectOverview { session_id, .. }
             | Self::SearchProjectText { session_id, .. }
             | Self::GitDiffSummary { session_id, .. }
             | Self::ShowChanges { session_id, .. }
@@ -1159,6 +1177,7 @@ impl ToolCall {
             | Self::RunJob { project, .. }
             | Self::StopJob { project, .. }
             | Self::ListProjectFiles { project, .. }
+            | Self::ProjectOverview { project, .. }
             | Self::SearchProjectText { project, .. }
             | Self::GitDiffSummary { project, .. }
             | Self::ShowChanges { project, .. }

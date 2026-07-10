@@ -23,6 +23,9 @@ mod artifact_policy;
 #[path = "../build_info.rs"]
 mod build_info;
 
+#[path = "../project_overview.rs"]
+mod project_overview;
+
 #[path = "../workspace_checkpoint.rs"]
 mod workspace_checkpoint;
 
@@ -858,7 +861,7 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         "file_checkpoint_create" | "file_checkpoint_restore" => {
             handle_checkpoint_file_request(request, &resolved, start)
         }
-        "file_read" | "file_write" | "file_list" => {
+        "file_read" | "file_write" | "file_list" | "file_project_overview" => {
             handle_basic_file_request(policy, request, &resolved, start)
         }
         _ => CommandResult {
@@ -5742,6 +5745,7 @@ shell_profile = "../rust"
             "file_read",
             "file_write",
             "file_list",
+            "file_project_overview",
             "file_replace_line_range",
             "file_insert_at_line",
             "file_delete_line_range",
@@ -5755,6 +5759,32 @@ shell_profile = "../rust"
             );
         }
         assert!(!is_file_request_kind("run_shell"));
+    }
+
+    #[test]
+    fn project_overview_agent_request_returns_metadata_without_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("Cargo.toml"), "private manifest content").unwrap();
+        std::fs::write(tmp.path().join("README.md"), "private readme content").unwrap();
+        std::fs::write(tmp.path().join(".env"), "TOKEN=not-returned").unwrap();
+        let request = json_file_op_request(
+            tmp.path(),
+            "file_project_overview",
+            ".",
+            serde_json::json!({"max_depth": 2, "limit": 200}),
+        );
+
+        let output = line_edit_json(handle_file_request(&policy, &request));
+        assert_eq!(output["schema_version"], 1);
+        assert_eq!(output["deterministic"], true);
+        assert!(output.to_string().contains("Cargo.toml"));
+        assert!(!output.to_string().contains("private manifest content"));
+        assert!(!output.to_string().contains("TOKEN=not-returned"));
+        assert!(!output.to_string().contains(".env"));
+        assert!(!output
+            .to_string()
+            .contains(&tmp.path().display().to_string()));
     }
 
     #[test]

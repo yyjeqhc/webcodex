@@ -24,6 +24,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "list_agents",
             "runtime_status",
             "start_coding_task",
+            "project_overview",
             "read_file",
             "search_project_text",
             "show_changes",
@@ -179,14 +180,14 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
 pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "discovery",
-        summary:
-            "Discovery: resolve project with list_projects/runtime_status, then load rules/context with read_file before editing.",
-        manifest_purpose: "Resolve the project and load rules/context before editing.",
+        summary: "Discovery: list_projects, project_overview, read_file, then search_project_text for an unfamiliar project.",
+        manifest_purpose:
+            "Resolve the project, inspect bounded structure, then load targeted rules/context.",
         tools: &[
-            "start_coding_task",
             "list_projects",
-            "runtime_status",
+            "project_overview",
             "read_file",
+            "search_project_text",
         ],
     },
     ToolRecommendedFlow {
@@ -245,6 +246,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
         purpose: "Default coding loop: start, inspect, structured edit, validate, review, finish.",
         tools: &[
             "start_coding_task",
+            "project_overview",
             "read_file",
             "search_project_text",
             "list_project_files",
@@ -265,6 +267,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
         purpose: "Read-only review/audit: inspect, git history/diff, hygiene, finish or handoff.",
         tools: &[
             "start_coding_task",
+            "project_overview",
             "read_file",
             "search_project_text",
             "list_project_files",
@@ -285,6 +288,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
         tools: &[
             "list_projects",
             "runtime_status",
+            "project_overview",
             "list_project_files",
             "search_project_text",
             "read_file",
@@ -318,6 +322,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "runtime_status",
             "list_agents",
             "list_projects",
+            "project_overview",
         ],
     },
 ];

@@ -94,6 +94,35 @@ pub(in crate::tool_runtime::tests) async fn complete_agent_request_by_running_lo
     .await;
 }
 
+pub(in crate::tool_runtime::tests) async fn complete_project_overview_agent_request_locally(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    req: &ShellAgentShellRequest,
+) {
+    assert_eq!(req.kind, "file_project_overview");
+    let options = req
+        .content
+        .as_deref()
+        .and_then(|content| serde_json::from_str::<Value>(content).ok())
+        .expect("project_overview agent options");
+    let output = crate::project_overview::build_project_overview(
+        Path::new(req.cwd.as_deref().expect("project_overview cwd")),
+        req.path.as_deref().expect("project_overview path"),
+        options["max_depth"].as_u64().map(|value| value as usize),
+        options["limit"].as_u64().map(|value| value as usize),
+    )
+    .expect("agent-side project_overview scan");
+    complete_patch_agent_request(
+        runtime,
+        client_id,
+        &req.request_id,
+        0,
+        &output.to_string(),
+        "",
+    )
+    .await;
+}
+
 pub(in crate::tool_runtime::tests) fn run_agent_checkpoint_request_locally(
     req: &ShellAgentShellRequest,
 ) -> (i32, String, String) {

@@ -27,6 +27,13 @@ impl ToolRuntime {
                 path,
                 limit,
             } => self.list_project_files(project, path, limit).await,
+            ToolCall::ProjectOverview {
+                project,
+                session_id: _,
+                path,
+                max_depth,
+                limit,
+            } => self.project_overview(project, path, max_depth, limit).await,
             ToolCall::SearchProjectText {
                 project,
                 pattern,

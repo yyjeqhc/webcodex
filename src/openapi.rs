@@ -3214,6 +3214,7 @@ mod tests {
             "/api/projects/workspace_checkpoint_show",
             "/api/projects/workspace_checkpoint_restore",
             "/api/projects/workspace_checkpoint_delete",
+            "/api/projects/project_overview",
             "/api/projects/replace_in_file",
             "/api/projects/write_file",
         ] {

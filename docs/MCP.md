@@ -58,8 +58,9 @@ Ask the client to run low-risk checks:
 
 1. `runtime_status` with a compact or summary shape.
 2. `list_projects`.
-3. A bounded `read_file` call against `README.md`.
-4. `show_changes` with `include_diff=false`.
+3. `project_overview` for a bounded, structured view of an unfamiliar project.
+4. A bounded `read_file` call against a key path returned by the overview.
+5. `show_changes` with `include_diff=false`.
 
 The project id should look like:
 
@@ -78,6 +79,7 @@ startup:
   start_coding_task
 
 inspect:
+  project_overview
   list_project_files
   search_project_text
   read_file
@@ -104,6 +106,10 @@ finish:
   finish_coding_task
   session_handoff_summary
 ```
+
+`project_overview` returns only deterministic structure and project-relative
+path metadata. It does not read file contents or perform semantic/LSP analysis;
+use `read_file` afterward to inspect README, rules, manifests, or source.
 
 `start_coding_task` returns the session id used by later review and finish tools. `finish_coding_task` is the preferred closeout for a completed task; `session_handoff_summary` is for passing context to another operator or later client.
 

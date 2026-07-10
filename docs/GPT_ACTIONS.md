@@ -72,6 +72,11 @@ When using `callRuntimeTool`, pass the runtime tool name and flattened top-level
 
 MCP and GPT Actions share the same runtime, project ids, session recording, agent bridge, and safety boundaries.
 
+For an unfamiliar project, call `project_overview` through `callRuntimeTool`
+after `listProjects`. It returns bounded structure and project-relative path
+metadata only; it does not read contents or perform semantic/LSP analysis. Use
+`read_file` afterward for the specific README, rules, manifest, or source path.
+
 ## Default Coding Loop
 
 Use this loop for Custom GPT coding tasks:
@@ -81,6 +86,7 @@ startup:
   start_coding_task
 
 inspect:
+  project_overview
   list_project_files
   search_project_text
   read_file

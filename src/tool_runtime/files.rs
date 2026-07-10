@@ -16,6 +16,10 @@ use super::{SearchResultMode, ToolRuntime};
 use crate::artifact_policy::{
     has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error,
 };
+use crate::project_overview::{
+    effective_project_overview_limit, effective_project_overview_max_depth,
+    normalize_project_overview_path,
+};
 use crate::projects::ProjectConfig;
 use crate::shell_protocol::{ShellFileOpRequest, ShellRunRequest};
 
@@ -3573,6 +3577,110 @@ impl ToolRuntime {
             "entries": entries,
             "truncated": truncated,
         }))
+    }
+
+    /// `project_overview`: deterministic, bounded project metadata routed to
+    /// the owning agent. The server validates inputs and parses the structured
+    /// response but never reads the agent host's project path.
+    pub(crate) async fn project_overview(
+        &self,
+        project: String,
+        path: Option<String>,
+        max_depth: Option<usize>,
+        limit: Option<usize>,
+    ) -> ToolResult {
+        let rel_path = match normalize_project_overview_path(path.as_deref().unwrap_or("")) {
+            Ok(path) => path,
+            Err(error) => return ToolResult::err(error),
+        };
+        let max_depth = effective_project_overview_max_depth(max_depth);
+        let limit = effective_project_overview_limit(limit);
+        let proj = match self.resolve_project(&project).await {
+            Ok(project) => project,
+            Err(error) => return ToolResult::err(error),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err("project_overview requires a full agent runtime project id");
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(client_id) => client_id.to_string(),
+            Err(error) => return ToolResult::err(error),
+        };
+        let wait_timeout = 30;
+        let agent_path = if rel_path.is_empty() {
+            ".".to_string()
+        } else {
+            rel_path.clone()
+        };
+        let (request_id, receiver) = match self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: "project_overview".to_string(),
+                    client_id,
+                    path: agent_path,
+                    cwd: Some(proj.path.clone()),
+                    content: Some(json!({"max_depth": max_depth, "limit": limit}).to_string()),
+                    max_bytes: None,
+                    old_text: None,
+                    pattern: None,
+                    expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: wait_timeout,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(request) => request,
+            Err(error) => return ToolResult::err(error),
+        };
+        match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), receiver).await {
+            Ok(Ok(response)) if response.exit_code == Some(0) && response.error.is_none() => {
+                let mut output: Value =
+                    match serde_json::from_str(response.stdout.as_deref().unwrap_or_default()) {
+                        Ok(Value::Object(output)) => Value::Object(output),
+                        Ok(_) => {
+                            return ToolResult::err(
+                                "agent project_overview returned a non-object payload",
+                            )
+                        }
+                        Err(error) => {
+                            return ToolResult::err(format!(
+                                "agent project_overview returned invalid JSON: {error}"
+                            ))
+                        }
+                    };
+                if output["path"] != rel_path
+                    || output["scan"]["max_depth"] != max_depth
+                    || output["scan"]["limit"] != limit
+                {
+                    return ToolResult::err(
+                        "agent project_overview response did not match the requested bounds",
+                    );
+                }
+                output["project"] = json!(project);
+                ToolResult::ok(output)
+            }
+            Ok(Ok(response)) => ToolResult::err(
+                response
+                    .error
+                    .or(response.stderr)
+                    .unwrap_or_else(|| "agent project_overview failed".to_string()),
+            ),
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                ToolResult::err("agent project_overview waiter was dropped")
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                ToolResult::err("timed out waiting for agent project_overview")
+            }
+        }
     }
 
     /// `search_project_text`: bounded rg-first text search with grep fallback.

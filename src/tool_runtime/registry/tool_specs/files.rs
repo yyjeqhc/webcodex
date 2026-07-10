@@ -1,11 +1,17 @@
 use super::super::input_schemas::{
-    list_project_files_input_schema, read_file_input_schema, search_project_text_input_schema,
+    list_project_files_input_schema, project_overview_input_schema, read_file_input_schema,
+    search_project_text_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
 
 pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
+        tool_spec(
+            "project_overview",
+            "Deterministic, bounded, metadata-only overview of an unfamiliar project: conventional project types, manifests, key files, roots, and direct children. Reads no file contents, uses no LLM, and is not semantic/LSP analysis; use read_file for contents.",
+            project_overview_input_schema(),
+        ),
         tool_spec(
             "list_project_files",
             "List files in an agent-registered project directory (bounded, "

@@ -58,8 +58,9 @@ Authorization: Bearer <shared key>
 
 1. compact 或 summary 形态的 `runtime_status`。
 2. `list_projects`。
-3. 对 `README.md` 做有界 `read_file`。
-4. `show_changes`，并设置 `include_diff=false`。
+3. 用 `project_overview` 获取陌生项目的有界结构化概览。
+4. 对概览返回的关键路径做有界 `read_file`。
+5. `show_changes`，并设置 `include_diff=false`。
 
 project id 应该长这样：
 
@@ -78,6 +79,7 @@ startup:
   start_coding_task
 
 inspect:
+  project_overview
   list_project_files
   search_project_text
   read_file
@@ -104,6 +106,10 @@ finish:
   finish_coding_task
   session_handoff_summary
 ```
+
+`project_overview` 只返回确定性的结构与项目相对路径元数据。它不读取文件
+内容，也不执行 semantic/LSP analysis；随后仍应使用 `read_file` 查看 README、
+规则、manifest 或源码。
 
 `start_coding_task` 返回 session id，后续 review 和 finish tools 可以继续使用。`finish_coding_task` 是完成任务的推荐收口工具；`session_handoff_summary` 用于把上下文交给另一个 operator 或后续 client。
 

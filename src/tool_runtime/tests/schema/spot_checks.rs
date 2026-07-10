@@ -140,6 +140,11 @@ fn tool_specs_schema_spot_checks_extended() {
         ("delete_project_files", vec!["project", "paths"], vec![]),
         ("git_restore_paths", vec!["project", "paths"], vec![]),
         ("discard_untracked", vec!["project", "paths"], vec![]),
+        (
+            "project_overview",
+            vec!["project"],
+            vec!["path", "max_depth", "limit"],
+        ),
         ("list_project_files", vec!["project"], vec!["path", "limit"]),
         (
             "search_project_text",

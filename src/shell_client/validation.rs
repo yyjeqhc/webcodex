@@ -84,6 +84,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         "read"
         | "write"
         | "list"
+        | "project_overview"
         | "replace_line_range"
         | "insert_at_line"
         | "delete_line_range"
@@ -104,7 +105,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "checkpoint_restore" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, replace_in_file, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore"
+                "op must be one of read, write, list, project_overview, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, replace_in_file, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore"
                     .to_string(),
             )
         }
@@ -191,6 +192,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
             ));
         }
         if body.op != "write"
+            && body.op != "project_overview"
             && body.op != "replace_line_range"
             && body.op != "insert_at_line"
             && body.op != "apply_text_edits"
@@ -200,7 +202,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
             && !anchor_edit
         {
             return Err(
-                "content is only allowed for op=write, line edit insert/replace, apply_text_edits, structured edit tools, artifact tools, checkpoint tools, or anchor edit tools"
+                "content is only allowed for op=write, project_overview options, line edit insert/replace, apply_text_edits, structured edit tools, artifact tools, checkpoint tools, or anchor edit tools"
                     .to_string(),
             );
         }

@@ -2,7 +2,9 @@ use super::config::AgentPolicy;
 use super::output::CommandResult;
 use super::shell::cwd_allowed;
 use crate::agent_init::DEFAULT_MAX_OUTPUT_BYTES;
+use crate::project_overview::build_project_overview;
 use crate::shell_protocol::ShellAgentShellRequest;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -50,7 +52,10 @@ pub(crate) fn resolve_requested_path(
 }
 
 pub(crate) fn is_basic_file_request_kind(kind: &str) -> bool {
-    matches!(kind, "file_read" | "file_write" | "file_list")
+    matches!(
+        kind,
+        "file_read" | "file_write" | "file_list" | "file_project_overview"
+    )
 }
 
 pub(crate) fn handle_basic_file_request(
@@ -63,12 +68,73 @@ pub(crate) fn handle_basic_file_request(
         "file_read" => handle_file_read_request(policy, request, resolved, start),
         "file_write" => handle_file_write_request(policy, request, resolved, start),
         "file_list" => handle_file_list_request(resolved, start),
+        "file_project_overview" => handle_project_overview_request(request, start),
         _ => CommandResult {
             exit_code: None,
             stdout: None,
             stderr: None,
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some(format!("unknown file request kind: {}", request.kind)),
+        },
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProjectOverviewAgentOptions {
+    #[serde(default)]
+    max_depth: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+fn handle_project_overview_request(
+    request: &ShellAgentShellRequest,
+    start: Instant,
+) -> CommandResult {
+    let Some(project_root) = request.cwd.as_deref() else {
+        return CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some("project_overview request missing project root".to_string()),
+        };
+    };
+    let requested_path = request.path.as_deref().unwrap_or(".");
+    let options = match request.content.as_deref() {
+        Some(payload) => match serde_json::from_str::<ProjectOverviewAgentOptions>(payload) {
+            Ok(options) => options,
+            Err(error) => {
+                return CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!("invalid project_overview options: {error}")),
+                }
+            }
+        },
+        None => ProjectOverviewAgentOptions::default(),
+    };
+    match build_project_overview(
+        Path::new(project_root),
+        requested_path,
+        options.max_depth,
+        options.limit,
+    ) {
+        Ok(output) => CommandResult {
+            exit_code: Some(0),
+            stdout: Some(output.to_string()),
+            stderr: Some(String::new()),
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: None,
+        },
+        Err(error) => CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(error),
         },
     }
 }

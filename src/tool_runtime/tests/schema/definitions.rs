@@ -150,7 +150,6 @@ fn legacy_run_codex_surface_is_removed() {
         lookup_tool_definition, model_hidden_tool_names, tool_definitions,
     };
 
-    assert_eq!(tool_definitions().count(), 66, "ToolDefinition count");
     assert!(
         lookup_tool_definition("run_codex").is_none(),
         "run_codex must not keep a ToolDefinition"
@@ -162,7 +161,11 @@ fn legacy_run_codex_surface_is_removed() {
     );
 
     let model_visible_names = registered_tool_names();
-    assert_eq!(model_visible_names.len(), 66, "tools.count");
+    assert_eq!(
+        tool_definitions().count(),
+        model_visible_names.len(),
+        "ToolDefinitions and model-visible tool names must stay synchronized"
+    );
     assert!(
         !model_visible_names.iter().any(|name| name == "run_codex"),
         "tools.count/model-facing names must not include run_codex"

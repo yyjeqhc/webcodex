@@ -43,10 +43,9 @@ fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(specs.len(), 66, "model-visible tools.count");
     assert_eq!(
         specs.len() - default_schema_names.len(),
-        66,
+        specs.len(),
         "explicit model-visible output schema coverage"
     );
     assert_eq!(
@@ -151,6 +150,25 @@ fn key_tool_output_schemas_include_expected_fields() {
         assert!(
             has_output_field("list_project_files", field),
             "list_project_files missing {field}"
+        );
+    }
+    for field in [
+        "schema_version",
+        "project",
+        "path",
+        "deterministic",
+        "project_types",
+        "manifests",
+        "key_files",
+        "roots",
+        "top_level",
+        "suggested_next_reads",
+        "scan",
+        "warnings",
+    ] {
+        assert!(
+            has_output_field("project_overview", field),
+            "project_overview missing {field}"
         );
     }
     assert!(

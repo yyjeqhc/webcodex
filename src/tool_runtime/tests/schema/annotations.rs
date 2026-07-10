@@ -25,6 +25,7 @@ fn tool_specs_annotations_cover_safety_hints() {
 
     for name in [
         "read_file",
+        "project_overview",
         "git_status",
         "git_diff_summary",
         "git_diff_hunks",

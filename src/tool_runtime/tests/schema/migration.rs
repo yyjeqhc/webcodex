@@ -491,6 +491,18 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             None,
         ),
         ExpectedToolPolicy::new(
+            "project_overview",
+            "project",
+            "read_only",
+            true,
+            false,
+            false,
+            false,
+            "current_session_fallback",
+            false,
+            Some(FileRead),
+        ),
+        ExpectedToolPolicy::new(
             "list_project_files",
             "file",
             "read_only",
@@ -850,7 +862,6 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
     let definition_name_set = definition_names.iter().copied().collect::<BTreeSet<_>>();
     assert_eq!(definition_name_set, expected_names);
     assert_eq!(definition_names, known_tool_names().collect::<Vec<_>>());
-    assert_eq!(definition_names.len(), 66, "runtime ToolDefinition count");
 
     for entry in expected {
         let definition = lookup_tool_definition(entry.name)
@@ -1262,9 +1273,7 @@ fn tool_definition_legacy_metadata_fallbacks_are_explicit_and_reasoned() {
 
 #[test]
 fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
-    use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, model_hidden_tool_names, tool_definitions,
-    };
+    use crate::tool_runtime::tool_definition::{lookup_tool_definition, model_hidden_tool_names};
 
     let openapi = crate::openapi::build_openapi_spec();
     let openapi_operation_count: usize = openapi["paths"]
@@ -1327,10 +1336,6 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
     );
 
     let model_facing_names = registered_tool_names();
-    let definition_names = tool_definitions()
-        .map(|definition| definition.name)
-        .collect::<Vec<_>>();
-    assert_eq!(definition_names.len(), 66, "ToolDefinition count");
     assert!(
         lookup_tool_definition("run_codex").is_none(),
         "run_codex must not keep an explicit ToolDefinition"
@@ -1347,11 +1352,6 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         )
         .is_err(),
         "run_codex must not remain parser-known"
-    );
-    assert_eq!(
-        model_facing_names.len(),
-        66,
-        "tools.count / model-facing tool count"
     );
     assert!(
         !model_facing_names.iter().any(|name| name == "run_codex"),

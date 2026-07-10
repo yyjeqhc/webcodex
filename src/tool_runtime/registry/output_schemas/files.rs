@@ -7,6 +7,20 @@ use super::common::{
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
+        "project_overview" => Some(wrapped_output_schema(vec![
+            ("schema_version", schema_type("integer", "Overview schema version.")),
+            ("project", schema_type("string", "Resolved runtime project id.")),
+            ("path", schema_type("string", "Project-relative overview scope; empty means project root.")),
+            ("deterministic", schema_type("boolean", "Always true; the overview uses deterministic path evidence only.")),
+            ("project_types", array_schema(project_type_schema(), "Detected project types with project-relative evidence paths.")),
+            ("manifests", array_schema(path_kind_schema("Detected build or package manifest."), "Detected manifests.")),
+            ("key_files", array_schema(key_file_schema(), "Prioritized project entrypoints; metadata only.")),
+            ("roots", roots_schema()),
+            ("top_level", array_schema(top_level_entry_schema(), "Direct safe children of the requested path.")),
+            ("suggested_next_reads", array_schema(suggested_read_schema(), "Bounded key-file subset recommended for later read_file calls.")),
+            ("scan", scan_schema()),
+            ("warnings", array_schema(schema_type("string", "Stable warning code."), "Bounded scan warning codes.")),
+        ])),
         "list_project_files" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved project id.")),
             (
@@ -188,6 +202,106 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+fn project_type_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "kind": schema_type("string", "Stable project type identifier."),
+            "evidence": array_schema(schema_type("string", "Project-relative evidence path."), "Sorted evidence paths."),
+        },
+        "required": ["kind", "evidence"],
+        "additionalProperties": false,
+    })
+}
+
+fn path_kind_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "properties": {
+            "path": schema_type("string", "Project-relative path."),
+            "kind": schema_type("string", "Stable classification."),
+        },
+        "required": ["path", "kind"],
+        "additionalProperties": false,
+    })
+}
+
+fn key_file_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "path": schema_type("string", "Project-relative key-file path."),
+            "kind": schema_type("string", "Stable key-file classification."),
+            "reason": schema_type("string", "Deterministic classification reason."),
+        },
+        "required": ["path", "kind", "reason"],
+        "additionalProperties": false,
+    })
+}
+
+fn roots_schema() -> Value {
+    let paths = || {
+        array_schema(
+            schema_type("string", "Project-relative conventional root."),
+            "Sorted conventional roots.",
+        )
+    };
+    json!({
+        "type": "object",
+        "properties": {
+            "source": paths(),
+            "tests": paths(),
+            "docs": paths(),
+            "examples": paths(),
+            "scripts": paths(),
+            "ci": paths(),
+            "classification_basis": schema_type("string", "Classification basis; conventional_directory_name."),
+        },
+        "required": ["source", "tests", "docs", "examples", "scripts", "ci", "classification_basis"],
+        "additionalProperties": false,
+    })
+}
+
+fn top_level_entry_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "path": schema_type("string", "Project-relative direct-child path."),
+            "kind": {"type": "string", "enum": ["file", "directory"]},
+        },
+        "required": ["path", "kind"],
+        "additionalProperties": false,
+    })
+}
+
+fn suggested_read_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "path": schema_type("string", "Project-relative path for a later read_file call."),
+            "reason": schema_type("string", "Deterministic recommendation reason."),
+        },
+        "required": ["path", "reason"],
+        "additionalProperties": false,
+    })
+}
+
+fn scan_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "max_depth": schema_type("integer", "Effective clamped maximum depth."),
+            "limit": schema_type("integer", "Effective clamped entry limit."),
+            "returned_entry_count": schema_type("integer", "Number of safe scanned entries used to construct the overview."),
+            "truncated": schema_type("boolean", "Whether limit or depth bounded the scan."),
+            "truncation_reason": nullable_schema("string", "limit, max_depth, limit_and_max_depth, or null."),
+        },
+        "required": ["max_depth", "limit", "returned_entry_count", "truncated", "truncation_reason"],
+        "additionalProperties": false,
+    })
 }
 
 fn search_file_result_schema() -> Value {

@@ -1675,6 +1675,26 @@ mod tests {
             );
             assert_eq!(runtime_props[field]["type"], "boolean");
         }
+
+        let overview = tool("project_overview");
+        let overview_props = overview["inputSchema"]["properties"]
+            .as_object()
+            .expect("project_overview inputSchema properties");
+        for field in ["project", "path", "max_depth", "limit"] {
+            assert!(
+                overview_props.contains_key(field),
+                "MCP project_overview schema should expose {field}"
+            );
+        }
+        let overview_output = overview["outputSchema"]["properties"]["output"]["properties"]
+            .as_object()
+            .expect("project_overview outputSchema properties");
+        for field in ["project_types", "key_files", "top_level", "scan"] {
+            assert!(
+                overview_output.contains_key(field),
+                "MCP project_overview output schema should expose {field}"
+            );
+        }
     }
 
     #[tokio::test]

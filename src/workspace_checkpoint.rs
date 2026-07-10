@@ -818,7 +818,7 @@ fn invalid_rel_path(path: &str) -> bool {
     path.replace('\\', "/").split('/').any(|part| part == "..")
 }
 
-fn sensitive_path(path: &str) -> bool {
+pub(crate) fn sensitive_path(path: &str) -> bool {
     let parts = path
         .replace('\\', "/")
         .split('/')

@@ -456,6 +456,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ("read_file", ToolRisk::ReadOnly, AgentCapability::FileRead),
         ("run_job", ToolRisk::JobRun, AgentCapability::AsyncJobs),
         (
+            "project_overview",
+            ToolRisk::ReadOnly,
+            AgentCapability::FileRead,
+        ),
+        (
             "list_project_files",
             ToolRisk::ReadOnly,
             AgentCapability::FileRead,

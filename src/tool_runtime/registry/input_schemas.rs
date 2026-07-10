@@ -40,7 +40,8 @@ pub(super) use discovery::{
     tool_manifest_input_schema,
 };
 pub(super) use files::{
-    list_project_files_input_schema, read_file_input_schema, search_project_text_input_schema,
+    list_project_files_input_schema, project_overview_input_schema, read_file_input_schema,
+    search_project_text_input_schema,
 };
 pub(super) use git::{
     git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,

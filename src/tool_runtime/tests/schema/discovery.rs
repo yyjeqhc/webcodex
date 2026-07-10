@@ -1261,6 +1261,7 @@ async fn tool_manifest_accepts_hyphenated_intent_alias() {
             "runtime_status",
             "list_agents",
             "list_projects",
+            "project_overview",
         ]
     );
 }
@@ -1355,6 +1356,7 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
         if intent == "audit" {
             for required in [
                 "start_coding_task",
+                "project_overview",
                 "read_file",
                 "search_project_text",
                 "list_project_files",
@@ -1407,6 +1409,10 @@ async fn release_intent_includes_list_jobs_but_not_run_shell_or_run_job() {
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
     assert!(
+        !names.contains(&"project_overview"),
+        "release intent must not include project_overview: {names:?}"
+    );
+    assert!(
         names.contains(&"list_jobs"),
         "release intent should keep read-only list_jobs: {names:?}"
     );
@@ -1416,4 +1422,25 @@ async fn release_intent_includes_list_jobs_but_not_run_shell_or_run_job() {
             "release intent must not include {forbidden}: {names:?}"
         );
     }
+}
+
+#[test]
+fn project_overview_manifest_profiles_match_intended_workflows() {
+    use crate::tool_runtime::tool_definition::TOOL_MANIFEST_INTENTS;
+
+    for intent in ["coding", "audit", "exploration", "discovery"] {
+        let profile = TOOL_MANIFEST_INTENTS
+            .iter()
+            .find(|profile| profile.name == intent)
+            .unwrap_or_else(|| panic!("missing {intent} intent"));
+        assert!(
+            profile.tools.contains(&"project_overview"),
+            "{intent} must include project_overview"
+        );
+    }
+    let release = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|profile| profile.name == "release")
+        .expect("release intent");
+    assert!(!release.tools.contains(&"project_overview"));
 }

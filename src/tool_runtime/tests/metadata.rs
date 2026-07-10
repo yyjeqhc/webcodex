@@ -949,6 +949,54 @@ fn session_handoff_validation_exposure_keeps_read_only_metadata() {
     assert_eq!(metadata.oauth_scope, Some("runtime:read"));
 }
 
+#[test]
+fn project_overview_metadata_schema_and_flattened_args_are_read_only() {
+    let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("project_overview")
+        .expect("project_overview metadata");
+    assert_eq!(metadata.provider_id, "agent");
+    assert!(metadata.requires_project);
+    assert!(metadata.read_only);
+    assert!(!metadata.destructive);
+    assert!(!metadata.shell_like);
+    assert_eq!(metadata.oauth_scope, Some("project:read"));
+    assert_eq!(tool_manifest_category("project_overview"), "project");
+
+    let spec = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "project_overview")
+        .expect("project_overview ToolSpec");
+    let properties = spec.input_schema["properties"].as_object().unwrap();
+    for field in ["project", "path", "max_depth", "limit", "session_id"] {
+        assert!(
+            properties.contains_key(field),
+            "missing input field {field}"
+        );
+    }
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+    let accepted = accepted_flattened_args_for_spec(&spec);
+    for field in ["project", "path", "max_depth", "limit", "session_id"] {
+        assert!(
+            accepted.contains(&field.to_string()),
+            "missing {field}: {accepted:?}"
+        );
+    }
+    assert_eq!(spec.annotations["readOnlyHint"], true);
+    assert_eq!(spec.annotations["destructiveHint"], false);
+    assert_eq!(spec.annotations["idempotentHint"], true);
+    assert_eq!(spec.annotations["openWorldHint"], false);
+
+    let openapi = crate::openapi::build_openapi_spec();
+    let action_properties = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
+        .as_object()
+        .unwrap();
+    for field in ["max_depth", "limit", "path", "project"] {
+        assert!(
+            action_properties.contains_key(field),
+            "missing flattened {field}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn tool_manifest_hides_run_codex_from_model_facing_surface() {
     let runtime = test_runtime();

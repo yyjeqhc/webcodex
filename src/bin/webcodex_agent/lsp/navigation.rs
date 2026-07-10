@@ -8,7 +8,7 @@ use super::super::config::AgentPolicy;
 use super::super::output::CommandResult;
 use super::super::projects::load_agent_project_summaries_from_dir;
 use super::super::shell::cwd_allowed;
-use super::position::{lsp_to_public, public_to_lsp, LineCache};
+use super::position::{lsp_to_public, public_to_lsp, LineCache, MAX_LSP_DOCUMENT_BYTES};
 use super::supervisor::{
     classify_uri_against_project_root, LspError, LspServerKind, LspServerStatus, LspSupervisor,
     PositionEncoding, ProjectUriClassification,
@@ -215,6 +215,27 @@ fn lsp_status(
     }
 }
 
+/// Read a validated project document with a pre-allocation size guard.
+///
+/// The LSP wire cap (`MAX_LSP_MESSAGE_BYTES`) would reject an oversized
+/// `didOpen` only after the whole file is already resident in agent memory;
+/// checking metadata first keeps a model-chosen giant `.rs` file from forcing
+/// that allocation. See `MAX_LSP_DOCUMENT_BYTES` for the race caveat.
+fn read_document_text(file: &Path) -> Result<String, AgentLspResultEnvelope> {
+    let metadata = fs::metadata(file).map_err(|_| {
+        AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
+    })?;
+    if metadata.len() > MAX_LSP_DOCUMENT_BYTES {
+        return Err(AgentLspResultEnvelope::err(
+            error_codes::DOCUMENT_TOO_LARGE,
+            "file exceeds the LSP navigation document size limit",
+        ));
+    }
+    fs::read_to_string(file).map_err(|_| {
+        AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
+    })
+}
+
 fn document_symbols(
     project_id: &str,
     project_root: &Path,
@@ -225,9 +246,19 @@ fn document_symbols(
     let limit = limit.clamp(1, 500);
     let file = resolve_rust_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
-    let text = fs::read_to_string(&file).map_err(|_| {
-        AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
-    })?;
+    let text = read_document_text(&file)?;
+    // Take the encoding from prepare_document like goto/references do: the
+    // post-request slot lookup could race a slot transition and silently fall
+    // back to UTF-16 while the server negotiated another encoding.
+    let encoding = supervisor
+        .prepare_document(
+            project_root,
+            LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
+        )
+        .map_err(map_lsp_error)?;
     let value = supervisor
         .request_with_document(
             project_root,
@@ -239,9 +270,6 @@ fn document_symbols(
             json!({ "textDocument": { "uri": uri } }),
         )
         .map_err(map_lsp_error)?;
-    let encoding = supervisor
-        .project_position_encoding(project_root, LspServerKind::RustAnalyzer)
-        .unwrap_or(PositionEncoding::Utf16);
     let mut cache = LineCache::new();
     cache.seed(&file, text);
     let mut invalid = 0usize;
@@ -284,9 +312,7 @@ fn goto_definition(
     let limit = limit.clamp(1, 100);
     let file = resolve_rust_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
-    let text = fs::read_to_string(&file).map_err(|_| {
-        AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
-    })?;
+    let text = read_document_text(&file)?;
     let encoding = supervisor
         .prepare_document(
             project_root,
@@ -342,9 +368,7 @@ fn find_references(
     let limit = limit.clamp(1, 200);
     let file = resolve_rust_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
-    let text = fs::read_to_string(&file).map_err(|_| {
-        AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "failed to read file")
-    })?;
+    let text = read_document_text(&file)?;
     let encoding = supervisor
         .prepare_document(
             project_root,
@@ -896,18 +920,11 @@ fn map_lsp_error(error: LspError) -> AgentLspResultEnvelope {
 }
 
 fn sanitize_path_message(message: impl Into<String>) -> String {
-    let message = message.into();
-    // Strip absolute path-looking segments without inventing a full redactor.
-    let mut out = String::with_capacity(message.len());
-    for part in message.split(char::is_whitespace) {
-        if part.starts_with('/') && part.len() > 1 {
-            out.push_str("<path>");
-        } else {
-            out.push_str(part);
-        }
-        out.push(' ');
-    }
-    bound_error_message(out)
+    // `bound_error_message` redacts file URIs, absolute POSIX/Windows paths
+    // (including quoted and `key=/...` embedded forms), scrubs control
+    // characters, and truncates. Kept as a named wrapper so agent call sites
+    // state intent.
+    bound_error_message(message.into())
 }
 
 fn lsp_error_cmd(start: Instant, code: &str, message: &str) -> CommandResult {

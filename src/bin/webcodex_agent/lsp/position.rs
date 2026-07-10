@@ -3,10 +3,20 @@
 //! Public tools use 1-based line and 1-based Unicode scalar columns.
 //! LSP uses 0-based line and encoding-specific character offsets.
 
+use super::protocol::MAX_LSP_MESSAGE_BYTES;
 use super::supervisor::PositionEncoding;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Upper bound for document text loaded into agent memory for LSP navigation.
+///
+/// Aligned with the LSP wire cap: a `didOpen` above `MAX_LSP_MESSAGE_BYTES`
+/// would be rejected at write time anyway, but only after the whole file was
+/// already resident. Checking file metadata first fails fast before the
+/// allocation. A racing writer can still grow a file between check and read;
+/// the wire cap remains the backstop.
+pub(super) const MAX_LSP_DOCUMENT_BYTES: u64 = MAX_LSP_MESSAGE_BYTES as u64;
 
 /// Request-local cache of file text used for position conversion.
 #[derive(Default)]
@@ -21,7 +31,14 @@ impl LineCache {
 
     pub(crate) fn text(&mut self, path: &Path) -> Option<&str> {
         if !self.files.contains_key(path) {
-            let text = fs::read_to_string(path).ok();
+            // Oversized result targets degrade to an invalid-conversion count
+            // downstream instead of ballooning agent memory per location.
+            let text = match fs::metadata(path) {
+                Ok(metadata) if metadata.len() <= MAX_LSP_DOCUMENT_BYTES => {
+                    fs::read_to_string(path).ok()
+                }
+                _ => None,
+            };
             self.files.insert(path.to_path_buf(), text);
         }
         self.files.get(path).and_then(|value| value.as_deref())

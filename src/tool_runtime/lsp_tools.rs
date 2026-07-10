@@ -251,7 +251,10 @@ fn string_contains_forbidden_path_material(value: &str) -> bool {
         && matches!(bytes[2], b'/' | b'\\')
 }
 
-fn agent_local_project_id(resolved_id: &str) -> Option<&str> {
+/// Derive the agent-local project id from a server-resolved runtime id.
+/// Shared with the coding-startup semantic-navigation probe; never derived
+/// from model-supplied free-form ids.
+pub(crate) fn agent_local_project_id(resolved_id: &str) -> Option<&str> {
     let rest = resolved_id.strip_prefix("agent:")?;
     let (_client, project_id) = rest.split_once(':')?;
     if project_id.is_empty() {

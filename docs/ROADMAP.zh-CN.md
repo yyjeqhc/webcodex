@@ -9,12 +9,23 @@
 - 更多 fixture dogfood tasks。
 - 更清晰的 review 和 rollback workflow。
 
-## 0.3.x：Semantic Code Understanding
+## LSP Phase 1：已完成
+
+- agent-side supervisor。
+- constrained rust-analyzer profile。
+- read-only symbol navigation。
+- startup capability awareness。
+
+## 后续 LSP 工作
 
 - diagnostics。
-- symbol outline。
-- references。
-- test failure summaries。
+- workspace symbols。
+- rename 和 code actions。
+- 更多 languages。
+
+## 后续 Coding Intelligence
+
+- 改进 test failure summary。
 
 ## Later
 

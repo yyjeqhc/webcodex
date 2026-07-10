@@ -161,7 +161,7 @@ fn semantic_navigation_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "supported": schema_type("boolean", "True when the project is agent-backed, the owning agent is connected, and it advertises lsp_read_only_navigation."),
-            "available": schema_type("boolean", "True when supported Rust navigation has an available executable or an existing running/initializing server slot."),
+            "available": schema_type("boolean", "True when supported Rust navigation has an available executable or an existing running/initializing server slot. A crashed slot stays available only while the agent still reports the executable as available."),
             "recommended": schema_type("boolean", "True only for available or running status."),
             "status": {
                 "type": "string",

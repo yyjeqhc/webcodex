@@ -4,6 +4,7 @@
 //! enters public ToolCall dispatch, starts a language server, or exposes the
 //! raw agent transport/result envelope.
 
+use super::lsp_tools::agent_local_project_id;
 use super::project_resolution::ResolvedProject;
 use super::ToolRuntime;
 use crate::lsp_bridge::{
@@ -189,8 +190,12 @@ impl SemanticNavigationStartupSummary {
                 None,
                 None,
             ),
+            // A crashed slot restarts on the next request, so navigation is
+            // still worth offering — but only while the agent reports the
+            // executable itself as available. Hardcoding `true` here would
+            // advertise navigation after the binary was removed.
             LspAvailabilityStatus::Crashed => (
-                true,
+                server.available,
                 false,
                 SemanticNavigationStartupStatus::Crashed,
                 Some(SemanticNavigationReasonCode::ServerCrashed),
@@ -384,15 +389,49 @@ impl ToolRuntime {
     }
 }
 
-fn agent_local_project_id(resolved_id: &str) -> Option<&str> {
-    let rest = resolved_id.strip_prefix("agent:")?;
-    let (_client_id, project_id) = rest.split_once(':')?;
-    (!project_id.is_empty()).then_some(project_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp_bridge::LspServerStatusEntry;
+
+    fn crashed_status(executable_available: bool) -> LspStatusResult {
+        LspStatusResult {
+            project: "demo".to_string(),
+            detected_languages: vec!["rust".to_string()],
+            servers: vec![LspServerStatusEntry {
+                language: "rust".to_string(),
+                server: "rust-analyzer".to_string(),
+                available: executable_available,
+                running: false,
+                status: LspAvailabilityStatus::Crashed,
+                source: None,
+                position_encoding: None,
+            }],
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn crashed_available_follows_agent_reported_executable_availability() {
+        // Executable still present: the slot restarts on demand.
+        let summary =
+            SemanticNavigationStartupSummary::from_lsp_status(crashed_status(true), "demo")
+                .unwrap();
+        let value = serde_json::to_value(summary).unwrap();
+        assert_eq!(value["status"], "crashed");
+        assert_eq!(value["available"], true);
+        assert_eq!(value["recommended"], false);
+        assert_eq!(value["reason_code"], "server_crashed");
+
+        // Executable removed after the crash: navigation must not be offered.
+        let summary =
+            SemanticNavigationStartupSummary::from_lsp_status(crashed_status(false), "demo")
+                .unwrap();
+        let value = serde_json::to_value(summary).unwrap();
+        assert_eq!(value["status"], "crashed");
+        assert_eq!(value["available"], false);
+        assert_eq!(value["reason_code"], "server_crashed");
+    }
 
     #[test]
     fn non_agent_summary_is_bounded_and_not_applicable() {

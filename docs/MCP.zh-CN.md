@@ -113,6 +113,36 @@ finish:
 
 `start_coding_task` 返回 session id，后续 review 和 finish tools 可以继续使用。`finish_coding_task` 是完成任务的推荐收口工具；`session_handoff_summary` 用于把上下文交给另一个 operator 或后续 client。
 
+## 只读 LSP 导航
+
+当前 LSP tools：
+
+- `lsp_status`
+- `document_symbols`
+- `goto_definition`
+- `find_references`
+
+Phase 1 只支持 Rust。这些 tools 是只读的，只在已注册 workspace 内工作，也不会
+导航到 dependencies。它们不提供 client-controlled document synchronization，也不
+提供任何 write operation。可用性取决于所选 agent 是否声明
+`lsp_read_only_navigation`。
+
+当 `start_coding_task.semantic_navigation.recommended=true` 时，推荐：
+
+```text
+document_symbols
+→ goto_definition / find_references
+→ read_file
+```
+
+semantic navigation 不可用时，使用：
+
+```text
+project_overview
+→ search_project_text
+→ read_file
+```
+
 ## Advanced / Escape-Hatch Tools
 
 ```text

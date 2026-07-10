@@ -65,6 +65,19 @@ agent:<client_id>:<project_id>
 
 Server 会把 project tool calls 路由到拥有该项目的 connected agent。
 
+## LSP 只读导航
+
+支持 Phase 1 LSP 导航的 agent 会注册
+`lsp_read_only_navigation` capability。Server 只发送 typed
+`AgentLspRequest` operations：status、document symbols、go to definition 和
+find references。Agent 返回带版本的 `AgentLspResultEnvelope`，其中包含成功结果或
+structured error。
+
+不提供 arbitrary LSP-method passthrough。Agent 只在已注册 project boundary 内
+解析请求，并在本地运行 language server。未声明
+`lsp_read_only_navigation` 的旧 agent 会被视为这些 tools 不可用，并安全失败；
+其他已支持的操作仍可继续使用。
+
 ## Codex-specific workflows
 
 WebCodex 不再暴露 `run_codex` 或 legacy `/api/codex/*` routes。Agent lifecycle 和 project dispatch 使用 structured runtime tools、agent-registered projects、bounded shell/job validation、MCP 和 GPT Actions。需要时请在 WebCodex 外部运行 Codex。

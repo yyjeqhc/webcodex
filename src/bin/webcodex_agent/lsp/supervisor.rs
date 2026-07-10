@@ -216,6 +216,11 @@ pub(crate) struct LspSupervisorConfig {
     pub(crate) initialize_timeout: Duration,
     pub(crate) shutdown_timeout: Duration,
     pub(crate) idle_ttl: Duration,
+    /// Reap idle/unusable servers from a background thread so `idle_ttl` and
+    /// capacity recovery work in long-lived agents without explicit
+    /// `cleanup_idle` calls. Tests that pin manual `cleanup_idle` semantics
+    /// disable this to stay deterministic.
+    pub(crate) background_reaper: bool,
 }
 
 impl Default for LspSupervisorConfig {
@@ -228,6 +233,7 @@ impl Default for LspSupervisorConfig {
             initialize_timeout: DEFAULT_INITIALIZE_TIMEOUT,
             shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
             idle_ttl: DEFAULT_IDLE_TTL,
+            background_reaper: true,
         }
     }
 }
@@ -253,6 +259,7 @@ struct SupervisorInner {
     config: LspSupervisorConfig,
     servers: Mutex<HashMap<ProcessKey, Arc<ServerSlot>>>,
     shutting_down: AtomicBool,
+    reaper_started: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -273,6 +280,7 @@ impl LspSupervisor {
                 config,
                 servers: Mutex::new(HashMap::new()),
                 shutting_down: AtomicBool::new(false),
+                reaper_started: AtomicBool::new(false),
             }),
         }
     }
@@ -524,7 +532,8 @@ impl LspSupervisor {
         ))
     }
 
-    #[allow(dead_code)] // Periodic idle reaping for long-lived agent processes.
+    /// Reap unusable slots and idle servers past `idle_ttl`. Called
+    /// periodically by the background reaper thread and directly by tests.
     pub(crate) fn cleanup_idle(&self) -> usize {
         let now = Instant::now();
         let mut removed = Vec::new();
@@ -570,6 +579,41 @@ impl LspSupervisor {
         shutdown_slots(slots, self.inner.config.shutdown_timeout);
     }
 
+    /// Start the background idle reaper once, on the first server demand.
+    /// Idle supervisors (status-only probes, tests without servers) never
+    /// spawn the thread. The thread holds only a `Weak` reference between
+    /// passes, so it exits on drop or shutdown instead of pinning the
+    /// supervisor alive.
+    fn ensure_reaper_started(&self) {
+        if !self.inner.config.background_reaper {
+            return;
+        }
+        if self.inner.reaper_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let weak = Arc::downgrade(&self.inner);
+        let interval = reaper_interval(self.inner.config.idle_ttl);
+        let spawned = thread::Builder::new()
+            .name("webcodex-lsp-reaper".to_string())
+            .spawn(move || loop {
+                thread::sleep(interval);
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                if inner.shutting_down.load(Ordering::SeqCst) {
+                    return;
+                }
+                // Hold the strong reference only for one cleanup pass so a
+                // concurrent drop is delayed by at most one pass.
+                LspSupervisor { inner }.cleanup_idle();
+            });
+        if let Err(error) = spawned {
+            // Degraded mode: capacity recovery falls back to explicit
+            // eviction on failed requests, exactly as before the reaper.
+            tracing::debug!(error = %error, "LSP idle reaper thread failed to start");
+        }
+    }
+
     fn get_or_start(
         &self,
         key: &ProcessKey,
@@ -578,6 +622,7 @@ impl LspSupervisor {
         if self.inner.shutting_down.load(Ordering::SeqCst) {
             return Err(LspError::ServerUnavailable);
         }
+        self.ensure_reaper_started();
         let (slot, owns_start) = {
             let mut servers = lock_unpoison(&self.inner.servers);
             // A completed failed start has no process to reuse and must not
@@ -845,6 +890,12 @@ fn is_executable_file(path: &Path) -> bool {
 
 fn remaining_until(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
+}
+
+/// Reaper cadence: a fraction of the idle TTL, bounded so long TTLs still
+/// notice shutdown within a minute and tiny test TTLs do not spin.
+fn reaper_interval(idle_ttl: Duration) -> Duration {
+    (idle_ttl / 4).clamp(Duration::from_millis(10), Duration::from_secs(60))
 }
 
 /// Constrained read-only rust-analyzer profile for WebCodex v1 semantic navigation.

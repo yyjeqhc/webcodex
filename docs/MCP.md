@@ -113,6 +113,36 @@ use `read_file` afterward to inspect README, rules, manifests, or source.
 
 `start_coding_task` returns the session id used by later review and finish tools. `finish_coding_task` is the preferred closeout for a completed task; `session_handoff_summary` is for passing context to another operator or later client.
 
+## Read-Only LSP Navigation
+
+Current LSP tools are:
+
+- `lsp_status`
+- `document_symbols`
+- `goto_definition`
+- `find_references`
+
+Phase 1 supports Rust only. These tools are read-only, operate only within the
+registered workspace, and do not navigate dependencies. They do not expose
+client-controlled document synchronization or any write operation. Availability
+depends on the selected agent advertising `lsp_read_only_navigation`.
+
+When `start_coding_task.semantic_navigation.recommended=true`, prefer:
+
+```text
+document_symbols
+→ goto_definition / find_references
+→ read_file
+```
+
+When semantic navigation is unavailable, use:
+
+```text
+project_overview
+→ search_project_text
+→ read_file
+```
+
 ## Advanced And Escape-Hatch Tools
 
 ```text

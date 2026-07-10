@@ -65,6 +65,20 @@ agent:<client_id>:<project_id>
 
 The server routes project tool calls to the owning connected agent.
 
+## LSP read-only navigation
+
+Agents that support Phase 1 LSP navigation register the
+`lsp_read_only_navigation` capability. The server sends only typed
+`AgentLspRequest` operations: status, document symbols, go to definition, and
+find references. The agent returns a versioned `AgentLspResultEnvelope` with a
+success result or a structured error.
+
+There is no arbitrary LSP-method passthrough. The agent resolves requests only
+inside the registered project boundary and runs the language server locally.
+An older agent that does not advertise `lsp_read_only_navigation` is treated as
+unavailable for these tools and fails safely; its other supported operations
+continue to work.
+
 ## Codex-specific workflows
 
 WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes. Agent lifecycle and project dispatch use structured runtime tools, agent-registered projects, bounded shell/job validation, MCP, and GPT Actions. Run Codex outside WebCodex when needed.

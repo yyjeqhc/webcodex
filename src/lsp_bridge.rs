@@ -39,6 +39,7 @@ pub mod error_codes {
     pub const MALFORMED_AGENT_LSP_RESULT: &str = "malformed_agent_lsp_result";
     pub const UNKNOWN_PROJECT: &str = "unknown_project";
     pub const MISSING_LSP_PAYLOAD: &str = "missing_lsp_payload";
+    pub const DOCUMENT_TOO_LARGE: &str = "document_too_large";
 }
 
 pub fn is_known_error_code(code: &str) -> bool {
@@ -57,6 +58,7 @@ pub fn is_known_error_code(code: &str) -> bool {
             | error_codes::MALFORMED_AGENT_LSP_RESULT
             | error_codes::UNKNOWN_PROJECT
             | error_codes::MISSING_LSP_PAYLOAD
+            | error_codes::DOCUMENT_TOO_LARGE
     )
 }
 
@@ -324,10 +326,69 @@ pub fn clamp_find_references_limit(limit: Option<usize>) -> usize {
         .clamp(MIN_FIND_REFERENCES_LIMIT, MAX_FIND_REFERENCES_LIMIT)
 }
 
+/// Best-effort redaction of absolute-path-looking material in error text.
+///
+/// Replaces `file:` URIs, absolute POSIX paths (including quoted, bracketed,
+/// or `key=/...` embedded forms), Windows drive paths, and UNC prefixes with
+/// `<path>`, while leaving relative paths like `src/main.rs` intact. This is
+/// layered defense for the error channel only; result payloads are bounded by
+/// the typed result contract and boundary classification instead.
+pub fn redact_absolute_paths(message: &str) -> String {
+    const PLACEHOLDER: &str = "<path>";
+    fn is_path_stop(c: char) -> bool {
+        c.is_whitespace() || matches!(c, '\'' | '"' | '`' | ')' | ']' | '}' | ',' | ';')
+    }
+    fn is_token_interior(c: char) -> bool {
+        c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | '/')
+    }
+    fn starts_with_file_uri(chars: &[char]) -> bool {
+        chars.len() >= 6
+            && chars[..5]
+                .iter()
+                .collect::<String>()
+                .eq_ignore_ascii_case("file:")
+            && chars[5] == '/'
+    }
+    let chars: Vec<char> = message.chars().collect();
+    let mut out = String::with_capacity(message.len());
+    let mut prev: Option<char> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let file_uri = starts_with_file_uri(&chars[i..])
+            && !prev.is_some_and(|p| p.is_alphanumeric() || matches!(p, '.' | '_' | '-'));
+        // A '/' opens an absolute path only at a token start; `src/main.rs`
+        // keeps its interior separator.
+        let absolute_posix = c == '/'
+            && !prev.is_some_and(is_token_interior)
+            && chars
+                .get(i + 1)
+                .is_some_and(|next| next.is_alphanumeric() || matches!(next, '.' | '_' | '-'));
+        let windows_drive = c.is_ascii_alphabetic()
+            && !prev.is_some_and(|p| p.is_alphanumeric() || matches!(p, '.' | '_' | '-'))
+            && chars.get(i + 1) == Some(&':')
+            && matches!(chars.get(i + 2), Some('/') | Some('\\'));
+        let unc = c == '\\' && chars.get(i + 1) == Some(&'\\');
+        if file_uri || absolute_posix || windows_drive || unc {
+            out.push_str(PLACEHOLDER);
+            while i < chars.len() && !is_path_stop(chars[i]) {
+                i += 1;
+            }
+            prev = Some('>');
+            continue;
+        }
+        out.push(c);
+        prev = Some(c);
+        i += 1;
+    }
+    out
+}
+
+/// Bound an error message for transport: redact absolute-path material, scrub
+/// control characters, and truncate to `MAX_ERROR_MESSAGE_CHARS`.
 pub fn bound_error_message(message: impl Into<String>) -> String {
     let message = message.into();
-    // Never ship absolute-looking paths or env-looking fragments in bridge errors.
-    let sanitized = message
+    let sanitized = redact_absolute_paths(&message)
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect::<String>();
@@ -412,6 +473,48 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn redact_absolute_paths_covers_uri_quoted_embedded_and_windows_forms() {
+        let cases = [
+            (
+                "failed to load file:///home/user/secret.rs now",
+                "failed to load <path> now",
+            ),
+            ("cannot open /home/user/x.rs", "cannot open <path>"),
+            ("cwd '/srv/repo' not allowed", "cwd '<path>' not allowed"),
+            ("path=/etc/passwd denied", "path=<path> denied"),
+            ("bad (C:\\Users\\x\\y.rs)", "bad (<path>)"),
+            ("share \\\\host\\repo failed", "share <path> failed"),
+            ("manifest at /workspace: broken", "manifest at <path> broken"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(redact_absolute_paths(input), expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn redact_absolute_paths_preserves_relative_paths_and_plain_text() {
+        let cases = [
+            "expected item in src/main.rs at line 3",
+            "unresolved import a::b::c",
+            "1/2 requests failed",
+            "duration 3ms w/ retry",
+        ];
+        for input in cases {
+            assert_eq!(redact_absolute_paths(input), input, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn bound_error_message_redacts_before_truncation() {
+        let message = format!("rust-analyzer said file://{} exploded", "/a".repeat(400));
+        let bounded = bound_error_message(message);
+        assert!(!bounded.contains("file://"));
+        assert!(!bounded.contains("/a/"));
+        assert!(bounded.contains("<path>"));
+        assert!(bounded.chars().count() <= MAX_ERROR_MESSAGE_CHARS);
     }
 
     #[test]

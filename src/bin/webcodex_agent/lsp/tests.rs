@@ -65,7 +65,19 @@ impl Fixture {
     }
 
     fn with_limits(scenario: &str, maximum: usize, idle_ttl: Duration) -> Self {
-        Self::with_config(scenario, maximum, idle_ttl, Duration::from_millis(300))
+        Self::with_config(scenario, maximum, idle_ttl, Duration::from_millis(300), true)
+    }
+
+    /// Fixture for tests that pin explicit `cleanup_idle` return values; the
+    /// background reaper would race those assertions.
+    fn with_manual_cleanup(scenario: &str, maximum: usize, idle_ttl: Duration) -> Self {
+        Self::with_config(
+            scenario,
+            maximum,
+            idle_ttl,
+            Duration::from_millis(300),
+            false,
+        )
     }
 
     fn with_config(
@@ -73,6 +85,7 @@ impl Fixture {
         maximum: usize,
         idle_ttl: Duration,
         shutdown_timeout: Duration,
+        background_reaper: bool,
     ) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
@@ -93,6 +106,7 @@ impl Fixture {
             initialize_timeout: Duration::from_secs(2),
             shutdown_timeout,
             idle_ttl,
+            background_reaper,
         });
         Self {
             supervisor,
@@ -616,6 +630,7 @@ fn lsp_crashed_connection_reaps_immediately_without_full_shutdown_deadline() {
         4,
         Duration::from_secs(3600),
         shutdown_timeout,
+        false,
     );
     let server = fixture
         .supervisor
@@ -707,6 +722,7 @@ fn lsp_shutdown_uses_single_deadline_against_hanging_server() {
         4,
         Duration::from_secs(60),
         shutdown_timeout,
+        false,
     );
     let server = fixture
         .supervisor
@@ -767,6 +783,7 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
         initialize_timeout: Duration::from_millis(80),
         shutdown_timeout,
         idle_ttl: Duration::from_secs(60),
+        background_reaper: true,
     });
 
     let started = Instant::now();
@@ -811,7 +828,7 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
 
 #[test]
 fn lsp_idle_cleanup_is_explicit_and_bounded() {
-    let fixture = Fixture::with_limits("normal", 4, Duration::ZERO);
+    let fixture = Fixture::with_manual_cleanup("normal", 4, Duration::ZERO);
     let server = fixture
         .supervisor
         .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
@@ -824,7 +841,7 @@ fn lsp_idle_cleanup_is_explicit_and_bounded() {
 
 #[test]
 fn lsp_idle_cleanup_skips_active_pending_requests() {
-    let fixture = Fixture::with_limits("timeout", 4, Duration::ZERO);
+    let fixture = Fixture::with_manual_cleanup("timeout", 4, Duration::ZERO);
     let server = fixture
         .supervisor
         .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
@@ -850,7 +867,8 @@ fn lsp_idle_cleanup_skips_active_pending_requests() {
 
 #[test]
 fn lsp_idle_cleanup_reaps_crashed_alive_server_immediately() {
-    let fixture = Fixture::with_limits("malformed_alive_always", 4, Duration::from_secs(3600));
+    let fixture =
+        Fixture::with_manual_cleanup("malformed_alive_always", 4, Duration::from_secs(3600));
     let server = fixture
         .supervisor
         .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
@@ -867,6 +885,36 @@ fn lsp_idle_cleanup_reaps_crashed_alive_server_immediately() {
     assert_eq!(fixture.supervisor.cleanup_idle(), 1);
     assert!(wait_until(Duration::from_secs(2), || !process_exists(pid)));
     assert_eq!(fixture.supervisor.server_count_for_test(), 0);
+}
+
+#[test]
+fn lsp_background_reaper_reclaims_idle_capacity_without_explicit_cleanup() {
+    // Production agents never call cleanup_idle directly; idle_ttl must be
+    // honored by the built-in background reaper or capacity leaks forever.
+    let fixture = Fixture::with_limits("normal", 1, Duration::from_millis(100));
+    let server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    let pid = server.process_id();
+    drop(server);
+    assert_eq!(fixture.supervisor.server_count_for_test(), 1);
+    assert!(
+        wait_until(Duration::from_secs(5), || fixture
+            .supervisor
+            .server_count_for_test()
+            == 0),
+        "background reaper must reclaim the idle server after idle_ttl"
+    );
+    assert!(wait_until(Duration::from_secs(2), || !process_exists(pid)));
+    // Freed capacity must be reusable: at max_servers_per_agent=1 a second
+    // project start only succeeds because the idle slot was reclaimed.
+    let second_root = fixture._temp.path().join("project-second");
+    fs::create_dir(&second_root).unwrap();
+    fixture
+        .supervisor
+        .server_for_test(&second_root, LspServerKind::RustAnalyzer)
+        .expect("capacity must recover after background reaping");
 }
 
 #[test]

@@ -9,12 +9,23 @@ This roadmap is intentionally short. WebCodex 0.2.x is about making online AI co
 - More fixture dogfood tasks.
 - Clearer review and rollback workflow.
 
-## 0.3.x: Semantic Code Understanding
+## LSP Phase 1: Completed
+
+- Agent-side supervisor.
+- Constrained rust-analyzer profile.
+- Read-only symbol navigation.
+- Startup capability awareness.
+
+## Future LSP Work
 
 - Diagnostics.
-- Symbol outline.
-- References.
-- Test failure summaries.
+- Workspace symbols.
+- Rename and code actions.
+- More languages.
+
+## Future Coding Intelligence
+
+- Test failure summary improvements.
 
 ## Later
 

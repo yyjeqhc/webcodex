@@ -39,14 +39,15 @@
 19. [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) / [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) - QUIC、WebSocket、polling、fallback 和 transport validation。
 20. [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) / [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) - agent auth、identity、protocol 和 redacted policy summaries。
 21. [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) / [SHELL_PROFILES.md](SHELL_PROFILES.md) - prepared shell environment snapshots 和 safety boundaries。
+22. [LSP_NAVIGATION.md](LSP_NAVIGATION.md) - 只读 Rust LSP 导航工具、startup capability summary、边界、限制和 error codes。
 
 ## Release And Roadmap
 
-22. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - 面向外部用户的 0.2.0 release notes。
-23. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness 和 acceptance procedure。
-24. [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) / [ROADMAP.md](ROADMAP.md) - 短 roadmap。
+23. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - 面向外部用户的 0.2.0 release notes。
+24. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness 和 acceptance procedure。
+25. [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) / [ROADMAP.md](ROADMAP.md) - 短 roadmap。
 
 ## Developer Maintenance
 
-25. [TESTING.md](TESTING.md) - test lanes、test layout 和 ignored-test inventory。
-26. [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) / [E2E_VALIDATION.md](E2E_VALIDATION.md) - 本地端到端验证脚本和文档扫描建议。
+26. [TESTING.md](TESTING.md) - test lanes、test layout 和 ignored-test inventory。
+27. [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) / [E2E_VALIDATION.md](E2E_VALIDATION.md) - 本地端到端验证脚本和文档扫描建议。

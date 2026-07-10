@@ -39,14 +39,15 @@ Start with the README, [QUICK_START.md](QUICK_START.md), and [DEMO.md](DEMO.md).
 19. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) - QUIC, WebSocket, polling, fallback, and transport validation.
 20. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) - agent auth, identity, protocol, and redacted policy summaries.
 21. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) - prepared shell environment snapshots and safety boundaries.
+22. [LSP_NAVIGATION.md](LSP_NAVIGATION.md) - read-only Rust LSP navigation tools, startup capability summary, boundaries, limits, and error codes.
 
 ## Release And Roadmap
 
-22. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - external-facing 0.2.0 release notes.
-23. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness and acceptance procedure.
-24. [ROADMAP.md](ROADMAP.md) / [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) - short roadmap.
+23. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - external-facing 0.2.0 release notes.
+24. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness and acceptance procedure.
+25. [ROADMAP.md](ROADMAP.md) / [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) - short roadmap.
 
 ## Developer Maintenance
 
-25. [TESTING.md](TESTING.md) - test lanes, test layout, and ignored-test inventory.
-26. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) - local end-to-end validation scripts and documentation scan guidance.
+26. [TESTING.md](TESTING.md) - test lanes, test layout, and ignored-test inventory.
+27. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) - local end-to-end validation scripts and documentation scan guidance.

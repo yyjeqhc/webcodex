@@ -1,5 +1,5 @@
 use super::navigation::{handle_lsp_request, is_lsp_request_kind};
-use super::position::{lsp_to_public, public_to_lsp};
+use super::position::{lsp_to_public, public_to_lsp, MAX_LSP_DOCUMENT_BYTES};
 use super::supervisor::{LspCommand, LspSupervisor, LspSupervisorConfig, PositionEncoding};
 use crate::lsp_bridge::{
     parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND,
@@ -516,6 +516,44 @@ fn rejects_absolute_traversal_symlink_and_non_rs() {
         assert_eq!(sym["success"], false);
         assert_eq!(sym["error"]["code"], "invalid_project_path");
     }
+}
+
+#[test]
+fn oversized_document_is_rejected_before_read_and_server_start() {
+    let fixture = NavFixture::new("normal");
+    // Sparse file: metadata length is over the cap without writing the bytes.
+    let oversized = fixture.root.join("src/generated.rs");
+    let file = fs::File::create(&oversized).unwrap();
+    file.set_len(MAX_LSP_DOCUMENT_BYTES + 1).unwrap();
+    drop(file);
+
+    let symbols = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentSymbols {
+            path: "src/generated.rs".into(),
+            limit: 10,
+        },
+    });
+    assert_eq!(symbols["success"], false);
+    assert_eq!(symbols["error"]["code"], "document_too_large");
+
+    let goto = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::GotoDefinition {
+            path: "src/generated.rs".into(),
+            line: 1,
+            column: 1,
+            limit: 10,
+        },
+    });
+    assert_eq!(goto["success"], false);
+    assert_eq!(goto["error"]["code"], "document_too_large");
+
+    // The guard fires before any didOpen, so no server may have started.
+    assert!(
+        !fixture.marker.exists(),
+        "oversized documents must be rejected before starting rust-analyzer"
+    );
 }
 
 #[test]

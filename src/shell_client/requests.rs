@@ -98,6 +98,7 @@ impl ShellClientRegistry {
             timeout_secs: 30,
             requested_by,
             created_at: now_ts(),
+            lsp: None,
         };
         let mut inner = self.inner.lock().await;
         enqueue_pending_request_locked(
@@ -142,6 +143,7 @@ impl ShellClientRegistry {
             timeout_secs: body.timeout_secs,
             requested_by,
             created_at: now_ts(),
+            lsp: None,
         };
         let mut inner = self.inner.lock().await;
         enqueue_pending_request_locked(
@@ -205,6 +207,7 @@ impl ShellClientRegistry {
             timeout_secs: 30,
             requested_by,
             created_at: now_ts(),
+            lsp: None,
         };
         let mut inner = self.inner.lock().await;
         enqueue_pending_request_locked(

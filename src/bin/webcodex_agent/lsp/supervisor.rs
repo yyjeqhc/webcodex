@@ -55,6 +55,21 @@ impl PositionEncoding {
             _ => Self::Utf16,
         }
     }
+
+    pub(crate) fn as_public_label(self) -> &'static str {
+        match self {
+            Self::Utf8 => "utf-8",
+            Self::Utf16 => "utf-16",
+            Self::Utf32 => "utf-32",
+        }
+    }
+}
+
+/// Resolution metadata for lsp_status. Never includes absolute executable paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedCommandInfo {
+    pub(crate) available: bool,
+    pub(crate) source: crate::lsp_bridge::LspCommandSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,7 +289,74 @@ impl LspSupervisor {
         }
     }
 
-    #[allow(dead_code)] // Commit 2 runtime tools issue requests through this API.
+    /// Resolve command availability and source without starting a server and
+    /// without returning absolute executable paths.
+    pub(crate) fn resolve_command_info(&self, kind: LspServerKind) -> Option<ResolvedCommandInfo> {
+        if self.inner.config.rust_analyzer.is_some() {
+            let command = self.inner.config.rust_analyzer.as_ref()?;
+            return Some(ResolvedCommandInfo {
+                available: command.is_available(),
+                source: crate::lsp_bridge::LspCommandSource::Configured,
+            });
+        }
+        if kind == LspServerKind::RustAnalyzer {
+            if let Some(program) = env::var_os("WEBCODEX_RUST_ANALYZER") {
+                if !program.is_empty() {
+                    let command = LspCommand::new(program);
+                    return Some(ResolvedCommandInfo {
+                        available: command.is_available(),
+                        source: crate::lsp_bridge::LspCommandSource::Environment,
+                    });
+                }
+            }
+        }
+        let command = self.resolve_command(kind)?;
+        Some(ResolvedCommandInfo {
+            available: command.is_available(),
+            source: crate::lsp_bridge::LspCommandSource::Path,
+        })
+    }
+
+    /// Inspect an existing project server slot without starting one.
+    pub(crate) fn project_server_status(
+        &self,
+        project_root: &Path,
+        kind: LspServerKind,
+    ) -> Option<LspServerStatus> {
+        let root = fs::canonicalize(project_root).ok()?;
+        let key = ProcessKey {
+            project_root: root,
+            kind,
+        };
+        let servers = lock_unpoison(&self.inner.servers);
+        let slot = servers.get(&key)?;
+        let state = lock_unpoison(&slot.state);
+        match &*state {
+            SlotState::Starting => Some(LspServerStatus::Initializing),
+            SlotState::Running(server) => Some(server.connection.status()),
+            SlotState::Failed(_) => Some(LspServerStatus::Crashed),
+        }
+    }
+
+    pub(crate) fn project_position_encoding(
+        &self,
+        project_root: &Path,
+        kind: LspServerKind,
+    ) -> Option<PositionEncoding> {
+        let root = fs::canonicalize(project_root).ok()?;
+        let key = ProcessKey {
+            project_root: root,
+            kind,
+        };
+        let servers = lock_unpoison(&self.inner.servers);
+        let slot = servers.get(&key)?;
+        let state = lock_unpoison(&slot.state);
+        match &*state {
+            SlotState::Running(server) => Some(*lock_unpoison(&server.position_encoding)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn request(
         &self,
         validated_project_root: &Path,
@@ -289,6 +371,22 @@ impl LspSupervisor {
             params,
             self.inner.config.request_timeout,
         )
+    }
+
+    /// Best-effort notification on a running/startable server (e.g. didOpen).
+    pub(crate) fn notify(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        method: &str,
+        params: Value,
+    ) -> Result<(), LspError> {
+        let key = ProcessKey {
+            project_root: canonical_project_root(validated_project_root)?,
+            kind,
+        };
+        let server = self.get_or_start(&key, false)?;
+        server.notify(method, params)
     }
 
     #[allow(dead_code)] // Commit 2 tools may override per-call timeouts.

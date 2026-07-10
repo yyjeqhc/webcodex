@@ -1,7 +1,7 @@
 pub(crate) mod artifacts;
 pub(crate) mod checkpoints;
 pub(crate) mod config;
-pub(super) mod dispatch;
+pub(crate) mod dispatch;
 pub(crate) mod files;
 pub(crate) mod lsp;
 pub(crate) mod output;
@@ -28,6 +28,7 @@ pub(crate) use files::sha256_hex_bytes;
 pub(crate) use files::{
     handle_basic_file_request, is_basic_file_request_kind, resolve_requested_path,
 };
+pub(crate) use lsp::LspSupervisor;
 pub(crate) use output::{err_cmd, ok_cmd, CommandResult};
 pub(crate) use patches::{
     handle_apply_text_edits_file_request, handle_line_edit_file_request,
@@ -35,9 +36,10 @@ pub(crate) use patches::{
     validate_line_edit_agent_path,
 };
 #[cfg(test)]
+pub(crate) use projects::load_agent_project_summaries_from_dir;
+#[cfg(test)]
 pub(crate) use projects::{
-    agent_project_summary, load_agent_project_summaries_from_dir, parse_agent_project_toml,
-    validate_project_path_policy,
+    agent_project_summary, parse_agent_project_toml, validate_project_path_policy,
 };
 pub(crate) use projects::{handle_project_op, AgentProjectCache};
 #[cfg(test)]

@@ -1,9 +1,10 @@
+use super::lsp::{handle_lsp_request, is_lsp_request_kind, LspSupervisor};
 use super::{handle_project_op, run_shell_with_profiles, AgentPolicy, AgentSink, ShellConfig};
 use crate::shell_protocol::ShellAgentShellRequest;
 use crate::{handle_file_request, is_file_request_kind, JobManager};
 use std::path::Path;
 
-/// Execute a single agent request (shell/file/job) and send the result over
+/// Execute a single agent request (shell/file/job/lsp) and send the result over
 /// the active transport. This is the shared dispatch path used by both the
 /// polling loop (`handle_one_poll`) and the WebSocket loop. It contains no
 /// transport-specific code: all outgoing traffic goes through `sink`.
@@ -13,6 +14,7 @@ pub(crate) fn dispatch_request(
     shell: &ShellConfig,
     jobs: &JobManager,
     projects_dir: &Path,
+    lsp: &LspSupervisor,
     request: ShellAgentShellRequest,
 ) -> Result<bool, String> {
     match request.kind.as_str() {
@@ -42,6 +44,12 @@ pub(crate) fn dispatch_request(
         "register_project" | "create_project" => {
             let request_id = request.request_id.clone();
             let result = handle_project_op(policy, projects_dir, &request);
+            sink.submit_result(request_id, result)
+        }
+        kind if is_lsp_request_kind(kind) => {
+            // Explicit LSP branch — must never fall through to shell execution.
+            let request_id = request.request_id.clone();
+            let result = handle_lsp_request(policy, projects_dir, lsp, &request);
             sink.submit_result(request_id, result)
         }
         _ => {

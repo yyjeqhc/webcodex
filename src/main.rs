@@ -29,6 +29,7 @@ mod openapi;
 mod pairing_http;
 // The server uses only normalization/bounds helpers; the same module's
 // filesystem scanner is compiled for and invoked by webcodex-agent.
+mod lsp_bridge;
 #[allow(dead_code)]
 mod project_overview;
 mod projects;

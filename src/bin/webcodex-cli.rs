@@ -18,6 +18,10 @@
 use std::path::PathBuf;
 
 #[allow(dead_code)]
+#[path = "../lsp_bridge.rs"]
+mod lsp_bridge;
+
+#[allow(dead_code)]
 #[path = "../shell_protocol.rs"]
 mod shell_protocol;
 

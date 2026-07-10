@@ -80,6 +80,7 @@ impl ShellClientRegistry {
             timeout_secs: run.timeout_secs,
             requested_by,
             created_at,
+            lsp: None,
         };
         let mut inner = self.inner.lock().await;
         let Some(client) = inner.clients.get(&client_id) else {
@@ -299,6 +300,7 @@ impl ShellClientRegistry {
                     timeout_secs: 1,
                     requested_by,
                     created_at: now_ts(),
+                    lsp: None,
                 };
                 enqueue_pending_request_locked(
                     &mut inner,

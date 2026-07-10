@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
 
 #[allow(dead_code)]
+#[path = "../lsp_bridge.rs"]
+mod lsp_bridge;
+
+#[allow(dead_code)]
 #[path = "../shell_protocol.rs"]
 mod shell_protocol;
 
@@ -694,6 +698,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.file_write = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
+    // New agents always advertise read-only LSP navigation. Older agents omit
+    // the field and deserialize as false on the server.
+    capabilities.lsp_read_only_navigation = true;
     capabilities
 }
 
@@ -1384,6 +1391,7 @@ fn handle_one_poll(
     jobs: &JobManager,
     project_cache: &mut AgentProjectCache,
     agent_instance_id: &str,
+    lsp: &webcodex_agent::LspSupervisor,
 ) -> Result<bool, PollError> {
     let poll = ShellAgentPollRequest {
         client_id: cfg.client_id.clone(),
@@ -1412,6 +1420,7 @@ fn handle_one_poll(
         &cfg.shell,
         jobs,
         &projects_dir(&cfg),
+        lsp,
         request,
     );
     if project_op && result.is_ok() {
@@ -2582,6 +2591,7 @@ shell_profile = "../rust"
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         }
     }
 
@@ -2641,6 +2651,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         }
     }
 
@@ -2675,6 +2686,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         }
     }
 
@@ -2707,6 +2719,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         }
     }
 
@@ -3180,6 +3193,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         }
     }
 
@@ -3211,6 +3225,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         }
     }
 
@@ -5073,12 +5088,14 @@ shell_profile = "../rust"
         assert_eq!(shell_result.stdout.as_deref(), Some("same"));
 
         let (sink, mut rx) = ws_sink("ws-client");
+        let lsp = webcodex_agent::LspSupervisor::default();
         dispatch_request(
             &sink,
             &AgentPolicy::default(),
             &shell,
             &jobs,
             &projects_dir,
+            &lsp,
             shell_job_request(&project_dir, "printf %s \"$WEBCODEX_TEST_PROFILE\""),
         )
         .unwrap();
@@ -5715,6 +5732,7 @@ shell_profile = "../rust"
             timeout_secs: 60,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         };
 
         jobs.enqueue(
@@ -5817,9 +5835,12 @@ shell_profile = "../rust"
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         };
         let pdir = projects_dir(&cfg);
-        let ran = dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, &pdir, request).unwrap();
+        let lsp = webcodex_agent::LspSupervisor::default();
+        let ran =
+            dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, &pdir, &lsp, request).unwrap();
         assert!(ran);
         let env = rx.try_recv().expect("result envelope was sent");
         match env {
@@ -5877,9 +5898,18 @@ shell_profile = "../rust"
                 timeout_secs: 10,
                 requested_by: "tester".to_string(),
                 created_at: 0,
+                lsp: None,
             };
-            let ran =
-                dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, &pdir, request).unwrap();
+            let ran = dispatch_request(
+                &sink,
+                &cfg.policy,
+                &cfg.shell,
+                &jobs,
+                &pdir,
+                &webcodex_agent::LspSupervisor::default(),
+                request,
+            )
+            .unwrap();
             assert!(ran, "{label}");
             let env = rx.try_recv().expect("result envelope was sent");
             match env {
@@ -5927,6 +5957,7 @@ shell_profile = "../rust"
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         }
     }
 
@@ -6475,7 +6506,12 @@ shell_profile = "../rust"
 
         let outcome = tokio::time::timeout(
             Duration::from_secs(10),
-            websocket_session(&cfg, Vec::new(), "inst-1"),
+            websocket_session(
+                &cfg,
+                Vec::new(),
+                "inst-1",
+                &webcodex_agent::LspSupervisor::default(),
+            ),
         )
         .await
         .expect("websocket_session did not complete in time");

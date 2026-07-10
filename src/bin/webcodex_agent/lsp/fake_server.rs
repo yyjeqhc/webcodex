@@ -201,15 +201,90 @@ fn start_count(marker: Option<&Path>) -> usize {
 
 fn write_result(writer: &mut impl Write, id: Option<u64>, method: &str) -> io::Result<()> {
     let cwd = env::current_dir()?.display().to_string();
-    write_frame(
-        writer,
-        &format!(
-            r#"{{"jsonrpc":"2.0","id":{},"result":{{"method":"{}","cwd":"{}"}}}}"#,
-            id.unwrap_or(0),
+    let main_uri = path_to_file_uri(&Path::new(&cwd).join("src/main.rs"));
+    let other_uri = path_to_file_uri(&Path::new(&cwd).join("src/other.rs"));
+    let external_uri = "file:///usr/lib/rustlib/src/rust/library/core/src/lib.rs";
+    // Scenario is argv[1]; navigation scenarios encode response shape without
+    // process-global env vars (which race under parallel tests).
+    let scenario = env::args().nth(1).unwrap_or_else(|| "normal".to_string());
+    let body = match method {
+        "textDocument/documentSymbol" => match scenario.as_str() {
+            "symbol_information" => format!(
+                r#"[{{"name":"main","kind":12,"location":{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}}}]"#
+            ),
+            "symbols_malformed" => {
+                r#"[{"name":"bad","kind":12,"range":{"start":{"line":999,"character":0},"end":{"line":999,"character":1}}}]"#.to_string()
+            }
+            _ => format!(
+                r#"[{{"name":"outer","kind":5,"range":{{"start":{{"line":0,"character":0}},"end":{{"line":3,"character":1}}}},"selectionRange":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":5}}}},"children":[{{"name":"inner","kind":12,"range":{{"start":{{"line":2,"character":0}},"end":{{"line":2,"character":5}}}},"selectionRange":{{"start":{{"line":2,"character":0}},"end":{{"line":2,"character":2}}}},"children":[]}}]}}]"#
+            ),
+        },
+        "textDocument/definition" => match scenario.as_str() {
+            "definition_null" => "null".to_string(),
+            "definition_array" => format!(
+                r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{other_uri}","range":{{"start":{{"line":1,"character":0}},"end":{{"line":1,"character":3}}}}}}]"#
+            ),
+            "definition_link" => format!(
+                r#"[{{"targetUri":"{main_uri}","targetRange":{{"start":{{"line":0,"character":0}},"end":{{"line":3,"character":1}}}},"targetSelectionRange":{{"start":{{"line":0,"character":3}},"end":{{"line":0,"character":7}}}}}}]"#
+            ),
+            "definition_external" => format!(
+                r#"[{{"uri":"{external_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}]"#
+            ),
+            "definition_malformed" => format!(
+                r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":999,"character":0}},"end":{{"line":999,"character":1}}}}}}]"#
+            ),
+            _ => format!(
+                r#"{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}"#
+            ),
+        },
+        "textDocument/references" => match scenario.as_str() {
+            "references_empty" => "null".to_string(),
+            "references_duplicates" => format!(
+                r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{other_uri}","range":{{"start":{{"line":2,"character":0}},"end":{{"line":2,"character":3}}}}}}]"#
+            ),
+            "references_overflow" => {
+                let mut items = Vec::new();
+                for i in 0..30 {
+                    items.push(format!(
+                        r#"{{"uri":"{main_uri}","range":{{"start":{{"line":{i},"character":0}},"end":{{"line":{i},"character":1}}}}}}"#
+                    ));
+                }
+                format!("[{}]", items.join(","))
+            }
+            "references_external" => format!(
+                r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{external_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}]"#
+            ),
+            _ => format!(
+                r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{main_uri}","range":{{"start":{{"line":3,"character":0}},"end":{{"line":3,"character":4}}}}}}]"#
+            ),
+        },
+        _ => format!(
+            r#"{{"method":"{}","cwd":"{}"}}"#,
             json_escape(method),
             json_escape(&cwd)
         ),
+    };
+    write_frame(
+        writer,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":{},"result":{body}}}"#,
+            id.unwrap_or(0),
+        ),
     )
+}
+
+fn path_to_file_uri(path: &Path) -> String {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
+    };
+    let text = absolute.display().to_string();
+    if text.starts_with('/') {
+        format!("file://{}", text)
+    } else {
+        format!("file:///{}", text.replace('\\', "/"))
+    }
 }
 
 fn read_frame(reader: &mut impl BufRead) -> io::Result<Option<String>> {

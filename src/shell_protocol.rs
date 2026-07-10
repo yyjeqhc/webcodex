@@ -66,6 +66,10 @@ pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
+/// Explicit capability for agent-side read-only LSP navigation. Missing on
+/// older agents and defaults to `false` so the server never dispatches typed
+/// LSP requests to agents that cannot handle them.
+pub const SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION: &str = "lsp_read_only_navigation";
 #[cfg(test)]
 pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_SHELL,
@@ -75,6 +79,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
+    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +98,10 @@ pub struct ShellClientCapabilities {
     pub async_jobs: bool,
     #[serde(default)]
     pub async_shell_jobs: bool,
+    /// Read-only semantic navigation via agent-side rust-analyzer. Defaults to
+    /// false for wire compatibility with older agents.
+    #[serde(default)]
+    pub lsp_read_only_navigation: bool,
 }
 
 impl Default for ShellClientCapabilities {
@@ -105,6 +114,7 @@ impl Default for ShellClientCapabilities {
             jobs: false,
             async_jobs: false,
             async_shell_jobs: false,
+            lsp_read_only_navigation: false,
         }
     }
 }
@@ -415,6 +425,10 @@ pub struct ShellAgentShellRequest {
     pub timeout_secs: u64,
     pub requested_by: String,
     pub created_at: i64,
+    /// Typed read-only LSP navigation payload. Present only for `kind = "lsp"`.
+    /// Defaults to `None` so older request bodies continue to deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lsp: Option<crate::lsp_bridge::AgentLspPayload>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -980,6 +994,7 @@ mod envelope_tests {
                 jobs: true,
                 async_jobs: true,
                 async_shell_jobs: true,
+                lsp_read_only_navigation: false,
             }),
             projects: None,
             agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string()),
@@ -1039,6 +1054,7 @@ mod envelope_tests {
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 123,
+            lsp: None,
         };
         let env = AgentEnvelope::Request { request };
         let json = env.to_json().unwrap();

@@ -1447,6 +1447,7 @@ mod tests {
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            lsp: None,
         }
     }
 

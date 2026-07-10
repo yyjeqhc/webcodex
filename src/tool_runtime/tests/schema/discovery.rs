@@ -1048,7 +1048,8 @@ fn tool_categories_include_projects_with_management_tools() {
 #[test]
 fn tool_manifest_intents_reference_only_known_model_visible_tools() {
     use crate::tool_runtime::tool_definition::{
-        is_known_tool_name, is_model_visible_tool_name, TOOL_MANIFEST_INTENTS,
+        available_tool_manifest_intent_names, is_known_tool_name, is_model_visible_tool_name,
+        resolve_tool_manifest_intent, TOOL_MANIFEST_INTENTS,
     };
     use std::collections::BTreeSet;
 
@@ -1061,6 +1062,13 @@ fn tool_manifest_intents_reference_only_known_model_visible_tools() {
         names, expected,
         "intent set must stay stable for this release"
     );
+    assert_eq!(available_tool_manifest_intent_names(), names);
+    for name in &names {
+        let resolved = resolve_tool_manifest_intent(name)
+            .unwrap_or_else(|unknown| panic!("available intent {unknown} must resolve"))
+            .unwrap_or_else(|| panic!("available intent {name} must not resolve as empty"));
+        assert_eq!(resolved.name, *name);
+    }
 
     let mut seen = BTreeSet::new();
     for intent in TOOL_MANIFEST_INTENTS {
@@ -1112,14 +1120,8 @@ fn tool_manifest_intents_reference_only_known_model_visible_tools() {
 #[tokio::test]
 async fn tool_manifest_without_intent_keeps_compat_shape_and_lists_available_intents() {
     let runtime = test_runtime();
-    let result = runtime
-        .dispatch(ToolCall::ToolManifest {
-            category: None,
-            intent: None,
-            include_recommended_flows: true,
-            include_risk_summary: true,
-        })
-        .await;
+    let call = ToolCall::from_tool_name("tool_manifest", json!({})).unwrap();
+    let result = runtime.dispatch(call).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["schema_version"], 1);
     assert_eq!(result.output["intent"], Value::Null);
@@ -1144,6 +1146,33 @@ async fn tool_manifest_without_intent_keeps_compat_shape_and_lists_available_int
         &result.output,
         output_schema_properties(spec_named(&registered_tool_specs(), "tool_manifest")),
     );
+}
+
+#[tokio::test]
+async fn tool_manifest_all_available_intents_parse_and_filter_through_tool_call() {
+    let runtime = test_runtime();
+    for intent in ["coding", "audit", "exploration", "release", "discovery"] {
+        let call = ToolCall::from_tool_name(
+            "tool_manifest",
+            json!({
+                "intent": intent,
+                "include_recommended_flows": false,
+                "include_risk_summary": false,
+            }),
+        )
+        .unwrap_or_else(|error| panic!("{intent} must parse: {error}"));
+        let result = runtime.dispatch(call).await;
+
+        assert!(result.success, "{intent}: {:?}", result.error);
+        assert_eq!(result.output["intent"], intent);
+        assert_eq!(result.output["filtered"], true);
+        assert!(
+            result.output["returned_count"].as_u64().unwrap()
+                < result.output["total_count"].as_u64().unwrap(),
+            "{intent} must return a bounded manifest: {:?}",
+            result.output
+        );
+    }
 }
 
 #[tokio::test]
@@ -1230,14 +1259,9 @@ async fn tool_manifest_accepts_hyphenated_intent_alias() {
 #[tokio::test]
 async fn tool_manifest_unknown_intent_returns_structured_error() {
     let runtime = test_runtime();
-    let result = runtime
-        .dispatch(ToolCall::ToolManifest {
-            category: None,
-            intent: Some("not_a_real_intent".to_string()),
-            include_recommended_flows: true,
-            include_risk_summary: true,
-        })
-        .await;
+    let call =
+        ToolCall::from_tool_name("tool_manifest", json!({"intent": "not_a_real_intent"})).unwrap();
+    let result = runtime.dispatch(call).await;
     assert!(!result.success, "unknown intent must fail");
     assert!(
         result
@@ -1300,6 +1324,13 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
             })
             .await;
         assert!(result.success, "{intent}: {:?}", result.error);
+        assert_eq!(result.output["intent"], intent);
+        assert_eq!(result.output["filtered"], true);
+        assert!(
+            result.output["returned_count"].as_u64().unwrap()
+                < result.output["total_count"].as_u64().unwrap(),
+            "{intent} must not return the full manifest"
+        );
         let names: Vec<&str> = result.output["tools"]
             .as_array()
             .unwrap()
@@ -1311,6 +1342,38 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
                 !names.contains(&forbidden),
                 "{intent} must not include {forbidden}: {names:?}"
             );
+        }
+        if intent == "audit" {
+            for required in [
+                "start_coding_task",
+                "read_file",
+                "search_project_text",
+                "list_project_files",
+                "git_status",
+                "git_diff_summary",
+                "git_diff_hunks",
+                "git_log",
+                "show_changes",
+                "workspace_hygiene_check",
+                "session_handoff_summary",
+                "finish_coding_task",
+                "tool_manifest",
+            ] {
+                assert!(
+                    names.contains(&required),
+                    "audit intent must include {required}: {names:?}"
+                );
+            }
+            for tool in result.output["tools"].as_array().unwrap() {
+                assert_eq!(
+                    tool["risk"], "read_only",
+                    "audit intent must exclude project_write/job_run tools: {tool:?}"
+                );
+                assert_eq!(
+                    tool["shell_like"], false,
+                    "audit intent must exclude shell-like tools: {tool:?}"
+                );
+            }
         }
     }
 }

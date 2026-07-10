@@ -276,6 +276,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "workspace_hygiene_check",
             "finish_coding_task",
             "session_handoff_summary",
+            "tool_manifest",
         ],
     },
     ToolManifestIntent {

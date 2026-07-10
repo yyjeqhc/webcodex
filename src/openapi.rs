@@ -770,7 +770,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                             }
                         },
                         "argumentsAlias": {
-                            "summary": "MCP-style arguments alias (params wins when both present)",
+                            "summary": "MCP-style arguments alias (non-null params wins when both are present)",
                             "value": {
                                 "tool": "git_diff_summary",
                                 "arguments": {
@@ -995,7 +995,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": [TOOL_CALL_TOOL_FIELD],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for GPT Action top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with non-null `params` taking precedence; null wrappers do not suppress flattened arguments. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for GPT Action top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
             "properties": {
                 ALLOW_CROSS_PROJECT_SESSION_FIELD: {
                     "type": "boolean",
@@ -1936,7 +1936,7 @@ fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
         TOOL_CALL_PARAMS_FIELD.to_string(),
         json!({
             "type": "object",
-            "description": "Tool-specific arguments object for non-Action clients. Takes precedence over `arguments` when both are present. GPT Actions should prefer flattened top-level fields.",
+            "description": "Tool-specific arguments object for non-Action clients. Takes precedence over `arguments` when both are non-null. A null wrapper does not suppress flattened top-level fields. GPT Actions should prefer flattened top-level fields.",
             "nullable": true,
             "additionalProperties": true
         }),

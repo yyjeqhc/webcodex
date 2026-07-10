@@ -32,8 +32,9 @@ pub use projects::{projects_create, projects_list, projects_register};
 
 /// Generic runtime tool call body. `tool` is required; `params` carries the
 /// tool-specific arguments. `arguments` is accepted as a compatibility alias
-/// for `params` — when both are present, `params` wins. GPT Actions may also
-/// pass tool-specific arguments as flattened top-level fields. Top-level
+/// for `params` — when both are non-null, `params` wins. Null wrapper values
+/// are treated as absent so GPT Actions may still pass tool-specific arguments
+/// as flattened top-level fields. Top-level
 /// `recording_session_id` is recorder metadata; top-level `session_id` remains
 /// an ordinary flattened tool argument so tools like `session_summary` can use
 /// it as business input.
@@ -197,14 +198,15 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
 /// - `{"tool":"git_diff_summary","project":"agent:c:p"}`
 /// - `{"tool":"git_status","project":"agent:c:p","recording_session_id":"wc_sess_..."}`
 ///
-/// When both `params` and `arguments` are present, `params` wins; `arguments`
-/// is only a compatibility alias. When neither is present, every top-level
-/// field except `tool` and reserved metadata like `recording_session_id` is
-/// collected into the params object for GPT Action compatibility. Top-level
-/// `session_id` is not reserved here; it remains a normal flattened tool
-/// argument for tools such as `session_summary`. Returns a human-readable error
-/// string (never including the raw body) when the body is not a JSON object or
-/// `tool` is missing/not a non-empty string.
+/// When both non-null `params` and `arguments` are present, `params` wins;
+/// `arguments` is only a compatibility alias. Null wrappers are treated as
+/// absent. When neither non-null wrapper is present, every top-level field
+/// except `tool` and reserved metadata like `recording_session_id` is collected
+/// into the params object for GPT Action compatibility. Top-level `session_id`
+/// is not reserved here; it remains a normal flattened tool argument for tools
+/// such as `session_summary`. Returns a human-readable error string (never
+/// including the raw body) when the body is not a JSON object or `tool` is
+/// missing/not a non-empty string.
 fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     let obj = body
         .as_object()
@@ -222,16 +224,20 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
             return Err(format!("missing required field '{TOOL_CALL_TOOL_FIELD}'"));
         }
     };
-    // params takes precedence over the `arguments` alias; flattened GPT Action
-    // fields are collected only when neither object wrapper is present.
-    let params = if obj.contains_key(TOOL_CALL_PARAMS_FIELD) {
-        obj.get(TOOL_CALL_PARAMS_FIELD)
-            .cloned()
-            .unwrap_or(Value::Null)
-    } else if obj.contains_key(TOOL_CALL_ARGUMENTS_FIELD) {
-        obj.get(TOOL_CALL_ARGUMENTS_FIELD)
-            .cloned()
-            .unwrap_or(Value::Null)
+    // Non-null params take precedence over the `arguments` alias; flattened
+    // GPT Action fields are collected when neither wrapper has a value. Some
+    // Action runtimes emit optional object properties as explicit nulls, which
+    // must not erase valid flattened tool arguments.
+    let params = if let Some(params) = obj
+        .get(TOOL_CALL_PARAMS_FIELD)
+        .filter(|params| !params.is_null())
+    {
+        params.clone()
+    } else if let Some(arguments) = obj
+        .get(TOOL_CALL_ARGUMENTS_FIELD)
+        .filter(|arguments| !arguments.is_null())
+    {
+        arguments.clone()
     } else {
         let mut flattened = serde_json::Map::new();
         for (key, value) in obj {
@@ -736,6 +742,31 @@ mod tests {
         let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
         let service = Service::new(build_projects_router(config, db, runtime));
         (_tmp, service)
+    }
+
+    #[tokio::test]
+    async fn flattened_tool_manifest_audit_intent_survives_null_params_wrapper() {
+        let (tool, params) = extract_tool_call(&json!({
+            "tool": "tool_manifest",
+            "params": null,
+            "intent": "audit",
+        }))
+        .unwrap();
+        let call = ToolCall::from_tool_name(&tool, params).unwrap();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_local_project(tmp_proj.path(), "demo");
+
+        let result = runtime.dispatch(call).await;
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["intent"], "audit");
+        assert_eq!(result.output["filtered"], true);
+        assert!(
+            result.output["returned_count"].as_u64().unwrap()
+                < result.output["total_count"].as_u64().unwrap(),
+            "audit intent must not silently degrade to the full manifest: {:?}",
+            result.output
+        );
     }
 
     #[test]

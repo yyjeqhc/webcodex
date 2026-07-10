@@ -8,7 +8,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "start_coding_task",
-            "Deterministic coding-task startup aggregate. Requires project, creates a session, returns explicit session_id, project resolution, optional runtime/git/rules context, recommended flow, warnings, and current binding state. Never calls an LLM; bind_current defaults false.",
+            "Deterministic coding startup. Creates a session and returns session_id, project resolution, always-present bounded semantic_navigation, optional runtime/git/rules context, recommended flow, warnings, and binding state. The status-only semantic probe never starts rust-analyzer. Never calls an LLM.",
             start_coding_task_input_schema(),
         ),
         tool_spec(

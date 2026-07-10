@@ -7,6 +7,7 @@ use crate::shell_client::ShellClientRegistry;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -19,6 +20,7 @@ pub struct ToolRuntime {
     pub(crate) sessions: sessions::SessionStore,
     pub(crate) local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
     pub(crate) job_killer: Arc<dyn LocalJobKiller>,
+    pub(crate) semantic_navigation_probe_timeout: Duration,
 }
 
 impl ToolRuntime {
@@ -35,6 +37,8 @@ impl ToolRuntime {
             sessions: sessions::SessionStore::default(),
             local_jobs: Arc::new(Mutex::new(HashMap::new())),
             job_killer: Arc::new(SystemJobKiller),
+            semantic_navigation_probe_timeout:
+                super::semantic_navigation::DEFAULT_SEMANTIC_NAVIGATION_PROBE_TIMEOUT,
         }
     }
 
@@ -60,6 +64,12 @@ impl ToolRuntime {
             sessions::DEFAULT_MAX_SESSIONS,
             sessions::DEFAULT_MAX_EVENTS_PER_SESSION,
         );
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_semantic_navigation_probe_timeout(mut self, timeout: Duration) -> Self {
+        self.semantic_navigation_probe_timeout = timeout;
         self
     }
 }

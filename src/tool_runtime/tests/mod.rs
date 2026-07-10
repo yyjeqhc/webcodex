@@ -5,6 +5,7 @@ mod support;
 mod apply_text_edits;
 mod checkpoint;
 mod coding_task;
+mod coding_task_semantic_navigation;
 mod dispatch;
 mod files;
 mod files_helpers;

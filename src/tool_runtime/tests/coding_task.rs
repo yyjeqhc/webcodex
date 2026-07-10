@@ -265,6 +265,7 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
         "permissions",
         "rules",
         "git",
+        "semantic_navigation",
         "recommended_flow",
         "warnings",
         "tool_manifest",

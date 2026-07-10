@@ -162,6 +162,16 @@ fn capability_default_is_false_and_new_agent_sets_true() {
 #[test]
 fn status_does_not_start_server_and_unavailable_succeeds() {
     let fixture = NavFixture::new("normal");
+    let available = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::Status,
+    });
+    assert_eq!(available["success"], true);
+    assert_eq!(available["result"]["servers"][0]["status"], "available");
+    assert!(
+        !fixture.marker.exists(),
+        "status-only startup probes must not start the fake rust-analyzer"
+    );
     // Point supervisor at a missing binary via separate fixture.
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("project");
@@ -218,7 +228,6 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
     // No absolute executable path.
     let serialized = value.to_string();
     assert!(!serialized.contains("/nonexistent"));
-    let _ = fixture;
 }
 
 #[test]

@@ -80,6 +80,7 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(err) => return err.into_tool_result(),
         };
+        let semantic_navigation = self.probe_semantic_navigation_for_startup(&resolved).await;
         let project_instructions = if include_rules {
             Some(self.load_project_instructions(&resolved.config).await)
         } else {
@@ -200,6 +201,7 @@ impl ToolRuntime {
             "permissions": permission_profile_payload(),
             "rules": rules_summary(project_instructions.as_ref()),
             "git": git,
+            "semantic_navigation": semantic_navigation,
             "recommended_flow": recommended_flow,
             "deterministic": true,
             "llm_summary": false,

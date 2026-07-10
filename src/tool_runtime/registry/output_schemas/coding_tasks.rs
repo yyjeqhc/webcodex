@@ -35,6 +35,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 nullable_schema("object", "Structured worktree/git summary when requested; null otherwise."),
             ),
             (
+                "semantic_navigation",
+                semantic_navigation_schema(),
+            ),
+            (
                 "tool_manifest",
                 open_object_schema("Compact tool_manifest output when requested; absent otherwise. Never includes full input/output schemas."),
             ),
@@ -148,6 +152,111 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         _ => None,
     }
+}
+
+fn semantic_navigation_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Always-present bounded Rust semantic-navigation capability summary. Derived only from a typed agent status probe; never contains transport envelopes, process output, paths, environment variables, or symbol/location data.",
+        "additionalProperties": false,
+        "properties": {
+            "supported": schema_type("boolean", "True when the project is agent-backed, the owning agent is connected, and it advertises lsp_read_only_navigation."),
+            "available": schema_type("boolean", "True when supported Rust navigation has an available executable or an existing running/initializing server slot."),
+            "recommended": schema_type("boolean", "True only for available or running status."),
+            "status": {
+                "type": "string",
+                "enum": [
+                    "running",
+                    "available",
+                    "initializing",
+                    "crashed",
+                    "unavailable",
+                    "not_applicable",
+                    "agent_unavailable",
+                    "agent_capability_unavailable",
+                    "probe_timeout",
+                    "probe_failed"
+                ]
+            },
+            "language": {
+                "anyOf": [
+                    { "type": "string", "enum": ["rust"] },
+                    { "type": "null" }
+                ]
+            },
+            "server": {
+                "anyOf": [
+                    { "type": "string", "enum": ["rust-analyzer"] },
+                    { "type": "null" }
+                ]
+            },
+            "position_encoding": {
+                "anyOf": [
+                    { "type": "string", "enum": ["utf-8", "utf-16", "utf-32"] },
+                    { "type": "null" }
+                ]
+            },
+            "tools": {
+                "type": "array",
+                "maxItems": 4,
+                "uniqueItems": true,
+                "items": {
+                    "type": "string",
+                    "enum": ["lsp_status", "document_symbols", "goto_definition", "find_references"]
+                }
+            },
+            "preferred_flow": {
+                "type": "array",
+                "maxItems": 5,
+                "uniqueItems": true,
+                "items": {
+                    "type": "string",
+                    "enum": ["document_symbols", "goto_definition", "find_references", "read_file", "search_project_text"]
+                }
+            },
+            "limitations": {
+                "type": "array",
+                "maxItems": 5,
+                "uniqueItems": true,
+                "items": {
+                    "type": "string",
+                    "enum": ["rust_only", "read_only", "workspace_only", "no_dependency_navigation", "no_document_sync"]
+                }
+            },
+            "reason_code": {
+                "anyOf": [
+                    {
+                        "type": "string",
+                        "enum": [
+                            "project_not_agent_backed",
+                            "rust_not_detected",
+                            "agent_not_connected",
+                            "lsp_capability_not_advertised",
+                            "server_crashed",
+                            "server_unavailable",
+                            "status_probe_timed_out",
+                            "status_probe_failed",
+                            "malformed_agent_result"
+                        ]
+                    },
+                    { "type": "null" }
+                ]
+            }
+        },
+        "required": [
+            "supported",
+            "available",
+            "recommended",
+            "status",
+            "language",
+            "server",
+            "position_encoding",
+            "tools",
+            "preferred_flow",
+            "limitations",
+            "reason_code"
+        ]
+    })
 }
 
 fn review_evidence_schema(description: &str) -> Value {

@@ -36,6 +36,7 @@ mod projects;
 mod registry;
 mod runtime;
 mod runtime_info;
+mod semantic_navigation;
 mod session_context;
 mod session_tools;
 pub(crate) mod sessions;

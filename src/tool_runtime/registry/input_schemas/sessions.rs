@@ -193,7 +193,7 @@ pub(crate) fn session_handoff_summary_input_schema() -> Value {
             },
             "summary_only": {
                 "type": "boolean",
-                "description": "When true, return compact verdict fields only: workspace/jobs/permissions/tool_failures/validation/warnings/suggested_next_actions. Omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts."
+                "description": "When true, return compact closeout fields only: workspace/jobs/permissions/tool_failures/validation/task_outcome/evidence_history/evidence_integrity/informational_notes/legacy verdict/warnings/suggested_next_actions. Omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts."
             },
             "limit": {
                 "type": "integer",

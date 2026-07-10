@@ -1,8 +1,9 @@
 use serde_json::{json, Value};
 
 use super::common::{
-    array_schema, job_lifecycle_summary_schema, nullable_schema, open_object_schema,
-    permission_profile_schema, permission_summary_schema, schema_type, wrapped_output_schema,
+    array_schema, evidence_history_schema, evidence_integrity_schema, job_lifecycle_summary_schema,
+    nullable_schema, open_object_schema, permission_profile_schema, permission_summary_schema,
+    schema_type, task_outcome_schema, wrapped_output_schema,
 };
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
@@ -115,11 +116,30 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "verdict",
-                open_object_schema("Operator-friendly compact sanity verdict for summary_only output: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. Additive UX summary only; does not change safety semantics."),
+                open_object_schema("Legacy aggregate closeout verdict for full and summary_only output: task_outcome fail or evidence_integrity error maps to blocking fail; otherwise task_outcome warn or evidence_integrity warning maps to non-blocking warn; otherwise pass. Resolved evidence history alone does not lower the verdict."),
             ),
             (
                 "finish_verdict",
-                open_object_schema("Alias of verdict for finish_coding_task summary_only output. Callers should report this final closeout verdict instead of nested show_changes.verdict or workspace_hygiene_check.verdict."),
+                open_object_schema("Alias of the legacy verdict for full and summary_only finish_coding_task output. Callers should report this final closeout verdict instead of nested show_changes.verdict or workspace_hygiene_check.verdict."),
+            ),
+            (
+                "task_outcome",
+                task_outcome_schema("Final task completion outcome with status pass/warn/fail, blocking, and task-only reasons. Resolved validation history and expected-failure audit metadata do not lower this status."),
+            ),
+            (
+                "evidence_history",
+                evidence_history_schema("Validation evidence history status: clean, mixed_resolved, mixed_unresolved, or failed. Does not replace validation.status or validation.latest_status."),
+            ),
+            (
+                "evidence_integrity",
+                evidence_integrity_schema("Expected-failure and validation-evidence integrity status: clean, warning, or error, with bounded reason identifiers."),
+            ),
+            (
+                "informational_notes",
+                array_schema(
+                    schema_type("string", "Completed-state informational note."),
+                    "Bounded completed-state facts, separate from executable suggested_next_actions.",
+                ),
             ),
             (
                 "suggested_next_actions",

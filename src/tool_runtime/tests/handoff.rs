@@ -118,6 +118,18 @@ async fn session_handoff_summary_returns_message_board_state() {
         .as_array()
         .expect("suggested_next_actions array");
     assert!(!actions.is_empty());
+    for field in [
+        "task_outcome",
+        "evidence_history",
+        "evidence_integrity",
+        "informational_notes",
+        "verdict",
+    ] {
+        assert!(
+            result.output.get(field).is_some(),
+            "full handoff output should serialize {field}"
+        );
+    }
 }
 
 // =========================================================================
@@ -312,7 +324,7 @@ async fn expected_stop_job_failures_are_classified_without_permission_noise() {
         "stop_job requires confirm=true"
     );
     let actions = handoff.output["suggested_next_actions"].as_array().unwrap();
-    assert!(actions
+    assert!(!actions
         .iter()
         .any(|action| action == "expected failure assertions matched"));
     assert!(!actions.iter().any(|action| action
@@ -559,7 +571,7 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
         0
     );
     let actions = handoff.output["suggested_next_actions"].as_array().unwrap();
-    assert!(actions
+    assert!(!actions
         .iter()
         .any(|action| action == "expected failure assertions matched"));
     assert!(!actions.iter().any(|action| action
@@ -567,11 +579,16 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
         .unwrap_or("")
         .contains("review unexpected failed tool calls")));
     assert_ne!(handoff.output["verdict"]["status"], "fail");
-    assert_reason_list_contains(
+    assert_reason_list_not_contains(
         &handoff.output["verdict"],
         "warning_reasons",
         "expected_failures_matched",
     );
+    assert!(handoff.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str() == Some("expected failure assertions matched")));
 
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
@@ -697,9 +714,14 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
         "blocking_reasons",
         "expectation_mismatches",
     );
-    assert_reason_list_contains(
+    assert_reason_list_not_contains(
         &handoff.output["verdict"],
         "blocking_reasons",
+        "unexpected_successes",
+    );
+    assert_reason_list_contains(
+        &handoff.output["verdict"],
+        "warning_reasons",
         "unexpected_successes",
     );
 }
@@ -848,11 +870,16 @@ async fn real_cargo_nonzero_failures_match_validation_failed_expectations() {
         handoff.output["tool_failures"]["unexpected_success_count"],
         0
     );
-    assert_reason_list_contains(
+    assert_reason_list_not_contains(
         &handoff.output["verdict"],
         "warning_reasons",
         "expected_failures_matched",
     );
+    assert!(handoff.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str() == Some("expected failure assertions matched")));
 }
 
 #[tokio::test]
@@ -950,7 +977,11 @@ async fn cargo_test_zero_tests_success_is_detected_and_warns_in_handoff() {
         true
     );
     let verdict = &handoff.output["verdict"];
-    assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_successes");
+    assert_eq!(handoff.output["evidence_integrity"]["status"], "warning");
+    assert_eq!(verdict["status"], "warn");
+    assert_eq!(verdict["blocking"], false);
+    assert_reason_list_not_contains(verdict, "blocking_reasons", "unexpected_successes");
+    assert_reason_list_contains(verdict, "warning_reasons", "unexpected_successes");
     assert_reason_list_contains(verdict, "warning_reasons", "cargo_test_zero_tests");
     assert!(verdict["suggested_next_actions"]
         .as_array()
@@ -1414,7 +1445,17 @@ async fn session_handoff_summary_only_is_compact() {
     assert_workflow_verdict_shape(verdict);
     assert_eq!(verdict["status"], "warn");
     assert_eq!(verdict["blocking"], false);
-    assert_reason_list_contains(verdict, "warning_reasons", "expected_failures_matched");
+    assert_reason_list_not_contains(verdict, "warning_reasons", "expected_failures_matched");
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str() == Some("expected failure assertions matched")));
+    assert!(!result.output["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str() == Some("expected failure assertions matched")));
     assert!(verdict["suggested_next_actions"]
         .as_array()
         .unwrap()
@@ -1428,6 +1469,17 @@ async fn session_handoff_summary_only_is_compact() {
         .any(|action| action.as_str() == Some("run validation before closeout when available")));
     assert_compact_verdict_safe(verdict, "summary_only handoff verdict");
     let serialized = serde_json::to_string(&result.output).unwrap();
+    for field in [
+        "task_outcome",
+        "evidence_history",
+        "evidence_integrity",
+        "informational_notes",
+    ] {
+        assert!(
+            serialized.contains(&format!("\"{field}\"")),
+            "summary_only handoff should serialize {field}: {serialized}"
+        );
+    }
     for forbidden in [
         "recent_events",
         "recent_failed_tools",
@@ -1503,6 +1555,8 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
     assert_eq!(active.output["jobs"]["terminal_pending_count"], 0);
     assert_eq!(active.output["jobs"]["blocking_active_count"], 1);
     assert_eq!(active.output["jobs"]["nonblocking_active_count"], 0);
+    assert_eq!(active.output["task_outcome"]["status"], "fail");
+    assert_eq!(active.output["verdict"]["blocking"], true);
     assert_eq!(active.output["jobs"]["recent"][0]["job_id"], job_id);
     assert!(active.output["warnings"]
         .as_array()
@@ -1932,9 +1986,7 @@ async fn session_handoff_summary_only_warns_with_review_evidence_when_validation
         .unwrap()
         .iter()
         .any(|action| action.as_str()
-            == Some(
-                "no structured validation was run; review evidence is available for task-appropriate closeout"
-            )));
+            == Some("decide whether task-appropriate validation is needed before closeout")));
 }
 
 // =========================================================================
@@ -2003,7 +2055,7 @@ async fn session_handoff_summary_only_verdict_allows_clean_workspace_without_fai
 }
 
 #[tokio::test]
-async fn session_handoff_summary_only_warns_for_resolved_historical_validation_failures() {
+async fn session_handoff_summary_only_passes_with_resolved_historical_validation_failures() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
@@ -2071,19 +2123,28 @@ async fn session_handoff_summary_only_warns_for_resolved_historical_validation_f
     );
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);
-    assert_eq!(verdict["status"], "warn");
-    assert_eq!(verdict["blocking"], false);
-    assert_reason_list_contains(
-        verdict,
-        "warning_reasons",
-        "validation_historical_failures_resolved",
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(
+        result.output["evidence_history"]["status"],
+        "mixed_resolved"
     );
+    assert_eq!(result.output["evidence_integrity"]["status"], "clean");
+    assert_eq!(verdict["status"], "pass");
+    assert_eq!(verdict["blocking"], false);
     assert_reason_list_not_contains(verdict, "blocking_reasons", "validation_mixed");
-    assert!(verdict["suggested_next_actions"]
+    assert!(!verdict["suggested_next_actions"]
         .as_array()
         .unwrap()
         .iter()
         .any(|action| action.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
             == Some(
                 "historical validation failures were resolved by later successful validation"
             )));
@@ -2134,6 +2195,8 @@ async fn session_handoff_summary_only_verdict_fails_for_failed_validation() {
     );
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(result.output["evidence_history"]["status"], "failed");
     assert_eq!(verdict["status"], "fail");
     assert_eq!(verdict["blocking"], true);
     assert_reason_list_contains(verdict, "blocking_reasons", "validation_failed");
@@ -2184,6 +2247,11 @@ async fn session_handoff_summary_only_verdict_fails_for_unresolved_mixed_validat
     );
     let verdict = &result.output["verdict"];
     assert_workflow_verdict_shape(verdict);
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(
+        result.output["evidence_history"]["status"],
+        "mixed_unresolved"
+    );
     assert_eq!(verdict["status"], "fail");
     assert_eq!(verdict["blocking"], true);
     assert_reason_list_contains(verdict, "blocking_reasons", "validation_mixed");

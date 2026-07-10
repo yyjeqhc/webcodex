@@ -843,6 +843,18 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         output_props.contains_key("finish_verdict"),
         "finish_coding_task output schema should include finish_verdict alias"
     );
+    for field in [
+        "task_outcome",
+        "evidence_history",
+        "evidence_integrity",
+        "informational_notes",
+    ] {
+        assert!(
+            output_props.contains_key(field),
+            "finish_coding_task output schema should include {field}"
+        );
+    }
+    assert_outcome_model_schema_fields(output_props);
     assert!(
         output_props.contains_key("suggested_next_actions"),
         "finish_coding_task output schema should include top-level suggested_next_actions"
@@ -962,6 +974,18 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         output_props.contains_key("expectation_mismatches"),
         "session_handoff_summary output schema should include expectation mismatches"
     );
+    for field in [
+        "task_outcome",
+        "evidence_history",
+        "evidence_integrity",
+        "informational_notes",
+    ] {
+        assert!(
+            output_props.contains_key(field),
+            "session_handoff_summary output schema should include {field}"
+        );
+    }
+    assert_outcome_model_schema_fields(output_props);
     assert_permission_summary_schema_fields(&output_props["permissions"]);
     assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);
     assert_review_evidence_schema_fields(&output_props["review_evidence"]);
@@ -1050,4 +1074,20 @@ fn assert_review_evidence_schema_fields(schema: &Value) {
     }
     assert_eq!(props["tools"]["type"], "array");
     assert_eq!(props["tools"]["items"]["type"], "string");
+}
+
+fn assert_outcome_model_schema_fields(output_props: &serde_json::Map<String, Value>) {
+    assert_eq!(
+        output_props["task_outcome"]["properties"]["status"]["enum"],
+        json!(["pass", "warn", "fail"])
+    );
+    assert_eq!(
+        output_props["evidence_history"]["properties"]["status"]["enum"],
+        json!(["clean", "mixed_resolved", "mixed_unresolved", "failed"])
+    );
+    assert_eq!(
+        output_props["evidence_integrity"]["properties"]["status"]["enum"],
+        json!(["clean", "warning", "error"])
+    );
+    assert_eq!(output_props["informational_notes"]["type"], "array");
 }

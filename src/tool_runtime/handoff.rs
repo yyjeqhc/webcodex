@@ -234,8 +234,18 @@ impl ToolRuntime {
         // --- bounded suggested next actions ---
         output["suggested_next_actions"] = json!(handoff_suggested_next_actions(&output));
 
+        let compact = compact_handoff_output(&output);
         if summary_only {
-            return ToolResult::ok(compact_handoff_output(&output));
+            return ToolResult::ok(compact);
+        }
+        for field in [
+            "task_outcome",
+            "evidence_history",
+            "evidence_integrity",
+            "informational_notes",
+            "verdict",
+        ] {
+            output[field] = compact.get(field).cloned().unwrap_or(Value::Null);
         }
 
         ToolResult::ok(output)
@@ -475,7 +485,7 @@ fn compact_handoff_output(output: &Value) -> Value {
         "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });
-    compact["verdict"] = compact_workflow_verdict(&compact, workspace_checked, None);
+    apply_compact_workflow_outcomes(&mut compact, workspace_checked, None);
     compact
 }
 
@@ -673,13 +683,25 @@ fn compact_validation_historical_failures_fallback() -> Value {
     })
 }
 
-pub(crate) fn compact_workflow_verdict(
+pub(crate) fn apply_compact_workflow_outcomes(
+    output: &mut Value,
+    workspace_checked: bool,
+    hygiene_checked: Option<bool>,
+) {
+    let outcomes = compact_workflow_outcomes(output, workspace_checked, hygiene_checked);
+    install_compact_workflow_outcomes(output, outcomes);
+}
+
+fn compact_workflow_outcomes(
     output: &Value,
     workspace_checked: bool,
     hygiene_checked: Option<bool>,
 ) -> Value {
     let mut blocking_reasons: Vec<&'static str> = Vec::new();
     let mut warning_reasons: Vec<&'static str> = Vec::new();
+    let mut integrity_errors: Vec<&'static str> = Vec::new();
+    let mut integrity_warnings: Vec<&'static str> = Vec::new();
+    let mut informational_notes: Vec<&'static str> = Vec::new();
     let mut actions = string_array(output.get("suggested_next_actions"));
 
     if !workspace_checked {
@@ -733,37 +755,23 @@ pub(crate) fn compact_workflow_verdict(
     let unexpected_count = count_field(tool_failures, "unexpected_count");
     let expectation_mismatch_count = count_field(tool_failures, "expectation_mismatch_count");
     let unexpected_success_count = count_field(tool_failures, "unexpected_success_count");
-    let resolved_validation_like_unexpected_count =
-        resolved_validation_like_unexpected_tool_failure_count(
-            tool_failures,
-            output,
-            validation,
-            workspace_checked,
-            hygiene_checked,
-        );
-    let blocking_unexpected_count =
-        unexpected_count.saturating_sub(resolved_validation_like_unexpected_count);
-    if blocking_unexpected_count > 0 {
+    if unexpected_count > 0 {
         push_unique(&mut blocking_reasons, "unexpected_tool_failures");
         push_unique_action(
             &mut actions,
             "review unexpected failed tool calls before proceeding",
         );
-    } else if resolved_validation_like_unexpected_count > 0 {
-        push_unique(
-            &mut warning_reasons,
-            "resolved_validation_like_tool_failures",
-        );
     }
     if expectation_mismatch_count > 0 {
         push_unique(&mut blocking_reasons, "expectation_mismatches");
+        push_unique(&mut integrity_errors, "expectation_mismatches");
         push_unique_action(
             &mut actions,
             "review expected failure mismatches before proceeding",
         );
     }
     if unexpected_success_count > 0 {
-        push_unique(&mut blocking_reasons, "unexpected_successes");
+        push_unique(&mut integrity_warnings, "unexpected_successes");
         push_unique_action(
             &mut actions,
             "review expected-failure assertions that unexpectedly succeeded",
@@ -774,11 +782,22 @@ pub(crate) fn compact_workflow_verdict(
         && expectation_mismatch_count == 0
         && unexpected_success_count == 0
     {
-        push_unique(&mut warning_reasons, "expected_failures_matched");
-        push_unique_action(&mut actions, "expected failure assertions matched");
+        push_unique(
+            &mut informational_notes,
+            "expected failure assertions matched",
+        );
     }
 
-    match validation.get("status").and_then(Value::as_str) {
+    let validation_status = validation.get("status").and_then(Value::as_str);
+    let evidence_history_status = match validation_status {
+        Some("mixed") if validation_historical_failures_resolved(validation) => "mixed_resolved",
+        Some("mixed") => "mixed_unresolved",
+        Some("failed") => "failed",
+        _ if validation_historical_failures_unresolved(validation) => "mixed_unresolved",
+        _ => "clean",
+    };
+
+    match validation_status {
         Some("not_run") => {
             let review_evidence_total = output
                 .get("review_evidence")
@@ -792,7 +811,7 @@ pub(crate) fn compact_workflow_verdict(
                 );
                 push_unique_action(
                     &mut actions,
-                    "no structured validation was run; review evidence is available for task-appropriate closeout",
+                    "decide whether task-appropriate validation is needed before closeout",
                 );
             } else {
                 push_unique(&mut warning_reasons, "validation_not_run");
@@ -809,11 +828,7 @@ pub(crate) fn compact_workflow_verdict(
         Some("mixed") => {
             if validation_historical_failures_resolved(validation) {
                 push_unique(
-                    &mut warning_reasons,
-                    "validation_historical_failures_resolved",
-                );
-                push_unique_action(
-                    &mut actions,
+                    &mut informational_notes,
                     "historical validation failures were resolved by later successful validation",
                 );
             } else {
@@ -829,8 +844,20 @@ pub(crate) fn compact_workflow_verdict(
         }
         Some(_) => {}
     }
+    if validation_historical_failures_unresolved(validation)
+        && !matches!(validation_status, Some("failed" | "mixed"))
+    {
+        push_unique(
+            &mut blocking_reasons,
+            "validation_historical_failures_unresolved",
+        );
+        push_unique_action(
+            &mut actions,
+            "review unresolved historical validation failures before closeout",
+        );
+    }
     if validation_has_cargo_test_zero_tests(validation) {
-        push_unique(&mut warning_reasons, "cargo_test_zero_tests");
+        push_unique(&mut integrity_warnings, "cargo_test_zero_tests");
         push_unique_action(
             &mut actions,
             "cargo_test ran zero tests; verify the test filter or command",
@@ -840,7 +867,7 @@ pub(crate) fn compact_workflow_verdict(
     if actions.is_empty() {
         actions.push("proceed with handoff or closeout".to_string());
     }
-    let status = if blocking_reasons.is_empty() {
+    let task_status = if blocking_reasons.is_empty() {
         if warning_reasons.is_empty() {
             "pass"
         } else {
@@ -849,14 +876,62 @@ pub(crate) fn compact_workflow_verdict(
     } else {
         "fail"
     };
+    let evidence_integrity_status = if !integrity_errors.is_empty() {
+        "error"
+    } else if !integrity_warnings.is_empty() {
+        "warning"
+    } else {
+        "clean"
+    };
+    let task_warning_reasons = warning_reasons.clone();
+    for reason in &integrity_warnings {
+        push_unique(&mut warning_reasons, *reason);
+    }
+    let legacy_status = if task_status == "fail" || evidence_integrity_status == "error" {
+        "fail"
+    } else if task_status == "warn" || evidence_integrity_status == "warning" {
+        "warn"
+    } else {
+        "pass"
+    };
+    let verdict = json!({
+        "status": legacy_status,
+        "blocking": task_status == "fail" || evidence_integrity_status == "error",
+        "blocking_reasons": blocking_reasons.clone(),
+        "warning_reasons": warning_reasons.clone(),
+        "suggested_next_actions": actions.clone(),
+    });
 
     json!({
-        "status": status,
-        "blocking": !blocking_reasons.is_empty(),
-        "blocking_reasons": blocking_reasons,
-        "warning_reasons": warning_reasons,
-        "suggested_next_actions": actions,
+        "task_outcome": {
+            "status": task_status,
+            "blocking": task_status == "fail",
+            "blocking_reasons": verdict["blocking_reasons"],
+            "warning_reasons": task_warning_reasons,
+        },
+        "evidence_history": {
+            "status": evidence_history_status,
+        },
+        "evidence_integrity": {
+            "status": evidence_integrity_status,
+            "error_reasons": integrity_errors,
+            "warning_reasons": integrity_warnings,
+        },
+        "informational_notes": informational_notes,
+        "verdict": verdict,
     })
+}
+
+fn install_compact_workflow_outcomes(target: &mut Value, outcomes: Value) {
+    for field in [
+        "task_outcome",
+        "evidence_history",
+        "evidence_integrity",
+        "informational_notes",
+        "verdict",
+    ] {
+        target[field] = outcomes.get(field).cloned().unwrap_or(Value::Null);
+    }
 }
 
 fn validation_historical_failures_resolved(validation: &Value) -> bool {
@@ -871,38 +946,11 @@ fn validation_historical_failures_resolved(validation: &Value) -> bool {
             == Some(false)
 }
 
-fn resolved_validation_like_unexpected_tool_failure_count(
-    tool_failures: &Value,
-    output: &Value,
-    validation: &Value,
-    workspace_checked: bool,
-    hygiene_checked: Option<bool>,
-) -> u64 {
-    if !workspace_checked
-        || hygiene_checked != Some(true)
-        || output.get("workspace_clean").and_then(Value::as_bool) != Some(true)
-        || output.get("hygiene_clean").and_then(Value::as_bool) != Some(true)
-        || !validation_historical_failures_resolved(validation)
-    {
-        return 0;
-    }
-
-    tool_failures
-        .get("recent_unexpected")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|failure| {
-            failure
-                .get("tool_name")
-                .and_then(Value::as_str)
-                .is_some_and(is_validation_like_closeout_tool)
-        })
-        .count() as u64
-}
-
-fn is_validation_like_closeout_tool(tool_name: &str) -> bool {
-    matches!(tool_name, "cargo_fmt" | "cargo_check" | "cargo_test")
+fn validation_historical_failures_unresolved(validation: &Value) -> bool {
+    validation
+        .pointer("/historical_failures/unresolved")
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 fn count_field(value: &Value, key: &str) -> u64 {
@@ -959,10 +1007,6 @@ fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
         .get("unexpected_success_count")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let expected_count = tool_failures
-        .get("expected_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
     if unexpected_count > 0 {
         push(
             &mut actions,
@@ -980,13 +1024,6 @@ fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
             &mut actions,
             "review expected-failure assertions that unexpectedly succeeded",
         );
-    }
-    if expected_count > 0
-        && unexpected_count == 0
-        && expectation_mismatch_count == 0
-        && unexpected_success_count == 0
-    {
-        push(&mut actions, "expected failure assertions matched");
     }
     let open_todos = output["counts"]["open_todos"].as_u64().unwrap_or(0);
     if open_todos > 0 {

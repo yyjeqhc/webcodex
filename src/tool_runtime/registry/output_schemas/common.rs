@@ -33,6 +33,56 @@ pub(crate) fn open_object_schema(description: &str) -> Value {
     })
 }
 
+pub(crate) fn task_outcome_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["pass", "warn", "fail"]
+            },
+            "blocking": schema_type("boolean", "True only when the final task outcome is fail."),
+            "blocking_reasons": array_schema(schema_type("string", "Task blocker reason identifier."), "Bounded task blocker reasons."),
+            "warning_reasons": array_schema(schema_type("string", "Task warning reason identifier."), "Bounded task-only warning reasons.")
+        },
+        "required": ["status", "blocking", "blocking_reasons", "warning_reasons"]
+    })
+}
+
+pub(crate) fn evidence_history_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["clean", "mixed_resolved", "mixed_unresolved", "failed"]
+            }
+        },
+        "required": ["status"]
+    })
+}
+
+pub(crate) fn evidence_integrity_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["clean", "warning", "error"]
+            },
+            "error_reasons": array_schema(schema_type("string", "Evidence integrity error reason identifier."), "Bounded integrity error reasons."),
+            "warning_reasons": array_schema(schema_type("string", "Evidence integrity warning reason identifier."), "Bounded integrity warning reasons.")
+        },
+        "required": ["status", "error_reasons", "warning_reasons"]
+    })
+}
+
 pub(crate) fn permission_profile_schema(description: &str) -> Value {
     json!({
         "type": "object",

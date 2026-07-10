@@ -8,8 +8,8 @@
 use serde_json::{json, Value};
 
 use super::handoff::{
-    compact_jobs, compact_permissions, compact_review_evidence, compact_tool_failures,
-    compact_validation, compact_workflow_verdict, review_evidence_summary_for_session,
+    apply_compact_workflow_outcomes, compact_jobs, compact_permissions, compact_review_evidence,
+    compact_tool_failures, compact_validation, review_evidence_summary_for_session,
     validation_has_cargo_test_zero_tests,
 };
 use super::permissions::{permission_profile_payload, permission_summary_from_events};
@@ -427,9 +427,21 @@ impl ToolRuntime {
             output["allow_cross_project_session"] = json!(false);
         }
         output["suggested_next_actions"] = json!(finish_suggested_next_actions(&output));
+        let compact = compact_finish_output(&output);
         if summary_only {
-            return ToolResult::ok(compact_finish_output(&output));
+            return ToolResult::ok(compact);
         }
+        for field in [
+            "task_outcome",
+            "evidence_history",
+            "evidence_integrity",
+            "informational_notes",
+            "verdict",
+            "finish_verdict",
+        ] {
+            output[field] = compact.get(field).cloned().unwrap_or(Value::Null);
+        }
+        output["suggested_next_actions"] = compact["suggested_next_actions"].clone();
         ToolResult::ok(output)
     }
 
@@ -690,14 +702,9 @@ fn compact_finish_output(output: &Value) -> Value {
         "warnings": output.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });
-    let mut verdict_input = compact.clone();
-    verdict_input["tool_failures"] = output
-        .get("tool_failures")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let verdict = compact_workflow_verdict(&verdict_input, true, Some(hygiene_checked));
+    apply_compact_workflow_outcomes(&mut compact, true, Some(hygiene_checked));
+    let verdict = compact.get("verdict").cloned().unwrap_or_else(|| json!({}));
     compact["suggested_next_actions"] = json!(merged_suggested_next_actions(&compact, &verdict));
-    compact["verdict"] = verdict.clone();
     compact["finish_verdict"] = verdict;
     compact
 }
@@ -978,10 +985,6 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
         .get("unexpected_success_count")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let expected_count = tool_failures
-        .get("expected_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
 
     if unexpected_count > 0 {
         push(
@@ -1000,13 +1003,6 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
             &mut actions,
             "review expected-failure assertions that unexpectedly succeeded",
         );
-    }
-    if expected_count > 0
-        && unexpected_count == 0
-        && expectation_mismatch_count == 0
-        && unexpected_success_count == 0
-    {
-        push(&mut actions, "expected failure assertions matched");
     }
     if output
         .get("workspace")

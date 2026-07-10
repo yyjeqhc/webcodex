@@ -149,7 +149,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
     let cargo_test_zero_tests_run = validation_events.iter().any(cargo_test_zero_tests_success);
     let latest = validation_events.last().cloned();
     let latest_status = validation_latest_status(latest.as_ref());
-    let historical_failures = validation_historical_failures(failures, latest.as_ref());
+    let historical_failures = validation_historical_failures(&validation_events);
     let latest_success = validation_events
         .iter()
         .rev()
@@ -200,17 +200,21 @@ fn validation_latest_status(latest: Option<&ValidationEvent>) -> &'static str {
     }
 }
 
-fn validation_historical_failures(
-    failures: usize,
-    latest: Option<&ValidationEvent>,
-) -> ValidationHistoricalFailures {
-    let latest_passed = latest.is_some_and(|event| event.success);
-    let latest_failed = latest.is_some_and(|event| !event.success);
+fn validation_historical_failures(events: &[ValidationEvent]) -> ValidationHistoricalFailures {
+    let failures = events.iter().filter(|event| !event.success).count();
+    let latest_decisive = events
+        .iter()
+        .rev()
+        .find(|event| validation_event_decides_historical_failure_status(event));
     ValidationHistoricalFailures {
         count: failures,
-        resolved: failures > 0 && latest_passed,
-        unresolved: failures > 0 && latest_failed,
+        resolved: failures > 0 && latest_decisive.is_some_and(|event| event.success),
+        unresolved: failures > 0 && latest_decisive.is_some_and(|event| !event.success),
     }
+}
+
+fn validation_event_decides_historical_failure_status(event: &ValidationEvent) -> bool {
+    !cargo_test_zero_tests_success(event)
 }
 
 fn no_historical_failures() -> ValidationHistoricalFailures {

@@ -1876,11 +1876,26 @@ async fn finish_coding_task_summary_only_keeps_cargo_test_failure_blocking_after
 
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
     assert_eq!(
         result.output["validation"]["cargo_test_zero_tests_run"],
         true
     );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["resolved"],
+        false
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        true
+    );
     assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(
+        result.output["evidence_history"]["status"],
+        "mixed_unresolved"
+    );
+    assert_eq!(result.output["evidence_integrity"]["status"], "warning");
     assert_eq!(result.output["verdict"]["status"], "fail");
     assert_eq!(result.output["verdict"]["blocking"], true);
     assert_reason_list_contains(
@@ -1896,11 +1911,23 @@ async fn finish_coding_task_summary_only_keeps_cargo_test_failure_blocking_after
         &result.output["verdict"]["suggested_next_actions"],
         "review unexpected failed tool calls before proceeding",
     );
+    assert_action_list_contains(
+        &result.output["suggested_next_actions"],
+        "cargo_test ran zero tests; verify the test filter or command",
+    );
     assert_reason_list_contains(
         &result.output["verdict"],
         "warning_reasons",
         "cargo_test_zero_tests",
     );
+    assert!(!result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
 }
 
 #[tokio::test]

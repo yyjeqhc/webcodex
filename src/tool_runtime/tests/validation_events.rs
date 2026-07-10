@@ -383,6 +383,9 @@ fn validation_summary_exposes_cargo_test_zero_tests_metadata() {
 
     assert_eq!(validation["status"], "passed");
     assert_eq!(validation["cargo_test_zero_tests_run"], true);
+    assert_eq!(validation["historical_failures"]["count"], 0);
+    assert_eq!(validation["historical_failures"]["resolved"], false);
+    assert_eq!(validation["historical_failures"]["unresolved"], false);
     assert_eq!(event["tool_name"], "cargo_test");
     assert_eq!(event["tests_detected"], true);
     assert_eq!(event["tests_run_count"], 0);
@@ -554,6 +557,97 @@ fn failed_validation_followed_by_success_marks_historical_failure_resolved() {
     assert_eq!(validation["latest"]["success"], true);
     assert_eq!(validation["latest_success"]["tool_name"], "cargo_check");
     assert_eq!(validation["latest_failure"]["tool_name"], "cargo_test");
+}
+
+#[test]
+fn failed_cargo_test_followed_by_zero_tests_remains_historically_unresolved() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({"exit_code": 101}),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["latest"]["tool_name"], "cargo_test");
+    assert_eq!(validation["latest"]["zero_tests_run"], true);
+    assert_eq!(validation["cargo_test_zero_tests_run"], true);
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], false);
+    assert_eq!(validation["historical_failures"]["unresolved"], true);
+}
+
+#[test]
+fn normal_success_after_zero_tests_resolves_historical_failure() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({"exit_code": 101}),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["status"], "mixed");
+    assert_eq!(validation["latest_status"], "passed");
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["historical_failures"]["resolved"], true);
+    assert_eq!(validation["historical_failures"]["unresolved"], false);
 }
 
 #[test]

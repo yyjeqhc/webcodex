@@ -6,6 +6,7 @@ use super::helpers::{
 };
 use super::shell::ProjectCommandOutput;
 use super::tool_result::ToolResult;
+use super::validation_parser::{aggregate_cargo_test_summaries, parse_cargo_test_diagnostics};
 use super::ToolRuntime;
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
@@ -128,23 +129,16 @@ fn count_rustc_diagnostics(text: &str, prefix: &str) -> usize {
         .count()
 }
 
+/// Aggregate passed/failed counts across every Cargo test harness summary line.
+///
+/// Uses the same multi-harness aggregation as diagnostics `test_summary` so
+/// top-level `tests_passed` / `tests_failed` stay consistent when the bounded
+/// tails still contain every summary.
 pub(crate) fn parse_cargo_test_counts(text: &str) -> (Option<u64>, Option<u64>) {
-    let mut passed = None;
-    let mut failed = None;
-    for line in text.lines().filter(|line| line.contains("test result:")) {
-        let tokens: Vec<&str> = line
-            .split(|c: char| c.is_whitespace() || c == ';')
-            .filter(|token| !token.is_empty())
-            .collect();
-        for window in tokens.windows(2) {
-            if window[1] == "passed" {
-                passed = window[0].parse::<u64>().ok();
-            } else if window[1] == "failed" {
-                failed = window[0].parse::<u64>().ok();
-            }
-        }
+    match aggregate_cargo_test_summaries(text.lines()) {
+        Some(summary) => (summary.passed, summary.failed),
+        None => (None, None),
     }
-    (passed, failed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,6 +351,15 @@ impl ToolRuntime {
         let passed = output.exit_code == Some(0);
         let validation_failed = is_cargo_validation_failure(&output, timeout_secs);
         let combined = format!("{}\n{}", output.stdout, output.stderr);
+        let test_diagnostics = if mode == Some("test") {
+            Some(parse_cargo_test_diagnostics(
+                &stdout_tail,
+                &stderr_tail,
+                stdout_truncated || stderr_truncated,
+            ))
+        } else {
+            None
+        };
         let mut payload = json!({
             "project": project,
             "command": command,
@@ -382,6 +385,9 @@ impl ToolRuntime {
                 payload["tests_detected"] = json!(run_metadata.tests_detected);
                 payload["tests_run_count"] = json!(run_metadata.tests_run_count);
                 payload["zero_tests_run"] = json!(run_metadata.zero_tests_run);
+                if let Some(diagnostics) = test_diagnostics {
+                    payload["diagnostics"] = json!(diagnostics);
+                }
             }
             _ => {}
         }

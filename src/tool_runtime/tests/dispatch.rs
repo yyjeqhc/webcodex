@@ -207,6 +207,209 @@ async fn cargo_test_failure_includes_stderr_tail_or_guidance() {
 }
 
 #[tokio::test]
+async fn cargo_test_output_includes_bounded_failed_test_diagnostics() {
+    let runtime = runtime_with_agent_project("cargo-diag");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "cargo-diag", None, caps).await;
+    let project = agent_test_project_id("cargo-diag");
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .cargo_test(
+                project,
+                None,
+                Some("multi_fail".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(60),
+            )
+            .await
+    });
+    let req = next_patch_agent_request(&runtime, "cargo-diag")
+        .await
+        .expect("cargo_test should enqueue a cargo command");
+    assert_eq!(req.command, "cargo test 'multi_fail'");
+    complete_patch_agent_request(
+        &runtime,
+        "cargo-diag",
+        &req.request_id,
+        101,
+        "running 10 tests\n\
+test tests::first_failure ... FAILED\n\
+test tests::second_failure ... FAILED\n\
+test tests::third_failure ... FAILED\n\
+\n\
+failures:\n\
+\n\
+---- tests::first_failure stdout ----\n\
+thread 'tests::first_failure' panicked at 'TOKEN=secret-value'\n\
+assertion failed: left == right\n\
+\n\
+test result: FAILED. 7 passed; 3 failed; 1 ignored; 0 measured; 0 filtered out\n",
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["passed"], false);
+    assert_eq!(result.output["failure_kind"], "validation_failed");
+    assert_eq!(result.output["tests_passed"], 7);
+    assert_eq!(result.output["tests_failed"], 3);
+    assert_eq!(result.output["tests_detected"], true);
+    assert_eq!(result.output["tests_run_count"], 10);
+    assert_eq!(result.output["zero_tests_run"], false);
+    assert!(result.output["stdout_truncated"].is_boolean());
+    assert!(result.output["stderr_truncated"].is_boolean());
+
+    let diagnostics = &result.output["diagnostics"];
+    assert_eq!(diagnostics["available"], true);
+    assert_eq!(diagnostics["parser"], "minimal_bounded_tail_parser");
+    assert_eq!(diagnostics["diagnostic_count"], 3);
+    assert_eq!(diagnostics["test_summary"]["passed"], 7);
+    assert_eq!(diagnostics["test_summary"]["failed"], 3);
+    assert_eq!(diagnostics["test_summary"]["ignored"], 1);
+    assert_eq!(
+        diagnostics["failed_tests"],
+        json!([
+            "tests::first_failure",
+            "tests::second_failure",
+            "tests::third_failure"
+        ])
+    );
+    assert_eq!(diagnostics["first_failed_test"], "tests::first_failure");
+    assert_eq!(diagnostics["failed_tests_truncated"], false);
+    assert_eq!(diagnostics["truncated"], false);
+
+    let diagnostics_json = diagnostics.to_string();
+    for raw in ["TOKEN=secret-value", "assertion failed", "left == right"] {
+        assert!(
+            !diagnostics_json.contains(raw),
+            "cargo_test diagnostics must not include unsafe text {raw:?}: {diagnostics_json}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn cargo_test_passing_output_includes_empty_failed_tests_diagnostics() {
+    let runtime = runtime_with_agent_project("cargo-pass-diag");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "cargo-pass-diag", None, caps).await;
+    let project = agent_test_project_id("cargo-pass-diag");
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .cargo_test(
+                project,
+                None,
+                Some("all_ok".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(60),
+            )
+            .await
+    });
+    let req = next_patch_agent_request(&runtime, "cargo-pass-diag")
+        .await
+        .expect("cargo_test should enqueue a cargo command");
+    complete_patch_agent_request(
+        &runtime,
+        "cargo-pass-diag",
+        &req.request_id,
+        0,
+        "running 12 tests\n\
+test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out\n",
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["passed"], true);
+    assert_eq!(result.output["tests_passed"], 12);
+    assert_eq!(result.output["tests_failed"], 0);
+    assert_eq!(result.output["tests_detected"], true);
+    assert_eq!(result.output["tests_run_count"], 12);
+    assert_eq!(result.output["zero_tests_run"], false);
+
+    let diagnostics = &result.output["diagnostics"];
+    assert_eq!(diagnostics["available"], true);
+    assert_eq!(diagnostics["diagnostic_count"], 0);
+    assert_eq!(diagnostics["failed_tests"], json!([]));
+    assert_eq!(diagnostics["failed_tests_truncated"], false);
+    assert_eq!(diagnostics["test_summary"]["passed"], 12);
+    assert_eq!(diagnostics["test_summary"]["failed"], 0);
+}
+
+#[tokio::test]
+async fn cargo_test_multi_harness_counts_match_diagnostics_summary() {
+    let runtime = runtime_with_agent_project("cargo-multi-harness");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "cargo-multi-harness", None, caps).await;
+    let project = agent_test_project_id("cargo-multi-harness");
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .cargo_test(
+                project,
+                None,
+                Some("multi_harness".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(60),
+            )
+            .await
+    });
+    let req = next_patch_agent_request(&runtime, "cargo-multi-harness")
+        .await
+        .expect("cargo_test should enqueue a cargo command");
+    complete_patch_agent_request(
+        &runtime,
+        "cargo-multi-harness",
+        &req.request_id,
+        101,
+        "running 2 tests\n\
+test result: ok. 2 passed; 0 failed; 1 ignored\n\
+running 4 tests\n\
+test tests::broken ... FAILED\n\
+test result: FAILED. 3 passed; 1 failed; 0 ignored\n\
+running 0 tests\n\
+test result: ok. 0 passed; 0 failed; 2 ignored\n",
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "validation_failed");
+    // Top-level counts (full combined output) and diagnostics (bounded tails)
+    // must agree when every summary is still present in the tails.
+    assert_eq!(result.output["tests_passed"], 5);
+    assert_eq!(result.output["tests_failed"], 1);
+    let diagnostics = &result.output["diagnostics"];
+    assert_eq!(diagnostics["available"], true);
+    assert_eq!(diagnostics["test_summary"]["passed"], 5);
+    assert_eq!(diagnostics["test_summary"]["failed"], 1);
+    assert_eq!(diagnostics["test_summary"]["ignored"], 3);
+    assert_eq!(diagnostics["diagnostic_count"], 1);
+    assert_eq!(diagnostics["failed_tests"], json!(["tests::broken"]));
+    assert_eq!(diagnostics["first_failed_test"], "tests::broken");
+    assert_eq!(diagnostics["failed_tests_truncated"], false);
+}
+
+#[tokio::test]
 async fn cargo_test_agent_timeout_is_not_validation_failed() {
     let runtime = runtime_with_agent_project("cargo-timeout");
     let mut caps = ShellClientCapabilities::default();

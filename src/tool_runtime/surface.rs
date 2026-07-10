@@ -258,7 +258,13 @@ impl ToolRuntime {
         }
 
         if include_recommended_flows {
-            output["recommended_flows"] = Value::Array(tool_manifest_recommended_flows());
+            output["recommended_flows"] = Value::Array(if filtered {
+                tool_manifest_recommended_flows_for_visible_tools(
+                    returned_specs.iter().map(|spec| spec.name.as_str()),
+                )
+            } else {
+                tool_manifest_recommended_flows()
+            });
         }
 
         Ok(output)
@@ -479,6 +485,39 @@ pub(super) fn tool_manifest_recommended_flows() -> Vec<Value> {
                 "purpose": flow.manifest_purpose,
                 "tools": flow.tools,
             })
+        })
+        .collect()
+}
+
+/// Project recommended flows onto the tools actually returned by a filtered
+/// manifest. Keeps original flow tool order, drops duplicates, and omits flows
+/// that project to an empty tool list. Unfiltered callers should use the full
+/// global flows instead.
+pub(super) fn tool_manifest_recommended_flows_for_visible_tools<'a, I>(
+    visible_tools: I,
+) -> Vec<Value>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let visible: std::collections::HashSet<&str> = visible_tools.into_iter().collect();
+    TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .filter_map(|flow| {
+            let mut seen = std::collections::HashSet::new();
+            let tools: Vec<&str> = flow
+                .tools
+                .iter()
+                .copied()
+                .filter(|tool| visible.contains(*tool) && seen.insert(*tool))
+                .collect();
+            if tools.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "name": flow.name,
+                "purpose": flow.manifest_purpose,
+                "tools": tools,
+            }))
         })
         .collect()
 }

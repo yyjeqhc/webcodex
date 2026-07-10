@@ -181,6 +181,10 @@ pub(crate) struct ToolCallStart {
     pub(crate) shell_like: bool,
     pub(crate) git_like: bool,
     pub(crate) change_summary_like: bool,
+    /// Safe boolean metadata: true when this call contributes to
+    /// `review_evidence.diff_review_count` (git diff tools, or
+    /// `show_changes(include_diff=true)`). Never stores raw input or diffs.
+    pub(crate) diff_review_like: bool,
     pub(crate) changed_paths: Vec<String>,
     pub(crate) started_at: i64,
     pub(crate) started_instant: Instant,
@@ -239,6 +243,10 @@ pub(crate) struct SessionEvent {
     pub(crate) shell_like: bool,
     pub(crate) git_like: bool,
     pub(crate) change_summary_like: bool,
+    /// Safe boolean: git diff tools, or `show_changes` with `include_diff=true`.
+    /// Defaults to false for legacy ledger rows that omit the field.
+    #[serde(default)]
+    pub(crate) diff_review_like: bool,
     pub(crate) started_at: Option<i64>,
     pub(crate) finished_at: Option<i64>,
     pub(crate) duration_ms: Option<u64>,
@@ -705,6 +713,7 @@ impl SessionStore {
         let classification = SessionToolClassification::for_tool(tool_name);
         let risk_class = classification.risk_class.to_string();
         let changed_paths = changed_paths_for_tool(tool_name, arguments);
+        let diff_review_like = diff_review_like_for_tool(tool_name, arguments);
         let input_summary = Some(redact_and_bound_value(arguments));
         let expectation = metadata.expectation;
         let start = ToolCallStart {
@@ -720,6 +729,7 @@ impl SessionStore {
             shell_like: classification.shell_like,
             git_like: classification.git_like,
             change_summary_like: classification.change_summary_like,
+            diff_review_like,
             changed_paths: changed_paths.clone(),
             started_at: now,
             started_instant: Instant::now(),
@@ -741,6 +751,7 @@ impl SessionStore {
             shell_like: classification.shell_like,
             git_like: classification.git_like,
             change_summary_like: classification.change_summary_like,
+            diff_review_like,
             started_at: Some(now),
             finished_at: None,
             duration_ms: None,
@@ -864,6 +875,7 @@ impl SessionStore {
             shell_like: start.shell_like,
             git_like: start.git_like,
             change_summary_like: start.change_summary_like,
+            diff_review_like: start.diff_review_like,
             started_at: Some(start.started_at),
             finished_at: Some(finished_at),
             duration_ms: Some(duration_ms),
@@ -1900,6 +1912,21 @@ fn push_path(paths: &mut Vec<String>, path: &str) {
         return;
     }
     paths.push(path.to_string());
+}
+
+/// Compute whether a tool call should contribute to `diff_review_count`.
+///
+/// Only reads a safe boolean (`include_diff`) from arguments for `show_changes`.
+/// Does not store raw input, command text, or diff content.
+fn diff_review_like_for_tool(tool_name: &str, arguments: &Value) -> bool {
+    match tool_name {
+        "git_diff" | "git_diff_summary" | "git_diff_hunks" => true,
+        "show_changes" => arguments
+            .get("include_diff")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn extract_job_id(output: &Value) -> Option<String> {

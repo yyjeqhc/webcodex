@@ -21,12 +21,14 @@ use super::session_context::{
 };
 use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIELD};
+use super::tool_catalog::TOOL_RECOMMENDED_FLOWS;
 use super::tool_inputs::SessionMode;
 use super::tool_result::ToolResult;
 use super::validation_events::{skipped_validation_summary, validation_summary_for_session};
 use super::{current_session_key, unknown_session_result};
 use super::{ToolCall, ToolRuntime};
 use crate::auth::AuthContext;
+use std::collections::HashSet;
 
 const RULES_MAX_HEADINGS: usize = 8;
 const RULES_MAX_FIRST_LINES: usize = 5;
@@ -175,6 +177,10 @@ impl ToolRuntime {
         } else {
             Value::Null
         };
+        let recommended_flow = match &tool_manifest {
+            Some(manifest) => recommended_flow_payload_for_manifest_tools(manifest),
+            None => recommended_flow_payload(),
+        };
         let mut output = json!({
             "project": project,
             "resolved_project": resolved_project_payload(&resolved),
@@ -193,7 +199,7 @@ impl ToolRuntime {
             "permissions": permission_profile_payload(),
             "rules": rules_summary(project_instructions.as_ref()),
             "git": git,
-            "recommended_flow": recommended_flow_payload(),
+            "recommended_flow": recommended_flow,
             "deterministic": true,
             "llm_summary": false,
             "warnings": warnings,
@@ -580,20 +586,51 @@ fn bound_line(line: &str) -> String {
     out
 }
 
+/// Full default startup recommended flow. Reuses the shared
+/// `TOOL_RECOMMENDED_FLOWS` group definitions so top-level startup guidance
+/// does not drift from `tool_manifest.recommended_flows`.
 fn recommended_flow_payload() -> Value {
-    json!({
-        "inspect": ["read_file", "search_project_text", "show_changes"],
-        "edit": [
-            "replace_line_range",
-            "insert_at_line",
-            "delete_line_range",
-            "apply_text_edits",
-            "apply_patch_checked"
-        ],
-        "validate": ["cargo_check", "cargo_test", "validate_patch"],
-        "review": ["show_changes", "git_diff_hunks", "workspace_hygiene_check"],
-        "handoff": ["session_summary", "session_handoff_summary"],
-    })
+    recommended_flow_groups(None)
+}
+
+/// Project top-level `recommended_flow` onto tools present in the embedded
+/// `tool_manifest`. Group keys stay fixed; empty groups are allowed.
+fn recommended_flow_payload_for_manifest_tools(manifest: &Value) -> Value {
+    let visible: HashSet<&str> = manifest
+        .get("tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect();
+    recommended_flow_groups(Some(&visible))
+}
+
+fn recommended_flow_groups(visible: Option<&HashSet<&str>>) -> Value {
+    const GROUPS: &[&str] = &["inspect", "edit", "validate", "review", "handoff"];
+    let mut map = serde_json::Map::new();
+    for group in GROUPS {
+        let tools = TOOL_RECOMMENDED_FLOWS
+            .iter()
+            .find(|flow| flow.name == *group)
+            .map(|flow| {
+                let mut seen = HashSet::new();
+                flow.tools
+                    .iter()
+                    .copied()
+                    .filter(|tool| {
+                        let allowed = match visible {
+                            Some(set) => set.contains(*tool),
+                            None => true,
+                        };
+                        allowed && seen.insert(*tool)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        map.insert((*group).to_string(), json!(tools));
+    }
+    Value::Object(map)
 }
 
 fn workspace_payload_from_show_changes(show_changes: &Value) -> Value {

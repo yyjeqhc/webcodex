@@ -297,7 +297,47 @@ fn validation_summary_wires_cargo_test_summary_from_captured_excerpt() {
     assert_eq!(diagnostics["test_summary"]["failed"], 1);
     assert_eq!(diagnostics["test_summary"]["ignored"], 0);
     assert_eq!(diagnostics["first_failed_test"], "tests::fails");
+    assert_eq!(diagnostics["failed_tests"], json!(["tests::fails"]));
+    assert_eq!(diagnostics["failed_tests_truncated"], false);
     assert_eq!(diagnostics["truncated"], false);
+}
+
+#[test]
+fn validation_summary_exposes_failed_tests_on_latest_and_latest_failure() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({
+            "exit_code": 101,
+            "stdout_tail": "test tests::first ... FAILED\n\
+        test tests::second ... FAILED\n\
+        test tests::third ... FAILED\n\
+        test result: FAILED. 7 passed; 3 failed; 1 ignored\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let expected_names = json!(["tests::first", "tests::second", "tests::third"]);
+
+    for path in ["latest", "latest_failure"] {
+        let diagnostics = &validation[path]["diagnostics"];
+        assert_eq!(diagnostics["available"], true, "{path}");
+        assert_eq!(diagnostics["diagnostic_count"], 3, "{path}");
+        assert_eq!(diagnostics["failed_tests"], expected_names, "{path}");
+        assert_eq!(diagnostics["first_failed_test"], "tests::first", "{path}");
+        assert_eq!(diagnostics["failed_tests_truncated"], false, "{path}");
+        assert_eq!(diagnostics["test_summary"]["failed"], 3, "{path}");
+        assert_eq!(diagnostics["truncated"], false, "{path}");
+    }
 }
 
 #[test]

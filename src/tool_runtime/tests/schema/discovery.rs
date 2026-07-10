@@ -1444,3 +1444,218 @@ fn project_overview_manifest_profiles_match_intended_workflows() {
         .expect("release intent");
     assert!(!release.tools.contains(&"project_overview"));
 }
+
+#[test]
+fn coding_intent_includes_line_edit_and_cleanup_tools() {
+    use crate::tool_runtime::tool_definition::TOOL_MANIFEST_INTENTS;
+
+    let coding = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == "coding")
+        .expect("coding intent");
+    for required in [
+        "replace_line_range",
+        "insert_at_line",
+        "delete_line_range",
+        "apply_text_edits",
+        "apply_patch_checked",
+        "git_status",
+        "git_restore_paths",
+        "discard_untracked",
+        "finish_coding_task",
+    ] {
+        assert!(
+            coding.tools.contains(&required),
+            "coding intent must include {required}: {:?}",
+            coding.tools
+        );
+    }
+    for forbidden in ["run_shell", "run_job"] {
+        assert!(
+            !coding.tools.contains(&forbidden),
+            "coding intent must exclude {forbidden}"
+        );
+    }
+}
+
+fn assert_recommended_flows_subset_of_manifest_tools(manifest: &Value, context: &str) {
+    let tool_names: std::collections::BTreeSet<&str> = manifest["tools"]
+        .as_array()
+        .expect("manifest tools")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    let flows = manifest["recommended_flows"]
+        .as_array()
+        .expect("recommended_flows");
+    for flow in flows {
+        let flow_name = flow["name"].as_str().unwrap_or("<unnamed>");
+        let tools = flow["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{context}: flow {flow_name} tools"));
+        assert!(
+            !tools.is_empty(),
+            "{context}: projected flow {flow_name} must not be empty"
+        );
+        for tool in tools {
+            let tool = tool.as_str().expect("flow tool name");
+            assert!(
+                tool_names.contains(tool),
+                "{context}: recommended_flows[{flow_name}] references invisible tool {tool}; visible={tool_names:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools() {
+    let runtime = test_runtime();
+
+    // intent=coding
+    let coding = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            intent: Some("coding".to_string()),
+            include_recommended_flows: true,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(coding.success, "{:?}", coding.error);
+    assert_eq!(coding.output["filtered"], true);
+    assert_recommended_flows_subset_of_manifest_tools(&coding.output, "intent=coding");
+    let coding_names: Vec<&str> = coding.output["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(
+        coding_names.contains(&"replace_line_range"),
+        "coding intent tools should expose line edits: {coding_names:?}"
+    );
+
+    // single category filter
+    let file_only = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: Some("file".to_string()),
+            intent: None,
+            include_recommended_flows: true,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(file_only.success, "{:?}", file_only.error);
+    assert_eq!(file_only.output["filtered"], true);
+    assert_recommended_flows_subset_of_manifest_tools(&file_only.output, "category=file");
+
+    // multi-category startup-style filter without patch
+    let no_patch = runtime
+        .compact_tool_manifest_payload_bounded(
+            Some(vec![
+                "workflow".to_string(),
+                "file".to_string(),
+                "edit".to_string(),
+                "validation".to_string(),
+                "git".to_string(),
+                "cleanup".to_string(),
+            ]),
+            Some("coding".to_string()),
+            None,
+        )
+        .expect("startup-style no-patch manifest");
+    assert_eq!(no_patch["filtered"], true);
+    assert_recommended_flows_subset_of_manifest_tools(&no_patch, "startup no-patch");
+    let no_patch_tools = serde_json::to_string(&no_patch["tools"]).unwrap();
+    let no_patch_flows = serde_json::to_string(&no_patch["recommended_flows"]).unwrap();
+    assert!(
+        !no_patch_tools.contains("apply_patch_checked"),
+        "without patch category, tools must not include apply_patch_checked"
+    );
+    assert!(
+        !no_patch_flows.contains("apply_patch_checked"),
+        "without patch category, recommended_flows must not include apply_patch_checked"
+    );
+
+    // same filter with patch
+    let with_patch = runtime
+        .compact_tool_manifest_payload_bounded(
+            Some(vec![
+                "workflow".to_string(),
+                "file".to_string(),
+                "edit".to_string(),
+                "patch".to_string(),
+                "validation".to_string(),
+                "git".to_string(),
+                "cleanup".to_string(),
+            ]),
+            Some("coding".to_string()),
+            None,
+        )
+        .expect("startup-style with-patch manifest");
+    assert_recommended_flows_subset_of_manifest_tools(&with_patch, "startup with-patch");
+    let with_patch_tools: Vec<&str> = with_patch["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(
+        with_patch_tools.contains(&"apply_patch_checked"),
+        "with patch category, tools should include apply_patch_checked: {with_patch_tools:?}"
+    );
+    let edit_flow = with_patch["recommended_flows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|flow| flow["name"] == "edit")
+        .expect("edit flow");
+    assert!(
+        edit_flow["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool == "apply_patch_checked"),
+        "with patch category, edit flow may include apply_patch_checked: {edit_flow}"
+    );
+
+    // limit truncation after intent ordering
+    let limited = runtime
+        .compact_tool_manifest_payload_bounded(None, Some("coding".to_string()), Some(3))
+        .expect("limit-truncated coding manifest");
+    assert_eq!(limited["returned_count"], 3);
+    assert_eq!(limited["truncated"], true);
+    assert_recommended_flows_subset_of_manifest_tools(&limited, "intent=coding limit=3");
+}
+
+#[tokio::test]
+async fn unfiltered_tool_manifest_keeps_full_recommended_flows() {
+    use crate::tool_runtime::tool_definition::TOOL_RECOMMENDED_FLOWS;
+
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            intent: None,
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["filtered"], false);
+    let flows = result.output["recommended_flows"]
+        .as_array()
+        .expect("unfiltered recommended_flows");
+    assert_eq!(
+        flows.len(),
+        TOOL_RECOMMENDED_FLOWS.len(),
+        "unfiltered recommended_flows must keep full global set"
+    );
+    let serialized = result.output["recommended_flows"]
+        .to_string()
+        .to_lowercase();
+    assert!(
+        serialized.contains("run_shell")
+            && serialized.contains("escape hatch")
+            && serialized.contains("not the primary validation path"),
+        "unfiltered flows must keep run_shell escape-hatch guidance: {serialized}"
+    );
+}

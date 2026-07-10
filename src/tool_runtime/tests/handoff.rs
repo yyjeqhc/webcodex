@@ -3003,6 +3003,7 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
                     | "show_changes"
                     | "git_status"
                     | "workspace_hygiene_check"
+                    | "project_overview"
             ),
             "unexpected review evidence tool name {tool}"
         );
@@ -3015,4 +3016,197 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn review_evidence_show_changes_without_diff_does_not_count_diff_review() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(Some("agent:eval:demo".to_string()), Some("no-diff".into()));
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "show_changes",
+        json!({"project": "agent:eval:demo", "include_diff": false}),
+        true,
+        json!({}),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: sid,
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: None,
+            summary_only: false,
+            limit: None,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let review = &result.output["review_evidence"];
+    assert_eq!(review["workspace_review_count"], 1);
+    assert_eq!(review["diff_review_count"], 0);
+    assert_eq!(review["total"], 1);
+    assert_eq!(review["tools"], json!(["show_changes"]));
+}
+
+#[tokio::test]
+async fn review_evidence_show_changes_with_diff_counts_workspace_and_diff() {
+    let runtime = test_runtime();
+    let session = runtime.sessions.start_session(
+        Some("agent:eval:demo".to_string()),
+        Some("with-diff".into()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "show_changes",
+        json!({"project": "agent:eval:demo", "include_diff": true}),
+        true,
+        json!({}),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: sid.clone(),
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: None,
+            summary_only: false,
+            limit: None,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let review = &result.output["review_evidence"];
+    assert_eq!(review["workspace_review_count"], 1);
+    assert_eq!(review["diff_review_count"], 1);
+    assert_eq!(review["total"], 1);
+    assert_eq!(review["tools"], json!(["show_changes"]));
+
+    let events = runtime
+        .sessions
+        .summary(&sid, None)
+        .expect("session")
+        .events;
+    let finished = events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "show_changes")
+        .expect("finished show_changes event");
+    assert!(
+        finished.diff_review_like,
+        "finished show_changes(include_diff=true) must persist diff_review_like=true"
+    );
+    assert!(
+        finished.input_summary.is_none(),
+        "finished events must not carry raw input_summary"
+    );
+}
+
+#[tokio::test]
+async fn review_evidence_mixed_diff_workspace_and_hygiene_counts() {
+    let runtime = test_runtime();
+    let session = runtime.sessions.start_session(
+        Some("agent:eval:demo".to_string()),
+        Some("mixed-review".into()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "show_changes",
+        json!({"project": "agent:eval:demo", "include_diff": true}),
+        true,
+        json!({}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "git_diff_hunks",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({}),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "workspace_hygiene_check",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({}),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: sid,
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: None,
+            summary_only: false,
+            limit: None,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let review = &result.output["review_evidence"];
+    assert_eq!(review["total"], 3);
+    assert_eq!(review["diff_review_count"], 2);
+    assert_eq!(review["workspace_review_count"], 2);
+    assert_eq!(review["hygiene_review_count"], 1);
+    assert_eq!(
+        review["tools"],
+        json!(["show_changes", "git_diff_hunks", "workspace_hygiene_check"])
+    );
+    assert_review_evidence_tools_safe(review);
+}
+
+#[test]
+fn session_event_omitted_optional_fields_still_deserialize() {
+    use crate::tool_runtime::sessions::SessionEvent;
+
+    // Legacy ledgers omit newer optional/defaulted fields. Deserialization must
+    // remain compatible and must not invent raw input/diff payloads.
+    let legacy = r#"{
+        "event_id": "wc_evt_legacy",
+        "session_id": "wc_sess_legacy",
+        "kind": "tool_call_finished",
+        "timestamp": 1,
+        "transport": "api",
+        "tool_name": "show_changes",
+        "project": null,
+        "resolved_project": null,
+        "risk_class": "read_only",
+        "read_like": true,
+        "write_like": false,
+        "shell_like": false,
+        "git_like": true,
+        "change_summary_like": true,
+        "started_at": 1,
+        "finished_at": 2,
+        "duration_ms": 1,
+        "status": "succeeded",
+        "exit_code": null,
+        "failure_kind": null,
+        "error_kind": null,
+        "error_message_summary": null,
+        "changed_paths": [],
+        "job_id": null,
+        "input_summary": null
+    }"#;
+    let event: SessionEvent =
+        serde_json::from_str(legacy).expect("legacy SessionEvent must keep deserializing");
+    assert_eq!(event.tool_name, "show_changes");
+    assert!(event.input_summary.is_none());
+    assert_eq!(event.status.as_deref(), Some("succeeded"));
+    assert_eq!(
+        event.diff_review_like, false,
+        "legacy ledger rows without diff_review_like must default to false"
+    );
 }

@@ -555,7 +555,15 @@ fn review_evidence_summary_from_events(events: &[SessionEvent]) -> Value {
             ReviewEvidenceKind::ReadOnlyInspection => read_only_inspection_count += 1,
             ReviewEvidenceKind::Search => search_count += 1,
             ReviewEvidenceKind::DiffReview => diff_review_count += 1,
-            ReviewEvidenceKind::WorkspaceReview => workspace_review_count += 1,
+            ReviewEvidenceKind::WorkspaceReview => {
+                // `show_changes(include_diff=true)` is one successful call that
+                // contributes both workspace and diff dimensions, but total
+                // still increments only once below.
+                workspace_review_count += 1;
+                if event.diff_review_like {
+                    diff_review_count += 1;
+                }
+            }
             ReviewEvidenceKind::HygieneReview => {
                 workspace_review_count += 1;
                 hygiene_review_count += 1;

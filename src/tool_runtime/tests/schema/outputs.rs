@@ -98,7 +98,12 @@ fn key_tool_output_schemas_include_expected_fields() {
             "{name} failure_kind description should mention validation_failed: {description}"
         );
     }
-    for field in ["tests_detected", "tests_run_count", "zero_tests_run"] {
+    for field in [
+        "tests_detected",
+        "tests_run_count",
+        "zero_tests_run",
+        "diagnostics",
+    ] {
         assert!(
             has_output_field("cargo_test", field),
             "cargo_test missing {field}"
@@ -110,6 +115,50 @@ fn key_tool_output_schemas_include_expected_fields() {
         assert!(
             !has_output_field("cargo_check", field),
             "cargo_check should not expose cargo_test zero-tests metadata field {field}"
+        );
+    }
+    let diagnostics_schema = output_schema_property(&specs, "cargo_test", "diagnostics");
+    assert_eq!(diagnostics_schema["type"], "object");
+    let diagnostics_props = diagnostics_schema["properties"]
+        .as_object()
+        .expect("cargo_test diagnostics schema properties");
+    for field in [
+        "available",
+        "parser",
+        "reason",
+        "diagnostic_count",
+        "test_summary",
+        "failed_tests",
+        "first_failed_test",
+        "failed_tests_truncated",
+        "truncated",
+    ] {
+        assert!(
+            diagnostics_props.contains_key(field),
+            "cargo_test diagnostics schema missing {field}"
+        );
+    }
+    assert_eq!(diagnostics_props["failed_tests"]["type"], "array");
+    assert_eq!(diagnostics_props["failed_tests"]["items"]["type"], "string");
+    assert_eq!(
+        diagnostics_props["failed_tests_truncated"]["type"],
+        "boolean"
+    );
+    assert_eq!(
+        diagnostics_schema["additionalProperties"], false,
+        "cargo_test diagnostics schema must close undeclared fields"
+    );
+    assert_eq!(
+        diagnostics_props["test_summary"]["additionalProperties"], false,
+        "cargo_test diagnostics.test_summary schema must close undeclared fields"
+    );
+    let summary_props = diagnostics_props["test_summary"]["properties"]
+        .as_object()
+        .expect("cargo_test diagnostics.test_summary properties");
+    for field in ["passed", "failed", "ignored"] {
+        assert!(
+            summary_props.contains_key(field),
+            "cargo_test diagnostics.test_summary missing {field}"
         );
     }
     for field in [

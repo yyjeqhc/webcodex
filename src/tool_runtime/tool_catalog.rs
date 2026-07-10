@@ -245,20 +245,35 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
         name: "coding",
         purpose: "Default coding loop: start, inspect, structured edit, validate, review, finish.",
         tools: &[
+            // start
             "start_coding_task",
+            // project discovery
             "project_overview",
+            // inspect
             "read_file",
             "search_project_text",
             "list_project_files",
+            // local line edit
+            "replace_line_range",
+            "insert_at_line",
+            "delete_line_range",
+            // batch / patch edit
             "apply_text_edits",
             "apply_patch_checked",
+            // validation
             "validate_patch",
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
+            // review
             "show_changes",
             "git_diff_hunks",
             "workspace_hygiene_check",
+            // git / cleanup
+            "git_status",
+            "git_restore_paths",
+            "discard_untracked",
+            // finish
             "finish_coding_task",
         ],
     },

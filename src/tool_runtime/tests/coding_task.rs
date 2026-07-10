@@ -2316,3 +2316,141 @@ async fn finish_coding_task_summary_only_with_agent(
     );
     task.await.unwrap()
 }
+
+#[tokio::test]
+async fn start_coding_task_top_level_recommended_flow_projects_to_visible_manifest_tools() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-flow-proj", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_coding_task",
+                json!({
+                    "project": project,
+                    "include_runtime_status": false,
+                    "include_git": false,
+                    "include_recent_commits": false,
+                    "include_rules": false,
+                    "include_tool_manifest": true,
+                    "tool_manifest_intent": "coding",
+                    "tool_manifest_categories": [
+                        "workflow",
+                        "file",
+                        "edit",
+                        "validation",
+                        "git",
+                        "cleanup"
+                    ]
+                }),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+    assert!(result.success, "{:?}", result.error);
+
+    let manifest_tools: std::collections::BTreeSet<&str> = result.output["tool_manifest"]["tools"]
+        .as_array()
+        .expect("tool_manifest.tools")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(
+        !manifest_tools.contains("apply_patch_checked"),
+        "startup without patch must hide apply_patch_checked"
+    );
+    assert!(
+        manifest_tools.contains("finish_coding_task"),
+        "coding startup should keep finish_coding_task visible"
+    );
+
+    let flow = &result.output["recommended_flow"];
+    for group in ["inspect", "edit", "validate", "review", "handoff"] {
+        assert!(
+            flow.get(group).and_then(Value::as_array).is_some(),
+            "recommended_flow must keep group key {group}"
+        );
+    }
+
+    for group in ["inspect", "edit", "validate", "review", "handoff"] {
+        for tool in flow[group].as_array().unwrap() {
+            let tool = tool.as_str().unwrap();
+            assert!(
+                manifest_tools.contains(tool),
+                "recommended_flow.{group} references invisible tool {tool}; visible={manifest_tools:?}"
+            );
+            assert_ne!(
+                tool, "apply_patch_checked",
+                "recommended_flow must not project patch tools without patch category"
+            );
+        }
+    }
+
+    let handoff = flow["handoff"].as_array().unwrap();
+    assert!(
+        handoff.iter().any(|tool| tool == "finish_coding_task"),
+        "handoff should retain finish_coding_task when visible: {handoff:?}"
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_without_manifest_keeps_full_default_recommended_flow() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-flow-full", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_coding_task",
+                json!({
+                    "project": project,
+                    "include_runtime_status": false,
+                    "include_git": false,
+                    "include_recent_commits": false,
+                    "include_rules": false,
+                    "include_tool_manifest": false
+                }),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert!(result.output.get("tool_manifest").is_none());
+
+    let flow = &result.output["recommended_flow"];
+    for tool in [
+        "replace_line_range",
+        "insert_at_line",
+        "delete_line_range",
+        "apply_text_edits",
+        "apply_patch_checked",
+    ] {
+        assert!(
+            flow["edit"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == tool),
+            "full default edit flow should include {tool}"
+        );
+    }
+    assert!(
+        flow["handoff"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry == "finish_coding_task"),
+        "full default handoff must include finish_coding_task: {:?}",
+        flow["handoff"]
+    );
+}

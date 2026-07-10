@@ -313,6 +313,48 @@ fn navigation_reuses_one_did_open_for_the_same_document() {
 }
 
 #[test]
+fn navigation_sends_full_text_changes_once_per_disk_content_version() {
+    let fixture = NavFixture::new("normal");
+    let request = || {
+        fixture.request(AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::DocumentSymbols {
+                path: "src/main.rs".into(),
+                limit: 10,
+            },
+        })
+    };
+
+    assert_eq!(request()["success"], true);
+    fs::write(fixture.root.join("src/main.rs"), "fn changed_once() {}\n").unwrap();
+    assert_eq!(request()["success"], true);
+    assert_eq!(request()["success"], true);
+    fs::write(fixture.root.join("src/main.rs"), "fn changed_twice() {}\n").unwrap();
+    assert_eq!(request()["success"], true);
+    assert_eq!(request()["success"], true);
+
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    let opens = marker
+        .lines()
+        .filter(|line| line.starts_with("didOpen:"))
+        .collect::<Vec<_>>();
+    let changes = marker
+        .lines()
+        .filter(|line| line.starts_with("didChange:"))
+        .collect::<Vec<_>>();
+    assert_eq!(opens.len(), 1, "{marker}");
+    assert_eq!(changes.len(), 2, "{marker}");
+    assert!(opens[0].contains("\"version\":1"), "{marker}");
+    assert!(changes[0].contains("\"version\":2"), "{marker}");
+    assert!(changes[0].contains("fn changed_once()"), "{marker}");
+    assert!(changes[1].contains("\"version\":3"), "{marker}");
+    assert!(changes[1].contains("fn changed_twice()"), "{marker}");
+    assert!(changes
+        .iter()
+        .all(|line| line.contains("\"contentChanges\":[{\"text\":")));
+}
+
+#[test]
 fn navigation_restart_opens_the_document_on_the_new_server_instance() {
     let fixture = NavFixture::new("restart_then_success");
     let envelope = fixture.request(AgentLspPayload {

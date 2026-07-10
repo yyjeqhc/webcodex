@@ -102,6 +102,14 @@ fn run() -> io::Result<()> {
                     )?;
                 }
             }
+            Some("textDocument/didChange") => {
+                if let Some(marker) = &marker {
+                    append_marker(
+                        marker,
+                        &format!("didChange:{}:{body}\n", std::process::id()),
+                    )?;
+                }
+            }
             Some("shutdown") => {
                 if scenario == "shutdown_hang" {
                     // Acknowledge nothing and never exit on its own.

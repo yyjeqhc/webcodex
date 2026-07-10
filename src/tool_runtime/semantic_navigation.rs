@@ -37,7 +37,7 @@ const SEMANTIC_NAVIGATION_LIMITATIONS: [&str; 5] = [
     "read_only",
     "workspace_only",
     "no_dependency_navigation",
-    "no_document_sync",
+    "full_text_sync_only",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

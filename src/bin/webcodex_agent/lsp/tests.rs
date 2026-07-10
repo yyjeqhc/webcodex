@@ -65,7 +65,13 @@ impl Fixture {
     }
 
     fn with_limits(scenario: &str, maximum: usize, idle_ttl: Duration) -> Self {
-        Self::with_config(scenario, maximum, idle_ttl, Duration::from_millis(300), true)
+        Self::with_config(
+            scenario,
+            maximum,
+            idle_ttl,
+            Duration::from_millis(300),
+            true,
+        )
     }
 
     /// Fixture for tests that pin explicit `cleanup_idle` return values; the
@@ -186,6 +192,130 @@ fn lsp_supervisor_is_lazy_and_reuses_one_process_for_concurrent_project_calls() 
         .unwrap();
     assert!(Arc::ptr_eq(&first, &second));
     assert_eq!(first.process_id(), second.process_id());
+}
+
+#[test]
+fn concurrent_document_refresh_uses_one_monotonic_version() {
+    let fixture = Fixture::new("normal");
+    let document_path = fixture.root.join("main.rs");
+    fs::write(&document_path, "fn initial() {}\n").unwrap();
+    let uri = Url::from_file_path(&document_path).unwrap().to_string();
+    fixture
+        .supervisor
+        .prepare_document(
+            &fixture.root,
+            LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            "fn initial() {}\n",
+        )
+        .unwrap();
+
+    let barrier = Arc::new(Barrier::new(9));
+    let handles = (0..8)
+        .map(|_| {
+            let supervisor = fixture.supervisor.clone();
+            let root = fixture.root.clone();
+            let uri = uri.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                supervisor.prepare_document(
+                    &root,
+                    LspServerKind::RustAnalyzer,
+                    &uri,
+                    "rust",
+                    "fn refreshed() {}\n",
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    for handle in handles {
+        handle.join().unwrap().unwrap();
+    }
+
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    assert_eq!(
+        marker
+            .lines()
+            .filter(|line| line.starts_with("didOpen:"))
+            .count(),
+        1,
+        "{marker}"
+    );
+    let changes = marker
+        .lines()
+        .filter(|line| line.starts_with("didChange:"))
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 1, "{marker}");
+    assert!(changes[0].contains("\"version\":2"), "{marker}");
+}
+
+#[test]
+fn failed_did_change_does_not_advance_document_state() {
+    let documents = Mutex::new(HashMap::new());
+    let initial = DocumentOpen {
+        uri: "file:///workspace/main.rs",
+        language_id: "rust",
+        text: "fn initial() {}\n",
+    };
+    synchronize_document_state(&documents, initial, |method, _| {
+        assert_eq!(method, "textDocument/didOpen");
+        Ok(())
+    })
+    .unwrap();
+
+    let changed = DocumentOpen {
+        text: "fn changed() {}\n",
+        ..initial
+    };
+    let error = synchronize_document_state(&documents, changed, |method, _| {
+        assert_eq!(method, "textDocument/didChange");
+        Err(LspError::WriterFailed("injected failure".to_string()))
+    })
+    .unwrap_err();
+    assert!(matches!(error, LspError::WriterFailed(_)));
+    let unchanged = lock_unpoison(&documents)[initial.uri];
+    assert_eq!(unchanged.version, 1);
+    assert_eq!(
+        unchanged.content_fingerprint,
+        document_fingerprint(initial.text)
+    );
+
+    let version = synchronize_document_state(&documents, changed, |method, params| {
+        assert_eq!(method, "textDocument/didChange");
+        assert_eq!(params["textDocument"]["version"], 2);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(version, 2);
+}
+
+#[test]
+fn document_version_overflow_is_safe_and_state_is_fingerprint_only() {
+    assert!(std::mem::size_of::<OpenDocumentState>() <= 40);
+    let uri = "file:///workspace/main.rs";
+    let initial_text = "fn initial() {}\n";
+    let documents = Mutex::new(HashMap::from([(
+        uri.to_string(),
+        OpenDocumentState {
+            version: i32::MAX,
+            content_fingerprint: document_fingerprint(initial_text),
+        },
+    )]));
+    let error = synchronize_document_state(
+        &documents,
+        DocumentOpen {
+            uri,
+            language_id: "rust",
+            text: "fn changed() {}\n",
+        },
+        |_, _| panic!("overflow must be rejected before notification"),
+    )
+    .unwrap_err();
+    assert!(matches!(error, LspError::ProtocolError(_)));
+    assert_eq!(lock_unpoison(&documents)[uri].version, i32::MAX);
 }
 
 #[test]

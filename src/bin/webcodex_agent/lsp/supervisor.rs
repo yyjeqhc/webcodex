@@ -1,6 +1,7 @@
 use super::protocol::{read_message, write_message, FramingError, MAX_LSP_MESSAGE_BYTES};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -432,7 +433,7 @@ impl LspSupervisor {
                 }
                 Err(error) => return Err(error),
             };
-            match server.ensure_document_open(document) {
+            match server.synchronize_document(document) {
                 Ok(()) => return Ok(server.position_encoding()),
                 Err(error) if attempt == 0 && error.permits_restart() => continue,
                 Err(error) if attempt == 1 && error.permits_restart() => {
@@ -491,7 +492,7 @@ impl LspSupervisor {
                 Err(error) => return Err(error),
             };
             if let Some(document) = document {
-                if let Err(error) = server.ensure_document_open(document) {
+                if let Err(error) = server.synchronize_document(document) {
                     if attempt == 0 && error.permits_restart() {
                         last_error = Some(error);
                         continue;
@@ -993,6 +994,76 @@ struct DocumentOpen<'a> {
     text: &'a str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpenDocumentState {
+    version: i32,
+    content_fingerprint: [u8; 32],
+}
+
+fn document_fingerprint(text: &str) -> [u8; 32] {
+    Sha256::digest(text.as_bytes()).into()
+}
+
+fn synchronize_document_state(
+    documents: &Mutex<HashMap<String, OpenDocumentState>>,
+    document: DocumentOpen<'_>,
+    mut notify: impl FnMut(&str, Value) -> Result<(), LspError>,
+) -> Result<i32, LspError> {
+    let fingerprint = document_fingerprint(document.text);
+    // Serialize comparison, notification, and commit for a URI. The state
+    // changes only after the notification is accepted by the writer.
+    let mut documents = lock_unpoison(documents);
+    match documents.get(document.uri).copied() {
+        Some(state) if state.content_fingerprint == fingerprint => Ok(state.version),
+        Some(state) => {
+            let version = state.version.checked_add(1).ok_or_else(|| {
+                LspError::ProtocolError("LSP document version exhausted".to_string())
+            })?;
+            notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": {
+                        "uri": document.uri,
+                        "version": version,
+                    },
+                    "contentChanges": [{
+                        "text": document.text,
+                    }],
+                }),
+            )?;
+            documents.insert(
+                document.uri.to_string(),
+                OpenDocumentState {
+                    version,
+                    content_fingerprint: fingerprint,
+                },
+            );
+            Ok(version)
+        }
+        None => {
+            notify(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": document.uri,
+                        "languageId": document.language_id,
+                        "version": 1,
+                        "text": document.text,
+                    }
+                }),
+            )?;
+            documents.insert(
+                document.uri.to_string(),
+                OpenDocumentState {
+                    version: 1,
+                    content_fingerprint: fingerprint,
+                },
+            );
+            Ok(1)
+        }
+    }
+}
+
 struct ServerInstance {
     key: ProcessKey,
     child: Mutex<Child>,
@@ -1000,7 +1071,7 @@ struct ServerInstance {
     connection: Arc<ConnectionState>,
     next_id: AtomicU64,
     position_encoding: Mutex<PositionEncoding>,
-    opened_documents: Mutex<HashSet<String>>,
+    open_documents: Mutex<HashMap<String, OpenDocumentState>>,
     last_used: Mutex<Instant>,
     #[allow(dead_code)] // Bounded capture retained for Commit 2 diagnostics/status.
     stderr: Arc<Mutex<BoundedStderr>>,
@@ -1087,7 +1158,7 @@ impl ServerInstance {
             connection,
             next_id: AtomicU64::new(1),
             position_encoding: Mutex::new(PositionEncoding::Utf16),
-            opened_documents: Mutex::new(HashSet::new()),
+            open_documents: Mutex::new(HashMap::new()),
             last_used: Mutex::new(Instant::now()),
             stderr: stderr_buffer,
             reader_thread: Mutex::new(Some(reader_thread)),
@@ -1240,23 +1311,10 @@ impl ServerInstance {
         }))
     }
 
-    fn ensure_document_open(&self, document: DocumentOpen<'_>) -> Result<(), LspError> {
-        let mut opened = lock_unpoison(&self.opened_documents);
-        if opened.contains(document.uri) {
-            return Ok(());
-        }
-        self.notify(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": document.uri,
-                    "languageId": document.language_id,
-                    "version": 1,
-                    "text": document.text,
-                }
-            }),
-        )?;
-        opened.insert(document.uri.to_string());
+    fn synchronize_document(&self, document: DocumentOpen<'_>) -> Result<(), LspError> {
+        synchronize_document_state(&self.open_documents, document, |method, params| {
+            self.notify(method, params)
+        })?;
         Ok(())
     }
 

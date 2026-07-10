@@ -209,7 +209,7 @@ async fn coding_task_semantic_navigation_available_is_recommended_and_bounded() 
             "read_only",
             "workspace_only",
             "no_dependency_navigation",
-            "no_document_sync"
+            "full_text_sync_only"
         ])
     );
     assert_eq!(semantic["reason_code"], Value::Null);

@@ -220,7 +220,7 @@ fn semantic_navigation_schema() -> Value {
                 "uniqueItems": true,
                 "items": {
                     "type": "string",
-                    "enum": ["rust_only", "read_only", "workspace_only", "no_dependency_navigation", "no_document_sync"]
+                    "enum": ["rust_only", "read_only", "workspace_only", "no_dependency_navigation", "full_text_sync_only"]
                 }
             },
             "reason_code": {

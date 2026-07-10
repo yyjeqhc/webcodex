@@ -487,7 +487,10 @@ mod tests {
             ("path=/etc/passwd denied", "path=<path> denied"),
             ("bad (C:\\Users\\x\\y.rs)", "bad (<path>)"),
             ("share \\\\host\\repo failed", "share <path> failed"),
-            ("manifest at /workspace: broken", "manifest at <path> broken"),
+            (
+                "manifest at /workspace: broken",
+                "manifest at <path> broken",
+            ),
         ];
         for (input, expected) in cases {
             assert_eq!(redact_absolute_paths(input), expected, "input: {input}");

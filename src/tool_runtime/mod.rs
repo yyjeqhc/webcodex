@@ -24,6 +24,7 @@ mod job_tools;
 mod jobs;
 pub(crate) mod kernel;
 mod local_jobs;
+mod lsp_tools;
 pub(crate) mod metadata;
 mod patch;
 mod patch_tools;

@@ -53,7 +53,7 @@ The protocol adapters translate incoming requests into runtime tool calls. The T
 
 - `shell_client` is the server-side agent registry and transport bridge. It tracks connected agents, project registrations, request/response flow, job updates, and agent policy summaries.
 - `src/bin/webcodex_agent/*` owns the agent binary behavior: config loading, transport fallback, project registry parsing, file/patch/artifact/checkpoint handling, shell execution, and response shaping.
-- `src/bin/webcodex_agent/lsp/*` owns the Rust-only LSP process supervisor. Language servers run inside the agent at canonical registered project roots; the server never reads project files. This foundation does not yet expose public LSP tools, which are reserved for a later change.
+- `src/bin/webcodex_agent/lsp/*` owns the Rust-only LSP process supervisor and read-only navigation handlers. Language servers run only inside the agent at canonical registered project roots; the server never reads agent project files and never accepts arbitrary LSP methods. Public tools (`lsp_status`, `document_symbols`, `goto_definition`, `find_references`) flow through ToolRuntime → typed agent bridge payload → `LspSupervisor` → rust-analyzer. Results use project-relative paths, 1-based Unicode scalar columns, bounded truncation, and omit external (registry/sysroot) locations. The constrained rust-analyzer profile keeps `cargo.noDeps=true` and disables build scripts, proc macros, and checkOnSave.
 
 The agent is where private repository paths are interpreted. The server routes by runtime project id, such as `agent:<client_id>:<project_id>`.
 

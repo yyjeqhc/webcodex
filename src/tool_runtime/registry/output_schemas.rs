@@ -10,6 +10,7 @@ mod files;
 mod git;
 mod hygiene;
 mod jobs;
+mod lsp;
 mod projects;
 mod sessions;
 mod testing;
@@ -48,6 +49,9 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
         return schema;
     }
     if let Some(schema) = files::output_schema_for_tool(name) {
+        return schema;
+    }
+    if let Some(schema) = lsp::output_schema_for_tool(name) {
         return schema;
     }
     if let Some(schema) = testing::output_schema_for_tool(name) {

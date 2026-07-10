@@ -194,15 +194,22 @@ pub enum ToolCall {
     /// Explicitly bind an existing project-scoped session as the caller's
     /// process-local in-memory current session for later project tool calls on
     /// this transport.
-    BindCurrentSession { project: String, session_id: String },
+    BindCurrentSession {
+        project: String,
+        session_id: String,
+    },
 
     /// Return the caller's process-local current session binding for a project,
     /// if any.
-    CurrentSession { project: String },
+    CurrentSession {
+        project: String,
+    },
 
     /// Remove the caller's process-local current session binding for a project.
     /// Idempotent.
-    UnbindCurrentSession { project: String },
+    UnbindCurrentSession {
+        project: String,
+    },
 
     /// Create a bounded last-known-good workspace checkpoint outside the
     /// project worktree.
@@ -830,6 +837,50 @@ pub enum ToolCall {
     },
 
     /// List all agent-registered runtime projects.
+
+    /// Probe agent-side rust-analyzer availability without starting it.
+    LspStatus {
+        project: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Hierarchical document symbols for a project-relative Rust file.
+    DocumentSymbols {
+        project: String,
+        path: String,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Goto definition at a 1-based Unicode scalar position.
+    GotoDefinition {
+        project: String,
+        path: String,
+        line: usize,
+        column: usize,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Find references at a 1-based Unicode scalar position.
+    FindReferences {
+        project: String,
+        path: String,
+        line: usize,
+        column: usize,
+        #[serde(default = "default_true")]
+        include_declaration: bool,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     ListProjects,
 
     /// Register an existing directory as a WebCodex project on a selected
@@ -1043,6 +1094,10 @@ impl ToolCall {
             Self::InsertAtLine { .. } => "insert_at_line",
             Self::DeleteLineRange { .. } => "delete_line_range",
             Self::ApplyTextEdits { .. } => "apply_text_edits",
+            Self::LspStatus { .. } => "lsp_status",
+            Self::DocumentSymbols { .. } => "document_symbols",
+            Self::GotoDefinition { .. } => "goto_definition",
+            Self::FindReferences { .. } => "find_references",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",
             Self::CreateProject { .. } => "create_project",
@@ -1097,7 +1152,11 @@ impl ToolCall {
             | Self::WorkspaceCheckpointShow { session_id, .. }
             | Self::WorkspaceCheckpointRestore { session_id, .. }
             | Self::WorkspaceCheckpointDelete { session_id, .. }
-            | Self::WorkspaceHygieneCheck { session_id, .. } => session_id.as_deref(),
+            | Self::WorkspaceHygieneCheck { session_id, .. }
+            | Self::LspStatus { session_id, .. }
+            | Self::DocumentSymbols { session_id, .. }
+            | Self::GotoDefinition { session_id, .. }
+            | Self::FindReferences { session_id, .. } => session_id.as_deref(),
             _ => None,
         }
     }
@@ -1147,7 +1206,11 @@ impl ToolCall {
             | Self::WorkspaceCheckpointShow { session_id, .. }
             | Self::WorkspaceCheckpointRestore { session_id, .. }
             | Self::WorkspaceCheckpointDelete { session_id, .. }
-            | Self::WorkspaceHygieneCheck { session_id, .. } => {
+            | Self::WorkspaceHygieneCheck { session_id, .. }
+            | Self::LspStatus { session_id, .. }
+            | Self::DocumentSymbols { session_id, .. }
+            | Self::GotoDefinition { session_id, .. }
+            | Self::FindReferences { session_id, .. } => {
                 if session_id.is_none() {
                     *session_id = Some(effective_session_id);
                 }
@@ -1205,7 +1268,11 @@ impl ToolCall {
             | Self::WorkspaceCheckpointShow { project, .. }
             | Self::WorkspaceCheckpointRestore { project, .. }
             | Self::WorkspaceCheckpointDelete { project, .. }
-            | Self::WorkspaceHygieneCheck { project, .. } => Some(project.as_str()),
+            | Self::WorkspaceHygieneCheck { project, .. }
+            | Self::LspStatus { project, .. }
+            | Self::DocumentSymbols { project, .. }
+            | Self::GotoDefinition { project, .. }
+            | Self::FindReferences { project, .. } => Some(project.as_str()),
             Self::StartCodingTask { project, .. } | Self::FinishCodingTask { project, .. } => {
                 Some(project.as_str())
             }

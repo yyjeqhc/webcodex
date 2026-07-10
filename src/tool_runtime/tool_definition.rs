@@ -14,6 +14,7 @@ mod files;
 mod git;
 mod hygiene;
 mod jobs;
+mod lsp;
 mod patches;
 mod sessions;
 mod testing;
@@ -59,7 +60,8 @@ pub(crate) use super::tool_policy::{
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
     SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
-    SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_SHELL,
+    SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_SHELL,
 };
 
 /// Capability an agent-backed tool requires before dispatch can reach an
@@ -80,6 +82,8 @@ pub(crate) enum AgentCapability {
     GitOrShell,
     /// `run_job` (agent path starts an async job).
     AsyncJobs,
+    /// Read-only agent-side rust-analyzer navigation tools.
+    LspReadOnlyNavigation,
 }
 
 impl AgentCapability {
@@ -91,6 +95,7 @@ impl AgentCapability {
             Self::FileWrite => SHELL_CLIENT_CAPABILITY_FILE_WRITE,
             Self::GitOrShell => "shell or git",
             Self::AsyncJobs => "async shell jobs",
+            Self::LspReadOnlyNavigation => SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
         }
     }
 
@@ -105,6 +110,7 @@ impl AgentCapability {
                 SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
                 SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
             ],
+            Self::LspReadOnlyNavigation => &[SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION],
         }
     }
 
@@ -149,6 +155,7 @@ pub(crate) const TOOL_CATEGORY_EDIT: &str = "edit";
 pub(crate) const TOOL_CATEGORY_FILE: &str = "file";
 pub(crate) const TOOL_CATEGORY_GIT: &str = "git";
 pub(crate) const TOOL_CATEGORY_JOB: &str = "job";
+pub(crate) const TOOL_CATEGORY_LSP: &str = "lsp";
 pub(crate) const TOOL_CATEGORY_PATCH: &str = "patch";
 pub(crate) const TOOL_CATEGORY_PROJECT: &str = "project";
 pub(crate) const TOOL_CATEGORY_RUNTIME: &str = "runtime";
@@ -377,6 +384,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     git::SUMMARY_DEFINITIONS,
     jobs::LISTING_DEFINITIONS,
     files::READ_DEFINITIONS,
+    lsp::DEFINITIONS,
     git::DETAIL_DEFINITIONS,
     testing::DEFINITIONS,
     patches::APPLY_DEFINITIONS,

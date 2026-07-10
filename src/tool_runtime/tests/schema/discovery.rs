@@ -281,6 +281,7 @@ fn allowed_tool_definition_categories_for_discovery_group(group: &str) -> &'stat
             "checkpoint",
             "file",
             "git",
+            "lsp",
             "project",
             "runtime",
             "session",

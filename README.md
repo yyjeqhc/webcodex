@@ -150,7 +150,7 @@ For a walkthrough of the expected tool flow, see [docs/DEMO.md](docs/DEMO.md).
 WebCodex is designed around a conservative coding loop:
 
 1. `start_coding_task` - create an explicit session and collect bounded startup context.
-2. Inspect - use `list_project_files`, `search_project_text`, `read_file`, and Git status tools.
+2. Inspect - use `list_project_files`, `search_project_text`, `read_file`, optional read-only LSP navigation (`lsp_status`, `document_symbols`, `goto_definition`, `find_references`), and Git status tools.
 3. Edit - prefer `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
 4. Validate - run `validate_patch`, `cargo_fmt`, `cargo_check`, or `cargo_test` where appropriate.
 5. Inspect outcome - use `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`.
@@ -180,7 +180,7 @@ Do not expose secrets in prompts, examples, tool output, docs, or committed conf
 
 - WebCodex is self-hosted infrastructure, not a hosted SaaS.
 - Setup is still technical and assumes comfort with a terminal, server URL, and agent process.
-- Semantic code intelligence, LSP diagnostics, and symbol navigation are not first-class in 0.2.0.
+- Read-only Rust LSP navigation is available through four tools (`lsp_status`, `document_symbols`, `goto_definition`, `find_references`) via agent-side rust-analyzer with a constrained profile (`cargo.noDeps=true`, no build scripts/proc macros/checkOnSave). Paths are project-relative; columns are 1-based Unicode scalars; external/dependency results are omitted. Diagnostics, workspace symbols, document sync, multi-language support, and write operations are not first-class yet.
 - The browser console is read-only and minimal; MCP, GPT Actions, and CLI workflows are the primary paths.
 - WebCodex does not provide a full UI approval/review queue yet. Review means inspecting diff, validation, hygiene, and session evidence before accepting the work in Git.
 - Shell and job tools require operator trust, bounded configuration, and normal code review discipline.

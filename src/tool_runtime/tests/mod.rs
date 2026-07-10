@@ -13,6 +13,7 @@ mod git;
 mod handoff;
 mod hygiene;
 mod jobs;
+mod lsp;
 mod metadata;
 mod schema;
 mod sessions;

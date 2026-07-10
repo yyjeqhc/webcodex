@@ -9,6 +9,7 @@ mod git;
 mod hygiene;
 mod jobs;
 mod line_edits;
+mod lsp;
 mod patches;
 mod projects;
 mod sessions;
@@ -55,6 +56,10 @@ pub(super) use jobs::{
 pub(super) use line_edits::{
     apply_text_edits_input_schema, delete_line_range_input_schema, insert_at_line_input_schema,
     replace_line_range_input_schema,
+};
+pub(super) use lsp::{
+    document_symbols_input_schema, find_references_input_schema, goto_definition_input_schema,
+    lsp_status_input_schema,
 };
 pub(super) use patches::{apply_patch_checked_input_schema, apply_patch_input_schema};
 pub(super) use projects::{create_project_input_schema, register_project_input_schema};

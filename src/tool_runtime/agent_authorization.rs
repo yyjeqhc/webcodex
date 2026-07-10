@@ -70,11 +70,19 @@ impl ToolRuntime {
             }
         }
         if !supported {
-            return Err(ToolResult::err(format!(
+            let message = format!(
                 "agent client {} does not support {}",
                 client_id,
                 required.label()
-            )));
+            );
+            if matches!(required, AgentCapability::LspReadOnlyNavigation) {
+                return Err(ToolResult::err(format!(
+                    "{}: {}",
+                    crate::lsp_bridge::error_codes::AGENT_CAPABILITY_UNAVAILABLE,
+                    message
+                )));
+            }
+            return Err(ToolResult::err(message));
         }
         Ok(())
     }

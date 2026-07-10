@@ -2,8 +2,10 @@ use super::jobs::{ensure_dispatch_supported_locked, ensure_queue_capacity_locked
 use super::state::{PendingShellRequest, ShellClientRegistryInner};
 use super::validation::{validate_file_request, validate_id, validate_run_request};
 use super::{now_ts, ShellClientRegistry};
+use crate::lsp_bridge::{AgentLspPayload, AGENT_LSP_REQUEST_KIND};
 use crate::shell_protocol::{
     ShellAgentShellRequest, ShellFileOpRequest, ShellRunRequest, ShellRunResponse,
+    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
 };
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -208,6 +210,67 @@ impl ShellClientRegistry {
             requested_by,
             created_at: now_ts(),
             lsp: None,
+        };
+        let mut inner = self.inner.lock().await;
+        enqueue_pending_request_locked(
+            &mut inner,
+            &client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        notify_client_locked(&inner, &client_id);
+        Ok((request_id, rx))
+    }
+
+    /// Enqueue a typed read-only LSP navigation request. Never falls through
+    /// to shell execution: the agent dispatches exclusively on `kind = "lsp"`
+    /// with a structured `lsp` payload.
+    pub async fn enqueue_lsp(
+        &self,
+        client_id: String,
+        payload: AgentLspPayload,
+        requested_by: String,
+        timeout_secs: u64,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        validate_id(&client_id, "client_id")?;
+        // Capability gate before enqueue so old agents never receive unknown
+        // LSP kinds that could fall into shell fallback.
+        if !self
+            .client_supports(&client_id, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION)
+            .await?
+        {
+            return Err(format!(
+                "agent client {} does not support {}",
+                client_id, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION
+            ));
+        }
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.clone(),
+            kind: AGENT_LSP_REQUEST_KIND.to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            command: String::new(),
+            stdin: None,
+            timeout_secs: timeout_secs.max(1),
+            requested_by,
+            created_at: now_ts(),
+            lsp: Some(payload),
         };
         let mut inner = self.inner.lock().await;
         enqueue_pending_request_locked(

@@ -341,6 +341,11 @@ impl ToolRuntime {
             | ToolCall::JobTail { .. }) => self.dispatch_job_tool(call, auth).await,
 
             call @ ToolCall::WorkspaceHygieneCheck { .. } => self.dispatch_hygiene_tool(call).await,
+
+            call @ (ToolCall::LspStatus { .. }
+            | ToolCall::DocumentSymbols { .. }
+            | ToolCall::GotoDefinition { .. }
+            | ToolCall::FindReferences { .. }) => self.dispatch_lsp_tool(call).await,
         }
     }
 }

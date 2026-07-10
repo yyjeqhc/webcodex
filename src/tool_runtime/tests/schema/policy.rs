@@ -454,6 +454,26 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ("cargo_check", ToolRisk::JobRun, AgentCapability::Shell),
         ("cargo_test", ToolRisk::JobRun, AgentCapability::Shell),
         ("read_file", ToolRisk::ReadOnly, AgentCapability::FileRead),
+        (
+            "lsp_status",
+            ToolRisk::ReadOnly,
+            AgentCapability::LspReadOnlyNavigation,
+        ),
+        (
+            "document_symbols",
+            ToolRisk::ReadOnly,
+            AgentCapability::LspReadOnlyNavigation,
+        ),
+        (
+            "goto_definition",
+            ToolRisk::ReadOnly,
+            AgentCapability::LspReadOnlyNavigation,
+        ),
+        (
+            "find_references",
+            ToolRisk::ReadOnly,
+            AgentCapability::LspReadOnlyNavigation,
+        ),
         ("run_job", ToolRisk::JobRun, AgentCapability::AsyncJobs),
         (
             "project_overview",

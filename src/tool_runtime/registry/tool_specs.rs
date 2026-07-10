@@ -9,6 +9,7 @@ mod files;
 mod git;
 mod hygiene;
 mod jobs;
+mod lsp;
 mod sessions;
 mod testing;
 
@@ -49,6 +50,7 @@ fn tool_spec_declarations() -> Vec<ToolSpec> {
     declarations.extend(coding_tasks::tool_specs());
     declarations.extend(hygiene::tool_specs());
     declarations.extend(files::tool_specs());
+    declarations.extend(lsp::tool_specs());
     declarations.extend(git::tool_specs());
     declarations.extend(testing::tool_specs());
     declarations.extend(artifacts::tool_specs());

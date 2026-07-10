@@ -2001,7 +2001,7 @@ mod tests {
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
-                    lsp_read_only_navigation: false,
+                    lsp_read_only_navigation: true,
                 }),
                 projects: None,
                 agent_protocol_version: None,

@@ -1,0 +1,63 @@
+use super::AgentCapability::LspReadOnlyNavigation;
+use super::ToolVisibility::ModelVisible;
+use super::{def, ToolDefinition, TOOL_CATEGORY_LSP};
+use crate::tool_runtime::metadata::{
+    ToolPathHint::{None as NoPath, SinglePath},
+    ToolRisk::ReadOnly,
+    PROJECT_READ, TOOL_PROVIDER_AGENT,
+};
+
+pub(super) const DEFINITIONS: &[ToolDefinition] = &[
+    def(
+        "lsp_status",
+        ModelVisible,
+        TOOL_CATEGORY_LSP,
+        Some(LspReadOnlyNavigation),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        NoPath,
+        false,
+        false,
+    ),
+    def(
+        "document_symbols",
+        ModelVisible,
+        TOOL_CATEGORY_LSP,
+        Some(LspReadOnlyNavigation),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        SinglePath,
+        false,
+        false,
+    ),
+    def(
+        "goto_definition",
+        ModelVisible,
+        TOOL_CATEGORY_LSP,
+        Some(LspReadOnlyNavigation),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        SinglePath,
+        false,
+        false,
+    ),
+    def(
+        "find_references",
+        ModelVisible,
+        TOOL_CATEGORY_LSP,
+        Some(LspReadOnlyNavigation),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        SinglePath,
+        false,
+        false,
+    ),
+];

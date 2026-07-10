@@ -43,7 +43,9 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         runtime_tool_is_write_like, runtime_tool_requires_explicit_business_session,
         runtime_tool_requires_permission, runtime_tool_session_risk_class, tool_definitions,
     };
-    use AgentCapability::{AsyncJobs, FileRead, FileWrite, GitOrShell, OwnerOnly, Shell};
+    use AgentCapability::{
+        AsyncJobs, FileRead, FileWrite, GitOrShell, LspReadOnlyNavigation, OwnerOnly, Shell,
+    };
 
     let expected = [
         ExpectedToolPolicy::new(
@@ -441,6 +443,54 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             "current_session_fallback",
             false,
             Some(FileRead),
+        ),
+        ExpectedToolPolicy::new(
+            "lsp_status",
+            "lsp",
+            "read_only",
+            true,
+            false,
+            false,
+            false,
+            "current_session_fallback",
+            false,
+            Some(LspReadOnlyNavigation),
+        ),
+        ExpectedToolPolicy::new(
+            "document_symbols",
+            "lsp",
+            "read_only",
+            true,
+            false,
+            false,
+            false,
+            "current_session_fallback",
+            false,
+            Some(LspReadOnlyNavigation),
+        ),
+        ExpectedToolPolicy::new(
+            "goto_definition",
+            "lsp",
+            "read_only",
+            true,
+            false,
+            false,
+            false,
+            "current_session_fallback",
+            false,
+            Some(LspReadOnlyNavigation),
+        ),
+        ExpectedToolPolicy::new(
+            "find_references",
+            "lsp",
+            "read_only",
+            true,
+            false,
+            false,
+            false,
+            "current_session_fallback",
+            false,
+            Some(LspReadOnlyNavigation),
         ),
         ExpectedToolPolicy::new(
             "run_job",

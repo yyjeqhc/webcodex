@@ -6,6 +6,8 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 fn main() {
     if let Err(error) = run() {
@@ -57,6 +59,14 @@ fn run() -> io::Result<()> {
                 if scenario == "initialize_exit" {
                     return Ok(());
                 }
+                if scenario == "initialize_hang" {
+                    // Never answer initialize; keep the process alive so the
+                    // client cleanup path must kill/wait under the configured
+                    // shutdown budget.
+                    loop {
+                        thread::sleep(Duration::from_secs(60));
+                    }
+                }
                 if scenario == "interleaved" {
                     write_frame(
                         &mut writer,
@@ -85,6 +95,10 @@ fn run() -> io::Result<()> {
             }
             Some("initialized") => {}
             Some("shutdown") => {
+                if scenario == "shutdown_hang" {
+                    // Acknowledge nothing and never exit on its own.
+                    continue;
+                }
                 write_frame(
                     &mut writer,
                     &format!(
@@ -94,14 +108,37 @@ fn run() -> io::Result<()> {
                 )?;
             }
             Some("exit") => {
+                if scenario == "shutdown_hang" {
+                    continue;
+                }
                 if let Some(path) = exit_marker {
                     fs::write(path, b"exited")?;
                 }
                 return Ok(());
             }
+            Some("$/cancelRequest") => {
+                if let Some(marker) = &marker {
+                    append_marker(marker, &format!("cancel:{body}\n"))?;
+                }
+            }
             Some(method) => match scenario.as_str() {
-                "timeout" => {}
+                // Never answer business requests; keep the process alive.
+                "timeout" | "timeout_cancel" | "shutdown_hang" => {}
                 "malformed_json" => write_frame(&mut writer, "{not-json")?,
+                "malformed_alive_then_success" => {
+                    let starts = start_count(marker.as_deref());
+                    if starts <= 1 {
+                        // Malformed response while keeping the process alive so
+                        // the client reader crashes but try_wait still sees the
+                        // child as running.
+                        write_frame(&mut writer, "{not-json")?;
+                    } else {
+                        write_result(&mut writer, id, method)?;
+                    }
+                }
+                "malformed_alive_always" => {
+                    write_frame(&mut writer, "{not-json")?;
+                }
                 "invalid_length" => {
                     writer.write_all(b"Content-Length: invalid\r\n\r\n")?;
                     writer.flush()?;
@@ -148,6 +185,18 @@ fn run() -> io::Result<()> {
             }
         }
     }
+}
+
+fn start_count(marker: Option<&Path>) -> usize {
+    marker
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|contents| {
+            contents
+                .lines()
+                .filter(|line| line.starts_with("start:"))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 fn write_result(writer: &mut impl Write, id: Option<u64>, method: &str) -> io::Result<()> {

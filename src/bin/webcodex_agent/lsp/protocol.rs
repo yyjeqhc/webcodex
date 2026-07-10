@@ -3,11 +3,18 @@ use std::fmt;
 use std::io::{self, BufRead, Write};
 
 pub(super) const MAX_LSP_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+pub(super) const MAX_LSP_HEADER_LINE_BYTES: usize = 8 * 1024;
+pub(super) const MAX_LSP_HEADER_BYTES: usize = 32 * 1024;
+pub(super) const MAX_LSP_HEADER_COUNT: usize = 64;
 
 #[derive(Debug)]
 pub(super) enum FramingError {
     Io(io::Error),
     MalformedHeader(String),
+    NonUtf8Header,
+    HeaderLineTooLarge { length: usize, maximum: usize },
+    HeaderTooLarge { length: usize, maximum: usize },
+    TooManyHeaders { count: usize, maximum: usize },
     MissingContentLength,
     InvalidContentLength,
     MessageTooLarge { length: usize, maximum: usize },
@@ -18,6 +25,22 @@ impl fmt::Display for FramingError {
         match self {
             Self::Io(error) => write!(f, "LSP stream I/O failed: {error}"),
             Self::MalformedHeader(header) => write!(f, "malformed LSP header: {header}"),
+            Self::NonUtf8Header => f.write_str("LSP header is not valid UTF-8"),
+            Self::HeaderLineTooLarge { length, maximum } => {
+                write!(
+                    f,
+                    "LSP header line length {length} exceeds maximum {maximum}"
+                )
+            }
+            Self::HeaderTooLarge { length, maximum } => {
+                write!(
+                    f,
+                    "LSP header block length {length} exceeds maximum {maximum}"
+                )
+            }
+            Self::TooManyHeaders { count, maximum } => {
+                write!(f, "LSP header count {count} exceeds maximum {maximum}")
+            }
             Self::MissingContentLength => f.write_str("LSP message is missing Content-Length"),
             Self::InvalidContentLength => f.write_str("LSP Content-Length is invalid"),
             Self::MessageTooLarge { length, maximum } => {
@@ -53,19 +76,39 @@ pub(super) fn read_message(
     maximum: usize,
 ) -> Result<Value, FramingError> {
     let mut content_length = None;
+    let mut total_header_bytes = 0_usize;
+    let mut header_count = 0_usize;
     loop {
-        let mut line = String::new();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
+        let line = read_header_line(reader)?;
+        if line.is_empty() {
             return Err(FramingError::Io(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "LSP stdout closed",
             )));
         }
-        if line == "\r\n" || line == "\n" {
+
+        total_header_bytes = total_header_bytes.saturating_add(line.len());
+        if total_header_bytes > MAX_LSP_HEADER_BYTES {
+            return Err(FramingError::HeaderTooLarge {
+                length: total_header_bytes,
+                maximum: MAX_LSP_HEADER_BYTES,
+            });
+        }
+
+        if line == b"\r\n" || line == b"\n" {
             break;
         }
-        let trimmed = line.trim_end_matches(['\r', '\n']);
+
+        header_count = header_count.saturating_add(1);
+        if header_count > MAX_LSP_HEADER_COUNT {
+            return Err(FramingError::TooManyHeaders {
+                count: header_count,
+                maximum: MAX_LSP_HEADER_COUNT,
+            });
+        }
+
+        let text = std::str::from_utf8(&line).map_err(|_| FramingError::NonUtf8Header)?;
+        let trimmed = text.trim_end_matches(['\r', '\n']);
         let (name, value) = trimmed
             .split_once(':')
             .ok_or_else(|| FramingError::MalformedHeader(trimmed.to_string()))?;
@@ -95,6 +138,49 @@ pub(super) fn read_message(
             format!("malformed LSP JSON: {error}"),
         ))
     })
+}
+
+/// Read one header line (including the trailing newline) with a hard byte cap.
+///
+/// Returns an empty buffer only on clean EOF before any bytes were read.
+/// Exceeding [`MAX_LSP_HEADER_LINE_BYTES`] fails immediately without first
+/// buffering an unbounded line into a `String`.
+fn read_header_line(reader: &mut impl BufRead) -> Result<Vec<u8>, FramingError> {
+    let mut line = Vec::new();
+    loop {
+        let available = {
+            let buffer = reader.fill_buf().map_err(FramingError::Io)?;
+            if buffer.is_empty() {
+                return Ok(line);
+            }
+            if let Some(newline) = buffer.iter().position(|&byte| byte == b'\n') {
+                let take = newline + 1;
+                let next_len = line.len().saturating_add(take);
+                if next_len > MAX_LSP_HEADER_LINE_BYTES {
+                    return Err(FramingError::HeaderLineTooLarge {
+                        length: next_len,
+                        maximum: MAX_LSP_HEADER_LINE_BYTES,
+                    });
+                }
+                line.extend_from_slice(&buffer[..take]);
+                take
+            } else {
+                let next_len = line.len().saturating_add(buffer.len());
+                if next_len > MAX_LSP_HEADER_LINE_BYTES {
+                    return Err(FramingError::HeaderLineTooLarge {
+                        length: next_len,
+                        maximum: MAX_LSP_HEADER_LINE_BYTES,
+                    });
+                }
+                line.extend_from_slice(buffer);
+                buffer.len()
+            }
+        };
+        reader.consume(available);
+        if line.last() == Some(&b'\n') {
+            return Ok(line);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -203,5 +289,97 @@ mod tests {
                 maximum: 8
             })
         ));
+    }
+
+    #[test]
+    fn lsp_framing_rejects_oversized_header_line_without_buffering_unbounded() {
+        let mut bytes = Vec::new();
+        bytes.extend(b"X: ");
+        bytes.extend(std::iter::repeat_n(b'a', MAX_LSP_HEADER_LINE_BYTES));
+        bytes.extend(b"\r\n\r\n");
+        let mut reader = BufReader::with_capacity(64, Cursor::new(bytes));
+        assert!(matches!(
+            read_message(&mut reader, MAX_LSP_MESSAGE_BYTES),
+            Err(FramingError::HeaderLineTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn lsp_framing_rejects_header_block_over_total_byte_limit() {
+        // A few long headers (under the per-line cap) that together exceed the
+        // total header block limit without hitting the count limit first.
+        let mut bytes = Vec::new();
+        let payload = "y".repeat(6 * 1024);
+        for index in 0..6 {
+            let line = format!("X-{index}: {payload}\r\n");
+            assert!(line.len() <= MAX_LSP_HEADER_LINE_BYTES);
+            bytes.extend_from_slice(line.as_bytes());
+        }
+        assert!(bytes.len() > MAX_LSP_HEADER_BYTES);
+        bytes.extend_from_slice(b"Content-Length: 2\r\n\r\n{}");
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        assert!(matches!(
+            read_message(&mut reader, MAX_LSP_MESSAGE_BYTES),
+            Err(FramingError::HeaderTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn lsp_framing_rejects_too_many_header_lines() {
+        let mut bytes = Vec::new();
+        for index in 0..=MAX_LSP_HEADER_COUNT {
+            bytes.extend_from_slice(format!("X-{index}: 1\r\n").as_bytes());
+        }
+        bytes.extend_from_slice(b"Content-Length: 2\r\n\r\n{}");
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        assert!(matches!(
+            read_message(&mut reader, MAX_LSP_MESSAGE_BYTES),
+            Err(FramingError::TooManyHeaders { .. })
+        ));
+    }
+
+    #[test]
+    fn lsp_framing_rejects_non_utf8_header() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"Content-Length: 2\r\n");
+        bytes.extend_from_slice(b"X: \xff\xfe\r\n\r\n{}");
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        assert!(matches!(
+            read_message(&mut reader, MAX_LSP_MESSAGE_BYTES),
+            Err(FramingError::NonUtf8Header)
+        ));
+    }
+
+    #[test]
+    fn lsp_framing_accepts_header_line_at_max_length() {
+        // Content-Length is short; pad with a max-length secondary header line.
+        let mut pad = String::from("X: ");
+        // line includes trailing \r\n, so payload + "X: " + "\r\n" == MAX
+        let payload_len = MAX_LSP_HEADER_LINE_BYTES
+            .saturating_sub(3 /* "X: " */)
+            .saturating_sub(2 /* "\r\n" */);
+        pad.push_str(&"y".repeat(payload_len));
+        assert_eq!(pad.len() + 2, MAX_LSP_HEADER_LINE_BYTES);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"Content-Length: 2\r\n");
+        bytes.extend_from_slice(pad.as_bytes());
+        bytes.extend_from_slice(b"\r\n\r\n{}");
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        assert_eq!(
+            read_message(&mut reader, MAX_LSP_MESSAGE_BYTES).unwrap(),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn lsp_framing_accepts_lf_only_headers() {
+        let body = br#"{"jsonrpc":"2.0","id":1,"result":null}"#;
+        let mut bytes = format!("Content-Length: {}\n\n", body.len()).into_bytes();
+        bytes.extend_from_slice(body);
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        assert_eq!(
+            read_message(&mut reader, MAX_LSP_MESSAGE_BYTES).unwrap(),
+            json!({"jsonrpc":"2.0","id":1,"result":null})
+        );
     }
 }

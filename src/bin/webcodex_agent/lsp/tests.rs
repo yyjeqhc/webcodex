@@ -65,6 +65,15 @@ impl Fixture {
     }
 
     fn with_limits(scenario: &str, maximum: usize, idle_ttl: Duration) -> Self {
+        Self::with_config(scenario, maximum, idle_ttl, Duration::from_millis(300))
+    }
+
+    fn with_config(
+        scenario: &str,
+        maximum: usize,
+        idle_ttl: Duration,
+        shutdown_timeout: Duration,
+    ) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
         fs::create_dir(&root).unwrap();
@@ -82,7 +91,7 @@ impl Fixture {
             max_servers_per_agent: maximum,
             request_timeout: Duration::from_millis(300),
             initialize_timeout: Duration::from_secs(2),
-            shutdown_timeout: Duration::from_millis(300),
+            shutdown_timeout,
             idle_ttl,
         });
         Self {
@@ -101,6 +110,16 @@ impl Fixture {
             .lines()
             .filter(|line| line.starts_with("start:"))
             .count()
+    }
+
+    fn start_pids(&self) -> Vec<u32> {
+        fs::read_to_string(&self.marker)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.strip_prefix("start:"))
+            .filter_map(|rest| rest.split(':').next())
+            .filter_map(|pid| pid.parse().ok())
+            .collect()
     }
 }
 
@@ -283,6 +302,51 @@ fn lsp_request_timeout_removes_pending_request() {
 }
 
 #[test]
+fn lsp_request_timeout_sends_cancel_request() {
+    let fixture = Fixture::new("timeout_cancel");
+    let server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    // initialize used id=1; next business request is id=2.
+    let error = fixture
+        .supervisor
+        .request_with_timeout(
+            &fixture.root,
+            LspServerKind::RustAnalyzer,
+            "fake/timeout",
+            json!({}),
+            Duration::from_millis(40),
+        )
+        .unwrap_err();
+    assert!(matches!(error, LspError::RequestTimeout { .. }));
+    assert_eq!(server.pending_count(), 0);
+    assert!(wait_until(Duration::from_secs(1), || {
+        fs::read_to_string(&fixture.marker)
+            .unwrap_or_default()
+            .contains("cancel:")
+    }));
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    let cancel_line = marker
+        .lines()
+        .find(|line| line.starts_with("cancel:"))
+        .expect("cancelRequest should reach the fake server");
+    assert!(
+        cancel_line.contains(r#""method":"$/cancelRequest""#)
+            || cancel_line.contains(r#""method": "$/cancelRequest""#),
+        "cancel line: {cancel_line}"
+    );
+    // params.id must match the timed-out request id (2 after initialize=1).
+    assert!(
+        cancel_line.contains(r#""id":2"#) || cancel_line.contains(r#""id": 2"#),
+        "cancel line should reference request id 2: {cancel_line}"
+    );
+    assert_eq!(server.status(), LspServerStatus::Running);
+    // Late unknown responses must not corrupt pending state.
+    assert_eq!(server.pending_count(), 0);
+}
+
+#[test]
 fn lsp_pending_request_receives_server_exit_error() {
     let fixture = Fixture::new("crash_request");
     let server = fixture
@@ -330,6 +394,59 @@ fn lsp_supervisor_never_restarts_more_than_once_per_call() {
         "unexpected error: {error:?}"
     );
     assert_eq!(fixture.starts(), 2);
+}
+
+#[test]
+fn lsp_supervisor_restarts_malformed_alive_process_once_then_succeeds() {
+    let fixture = Fixture::new("malformed_alive_then_success");
+    let result = fixture
+        .supervisor
+        .request(
+            &fixture.root,
+            LspServerKind::RustAnalyzer,
+            "fake/echo",
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(result["method"], "fake/echo");
+    assert_eq!(fixture.starts(), 2);
+    // First process must have been reaped even though it stayed alive after
+    // emitting malformed JSON.
+    let pids = fixture.start_pids();
+    assert_eq!(pids.len(), 2);
+    assert!(wait_until(Duration::from_secs(2), || !process_exists(
+        pids[0]
+    )));
+    assert!(process_exists(pids[1]));
+}
+
+#[test]
+fn lsp_supervisor_malformed_alive_exhausts_restart_without_timeout() {
+    let fixture = Fixture::new("malformed_alive_always");
+    let started = Instant::now();
+    let error = fixture
+        .supervisor
+        .request(
+            &fixture.root,
+            LspServerKind::RustAnalyzer,
+            "fake/echo",
+            json!({}),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, LspError::RestartExhausted(_)),
+        "unexpected error: {error:?}"
+    );
+    assert_eq!(fixture.starts(), 2);
+    // Must not degrade into waiting full request timeouts for a dead reader.
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "restart path took too long: {:?}",
+        started.elapsed()
+    );
+    for pid in fixture.start_pids() {
+        assert!(wait_until(Duration::from_secs(2), || !process_exists(pid)));
+    }
 }
 
 #[test]
@@ -458,6 +575,117 @@ fn lsp_shutdown_and_drop_reap_the_child_process() {
 }
 
 #[test]
+fn lsp_shutdown_uses_single_deadline_against_hanging_server() {
+    // Shutdown timeout 200ms. Multiplied waits would approach 600–800ms+.
+    let shutdown_timeout = Duration::from_millis(200);
+    let fixture = Fixture::with_config(
+        "shutdown_hang",
+        4,
+        Duration::from_secs(60),
+        shutdown_timeout,
+    );
+    let server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    let pid = server.process_id();
+    // Keep a pending waiter so shutdown must fail_pending as well.
+    let pending = {
+        let server = Arc::clone(&server);
+        std::thread::spawn(move || server.request("fake/hang", json!({}), Duration::from_secs(5)))
+    };
+    assert!(wait_until(Duration::from_secs(1), || server
+        .pending_count()
+        > 0));
+
+    let started = Instant::now();
+    fixture.supervisor.shutdown();
+    let elapsed = started.elapsed();
+
+    // Single deadline + scheduling slack, far below 3–4× the configured timeout.
+    assert!(
+        elapsed < shutdown_timeout + Duration::from_millis(400),
+        "shutdown took {elapsed:?}, budget was {shutdown_timeout:?}"
+    );
+    assert!(
+        elapsed < shutdown_timeout.saturating_mul(3),
+        "shutdown looked like stacked timeouts: {elapsed:?}"
+    );
+    assert!(wait_until(Duration::from_secs(1), || !process_exists(pid)));
+    let pending_result = pending.join().unwrap();
+    assert!(
+        matches!(
+            pending_result,
+            Err(LspError::ServerExited) | Err(LspError::RequestTimeout { .. })
+        ),
+        "pending request should be woken: {pending_result:?}"
+    );
+}
+
+#[test]
+fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
+    let shutdown_timeout = Duration::from_millis(150);
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir(&root).unwrap();
+    let marker = temp.path().join("starts.marker");
+    let exit_marker = temp.path().join("exit.marker");
+    let fake = fake_server_binary();
+    let command = LspCommand::new(fake.path.clone())
+        .arg("initialize_hang")
+        .arg(marker.as_os_str())
+        .arg(exit_marker.as_os_str());
+    let supervisor = LspSupervisor::new(LspSupervisorConfig {
+        rust_analyzer: Some(command),
+        max_servers_per_project: 1,
+        max_servers_per_agent: 4,
+        request_timeout: Duration::from_millis(300),
+        initialize_timeout: Duration::from_millis(80),
+        shutdown_timeout,
+        idle_ttl: Duration::from_secs(60),
+    });
+
+    let started = Instant::now();
+    let error = supervisor
+        .request(&root, LspServerKind::RustAnalyzer, "fake/nope", json!({}))
+        .unwrap_err();
+    let elapsed = started.elapsed();
+    assert!(
+        matches!(
+            error,
+            LspError::RestartExhausted(_) | LspError::InitializeFailed(_)
+        ),
+        "unexpected error: {error:?}"
+    );
+    // Two attempts each: initialize_timeout + shutdown_timeout, plus slack.
+    // Must stay well below using the multi-second DEFAULT_SHUTDOWN_TIMEOUT.
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "initialize cleanup used an oversized budget: {elapsed:?}"
+    );
+    assert!(
+        elapsed < DEFAULT_SHUTDOWN_TIMEOUT.saturating_mul(2),
+        "cleanup appears to use DEFAULT_SHUTDOWN_TIMEOUT: {elapsed:?}"
+    );
+    let starts = fs::read_to_string(&marker)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.starts_with("start:"))
+        .count();
+    assert_eq!(starts, 2);
+    for line in fs::read_to_string(&marker).unwrap_or_default().lines() {
+        if let Some(rest) = line.strip_prefix("start:") {
+            if let Some(pid) = rest.split(':').next().and_then(|p| p.parse::<u32>().ok()) {
+                assert!(wait_until(Duration::from_secs(2), || !process_exists(pid)));
+            }
+        }
+    }
+    drop(supervisor);
+    drop(fake);
+    drop(temp);
+}
+
+#[test]
 fn lsp_idle_cleanup_is_explicit_and_bounded() {
     let fixture = Fixture::with_limits("normal", 4, Duration::ZERO);
     let server = fixture
@@ -468,6 +696,53 @@ fn lsp_idle_cleanup_is_explicit_and_bounded() {
     drop(server);
     assert_eq!(fixture.supervisor.cleanup_idle(), 1);
     assert!(wait_until(Duration::from_secs(1), || !process_exists(pid)));
+}
+
+#[test]
+fn lsp_idle_cleanup_skips_active_pending_requests() {
+    let fixture = Fixture::with_limits("timeout", 4, Duration::ZERO);
+    let server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    let pid = server.process_id();
+    let server_for_request = Arc::clone(&server);
+    let handle = std::thread::spawn(move || {
+        server_for_request.request("fake/timeout", json!({}), Duration::from_millis(250))
+    });
+    assert!(wait_until(Duration::from_secs(1), || server
+        .pending_count()
+        > 0));
+    assert_eq!(fixture.supervisor.cleanup_idle(), 0);
+    assert_eq!(fixture.supervisor.server_count_for_test(), 1);
+    let error = handle.join().unwrap().unwrap_err();
+    assert!(matches!(error, LspError::RequestTimeout { .. }));
+    assert_eq!(server.pending_count(), 0);
+    // After the request completes, idle TTL=0 allows cleanup.
+    assert_eq!(fixture.supervisor.cleanup_idle(), 1);
+    assert!(wait_until(Duration::from_secs(1), || !process_exists(pid)));
+    assert_eq!(fixture.supervisor.server_count_for_test(), 0);
+}
+
+#[test]
+fn lsp_idle_cleanup_reaps_crashed_alive_server_immediately() {
+    let fixture = Fixture::with_limits("malformed_alive_always", 4, Duration::from_secs(3600));
+    let server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    let pid = server.process_id();
+    let error = server
+        .request("fake/malformed", json!({}), Duration::from_secs(1))
+        .unwrap_err();
+    assert!(matches!(error, LspError::MalformedMessage(_)));
+    assert_eq!(server.status(), LspServerStatus::Crashed);
+    // Process may still be alive, but connection is unusable — cleanup must
+    // ignore the long idle TTL and free capacity immediately.
+    assert!(process_exists(pid));
+    assert_eq!(fixture.supervisor.cleanup_idle(), 1);
+    assert!(wait_until(Duration::from_secs(2), || !process_exists(pid)));
+    assert_eq!(fixture.supervisor.server_count_for_test(), 0);
 }
 
 #[test]

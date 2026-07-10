@@ -23,6 +23,7 @@ const DEFAULT_MAX_SERVERS_PER_AGENT: usize = 4;
 const MAX_STDERR_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)] // Commit 2 public tools will select server kinds.
 pub(crate) enum LspServerKind {
     RustAnalyzer,
 }
@@ -36,6 +37,7 @@ impl LspServerKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Retained for Commit 2 position-aware tools.
 pub(crate) enum PositionEncoding {
     Utf8,
     Utf16,
@@ -56,6 +58,7 @@ impl PositionEncoding {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Status surface for Commit 2 lsp_status / health checks.
 pub(crate) enum LspServerStatus {
     Available,
     Unavailable,
@@ -65,6 +68,7 @@ pub(crate) enum LspServerStatus {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // Error variants map 1:1 to future tool error envelopes.
 pub(crate) enum LspError {
     ServerUnavailable,
     SpawnFailed(String),
@@ -154,11 +158,13 @@ impl LspCommand {
         }
     }
 
+    #[allow(dead_code)] // Builder used by tests and Commit 2 custom command wiring.
     pub(crate) fn arg(mut self, value: impl Into<OsString>) -> Self {
         self.args.push(value.into());
         self
     }
 
+    #[allow(dead_code)] // Builder used by tests and Commit 2 custom command wiring.
     pub(crate) fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.env.push((key.into(), value.into()));
         self
@@ -256,6 +262,7 @@ impl LspSupervisor {
         }
     }
 
+    #[allow(dead_code)] // Commit 2 lsp_status / availability probes.
     pub(crate) fn availability(&self, kind: LspServerKind) -> LspServerStatus {
         if self
             .resolve_command(kind)
@@ -267,6 +274,7 @@ impl LspSupervisor {
         }
     }
 
+    #[allow(dead_code)] // Commit 2 runtime tools issue requests through this API.
     pub(crate) fn request(
         &self,
         validated_project_root: &Path,
@@ -283,6 +291,7 @@ impl LspSupervisor {
         )
     }
 
+    #[allow(dead_code)] // Commit 2 tools may override per-call timeouts.
     pub(crate) fn request_with_timeout(
         &self,
         validated_project_root: &Path,
@@ -314,9 +323,17 @@ impl LspSupervisor {
                     last_error = Some(error);
                 }
                 Err(error) if attempt == 1 && error.permits_restart() => {
+                    // Final attempt failed: do not leave a crashed-but-alive
+                    // child occupying capacity forever.
+                    self.evict_unusable(&key);
                     return Err(LspError::RestartExhausted(error.to_string()));
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    if !server.is_usable() {
+                        self.evict_unusable(&key);
+                    }
+                    return Err(error);
+                }
             }
         }
         Err(LspError::RestartExhausted(
@@ -326,6 +343,7 @@ impl LspSupervisor {
         ))
     }
 
+    #[allow(dead_code)] // Periodic idle reaping for long-lived agent processes.
     pub(crate) fn cleanup_idle(&self) -> usize {
         let now = Instant::now();
         let mut removed = Vec::new();
@@ -336,9 +354,11 @@ impl LspSupervisor {
                 .filter_map(|(key, slot)| {
                     let state = lock_unpoison(&slot.state);
                     match &*state {
+                        SlotState::Running(server) if !server.is_usable() => Some(key.clone()),
                         SlotState::Running(server)
-                            if now.saturating_duration_since(server.last_used())
-                                >= self.inner.config.idle_ttl =>
+                            if server.pending_count() == 0
+                                && now.saturating_duration_since(server.last_used())
+                                    >= self.inner.config.idle_ttl =>
                         {
                             Some(key.clone())
                         }
@@ -353,6 +373,7 @@ impl LspSupervisor {
             }
         }
         let count = removed.len();
+        // Never perform slow shutdown while holding the supervisor map lock.
         shutdown_slots(removed, self.inner.config.shutdown_timeout);
         count
     }
@@ -409,10 +430,12 @@ impl LspSupervisor {
                         waited = true;
                         state = wait_unpoison(&slot.ready, state);
                     }
-                    SlotState::Running(server) if server.is_alive() => {
+                    SlotState::Running(server) if server.is_usable() => {
                         return Ok(Arc::clone(server));
                     }
                     SlotState::Running(server) => {
+                        // Crashed/unhealthy connection (including alive child
+                        // without a working reader) must not be reused.
                         if !retry_failed {
                             return Err(LspError::ServerExited);
                         }
@@ -435,6 +458,8 @@ impl LspSupervisor {
 
         if should_start {
             if let Some(server) = stale_server {
+                // Reap the stale instance outside the slot lock. Even when the
+                // child is still alive after a reader crash, kill/wait it.
                 let _ = server.shutdown(self.inner.config.shutdown_timeout);
             }
             let result = self.start_server(key);
@@ -486,7 +511,34 @@ impl LspSupervisor {
         let command = self
             .resolve_command(key.kind)
             .ok_or(LspError::ServerUnavailable)?;
-        ServerInstance::start(key.clone(), command, self.inner.config.initialize_timeout)
+        ServerInstance::start(
+            key.clone(),
+            command,
+            self.inner.config.initialize_timeout,
+            self.inner.config.shutdown_timeout,
+        )
+    }
+
+    /// Remove and shut down a Running slot that is no longer usable. Does not
+    /// hold the supervisor map lock across the potentially slow shutdown.
+    fn evict_unusable(&self, key: &ProcessKey) {
+        let slot = {
+            let mut servers = lock_unpoison(&self.inner.servers);
+            let remove = servers.get(key).is_some_and(|slot| {
+                matches!(
+                    &*lock_unpoison(&slot.state),
+                    SlotState::Running(server) if !server.is_usable()
+                )
+            });
+            if remove {
+                servers.remove(key)
+            } else {
+                None
+            }
+        };
+        if let Some(slot) = slot {
+            shutdown_slots(vec![slot], self.inner.config.shutdown_timeout);
+        }
     }
 
     fn resolve_command(&self, kind: LspServerKind) -> Option<LspCommand> {
@@ -530,6 +582,11 @@ impl LspSupervisor {
             },
             false,
         )
+    }
+
+    #[cfg(test)]
+    fn server_count_for_test(&self) -> usize {
+        lock_unpoison(&self.inner.servers).len()
     }
 }
 
@@ -605,6 +662,10 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+fn remaining_until(deadline: Instant) -> Duration {
+    deadline.saturating_duration_since(Instant::now())
+}
+
 struct ConnectionState {
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, LspError>>>>,
     status: Mutex<LspServerStatus>,
@@ -623,6 +684,10 @@ impl ConnectionState {
         for sender in pending {
             let _ = sender.send(Err(error.clone()));
         }
+    }
+
+    fn status(&self) -> LspServerStatus {
+        *lock_unpoison(&self.status)
     }
 }
 
@@ -656,6 +721,7 @@ struct ServerInstance {
     next_id: AtomicU64,
     position_encoding: Mutex<PositionEncoding>,
     last_used: Mutex<Instant>,
+    #[allow(dead_code)] // Bounded capture retained for Commit 2 diagnostics/status.
     stderr: Arc<Mutex<BoundedStderr>>,
     reader_thread: Mutex<Option<JoinHandle<()>>>,
     stderr_thread: Mutex<Option<JoinHandle<()>>>,
@@ -667,6 +733,7 @@ impl ServerInstance {
         key: ProcessKey,
         command: LspCommand,
         initialize_timeout: Duration,
+        shutdown_timeout: Duration,
     ) -> Result<Arc<Self>, LspError> {
         let mut child = command.spawn(&key.project_root)?;
         let Some(stdin) = child.stdin.take() else {
@@ -747,7 +814,8 @@ impl ServerInstance {
         });
 
         if let Err(error) = server.initialize(initialize_timeout) {
-            let _ = server.shutdown(DEFAULT_SHUTDOWN_TIMEOUT);
+            // Use the configured shutdown budget, never a fixed default.
+            let _ = server.shutdown(shutdown_timeout);
             return Err(LspError::InitializeFailed(error.to_string()));
         }
         Ok(server)
@@ -788,14 +856,17 @@ impl ServerInstance {
         if self.shutdown_started.load(Ordering::SeqCst) {
             return Err(LspError::ServerExited);
         }
-        if !self.is_alive() {
+        if !self.is_usable() {
             return Err(LspError::ServerExited);
         }
         match self.request_raw(method, params, timeout) {
-            Err(LspError::RequestTimeout { .. })
-                if !self.is_alive()
-                    || *lock_unpoison(&self.connection.status) == LspServerStatus::Crashed =>
+            Err(LspError::RequestTimeout { method, timeout })
+                if !self.is_alive() || self.connection.status() == LspServerStatus::Crashed =>
             {
+                // Prefer an explicit exit/crash over a bare timeout when the
+                // connection is already known to be dead.
+                let _ = method;
+                let _ = timeout;
                 Err(LspError::ServerExited)
             }
             result => result,
@@ -808,7 +879,6 @@ impl ServerInstance {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, LspError> {
-        *lock_unpoison(&self.last_used) = Instant::now();
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (sender, receiver) = mpsc::channel();
         lock_unpoison(&self.connection.pending).insert(id, sender);
@@ -820,18 +890,49 @@ impl ServerInstance {
         });
         if let Err(error) = self.write(&message) {
             lock_unpoison(&self.connection.pending).remove(&id);
+            self.touch_last_used();
             return Err(error);
         }
-        match receiver.recv_timeout(timeout) {
+        let result = match receiver.recv_timeout(timeout) {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Remove before cancellation so a late response is ignored and
+                // cannot re-wake this wait or panic on a dropped sender.
                 lock_unpoison(&self.connection.pending).remove(&id);
+                self.send_cancel_request(id);
                 Err(LspError::RequestTimeout {
                     method: method.to_string(),
                     timeout,
                 })
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(LspError::ServerExited),
+        };
+        self.touch_last_used();
+        result
+    }
+
+    /// Best-effort `$/cancelRequest`. Failures must not replace the original
+    /// timeout error; callers still return `RequestTimeout`. Allowed during
+    /// shutdown so a hung `shutdown` request can still be cancelled without
+    /// re-entering `shutdown()` (this method never calls shutdown).
+    fn send_cancel_request(&self, id: u64) {
+        if self.connection.status() == LspServerStatus::Crashed {
+            return;
+        }
+        let message = json!({
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": { "id": id },
+        });
+        // Avoid self.write()'s error mapping path for the timeout return value;
+        // only mark the connection crashed when the writer is truly broken.
+        let write_result = {
+            let mut writer = lock_unpoison(&self.writer);
+            write_message(&mut *writer, &message)
+        };
+        if let Err(error) = write_result {
+            self.connection
+                .fail_pending(LspError::WriterFailed(error.to_string()));
         }
     }
 
@@ -852,6 +953,20 @@ impl ServerInstance {
         })
     }
 
+    /// True when the instance may safely serve ordinary requests.
+    ///
+    /// Requires: child still running, connection status `Running`, shutdown not
+    /// started. `Initializing` is never usable for ordinary callers.
+    fn is_usable(&self) -> bool {
+        if self.shutdown_started.load(Ordering::SeqCst) {
+            return false;
+        }
+        if self.connection.status() != LspServerStatus::Running {
+            return false;
+        }
+        self.is_alive()
+    }
+
     fn is_alive(&self) -> bool {
         let exited = match lock_unpoison(&self.child).try_wait() {
             Ok(Some(_)) => true,
@@ -864,51 +979,86 @@ impl ServerInstance {
         !exited
     }
 
+    fn process_running(&self) -> bool {
+        match lock_unpoison(&self.child).try_wait() {
+            Ok(None) => true,
+            Ok(Some(_)) | Err(_) => false,
+        }
+    }
+
     fn last_used(&self) -> Instant {
         *lock_unpoison(&self.last_used)
+    }
+
+    fn touch_last_used(&self) {
+        *lock_unpoison(&self.last_used) = Instant::now();
+    }
+
+    fn pending_count(&self) -> usize {
+        lock_unpoison(&self.connection.pending).len()
     }
 
     fn shutdown(&self, timeout: Duration) -> Result<(), LspError> {
         if self.shutdown_started.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
+        let deadline = Instant::now() + timeout;
         let mut graceful_error = None;
-        if self.is_alive() {
-            if let Err(error) = self.request_raw("shutdown", Value::Null, timeout) {
-                graceful_error = Some(error.to_string());
+
+        let status = self.connection.status();
+        let can_attempt_graceful = status == LspServerStatus::Running && self.process_running();
+
+        if can_attempt_graceful {
+            let remaining = remaining_until(deadline);
+            if !remaining.is_zero() {
+                if let Err(error) = self.request_raw("shutdown", Value::Null, remaining) {
+                    // Do not keep spending budget on a hung shutdown request
+                    // beyond the shared deadline (request_raw already waited).
+                    graceful_error = Some(error.to_string());
+                } else {
+                    let _ = self.notify("exit", Value::Null);
+                }
             }
-            let _ = self.notify("exit", Value::Null);
         }
 
-        let deadline = Instant::now() + timeout;
-        let mut exited = false;
-        while Instant::now() < deadline {
-            match lock_unpoison(&self.child).try_wait() {
-                Ok(Some(_)) => {
-                    exited = true;
-                    break;
-                }
-                Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(error) => {
-                    graceful_error = Some(error.to_string());
-                    break;
-                }
-            }
-        }
-        if !exited {
+        // If connection is crashed, reader already exited, or writer is dead:
+        // skip graceful wait and go straight to close/kill/wait.
+        if !self.reap_child(deadline) {
             let mut child = lock_unpoison(&self.child);
             let _ = child.kill();
-            child
-                .wait()
-                .map_err(|error| LspError::ShutdownFailed(error.to_string()))?;
+            if let Err(error) = child.wait() {
+                graceful_error = Some(error.to_string());
+            }
         }
+
         self.connection.fail_pending(LspError::ServerExited);
-        join_if_finished(&self.reader_thread, timeout);
-        join_if_finished(&self.stderr_thread, timeout);
+        // Closing the process pipes should unblock reader/stderr promptly.
+        join_thread_until(&self.reader_thread, deadline);
+        join_thread_until(&self.stderr_thread, deadline);
+
         if let Some(error) = graceful_error {
             return Err(LspError::ShutdownFailed(error));
         }
         Ok(())
+    }
+
+    /// Wait for the child to exit using the shared deadline. Returns true when
+    /// the process has been reaped (exited before the deadline).
+    fn reap_child(&self, deadline: Instant) -> bool {
+        while Instant::now() < deadline {
+            match lock_unpoison(&self.child).try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) => {
+                    let remaining = remaining_until(deadline);
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10).min(remaining));
+                }
+                Err(_) => return true,
+            }
+        }
+        matches!(lock_unpoison(&self.child).try_wait(), Ok(Some(_)) | Err(_))
     }
 
     #[cfg(test)]
@@ -918,12 +1068,7 @@ impl ServerInstance {
 
     #[cfg(test)]
     fn status(&self) -> LspServerStatus {
-        *lock_unpoison(&self.connection.status)
-    }
-
-    #[cfg(test)]
-    fn pending_count(&self) -> usize {
-        lock_unpoison(&self.connection.pending).len()
+        self.connection.status()
     }
 
     #[cfg(test)]
@@ -939,6 +1084,7 @@ impl ServerInstance {
 
 impl Drop for ServerInstance {
     fn drop(&mut self) {
+        // Must never panic. Uses the same single-deadline shutdown path.
         let _ = self.shutdown(DEFAULT_SHUTDOWN_TIMEOUT);
     }
 }
@@ -992,6 +1138,7 @@ fn handle_incoming_message(
         .ok_or_else(|| LspError::ProtocolError("response has no numeric id".to_string()))?;
     let sender = lock_unpoison(&connection.pending).remove(&id);
     let Some(sender) = sender else {
+        // Late response after timeout/cancel: ignore safely.
         return Ok(());
     };
     let result = if let Some(error) = message.get("error") {
@@ -1027,22 +1174,29 @@ fn framing_to_lsp_error(error: FramingError) -> LspError {
     }
 }
 
-fn join_if_finished(thread: &Mutex<Option<JoinHandle<()>>>, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+/// Join a helper thread using only the remaining budget of a shared deadline.
+///
+/// If the thread has not finished by the deadline the handle is left in place
+/// so a later `Drop` can retry; we never re-arm a full independent timeout.
+fn join_thread_until(thread: &Mutex<Option<JoinHandle<()>>>, deadline: Instant) {
     loop {
         let finished = lock_unpoison(thread)
             .as_ref()
             .map(JoinHandle::is_finished)
             .unwrap_or(true);
-        if finished || Instant::now() >= deadline {
+        if finished {
             break;
         }
-        thread::sleep(Duration::from_millis(5));
+        let remaining = remaining_until(deadline);
+        if remaining.is_zero() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5).min(remaining));
     }
     let handle = {
-        let mut handle = lock_unpoison(thread);
-        if handle.as_ref().is_some_and(JoinHandle::is_finished) {
-            handle.take()
+        let mut guard = lock_unpoison(thread);
+        if guard.as_ref().is_some_and(JoinHandle::is_finished) {
+            guard.take()
         } else {
             None
         }
@@ -1070,12 +1224,14 @@ fn wait_unpoison<'a, T>(condvar: &Condvar, guard: MutexGuard<'a, T>) -> MutexGua
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // URI classification for Commit 2 document tools.
 pub(crate) enum ProjectUriClassification {
     InsideProject(PathBuf),
     OutsideProject,
     Unsupported,
 }
 
+#[allow(dead_code)] // Commit 2 document URI validation.
 pub(crate) fn classify_uri_against_project_root(
     canonical_project_root: &Path,
     uri: &str,

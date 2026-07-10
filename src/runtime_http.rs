@@ -769,6 +769,45 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn http_start_coding_task_manifest_intent_survives_null_params_wrapper() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "start_coding_task",
+                "params": null,
+                "project": "agent:importer:demo",
+                "include_runtime_status": false,
+                "include_git": false,
+                "include_recent_commits": false,
+                "include_rules": false,
+                "include_tool_manifest": true,
+                "tool_manifest_intent": "audit",
+            }))
+            .send(&service)
+            .await;
+
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["output"]["tool_manifest"]["intent"], "audit");
+        assert_eq!(body["output"]["tool_manifest"]["filtered"], true);
+        assert!(
+            body["output"]["tool_manifest"]["returned_count"]
+                .as_u64()
+                .unwrap()
+                < body["output"]["tool_manifest"]["total_count"]
+                    .as_u64()
+                    .unwrap()
+        );
+    }
+
     #[test]
     fn extract_tool_call_params_precede_flattened_fields() {
         let (tool, params) = extract_tool_call(&json!({

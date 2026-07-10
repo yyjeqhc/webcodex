@@ -1054,6 +1054,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "include_recent_commits",
         "include_rules",
         "include_tool_manifest",
+        "tool_manifest_intent",
         "tool_manifest_categories",
         "tool_manifest_limit",
         "session_id",

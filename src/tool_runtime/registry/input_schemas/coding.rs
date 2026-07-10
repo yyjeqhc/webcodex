@@ -47,6 +47,10 @@ pub(crate) fn start_coding_task_input_schema() -> Value {
                 "type": "boolean",
                 "description": "Include compact tool_manifest output without full input/output schemas. Defaults to true."
             },
+            "tool_manifest_intent": {
+                "type": "string",
+                "description": "When include_tool_manifest=true, optionally apply the same coding, audit, exploration, release, or discovery intent profile as tool_manifest. Intent filtering runs before category intersection and limit. This shapes discovery output only and does not change session mode, guards, permissions, policy, execution, or verdicts."
+            },
             "tool_manifest_categories": {
                 "type": "array",
                 "items": { "type": "string" },

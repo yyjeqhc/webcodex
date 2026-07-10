@@ -1623,7 +1623,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_tools_list_exposes_finish_and_runtime_status_ux_flags() {
+    async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
         let runtime = test_runtime();
         let outcome = handle_mcp_request(
             &runtime,
@@ -1659,6 +1659,11 @@ mod tests {
                 .any(|field| field.as_str() == Some("include_workspace")),
             "include_workspace must not be required in MCP schema"
         );
+
+        let start_props = tool("start_coding_task")["inputSchema"]["properties"]
+            .as_object()
+            .expect("start_coding_task inputSchema properties");
+        assert_eq!(start_props["tool_manifest_intent"]["type"], "string");
 
         let runtime_props = tool("runtime_status")["inputSchema"]["properties"]
             .as_object()

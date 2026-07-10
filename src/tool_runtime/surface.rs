@@ -156,13 +156,13 @@ impl ToolRuntime {
     pub(crate) fn compact_tool_manifest_payload_bounded(
         &self,
         categories: Option<Vec<String>>,
+        intent: Option<String>,
         limit: Option<usize>,
-    ) -> Value {
-        if categories.is_none() && limit.is_none() {
-            return self.compact_tool_manifest_payload();
+    ) -> Result<Value, ToolResult> {
+        if categories.is_none() && intent.is_none() && limit.is_none() {
+            return Ok(self.compact_tool_manifest_payload());
         }
-        self.tool_manifest_payload_for_categories(categories, None, limit, true, true)
-            .expect("category-bounded tool_manifest payload without intent must succeed")
+        self.tool_manifest_payload_for_categories(categories, intent, limit, true, true)
     }
 
     fn tool_manifest_payload(

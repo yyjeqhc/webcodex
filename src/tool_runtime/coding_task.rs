@@ -48,6 +48,7 @@ impl ToolRuntime {
         include_recent_commits: Option<bool>,
         include_rules: Option<bool>,
         include_tool_manifest: Option<bool>,
+        tool_manifest_intent: Option<String>,
         tool_manifest_categories: Option<Vec<String>>,
         tool_manifest_limit: Option<usize>,
         bind_current: bool,
@@ -59,6 +60,18 @@ impl ToolRuntime {
         let include_recent_commits = include_recent_commits.unwrap_or(true);
         let include_rules = include_rules.unwrap_or(true);
         let include_tool_manifest = include_tool_manifest.unwrap_or(true);
+        let tool_manifest = if include_tool_manifest {
+            match self.compact_tool_manifest_payload_bounded(
+                tool_manifest_categories,
+                tool_manifest_intent,
+                tool_manifest_limit,
+            ) {
+                Ok(payload) => Some(payload),
+                Err(result) => return result,
+            }
+        } else {
+            None
+        };
 
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
@@ -185,11 +198,8 @@ impl ToolRuntime {
             "llm_summary": false,
             "warnings": warnings,
         });
-        if include_tool_manifest {
-            output["tool_manifest"] = self.compact_tool_manifest_payload_bounded(
-                tool_manifest_categories,
-                tool_manifest_limit,
-            );
+        if let Some(tool_manifest) = tool_manifest {
+            output["tool_manifest"] = tool_manifest;
         }
         output["startup_verdict"] = startup_verdict(
             &output,

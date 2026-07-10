@@ -1157,6 +1157,10 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to true and returns compact tool_manifest output without full schemas. Used only when `params` and `arguments` are absent."
                 },
+                "tool_manifest_intent": {
+                    "type": "string",
+                    "description": "Flattened start_coding_task compact manifest intent profile. Accepts the same coding, audit, exploration, release, and discovery values and aliases as tool_manifest; filtering affects only the returned manifest view. Used only when `params` and `arguments` are absent."
+                },
                 "tool_manifest_categories": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -3011,6 +3015,7 @@ mod tests {
             "compact_startup",
             "compact",
             "include_tool_manifest",
+            "tool_manifest_intent",
             "tool_manifest_categories",
             "tool_manifest_limit",
             "include_recommended_flows",
@@ -3028,6 +3033,7 @@ mod tests {
         assert_eq!(properties["compact_startup"]["type"], "boolean");
         assert_eq!(properties["compact"]["type"], "boolean");
         assert_eq!(properties["include_tool_manifest"]["type"], "boolean");
+        assert_eq!(properties["tool_manifest_intent"]["type"], "string");
         assert_eq!(properties["tool_manifest_categories"]["type"], "array");
         assert_eq!(properties["tool_manifest_limit"]["type"], "integer");
         assert_eq!(properties["include_recommended_flows"]["type"], "boolean");

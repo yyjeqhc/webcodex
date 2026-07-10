@@ -90,6 +90,8 @@ pub enum ToolCall {
         #[serde(default)]
         include_tool_manifest: Option<bool>,
         #[serde(default)]
+        tool_manifest_intent: Option<String>,
+        #[serde(default)]
         tool_manifest_categories: Option<Vec<String>>,
         #[serde(default)]
         tool_manifest_limit: Option<usize>,

@@ -106,7 +106,12 @@ fn discovery_output_schemas_cover_runtime_payload_keys() {
 
     let tool_manifest_spec = spec_named(&specs, "tool_manifest");
     let tool_manifest_payload = runtime
-        .compact_tool_manifest_payload_bounded(Some(vec![TOOL_CATEGORY_GIT.to_string()]), Some(2));
+        .compact_tool_manifest_payload_bounded(
+            Some(vec![TOOL_CATEGORY_GIT.to_string()]),
+            None,
+            Some(2),
+        )
+        .unwrap();
     assert_payload_keys_declared(
         "tool_manifest",
         &tool_manifest_payload,
@@ -137,10 +142,13 @@ fn tool_manifest_and_list_tools_limit_truncation_reports_limit_reason() {
         .unwrap()
         .contains("ResponseTooLarge"));
 
-    let manifest = runtime.compact_tool_manifest_payload_bounded(
-        Some(vec![TOOL_CATEGORY_SESSION.to_string()]),
-        Some(2),
-    );
+    let manifest = runtime
+        .compact_tool_manifest_payload_bounded(
+            Some(vec![TOOL_CATEGORY_SESSION.to_string()]),
+            None,
+            Some(2),
+        )
+        .unwrap();
     assert_eq!(manifest["truncated"], true);
     assert_eq!(manifest["truncation_reason"], "limit");
     assert_eq!(manifest["limit_applied"], true);
@@ -690,8 +698,9 @@ fn tool_manifest_category_filter_matches_tool_definition_categories() {
     );
 
     for (category, expected_tools) in expected_categories {
-        let manifest =
-            runtime.compact_tool_manifest_payload_bounded(Some(vec![category.clone()]), None);
+        let manifest = runtime
+            .compact_tool_manifest_payload_bounded(Some(vec![category.clone()]), None, None)
+            .unwrap();
         assert_eq!(manifest["filtered"], true);
         assert_eq!(manifest["category"].as_str(), Some(category.as_str()));
         assert_eq!(

@@ -93,6 +93,7 @@ pub(crate) const ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER: &[&str] = &[
     "include_recent_commits",
     "include_rules",
     "include_tool_manifest",
+    "tool_manifest_intent",
     "tool_manifest_categories",
     "tool_manifest_limit",
     "include_diff",

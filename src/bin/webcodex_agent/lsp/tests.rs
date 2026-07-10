@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -525,6 +525,130 @@ fn lsp_position_encoding_uses_server_capability_or_utf16_default() {
             .unwrap();
         assert_eq!(server.position_encoding(), expected, "scenario={scenario}");
     }
+}
+
+#[test]
+fn lsp_initialize_uses_constrained_rust_analyzer_profile() {
+    let fixture = Fixture::new("normal");
+    let _server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    let initialize_line = marker
+        .lines()
+        .find(|line| line.starts_with("initialize:"))
+        .expect("fake server should record the initialize request body");
+    let body_json = initialize_line
+        .strip_prefix("initialize:")
+        .expect("initialize: prefix");
+    let body: serde_json::Value =
+        serde_json::from_str(body_json).expect("initialize body must be valid JSON");
+    assert_eq!(body["method"], "initialize");
+
+    let params = body
+        .get("params")
+        .expect("initialize request must include params");
+    let options = params
+        .get("initializationOptions")
+        .expect("initializationOptions must be present for the constrained profile");
+
+    // Fail if any safety field is removed, restored to defaults, or nested wrong.
+    assert_eq!(
+        options.pointer("/cargo/buildScripts/enable"),
+        Some(&json!(false)),
+        "cargo.buildScripts.enable must be false: {options}"
+    );
+    assert_eq!(
+        options.pointer("/cargo/noDeps"),
+        Some(&json!(true)),
+        "cargo.noDeps must be true: {options}"
+    );
+    assert_eq!(
+        options.pointer("/procMacro/enable"),
+        Some(&json!(false)),
+        "procMacro.enable must be false: {options}"
+    );
+    assert_eq!(
+        options.get("checkOnSave"),
+        Some(&json!(false)),
+        "checkOnSave must be false: {options}"
+    );
+    assert_eq!(
+        options.pointer("/files/watcher"),
+        Some(&json!("server")),
+        "files.watcher must be \"server\": {options}"
+    );
+    assert_eq!(
+        options.pointer("/cachePriming/enable"),
+        Some(&json!(false)),
+        "cachePriming.enable must be false: {options}"
+    );
+
+    let canonical = fs::canonicalize(&fixture.root).unwrap();
+    let expected_root_uri = Url::from_directory_path(&canonical).unwrap().to_string();
+    assert_eq!(
+        params.get("rootUri").and_then(Value::as_str),
+        Some(expected_root_uri.as_str()),
+        "rootUri must be the canonical project root"
+    );
+
+    let encodings = params
+        .pointer("/capabilities/general/positionEncodings")
+        .and_then(Value::as_array)
+        .expect("positionEncodings capability must be present");
+    let encoding_strings: Vec<&str> = encodings.iter().filter_map(Value::as_str).collect();
+    assert!(
+        encoding_strings.contains(&"utf-8")
+            && encoding_strings.contains(&"utf-16")
+            && encoding_strings.contains(&"utf-32"),
+        "positionEncodings must include utf-8, utf-16, and utf-32: {encodings:?}"
+    );
+}
+
+#[test]
+fn lsp_crashed_connection_reaps_immediately_without_full_shutdown_deadline() {
+    // Crashed-but-alive child must not wait the full shutdown timeout before
+    // kill/wait. Use a deliberately large budget so the difference is obvious.
+    let shutdown_timeout = Duration::from_secs(1);
+    let fixture = Fixture::with_config(
+        "malformed_alive_always",
+        4,
+        Duration::from_secs(3600),
+        shutdown_timeout,
+    );
+    let server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    let pid = server.process_id();
+    let error = server
+        .request("fake/malformed", json!({}), Duration::from_secs(1))
+        .unwrap_err();
+    assert!(matches!(error, LspError::MalformedMessage(_)));
+    assert_eq!(server.status(), LspServerStatus::Crashed);
+    assert!(
+        process_exists(pid),
+        "precondition: child stays alive after malformed response"
+    );
+
+    let started = Instant::now();
+    // cleanup_idle reaps unusable Running slots via the shared shutdown path.
+    assert_eq!(fixture.supervisor.cleanup_idle(), 1);
+    let elapsed = started.elapsed();
+
+    // configured timeout = 1s; expected completion well under half that budget
+    // with normal scheduling tolerance (not a tight flaky ms boundary).
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "crashed connection reap took {elapsed:?}, expected well under {shutdown_timeout:?}"
+    );
+    assert!(
+        elapsed < shutdown_timeout,
+        "crashed connection must not consume the full shutdown deadline: {elapsed:?}"
+    );
+    assert!(wait_until(Duration::from_secs(2), || !process_exists(pid)));
+    assert_eq!(fixture.supervisor.server_count_for_test(), 0);
 }
 
 #[test]

@@ -666,6 +666,47 @@ fn remaining_until(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
 }
 
+/// Constrained read-only rust-analyzer profile for WebCodex v1 semantic navigation.
+///
+/// WebCodex first-version LSP tools are read-only semantic navigation
+/// (document symbols, goto definition, find references). Starting the language
+/// server must not implicitly execute repository `build.rs` scripts, load or
+/// execute proc macros, or run Cargo check. This is **not** a full OS sandbox;
+/// it is a constrained read-only rust-analyzer profile.
+///
+/// Safety choices encoded here:
+/// - `cargo.buildScripts.enable=false` / `procMacro.enable=false` / `checkOnSave=false`
+///   prevent code execution and write-side Cargo check during analysis.
+/// - `cargo.noDeps=true` is a v1 safety and network boundary: do not fetch or
+///   analyze external dependencies automatically.
+/// - `files.watcher=server` because the client does not yet implement
+///   watched-files registration or change notifications.
+/// - `cachePriming.enable=false` avoids unnecessary background priming work.
+///
+/// When changing `initializationOptions`, update the security regression test
+/// `lsp_initialize_uses_constrained_rust_analyzer_profile` in lockstep. Do not
+/// allow environment variables to override these v1 safety fields.
+fn rust_analyzer_read_only_initialization_options() -> Value {
+    json!({
+        "cargo": {
+            "buildScripts": {
+                "enable": false
+            },
+            "noDeps": true
+        },
+        "procMacro": {
+            "enable": false
+        },
+        "checkOnSave": false,
+        "files": {
+            "watcher": "server"
+        },
+        "cachePriming": {
+            "enable": false
+        }
+    })
+}
+
 struct ConnectionState {
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, LspError>>>>,
     status: Mutex<LspServerStatus>,
@@ -825,12 +866,18 @@ impl ServerInstance {
         let root_uri = Url::from_directory_path(&self.key.project_root).map_err(|_| {
             LspError::InitializeFailed("project root is not a file URI".to_string())
         })?;
+        // WebCodex v1 LSP tools are read-only semantic navigation. Starting the
+        // language server must not implicitly execute repository build scripts,
+        // proc macros, or Cargo check. See
+        // `rust_analyzer_read_only_initialization_options` for the constrained
+        // profile and the security regression tests that pin these fields.
         let result = self.request_raw(
             "initialize",
             json!({
                 "processId": std::process::id(),
                 "clientInfo": {"name": "WebCodex agent"},
                 "rootUri": root_uri.to_string(),
+                "initializationOptions": rust_analyzer_read_only_initialization_options(),
                 "capabilities": {
                     "general": {
                         "positionEncodings": ["utf-8", "utf-16", "utf-32"]
@@ -882,6 +929,9 @@ impl ServerInstance {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (sender, receiver) = mpsc::channel();
         lock_unpoison(&self.connection.pending).insert(id, sender);
+        // Reflect request start (pending registration) so idle cleanup does not
+        // race a just-started call while pending_count is still catching up.
+        self.touch_last_used();
         let message = json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -907,6 +957,7 @@ impl ServerInstance {
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(LspError::ServerExited),
         };
+        // Reflect request completion, failure, or timeout.
         self.touch_last_used();
         result
     }
@@ -1002,6 +1053,7 @@ impl ServerInstance {
         if self.shutdown_started.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
+        // One shared deadline for the entire shutdown path (no stacked waits).
         let deadline = Instant::now() + timeout;
         let mut graceful_error = None;
 
@@ -1009,6 +1061,8 @@ impl ServerInstance {
         let can_attempt_graceful = status == LspServerStatus::Running && self.process_running();
 
         if can_attempt_graceful {
+            // Healthy Running connection: request shutdown, then exit, then wait
+            // for natural exit under the remaining budget before kill/wait.
             let remaining = remaining_until(deadline);
             if !remaining.is_zero() {
                 if let Err(error) = self.request_raw("shutdown", Value::Null, remaining) {
@@ -1019,15 +1073,17 @@ impl ServerInstance {
                     let _ = self.notify("exit", Value::Null);
                 }
             }
-        }
-
-        // If connection is crashed, reader already exited, or writer is dead:
-        // skip graceful wait and go straight to close/kill/wait.
-        if !self.reap_child(deadline) {
-            let mut child = lock_unpoison(&self.child);
-            let _ = child.kill();
-            if let Err(error) = child.wait() {
-                graceful_error = Some(error.to_string());
+            if !self.reap_child(deadline) {
+                if let Err(error) = self.kill_and_wait_child() {
+                    graceful_error = Some(error);
+                }
+            }
+        } else {
+            // Crashed, initializing-failure, writer-failure, or other unusable
+            // state: never wait the full deadline for a natural exit. Kill
+            // immediately, wait to reap (no zombies), then join threads below.
+            if let Err(error) = self.kill_and_wait_child() {
+                graceful_error = Some(error);
             }
         }
 
@@ -1040,6 +1096,19 @@ impl ServerInstance {
             return Err(LspError::ShutdownFailed(error));
         }
         Ok(())
+    }
+
+    /// Kill the child if still running and always wait so no zombie remains.
+    fn kill_and_wait_child(&self) -> Result<(), String> {
+        let mut child = lock_unpoison(&self.child);
+        match child.try_wait() {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => {
+                let _ = child.kill();
+                child.wait().map(|_| ()).map_err(|error| error.to_string())
+            }
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     /// Wait for the child to exit using the shared deadline. Returns true when

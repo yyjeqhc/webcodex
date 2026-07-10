@@ -3,6 +3,7 @@ pub(crate) mod checkpoints;
 pub(crate) mod config;
 pub(super) mod dispatch;
 pub(crate) mod files;
+pub(crate) mod lsp;
 pub(crate) mod output;
 pub(crate) mod patches;
 pub(crate) mod projects;

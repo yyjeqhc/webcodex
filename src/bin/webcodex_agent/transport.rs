@@ -1,4 +1,5 @@
 use super::config::{max_concurrent_jobs, projects_dir, AgentConfig, QuicClientConfig};
+use super::lsp::LspSupervisor;
 use super::projects::AgentProjectCache;
 use crate::agent_init::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 use crate::shell_protocol::{
@@ -47,6 +48,22 @@ const JOB_SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 /// Granularity for signal-aware sleeps in the blocking polling loop.
 const POLLING_SHUTDOWN_SLEEP_SLICE: Duration = Duration::from_millis(50);
+
+struct AgentRuntimeState {
+    lsp: LspSupervisor,
+}
+
+impl AgentRuntimeState {
+    fn new() -> Self {
+        Self {
+            lsp: LspSupervisor::default(),
+        }
+    }
+
+    fn shutdown(&self) {
+        self.lsp.shutdown();
+    }
+}
 
 async fn stop_jobs_for_shutdown(jobs: &JobManager, poll_interval_ms: u64) {
     jobs.stop_all();
@@ -455,12 +472,18 @@ pub(crate) fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
         .filter(|s| !s.is_empty())
         .unwrap_or(TRANSPORT_WEBSOCKET)
         .to_string();
-    match transport.as_str() {
+    // The LSP supervisor belongs to the agent process rather than any server
+    // transport session. Public LSP dispatch is intentionally added later;
+    // constructing it here establishes the production lifecycle boundary now.
+    let runtime = AgentRuntimeState::new();
+    let result = match transport.as_str() {
         TRANSPORT_WEBSOCKET => run_websocket_agent(cfg, once, &agent_instance_id),
         TRANSPORT_QUIC => run_quic_agent(cfg, once, &agent_instance_id),
         TRANSPORT_AUTO => run_auto_agent(cfg, once, &agent_instance_id),
         _ => run_polling_agent(cfg, once, &agent_instance_id),
-    }
+    };
+    runtime.shutdown();
+    result
 }
 
 pub(crate) fn effective_transport(cfg: &AgentConfig) -> &str {

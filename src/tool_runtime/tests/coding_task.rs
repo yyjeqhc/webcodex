@@ -1569,7 +1569,7 @@ async fn finish_coding_task_summary_only_passes_with_resolved_historical_validat
 }
 
 #[tokio::test]
-async fn finish_coding_task_summary_only_keeps_resolved_unexpected_cargo_fmt_failure_blocking() {
+async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_fmt_failure() {
     let fixture = finish_summary_fixture("coding-finish-resolved-fmt").await;
 
     record_coding_task_tool_event(
@@ -1595,9 +1595,18 @@ async fn finish_coding_task_summary_only_keeps_resolved_unexpected_cargo_fmt_fai
     let result = finish_coding_task_summary_only_with_agent(
         &fixture.runtime,
         fixture.client_id,
+        fixture.project.clone(),
+        fixture.session_id.clone(),
+        fixture.auth.clone(),
+    )
+    .await;
+    let full = finish_coding_task_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
         fixture.project,
         fixture.session_id,
         fixture.auth,
+        false,
     )
     .await;
 
@@ -1617,16 +1626,136 @@ async fn finish_coding_task_summary_only_keeps_resolved_unexpected_cargo_fmt_fai
     );
     let verdict = &result.output["finish_verdict"];
     assert_workflow_verdict_shape(verdict);
-    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
     assert_eq!(
         result.output["evidence_history"]["status"],
         "mixed_resolved"
     );
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
-    assert_eq!(verdict["status"], "fail");
-    assert_eq!(verdict["blocking"], true);
+    assert_eq!(verdict["status"], "pass");
+    assert_eq!(verdict["blocking"], false);
     assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
-    assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+    assert_reason_list_not_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+    assert_action_list_not_contains(
+        &result.output["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+    assert_action_list_not_contains(
+        &verdict["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+    assert_eq!(full.output["task_outcome"], result.output["task_outcome"]);
+    assert_eq!(full.output["verdict"], result.output["verdict"]);
+    assert_eq!(
+        full.output["suggested_next_actions"],
+        result.output["suggested_next_actions"]
+    );
+}
+
+#[tokio::test]
+async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_check_failure() {
+    let fixture = finish_summary_fixture("coding-finish-resolved-check").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        false,
+        json!({
+            "exit_code": 101,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["resolved"],
+        true
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(
+        result.output["evidence_history"]["status"],
+        "mixed_resolved"
+    );
+    assert_eq!(result.output["evidence_integrity"]["status"], "clean");
+    assert_eq!(result.output["verdict"]["status"], "pass");
+    assert_eq!(result.output["verdict"]["blocking"], false);
+    assert_reason_list_not_contains(
+        &result.output["verdict"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+}
+
+#[tokio::test]
+async fn finish_coding_task_summary_only_keeps_cargo_fmt_failure_blocking_when_only_cargo_test_passes(
+) {
+    let fixture = finish_summary_fixture("coding-finish-cross-tool-validation").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        false,
+        json!({
+            "exit_code": 1,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_test",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["resolved"],
+        true
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["blocking"], true);
+    assert_reason_list_contains(
+        &result.output["verdict"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
 }
 
 #[tokio::test]
@@ -1702,6 +1831,79 @@ async fn finish_coding_task_summary_only_warns_for_cargo_test_zero_tests_success
 }
 
 #[tokio::test]
+async fn finish_coding_task_summary_only_keeps_cargo_test_failure_blocking_after_zero_tests_success(
+) {
+    let fixture = finish_summary_fixture("coding-finish-zero-tests-does-not-resolve").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_test",
+        json!({"project": fixture.project.clone()}),
+        false,
+        json!({
+            "exit_code": 101,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_test",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\n\n\
+                test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["validation"]["cargo_test_zero_tests_run"],
+        true
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["blocking"], true);
+    assert_reason_list_contains(
+        &result.output["verdict"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+    assert_action_list_contains(
+        &result.output["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+    assert_action_list_contains(
+        &result.output["verdict"]["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+    assert_reason_list_contains(
+        &result.output["verdict"],
+        "warning_reasons",
+        "cargo_test_zero_tests",
+    );
+}
+
+#[tokio::test]
 async fn finish_coding_task_summary_only_blocks_unresolved_cargo_fmt_failure() {
     let fixture = finish_summary_fixture("coding-finish-unresolved-fmt").await;
 
@@ -1741,6 +1943,10 @@ async fn finish_coding_task_summary_only_blocks_unresolved_cargo_fmt_failure() {
     assert_eq!(verdict["status"], "fail");
     assert_eq!(verdict["blocking"], true);
     assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+    assert_action_list_contains(
+        &result.output["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
 }
 
 #[tokio::test]
@@ -2160,6 +2366,28 @@ fn assert_verdict_actions_mirrored_at_top_level(output: &Value) {
     }
 }
 
+fn assert_action_list_contains(actions: &Value, action: &str) {
+    assert!(
+        actions
+            .as_array()
+            .expect("suggested_next_actions array")
+            .iter()
+            .any(|candidate| candidate.as_str() == Some(action)),
+        "suggested_next_actions should contain {action}: {actions}"
+    );
+}
+
+fn assert_action_list_not_contains(actions: &Value, action: &str) {
+    assert!(
+        !actions
+            .as_array()
+            .expect("suggested_next_actions array")
+            .iter()
+            .any(|candidate| candidate.as_str() == Some(action)),
+        "suggested_next_actions should not contain {action}: {actions}"
+    );
+}
+
 fn assert_compact_verdict_safe(value: &Value, context: &str) {
     let serialized = serde_json::to_string(value).unwrap();
     for forbidden in [
@@ -2291,6 +2519,17 @@ async fn finish_coding_task_summary_only_with_agent(
     session_id: String,
     auth: AuthContext,
 ) -> ToolResult {
+    finish_coding_task_with_agent(runtime, client_id, project, session_id, auth, true).await
+}
+
+async fn finish_coding_task_with_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    session_id: String,
+    auth: AuthContext,
+    summary_only: bool,
+) -> ToolResult {
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -2301,7 +2540,7 @@ async fn finish_coding_task_summary_only_with_agent(
                     ToolCall::FinishCodingTask {
                         project,
                         session_id,
-                        summary_only: true,
+                        summary_only,
                         include_diff: Some(false),
                         include_workspace: None,
                         include_hygiene: Some(true),

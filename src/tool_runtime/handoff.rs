@@ -16,7 +16,10 @@ use super::permissions::permission_summary_from_events;
 use super::session_context::{
     session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
 };
-use super::sessions::{tool_failure_summary_from_events, SessionEvent, SessionSummary};
+use super::sessions::{
+    tool_failure_summary_from_events, SessionEvent, SessionSummary,
+    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
+};
 use super::sessions::{SessionDiscussionCounts, SessionDiscussionSummary, SessionMessage};
 use super::tool_result::ToolResult;
 use super::validation_events::validation_summary_for_session;
@@ -231,10 +234,31 @@ impl ToolRuntime {
             output["validation"] = validation_summary;
         }
 
-        // --- bounded suggested next actions ---
-        output["suggested_next_actions"] = json!(handoff_suggested_next_actions(&output));
+        let workspace_checked = output.get("workspace").is_some();
+        let resolved_unexpected_validation_failures = resolved_unexpected_validation_failure_count(
+            &summary.events,
+            output.get("validation").unwrap_or(&Value::Null),
+            workspace_checked,
+            output
+                .get("workspace")
+                .and_then(|workspace| workspace.get("clean"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            true,
+            output
+                .get("jobs")
+                .and_then(|jobs| jobs.get("blocking_active_count"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        );
 
-        let compact = compact_handoff_output(&output);
+        // --- bounded suggested next actions ---
+        output["suggested_next_actions"] = json!(handoff_suggested_next_actions(
+            &output,
+            resolved_unexpected_validation_failures,
+        ));
+
+        let compact = compact_handoff_output(&output, resolved_unexpected_validation_failures);
         if summary_only {
             return ToolResult::ok(compact);
         }
@@ -464,7 +488,7 @@ fn output_recent(tool_failures: &Value, key: &str) -> Value {
     tool_failures.get(key).cloned().unwrap_or_else(|| json!([]))
 }
 
-fn compact_handoff_output(output: &Value) -> Value {
+fn compact_handoff_output(output: &Value, resolved_unexpected_validation_failures: usize) -> Value {
     let workspace_checked = output.get("workspace").is_some();
     let workspace_clean = output
         .get("workspace")
@@ -485,7 +509,12 @@ fn compact_handoff_output(output: &Value) -> Value {
         "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });
-    apply_compact_workflow_outcomes(&mut compact, workspace_checked, None);
+    apply_compact_workflow_outcomes(
+        &mut compact,
+        workspace_checked,
+        None,
+        resolved_unexpected_validation_failures,
+    );
     compact
 }
 
@@ -687,8 +716,14 @@ pub(crate) fn apply_compact_workflow_outcomes(
     output: &mut Value,
     workspace_checked: bool,
     hygiene_checked: Option<bool>,
+    resolved_unexpected_validation_failures: usize,
 ) {
-    let outcomes = compact_workflow_outcomes(output, workspace_checked, hygiene_checked);
+    let outcomes = compact_workflow_outcomes(
+        output,
+        workspace_checked,
+        hygiene_checked,
+        resolved_unexpected_validation_failures,
+    );
     install_compact_workflow_outcomes(output, outcomes);
 }
 
@@ -696,6 +731,7 @@ fn compact_workflow_outcomes(
     output: &Value,
     workspace_checked: bool,
     hygiene_checked: Option<bool>,
+    resolved_unexpected_validation_failures: usize,
 ) -> Value {
     let mut blocking_reasons: Vec<&'static str> = Vec::new();
     let mut warning_reasons: Vec<&'static str> = Vec::new();
@@ -755,7 +791,9 @@ fn compact_workflow_outcomes(
     let unexpected_count = count_field(tool_failures, "unexpected_count");
     let expectation_mismatch_count = count_field(tool_failures, "expectation_mismatch_count");
     let unexpected_success_count = count_field(tool_failures, "unexpected_success_count");
-    if unexpected_count > 0 {
+    if unresolved_unexpected_failure_count(tool_failures, resolved_unexpected_validation_failures)
+        > 0
+    {
         push_unique(&mut blocking_reasons, "unexpected_tool_failures");
         push_unique_action(
             &mut actions,
@@ -922,6 +960,78 @@ fn compact_workflow_outcomes(
     })
 }
 
+pub(crate) fn resolved_unexpected_validation_failure_count(
+    events: &[SessionEvent],
+    validation: &Value,
+    workspace_checked: bool,
+    workspace_clean: bool,
+    hygiene_clean: bool,
+    blocking_active_job_count: u64,
+) -> usize {
+    if !workspace_checked
+        || !workspace_clean
+        || !hygiene_clean
+        || blocking_active_job_count > 0
+        || !validation_historical_failures_resolved(validation)
+    {
+        return 0;
+    }
+
+    events
+        .iter()
+        .enumerate()
+        .filter(|(index, event)| {
+            is_resolvable_unexpected_validation_failure(event)
+                && events[index + 1..].iter().any(|later| {
+                    later.kind == "tool_call_finished"
+                        && later.session_id == event.session_id
+                        && later.tool_name == event.tool_name
+                        && later.status.as_deref() == Some("succeeded")
+                        && !cargo_test_zero_tests_success(later)
+                })
+        })
+        .count()
+}
+
+pub(crate) fn unresolved_unexpected_failure_count(
+    tool_failures: &Value,
+    resolved_unexpected_validation_failures: usize,
+) -> u64 {
+    count_field(tool_failures, "unexpected_count")
+        .saturating_sub(resolved_unexpected_validation_failures as u64)
+}
+
+fn cargo_test_zero_tests_success(event: &SessionEvent) -> bool {
+    event.tool_name == "cargo_test"
+        && event.status.as_deref() == Some("succeeded")
+        && event
+            .validation_output_summary
+            .as_ref()
+            .and_then(|summary| summary.get("zero_tests_run"))
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+fn is_resolvable_unexpected_validation_failure(event: &SessionEvent) -> bool {
+    matches!(
+        event.tool_name.as_str(),
+        "cargo_fmt" | "cargo_check" | "cargo_test"
+    ) && event.kind == "tool_call_finished"
+        && event.status.as_deref() == Some("failed")
+        && event.failure_kind.as_deref() == Some("validation_failed")
+        && event
+            .failure_expectation_result
+            .as_deref()
+            .unwrap_or_else(|| {
+                if event.status.as_deref() == Some("failed") {
+                    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
+                } else {
+                    "none"
+                }
+            })
+            == TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
+}
+
 fn install_compact_workflow_outcomes(target: &mut Value, outcomes: Value) {
     for field in [
         "task_outcome",
@@ -986,7 +1096,10 @@ fn push_unique_action(actions: &mut Vec<String>, action: &str) {
 }
 
 /// Build a bounded list of suggested next actions based on the handoff state.
-fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
+fn handoff_suggested_next_actions(
+    output: &Value,
+    resolved_unexpected_validation_failures: usize,
+) -> Vec<String> {
     let mut actions = Vec::new();
     let push = |actions: &mut Vec<String>, action: &str| {
         if !actions.iter().any(|existing| existing == action) {
@@ -1007,7 +1120,7 @@ fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
         .get("unexpected_success_count")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    if unexpected_count > 0 {
+    if unexpected_count.saturating_sub(resolved_unexpected_validation_failures as u64) > 0 {
         push(
             &mut actions,
             "review unexpected failed tool calls before proceeding",

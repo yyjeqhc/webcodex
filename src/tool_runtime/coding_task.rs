@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 
 use super::handoff::{
     apply_compact_workflow_outcomes, compact_jobs, compact_permissions, compact_review_evidence,
-    compact_tool_failures, compact_validation, review_evidence_summary_for_session,
+    compact_tool_failures, compact_validation, resolved_unexpected_validation_failure_count,
+    review_evidence_summary_for_session, unresolved_unexpected_failure_count,
     validation_has_cargo_test_zero_tests,
 };
 use super::permissions::{permission_profile_payload, permission_summary_from_events};
@@ -426,8 +427,31 @@ impl ToolRuntime {
             output["allow_cross_project_session_required"] = json!(true);
             output["allow_cross_project_session"] = json!(false);
         }
-        output["suggested_next_actions"] = json!(finish_suggested_next_actions(&output));
-        let compact = compact_finish_output(&output);
+        let resolved_unexpected_validation_failures = resolved_unexpected_validation_failure_count(
+            &session_summary.events,
+            output.get("validation").unwrap_or(&Value::Null),
+            true,
+            output
+                .get("workspace")
+                .and_then(|workspace| workspace.get("clean"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            output
+                .get("hygiene")
+                .and_then(|hygiene| hygiene.get("clean"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            output
+                .get("jobs")
+                .and_then(|jobs| jobs.get("blocking_active_count"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        );
+        output["suggested_next_actions"] = json!(finish_suggested_next_actions(
+            &output,
+            resolved_unexpected_validation_failures,
+        ));
+        let compact = compact_finish_output(&output, resolved_unexpected_validation_failures);
         if summary_only {
             return ToolResult::ok(compact);
         }
@@ -674,7 +698,7 @@ fn workspace_payload_from_show_changes(show_changes: &Value) -> Value {
     })
 }
 
-fn compact_finish_output(output: &Value) -> Value {
+fn compact_finish_output(output: &Value, resolved_unexpected_validation_failures: usize) -> Value {
     let hygiene_checked = output
         .get("hygiene")
         .is_some_and(|hygiene| !hygiene.is_null());
@@ -702,7 +726,12 @@ fn compact_finish_output(output: &Value) -> Value {
         "warnings": output.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
         "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
     });
-    apply_compact_workflow_outcomes(&mut compact, true, Some(hygiene_checked));
+    apply_compact_workflow_outcomes(
+        &mut compact,
+        true,
+        Some(hygiene_checked),
+        resolved_unexpected_validation_failures,
+    );
     let verdict = compact.get("verdict").cloned().unwrap_or_else(|| json!({}));
     compact["suggested_next_actions"] = json!(merged_suggested_next_actions(&compact, &verdict));
     compact["finish_verdict"] = verdict;
@@ -965,7 +994,10 @@ fn string_array(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
+fn finish_suggested_next_actions(
+    output: &Value,
+    resolved_unexpected_validation_failures: usize,
+) -> Vec<String> {
     let mut actions = Vec::new();
     let push = |actions: &mut Vec<String>, action: &str| {
         if !actions.iter().any(|existing| existing == action) {
@@ -973,10 +1005,6 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
         }
     };
     let tool_failures = output.get("tool_failures").unwrap_or(&Value::Null);
-    let unexpected_count = tool_failures
-        .get("unexpected_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
     let expectation_mismatch_count = tool_failures
         .get("expectation_mismatch_count")
         .and_then(Value::as_u64)
@@ -986,7 +1014,9 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
         .and_then(Value::as_u64)
         .unwrap_or(0);
 
-    if unexpected_count > 0 {
+    if unresolved_unexpected_failure_count(tool_failures, resolved_unexpected_validation_failures)
+        > 0
+    {
         push(
             &mut actions,
             "review unexpected failed tool calls before proceeding",

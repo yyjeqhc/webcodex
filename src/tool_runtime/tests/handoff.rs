@@ -2151,6 +2151,106 @@ async fn session_handoff_summary_only_passes_with_resolved_historical_validation
 }
 
 #[tokio::test]
+async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(
+        &runtime,
+        "handoff-resolved-unexpected-test",
+        "demo",
+        tmp.path(),
+    )
+    .await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("resolved unexpected cargo test handoff".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({"project": project.clone()}),
+        false,
+        json!({
+            "exit_code": 101,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_test",
+        json!({"project": project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = dispatch_handoff_summary_only_with_agent(
+        &runtime,
+        "handoff-resolved-unexpected-test",
+        sid.clone(),
+        Some(project.clone()),
+        true,
+        false,
+    )
+    .await;
+    let full = dispatch_handoff_with_agent(
+        &runtime,
+        "handoff-resolved-unexpected-test",
+        sid,
+        Some(project),
+        true,
+        false,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["resolved"],
+        true
+    );
+    assert_eq!(
+        result.output["validation"]["historical_failures"]["unresolved"],
+        false
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(
+        result.output["evidence_history"]["status"],
+        "mixed_resolved"
+    );
+    assert_eq!(result.output["evidence_integrity"]["status"], "clean");
+    assert_eq!(result.output["verdict"]["status"], "pass");
+    assert_eq!(result.output["verdict"]["blocking"], false);
+    assert_reason_list_not_contains(
+        &result.output["verdict"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+    assert_action_list_not_contains(
+        &result.output["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+    assert_action_list_not_contains(
+        &result.output["verdict"]["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+    assert_eq!(full.output["task_outcome"], result.output["task_outcome"]);
+    assert_eq!(full.output["verdict"], result.output["verdict"]);
+    assert_eq!(
+        full.output["suggested_next_actions"],
+        result.output["suggested_next_actions"]
+    );
+}
+
+#[tokio::test]
 async fn session_handoff_summary_only_verdict_fails_for_failed_validation() {
     let runtime = test_runtime();
     let session = runtime
@@ -3017,6 +3117,17 @@ fn assert_reason_list_not_contains(verdict: &Value, key: &str, reason: &str) {
     assert!(
         !reasons.iter().any(|value| value.as_str() == Some(reason)),
         "{key} should not contain {reason}: {verdict}"
+    );
+}
+
+fn assert_action_list_not_contains(actions: &Value, action: &str) {
+    assert!(
+        !actions
+            .as_array()
+            .expect("suggested_next_actions array")
+            .iter()
+            .any(|candidate| candidate.as_str() == Some(action)),
+        "suggested_next_actions should not contain {action}: {actions}"
     );
 }
 

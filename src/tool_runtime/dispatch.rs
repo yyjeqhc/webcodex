@@ -344,6 +344,7 @@ impl ToolRuntime {
 
             call @ (ToolCall::LspStatus { .. }
             | ToolCall::DocumentSymbols { .. }
+            | ToolCall::DocumentDiagnostics { .. }
             | ToolCall::GotoDefinition { .. }
             | ToolCall::FindReferences { .. }) => self.dispatch_lsp_tool(call).await,
         }

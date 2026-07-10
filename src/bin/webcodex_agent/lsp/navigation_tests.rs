@@ -140,6 +140,16 @@ impl NavFixture {
         let envelope = parse_agent_lsp_result_envelope(&stdout).expect("valid envelope");
         serde_json::to_value(envelope).unwrap()
     }
+
+    fn diagnostics(&self, limit: usize) -> Value {
+        self.request(AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::DocumentDiagnostics {
+                path: "src/main.rs".into(),
+                limit,
+            },
+        })
+    }
 }
 
 #[test]
@@ -352,6 +362,142 @@ fn navigation_sends_full_text_changes_once_per_disk_content_version() {
     assert!(changes
         .iter()
         .all(|line| line.contains("\"contentChanges\":[{\"text\":")));
+}
+
+#[test]
+fn document_diagnostics_empty_and_one_error_are_fresh_successes() {
+    let empty = NavFixture::new("diagnostics_empty").diagnostics(100);
+    assert_eq!(empty["success"], true, "{empty}");
+    assert_eq!(empty["result"]["diagnostics"], serde_json::json!([]));
+    assert_eq!(empty["result"]["total_count"], 0);
+    assert_eq!(empty["result"]["fresh"], true);
+    assert_eq!(empty["result"]["timed_out"], false);
+    assert_eq!(empty["result"]["published_version"], 1);
+
+    let one = NavFixture::new("diagnostics_one").diagnostics(100);
+    assert_eq!(one["success"], true, "{one}");
+    let result = &one["result"];
+    assert_eq!(result["returned_count"], 1);
+    assert_eq!(result["diagnostics"][0]["severity"], "error");
+    assert_eq!(result["diagnostics"][0]["severity_code"], 1);
+    assert_eq!(result["diagnostics"][0]["code"], "E0308");
+    assert_eq!(result["diagnostics"][0]["source"], "rust-analyzer");
+    assert_eq!(result["diagnostics"][0]["message"], "type mismatch");
+    assert_eq!(result["diagnostics"][0]["range"]["start"]["line"], 1);
+    assert_eq!(result["diagnostics"][0]["range"]["start"]["column"], 1);
+}
+
+#[test]
+fn document_diagnostics_normalizes_sorts_tags_and_omits_private_payloads() {
+    let envelope = NavFixture::new("diagnostics_mixed").diagnostics(100);
+    assert_eq!(envelope["success"], true, "{envelope}");
+    let result = &envelope["result"];
+    let severities = result["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["severity"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        severities,
+        ["error", "warning", "information", "hint", "unknown"]
+    );
+    assert_eq!(result["diagnostics"][1]["code"], "7");
+    assert_eq!(
+        result["diagnostics"][1]["tags"],
+        serde_json::json!(["unnecessary"])
+    );
+    assert_eq!(
+        result["diagnostics"][3]["tags"],
+        serde_json::json!(["deprecated", "unknown"])
+    );
+    assert_eq!(result["related_information_omitted"], 1);
+    let serialized = result.to_string();
+    assert!(!serialized.contains("file://"), "{serialized}");
+    assert!(!serialized.contains("/secret/"), "{serialized}");
+    assert!(!serialized.contains("private"), "{serialized}");
+    assert!(!serialized.contains("relatedInformation"), "{serialized}");
+}
+
+#[test]
+fn document_diagnostics_deduplicates_and_truncates_on_the_agent() {
+    let duplicate = NavFixture::new("diagnostics_duplicates").diagnostics(100);
+    assert_eq!(duplicate["result"]["total_count"], 2);
+    assert_eq!(duplicate["result"]["returned_count"], 1);
+
+    let overflow = NavFixture::new("diagnostics_overflow").diagnostics(10);
+    assert_eq!(overflow["success"], true, "{overflow}");
+    assert_eq!(overflow["result"]["total_count"], 520);
+    assert_eq!(overflow["result"]["returned_count"], 10);
+    assert_eq!(overflow["result"]["truncated"], true);
+
+    let text_budget = NavFixture::new("diagnostics_text_budget").diagnostics(200);
+    assert_eq!(text_budget["success"], true, "{text_budget}");
+    assert!(text_budget["result"]["returned_count"].as_u64().unwrap() < 30);
+    assert_eq!(text_budget["result"]["truncated"], true);
+}
+
+#[test]
+fn document_diagnostics_omits_bad_ranges_and_converts_utf16_emoji() {
+    let malformed = NavFixture::new("diagnostics_malformed_range").diagnostics(100);
+    assert_eq!(malformed["result"]["returned_count"], 1, "{malformed}");
+    assert_eq!(malformed["result"]["invalid_results_omitted"], 3);
+
+    let emoji = NavFixture::new("diagnostics_utf16").diagnostics(100);
+    assert_eq!(emoji["success"], true, "{emoji}");
+    let range = &emoji["result"]["diagnostics"][0]["range"];
+    assert_eq!(range["start"], serde_json::json!({"line": 3, "column": 4}));
+    assert_eq!(range["end"], serde_json::json!({"line": 3, "column": 5}));
+}
+
+#[test]
+fn document_diagnostics_bounds_and_sanitizes_text_fields() {
+    let envelope = NavFixture::new("diagnostics_oversized_message").diagnostics(100);
+    let diagnostic = &envelope["result"]["diagnostics"][0];
+    assert!(diagnostic["message"].as_str().unwrap().chars().count() <= 4096);
+    assert!(diagnostic["source"].as_str().unwrap().chars().count() <= 128);
+    assert!(diagnostic["code"].as_str().unwrap().chars().count() <= 128);
+    assert!(!diagnostic.to_string().contains("file://"));
+}
+
+#[test]
+fn document_diagnostics_handles_publication_timing_and_timeouts() {
+    let delayed = NavFixture::new("diagnostics_delayed").diagnostics(100);
+    assert_eq!(delayed["result"]["fresh"], true, "{delayed}");
+    assert_eq!(delayed["result"]["timed_out"], false);
+
+    let timeout = NavFixture::new("diagnostics_timeout").diagnostics(100);
+    assert_eq!(timeout["success"], true, "{timeout}");
+    assert_eq!(timeout["result"]["diagnostics"], serde_json::json!([]));
+    assert_eq!(timeout["result"]["fresh"], false);
+    assert_eq!(timeout["result"]["timed_out"], true);
+
+    let stale_fixture = NavFixture::new("diagnostics_stale_then_timeout");
+    let first = stale_fixture.diagnostics(100);
+    assert_eq!(first["result"]["fresh"], true, "{first}");
+    assert_eq!(first["result"]["published_version"], 0);
+    let stale = stale_fixture.diagnostics(100);
+    assert_eq!(stale["result"]["fresh"], false, "{stale}");
+    assert_eq!(stale["result"]["timed_out"], true);
+    assert_eq!(stale["result"]["published_version"], 0);
+}
+
+#[test]
+fn document_diagnostics_ignores_wrong_external_and_malformed_notifications() {
+    for scenario in ["diagnostics_wrong_uri", "diagnostics_external_uri"] {
+        let result = NavFixture::new(scenario).diagnostics(100);
+        assert_eq!(result["success"], true, "scenario={scenario}: {result}");
+        assert_eq!(result["result"]["returned_count"], 0);
+        assert_eq!(result["result"]["fresh"], false);
+        assert_eq!(result["result"]["timed_out"], true);
+        assert!(!result.to_string().contains("file://"));
+        assert!(!result.to_string().contains("/usr/lib"));
+    }
+
+    let malformed = NavFixture::new("diagnostics_malformed_notification").diagnostics(100);
+    assert_eq!(malformed["success"], true, "{malformed}");
+    assert_eq!(malformed["result"]["fresh"], true);
+    assert_eq!(malformed["result"]["timed_out"], false);
 }
 
 #[test]

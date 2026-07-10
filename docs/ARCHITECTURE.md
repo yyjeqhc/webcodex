@@ -68,7 +68,7 @@ flowchart LR
   LS --> RA[rust-analyzer]
 ```
 
-The LSP process runs only on the agent, at the canonical root of a registered project. The server never reads project files directly and does not spawn a shell to run LSP work. Typed bridge requests preserve the project boundary and do not permit arbitrary LSP-method passthrough. The Phase 1 rust-analyzer profile is constrained: `cargo.noDeps=true`, build scripts and proc macros are disabled, and `checkOnSave` is disabled. Public read-only navigation tools (`lsp_status`, `document_symbols`, `goto_definition`, and `find_references`) follow the path shown above.
+The LSP process runs only on the agent, at the canonical root of a registered project. The server never reads project files directly and does not spawn a shell to run LSP work. Typed bridge requests preserve the project boundary and do not permit arbitrary LSP-method passthrough. The rust-analyzer profile is constrained: `cargo.noDeps=true`, build scripts and proc macros are disabled, and `checkOnSave` is disabled. Public read-only intelligence tools (`lsp_status`, `document_symbols`, `goto_definition`, `find_references`, and `document_diagnostics`) follow the path shown above. Diagnostics are received only through an instance-local bounded `textDocument/publishDiagnostics` cache; freshness waiting uses one two-second deadline and does not invoke Cargo check.
 
 ## Auth, Policy, And Audit
 

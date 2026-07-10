@@ -67,11 +67,13 @@ The server routes project tool calls to the owning connected agent.
 
 ## LSP read-only navigation
 
-Agents that support Phase 1 LSP navigation register the
+Agents that support read-only LSP intelligence register the
 `lsp_read_only_navigation` capability. The server sends only typed
-`AgentLspRequest` operations: status, document symbols, go to definition, and
-find references. The agent returns a versioned `AgentLspResultEnvelope` with a
-success result or a structured error.
+`AgentLspRequest` operations: status, document symbols, go to definition, find
+references, and document diagnostics. The agent returns a versioned
+`AgentLspResultEnvelope` with a success result or a structured error. Document
+diagnostics use an instance-local bounded `publishDiagnostics` cache and report
+whether the result is fresh or the shared two-second wait timed out.
 
 There is no arbitrary LSP-method passthrough. The agent resolves requests only
 inside the registered project boundary and runs the language server locally.

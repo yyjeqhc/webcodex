@@ -14,20 +14,25 @@ use super::supervisor::{
     PositionEncoding, ProjectUriClassification,
 };
 use crate::lsp_bridge::{
-    bound_error_message, error_codes, AgentLspPayload, AgentLspRequest, AgentLspResultEnvelope,
-    DocumentSymbolsResult, LocationsResult, LspAvailabilityStatus, LspServerStatusEntry,
-    LspStatusResult, PublicLocation, PublicPosition, PublicRange, PublicSymbol,
-    AGENT_LSP_REQUEST_KIND,
+    bound_error_message, error_codes, redact_absolute_paths, AgentLspPayload, AgentLspRequest,
+    AgentLspResultEnvelope, DocumentDiagnosticsResult, DocumentSymbolsResult, LocationsResult,
+    LspAvailabilityStatus, LspServerStatusEntry, LspStatusResult, PublicDiagnostic, PublicLocation,
+    PublicPosition, PublicRange, PublicSymbol, AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::ShellAgentShellRequest;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use url::Url;
 
 const MAX_SYMBOL_NAME_CHARS: usize = 256;
 const MAX_SYMBOL_DETAIL_CHARS: usize = 512;
+const MAX_DIAGNOSTIC_MESSAGE_CHARS: usize = 4096;
+const MAX_DIAGNOSTIC_SOURCE_CHARS: usize = 128;
+const MAX_DIAGNOSTIC_CODE_CHARS: usize = 128;
+const MAX_DIAGNOSTIC_TOTAL_TEXT_CHARS: usize = 64 * 1024;
+const DIAGNOSTICS_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) fn is_lsp_request_kind(kind: &str) -> bool {
     kind == AGENT_LSP_REQUEST_KIND
@@ -84,6 +89,11 @@ fn execute_lsp(
         AgentLspRequest::DocumentSymbols { path, limit } => {
             let result =
                 document_symbols(&payload.project_id, &project_root, supervisor, path, *limit)?;
+            Ok(AgentLspResultEnvelope::ok(result))
+        }
+        AgentLspRequest::DocumentDiagnostics { path, limit } => {
+            let result =
+                document_diagnostics(&payload.project_id, &project_root, supervisor, path, *limit)?;
             Ok(AgentLspResultEnvelope::ok(result))
         }
         AgentLspRequest::GotoDefinition {
@@ -297,6 +307,114 @@ fn document_symbols(
         truncated,
         external_results_omitted: external,
         invalid_results_omitted: invalid,
+    })
+}
+
+fn document_diagnostics(
+    project_id: &str,
+    project_root: &Path,
+    supervisor: &LspSupervisor,
+    relative_path: &str,
+    limit: usize,
+) -> Result<DocumentDiagnosticsResult, AgentLspResultEnvelope> {
+    let limit = limit.clamp(1, 200);
+    let file = resolve_rust_file(project_root, relative_path)?;
+    let uri = file_uri(&file)?;
+    let text = read_document_text(&file)?;
+    let deadline = Instant::now() + DIAGNOSTICS_WAIT_TIMEOUT;
+    let snapshot = supervisor
+        .document_diagnostics(
+            project_root,
+            LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
+            deadline,
+        )
+        .map_err(map_lsp_error)?;
+
+    let mut invalid_results_omitted = 0usize;
+    let related_information_omitted = snapshot
+        .publication
+        .as_ref()
+        .map(|publication| publication.related_information_count)
+        .unwrap_or(0);
+    let mut cache = LineCache::new();
+    cache.seed(&file, text);
+    let mut diagnostics = snapshot
+        .publication
+        .as_ref()
+        .map(|publication| {
+            publication
+                .diagnostics
+                .iter()
+                .filter_map(|value| {
+                    match normalize_diagnostic(value, &file, snapshot.position_encoding, &mut cache)
+                    {
+                        Some(diagnostic) => Some(diagnostic),
+                        None => {
+                            invalid_results_omitted += 1;
+                            None
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    diagnostics.sort_by(|left, right| diagnostic_sort_key(left).cmp(&diagnostic_sort_key(right)));
+    diagnostics.dedup();
+    let raw_count = snapshot
+        .publication
+        .as_ref()
+        .map(|publication| publication.raw_diagnostics_count)
+        .unwrap_or(0);
+    let cached_count = snapshot
+        .publication
+        .as_ref()
+        .map(|publication| publication.diagnostics.len())
+        .unwrap_or(0);
+    let mut text_chars = 0usize;
+    let mut text_budget_count = diagnostics.len();
+    for (index, diagnostic) in diagnostics.iter().enumerate() {
+        let diagnostic_chars = diagnostic.message.chars().count()
+            + diagnostic
+                .source
+                .as_deref()
+                .map(|value| value.chars().count())
+                .unwrap_or(0)
+            + diagnostic
+                .code
+                .as_deref()
+                .map(|value| value.chars().count())
+                .unwrap_or(0);
+        if text_chars.saturating_add(diagnostic_chars) > MAX_DIAGNOSTIC_TOTAL_TEXT_CHARS {
+            text_budget_count = index;
+            break;
+        }
+        text_chars += diagnostic_chars;
+    }
+    let truncated = raw_count > cached_count
+        || diagnostics.len() > limit
+        || text_budget_count < diagnostics.len();
+    diagnostics.truncate(text_budget_count);
+    diagnostics.truncate(limit);
+
+    Ok(DocumentDiagnosticsResult {
+        project: project_id.to_string(),
+        path: normalize_relative_path(relative_path),
+        language: "rust".to_string(),
+        returned_count: diagnostics.len(),
+        diagnostics,
+        total_count: raw_count,
+        truncated,
+        fresh: snapshot.fresh,
+        timed_out: snapshot.timed_out,
+        published_version: snapshot
+            .publication
+            .as_ref()
+            .and_then(|publication| publication.version),
+        invalid_results_omitted,
+        related_information_omitted,
     })
 }
 
@@ -530,6 +648,114 @@ fn project_relative_path(project_root: &Path, absolute: &Path) -> Option<String>
     Some(text.replace('\\', "/"))
 }
 
+fn normalize_diagnostic(
+    value: &Value,
+    document_path: &Path,
+    encoding: PositionEncoding,
+    cache: &mut LineCache,
+) -> Option<PublicDiagnostic> {
+    let value = value.as_object()?;
+    let range = convert_range(cache, document_path, value.get("range")?, encoding)?;
+    let message = value.get("message")?.as_str()?;
+    let severity_code = value.get("severity").and_then(Value::as_i64);
+    let severity = match severity_code {
+        Some(1) => "error",
+        Some(2) => "warning",
+        Some(3) => "information",
+        Some(4) => "hint",
+        _ => "unknown",
+    }
+    .to_string();
+    let code = value.get("code").and_then(|code| match code {
+        Value::String(code) => Some(bound_diagnostic_field(code, MAX_DIAGNOSTIC_CODE_CHARS)),
+        Value::Number(code) => Some(code.to_string()),
+        _ => None,
+    });
+    let source = value
+        .get("source")
+        .and_then(Value::as_str)
+        .map(|source| bound_diagnostic_field(source, MAX_DIAGNOSTIC_SOURCE_CHARS))
+        .filter(|source| !source.is_empty());
+    let mut unnecessary = false;
+    let mut deprecated = false;
+    let mut unknown = false;
+    if let Some(tags) = value.get("tags") {
+        if let Some(tags) = tags.as_array() {
+            for tag in tags {
+                match tag.as_i64() {
+                    Some(1) => unnecessary = true,
+                    Some(2) => deprecated = true,
+                    _ => unknown = true,
+                }
+            }
+        } else {
+            unknown = true;
+        }
+    }
+    let mut tags = Vec::new();
+    if unnecessary {
+        tags.push("unnecessary".to_string());
+    }
+    if deprecated {
+        tags.push("deprecated".to_string());
+    }
+    if unknown {
+        tags.push("unknown".to_string());
+    }
+    Some(PublicDiagnostic {
+        range,
+        severity,
+        severity_code,
+        code,
+        source,
+        message: bound_diagnostic_field(message, MAX_DIAGNOSTIC_MESSAGE_CHARS),
+        tags,
+    })
+}
+
+fn diagnostic_sort_key(
+    diagnostic: &PublicDiagnostic,
+) -> (u8, usize, usize, usize, usize, Option<&str>, &str) {
+    let severity = match diagnostic.severity.as_str() {
+        "error" => 0,
+        "warning" => 1,
+        "information" => 2,
+        "hint" => 3,
+        _ => 4,
+    };
+    (
+        severity,
+        diagnostic.range.start.line,
+        diagnostic.range.start.column,
+        diagnostic.range.end.line,
+        diagnostic.range.end.column,
+        diagnostic.code.as_deref(),
+        diagnostic.message.as_str(),
+    )
+}
+
+fn bound_diagnostic_field(value: &str, max_chars: usize) -> String {
+    let sanitized = redact_absolute_paths(value)
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let sanitized = sanitized.trim();
+    if sanitized.chars().count() <= max_chars {
+        return sanitized.to_string();
+    }
+    sanitized
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>()
+        + "…"
+}
+
 fn normalize_locations_value(
     project_root: &Path,
     value: &Value,
@@ -635,14 +861,14 @@ fn convert_range(
 ) -> Option<PublicRange> {
     let start = range.get("start")?;
     let end = range.get("end")?;
-    let start_line = start.get("line")?.as_u64()? as u32;
-    let start_character = start.get("character")?.as_u64()? as u32;
-    let end_line = end.get("line")?.as_u64()? as u32;
-    let end_character = end.get("character")?.as_u64()? as u32;
+    let start_line = u32::try_from(start.get("line")?.as_u64()?).ok()?;
+    let start_character = u32::try_from(start.get("character")?.as_u64()?).ok()?;
+    let end_line = u32::try_from(end.get("line")?.as_u64()?).ok()?;
+    let end_character = u32::try_from(end.get("character")?.as_u64()?).ok()?;
     let text = cache.text(path)?;
     let (sl, sc) = lsp_to_public(text, start_line, start_character, encoding)?;
     let (el, ec) = lsp_to_public(text, end_line, end_character, encoding)?;
-    Some(PublicRange {
+    let range = PublicRange {
         start: PublicPosition {
             line: sl,
             column: sc,
@@ -651,7 +877,11 @@ fn convert_range(
             line: el,
             column: ec,
         },
-    })
+    };
+    if (range.end.line, range.end.column) < (range.start.line, range.start.column) {
+        return None;
+    }
+    Some(range)
 }
 
 fn normalize_document_symbols(

@@ -28,6 +28,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "read_file",
             "search_project_text",
             "document_symbols",
+            "document_diagnostics",
             "goto_definition",
             "find_references",
             "lsp_status",

@@ -1,6 +1,6 @@
 use super::super::input_schemas::{
-    document_symbols_input_schema, find_references_input_schema, goto_definition_input_schema,
-    lsp_status_input_schema,
+    document_diagnostics_input_schema, document_symbols_input_schema, find_references_input_schema,
+    goto_definition_input_schema, lsp_status_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -16,6 +16,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "document_symbols",
             "Read-only hierarchical document symbols for a project-relative .rs file via agent-side rust-analyzer. Returns project-relative paths, 1-based Unicode scalar columns, and bounded pre-order results. External or invalid ranges are omitted.",
             document_symbols_input_schema(),
+        ),
+        tool_spec(
+            "document_diagnostics",
+            "Read-only bounded diagnostics for a project-relative .rs file via agent-side rust-analyzer publishDiagnostics. Returns normalized 1-based Unicode scalar ranges and explicit freshness/timeout state; it does not run Cargo check.",
+            document_diagnostics_input_schema(),
         ),
         tool_spec(
             "goto_definition",

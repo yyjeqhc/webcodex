@@ -22,6 +22,8 @@ pub(crate) const DEFAULT_IDLE_TTL: Duration = Duration::from_secs(15 * 60);
 const DEFAULT_MAX_SERVERS_PER_PROJECT: usize = 1;
 const DEFAULT_MAX_SERVERS_PER_AGENT: usize = 4;
 const MAX_STDERR_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_DIAGNOSTIC_DOCUMENTS: usize = 256;
+pub(crate) const MAX_DIAGNOSTICS_PER_DOCUMENT: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(dead_code)] // Commit 2 public tools will select server kinds.
@@ -434,7 +436,7 @@ impl LspSupervisor {
                 Err(error) => return Err(error),
             };
             match server.synchronize_document(document) {
-                Ok(()) => return Ok(server.position_encoding()),
+                Ok(_) => return Ok(server.position_encoding()),
                 Err(error) if attempt == 0 && error.permits_restart() => continue,
                 Err(error) if attempt == 1 && error.permits_restart() => {
                     self.evict_unusable(&key);
@@ -450,6 +452,70 @@ impl LspSupervisor {
         }
         Err(LspError::RestartExhausted(
             "document open restart failed".to_string(),
+        ))
+    }
+
+    pub(crate) fn document_diagnostics(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        document_uri: &str,
+        language_id: &str,
+        text: &str,
+        deadline: Instant,
+    ) -> Result<DiagnosticsSnapshot, LspError> {
+        let key = ProcessKey {
+            project_root: canonical_project_root(validated_project_root)?,
+            kind,
+        };
+        let document = DocumentOpen {
+            uri: document_uri,
+            language_id,
+            text,
+        };
+        for attempt in 0..=1 {
+            let server = match self.get_or_start(&key, attempt == 1) {
+                Ok(server) => server,
+                Err(error) if attempt == 0 && error.permits_restart() => continue,
+                Err(error) if attempt == 1 && error.permits_restart() => {
+                    return Err(LspError::RestartExhausted(error.to_string()));
+                }
+                Err(error) => return Err(error),
+            };
+            let baseline_generation = server.diagnostics.generation();
+            let document_version = match server.synchronize_document(document) {
+                Ok(version) => version,
+                Err(error) if attempt == 0 && error.permits_restart() => continue,
+                Err(error) if attempt == 1 && error.permits_restart() => {
+                    self.evict_unusable(&key);
+                    return Err(LspError::RestartExhausted(error.to_string()));
+                }
+                Err(error) => return Err(error),
+            };
+            match server.diagnostics.wait_for_publication(
+                document_uri,
+                document_version,
+                baseline_generation,
+                deadline,
+            ) {
+                Ok((publication, fresh, timed_out)) => {
+                    return Ok(DiagnosticsSnapshot {
+                        position_encoding: server.position_encoding(),
+                        publication,
+                        fresh,
+                        timed_out,
+                    });
+                }
+                Err(error) if attempt == 0 && error.permits_restart() => continue,
+                Err(error) if attempt == 1 && error.permits_restart() => {
+                    self.evict_unusable(&key);
+                    return Err(LspError::RestartExhausted(error.to_string()));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(LspError::RestartExhausted(
+            "diagnostics restart failed".to_string(),
         ))
     }
 
@@ -1000,6 +1066,163 @@ struct OpenDocumentState {
     content_fingerprint: [u8; 32],
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct DiagnosticsPublication {
+    pub(crate) generation: u64,
+    pub(crate) version: Option<i32>,
+    pub(crate) received_at: Instant,
+    pub(crate) diagnostics: Vec<Value>,
+    pub(crate) raw_diagnostics_count: usize,
+    pub(crate) related_information_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DiagnosticsSnapshot {
+    pub(crate) position_encoding: PositionEncoding,
+    pub(crate) publication: Option<DiagnosticsPublication>,
+    pub(crate) fresh: bool,
+    pub(crate) timed_out: bool,
+}
+
+#[derive(Default)]
+struct DiagnosticsCacheState {
+    generation: u64,
+    publications: HashMap<String, DiagnosticsPublication>,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct DiagnosticsCache {
+    state: Mutex<DiagnosticsCacheState>,
+    changed: Condvar,
+    malformed_notifications: AtomicU64,
+}
+
+impl DiagnosticsCache {
+    fn generation(&self) -> u64 {
+        lock_unpoison(&self.state).generation
+    }
+
+    fn record_publish_diagnostics(&self, params: Option<&Value>) {
+        let Some(params) = params.and_then(Value::as_object) else {
+            self.record_malformed();
+            return;
+        };
+        let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+            self.record_malformed();
+            return;
+        };
+        if uri.is_empty() || uri.chars().count() > 4096 {
+            self.record_malformed();
+            return;
+        }
+        let version = match params.get("version") {
+            None | Some(Value::Null) => None,
+            Some(value) => match value.as_i64().and_then(|value| i32::try_from(value).ok()) {
+                Some(version) => Some(version),
+                None => {
+                    self.record_malformed();
+                    return;
+                }
+            },
+        };
+        let Some(raw_diagnostics) = params.get("diagnostics").and_then(Value::as_array) else {
+            self.record_malformed();
+            return;
+        };
+        let raw_diagnostics_count = raw_diagnostics.len();
+        let related_information_count = raw_diagnostics
+            .iter()
+            .map(|diagnostic| {
+                diagnostic
+                    .get("relatedInformation")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0)
+            })
+            .sum();
+        let diagnostics = raw_diagnostics
+            .iter()
+            .take(MAX_DIAGNOSTICS_PER_DOCUMENT)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut state = lock_unpoison(&self.state);
+        state.generation = state.generation.saturating_add(1);
+        let generation = state.generation;
+        if !state.publications.contains_key(uri)
+            && state.publications.len() >= MAX_DIAGNOSTIC_DOCUMENTS
+        {
+            let oldest = state
+                .publications
+                .iter()
+                .min_by_key(|(_, publication)| (publication.received_at, publication.generation))
+                .map(|(uri, _)| uri.clone());
+            if let Some(oldest) = oldest {
+                state.publications.remove(&oldest);
+            }
+        }
+        state.publications.insert(
+            uri.to_string(),
+            DiagnosticsPublication {
+                generation,
+                version,
+                received_at: Instant::now(),
+                diagnostics,
+                raw_diagnostics_count,
+                related_information_count,
+            },
+        );
+        drop(state);
+        self.changed.notify_all();
+    }
+
+    fn wait_for_publication(
+        &self,
+        uri: &str,
+        document_version: i32,
+        baseline_generation: u64,
+        deadline: Instant,
+    ) -> Result<(Option<DiagnosticsPublication>, bool, bool), LspError> {
+        let mut state = lock_unpoison(&self.state);
+        loop {
+            if let Some(publication) = state.publications.get(uri) {
+                let fresh = publication.generation > baseline_generation
+                    || publication.version == Some(document_version);
+                if fresh {
+                    return Ok((Some(publication.clone()), true, false));
+                }
+            }
+            if state.closed {
+                return Err(LspError::ServerExited);
+            }
+            let remaining = remaining_until(deadline);
+            if remaining.is_zero() {
+                return Ok((state.publications.get(uri).cloned(), false, true));
+            }
+            let waited = self.changed.wait_timeout(state, remaining);
+            state = match waited {
+                Ok((guard, _)) => guard,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+        }
+    }
+
+    fn mark_closed(&self) {
+        lock_unpoison(&self.state).closed = true;
+        self.changed.notify_all();
+    }
+
+    fn record_malformed(&self) {
+        self.malformed_notifications.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    fn malformed_notification_count(&self) -> u64 {
+        self.malformed_notifications.load(Ordering::Relaxed)
+    }
+}
+
 fn document_fingerprint(text: &str) -> [u8; 32] {
     Sha256::digest(text.as_bytes()).into()
 }
@@ -1072,6 +1295,7 @@ struct ServerInstance {
     next_id: AtomicU64,
     position_encoding: Mutex<PositionEncoding>,
     open_documents: Mutex<HashMap<String, OpenDocumentState>>,
+    diagnostics: Arc<DiagnosticsCache>,
     last_used: Mutex<Instant>,
     #[allow(dead_code)] // Bounded capture retained for Commit 2 diagnostics/status.
     stderr: Arc<Mutex<BoundedStderr>>,
@@ -1114,13 +1338,16 @@ impl ServerInstance {
         let stderr_buffer = Arc::new(Mutex::new(BoundedStderr {
             bytes: VecDeque::new(),
         }));
+        let diagnostics = Arc::new(DiagnosticsCache::default());
 
         let reader_connection = Arc::clone(&connection);
         let reader_writer = Arc::clone(&writer);
+        let reader_diagnostics = Arc::clone(&diagnostics);
         let reader_thread = match thread::Builder::new()
             .name("webcodex-lsp-reader".to_string())
-            .spawn(move || reader_loop(stdout, reader_writer, reader_connection))
-        {
+            .spawn(move || {
+                reader_loop(stdout, reader_writer, reader_connection, reader_diagnostics)
+            }) {
             Ok(thread) => thread,
             Err(error) => {
                 terminate_child(&mut child);
@@ -1159,6 +1386,7 @@ impl ServerInstance {
             next_id: AtomicU64::new(1),
             position_encoding: Mutex::new(PositionEncoding::Utf16),
             open_documents: Mutex::new(HashMap::new()),
+            diagnostics,
             last_used: Mutex::new(Instant::now()),
             stderr: stderr_buffer,
             reader_thread: Mutex::new(Some(reader_thread)),
@@ -1311,11 +1539,13 @@ impl ServerInstance {
         }))
     }
 
-    fn synchronize_document(&self, document: DocumentOpen<'_>) -> Result<(), LspError> {
-        synchronize_document_state(&self.open_documents, document, |method, params| {
-            self.notify(method, params)
-        })?;
-        Ok(())
+    fn synchronize_document(&self, document: DocumentOpen<'_>) -> Result<i32, LspError> {
+        let version =
+            synchronize_document_state(&self.open_documents, document, |method, params| {
+                self.notify(method, params)
+            })?;
+        self.touch_last_used();
+        Ok(version)
     }
 
     fn write(&self, message: &Value) -> Result<(), LspError> {
@@ -1480,17 +1710,20 @@ fn reader_loop(
     stdout: impl Read,
     writer: Arc<Mutex<ChildStdin>>,
     connection: Arc<ConnectionState>,
+    diagnostics: Arc<DiagnosticsCache>,
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
         let message = match read_message(&mut reader, MAX_LSP_MESSAGE_BYTES) {
             Ok(message) => message,
             Err(error) => {
+                diagnostics.mark_closed();
                 connection.fail_pending(framing_to_lsp_error(error));
                 return;
             }
         };
-        if let Err(error) = handle_incoming_message(&message, &writer, &connection) {
+        if let Err(error) = handle_incoming_message(&message, &writer, &connection, &diagnostics) {
+            diagnostics.mark_closed();
             connection.fail_pending(error);
             return;
         }
@@ -1501,6 +1734,7 @@ fn handle_incoming_message(
     message: &Value,
     writer: &Arc<Mutex<ChildStdin>>,
     connection: &Arc<ConnectionState>,
+    diagnostics: &DiagnosticsCache,
 ) -> Result<(), LspError> {
     if message.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         return Err(LspError::ProtocolError(
@@ -1516,6 +1750,8 @@ fn handle_incoming_message(
             });
             write_message(&mut *lock_unpoison(writer), &response)
                 .map_err(|error| LspError::WriterFailed(error.to_string()))?;
+        } else if method == "textDocument/publishDiagnostics" {
+            diagnostics.record_publish_diagnostics(message.get("params"));
         }
         return Ok(());
     }

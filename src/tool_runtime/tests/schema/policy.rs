@@ -465,6 +465,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
+            "document_diagnostics",
+            ToolRisk::ReadOnly,
+            AgentCapability::LspReadOnlyNavigation,
+        ),
+        (
             "goto_definition",
             ToolRisk::ReadOnly,
             AgentCapability::LspReadOnlyNavigation,

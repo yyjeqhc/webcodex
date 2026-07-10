@@ -1,8 +1,8 @@
 use super::support::*;
 use crate::lsp_bridge::{
     parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspResultEnvelope,
-    DocumentSymbolsResult, LocationsResult, LspAvailabilityStatus, LspCommandSource,
-    LspStatusResult, PublicLocation, PublicPosition, PublicRange, PublicSymbol,
+    DocumentDiagnosticsResult, DocumentSymbolsResult, LocationsResult, LspAvailabilityStatus,
+    LspStatusResult, PublicDiagnostic, PublicLocation, PublicPosition, PublicRange, PublicSymbol,
     AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::{
@@ -20,6 +20,7 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
     for name in [
         "lsp_status",
         "document_symbols",
+        "document_diagnostics",
         "goto_definition",
         "find_references",
     ] {
@@ -43,6 +44,7 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
     for name in [
         "lsp_status",
         "document_symbols",
+        "document_diagnostics",
         "goto_definition",
         "find_references",
     ] {
@@ -65,6 +67,41 @@ fn lsp_input_schemas_have_required_bounds() {
     assert_eq!(symbols["required"], json!(["project", "path"]));
     assert_eq!(symbols["properties"]["limit"]["maximum"], 500);
     assert_eq!(symbols["additionalProperties"], false);
+
+    let diagnostics = &by_name["document_diagnostics"].input_schema;
+    assert_eq!(diagnostics["required"], json!(["project", "path"]));
+    assert_eq!(diagnostics["properties"]["limit"]["minimum"], 1);
+    assert_eq!(diagnostics["properties"]["limit"]["maximum"], 200);
+    assert_eq!(diagnostics["properties"]["limit"]["default"], 100);
+    assert_eq!(diagnostics["additionalProperties"], false);
+    let diagnostics_output = &by_name["document_diagnostics"].output_schema;
+    let output_properties = &diagnostics_output["properties"]["output"]["properties"];
+    for field in [
+        "project",
+        "path",
+        "language",
+        "diagnostics",
+        "total_count",
+        "returned_count",
+        "truncated",
+        "fresh",
+        "timed_out",
+        "published_version",
+        "invalid_results_omitted",
+        "related_information_omitted",
+    ] {
+        assert!(
+            output_properties.get(field).is_some(),
+            "diagnostics output schema missing {field}"
+        );
+    }
+    let diagnostic_item = &output_properties["diagnostics"]["items"];
+    assert_eq!(diagnostic_item["additionalProperties"], false);
+    assert_eq!(diagnostic_item["properties"]["message"]["maxLength"], 4096);
+    assert!(diagnostic_item["properties"].get("data").is_none());
+    assert!(diagnostic_item["properties"]
+        .get("relatedInformation")
+        .is_none());
 
     let goto = &by_name["goto_definition"].input_schema;
     assert_eq!(
@@ -108,6 +145,51 @@ fn lsp_input_schemas_have_required_bounds() {
             "refs missing flattened {field}: {flat_refs:?}"
         );
     }
+    let flat_diagnostics = accepted_flattened_args_for_spec(&by_name["document_diagnostics"]);
+    for field in ["project", "path", "limit", "session_id"] {
+        assert!(
+            flat_diagnostics.iter().any(|item| item == field),
+            "diagnostics missing flattened {field}: {flat_diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn document_diagnostics_tool_call_parser_produces_only_typed_fields() {
+    let call = ToolCall::from_tool_name(
+        "document_diagnostics",
+        json!({
+            "project": "agent:oe:demo",
+            "path": "src/main.rs",
+            "limit": 25,
+            "session_id": "wc_sess_demo"
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        call,
+        ToolCall::DocumentDiagnostics {
+            project,
+            path,
+            limit: Some(25),
+            session_id: Some(session_id),
+        } if project == "agent:oe:demo"
+            && path == "src/main.rs"
+            && session_id == "wc_sess_demo"
+    ));
+    let call_with_ignored_internal_extra = ToolCall::from_tool_name(
+        "document_diagnostics",
+        json!({"project": "agent:oe:demo", "path": "src/main.rs", "timeout": 30}),
+    )
+    .unwrap();
+    assert!(matches!(
+        call_with_ignored_internal_extra,
+        ToolCall::DocumentDiagnostics {
+            limit: None,
+            session_id: None,
+            ..
+        }
+    ));
 }
 
 async fn register_lsp_agent(
@@ -185,6 +267,34 @@ fn document_symbols_result(path: &str) -> DocumentSymbolsResult {
     }
 }
 
+fn document_diagnostics_result(path: &str) -> DocumentDiagnosticsResult {
+    DocumentDiagnosticsResult {
+        project: "demo".into(),
+        path: path.into(),
+        language: "rust".into(),
+        diagnostics: vec![PublicDiagnostic {
+            range: PublicRange {
+                start: PublicPosition { line: 1, column: 1 },
+                end: PublicPosition { line: 1, column: 2 },
+            },
+            severity: "warning".into(),
+            severity_code: Some(2),
+            code: Some("unused".into()),
+            source: Some("rust-analyzer".into()),
+            message: "unused item".into(),
+            tags: vec!["unnecessary".into()],
+        }],
+        total_count: 1,
+        returned_count: 1,
+        truncated: false,
+        fresh: true,
+        timed_out: false,
+        published_version: Some(2),
+        invalid_results_omitted: 0,
+        related_information_omitted: 0,
+    }
+}
+
 async fn dispatch_document_symbols_with_result_path(client_id: &str, path: &str) -> ToolResult {
     let runtime = test_runtime();
     let tmp = tempfile::tempdir().unwrap();
@@ -217,8 +327,10 @@ async fn capability_missing_blocks_dispatch() {
     let auth = auth_context(None, true);
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::LspStatus {
+            ToolCall::DocumentDiagnostics {
                 project,
+                path: "src/main.rs".into(),
+                limit: None,
                 session_id: None,
             },
             Some(&auth),
@@ -230,6 +342,37 @@ async fn capability_missing_blocks_dispatch() {
         err.contains("agent_capability_unavailable")
             || err.contains(SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION),
         "{err}"
+    );
+}
+
+#[tokio::test]
+async fn disconnected_agent_blocks_document_diagnostics_dispatch() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent(&runtime, "offline-lsp", "demo", tmp.path(), true).await;
+    runtime
+        .shell_clients
+        .reconcile_disconnect("offline-lsp", "inst")
+        .await;
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::DocumentDiagnostics {
+                project,
+                path: "src/main.rs".into(),
+                limit: None,
+                session_id: None,
+            },
+            Some(&auth_context(None, true)),
+        )
+        .await;
+    assert!(!result.success, "{result:?}");
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("not connected"),
+        "{result:?}"
     );
 }
 
@@ -342,6 +485,82 @@ async fn document_symbols_and_locations_are_normalized() {
         .as_str()
         .unwrap()
         .starts_with("agent:"));
+}
+
+#[tokio::test]
+async fn document_diagnostics_dispatches_typed_result_without_process_output() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent(&runtime, "lsp-diagnostics", "demo", tmp.path(), true).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::DocumentDiagnostics {
+                        project,
+                        path: "src/main.rs".into(),
+                        limit: Some(100),
+                        session_id: None,
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    complete_lsp_agent_request(
+        &runtime,
+        "lsp-diagnostics",
+        document_diagnostics_result("src/main.rs"),
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["diagnostics"][0]["severity"], "warning");
+    assert_eq!(result.output["fresh"], true);
+    assert_eq!(result.output["timed_out"], false);
+    let serialized = result.output.to_string();
+    assert!(!serialized.contains("stdout"));
+    assert!(!serialized.contains("stderr"));
+    assert!(!serialized.contains("file://"));
+}
+
+#[tokio::test]
+async fn document_diagnostics_result_boundary_rejects_embedded_absolute_paths() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project =
+        register_lsp_agent(&runtime, "lsp-diagnostic-path", "demo", tmp.path(), true).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::DocumentDiagnostics {
+                        project,
+                        path: "src/main.rs".into(),
+                        limit: Some(100),
+                        session_id: None,
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    let mut result = document_diagnostics_result("src/main.rs");
+    result.diagnostics[0].message = "compiler opened /tmp/private.rs".into();
+    complete_lsp_agent_request(&runtime, "lsp-diagnostic-path", result).await;
+    let result = task.await.unwrap();
+    assert!(!result.success, "{result:?}");
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("malformed_agent_lsp_result"),
+        "{result:?}"
+    );
 }
 
 #[tokio::test]
@@ -470,8 +689,10 @@ async fn read_only_session_allows_lsp_tools() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::LspStatus {
+                    ToolCall::DocumentDiagnostics {
                         project,
+                        path: "src/main.rs".into(),
+                        limit: Some(100),
                         session_id: Some(session_id),
                     },
                     Some(&auth_context(None, true)),
@@ -482,20 +703,7 @@ async fn read_only_session_allows_lsp_tools() {
     complete_lsp_agent_request(
         &runtime,
         "lsp-ro",
-        LspStatusResult {
-            project: "demo".into(),
-            detected_languages: vec!["rust".into()],
-            servers: vec![crate::lsp_bridge::LspServerStatusEntry {
-                language: "rust".into(),
-                server: "rust-analyzer".into(),
-                available: true,
-                running: false,
-                status: LspAvailabilityStatus::Available,
-                source: Some(LspCommandSource::Path),
-                position_encoding: None,
-            }],
-            warnings: vec![],
-        },
+        document_diagnostics_result("src/main.rs"),
     )
     .await;
     let result = task.await.unwrap();

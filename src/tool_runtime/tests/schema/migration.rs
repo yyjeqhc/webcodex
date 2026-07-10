@@ -469,6 +469,18 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             Some(LspReadOnlyNavigation),
         ),
         ExpectedToolPolicy::new(
+            "document_diagnostics",
+            "lsp",
+            "read_only",
+            true,
+            false,
+            false,
+            false,
+            "current_session_fallback",
+            false,
+            Some(LspReadOnlyNavigation),
+        ),
+        ExpectedToolPolicy::new(
             "goto_definition",
             "lsp",
             "read_only",

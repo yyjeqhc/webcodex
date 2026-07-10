@@ -2451,6 +2451,16 @@ mod tests {
                 name
             );
         }
+        assert!(tool_desc.contains("document_diagnostics"));
+        let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+            .as_object()
+            .unwrap();
+        for field in ["project", "path", "limit", "session_id"] {
+            assert!(
+                properties.contains_key(field),
+                "callRuntimeTool must expose flattened document_diagnostics field {field}"
+            );
+        }
     }
 
     #[test]

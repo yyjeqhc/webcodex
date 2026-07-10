@@ -665,6 +665,10 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
             (
+                "document_diagnostics",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
+            (
                 "workspace_checkpoint_create",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
@@ -721,6 +725,7 @@ mod tests {
             "workspace_checkpoint_create",
             "workspace_checkpoint_restore",
             "show_changes",
+            "document_diagnostics",
             "read_file",
             "write_project_file",
             "artifact_upload_begin",

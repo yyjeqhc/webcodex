@@ -855,6 +855,16 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Latest bounded rust-analyzer diagnostics for a project-relative file.
+    DocumentDiagnostics {
+        project: String,
+        path: String,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Goto definition at a 1-based Unicode scalar position.
     GotoDefinition {
         project: String,
@@ -1096,6 +1106,7 @@ impl ToolCall {
             Self::ApplyTextEdits { .. } => "apply_text_edits",
             Self::LspStatus { .. } => "lsp_status",
             Self::DocumentSymbols { .. } => "document_symbols",
+            Self::DocumentDiagnostics { .. } => "document_diagnostics",
             Self::GotoDefinition { .. } => "goto_definition",
             Self::FindReferences { .. } => "find_references",
             Self::ListProjects => "list_projects",
@@ -1155,6 +1166,7 @@ impl ToolCall {
             | Self::WorkspaceHygieneCheck { session_id, .. }
             | Self::LspStatus { session_id, .. }
             | Self::DocumentSymbols { session_id, .. }
+            | Self::DocumentDiagnostics { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. } => session_id.as_deref(),
             _ => None,
@@ -1209,6 +1221,7 @@ impl ToolCall {
             | Self::WorkspaceHygieneCheck { session_id, .. }
             | Self::LspStatus { session_id, .. }
             | Self::DocumentSymbols { session_id, .. }
+            | Self::DocumentDiagnostics { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. } => {
                 if session_id.is_none() {
@@ -1271,6 +1284,7 @@ impl ToolCall {
             | Self::WorkspaceHygieneCheck { project, .. }
             | Self::LspStatus { project, .. }
             | Self::DocumentSymbols { project, .. }
+            | Self::DocumentDiagnostics { project, .. }
             | Self::GotoDefinition { project, .. }
             | Self::FindReferences { project, .. } => Some(project.as_str()),
             Self::StartCodingTask { project, .. } | Self::FinishCodingTask { project, .. } => {

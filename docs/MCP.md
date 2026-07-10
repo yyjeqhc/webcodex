@@ -119,13 +119,18 @@ Current LSP tools are:
 
 - `lsp_status`
 - `document_symbols`
+- `document_diagnostics`
 - `goto_definition`
 - `find_references`
 
-Phase 1 supports Rust only. These tools are read-only, operate only within the
+The current MVP supports Rust only. These tools are read-only, operate only within the
 registered workspace, and do not navigate dependencies. They do not expose
-client-controlled document synchronization or any write operation. Availability
-depends on the selected agent advertising `lsp_read_only_navigation`.
+client-controlled document synchronization or any write operation. Validated
+open `.rs` files refresh from current disk content with full-text sync only.
+`document_diagnostics` uses bounded rust-analyzer publications and returns
+explicit `fresh` / `timed_out` state; it is fast semantic feedback, not Cargo
+check. Availability depends on the selected agent advertising
+`lsp_read_only_navigation`.
 
 When `start_coding_task.semantic_navigation.recommended=true`, prefer:
 

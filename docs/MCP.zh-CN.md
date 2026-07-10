@@ -119,12 +119,15 @@ finish:
 
 - `lsp_status`
 - `document_symbols`
+- `document_diagnostics`
 - `goto_definition`
 - `find_references`
 
-Phase 1 只支持 Rust。这些 tools 是只读的，只在已注册 workspace 内工作，也不会
+当前 MVP 只支持 Rust。这些 tools 是只读的，只在已注册 workspace 内工作，也不会
 导航到 dependencies。它们不提供 client-controlled document synchronization，也不
-提供任何 write operation。可用性取决于所选 agent 是否声明
+提供任何 write operation。已验证且打开的 `.rs` 文件只通过当前磁盘内容进行 full-text
+sync。`document_diagnostics` 使用 bounded rust-analyzer publications，并明确返回
+`fresh` / `timed_out`；它是快速语义反馈，不是 Cargo check。可用性取决于所选 agent 是否声明
 `lsp_read_only_navigation`。
 
 当 `start_coding_task.semantic_navigation.recommended=true` 时，推荐：

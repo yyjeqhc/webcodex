@@ -101,6 +101,12 @@ fn run() -> io::Result<()> {
                         &format!("didOpen:{}:{body}\n", std::process::id()),
                     )?;
                 }
+                maybe_publish_diagnostics(
+                    &mut writer,
+                    &scenario,
+                    &body,
+                    marker.as_deref(),
+                )?;
             }
             Some("textDocument/didChange") => {
                 if let Some(marker) = &marker {
@@ -109,6 +115,12 @@ fn run() -> io::Result<()> {
                         &format!("didChange:{}:{body}\n", std::process::id()),
                     )?;
                 }
+                maybe_publish_diagnostics(
+                    &mut writer,
+                    &scenario,
+                    &body,
+                    marker.as_deref(),
+                )?;
             }
             Some("shutdown") => {
                 if scenario == "shutdown_hang" {
@@ -201,6 +213,86 @@ fn run() -> io::Result<()> {
             }
         }
     }
+}
+
+fn maybe_publish_diagnostics(
+    writer: &mut impl Write,
+    scenario: &str,
+    document_notification: &str,
+    marker: Option<&Path>,
+) -> io::Result<()> {
+    if !scenario.starts_with("diagnostics_") || scenario == "diagnostics_timeout" {
+        return Ok(());
+    }
+    let Some(mut uri) = json_string_field(document_notification, "uri") else {
+        return Ok(());
+    };
+    let mut version = json_u64_field(document_notification, "version").unwrap_or(1);
+    if scenario == "diagnostics_wrong_uri" {
+        uri = path_to_file_uri(&env::current_dir()?.join("src/other.rs"));
+    } else if scenario == "diagnostics_external_uri" {
+        uri = "file:///usr/lib/rustlib/src/rust/library/core/src/lib.rs".to_string();
+    }
+    if scenario == "diagnostics_delayed" {
+        thread::sleep(Duration::from_millis(50));
+    }
+    if scenario == "diagnostics_malformed_notification" {
+        write_frame(
+            writer,
+            r#"{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":7,"diagnostics":"bad"}}"#,
+        )?;
+    }
+    if scenario == "diagnostics_stale_then_timeout" {
+        let already_published = marker
+            .and_then(|path| fs::read_to_string(path).ok())
+            .is_some_and(|contents| contents.contains("diagnostics-publication"));
+        if already_published {
+            return Ok(());
+        }
+        version = 0;
+    }
+    let diagnostics = match scenario {
+        "diagnostics_empty"
+        | "diagnostics_delayed"
+        | "diagnostics_wrong_uri"
+        | "diagnostics_external_uri"
+        | "diagnostics_stale_then_timeout"
+        | "diagnostics_malformed_notification" => "[]".to_string(),
+        "diagnostics_one" => r#"[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"severity":1,"code":"E0308","source":"rust-analyzer","message":"type mismatch","tags":[]}]"#.to_string(),
+        "diagnostics_mixed" => r#"[{"range":{"start":{"line":3,"character":0},"end":{"line":3,"character":2}},"severity":4,"message":"hint","tags":[2,9]},{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},"severity":2,"code":7,"source":"rust-analyzer","message":"warning at file:///secret/source.rs\nnext","tags":[1],"data":{"private":"file:///secret/data"},"relatedInformation":[{"location":{"uri":"file:///secret/related.rs"},"message":"hidden"}]},{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}},"severity":3,"message":"information","tags":[]},{"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":1}},"severity":9,"message":"unknown","tags":[]},{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"message":"error","tags":[]}]"#.to_string(),
+        "diagnostics_duplicates" => r#"[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"message":"same","tags":[]},{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"message":"same","tags":[]}]"#.to_string(),
+        "diagnostics_malformed_range" => r#"[{"range":{"start":{"line":999,"character":0},"end":{"line":999,"character":1}},"severity":1,"message":"bad range"},{"range":{"start":{"line":1,"character":1},"end":{"line":1,"character":0}},"severity":2,"message":"reversed"},{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":2,"message":"valid"},7]"#.to_string(),
+        "diagnostics_utf16" => r#"[{"range":{"start":{"line":2,"character":3},"end":{"line":2,"character":5}},"severity":1,"message":"emoji"}]"#.to_string(),
+        "diagnostics_oversized_message" => {
+            let message = format!("{} file:///secret/source.rs", "x".repeat(5000));
+            format!(r#"[{{"range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":1}}}},"severity":1,"source":"{}","code":"{}","message":"{}"}}]"#, "s".repeat(300), "c".repeat(300), json_escape(&message))
+        }
+        "diagnostics_overflow" => {
+            let items = (0..520)
+                .map(|index| format!(r#"{{"range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":1}}}},"severity":2,"message":"diagnostic {index}"}}"#))
+                .collect::<Vec<_>>();
+            format!("[{}]", items.join(","))
+        }
+        "diagnostics_text_budget" => {
+            let message = "m".repeat(4096);
+            let items = (0..30)
+                .map(|index| format!(r#"{{"range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":1}}}},"severity":2,"code":"{index}","message":"{message}"}}"#))
+                .collect::<Vec<_>>();
+            format!("[{}]", items.join(","))
+        }
+        _ => return Ok(()),
+    };
+    write_frame(
+        writer,
+        &format!(
+            r#"{{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":"{}","version":{version},"diagnostics":{diagnostics}}}}}"#,
+            json_escape(&uri)
+        ),
+    )?;
+    if let Some(marker) = marker {
+        append_marker(marker, "diagnostics-publication\n")?;
+    }
+    Ok(())
 }
 
 fn start_count(marker: Option<&Path>) -> usize {

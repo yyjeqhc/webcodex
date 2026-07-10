@@ -2,9 +2,10 @@
 
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::lsp_bridge::{
-    clamp_document_symbols_limit, clamp_find_references_limit, clamp_goto_definition_limit,
-    error_codes, is_known_error_code, parse_agent_lsp_result_envelope, AgentLspPayload,
-    AgentLspRequest, DocumentSymbolsResult, LocationsResult, LspStatusResult,
+    clamp_document_diagnostics_limit, clamp_document_symbols_limit, clamp_find_references_limit,
+    clamp_goto_definition_limit, error_codes, is_known_error_code, parse_agent_lsp_result_envelope,
+    redact_absolute_paths, AgentLspPayload, AgentLspRequest, DocumentDiagnosticsResult,
+    DocumentSymbolsResult, LocationsResult, LspStatusResult,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -29,6 +30,21 @@ impl ToolRuntime {
                     AgentLspRequest::DocumentSymbols {
                         path,
                         limit: clamp_document_symbols_limit(limit),
+                    },
+                )
+                .await
+            }
+            ToolCall::DocumentDiagnostics {
+                project,
+                path,
+                limit,
+                session_id: _,
+            } => {
+                self.call_agent_lsp(
+                    project,
+                    AgentLspRequest::DocumentDiagnostics {
+                        path,
+                        limit: clamp_document_diagnostics_limit(limit),
                     },
                 )
                 .await
@@ -105,6 +121,24 @@ impl ToolRuntime {
             Ok(id) => id.to_string(),
             Err(e) => return ToolResult::err(e),
         };
+        let Some(client) = self.shell_clients.get_client_view(&client_id).await else {
+            return ToolResult::err(format!(
+                "{}: agent is not connected",
+                error_codes::AGENT_CAPABILITY_UNAVAILABLE
+            ));
+        };
+        if !client.connected {
+            return ToolResult::err(format!(
+                "{}: agent is not connected",
+                error_codes::AGENT_CAPABILITY_UNAVAILABLE
+            ));
+        }
+        if !client.capabilities.lsp_read_only_navigation {
+            return ToolResult::err(format!(
+                "{}: agent does not support lsp_read_only_navigation",
+                error_codes::AGENT_CAPABILITY_UNAVAILABLE
+            ));
+        }
         // Server-resolved agent-local project id only — never trust a
         // model-supplied free-form agent project id for bridge dispatch.
         let agent_project_id = match agent_local_project_id(&resolved.resolved_id) {
@@ -203,6 +237,9 @@ fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result
         AgentLspRequest::DocumentSymbols { .. } => {
             roundtrip_typed_result::<DocumentSymbolsResult>(result)
         }
+        AgentLspRequest::DocumentDiagnostics { .. } => {
+            roundtrip_typed_result::<DocumentDiagnosticsResult>(result)
+        }
         AgentLspRequest::GotoDefinition { .. } | AgentLspRequest::FindReferences { .. } => {
             roundtrip_typed_result::<LocationsResult>(result)
         }
@@ -241,7 +278,11 @@ fn contains_forbidden_path_material(value: &Value) -> bool {
 fn string_contains_forbidden_path_material(value: &str) -> bool {
     let value = value.trim();
     let lower = value.to_ascii_lowercase();
-    if lower.contains("file://") || value.starts_with('/') || value.starts_with(r"\\") {
+    if lower.contains("file://")
+        || value.starts_with('/')
+        || value.starts_with(r"\\")
+        || redact_absolute_paths(value) != value
+    {
         return true;
     }
     let bytes = value.as_bytes();

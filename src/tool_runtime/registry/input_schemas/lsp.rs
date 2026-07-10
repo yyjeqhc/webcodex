@@ -38,6 +38,33 @@ pub(crate) fn document_symbols_input_schema() -> Value {
     schema
 }
 
+pub(crate) fn document_diagnostics_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        (
+            "project",
+            "string",
+            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            true,
+        ),
+        (
+            "path",
+            "string",
+            "Project-relative UTF-8 path to a .rs file.",
+            true,
+        ),
+        (
+            "limit",
+            "integer",
+            "Maximum normalized diagnostics to return (default 100, clamped to 1..200).",
+            false,
+        ),
+    ]));
+    schema["properties"]["limit"]["minimum"] = json!(1);
+    schema["properties"]["limit"]["maximum"] = json!(200);
+    schema["properties"]["limit"]["default"] = json!(100);
+    schema
+}
+
 pub(crate) fn goto_definition_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
         (

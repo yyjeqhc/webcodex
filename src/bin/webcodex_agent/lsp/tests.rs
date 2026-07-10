@@ -319,6 +319,134 @@ fn document_version_overflow_is_safe_and_state_is_fingerprint_only() {
 }
 
 #[test]
+fn diagnostics_cache_is_latest_value_bounded_and_counts_malformed_notifications() {
+    let cache = DiagnosticsCache::default();
+    cache.record_publish_diagnostics(Some(&json!({"uri": 7, "diagnostics": []})));
+    cache.record_publish_diagnostics(Some(&json!({"uri": "file:///bad.rs"})));
+    assert_eq!(cache.malformed_notification_count(), 2);
+
+    let oversized = (0..(MAX_DIAGNOSTICS_PER_DOCUMENT + 7))
+        .map(|index| json!({"message": index}))
+        .collect::<Vec<_>>();
+    cache.record_publish_diagnostics(Some(&json!({
+        "uri": "file:///workspace/latest.rs",
+        "version": 1,
+        "diagnostics": oversized,
+    })));
+    {
+        let state = lock_unpoison(&cache.state);
+        let publication = &state.publications["file:///workspace/latest.rs"];
+        assert_eq!(publication.diagnostics.len(), MAX_DIAGNOSTICS_PER_DOCUMENT);
+        assert_eq!(
+            publication.raw_diagnostics_count,
+            MAX_DIAGNOSTICS_PER_DOCUMENT + 7
+        );
+    }
+    cache.record_publish_diagnostics(Some(&json!({
+        "uri": "file:///workspace/latest.rs",
+        "version": 2,
+        "diagnostics": [],
+    })));
+    {
+        let state = lock_unpoison(&cache.state);
+        let latest = &state.publications["file:///workspace/latest.rs"];
+        assert_eq!(latest.version, Some(2));
+        assert!(latest.diagnostics.is_empty());
+        assert_eq!(latest.raw_diagnostics_count, 0);
+    }
+
+    let bounded_cache = DiagnosticsCache::default();
+    for index in 0..=MAX_DIAGNOSTIC_DOCUMENTS {
+        bounded_cache.record_publish_diagnostics(Some(&json!({
+            "uri": format!("file:///workspace/{index}.rs"),
+            "diagnostics": [],
+        })));
+    }
+    let state = lock_unpoison(&bounded_cache.state);
+    assert_eq!(state.publications.len(), MAX_DIAGNOSTIC_DOCUMENTS);
+    assert!(!state.publications.contains_key("file:///workspace/0.rs"));
+}
+
+#[test]
+fn diagnostics_cache_wait_has_version_generation_and_timeout_semantics() {
+    let cache = DiagnosticsCache::default();
+    let uri = "file:///workspace/main.rs";
+    let no_cache = cache
+        .wait_for_publication(uri, 1, 0, Instant::now())
+        .unwrap();
+    assert!(no_cache.0.is_none());
+    assert!(!no_cache.1);
+    assert!(no_cache.2);
+
+    cache.record_publish_diagnostics(Some(&json!({
+        "uri": uri,
+        "version": 0,
+        "diagnostics": [],
+    })));
+    let baseline = cache.generation();
+    let stale = cache
+        .wait_for_publication(uri, 1, baseline, Instant::now())
+        .unwrap();
+    assert_eq!(stale.0.unwrap().version, Some(0));
+    assert!(!stale.1);
+    assert!(stale.2);
+
+    let version_match = cache
+        .wait_for_publication(uri, 0, baseline, Instant::now())
+        .unwrap();
+    assert!(version_match.1);
+    assert!(!version_match.2);
+
+    let before = cache.generation();
+    cache.record_publish_diagnostics(Some(&json!({
+        "uri": uri,
+        "diagnostics": [],
+    })));
+    let new_generation = cache
+        .wait_for_publication(uri, 1, before, Instant::now())
+        .unwrap();
+    assert!(new_generation.1);
+    assert!(!new_generation.2);
+}
+
+#[test]
+fn diagnostics_cache_is_cleared_with_server_instance_restart() {
+    let fixture = Fixture::with_manual_cleanup("diagnostics_one", 4, Duration::ZERO);
+    let document_path = fixture.root.join("main.rs");
+    let text = "fn main() {}\n";
+    fs::write(&document_path, text).unwrap();
+    let uri = Url::from_file_path(&document_path).unwrap().to_string();
+    let first = fixture
+        .supervisor
+        .document_diagnostics(
+            &fixture.root,
+            LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            text,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+    assert!(first.publication.is_some());
+    let first_server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    assert!(first_server.diagnostics.generation() > 0);
+    drop(first_server);
+    assert_eq!(fixture.supervisor.cleanup_idle(), 1);
+
+    let second_server = fixture
+        .supervisor
+        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
+        .unwrap();
+    assert_eq!(second_server.diagnostics.generation(), 0);
+    assert!(lock_unpoison(&second_server.diagnostics.state)
+        .publications
+        .is_empty());
+}
+
+#[test]
 fn lsp_supervisor_uses_distinct_processes_for_distinct_projects() {
     let fixture = Fixture::new("normal");
     let second_root = fixture._temp.path().join("second-project");

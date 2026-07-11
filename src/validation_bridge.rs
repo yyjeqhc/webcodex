@@ -240,6 +240,10 @@ pub fn bound_error_message(message: impl Into<String>) -> String {
 /// Redact absolute filesystem paths from free text before it crosses the
 /// validation bridge. Relative paths and ordinary slash-separated prose are
 /// preserved. Unix, Windows drive, and UNC forms are replaced uniformly.
+///
+/// A colon may introduce a local absolute path (`error:/root`, `cwd:C:\`,
+/// `share:\\server`). Forward-slash `//` after a non-`file` URI scheme
+/// (`https://`, `ssh://`, …) is not treated as UNC so ordinary URLs survive.
 pub fn sanitize_bridge_text(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -247,7 +251,7 @@ pub fn sanitize_bridge_text(text: &str) -> String {
     let mut index = 0usize;
 
     while index < bytes.len() {
-        let boundary = index == 0 || is_path_start_boundary(bytes[index - 1]);
+        let boundary = is_path_start_boundary_at(bytes, index);
         let file_uri = bytes
             .get(index..index.saturating_add(7))
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file://"))
@@ -261,10 +265,13 @@ pub fn sanitize_bridge_text(text: &str) -> String {
                     && matches!(prefix[2], b'/' | b'\\')
                     && boundary
             });
+        // Backslash UNC is never a URI. Forward-slash `//` after a non-file
+        // `scheme:` must be left intact (https://, ssh://, git+ssh://, …).
         let unc = matches!(
             bytes.get(index..index.saturating_add(2)),
             Some(prefix) if prefix == b"\\\\" || prefix == b"//"
-        ) && boundary;
+        ) && boundary
+            && !is_non_file_uri_authority_slashes(bytes, index);
 
         if file_uri || unix || drive || unc {
             let end = absolute_path_token_end(bytes, index);
@@ -280,12 +287,58 @@ pub fn sanitize_bridge_text(text: &str) -> String {
     out
 }
 
+fn is_path_start_boundary_at(bytes: &[u8], index: usize) -> bool {
+    if index == 0 {
+        return true;
+    }
+    let prev = bytes[index - 1];
+    if is_path_start_boundary(prev) {
+        return true;
+    }
+    // Colon can separate a label from a local absolute path, e.g.
+    // `error:/root`, `cwd:C:\Users\…`, `share:\\server\…`, `src:file:///…`.
+    prev == b':'
+}
+
 fn is_path_start_boundary(byte: u8) -> bool {
     byte.is_ascii_whitespace()
         || matches!(
             byte,
             b'\'' | b'"' | b'`' | b'(' | b'[' | b'{' | b'<' | b'=' | b',' | b';' | b'!'
         )
+}
+
+/// True when `index` points at the first `/` of `//` that belongs to a non-file
+/// URI (`scheme://…`). Scheme grammar is the approximate RFC 3986 form
+/// `[A-Za-z][A-Za-z0-9+.-]*`. `file://` is intentionally excluded so the
+/// dedicated file-URI branch still redacts it.
+fn is_non_file_uri_authority_slashes(bytes: &[u8], index: usize) -> bool {
+    if bytes.get(index..index.saturating_add(2)) != Some(b"//") {
+        return false;
+    }
+    if index == 0 || bytes[index - 1] != b':' {
+        return false;
+    }
+    let colon = index - 1;
+    // Walk back over scheme characters: ALPHA / DIGIT / "+" / "-" / "."
+    let mut start = colon;
+    while start > 0 {
+        let b = bytes[start - 1];
+        if b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.') {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    if start >= colon {
+        return false;
+    }
+    // RFC 3986 scheme must start with ALPHA.
+    if !bytes[start].is_ascii_alphabetic() {
+        return false;
+    }
+    let scheme = &bytes[start..colon];
+    !scheme.eq_ignore_ascii_case(b"file")
 }
 
 fn absolute_path_token_end(bytes: &[u8], start: usize) -> usize {
@@ -298,6 +351,13 @@ fn absolute_path_token_end(bytes: &[u8], start: usize) -> usize {
         )
     {
         end += 1;
+    }
+    // Keep sentence-final '.' outside the redacted token so
+    // `error:/root/a.py.` becomes `error:<path>.` rather than consuming the
+    // period into the path. Interior dots (e.g. `.py`) stay with the path
+    // because they are not trailing.
+    while end > start && bytes[end - 1] == b'.' {
+        end -= 1;
     }
     end
 }
@@ -602,5 +662,282 @@ mod tests {
         let parsed = parse_validation_bridge_result_envelope(&env.to_stdout_json()).unwrap();
         assert!(parsed.success);
         assert_eq!(parsed.result.as_ref().unwrap().adapter_id, "pyright");
+    }
+
+    fn assert_redacts(input: &str, leaked_fragment: &str) {
+        let sanitized = sanitize_bridge_text(input);
+        assert!(
+            sanitized.contains("<path>"),
+            "expected <path> marker for {input:?}, got {sanitized:?}"
+        );
+        assert!(
+            !sanitized.contains(leaked_fragment),
+            "absolute path leaked for {input:?}: {sanitized:?}"
+        );
+    }
+
+    fn assert_preserves(input: &str) {
+        let sanitized = sanitize_bridge_text(input);
+        assert_eq!(
+            sanitized, input,
+            "non-path text was altered: {input:?} -> {sanitized:?}"
+        );
+        assert!(
+            !sanitized.contains("<path>"),
+            "false-positive path redaction for {input:?}"
+        );
+    }
+
+    #[test]
+    fn colon_adjacent_unix_paths_are_redacted() {
+        let cases = [
+            ("error:/root/secret.py", "/root/secret.py"),
+            ("path:/etc/passwd", "/etc/passwd"),
+            ("temp:/tmp/private", "/tmp/private"),
+            ("location:/tmp/a.py", "/tmp/a.py"),
+            ("path:/opt/app/file.py", "/opt/app/file.py"),
+            ("/root/secret.py", "/root/secret.py"),
+            ("before /root/secret.py", "/root/secret.py"),
+            ("\"quoted /root/secret.py\"", "/root/secret.py"),
+            ("(error=/root/secret.py)", "/root/secret.py"),
+            ("消息:/root/secret.py", "/root/secret.py"),
+        ];
+        for (input, leaked) in cases {
+            assert_redacts(input, leaked);
+        }
+    }
+
+    #[test]
+    fn colon_adjacent_windows_paths_are_redacted() {
+        let cases = [
+            (r"cwd:C:\Users\alice\app.py", r"C:\Users\alice\app.py"),
+            ("cwd:D:/work/app.py", "D:/work/app.py"),
+            (r"source:D:/work/secret.py", "D:/work/secret.py"),
+            (r"C:\Users\alice\secret.py", r"C:\Users\alice\secret.py"),
+            ("D:/work/secret.py", "D:/work/secret.py"),
+            (
+                r"msg: C:\Users\alice\secret.py",
+                r"C:\Users\alice\secret.py",
+            ),
+            (
+                r#"cwd="C:\Users\alice\secret.py""#,
+                r"C:\Users\alice\secret.py",
+            ),
+            (
+                r"(path=C:\Users\alice\secret.py)",
+                r"C:\Users\alice\secret.py",
+            ),
+        ];
+        for (input, leaked) in cases {
+            assert_redacts(input, leaked);
+        }
+    }
+
+    #[test]
+    fn colon_adjacent_unc_paths_are_redacted() {
+        // Forward-slash `label://host/...` matches the URI scheme grammar and is
+        // preserved by design (see non_file_uri_schemes_are_preserved). Colon-
+        // adjacent UNC is covered via backslash form and bare/spaced `//`.
+        let cases = [
+            (r"share:\\server\share\app.py", r"\\server\share\app.py"),
+            (
+                r"source:\\server\share\secret.py",
+                r"\\server\share\secret.py",
+            ),
+            (r"\\server\share\secret.py", r"\\server\share\secret.py"),
+            ("//server/share/secret.py", "//server/share/secret.py"),
+            ("share: //server/share/app.py", "//server/share/app.py"),
+            (
+                "source: //server/share/secret.py",
+                "//server/share/secret.py",
+            ),
+            (
+                r"msg: \\server\share\secret.py",
+                r"\\server\share\secret.py",
+            ),
+            (
+                r#"(unc=\\server\share\secret.py)"#,
+                r"\\server\share\secret.py",
+            ),
+            (
+                r#"unc="//server/share/secret.py""#,
+                "//server/share/secret.py",
+            ),
+        ];
+        for (input, leaked) in cases {
+            assert_redacts(input, leaked);
+        }
+        // `share://…` is a legal non-file scheme under RFC 3986 grammar, so it
+        // is not treated as UNC. Backslash UNC after the same label is redacted.
+        assert_preserves("share://server/share/app.py");
+        assert_eq!(
+            sanitize_bridge_text(r"share:\\server\share\app.py"),
+            "share:<path>"
+        );
+    }
+
+    #[test]
+    fn non_file_uri_schemes_are_preserved() {
+        let cases = [
+            "url:https://example.com/path",
+            "url:http://example.com/path",
+            "url:http://example.com/a",
+            "remote:ssh://host/repo",
+            "remote:git+ssh://host/repo",
+            "registry:https://registry.example.com/pkg",
+            "custom:abc+def.1://host/path",
+            "https://example.com/path",
+            "text:ratio/with/slashes",
+            "message:not/an/absolute/path",
+            "text:not/an/absolute/path",
+        ];
+        for input in cases {
+            assert_preserves(input);
+        }
+    }
+
+    #[test]
+    fn file_uri_after_label_is_redacted() {
+        let cases = [
+            ("source:file:///root/secret.py", "/root/secret.py"),
+            (
+                "source:file://C:/Users/alice/secret.py",
+                "C:/Users/alice/secret.py",
+            ),
+            ("src:file:///root/app.py", "/root/app.py"),
+            ("file:///root/secret.py", "/root/secret.py"),
+            (
+                "file://C:/Users/alice/secret.py",
+                "C:/Users/alice/secret.py",
+            ),
+            ("msg file:///root/secret.py", "/root/secret.py"),
+        ];
+        for (input, leaked) in cases {
+            assert_redacts(input, leaked);
+            let sanitized = sanitize_bridge_text(input);
+            assert!(
+                !sanitized.to_ascii_lowercase().contains("file://"),
+                "file URI scheme leaked for {input:?}: {sanitized:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_punctuation_is_preserved() {
+        let cases = [
+            ("error:/root/a.py,", "error:<path>,"),
+            ("error:/root/a.py)", "error:<path>)"),
+            ("error:/root/a.py]", "error:<path>]"),
+            ("error:/root/a.py.", "error:<path>."),
+            ("cwd:C:\\Users\\alice\\a.py,", "cwd:<path>,"),
+            ("share:\\\\server\\share\\a.py)", "share:<path>)"),
+            ("path=/root/a.py;", "path=<path>;"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                sanitize_bridge_text(input),
+                expected,
+                "trailing punctuation mishandled for {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn envelope_redacts_colon_adjacent_paths() {
+        let mut response = successful_response_fixture();
+        response.success = false;
+        response.failure_kind = Some(failure_kinds::COMPILE_ERROR.to_string());
+        response.stderr_summary = Some("error:/root/private/secret.py".into());
+        response.message = Some(r"cwd:C:\Users\alice\private.py".into());
+        response.diagnostics = Some(BridgeDiagnostics {
+            available: true,
+            reason: None,
+            diagnostics: vec![BridgeDiagnostic {
+                severity: "error".into(),
+                code: None,
+                rule: Some("source:D:/work/private.py".into()),
+                file: Some("src/app.py".into()),
+                line: Some(1),
+                column: Some(1),
+                end_line: None,
+                end_column: None,
+                message: r"source:\\server\share\secret.py".into(),
+            }],
+            diagnostic_count: 1,
+            returned_diagnostic_count: 1,
+            diagnostics_truncated: false,
+            invalid_diagnostics_omitted: 0,
+            external_results_omitted: 0,
+            summary_error_count: Some(1),
+            summary_warning_count: Some(0),
+            summary_information_count: Some(0),
+        });
+
+        let json = ValidationBridgeResultEnvelope::ok(response).to_stdout_json();
+        for leaked in [
+            "/root/private/secret.py",
+            r"C:\Users\alice\private.py",
+            r"server\share\secret.py",
+            "D:/work/private.py",
+        ] {
+            assert!(!json.contains(leaked), "envelope leaked {leaked:?}: {json}");
+        }
+        assert!(json.contains("<path>"), "envelope missing <path>: {json}");
+
+        let parsed: ValidationBridgeResultEnvelope =
+            serde_json::from_str(&json).expect("envelope JSON must deserialize");
+        assert!(parsed.success);
+        let value = serde_json::to_value(&parsed).unwrap();
+        assert!(
+            !value_contains_absolute_path_leak(&value),
+            "value_contains_absolute_path_leak reported a leak: {value}"
+        );
+    }
+
+    #[test]
+    fn envelope_preserves_normal_urls() {
+        let mut response = successful_response_fixture();
+        response.message = Some("url:https://example.com/path".into());
+        response.stderr_summary = Some("remote:ssh://host/repo".into());
+        response.diagnostics = Some(BridgeDiagnostics {
+            available: true,
+            reason: None,
+            diagnostics: vec![BridgeDiagnostic {
+                severity: "warning".into(),
+                code: None,
+                rule: Some("registry:https://registry.example.com/pkg".into()),
+                file: Some("src/app.py".into()),
+                line: Some(1),
+                column: Some(1),
+                end_line: None,
+                end_column: None,
+                message: "see url:http://example.com/a".into(),
+            }],
+            diagnostic_count: 1,
+            returned_diagnostic_count: 1,
+            diagnostics_truncated: false,
+            invalid_diagnostics_omitted: 0,
+            external_results_omitted: 0,
+            summary_error_count: Some(0),
+            summary_warning_count: Some(1),
+            summary_information_count: Some(0),
+        });
+
+        let json = ValidationBridgeResultEnvelope::ok(response).to_stdout_json();
+        for url in [
+            "https://example.com/path",
+            "ssh://host/repo",
+            "https://registry.example.com/pkg",
+            "http://example.com/a",
+        ] {
+            assert!(
+                json.contains(url),
+                "normal URL was redacted: missing {url:?} in {json}"
+            );
+        }
+        assert!(
+            !json.contains("<path>"),
+            "normal URLs must not be replaced with <path>: {json}"
+        );
     }
 }

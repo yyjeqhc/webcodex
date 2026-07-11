@@ -223,7 +223,9 @@ consistency is enforced by tests.
 - Every free-text bridge field is sanitized before serialization. Embedded
   Unix absolute paths, Windows drive paths, and UNC paths are replaced with
   `<path>` in stderr summaries, response/error messages, parser failures, and
-  diagnostic messages.
+  diagnostic messages. Colon-labeled local absolute paths (for example
+  `error:/root/a.py` or `cwd:C:\Users\…`) are redacted as well, while non-`file`
+  URI schemes such as `https://` and `ssh://` are preserved.
 - Pyright pass/fail combines the process exit code with the complete structured
   diagnostic counts. Non-zero exit without errors is `process_exit`; any
   observed error (including one outside the returned diagnostic cap) is

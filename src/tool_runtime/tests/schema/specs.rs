@@ -158,6 +158,38 @@ fn search_project_text_schema_declares_bounded_advanced_inputs() {
 }
 
 #[test]
+fn sync_validation_and_run_shell_timeout_schema_bounds() {
+    let specs = registered_tool_specs();
+    for (name, default) in [
+        ("cargo_fmt", 120),
+        ("cargo_check", 120),
+        ("cargo_test", 120),
+        ("run_shell", 60),
+    ] {
+        let spec = specs.iter().find(|s| s.name == name).expect(name);
+        let timeout = &spec.input_schema["properties"]["timeout_secs"];
+        assert_eq!(timeout["type"], "integer", "{name}");
+        assert_eq!(timeout["minimum"], 1, "{name}");
+        assert_eq!(timeout["maximum"], 120, "{name}");
+        assert_eq!(timeout["default"], default, "{name}");
+        let desc = timeout["description"].as_str().unwrap_or("");
+        assert!(
+            desc.contains("120") && desc.to_ascii_lowercase().contains("reject"),
+            "{name} timeout description should document reject contract: {desc}"
+        );
+    }
+
+    // search_project_text keeps its own 1..120 clamp semantics without schema max.
+    let search = specs
+        .iter()
+        .find(|s| s.name == "search_project_text")
+        .expect("search_project_text");
+    assert!(search.input_schema["properties"]["timeout_secs"]
+        .get("maximum")
+        .is_none());
+}
+
+#[test]
 fn tool_specs_input_schema_fields_are_declared_and_safe() {
     for spec in registered_tool_specs() {
         let properties = input_schema_properties(&spec);
@@ -402,6 +434,18 @@ fn tool_specs_optional_fields_are_not_required() {
     assert!(required.contains(&"command".to_string()));
     assert!(!required.contains(&"timeout_secs".to_string()));
     assert!(!required.contains(&"cwd".to_string()));
+    assert_eq!(
+        run_shell.input_schema["properties"]["timeout_secs"]["minimum"],
+        1
+    );
+    assert_eq!(
+        run_shell.input_schema["properties"]["timeout_secs"]["maximum"],
+        120
+    );
+    assert_eq!(
+        run_shell.input_schema["properties"]["timeout_secs"]["default"],
+        60
+    );
 
     let read_file = specs.iter().find(|s| s.name == "read_file").unwrap();
     let required = required_fields(read_file);

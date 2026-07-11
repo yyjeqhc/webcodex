@@ -339,6 +339,13 @@ fn validation_event_from_finished(
         Some("failed") => false,
         _ => return None,
     };
+    // Pre-execution rejections (invalid arguments, offline agent, scope/guard
+    // denial, schema reject) must not become validation evidence. Only calls
+    // that actually entered validation execution — exit code and/or bounded
+    // validation output metadata — feed the ledger summary.
+    if !success && !validation_execution_started(finished) {
+        return None;
+    }
     let started_at = finished
         .started_at
         .or_else(|| started.and_then(|event| event.started_at));
@@ -383,6 +390,13 @@ fn validation_event_from_finished(
         tests_run_count,
         zero_tests_run,
     })
+}
+
+/// True when the finished tool call actually entered validation execution.
+/// Parameter / schema / permission / enqueue rejections leave neither an exit
+/// code nor validation output metadata and must not pollute the ledger.
+fn validation_execution_started(finished: &SessionEvent) -> bool {
+    finished.exit_code.is_some() || finished.validation_output_summary.is_some()
 }
 
 fn validation_failure_kind(

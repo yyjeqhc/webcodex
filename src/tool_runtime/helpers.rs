@@ -202,6 +202,58 @@ pub(crate) fn bounded_tail(text: &str, max_chars: usize) -> (String, bool) {
 
 pub(crate) const COMMAND_STDIO_TAIL_CHARS: usize = 12_000;
 
+/// Synchronous agent-wait tools share this hard upper bound with
+/// `shell_client` validation (`wait_timeout_secs` must be <= 120).
+pub(crate) const MIN_SYNC_TIMEOUT_SECS: u64 = 1;
+pub(crate) const MAX_SYNC_TIMEOUT_SECS: u64 = 120;
+pub(crate) const DEFAULT_CARGO_TIMEOUT_SECS: u64 = 120;
+pub(crate) const DEFAULT_RUN_SHELL_TIMEOUT_SECS: u64 = 60;
+
+/// Resolve a synchronous command timeout. Out-of-range values are rejected
+/// (not clamped) so callers cannot request longer waits than the sync path
+/// can honor.
+pub(crate) fn resolve_sync_timeout_secs(
+    timeout_secs: Option<u64>,
+    default: u64,
+) -> Result<u64, String> {
+    debug_assert!((MIN_SYNC_TIMEOUT_SECS..=MAX_SYNC_TIMEOUT_SECS).contains(&default));
+    let value = timeout_secs.unwrap_or(default);
+    if !(MIN_SYNC_TIMEOUT_SECS..=MAX_SYNC_TIMEOUT_SECS).contains(&value) {
+        return Err(format!(
+            "timeout_secs must be between {} and {}",
+            MIN_SYNC_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS
+        ));
+    }
+    Ok(value)
+}
+
+/// Structured pre-execution rejection for an out-of-range synchronous timeout.
+/// Messages name the calling tool and never leak the underlying shell request
+/// implementation (`runShell` / `run_shell`).
+pub(crate) fn sync_timeout_out_of_range_result(
+    tool_name: &str,
+    default: u64,
+) -> super::tool_result::ToolResult {
+    super::tool_result::ToolResult::err_with_output(
+        command_rejected_message(
+            format!(
+                "{tool_name} timeout_secs must be between {MIN_SYNC_TIMEOUT_SECS} and {MAX_SYNC_TIMEOUT_SECS}"
+            ),
+            format!(
+                "pass timeout_secs between {MIN_SYNC_TIMEOUT_SECS} and {MAX_SYNC_TIMEOUT_SECS}, or omit it for the default of {default} seconds. For longer work use run_job."
+            ),
+        ),
+        json!({
+            "command_started": false,
+            "command_completed": false,
+            "command_ok": false,
+            "exit_code": null,
+            "failure_kind": "invalid_arguments",
+            "tool_failure": true,
+        }),
+    )
+}
+
 pub(crate) fn command_rejected_message(
     reason: impl AsRef<str>,
     guidance: impl AsRef<str>,

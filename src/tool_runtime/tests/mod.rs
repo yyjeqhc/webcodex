@@ -23,6 +23,7 @@ mod sessions_git;
 mod sessions_guards;
 mod sessions_instructions;
 mod sessions_resolver;
+mod sync_timeout;
 mod tool_call;
 mod validation_events;
 mod validation_parser;

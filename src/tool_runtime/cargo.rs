@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::helpers::{
-    bounded_tail, command_rejected_message, looks_like_command_timeout,
-    validate_project_relative_path,
+    bounded_tail, command_rejected_message, looks_like_command_timeout, resolve_sync_timeout_secs,
+    sync_timeout_out_of_range_result, validate_project_relative_path, DEFAULT_CARGO_TIMEOUT_SECS,
 };
 use super::shell::ProjectCommandOutput;
 use super::tool_result::ToolResult;
@@ -119,6 +119,12 @@ impl ToolRuntime {
         check: Option<bool>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
+        let timeout = match resolve_sync_timeout_secs(timeout_secs, DEFAULT_CARGO_TIMEOUT_SECS) {
+            Ok(timeout) => timeout,
+            Err(_) => {
+                return sync_timeout_out_of_range_result("cargo_fmt", DEFAULT_CARGO_TIMEOUT_SECS)
+            }
+        };
         let cwd = match validate_cwd(cwd) {
             Ok(cwd) => cwd,
             Err(e) => {
@@ -136,7 +142,7 @@ impl ToolRuntime {
                 ..ValidationCommandOptions::default()
             })
             .expect("cargo_fmt command builder is infallible");
-        self.run_cargo_command(project, cwd, command, timeout_secs.unwrap_or(120), adapter)
+        self.run_cargo_command(project, cwd, command, timeout, adapter)
             .await
     }
 
@@ -152,6 +158,12 @@ impl ToolRuntime {
         package: Option<String>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
+        let timeout = match resolve_sync_timeout_secs(timeout_secs, DEFAULT_CARGO_TIMEOUT_SECS) {
+            Ok(timeout) => timeout,
+            Err(_) => {
+                return sync_timeout_out_of_range_result("cargo_check", DEFAULT_CARGO_TIMEOUT_SECS)
+            }
+        };
         let cwd = match validate_cwd(cwd) {
             Ok(cwd) => cwd,
             Err(e) => {
@@ -179,7 +191,7 @@ impl ToolRuntime {
                 ))
             }
         };
-        self.run_cargo_command(project, cwd, command, timeout_secs.unwrap_or(300), adapter)
+        self.run_cargo_command(project, cwd, command, timeout, adapter)
             .await
     }
 
@@ -197,6 +209,12 @@ impl ToolRuntime {
         no_run: Option<bool>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
+        let timeout = match resolve_sync_timeout_secs(timeout_secs, DEFAULT_CARGO_TIMEOUT_SECS) {
+            Ok(timeout) => timeout,
+            Err(_) => {
+                return sync_timeout_out_of_range_result("cargo_test", DEFAULT_CARGO_TIMEOUT_SECS)
+            }
+        };
         let cwd = match validate_cwd(cwd) {
             Ok(cwd) => cwd,
             Err(e) => {
@@ -226,7 +244,7 @@ impl ToolRuntime {
                 ))
             }
         };
-        self.run_cargo_command(project, cwd, command, timeout_secs.unwrap_or(600), adapter)
+        self.run_cargo_command(project, cwd, command, timeout, adapter)
             .await
     }
 

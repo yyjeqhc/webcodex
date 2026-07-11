@@ -1,9 +1,18 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::common::{object_schema, with_optional_session_id, PATCH_FIELD_DESCRIPTION};
 
+const SYNC_TIMEOUT_SECS_DESCRIPTION: &str = "Synchronous command timeout in seconds (minimum 1, maximum 120, default 120). Out-of-range values are rejected before the command starts; use run_job for longer work.";
+
+fn with_sync_timeout_bounds(mut schema: Value) -> Value {
+    schema["properties"]["timeout_secs"]["minimum"] = json!(1);
+    schema["properties"]["timeout_secs"]["maximum"] = json!(120);
+    schema["properties"]["timeout_secs"]["default"] = json!(120);
+    schema
+}
+
 pub(crate) fn cargo_fmt_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
+    with_sync_timeout_bounds(object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),
         (
             "cwd",
@@ -20,14 +29,14 @@ pub(crate) fn cargo_fmt_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Command timeout in seconds.",
+            SYNC_TIMEOUT_SECS_DESCRIPTION,
             false,
         ),
-    ]))
+    ])))
 }
 
 pub(crate) fn cargo_check_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
+    with_sync_timeout_bounds(object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),
         (
             "cwd",
@@ -58,14 +67,14 @@ pub(crate) fn cargo_check_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Command timeout in seconds.",
+            SYNC_TIMEOUT_SECS_DESCRIPTION,
             false,
         ),
-    ]))
+    ])))
 }
 
 pub(crate) fn cargo_test_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
+    with_sync_timeout_bounds(object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),
         (
             "cwd",
@@ -93,10 +102,10 @@ pub(crate) fn cargo_test_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Command timeout in seconds.",
+            SYNC_TIMEOUT_SECS_DESCRIPTION,
             false,
         ),
-    ]))
+    ])))
 }
 
 pub(crate) fn validate_patch_input_schema() -> Value {

@@ -1,15 +1,15 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::common::{object_schema, with_optional_session_id};
 
 pub(crate) fn run_shell_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
+    let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Configured project id.", true),
         ("command", "string", "Shell command to run.", true),
         (
             "timeout_secs",
             "integer",
-            "Command timeout in seconds.",
+            "Synchronous command timeout in seconds (minimum 1, maximum 120, default 60). Out-of-range values are rejected before the command starts; use run_job for longer work.",
             false,
         ),
         (
@@ -18,7 +18,11 @@ pub(crate) fn run_shell_input_schema() -> Value {
             "Optional project-relative working directory.",
             false,
         ),
-    ]))
+    ]));
+    schema["properties"]["timeout_secs"]["minimum"] = json!(1);
+    schema["properties"]["timeout_secs"]["maximum"] = json!(120);
+    schema["properties"]["timeout_secs"]["default"] = json!(60);
+    schema
 }
 
 pub(crate) fn run_job_input_schema() -> Value {

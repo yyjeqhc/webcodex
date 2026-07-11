@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use super::helpers::{
     bounded_tail, command_failed_message, command_rejected_message, command_timeout_message,
-    looks_like_command_timeout, resolve_local_cwd, run_command_sync, COMMAND_STDIO_TAIL_CHARS,
+    looks_like_command_timeout, resolve_local_cwd, resolve_sync_timeout_secs, run_command_sync,
+    sync_timeout_out_of_range_result, COMMAND_STDIO_TAIL_CHARS, DEFAULT_RUN_SHELL_TIMEOUT_SECS,
+    MAX_SYNC_TIMEOUT_SECS, MIN_SYNC_TIMEOUT_SECS,
 };
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
@@ -121,7 +123,16 @@ impl ToolRuntime {
         cwd: Option<String>,
     ) -> Result<ProjectCommandOutput, String> {
         let proj = self.resolve_project(project).await?;
-        let timeout = timeout_secs.max(1);
+        // Shared root of the sync agent-wait contract: wait_timeout_secs and
+        // command timeout must both stay within 1..=120 before enqueue so
+        // shell_client validation never rejects with implementation-detail
+        // errors about runShell.
+        if !(MIN_SYNC_TIMEOUT_SECS..=MAX_SYNC_TIMEOUT_SECS).contains(&timeout_secs) {
+            return Err(format!(
+                "timeout_secs must be between {MIN_SYNC_TIMEOUT_SECS} and {MAX_SYNC_TIMEOUT_SECS}"
+            ));
+        }
+        let timeout = timeout_secs;
         if proj.is_agent() {
             let client_id = proj.agent_client_id()?.to_string();
             let effective_cwd = match cwd {
@@ -131,7 +142,7 @@ impl ToolRuntime {
                 }
                 None => Some(proj.path.clone()),
             };
-            let wait_timeout = timeout.min(1_800);
+            let wait_timeout = timeout;
             let (request_id, rx) = self
                 .shell_clients
                 .enqueue_run(
@@ -191,6 +202,16 @@ impl ToolRuntime {
         timeout_secs: Option<u64>,
         cwd: Option<String>,
     ) -> ToolResult {
+        let timeout = match resolve_sync_timeout_secs(timeout_secs, DEFAULT_RUN_SHELL_TIMEOUT_SECS)
+        {
+            Ok(timeout) => timeout,
+            Err(_) => {
+                return sync_timeout_out_of_range_result(
+                    "run_shell",
+                    DEFAULT_RUN_SHELL_TIMEOUT_SECS,
+                )
+            }
+        };
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => {
@@ -205,7 +226,6 @@ impl ToolRuntime {
                 )
             }
         };
-        let timeout = timeout_secs.unwrap_or(60).max(1);
         if proj.is_agent() {
             let client_id =
                 match proj.agent_client_id() {
@@ -221,7 +241,7 @@ impl ToolRuntime {
                     ),
                 };
             let effective_cwd = cwd.or_else(|| Some(proj.path.clone()));
-            let wait_timeout = timeout.min(120);
+            let wait_timeout = timeout;
             let (request_id, rx) = match self
                 .shell_clients
                 .enqueue_run(

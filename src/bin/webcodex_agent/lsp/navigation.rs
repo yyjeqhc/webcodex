@@ -8,10 +8,14 @@ use super::super::config::AgentPolicy;
 use super::super::output::CommandResult;
 use super::super::projects::load_agent_project_summaries_from_dir;
 use super::super::shell::cwd_allowed;
+use super::language::{
+    detected_profiles, primary_profile, route_extension, supported_extensions_label,
+    LanguageProfile, LANGUAGES,
+};
 use super::position::{lsp_to_public, public_to_lsp, LineCache, MAX_LSP_DOCUMENT_BYTES};
 use super::supervisor::{
-    classify_uri_against_project_root, LspError, LspServerKind, LspServerStatus, LspSupervisor,
-    PositionEncoding, ProjectUriClassification,
+    classify_uri_against_project_root, LspError, LspServerStatus, LspSupervisor, PositionEncoding,
+    ProjectUriClassification,
 };
 use crate::lsp_bridge::{
     bound_error_message, error_codes, redact_absolute_paths, AgentLspPayload, AgentLspRequest,
@@ -206,19 +210,34 @@ fn lsp_status(
     project_root: &Path,
     supervisor: &LspSupervisor,
 ) -> LspStatusResult {
-    let has_cargo = project_root.join("Cargo.toml").is_file();
-    let detected_languages = if has_cargo {
-        vec!["rust".to_string()]
-    } else {
-        Vec::new()
-    };
-    let info = supervisor.resolve_command_info(LspServerKind::RustAnalyzer);
+    let detected_languages = detected_profiles(project_root)
+        .iter()
+        .map(|profile| profile.language_id.to_string())
+        .collect();
+    let servers = LANGUAGES
+        .iter()
+        .map(|profile| lsp_server_status_entry(project_root, supervisor, profile))
+        .collect();
+    LspStatusResult {
+        project: project_id.to_string(),
+        detected_languages,
+        servers,
+        warnings: Vec::new(),
+    }
+}
+
+fn lsp_server_status_entry(
+    project_root: &Path,
+    supervisor: &LspSupervisor,
+    profile: &'static LanguageProfile,
+) -> LspServerStatusEntry {
+    let info = supervisor.resolve_command_info(profile.kind);
     let available = info.as_ref().map(|entry| entry.available).unwrap_or(false);
-    let slot = supervisor.project_server_status(project_root, LspServerKind::RustAnalyzer);
+    let slot = supervisor.project_server_status(project_root, profile.kind);
     let (running, status, position_encoding) = match slot {
         Some(LspServerStatus::Running) => {
             let encoding = supervisor
-                .project_position_encoding(project_root, LspServerKind::RustAnalyzer)
+                .project_position_encoding(project_root, profile.kind)
                 .map(|encoding| encoding.as_public_label().to_string());
             (true, LspAvailabilityStatus::Running, encoding)
         }
@@ -233,19 +252,14 @@ fn lsp_status(
         }
     };
     let source = info.as_ref().map(|entry| entry.source);
-    LspStatusResult {
-        project: project_id.to_string(),
-        detected_languages,
-        servers: vec![LspServerStatusEntry {
-            language: "rust".to_string(),
-            server: "rust-analyzer".to_string(),
-            available,
-            running,
-            status,
-            source,
-            position_encoding,
-        }],
-        warnings: Vec::new(),
+    LspServerStatusEntry {
+        language: profile.language_id.to_string(),
+        server: profile.server_name.to_string(),
+        available,
+        running,
+        status,
+        source,
+        position_encoding,
     }
 }
 
@@ -278,27 +292,25 @@ fn document_symbols(
     limit: usize,
 ) -> Result<DocumentSymbolsResult, AgentLspResultEnvelope> {
     let limit = limit.clamp(1, 500);
-    let file = resolve_rust_file(project_root, relative_path)?;
+    let ResolvedSourceFile {
+        path: file,
+        profile,
+        language_id,
+    } = resolve_source_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     // Take the encoding from prepare_document like goto/references do: the
     // post-request slot lookup could race a slot transition and silently fall
     // back to UTF-16 while the server negotiated another encoding.
     let encoding = supervisor
-        .prepare_document(
-            project_root,
-            LspServerKind::RustAnalyzer,
-            &uri,
-            "rust",
-            &text,
-        )
+        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
         .map_err(map_lsp_error)?;
     let value = supervisor
         .request_with_document(
             project_root,
-            LspServerKind::RustAnalyzer,
+            profile.kind,
             &uri,
-            "rust",
+            language_id,
             &text,
             "textDocument/documentSymbol",
             json!({ "textDocument": { "uri": uri } }),
@@ -324,7 +336,7 @@ fn document_symbols(
     Ok(DocumentSymbolsResult {
         project: project_id.to_string(),
         path: normalize_relative_path(relative_path),
-        language: "rust".to_string(),
+        language: profile.language_id.to_string(),
         symbols,
         total_count,
         returned_count,
@@ -342,16 +354,20 @@ fn document_diagnostics(
     limit: usize,
 ) -> Result<DocumentDiagnosticsResult, AgentLspResultEnvelope> {
     let limit = limit.clamp(1, 200);
-    let file = resolve_rust_file(project_root, relative_path)?;
+    let ResolvedSourceFile {
+        path: file,
+        profile,
+        language_id,
+    } = resolve_source_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     let deadline = Instant::now() + DIAGNOSTICS_WAIT_TIMEOUT;
     let snapshot = supervisor
         .document_diagnostics(
             project_root,
-            LspServerKind::RustAnalyzer,
+            profile.kind,
             &uri,
-            "rust",
+            language_id,
             &text,
             deadline,
         )
@@ -426,7 +442,7 @@ fn document_diagnostics(
     Ok(DocumentDiagnosticsResult {
         project: project_id.to_string(),
         path: normalize_relative_path(relative_path),
-        language: "rust".to_string(),
+        language: profile.language_id.to_string(),
         returned_count: diagnostics.len(),
         diagnostics,
         total_count: raw_count,
@@ -450,26 +466,24 @@ fn hover(
     line: usize,
     column: usize,
 ) -> Result<HoverResult, AgentLspResultEnvelope> {
-    let file = resolve_rust_file(project_root, relative_path)?;
+    let ResolvedSourceFile {
+        path: file,
+        profile,
+        language_id,
+    } = resolve_source_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     let encoding = supervisor
-        .prepare_document(
-            project_root,
-            LspServerKind::RustAnalyzer,
-            &uri,
-            "rust",
-            &text,
-        )
+        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
         .map_err(|message| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, message))?;
     let value = supervisor
         .request_with_document(
             project_root,
-            LspServerKind::RustAnalyzer,
+            profile.kind,
             &uri,
-            "rust",
+            language_id,
             &text,
             "textDocument/hover",
             json!({
@@ -510,16 +524,19 @@ fn workspace_symbols(
         ));
     }
     let limit = limit.clamp(1, 200);
+    // Project-scoped query with no file path to route on: use the primary
+    // detected language's server. Multi-server fan-out is a follow-up.
+    let profile = primary_profile(project_root);
     let (value, encoding) = supervisor
         .request_with_position_encoding(
             project_root,
-            LspServerKind::RustAnalyzer,
+            profile.kind,
             "workspace/symbol",
             json!({"query": query}),
         )
         .map_err(map_lsp_error)?;
     let (mut symbols, total_results, external_results_omitted, invalid_results_omitted) =
-        normalize_workspace_symbols(project_root, &value, encoding);
+        normalize_workspace_symbols(project_root, profile, &value, encoding);
     symbols.sort_by(|left, right| {
         workspace_symbol_sort_key(left).cmp(&workspace_symbol_sort_key(right))
     });
@@ -548,26 +565,24 @@ fn goto_definition(
     limit: usize,
 ) -> Result<LocationsResult, AgentLspResultEnvelope> {
     let limit = limit.clamp(1, 100);
-    let file = resolve_rust_file(project_root, relative_path)?;
+    let ResolvedSourceFile {
+        path: file,
+        profile,
+        language_id,
+    } = resolve_source_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     let encoding = supervisor
-        .prepare_document(
-            project_root,
-            LspServerKind::RustAnalyzer,
-            &uri,
-            "rust",
-            &text,
-        )
+        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
         .map_err(|msg| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
     let value = supervisor
         .request_with_document(
             project_root,
-            LspServerKind::RustAnalyzer,
+            profile.kind,
             &uri,
-            "rust",
+            language_id,
             &text,
             "textDocument/definition",
             json!({
@@ -604,26 +619,24 @@ fn find_references(
     limit: usize,
 ) -> Result<LocationsResult, AgentLspResultEnvelope> {
     let limit = limit.clamp(1, 200);
-    let file = resolve_rust_file(project_root, relative_path)?;
+    let ResolvedSourceFile {
+        path: file,
+        profile,
+        language_id,
+    } = resolve_source_file(project_root, relative_path)?;
     let uri = file_uri(&file)?;
     let text = read_document_text(&file)?;
     let encoding = supervisor
-        .prepare_document(
-            project_root,
-            LspServerKind::RustAnalyzer,
-            &uri,
-            "rust",
-            &text,
-        )
+        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
         .map_err(|msg| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, msg))?;
     let value = supervisor
         .request_with_document(
             project_root,
-            LspServerKind::RustAnalyzer,
+            profile.kind,
             &uri,
-            "rust",
+            language_id,
             &text,
             "textDocument/references",
             json!({
@@ -694,10 +707,22 @@ fn finish_locations_result(
     })
 }
 
-fn resolve_rust_file(
+/// A validated source file with the language profile that owns its extension
+/// and the LSP `languageId` to announce for that extension.
+struct ResolvedSourceFile {
+    path: PathBuf,
+    profile: &'static LanguageProfile,
+    /// `languageId` for `textDocument/didOpen`; may be a dialect id such as
+    /// `typescriptreact` distinct from `profile.language_id`.
+    language_id: &'static str,
+}
+
+/// Validate a project-relative source path and route it to the language
+/// profile that owns its extension.
+fn resolve_source_file(
     project_root: &Path,
     relative_path: &str,
-) -> Result<PathBuf, AgentLspResultEnvelope> {
+) -> Result<ResolvedSourceFile, AgentLspResultEnvelope> {
     let path = relative_path.trim();
     if path.is_empty() {
         return Err(AgentLspResultEnvelope::err(
@@ -721,17 +746,19 @@ fn resolve_rust_file(
             "path must not contain '..'",
         ));
     }
-    if raw
+    let (profile, language_id) = raw
         .extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| !ext.eq_ignore_ascii_case("rs"))
-        .unwrap_or(true)
-    {
-        return Err(AgentLspResultEnvelope::err(
-            error_codes::UNSUPPORTED_LANGUAGE,
-            "only .rs files are supported",
-        ));
-    }
+        .and_then(route_extension)
+        .ok_or_else(|| {
+            AgentLspResultEnvelope::err(
+                error_codes::UNSUPPORTED_LANGUAGE,
+                format!(
+                    "unsupported file extension for LSP navigation (supported: {})",
+                    supported_extensions_label()
+                ),
+            )
+        })?;
     let joined = project_root.join(raw);
     let canonical = fs::canonicalize(&joined)
         .map_err(|_| AgentLspResultEnvelope::err(error_codes::FILE_NOT_FOUND, "file not found"))?;
@@ -747,7 +774,11 @@ fn resolve_rust_file(
             "path is not a regular file",
         ));
     }
-    Ok(canonical)
+    Ok(ResolvedSourceFile {
+        path: canonical,
+        profile,
+        language_id,
+    })
 }
 
 fn file_uri(path: &Path) -> Result<String, AgentLspResultEnvelope> {
@@ -895,6 +926,7 @@ fn bound_hover_value(value: &str) -> (String, bool) {
 
 fn normalize_workspace_symbols(
     project_root: &Path,
+    profile: &LanguageProfile,
     value: &Value,
     encoding: PositionEncoding,
 ) -> (Vec<PublicWorkspaceSymbol>, usize, usize, usize) {
@@ -909,7 +941,7 @@ fn normalize_workspace_symbols(
     let mut invalid = 0usize;
     let mut cache = LineCache::new();
     for item in items {
-        match normalize_workspace_symbol(project_root, item, encoding, &mut cache) {
+        match normalize_workspace_symbol(project_root, profile, item, encoding, &mut cache) {
             WorkspaceSymbolNormalize::Ok(symbol) => symbols.push(symbol),
             WorkspaceSymbolNormalize::External => external += 1,
             WorkspaceSymbolNormalize::Invalid => invalid += 1,
@@ -926,6 +958,7 @@ enum WorkspaceSymbolNormalize {
 
 fn normalize_workspace_symbol(
     project_root: &Path,
+    profile: &LanguageProfile,
     value: &Value,
     encoding: PositionEncoding,
     cache: &mut LineCache,
@@ -957,7 +990,7 @@ fn normalize_workspace_symbol(
     if path
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_none_or(|extension| !extension.eq_ignore_ascii_case("rs"))
+        .is_none_or(|extension| !profile.handles_extension(extension))
     {
         return WorkspaceSymbolNormalize::Invalid;
     }

@@ -1,12 +1,15 @@
 use super::navigation::{handle_lsp_request, is_lsp_request_kind};
 use super::position::{lsp_to_public, public_to_lsp, MAX_LSP_DOCUMENT_BYTES};
-use super::supervisor::{LspCommand, LspSupervisor, LspSupervisorConfig, PositionEncoding};
+use super::supervisor::{
+    LspCommand, LspServerKind, LspSupervisor, LspSupervisorConfig, PositionEncoding,
+};
 use crate::lsp_bridge::{
     parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::{ShellAgentShellRequest, ShellClientCapabilities};
 use crate::webcodex_agent::config::AgentPolicy;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,6 +40,34 @@ fn fake_server_binary() -> &'static FakeServerBinary {
         assert!(status.success());
         FakeServerBinary { path, _dir: dir }
     })
+}
+
+/// Minimal agent shell request carrying a typed LSP payload.
+fn shell_lsp_request(payload: AgentLspPayload) -> ShellAgentShellRequest {
+    ShellAgentShellRequest {
+        request_id: "lsp-1".to_string(),
+        client_id: "agent".to_string(),
+        kind: AGENT_LSP_REQUEST_KIND.to_string(),
+        job_id: None,
+        cwd: None,
+        path: None,
+        content: None,
+        max_bytes: None,
+        old_text: None,
+        pattern: None,
+        expected_sha256: None,
+        expected_prefix: None,
+        start_line: None,
+        end_line: None,
+        line: None,
+        create_dirs: false,
+        command: String::new(),
+        stdin: None,
+        timeout_secs: 60,
+        requested_by: "test".to_string(),
+        created_at: 0,
+        lsp: Some(payload),
+    }
 }
 
 struct NavFixture {
@@ -70,7 +101,29 @@ impl NavFixture {
             other.push_str(&format!("// other {i}\n"));
         }
         fs::write(root.join("src/other.rs"), other).unwrap();
+        Self::finish(temp, root, scenario, LspServerKind::RustAnalyzer)
+    }
 
+    /// Fixture for any language: writes the given project-relative files
+    /// (creating parent directories) and wires the fake server under `kind`.
+    fn with_language(scenario: &str, kind: LspServerKind, files: &[(&str, &str)]) -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+        for (relative, body) in files {
+            let path = root.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, body).unwrap();
+        }
+        Self::finish(temp, root, scenario, kind)
+    }
+
+    /// Shared wiring: register the project, start a fake server under `kind`,
+    /// and build the fixture. The fake server is language-agnostic, so the
+    /// language behavior under test comes from the profile registry.
+    fn finish(temp: tempfile::TempDir, root: PathBuf, scenario: &str, kind: LspServerKind) -> Self {
         let projects_dir = temp.path().join("projects.d");
         fs::create_dir_all(&projects_dir).unwrap();
         fs::write(
@@ -83,12 +136,13 @@ impl NavFixture {
         let marker = temp.path().join("marker");
         let exit_marker = temp.path().join("exit");
         let supervisor = LspSupervisor::new(LspSupervisorConfig {
-            rust_analyzer: Some(
+            commands: HashMap::from([(
+                kind,
                 LspCommand::new(fake.path.as_os_str())
                     .arg(scenario)
                     .arg(marker.as_os_str())
                     .arg(exit_marker.as_os_str()),
-            ),
+            )]),
             request_timeout: Duration::from_secs(3),
             initialize_timeout: Duration::from_secs(3),
             shutdown_timeout: Duration::from_millis(500),
@@ -110,30 +164,7 @@ impl NavFixture {
     }
 
     fn request(&self, payload: AgentLspPayload) -> Value {
-        let req = ShellAgentShellRequest {
-            request_id: "lsp-1".to_string(),
-            client_id: "agent".to_string(),
-            kind: AGENT_LSP_REQUEST_KIND.to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            old_text: None,
-            pattern: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            line: None,
-            create_dirs: false,
-            command: String::new(),
-            stdin: None,
-            timeout_secs: 30,
-            requested_by: "test".to_string(),
-            created_at: 0,
-            lsp: Some(payload),
-        };
+        let req = shell_lsp_request(payload);
         let result = handle_lsp_request(&self.policy, &self.projects_dir, &self.supervisor, &req);
         assert!(result.error.is_none(), "{result:?}");
         let stdout = result.stdout.expect("stdout envelope");
@@ -215,7 +246,10 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
     )
     .unwrap();
     let supervisor = LspSupervisor::new(LspSupervisorConfig {
-        rust_analyzer: Some(LspCommand::new("/nonexistent/rust-analyzer-webcodex-test")),
+        commands: HashMap::from([(
+            LspServerKind::RustAnalyzer,
+            LspCommand::new("/nonexistent/rust-analyzer-webcodex-test"),
+        )]),
         ..LspSupervisorConfig::default()
     });
     let policy = AgentPolicy {
@@ -1044,4 +1078,368 @@ fn lsp_request_ignores_command_field() {
     assert!(!marker.exists(), "LSP handler must not execute command");
     let envelope = parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
     assert!(envelope.success);
+}
+
+fn recorded_did_open_language_id(marker: &Path) -> String {
+    let text = fs::read_to_string(marker).unwrap();
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("didOpen:"))
+        .expect("fake server should record a didOpen");
+    let body = line.splitn(3, ':').nth(2).expect("didOpen body");
+    let value: Value = serde_json::from_str(body).expect("didOpen body is JSON");
+    value["params"]["textDocument"]["languageId"]
+        .as_str()
+        .expect("languageId")
+        .to_string()
+}
+
+#[test]
+fn navigation_routes_python_file_to_pyright_with_python_language_id() {
+    let fixture = NavFixture::with_language(
+        "normal",
+        LspServerKind::Pyright,
+        &[
+            ("pyproject.toml", "[project]\nname = \"demo\"\n"),
+            ("src/app.py", "def main():\n    return 1\n"),
+        ],
+    );
+    let envelope = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentSymbols {
+            path: "src/app.py".into(),
+            limit: 10,
+        },
+    });
+    assert_eq!(envelope["success"], true, "{envelope}");
+    assert_eq!(envelope["result"]["language"], "python");
+    assert_eq!(recorded_did_open_language_id(&fixture.marker), "python");
+}
+
+#[test]
+fn navigation_routes_tsx_file_with_react_dialect_language_id() {
+    let fixture = NavFixture::with_language(
+        "normal",
+        LspServerKind::TypeScriptLanguageServer,
+        &[
+            ("tsconfig.json", "{}\n"),
+            ("src/App.tsx", "export const App = () => null;\n"),
+        ],
+    );
+    let envelope = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentSymbols {
+            path: "src/App.tsx".into(),
+            limit: 10,
+        },
+    });
+    assert_eq!(envelope["success"], true, "{envelope}");
+    // Public label is the profile's primary language...
+    assert_eq!(envelope["result"]["language"], "typescript");
+    // ...but the LSP wire announces the React dialect for `.tsx`.
+    assert_eq!(
+        recorded_did_open_language_id(&fixture.marker),
+        "typescriptreact"
+    );
+}
+
+#[test]
+fn unsupported_extension_is_rejected_with_supported_list() {
+    let fixture = NavFixture::with_language(
+        "normal",
+        LspServerKind::Pyright,
+        &[
+            ("pyproject.toml", "[project]\n"),
+            ("notes.md", "# not a source file\n"),
+        ],
+    );
+    let envelope = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentSymbols {
+            path: "notes.md".into(),
+            limit: 10,
+        },
+    });
+    assert_eq!(envelope["success"], false, "{envelope}");
+    assert_eq!(envelope["error"]["code"], "unsupported_language");
+    let message = envelope["error"]["message"].as_str().unwrap();
+    assert!(message.contains(".py"), "{message}");
+    assert!(message.contains(".ts"), "{message}");
+}
+
+#[test]
+fn lsp_status_reports_every_registered_language_server() {
+    let fixture = NavFixture::with_language(
+        "normal",
+        LspServerKind::Pyright,
+        &[("pyproject.toml", "[project]\n"), ("src/app.py", "x = 1\n")],
+    );
+    let envelope = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::Status,
+    });
+    assert_eq!(envelope["success"], true, "{envelope}");
+    assert_eq!(
+        envelope["result"]["detected_languages"],
+        serde_json::json!(["python"])
+    );
+    let servers = envelope["result"]["servers"].as_array().unwrap();
+    let names: Vec<&str> = servers
+        .iter()
+        .map(|server| server["server"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"rust-analyzer"), "{names:?}");
+    assert!(names.contains(&"pyright"), "{names:?}");
+    assert!(names.contains(&"typescript-language-server"), "{names:?}");
+    // The pyright server is configured (fake) here, so it resolves available.
+    let pyright = servers
+        .iter()
+        .find(|server| server["server"] == "pyright")
+        .unwrap();
+    assert_eq!(pyright["language"], "python");
+    assert_eq!(pyright["available"], true, "{pyright}");
+}
+
+/// Resolve a real language server for an ignored end-to-end smoke test: the
+/// given env override first, then `executable` on `PATH`.
+fn real_language_server(env_var: &str, executable: &str) -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os(env_var) {
+        let path = PathBuf::from(explicit);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(executable))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Real end-to-end validation that the language abstraction drives an actual
+/// second language server, not just the fake. Ignored by default because it
+/// needs `pyright-langserver` (`npm i -g pyright`) and Node on the host.
+///
+/// Run with:
+/// `cargo test --bin webcodex-agent real_pyright -- --ignored --nocapture`
+#[test]
+#[ignore = "requires a real pyright-langserver (npm i -g pyright)"]
+fn real_pyright_document_symbols_end_to_end() {
+    let Some(pyright) = real_language_server("WEBCODEX_PYRIGHT", "pyright-langserver") else {
+        panic!("pyright-langserver not found; set WEBCODEX_PYRIGHT or install pyright");
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("pyproject.toml"), "[project]\nname = \"demo\"\n").unwrap();
+    fs::write(
+        root.join("src/app.py"),
+        "def greet(name):\n    return f\"hi {name}\"\n\n\nclass Widget:\n    def render(self):\n        return greet(\"world\")\n",
+    )
+    .unwrap();
+
+    let projects_dir = temp.path().join("projects.d");
+    fs::create_dir_all(&projects_dir).unwrap();
+    fs::write(
+        projects_dir.join("demo.toml"),
+        format!("id = \"demo\"\npath = {:?}\n", root.to_string_lossy()),
+    )
+    .unwrap();
+
+    // Exercise the real supervisor path with generous timeouts; pyright does a
+    // cold analysis on start. `--stdio` mirrors the profile's default_args.
+    let supervisor = LspSupervisor::new(LspSupervisorConfig {
+        commands: HashMap::from([(
+            LspServerKind::Pyright,
+            LspCommand::new(pyright).arg("--stdio"),
+        )]),
+        request_timeout: Duration::from_secs(30),
+        initialize_timeout: Duration::from_secs(30),
+        shutdown_timeout: Duration::from_secs(3),
+        ..LspSupervisorConfig::default()
+    });
+    let policy = AgentPolicy {
+        allow_cwd_anywhere: true,
+        allowed_roots: vec![temp.path().to_path_buf()],
+        ..AgentPolicy::default()
+    };
+
+    let req = shell_lsp_request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentSymbols {
+            path: "src/app.py".into(),
+            limit: 50,
+        },
+    });
+    let result = handle_lsp_request(&policy, &projects_dir, &supervisor, &req);
+    assert!(result.error.is_none(), "{result:?}");
+    let envelope =
+        parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).expect("envelope");
+    let value = serde_json::to_value(&envelope).unwrap();
+    assert_eq!(value["success"], true, "{value}");
+    assert_eq!(value["result"]["language"], "python");
+
+    // Flatten symbol names across the (possibly nested) document symbol tree.
+    fn collect_names(node: &Value, out: &mut Vec<String>) {
+        if let Some(name) = node["name"].as_str() {
+            out.push(name.to_string());
+        }
+        if let Some(children) = node["children"].as_array() {
+            for child in children {
+                collect_names(child, out);
+            }
+        }
+    }
+    let mut names = Vec::new();
+    for symbol in value["result"]["symbols"]
+        .as_array()
+        .expect("symbols array")
+    {
+        collect_names(symbol, &mut names);
+    }
+    assert!(
+        names.iter().any(|name| name == "greet"),
+        "expected `greet` in {names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == "Widget"),
+        "expected `Widget` in {names:?}"
+    );
+
+    // Goto-definition on the `greet(...)` call in `render` resolves back to the
+    // function definition on line 1 — real cross-symbol navigation.
+    let goto = shell_lsp_request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::GotoDefinition {
+            path: "src/app.py".into(),
+            line: 7,
+            column: 16,
+            limit: 10,
+        },
+    });
+    let goto_result = handle_lsp_request(&policy, &projects_dir, &supervisor, &goto);
+    let goto_value = serde_json::to_value(
+        parse_agent_lsp_result_envelope(goto_result.stdout.as_deref().unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(goto_value["success"], true, "{goto_value}");
+    let locations = goto_value["result"]["locations"].as_array().unwrap();
+    assert!(
+        locations
+            .iter()
+            .any(|loc| loc["path"] == "src/app.py" && loc["range"]["start"]["line"] == 1),
+        "greet definition should resolve to line 1: {goto_value}"
+    );
+}
+
+/// Real end-to-end validation for the third language: a `.tsx` file driven
+/// through the same supervisor path against a real
+/// `typescript-language-server`. Ignored by default (needs the server and
+/// Node). Run with:
+/// `cargo test --bin webcodex-agent real_typescript -- --ignored --nocapture`
+#[test]
+// Needs typescript@5 (classic tsserver.js); typescript@7 native preview lacks it.
+#[ignore = "requires typescript-language-server + typescript@5 (npm i -g typescript-language-server typescript@5)"]
+fn real_typescript_document_symbols_end_to_end() {
+    let Some(server) = real_language_server(
+        "WEBCODEX_TYPESCRIPT_LANGUAGE_SERVER",
+        "typescript-language-server",
+    ) else {
+        panic!("typescript-language-server not found; set WEBCODEX_TYPESCRIPT_LANGUAGE_SERVER");
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("tsconfig.json"),
+        "{\n  \"compilerOptions\": { \"jsx\": \"react-jsx\", \"strict\": true }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/App.tsx"),
+        "export function greet(name: string): string {\n  return `hi ${name}`;\n}\n\nexport const App = () => greet(\"world\");\n",
+    )
+    .unwrap();
+
+    // tsserver needs a TypeScript install; a real TS project has
+    // `node_modules/typescript`. Mirror that by linking the global typescript
+    // (derived from the server's npm prefix) into the fixture.
+    let ts_lib = server
+        .parent()
+        .and_then(Path::parent)
+        .map(|prefix| prefix.join("lib/node_modules/typescript"))
+        .filter(|path| path.is_dir())
+        .unwrap_or_else(|| {
+            panic!("global typescript not found next to {server:?}; npm i -g typescript")
+        });
+    fs::create_dir_all(root.join("node_modules")).unwrap();
+    std::os::unix::fs::symlink(&ts_lib, root.join("node_modules/typescript")).unwrap();
+
+    let projects_dir = temp.path().join("projects.d");
+    fs::create_dir_all(&projects_dir).unwrap();
+    fs::write(
+        projects_dir.join("demo.toml"),
+        format!("id = \"demo\"\npath = {:?}\n", root.to_string_lossy()),
+    )
+    .unwrap();
+
+    let supervisor = LspSupervisor::new(LspSupervisorConfig {
+        commands: HashMap::from([(
+            LspServerKind::TypeScriptLanguageServer,
+            LspCommand::new(server).arg("--stdio"),
+        )]),
+        request_timeout: Duration::from_secs(30),
+        initialize_timeout: Duration::from_secs(30),
+        shutdown_timeout: Duration::from_secs(3),
+        ..LspSupervisorConfig::default()
+    });
+    let policy = AgentPolicy {
+        allow_cwd_anywhere: true,
+        allowed_roots: vec![temp.path().to_path_buf()],
+        ..AgentPolicy::default()
+    };
+
+    let req = shell_lsp_request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentSymbols {
+            path: "src/App.tsx".into(),
+            limit: 50,
+        },
+    });
+    let result = handle_lsp_request(&policy, &projects_dir, &supervisor, &req);
+    assert!(result.error.is_none(), "{result:?}");
+    let value = serde_json::to_value(
+        parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).expect("envelope"),
+    )
+    .unwrap();
+    assert_eq!(value["success"], true, "{value}");
+    // Public label stays the primary language even for the `.tsx` dialect.
+    assert_eq!(value["result"]["language"], "typescript");
+
+    fn collect_names(node: &Value, out: &mut Vec<String>) {
+        if let Some(name) = node["name"].as_str() {
+            out.push(name.to_string());
+        }
+        if let Some(children) = node["children"].as_array() {
+            for child in children {
+                collect_names(child, out);
+            }
+        }
+    }
+    let mut names = Vec::new();
+    for symbol in value["result"]["symbols"]
+        .as_array()
+        .expect("symbols array")
+    {
+        collect_names(symbol, &mut names);
+    }
+    assert!(
+        names.iter().any(|name| name == "greet"),
+        "expected `greet` in {names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == "App"),
+        "expected `App` in {names:?}"
+    );
 }

@@ -105,7 +105,7 @@ impl Fixture {
             .arg(exit_marker.as_os_str())
             .env("WEBCODEX_LSP_FAKE", "1");
         let supervisor = LspSupervisor::new(LspSupervisorConfig {
-            rust_analyzer: Some(command),
+            commands: HashMap::from([(LspServerKind::RustAnalyzer, command)]),
             max_servers_per_project: 1,
             max_servers_per_agent: maximum,
             request_timeout: Duration::from_millis(300),
@@ -805,7 +805,7 @@ fn lsp_rustup_proxy_without_component_is_not_available() {
     let previous_toolchain = env::var_os("RUSTUP_TOOLCHAIN");
     env::set_var("RUSTUP_HOME", &rustup_home);
     env::remove_var("RUSTUP_TOOLCHAIN");
-    let available_missing = command.is_available();
+    let available_missing = command.is_available(LspServerKind::RustAnalyzer);
 
     // Installing the component binary under the active toolchain restores
     // availability without needing to execute the proxy.
@@ -822,7 +822,7 @@ fn lsp_rustup_proxy_without_component_is_not_available() {
         perms.set_mode(0o755);
         fs::set_permissions(&component, perms).unwrap();
     }
-    let available_installed = command.is_available();
+    let available_installed = command.is_available(LspServerKind::RustAnalyzer);
 
     // Always restore process env before assertions so a failure cannot leak.
     match previous_home {
@@ -845,16 +845,18 @@ fn lsp_rustup_proxy_without_component_is_not_available() {
 }
 
 #[test]
-fn summarize_lsp_startup_stderr_classifies_rustup_missing_component() {
-    let summary = summarize_lsp_startup_stderr(
-        "error: Unknown binary 'rust-analyzer' in official toolchain 'stable-x86_64-unknown-linux-gnu'.\n",
-    )
-    .unwrap();
-    assert_eq!(
-        summary,
-        "rust-analyzer component is not installed for the active rustup toolchain"
-    );
-    assert!(summarize_lsp_startup_stderr("   \n\t  ").is_none());
+fn generic_startup_stderr_summary_compacts_bounds_or_none() {
+    // Language-specific classification (e.g. rustup component missing) is
+    // owned by the profile's `startup_stderr_classifier`; the generic
+    // fallback compacts control characters to spaces, trims, and bounds.
+    let summary = generic_startup_stderr_summary("  language server crashed on boot \n").unwrap();
+    assert_eq!(summary, "language server crashed on boot");
+    assert!(generic_startup_stderr_summary("   \n\t  ").is_none());
+    let long = "x".repeat(200);
+    let bounded = generic_startup_stderr_summary(&long).unwrap();
+    // 160 retained characters plus the ellipsis marker.
+    assert_eq!(bounded.chars().count(), 161);
+    assert!(bounded.ends_with('…'));
 }
 
 #[test]
@@ -993,6 +995,124 @@ fn lsp_initialize_uses_constrained_rust_analyzer_profile() {
             && encoding_strings.contains(&"utf-32"),
         "positionEncodings must include utf-8, utf-16, and utf-32: {encodings:?}"
     );
+}
+
+/// Start the fake server under `kind` and return the `initializationOptions`
+/// it recorded from the `initialize` request. Lets per-language security
+/// profiles be asserted without the real language server installed.
+fn captured_initialize_options(kind: LspServerKind) -> Value {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir(&root).unwrap();
+    let marker = temp.path().join("starts.marker");
+    let exit_marker = temp.path().join("exit.marker");
+    let fake = fake_server_binary();
+    let command = LspCommand::new(fake.path.clone())
+        .arg("normal")
+        .arg(marker.as_os_str())
+        .arg(exit_marker.as_os_str());
+    let supervisor = LspSupervisor::new(LspSupervisorConfig {
+        commands: HashMap::from([(kind, command)]),
+        request_timeout: Duration::from_millis(300),
+        initialize_timeout: Duration::from_secs(2),
+        shutdown_timeout: Duration::from_millis(300),
+        ..LspSupervisorConfig::default()
+    });
+    let _server = supervisor.server_for_test(&root, kind).unwrap();
+    let marker_text = fs::read_to_string(&marker).unwrap();
+    let line = marker_text
+        .lines()
+        .find(|line| line.starts_with("initialize:"))
+        .expect("fake server records the initialize body");
+    let body: Value = serde_json::from_str(line.strip_prefix("initialize:").unwrap()).unwrap();
+    body.pointer("/params/initializationOptions")
+        .cloned()
+        .expect("initializationOptions present")
+}
+
+#[test]
+fn lsp_initialize_uses_constrained_pyright_profile() {
+    let options = captured_initialize_options(LspServerKind::Pyright);
+    // openFilesOnly bounds analysis; pyright never executes project code, so
+    // the code-execution boundary needs no build-script/proc-macro toggles.
+    assert_eq!(
+        options.pointer("/python/analysis/diagnosticMode"),
+        Some(&json!("openFilesOnly")),
+        "{options}"
+    );
+    assert_eq!(
+        options.pointer("/python/analysis/typeCheckingMode"),
+        Some(&json!("basic")),
+        "{options}"
+    );
+    assert_eq!(
+        options.pointer("/python/analysis/autoImportCompletions"),
+        Some(&json!(false)),
+        "{options}"
+    );
+    assert_eq!(
+        options.pointer("/python/analysis/useLibraryCodeForTypes"),
+        Some(&json!(true)),
+        "{options}"
+    );
+}
+
+#[test]
+fn lsp_initialize_uses_constrained_typescript_profile() {
+    let options = captured_initialize_options(LspServerKind::TypeScriptLanguageServer);
+    // disableAutomaticTypingAcquisition is the network boundary (no @types
+    // downloads from npm) — the analog to rust-analyzer's cargo.noDeps.
+    assert_eq!(
+        options.pointer("/disableAutomaticTypingAcquisition"),
+        Some(&json!(true)),
+        "{options}"
+    );
+    assert_eq!(
+        options.pointer("/preferences/includePackageJsonAutoImports"),
+        Some(&json!("off")),
+        "{options}"
+    );
+    assert_eq!(
+        options.pointer("/hostInfo"),
+        Some(&json!("webcodex-agent")),
+        "{options}"
+    );
+}
+
+#[test]
+fn lsp_default_args_apply_to_env_and_path_but_not_configured() {
+    let supervisor = LspSupervisor::default();
+    // Pyright resolves from the env override with `--stdio` appended.
+    let (from_env, source) = supervisor
+        .resolve_command_from_sources(
+            LspServerKind::Pyright,
+            Some(OsString::from("/opt/pyright-langserver")),
+            Some(OsStr::new("")),
+        )
+        .unwrap();
+    assert_eq!(source, crate::lsp_bridge::LspCommandSource::Environment);
+    assert_eq!(from_env.args, vec![OsString::from("--stdio")]);
+
+    // rust-analyzer declares no default args.
+    let (rust, _) = supervisor
+        .resolve_command_from_sources(
+            LspServerKind::RustAnalyzer,
+            Some(OsString::from("/opt/rust-analyzer")),
+            Some(OsStr::new("")),
+        )
+        .unwrap();
+    assert!(rust.args.is_empty(), "{:?}", rust.args);
+
+    // An explicitly configured command is used verbatim — no default args.
+    let configured = LspSupervisor::new(LspSupervisorConfig {
+        commands: HashMap::from([(LspServerKind::Pyright, LspCommand::new("/custom/pyright"))]),
+        ..LspSupervisorConfig::default()
+    });
+    let (command, source) = configured
+        .resolve_command_from_sources(LspServerKind::Pyright, None, Some(OsStr::new("")))
+        .unwrap();
+    assert_eq!(source, crate::lsp_bridge::LspCommandSource::Configured);
+    assert!(command.args.is_empty(), "{:?}", command.args);
 }
 
 #[test]
@@ -1151,7 +1271,7 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
         .arg(marker.as_os_str())
         .arg(exit_marker.as_os_str());
     let supervisor = LspSupervisor::new(LspSupervisorConfig {
-        rust_analyzer: Some(command),
+        commands: HashMap::from([(LspServerKind::RustAnalyzer, command)]),
         max_servers_per_project: 1,
         max_servers_per_agent: 4,
         request_timeout: Duration::from_millis(300),
@@ -1358,7 +1478,10 @@ fn lsp_rejects_missing_or_non_directory_project_roots_before_spawn() {
 fn lsp_command_resolution_uses_explicit_env_then_path_without_shell() {
     let fake = fake_server_binary();
     let explicit = LspSupervisor::new(LspSupervisorConfig {
-        rust_analyzer: Some(LspCommand::new(fake.path.as_os_str())),
+        commands: HashMap::from([(
+            LspServerKind::RustAnalyzer,
+            LspCommand::new(fake.path.as_os_str()),
+        )]),
         ..LspSupervisorConfig::default()
     });
     assert_eq!(
@@ -1367,7 +1490,7 @@ fn lsp_command_resolution_uses_explicit_env_then_path_without_shell() {
     );
 
     let supervisor = LspSupervisor::default();
-    let from_env = supervisor
+    let (from_env, env_source) = supervisor
         .resolve_command_from_sources(
             LspServerKind::RustAnalyzer,
             Some(fake.path.as_os_str().to_owned()),
@@ -1375,15 +1498,17 @@ fn lsp_command_resolution_uses_explicit_env_then_path_without_shell() {
         )
         .unwrap();
     assert_eq!(from_env.program, fake.path.as_os_str());
+    assert_eq!(env_source, crate::lsp_bridge::LspCommandSource::Environment);
 
     let path_dir = tempfile::tempdir().unwrap();
     let analyzer = path_dir.path().join("rust-analyzer");
     fs::copy(&fake.path, &analyzer).unwrap();
     let path = env::join_paths([path_dir.path()]).unwrap();
-    let from_path = supervisor
+    let (from_path, path_source) = supervisor
         .resolve_command_from_sources(LspServerKind::RustAnalyzer, None, Some(&path))
         .unwrap();
     assert_eq!(from_path.program, analyzer.as_os_str());
+    assert_eq!(path_source, crate::lsp_bridge::LspCommandSource::Path);
     let empty_path = tempfile::tempdir().unwrap();
     assert!(supervisor
         .resolve_command_from_sources(
@@ -1400,12 +1525,13 @@ fn lsp_command_resolution_uses_explicit_env_then_path_without_shell() {
     let marker = spaced.path().join("marker");
     let exit_marker = spaced.path().join("exit");
     let supervisor = LspSupervisor::new(LspSupervisorConfig {
-        rust_analyzer: Some(
+        commands: HashMap::from([(
+            LspServerKind::RustAnalyzer,
             LspCommand::new(program)
                 .arg("normal")
                 .arg(marker.as_os_str())
                 .arg(exit_marker.as_os_str()),
-        ),
+        )]),
         shutdown_timeout: Duration::from_millis(300),
         initialize_timeout: Duration::from_secs(2),
         ..LspSupervisorConfig::default()

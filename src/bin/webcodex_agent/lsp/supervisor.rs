@@ -1,3 +1,4 @@
+use super::language::{profile_for_kind, LanguageProfile};
 use super::protocol::{read_message, write_message, FramingError, MAX_LSP_MESSAGE_BYTES};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -25,18 +26,16 @@ const MAX_STDERR_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DIAGNOSTIC_DOCUMENTS: usize = 256;
 pub(crate) const MAX_DIAGNOSTICS_PER_DOCUMENT: usize = 500;
 
+/// Discriminant for one language-server process kind. Language-specific
+/// facts (executable, extensions, initialization options, …) live on the
+/// matching `LanguageProfile` in the `language` registry; this enum carries
+/// no behavior of its own, so adding a language is one variant plus one
+/// profile entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(dead_code)] // Commit 2 public tools will select server kinds.
 pub(crate) enum LspServerKind {
     RustAnalyzer,
-}
-
-impl LspServerKind {
-    fn executable_name(self) -> &'static str {
-        match self {
-            Self::RustAnalyzer => "rust-analyzer",
-        }
-    }
+    Pyright,
+    TypeScriptLanguageServer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,7 +128,7 @@ impl LspError {
 impl fmt::Display for LspError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ServerUnavailable => f.write_str("rust-analyzer is unavailable"),
+            Self::ServerUnavailable => f.write_str("language server is unavailable"),
             Self::SpawnFailed(message) => write!(f, "failed to spawn language server: {message}"),
             Self::InitializeFailed(message) => {
                 write!(f, "language server initialize failed: {message}")
@@ -176,7 +175,6 @@ impl LspCommand {
         }
     }
 
-    #[allow(dead_code)] // Builder used by tests and Commit 2 custom command wiring.
     pub(crate) fn arg(mut self, value: impl Into<OsString>) -> Self {
         self.args.push(value.into());
         self
@@ -200,7 +198,7 @@ impl LspCommand {
             .map_err(|error| LspError::SpawnFailed(error.to_string()))
     }
 
-    fn is_available(&self) -> bool {
+    fn is_available(&self, kind: LspServerKind) -> bool {
         let program = Path::new(&self.program);
         let resolved = if program.is_absolute() || program.components().count() > 1 {
             if !is_executable_file(program) {
@@ -213,16 +211,22 @@ impl LspCommand {
                 None => return false,
             }
         };
-        // rustup installs a PATH shim named `rust-analyzer` even when the
-        // component is missing. Treat that as unavailable without spawning
-        // the language server or running Cargo.
-        !is_unusable_rustup_proxy(&resolved)
+        // A resolved executable can still be unusable (e.g. rustup installs a
+        // PATH shim named `rust-analyzer` even when the component is
+        // missing). The probe decides without spawning the language server.
+        match profile_for_kind(kind).unusable_command_probe {
+            Some(probe) => !probe(&resolved),
+            None => true,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct LspSupervisorConfig {
-    pub(crate) rust_analyzer: Option<LspCommand>,
+    /// Explicitly configured server commands, keyed by server kind. A
+    /// configured command wins over the profile env override and `PATH`
+    /// lookup for that kind only.
+    pub(crate) commands: HashMap<LspServerKind, LspCommand>,
     pub(crate) max_servers_per_project: usize,
     pub(crate) max_servers_per_agent: usize,
     pub(crate) request_timeout: Duration,
@@ -239,7 +243,7 @@ pub(crate) struct LspSupervisorConfig {
 impl Default for LspSupervisorConfig {
     fn default() -> Self {
         Self {
-            rust_analyzer: None,
+            commands: HashMap::new(),
             max_servers_per_project: DEFAULT_MAX_SERVERS_PER_PROJECT,
             max_servers_per_agent: DEFAULT_MAX_SERVERS_PER_AGENT,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
@@ -302,7 +306,7 @@ impl LspSupervisor {
     pub(crate) fn availability(&self, kind: LspServerKind) -> LspServerStatus {
         if self
             .resolve_command(kind)
-            .is_some_and(|command| command.is_available())
+            .is_some_and(|command| command.is_available(kind))
         {
             LspServerStatus::Available
         } else {
@@ -313,28 +317,10 @@ impl LspSupervisor {
     /// Resolve command availability and source without starting a server and
     /// without returning absolute executable paths.
     pub(crate) fn resolve_command_info(&self, kind: LspServerKind) -> Option<ResolvedCommandInfo> {
-        if self.inner.config.rust_analyzer.is_some() {
-            let command = self.inner.config.rust_analyzer.as_ref()?;
-            return Some(ResolvedCommandInfo {
-                available: command.is_available(),
-                source: crate::lsp_bridge::LspCommandSource::Configured,
-            });
-        }
-        if kind == LspServerKind::RustAnalyzer {
-            if let Some(program) = env::var_os("WEBCODEX_RUST_ANALYZER") {
-                if !program.is_empty() {
-                    let command = LspCommand::new(program);
-                    return Some(ResolvedCommandInfo {
-                        available: command.is_available(),
-                        source: crate::lsp_bridge::LspCommandSource::Environment,
-                    });
-                }
-            }
-        }
-        let command = self.resolve_command(kind)?;
+        let (command, source) = self.resolve_command_with_source(kind)?;
         Some(ResolvedCommandInfo {
-            available: command.is_available(),
-            source: crate::lsp_bridge::LspCommandSource::Path,
+            available: command.is_available(kind),
+            source,
         })
     }
 
@@ -882,31 +868,53 @@ impl LspSupervisor {
     }
 
     fn resolve_command(&self, kind: LspServerKind) -> Option<LspCommand> {
+        self.resolve_command_with_source(kind)
+            .map(|(command, _)| command)
+    }
+
+    fn resolve_command_with_source(
+        &self,
+        kind: LspServerKind,
+    ) -> Option<(LspCommand, crate::lsp_bridge::LspCommandSource)> {
         self.resolve_command_from_sources(
             kind,
-            env::var_os("WEBCODEX_RUST_ANALYZER"),
+            env::var_os(profile_for_kind(kind).env_override),
             env::var_os("PATH").as_deref(),
         )
     }
 
+    /// Resolution priority per kind: explicitly configured command, then the
+    /// profile's env override, then the profile executable on `PATH`. An
+    /// explicitly configured command is used verbatim; env/PATH resolutions
+    /// get the profile's `default_args` (e.g. `--stdio`) appended.
     fn resolve_command_from_sources(
         &self,
         kind: LspServerKind,
-        rust_analyzer_override: Option<OsString>,
+        env_override: Option<OsString>,
         path: Option<&OsStr>,
-    ) -> Option<LspCommand> {
-        if let Some(command) = &self.inner.config.rust_analyzer {
-            return Some(command.clone());
+    ) -> Option<(LspCommand, crate::lsp_bridge::LspCommandSource)> {
+        if let Some(command) = self.inner.config.commands.get(&kind) {
+            return Some((
+                command.clone(),
+                crate::lsp_bridge::LspCommandSource::Configured,
+            ));
         }
-        if kind == LspServerKind::RustAnalyzer {
-            if let Some(program) = rust_analyzer_override {
-                if !program.is_empty() {
-                    return Some(LspCommand::new(program));
-                }
+        let profile = profile_for_kind(kind);
+        if let Some(program) = env_override {
+            if !program.is_empty() {
+                return Some((
+                    command_with_default_args(program, profile),
+                    crate::lsp_bridge::LspCommandSource::Environment,
+                ));
             }
         }
-        path.and_then(|path| find_executable_in_path(kind.executable_name(), path))
-            .map(LspCommand::new)
+        path.and_then(|path| find_executable_in_path(profile.executable, path))
+            .map(|program| {
+                (
+                    command_with_default_args(program, profile),
+                    crate::lsp_bridge::LspCommandSource::Path,
+                )
+            })
     }
 
     #[cfg(test)]
@@ -973,6 +981,20 @@ fn canonical_project_root(root: &Path) -> Result<PathBuf, LspError> {
     Ok(canonical)
 }
 
+/// Build a command from a resolved program plus the profile's default args.
+/// Used for env-override and `PATH` resolutions; explicitly configured
+/// commands already carry their own arguments.
+fn command_with_default_args(
+    program: impl Into<OsString>,
+    profile: &LanguageProfile,
+) -> LspCommand {
+    let mut command = LspCommand::new(program);
+    for arg in profile.default_args {
+        command = command.arg(*arg);
+    }
+    command
+}
+
 fn find_executable_on_path(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     find_executable_in_path(name, &path)
@@ -1008,7 +1030,8 @@ fn is_executable_file(path: &Path) -> bool {
 /// Detection is filesystem-only: no process spawn, no Cargo, no network.
 /// When toolchain resolution is ambiguous, returns `false` so callers keep
 /// the previous PATH-executable semantics instead of inventing unavailability.
-fn is_unusable_rustup_proxy(path: &Path) -> bool {
+/// Wired into the rust `LanguageProfile` as its `unusable_command_probe`.
+pub(super) fn is_unusable_rustup_proxy(path: &Path) -> bool {
     let file_name = path.file_name().and_then(|name| name.to_str());
     if file_name != Some("rust-analyzer") && file_name != Some("rust-analyzer.exe") {
         return false;
@@ -1126,31 +1149,30 @@ fn parse_default_toolchain(settings_toml: &str) -> Option<String> {
     None
 }
 
-/// Map bounded stderr capture into a short, path-free startup diagnostic.
-///
-/// Prefer stable classification for known rustup component-missing failures so
-/// operators do not need raw process stderr.
-fn summarize_lsp_startup_stderr(raw: &str) -> Option<String> {
+/// Collapse control characters to spaces and trim; `None` when the result is
+/// empty. Shared by the generic startup summary and per-language stderr
+/// classifiers in the `language` registry.
+pub(super) fn compact_stderr(raw: &str) -> Option<String> {
     let compact = raw
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect::<String>();
-    let compact = compact.trim();
+    let compact = compact.trim().to_string();
     if compact.is_empty() {
-        return None;
+        None
+    } else {
+        Some(compact)
     }
-    let lower = compact.to_ascii_lowercase();
-    if (lower.contains("unknown binary") && lower.contains("rust-analyzer"))
-        || lower.contains("does not have the binary rust-analyzer")
-        || lower.contains("does not have the binary `rust-analyzer`")
-        || lower.contains("rustup component add rust-analyzer")
-    {
-        return Some(
-            "rust-analyzer component is not installed for the active rustup toolchain".to_string(),
-        );
-    }
-    // Fall back to the first non-empty line. Absolute paths are redacted by
-    // `bound_error_message` at the public bridge boundary.
+}
+
+/// Generic, language-agnostic fallback: map bounded stderr capture into a
+/// short, path-light startup diagnostic (its first non-empty line). Stable
+/// per-language classification runs first via the profile's
+/// `startup_stderr_classifier`; this holds no per-language knowledge.
+fn generic_startup_stderr_summary(raw: &str) -> Option<String> {
+    let compact = compact_stderr(raw)?;
+    // Absolute paths are redacted by `bound_error_message` at the public
+    // bridge boundary.
     let first = compact
         .lines()
         .map(str::trim)
@@ -1184,47 +1206,6 @@ fn remaining_until(deadline: Instant) -> Duration {
 /// notice shutdown within a minute and tiny test TTLs do not spin.
 fn reaper_interval(idle_ttl: Duration) -> Duration {
     (idle_ttl / 4).clamp(Duration::from_millis(10), Duration::from_secs(60))
-}
-
-/// Constrained read-only rust-analyzer profile for WebCodex v1 semantic navigation.
-///
-/// WebCodex first-version LSP tools are read-only semantic navigation
-/// (document symbols, goto definition, find references). Starting the language
-/// server must not implicitly execute repository `build.rs` scripts, load or
-/// execute proc macros, or run Cargo check. This is **not** a full OS sandbox;
-/// it is a constrained read-only rust-analyzer profile.
-///
-/// Safety choices encoded here:
-/// - `cargo.buildScripts.enable=false` / `procMacro.enable=false` / `checkOnSave=false`
-///   prevent code execution and write-side Cargo check during analysis.
-/// - `cargo.noDeps=true` is a v1 safety and network boundary: do not fetch or
-///   analyze external dependencies automatically.
-/// - `files.watcher=server` because the client does not yet implement
-///   watched-files registration or change notifications.
-/// - `cachePriming.enable=false` avoids unnecessary background priming work.
-///
-/// When changing `initializationOptions`, update the security regression test
-/// `lsp_initialize_uses_constrained_rust_analyzer_profile` in lockstep. Do not
-/// allow environment variables to override these v1 safety fields.
-fn rust_analyzer_read_only_initialization_options() -> Value {
-    json!({
-        "cargo": {
-            "buildScripts": {
-                "enable": false
-            },
-            "noDeps": true
-        },
-        "procMacro": {
-            "enable": false
-        },
-        "checkOnSave": false,
-        "files": {
-            "watcher": "server"
-        },
-        "cachePriming": {
-            "enable": false
-        }
-    })
 }
 
 struct ConnectionState {
@@ -1631,31 +1612,41 @@ impl ServerInstance {
 
     /// Bounded, path-light summary of captured language-server stderr for
     /// initialize/start failures. Never returns absolute executable paths.
+    ///
+    /// The language profile's `startup_stderr_classifier` gets first refusal
+    /// for stable, known-failure messages; otherwise the generic first-line
+    /// summary applies. No per-language stderr knowledge lives here.
     fn startup_stderr_summary(&self) -> Option<String> {
         let bytes: Vec<u8> = lock_unpoison(&self.stderr).bytes.iter().copied().collect();
         if bytes.is_empty() {
             return None;
         }
         let raw = String::from_utf8_lossy(&bytes);
-        summarize_lsp_startup_stderr(&raw)
+        if let Some(classify) = profile_for_kind(self.key.kind).startup_stderr_classifier {
+            if let Some(summary) = classify(&raw) {
+                return Some(summary);
+            }
+        }
+        generic_startup_stderr_summary(&raw)
     }
 
     fn initialize(&self, timeout: Duration) -> Result<(), LspError> {
         let root_uri = Url::from_directory_path(&self.key.project_root).map_err(|_| {
             LspError::InitializeFailed("project root is not a file URI".to_string())
         })?;
-        // WebCodex v1 LSP tools are read-only semantic navigation. Starting the
-        // language server must not implicitly execute repository build scripts,
-        // proc macros, or Cargo check. See
-        // `rust_analyzer_read_only_initialization_options` for the constrained
-        // profile and the security regression tests that pin these fields.
+        // WebCodex LSP tools are read-only semantic navigation. Starting the
+        // language server must not implicitly execute repository build
+        // scripts, proc macros, or dependency fetches. Each language profile
+        // carries its constrained read-only `initializationOptions`, pinned
+        // by security regression tests.
+        let initialization_options = (profile_for_kind(self.key.kind).initialization_options)();
         let result = self.request_raw(
             "initialize",
             json!({
                 "processId": std::process::id(),
                 "clientInfo": {"name": "WebCodex agent"},
                 "rootUri": root_uri.to_string(),
-                "initializationOptions": rust_analyzer_read_only_initialization_options(),
+                "initializationOptions": initialization_options,
                 "capabilities": {
                     "general": {
                         "positionEncodings": ["utf-8", "utf-16", "utf-32"]

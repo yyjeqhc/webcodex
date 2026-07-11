@@ -1,6 +1,5 @@
 //! Dispatch tests for tool_runtime.
 
-use super::super::cargo::*;
 use super::super::helpers::*;
 use super::super::patch::*;
 use super::super::*;
@@ -42,29 +41,6 @@ fn cargo_runtime_tools_are_known_and_parse() {
         .unwrap(),
         ToolCall::CargoTest { filter: Some(filter), .. } if filter == "tool_runtime"
     ));
-}
-
-#[test]
-fn cargo_command_builders_use_expected_defaults_and_escaping() {
-    assert_eq!(cargo_fmt_command(true), "cargo fmt -- --check");
-    assert_eq!(
-        cargo_check_command(None, None, None, None, None).unwrap(),
-        "cargo check --all-targets"
-    );
-    assert_eq!(
-        cargo_test_command(
-            Some("tool_runtime".to_string()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None
-        )
-        .unwrap(),
-        "cargo test 'tool_runtime'"
-    );
-    assert!(cargo_check_command(None, None, None, Some("feat\0x".to_string()), None).is_err());
 }
 
 #[tokio::test]

@@ -1,12 +1,15 @@
 use serde_json::json;
 
 use super::helpers::{
-    bounded_tail, command_rejected_message, looks_like_command_timeout, shell_escape_simple,
+    bounded_tail, command_rejected_message, looks_like_command_timeout,
     validate_project_relative_path,
 };
 use super::shell::ProjectCommandOutput;
 use super::tool_result::ToolResult;
-use super::validation_parser::{aggregate_cargo_test_summaries, parse_cargo_test_diagnostics};
+use super::validation_parser::aggregate_cargo_test_summaries;
+use super::validation_profile::{
+    validation_adapter_for_tool, ValidationAdapter, ValidationCommandOptions,
+};
 use super::ToolRuntime;
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
@@ -27,100 +30,6 @@ fn validate_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
         }
         None => Ok(None),
     }
-}
-
-fn validate_arg(label: &str, value: Option<String>) -> Result<Option<String>, String> {
-    match value {
-        Some(raw) => {
-            if raw.contains('\0') {
-                return Err(format!("{} cannot contain NUL bytes", label));
-            }
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(trimmed.to_string()))
-            }
-        }
-        None => Ok(None),
-    }
-}
-
-pub(crate) fn cargo_fmt_command(check: bool) -> String {
-    if check {
-        "cargo fmt -- --check".to_string()
-    } else {
-        "cargo fmt".to_string()
-    }
-}
-
-pub(crate) fn cargo_check_command(
-    all_targets: Option<bool>,
-    all_features: Option<bool>,
-    no_default_features: Option<bool>,
-    features: Option<String>,
-    package: Option<String>,
-) -> Result<String, String> {
-    let features = validate_arg("features", features)?;
-    let package = validate_arg("package", package)?;
-    let mut args = vec!["cargo".to_string(), "check".to_string()];
-    if all_targets.unwrap_or(true) {
-        args.push("--all-targets".to_string());
-    }
-    if all_features.unwrap_or(false) {
-        args.push("--all-features".to_string());
-    }
-    if no_default_features.unwrap_or(false) {
-        args.push("--no-default-features".to_string());
-    }
-    if let Some(features) = features {
-        args.push("--features".to_string());
-        args.push(shell_escape_simple(&features));
-    }
-    if let Some(package) = package {
-        args.push("-p".to_string());
-        args.push(shell_escape_simple(&package));
-    }
-    Ok(args.join(" "))
-}
-
-pub(crate) fn cargo_test_command(
-    filter: Option<String>,
-    all_targets: Option<bool>,
-    all_features: Option<bool>,
-    no_default_features: Option<bool>,
-    features: Option<String>,
-    package: Option<String>,
-    no_run: Option<bool>,
-) -> Result<String, String> {
-    let filter = validate_arg("filter", filter)?;
-    let features = validate_arg("features", features)?;
-    let package = validate_arg("package", package)?;
-    let mut args = vec!["cargo".to_string(), "test".to_string()];
-    if let Some(filter) = filter {
-        args.push(shell_escape_simple(&filter));
-    }
-    if all_targets.unwrap_or(false) {
-        args.push("--all-targets".to_string());
-    }
-    if all_features.unwrap_or(false) {
-        args.push("--all-features".to_string());
-    }
-    if no_default_features.unwrap_or(false) {
-        args.push("--no-default-features".to_string());
-    }
-    if let Some(features) = features {
-        args.push("--features".to_string());
-        args.push(shell_escape_simple(&features));
-    }
-    if let Some(package) = package {
-        args.push("-p".to_string());
-        args.push(shell_escape_simple(&package));
-    }
-    if no_run.unwrap_or(false) {
-        args.push("--no-run".to_string());
-    }
-    Ok(args.join(" "))
 }
 
 fn count_rustc_diagnostics(text: &str, prefix: &str) -> usize {
@@ -219,8 +128,15 @@ impl ToolRuntime {
                 ))
             }
         };
-        let command = cargo_fmt_command(check.unwrap_or(false));
-        self.run_cargo_command(project, cwd, command, timeout_secs.unwrap_or(120), None)
+        let adapter = validation_adapter_for_tool("cargo_fmt")
+            .expect("Rust validation profile must register cargo_fmt");
+        let command = adapter
+            .build_command(ValidationCommandOptions {
+                check: check.unwrap_or(false),
+                ..ValidationCommandOptions::default()
+            })
+            .expect("cargo_fmt command builder is infallible");
+        self.run_cargo_command(project, cwd, command, timeout_secs.unwrap_or(120), adapter)
             .await
     }
 
@@ -245,13 +161,16 @@ impl ToolRuntime {
                 ))
             }
         };
-        let command = match cargo_check_command(
+        let adapter = validation_adapter_for_tool("cargo_check")
+            .expect("Rust validation profile must register cargo_check");
+        let command = match adapter.build_command(ValidationCommandOptions {
             all_targets,
             all_features,
             no_default_features,
             features,
             package,
-        ) {
+            ..ValidationCommandOptions::default()
+        }) {
             Ok(command) => command,
             Err(e) => {
                 return ToolResult::err(command_rejected_message(
@@ -260,14 +179,8 @@ impl ToolRuntime {
                 ))
             }
         };
-        self.run_cargo_command(
-            project,
-            cwd,
-            command,
-            timeout_secs.unwrap_or(300),
-            Some("check"),
-        )
-        .await
+        self.run_cargo_command(project, cwd, command, timeout_secs.unwrap_or(300), adapter)
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -293,7 +206,9 @@ impl ToolRuntime {
                 ))
             }
         };
-        let command = match cargo_test_command(
+        let adapter = validation_adapter_for_tool("cargo_test")
+            .expect("Rust validation profile must register cargo_test");
+        let command = match adapter.build_command(ValidationCommandOptions {
             filter,
             all_targets,
             all_features,
@@ -301,7 +216,8 @@ impl ToolRuntime {
             features,
             package,
             no_run,
-        ) {
+            ..ValidationCommandOptions::default()
+        }) {
             Ok(command) => command,
             Err(e) => {
                 return ToolResult::err(command_rejected_message(
@@ -310,14 +226,8 @@ impl ToolRuntime {
                 ))
             }
         };
-        self.run_cargo_command(
-            project,
-            cwd,
-            command,
-            timeout_secs.unwrap_or(600),
-            Some("test"),
-        )
-        .await
+        self.run_cargo_command(project, cwd, command, timeout_secs.unwrap_or(600), adapter)
+            .await
     }
 
     async fn run_cargo_command(
@@ -326,7 +236,7 @@ impl ToolRuntime {
         cwd: Option<String>,
         command: String,
         timeout_secs: u64,
-        mode: Option<&str>,
+        adapter: &'static dyn ValidationAdapter,
     ) -> ToolResult {
         let output = match self
             .run_project_command_capture(&project, command.clone(), timeout_secs, cwd.clone())
@@ -352,8 +262,8 @@ impl ToolRuntime {
         let passed = output.exit_code == Some(0);
         let validation_failed = is_cargo_validation_failure(&output, timeout_secs);
         let combined = format!("{}\n{}", output.stdout, output.stderr);
-        let test_diagnostics = if mode == Some("test") {
-            Some(parse_cargo_test_diagnostics(
+        let test_diagnostics = if adapter.reports_test_run_metadata() {
+            Some(adapter.parse(
                 &stdout_tail,
                 &stderr_tail,
                 stdout_truncated || stderr_truncated,
@@ -373,12 +283,12 @@ impl ToolRuntime {
             "stderr_truncated": stderr_truncated,
             "passed": passed,
         });
-        match mode {
-            Some("check") => {
+        match adapter.validation_kind() {
+            "check" => {
                 payload["warnings_count"] = json!(count_rustc_diagnostics(&combined, "warning:"));
                 payload["errors_count"] = json!(count_rustc_diagnostics(&combined, "error:"));
             }
-            Some("test") => {
+            "test" => {
                 let (tests_passed, tests_failed) = parse_cargo_test_counts(&combined);
                 let run_metadata = parse_cargo_test_run_metadata(&combined);
                 payload["tests_passed"] = json!(tests_passed);

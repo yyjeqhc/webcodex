@@ -13,8 +13,11 @@ use super::session_context::{
 };
 use super::sessions::{SessionEvent, SessionSummary};
 use super::validation_parser::{
-    parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, ValidationDiagnostics,
-    PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION, VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
+    ValidationDiagnostics, PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
+    VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
+};
+use super::validation_profile::{
+    validation_adapter_for_tool, ValidationAdapter, ValidationFailureEvidence,
 };
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
@@ -315,10 +318,10 @@ pub(crate) fn extract_validation_events(events: &[SessionEvent]) -> Vec<Validati
 }
 
 pub(crate) fn validation_kind_for_tool(tool_name: &str) -> Option<&'static str> {
+    if let Some(adapter) = validation_adapter_for_tool(tool_name) {
+        return Some(adapter.validation_kind());
+    }
     match tool_name {
-        "cargo_fmt" => Some("format"),
-        "cargo_check" => Some("check"),
-        "cargo_test" => Some("test"),
         "validate_patch" => Some("patch_preflight"),
         "apply_patch_checked" => Some("patch_apply_checked"),
         _ => None,
@@ -329,6 +332,7 @@ fn validation_event_from_finished(
     finished: &SessionEvent,
     started: Option<&SessionEvent>,
 ) -> Option<ValidationEvent> {
+    let adapter = validation_adapter_for_tool(&finished.tool_name);
     let validation_kind = validation_kind_for_tool(&finished.tool_name)?;
     let success = match finished.status.as_deref() {
         Some("succeeded") => true,
@@ -353,9 +357,11 @@ fn validation_event_from_finished(
         finished.changed_paths.clone()
     };
     let input_summary = started.and_then(|event| event.input_summary.clone());
-    let diagnostics = validation_diagnostics_from_summary(finished);
-    let failure_kind = validation_failure_kind(finished, success, diagnostics.as_ref());
-    let (tests_detected, tests_run_count, zero_tests_run) = cargo_test_run_metadata(finished);
+    let diagnostics =
+        adapter.and_then(|adapter| validation_diagnostics_from_summary(finished, adapter));
+    let failure_kind = validation_failure_kind(finished, success, diagnostics.as_ref(), adapter);
+    let (tests_detected, tests_run_count, zero_tests_run) =
+        validation_test_run_metadata(finished, adapter);
     let outcome = if success { "succeeded" } else { "failed" };
 
     Some(ValidationEvent {
@@ -383,7 +389,24 @@ fn validation_failure_kind(
     finished: &SessionEvent,
     success: bool,
     diagnostics: Option<&ValidationDiagnostics>,
+    adapter: Option<&dyn ValidationAdapter>,
 ) -> &'static str {
+    if let Some(adapter) = adapter {
+        let (stdout_excerpt, stderr_excerpt, _) =
+            validation_output_excerpts(finished).unwrap_or_default();
+        return adapter.map_failure_kind(ValidationFailureEvidence {
+            success,
+            reported_failure_kind: finished
+                .failure_kind
+                .as_deref()
+                .or(finished.error_kind.as_deref()),
+            exit_code: finished.exit_code,
+            diagnostics,
+            stdout_excerpt,
+            stderr_excerpt,
+        });
+    }
+
     if success {
         return "unknown";
     }
@@ -395,33 +418,6 @@ fn validation_failure_kind(
         Some("timeout" | "timed_out" | "command_timeout")
     ) {
         return "timeout";
-    }
-
-    let has_compile_error = diagnostics.is_some_and(|diagnostics| {
-        diagnostics
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.severity == "error")
-    });
-    if matches!(finished.tool_name.as_str(), "cargo_check" | "cargo_test") && has_compile_error {
-        return "compile_error";
-    }
-
-    if finished.tool_name == "cargo_test"
-        && diagnostics.is_some_and(|diagnostics| {
-            diagnostics
-                .test_summary
-                .as_ref()
-                .and_then(|summary| summary.failed)
-                .is_some_and(|failed| failed > 0)
-                || !diagnostics.failed_test_details.is_empty()
-        })
-    {
-        return "test_failure";
-    }
-
-    if finished.tool_name == "cargo_fmt" && cargo_fmt_has_stable_diff_metadata(finished) {
-        return "format_diff";
     }
 
     if finished.exit_code.is_some_and(|exit_code| exit_code != 0)
@@ -441,24 +437,6 @@ fn validation_failure_kind(
         return "process_exit";
     }
     "unknown"
-}
-
-fn cargo_fmt_has_stable_diff_metadata(finished: &SessionEvent) -> bool {
-    let Some(summary) = finished.validation_output_summary.as_ref() else {
-        return false;
-    };
-    ["stdout_tail_excerpt", "stderr_tail_excerpt"]
-        .iter()
-        .filter_map(|key| summary.get(*key).and_then(Value::as_str))
-        .flat_map(str::lines)
-        .map(str::trim_start)
-        .filter_map(|line| line.strip_prefix("Diff in "))
-        .any(|location| {
-            let location = location.trim_end_matches(':');
-            location
-                .rsplit_once(':')
-                .is_some_and(|(_, line)| line.parse::<u64>().is_ok_and(|line| line > 0))
-        })
 }
 
 fn matching_start(
@@ -505,13 +483,21 @@ fn parser_summary_for_events(events: &[ValidationEvent]) -> ValidationParserSumm
     }
 }
 
-fn validation_diagnostics_from_summary(finished: &SessionEvent) -> Option<ValidationDiagnostics> {
+fn validation_diagnostics_from_summary(
+    finished: &SessionEvent,
+    adapter: &dyn ValidationAdapter,
+) -> Option<ValidationDiagnostics> {
+    let (stdout_excerpt, stderr_excerpt, truncated) = validation_output_excerpts(finished)?;
+    Some(adapter.parse(stdout_excerpt, stderr_excerpt, truncated))
+}
+
+fn validation_output_excerpts(finished: &SessionEvent) -> Option<(&str, &str, bool)> {
     let summary = finished.validation_output_summary.as_ref()?.as_object()?;
-    let stdout_tail = summary
+    let stdout_excerpt = summary
         .get("stdout_tail_excerpt")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let stderr_tail = summary
+    let stderr_excerpt = summary
         .get("stderr_tail_excerpt")
         .and_then(Value::as_str)
         .unwrap_or_default();
@@ -523,24 +509,14 @@ fn validation_diagnostics_from_summary(finished: &SessionEvent) -> Option<Valida
             .get("stderr_truncated")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-
-    match finished.tool_name.as_str() {
-        "cargo_fmt" | "cargo_check" => Some(parse_cargo_check_diagnostics(
-            stdout_tail,
-            stderr_tail,
-            truncated,
-        )),
-        "cargo_test" => Some(parse_cargo_test_diagnostics(
-            stdout_tail,
-            stderr_tail,
-            truncated,
-        )),
-        _ => None,
-    }
+    Some((stdout_excerpt, stderr_excerpt, truncated))
 }
 
-fn cargo_test_run_metadata(finished: &SessionEvent) -> (Option<bool>, Option<u64>, Option<bool>) {
-    if finished.tool_name != "cargo_test" {
+fn validation_test_run_metadata(
+    finished: &SessionEvent,
+    adapter: Option<&dyn ValidationAdapter>,
+) -> (Option<bool>, Option<u64>, Option<bool>) {
+    if !adapter.is_some_and(ValidationAdapter::reports_test_run_metadata) {
         return (None, None, None);
     }
     let Some(summary) = finished.validation_output_summary.as_ref() else {
@@ -553,7 +529,10 @@ fn cargo_test_run_metadata(finished: &SessionEvent) -> (Option<bool>, Option<u64
 }
 
 fn cargo_test_zero_tests_success(event: &ValidationEvent) -> bool {
-    event.tool_name == "cargo_test" && event.success && event.zero_tests_run == Some(true)
+    validation_adapter_for_tool(&event.tool_name)
+        .is_some_and(ValidationAdapter::reports_test_run_metadata)
+        && event.success
+        && event.zero_tests_run == Some(true)
 }
 
 fn to_value(summary: ValidationSummary) -> Value {

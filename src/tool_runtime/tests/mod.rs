@@ -26,4 +26,5 @@ mod sessions_resolver;
 mod tool_call;
 mod validation_events;
 mod validation_parser;
+mod validation_profile;
 mod validation_summary;

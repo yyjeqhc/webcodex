@@ -53,6 +53,7 @@ mod tool_result;
 mod tool_spec;
 mod validation_events;
 mod validation_parser;
+mod validation_profile;
 
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[cfg(test)]

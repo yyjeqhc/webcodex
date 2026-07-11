@@ -706,6 +706,19 @@ fn fake_head_script() -> &'static str {
     "#!/bin/sh\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\"\ndone\n"
 }
 
+/// Whether the host environment has a working real `rg` (ripgrep) on PATH.
+///
+/// Used only by integration tests that exercise advanced `search_project_text`
+/// features against the installed backend. Fake-`rg` / controlled-PATH tests
+/// must not call this — they supply their own backend.
+fn host_ripgrep_available() -> bool {
+    std::process::Command::new("rg")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(unix)]
 #[test]
 fn search_project_text_command_prefers_rg_backend_when_available() {
@@ -1136,6 +1149,11 @@ fn search_command_preserves_grep_exit_2_despite_head() {
 #[test]
 fn search_command_illegal_regex_is_not_swallowed_by_head() {
     // Real rg with an illegal regex should surface exit >= 2 through the generated shell.
+    if !host_ripgrep_available() {
+        eprintln!("skipping real-ripgrep integration test: rg is unavailable");
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&root).unwrap();
@@ -1146,24 +1164,15 @@ fn search_command_illegal_regex_is_not_swallowed_by_head() {
         ..raw_search_request()
     })
     .unwrap();
-    // Prefer system rg if available; otherwise skip with a clear message path via fake.
-    if std::process::Command::new("rg")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
-        let (exit_code, stdout, stderr, _) =
-            run_command_sync(&search_project_text_command(&options), &root, 10);
-        assert!(
-            exit_code >= 2,
-            "illegal regex should fail backend: exit={exit_code} stderr={stderr} stdout={stdout}"
-        );
-        let result =
-            search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
-        assert!(!result.success);
-        assert_eq!(result.output["code"], "search_execution_failed");
-    }
+    let (exit_code, stdout, stderr, _) =
+        run_command_sync(&search_project_text_command(&options), &root, 10);
+    assert!(
+        exit_code >= 2,
+        "illegal regex should fail backend: exit={exit_code} stderr={stderr} stdout={stdout}"
+    );
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), &stderr);
+    assert!(!result.success);
+    assert_eq!(result.output["code"], "search_execution_failed");
 }
 
 #[cfg(unix)]
@@ -1970,6 +1979,14 @@ fn search_command_passes_shell_metacharacter_globs_as_one_literal_argument() {
 
 #[tokio::test]
 async fn search_project_text_include_and_exclude_globs_are_additive() {
+    // include/exclude globs are ripgrep-only; without host rg this is a
+    // capability error, not a product regression (see
+    // advanced_search_without_rg_returns_structured_capability_error).
+    if !host_ripgrep_available() {
+        eprintln!("skipping real-ripgrep integration test: rg is unavailable");
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(tmp.path().join("src")).unwrap();
     std::fs::create_dir_all(tmp.path().join("docs")).unwrap();
@@ -2011,6 +2028,14 @@ async fn search_project_text_include_and_exclude_globs_are_additive() {
 
 #[tokio::test]
 async fn search_project_text_files_with_matches_is_unique_stable_and_bounded() {
+    // files_with_matches is ripgrep-only; without host rg this is a capability
+    // error, not a product regression (see
+    // advanced_search_without_rg_returns_structured_capability_error).
+    if !host_ripgrep_available() {
+        eprintln!("skipping real-ripgrep integration test: rg is unavailable");
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("b.rs"), "FILE_NEEDLE\nFILE_NEEDLE\n").unwrap();
     std::fs::write(tmp.path().join("a.rs"), "FILE_NEEDLE\n").unwrap();
@@ -2041,6 +2066,14 @@ async fn search_project_text_files_with_matches_is_unique_stable_and_bounded() {
 
 #[tokio::test]
 async fn search_project_text_count_distinguishes_complete_and_truncated_totals() {
+    // count result mode is ripgrep-only; without host rg this is a capability
+    // error, not a product regression (see
+    // advanced_search_without_rg_returns_structured_capability_error).
+    if !host_ripgrep_available() {
+        eprintln!("skipping real-ripgrep integration test: rg is unavailable");
+        return;
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("a.rs"), "COUNT_NEEDLE\nCOUNT_NEEDLE\n").unwrap();
     std::fs::write(tmp.path().join("b.rs"), "COUNT_NEEDLE\n").unwrap();

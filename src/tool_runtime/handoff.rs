@@ -548,6 +548,9 @@ pub(crate) fn compact_tool_failures(tool_failures: &Value) -> Value {
 }
 
 pub(crate) fn compact_validation(validation: &Value) -> Value {
+    if validation.is_object() {
+        return validation.clone();
+    }
     json!({
         "status": validation.get("status").cloned().unwrap_or_else(|| json!("not_run")),
         "reason": validation.get("reason").cloned().unwrap_or_else(|| json!("no_validation_tool_invoked")),

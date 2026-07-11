@@ -1234,20 +1234,13 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     assert_compact_verdict_safe(verdict, "finish compact verdict");
 
     let serialized = serde_json::to_string(&result.output).unwrap();
-    for forbidden in [
-        "recent_events",
-        "recent_failed_tools",
-        "stdout",
-        "stderr",
-        "tail",
-        "excerpt",
-        "command",
-    ] {
+    for forbidden in ["recent_events", "recent_failed_tools", "command"] {
         assert!(
             !serialized.contains(forbidden),
             "summary_only finish leaked {forbidden}: {serialized}"
         );
     }
+    assert_no_raw_validation_output_fields(&result.output, "summary_only finish structured output");
     assert!(
         !serialized.contains("\"show_changes\":"),
         "summary_only finish leaked raw show_changes payload: {serialized}"

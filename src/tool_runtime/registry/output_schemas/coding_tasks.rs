@@ -84,7 +84,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "validation",
-                open_object_schema("Ledger-based validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. The status field remains strict ledger history; latest_status and historical_failures distinguish final validation state from resolved historical failures. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause."),
+                open_object_schema("Ledger-based validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Parser version 2 provides bounded structured diagnostics from bounded validation metadata while retaining backward-compatible first_diagnostic, failed_tests, and first_failed_test fields. Full and summary_only closeout preserve the same validation evidence. Does not include stdout/stderr bodies and performs no root-cause inference. latest_status and historical_failures retain the existing final-state and resolved-history semantics."),
             ),
             (
                 "review_evidence",

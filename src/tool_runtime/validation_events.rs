@@ -16,6 +16,7 @@ use super::validation_parser::{
 
 const DEFAULT_VALIDATION_EVENT_LIMIT: usize = 10;
 const VALIDATION_SOURCE: &str = "session_ledger";
+const VALIDATION_PARSER_SOURCE: &str = "bounded_validation_metadata";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ValidationEvent {
@@ -54,6 +55,8 @@ struct ValidationParserSummary {
     available: bool,
     kind: &'static str,
     version: u8,
+    source: &'static str,
+    raw_output_exposed: bool,
     limitations: [&'static str; 3],
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<&'static str>,
@@ -414,6 +417,8 @@ fn parser_unavailable() -> ValidationParserSummary {
         available: false,
         kind: PARSER_KIND,
         version: PARSER_VERSION,
+        source: VALIDATION_PARSER_SOURCE,
+        raw_output_exposed: false,
         limitations: PARSER_LIMITATIONS,
         reason: Some(VALIDATION_OUTPUT_METADATA_ABSENT_REASON),
     }
@@ -424,6 +429,8 @@ fn parser_available() -> ValidationParserSummary {
         available: true,
         kind: PARSER_KIND,
         version: PARSER_VERSION,
+        source: VALIDATION_PARSER_SOURCE,
+        raw_output_exposed: false,
         limitations: PARSER_LIMITATIONS,
         reason: None,
     }
@@ -508,6 +515,8 @@ fn to_value(summary: ValidationSummary) -> Value {
                 "available": false,
                 "kind": PARSER_KIND,
                 "version": PARSER_VERSION,
+                "source": VALIDATION_PARSER_SOURCE,
+                "raw_output_exposed": false,
                 "limitations": PARSER_LIMITATIONS,
                 "reason": VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
             },

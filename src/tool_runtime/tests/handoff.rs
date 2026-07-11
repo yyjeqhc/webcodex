@@ -1480,20 +1480,16 @@ async fn session_handoff_summary_only_is_compact() {
             "summary_only handoff should serialize {field}: {serialized}"
         );
     }
-    for forbidden in [
-        "recent_events",
-        "recent_failed_tools",
-        "stdout",
-        "stderr",
-        "tail",
-        "excerpt",
-        "command",
-    ] {
+    for forbidden in ["recent_events", "recent_failed_tools", "command"] {
         assert!(
             !serialized.contains(forbidden),
             "summary_only handoff leaked {forbidden}: {serialized}"
         );
     }
+    assert_no_raw_validation_output_fields(
+        &result.output,
+        "summary_only handoff structured output",
+    );
 }
 
 // =========================================================================

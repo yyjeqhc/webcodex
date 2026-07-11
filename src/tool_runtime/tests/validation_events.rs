@@ -53,6 +53,11 @@ fn validation_summary_is_unavailable_without_validation_events() {
     assert_eq!(validation["parser"]["kind"], PARSER_KIND);
     assert_eq!(validation["parser"]["version"], PARSER_VERSION);
     assert_eq!(
+        validation["parser"]["source"],
+        "bounded_validation_metadata"
+    );
+    assert_eq!(validation["parser"]["raw_output_exposed"], false);
+    assert_eq!(
         validation["parser"]["limitations"],
         json!([
             "bounded validation excerpts only",
@@ -146,6 +151,12 @@ fn validation_output_metadata_without_stable_diagnostics_makes_parser_available(
     assert_eq!(validation["status"], "passed");
     assert!(validation["reason"].is_null());
     assert_eq!(validation["parser"]["kind"], PARSER_KIND);
+    assert_eq!(validation["parser"]["version"], 2);
+    assert_eq!(
+        validation["parser"]["source"],
+        "bounded_validation_metadata"
+    );
+    assert_eq!(validation["parser"]["raw_output_exposed"], false);
     assert!(validation["parser"].get("reason").is_none());
     assert_eq!(diagnostics["available"], false);
     assert_eq!(diagnostics["parser"], PARSER_KIND);
@@ -998,7 +1009,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
 
     let handoff = runtime
         .dispatch(ToolCall::SessionHandoffSummary {
-            session_id,
+            session_id: session_id.clone(),
             project: None,
             include_workspace: Some(false),
             include_checkpoints: Some(false),
@@ -1015,6 +1026,69 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     assert_no_raw_validation_output_fields(
         &handoff.output["validation"],
         "handoff validation summary",
+    );
+
+    let handoff_compact = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: session_id.clone(),
+            project: None,
+            include_workspace: Some(false),
+            include_checkpoints: Some(false),
+            include_validation: Some(true),
+            summary_only: true,
+            limit: None,
+        })
+        .await;
+    assert!(handoff_compact.success, "{:?}", handoff_compact.error);
+    assert_eq!(
+        handoff_compact.output["validation"], finish.output["validation"],
+        "summary_only handoff must preserve the full structured validation evidence"
+    );
+
+    let finish_compact_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: true,
+                        include_diff: Some(false),
+                        include_workspace: None,
+                        include_hygiene: Some(false),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(true),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "validation-finish")
+        .await
+        .expect("summary-only finish should inspect changes through the agent");
+    complete_patch_agent_request(
+        &runtime,
+        "validation-finish",
+        &req.request_id,
+        0,
+        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add lib\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        "",
+    )
+    .await;
+    let finish_compact = finish_compact_task.await.unwrap();
+    assert!(finish_compact.success, "{:?}", finish_compact.error);
+    assert_eq!(
+        finish_compact.output["validation"], finish.output["validation"],
+        "summary_only finish must preserve the full structured validation evidence"
+    );
+    assert_no_raw_validation_output_fields(
+        &finish_compact.output["validation"],
+        "summary-only finish validation summary",
     );
 }
 

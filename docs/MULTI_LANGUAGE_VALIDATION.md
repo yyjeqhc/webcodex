@@ -216,9 +216,18 @@ consistency is enforced by tests.
     `output_too_large`);
   - **do not** tail-truncate and attempt parse;
   - **do not** parse incomplete JSON.
-- Stderr is at most a short summary across the bridge (or omitted).
-- Pass/fail uses structured diagnostics / summary (`errorCount` /
-  error-severity diagnostics), not exit code alone.
+- Stderr retention is capped while the pipe is read at
+  `MAX_VALIDATION_STDERR_CAPTURE_BYTES` = 32 KiB. Bytes beyond the cap are
+  drained without growing retained memory, and the response reports
+  `stderr_capped`; the cross-bridge summary remains capped at 512 characters.
+- Every free-text bridge field is sanitized before serialization. Embedded
+  Unix absolute paths, Windows drive paths, and UNC paths are replaced with
+  `<path>` in stderr summaries, response/error messages, parser failures, and
+  diagnostic messages.
+- Pyright pass/fail combines the process exit code with the complete structured
+  diagnostic counts. Non-zero exit without errors is `process_exit`; any
+  observed error (including one outside the returned diagnostic cap) is
+  `compile_error`; malformed JSON is `malformed_output`.
 
 ## 4. Tool surface — decisions
 
@@ -259,6 +268,10 @@ Unchanged from the Rust path and enforced by shared helpers:
   bodies returned to the model for structured adapters.
 - Paths project-relative + non-escaping; fields length-capped; 20 diagnostic
   cap; deterministic ordering.
+- Cwd must exist and canonicalize to a directory inside the canonical project
+  root. Targets may have a nonexistent leaf, but their nearest existing
+  ancestor is canonicalized first so an in-project symlink cannot escape to an
+  external directory. Symlinks resolving inside the project remain allowed.
 - Read-only: formatters run in check mode; no writes, no autofix, no installs.
 - No network: `--outputjson`/`--check` are local.
 - Missing toolchain → clean `tool_unavailable` (like LSP

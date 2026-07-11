@@ -19,6 +19,9 @@ pub const AGENT_VALIDATION_REQUEST_KIND: &str = "validation";
 /// Hard cap on captured tool stdout. Oversized output is not tail-truncated and
 /// is never JSON-parsed; the bridge returns a structured `output_too_large`.
 pub const MAX_VALIDATION_STDOUT_BYTES: usize = 2 * 1024 * 1024;
+/// Hard cap applied while reading validation stderr. Bytes beyond this limit
+/// are drained from the pipe without being retained.
+pub const MAX_VALIDATION_STDERR_CAPTURE_BYTES: usize = 32 * 1024;
 /// Bounded stderr summary across the bridge (or omitted entirely).
 pub const MAX_VALIDATION_STDERR_SUMMARY_CHARS: usize = 512;
 /// Max diagnostics returned in a bridge response.
@@ -166,6 +169,7 @@ pub struct ValidationBridgeResponse {
     pub tool_available: bool,
     pub stdout_bytes: u64,
     pub stdout_capped: bool,
+    pub stderr_capped: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stderr_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,7 +194,8 @@ pub struct ValidationBridgeError {
 }
 
 impl ValidationBridgeResultEnvelope {
-    pub fn ok(result: ValidationBridgeResponse) -> Self {
+    pub fn ok(mut result: ValidationBridgeResponse) -> Self {
+        sanitize_response_free_text(&mut result);
         Self {
             format: VALIDATION_BRIDGE_RESULT_FORMAT.to_string(),
             success: true,
@@ -220,19 +225,113 @@ impl ValidationBridgeResultEnvelope {
 }
 
 pub fn bound_error_message(message: impl Into<String>) -> String {
-    let message = message.into();
-    let mut out: String = message.chars().take(240).collect();
+    let message = sanitize_bridge_text(&message.into());
+    let mut out: String = message
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .take(240)
+        .collect();
     if message.chars().count() > 240 {
         out.push('…');
     }
-    // Never leak absolute-looking unix paths in error text.
-    if out.contains("/home/") || out.contains("/Users/") || out.contains("/tmp/") {
-        out = out
-            .replace("/home/", "<path>/")
-            .replace("/Users/", "<path>/")
-            .replace("/tmp/", "<path>/");
-    }
     out
+}
+
+/// Redact absolute filesystem paths from free text before it crosses the
+/// validation bridge. Relative paths and ordinary slash-separated prose are
+/// preserved. Unix, Windows drive, and UNC forms are replaced uniformly.
+pub fn sanitize_bridge_text(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut copied_until = 0usize;
+    let mut index = 0usize;
+
+    while index < bytes.len() {
+        let boundary = index == 0 || is_path_start_boundary(bytes[index - 1]);
+        let file_uri = bytes
+            .get(index..index.saturating_add(7))
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file://"))
+            && boundary;
+        let unix = bytes[index] == b'/' && bytes.get(index + 1) != Some(&b'/') && boundary;
+        let drive = bytes
+            .get(index..index.saturating_add(3))
+            .is_some_and(|prefix| {
+                prefix[0].is_ascii_alphabetic()
+                    && prefix[1] == b':'
+                    && matches!(prefix[2], b'/' | b'\\')
+                    && boundary
+            });
+        let unc = matches!(
+            bytes.get(index..index.saturating_add(2)),
+            Some(prefix) if prefix == b"\\\\" || prefix == b"//"
+        ) && boundary;
+
+        if file_uri || unix || drive || unc {
+            let end = absolute_path_token_end(bytes, index);
+            out.push_str(&text[copied_until..index]);
+            out.push_str("<path>");
+            copied_until = end;
+            index = end;
+        } else {
+            index += 1;
+        }
+    }
+    out.push_str(&text[copied_until..]);
+    out
+}
+
+fn is_path_start_boundary(byte: u8) -> bool {
+    byte.is_ascii_whitespace()
+        || matches!(
+            byte,
+            b'\'' | b'"' | b'`' | b'(' | b'[' | b'{' | b'<' | b'=' | b',' | b';' | b'!'
+        )
+}
+
+fn absolute_path_token_end(bytes: &[u8], start: usize) -> usize {
+    let mut end = start;
+    while end < bytes.len()
+        && !bytes[end].is_ascii_whitespace()
+        && !matches!(
+            bytes[end],
+            b'\'' | b'"' | b'`' | b')' | b']' | b'}' | b'>' | b',' | b';' | b'|'
+        )
+    {
+        end += 1;
+    }
+    end
+}
+
+fn sanitize_response_free_text(response: &mut ValidationBridgeResponse) {
+    response.adapter_id = sanitize_bridge_text(&response.adapter_id);
+    response.language = sanitize_bridge_text(&response.language);
+    response.validation_kind = sanitize_bridge_text(&response.validation_kind);
+    response.failure_kind = response
+        .failure_kind
+        .take()
+        .map(|text| sanitize_bridge_text(&text));
+    response.stderr_summary = response
+        .stderr_summary
+        .take()
+        .map(|text| sanitize_bridge_text(&text));
+    response.message = response.message.take().map(bound_error_message);
+    if let Some(diagnostics) = response.diagnostics.as_mut() {
+        diagnostics.reason = diagnostics
+            .reason
+            .take()
+            .map(|text| bound_error_message(text));
+        for diagnostic in &mut diagnostics.diagnostics {
+            diagnostic.message = sanitize_bridge_text(&diagnostic.message);
+            diagnostic.code = diagnostic
+                .code
+                .take()
+                .map(|text| sanitize_bridge_text(&text));
+            diagnostic.rule = diagnostic
+                .rule
+                .take()
+                .map(|text| sanitize_bridge_text(&text));
+        }
+    }
 }
 
 /// Validate project-relative path strings in a request (cwd/targets).
@@ -327,11 +426,11 @@ pub fn parse_validation_bridge_result_envelope(
             )
         })?;
     if envelope.format != VALIDATION_BRIDGE_RESULT_FORMAT {
-        return Err(format!(
+        return Err(bound_error_message(format!(
             "{}: unexpected format {:?}",
             failure_kinds::PROTOCOL_ERROR,
             envelope.format
-        ));
+        )));
     }
     if envelope.success {
         if envelope.result.is_none() {
@@ -353,7 +452,8 @@ pub fn parse_validation_bridge_result_envelope(
 pub fn value_contains_absolute_path_leak(value: &Value) -> bool {
     match value {
         Value::String(s) => {
-            s.starts_with('/')
+            sanitize_bridge_text(s) != *s
+                || s.starts_with('/')
                 || (s.len() >= 2
                     && s.as_bytes()[1] == b':'
                     && s.as_bytes()[0].is_ascii_alphabetic())
@@ -368,6 +468,97 @@ pub fn value_contains_absolute_path_leak(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn successful_response_fixture() -> ValidationBridgeResponse {
+        ValidationBridgeResponse {
+            protocol_version: VALIDATION_BRIDGE_PROTOCOL_VERSION,
+            adapter_id: "pyright".into(),
+            language: "python".into(),
+            validation_kind: "typecheck".into(),
+            success: true,
+            command_started: true,
+            exit_code: Some(0),
+            duration_ms: 12,
+            failure_kind: None,
+            diagnostics: Some(BridgeDiagnostics {
+                available: true,
+                reason: None,
+                diagnostics: vec![],
+                diagnostic_count: 0,
+                returned_diagnostic_count: 0,
+                diagnostics_truncated: false,
+                invalid_diagnostics_omitted: 0,
+                external_results_omitted: 0,
+                summary_error_count: Some(0),
+                summary_warning_count: Some(0),
+                summary_information_count: Some(0),
+            }),
+            tool_available: true,
+            stdout_bytes: 10,
+            stdout_capped: false,
+            stderr_capped: false,
+            stderr_summary: None,
+            message: None,
+        }
+    }
+
+    #[test]
+    fn bridge_text_sanitizer_redacts_absolute_paths_without_damaging_normal_text() {
+        let cases = [
+            "/root/git/private-drop/src/app.py",
+            "/etc/passwd",
+            "/tmp/private-file",
+            "file:///root/git/private-drop/src/app.py",
+            r"C:\Users\alice\project\app.py",
+            "D:/work/project/app.py",
+            r"\\server\share\secret.py",
+        ];
+        for path in cases {
+            let sanitized = sanitize_bridge_text(&format!("validation failed at {path}: denied"));
+            assert!(!sanitized.contains(path), "path leaked: {sanitized}");
+            assert!(sanitized.contains("<path>"), "path not marked: {sanitized}");
+            assert!(sanitized.contains("validation failed at"));
+        }
+
+        let ordinary = "type mismatch: expected int/string; retry 1/2";
+        assert_eq!(sanitize_bridge_text(ordinary), ordinary);
+    }
+
+    #[test]
+    fn bridge_error_sanitizes_spawn_path_before_serialization() {
+        let injected = "/root/git/private-drop/bin/pyright";
+        let envelope = ValidationBridgeResultEnvelope::err(
+            failure_kinds::SPAWN_FAILED,
+            format!("spawn failed for {injected}: permission denied"),
+        );
+        assert!(!envelope.error.as_ref().unwrap().message.contains(injected));
+        assert!(!envelope.to_stdout_json().contains(injected));
+    }
+
+    #[test]
+    fn envelope_success_is_transport_success_not_validation_verdict() {
+        let mut response = successful_response_fixture();
+        response.success = false;
+        response.failure_kind = Some(failure_kinds::COMPILE_ERROR.to_string());
+        let envelope = ValidationBridgeResultEnvelope::ok(response);
+        assert!(envelope.success);
+        assert!(!envelope.result.as_ref().unwrap().success);
+        assert_eq!(
+            envelope.result.as_ref().unwrap().failure_kind.as_deref(),
+            Some(failure_kinds::COMPILE_ERROR)
+        );
+    }
+
+    #[test]
+    fn result_parser_sanitizes_unexpected_format_text() {
+        let injected = "/root/git/private-drop/private-format";
+        let stdout = format!(
+            r#"{{"format":"{injected}","success":false,"error":{{"code":"x","message":"x"}}}}"#
+        );
+        let error = parse_validation_bridge_result_envelope(&stdout).unwrap_err();
+        assert!(!error.contains(injected));
+        assert!(error.contains("<path>"));
+    }
 
     #[test]
     fn validate_project_relative_path_rejects_escapes() {
@@ -406,35 +597,7 @@ mod tests {
 
     #[test]
     fn envelope_roundtrip() {
-        let response = ValidationBridgeResponse {
-            protocol_version: VALIDATION_BRIDGE_PROTOCOL_VERSION,
-            adapter_id: "pyright".into(),
-            language: "python".into(),
-            validation_kind: "typecheck".into(),
-            success: true,
-            command_started: true,
-            exit_code: Some(0),
-            duration_ms: 12,
-            failure_kind: None,
-            diagnostics: Some(BridgeDiagnostics {
-                available: true,
-                reason: None,
-                diagnostics: vec![],
-                diagnostic_count: 0,
-                returned_diagnostic_count: 0,
-                diagnostics_truncated: false,
-                invalid_diagnostics_omitted: 0,
-                external_results_omitted: 0,
-                summary_error_count: Some(0),
-                summary_warning_count: Some(0),
-                summary_information_count: Some(0),
-            }),
-            tool_available: true,
-            stdout_bytes: 10,
-            stdout_capped: false,
-            stderr_summary: None,
-            message: None,
-        };
+        let response = successful_response_fixture();
         let env = ValidationBridgeResultEnvelope::ok(response);
         let parsed = parse_validation_bridge_result_envelope(&env.to_stdout_json()).unwrap();
         assert!(parsed.success);

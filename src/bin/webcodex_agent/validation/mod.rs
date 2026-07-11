@@ -221,6 +221,7 @@ pub(crate) fn base_response(
         tool_available,
         stdout_bytes: 0,
         stdout_capped: false,
+        stderr_capped: false,
         stderr_summary: None,
         message: None,
     }

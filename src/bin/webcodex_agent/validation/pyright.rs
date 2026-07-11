@@ -7,9 +7,9 @@ use super::execute::{resolve_executable, run_bounded};
 use super::path::relativize_path;
 use super::{base_response, registry};
 use crate::validation_bridge::{
-    failure_kinds, BridgeDiagnostic, BridgeDiagnostics, ValidationBridgeRequest,
-    ValidationBridgeResponse, MAX_BRIDGE_DIAGNOSTICS, MAX_DIAGNOSTIC_MESSAGE_CHARS, MAX_RULE_CHARS,
-    MAX_VALIDATION_STDOUT_BYTES,
+    bound_error_message, failure_kinds, sanitize_bridge_text, BridgeDiagnostic, BridgeDiagnostics,
+    ValidationBridgeRequest, ValidationBridgeResponse, MAX_BRIDGE_DIAGNOSTICS,
+    MAX_DIAGNOSTIC_MESSAGE_CHARS, MAX_RULE_CHARS, MAX_VALIDATION_STDOUT_BYTES,
 };
 use serde_json::Value;
 use std::cmp::Ordering;
@@ -33,7 +33,7 @@ pub(crate) fn run_pyright(
     };
 
     let cwd = match request.cwd.as_deref() {
-        Some(rel) => match super::path::resolve_under_project(project_root, rel) {
+        Some(rel) => match super::path::resolve_cwd_under_project(project_root, rel) {
             Ok(path) => path,
             Err(message) => {
                 let mut response = base_response(request, true);
@@ -52,7 +52,8 @@ pub(crate) fn run_pyright(
                 // Pass project-relative path when possible so pyright output is
                 // easier to relativize; fall back to absolute for the process.
                 if let Ok(rel) = path.strip_prefix(project_root) {
-                    args.push(rel.to_string_lossy().replace('\\', "/"));
+                    let rel = rel.to_string_lossy().replace('\\', "/");
+                    args.push(if rel.is_empty() { ".".to_string() } else { rel });
                 } else {
                     args.push(path.to_string_lossy().to_string());
                 }
@@ -77,18 +78,25 @@ pub(crate) fn run_pyright(
         captured.stdout.len() as u64
     };
     response.stdout_capped = captured.stdout_capped;
+    response.stderr_capped = captured.stderr_capped;
     response.stderr_summary = captured.stderr_summary.clone();
 
     if let Some(spawn_error) = captured.spawn_error {
         response.command_started = false;
         response.failure_kind = Some(failure_kinds::SPAWN_FAILED.to_string());
-        response.message = Some(spawn_error);
+        response.message = Some(bound_error_message(spawn_error));
         return response;
     }
 
     if captured.timed_out {
         response.failure_kind = Some(failure_kinds::TIMEOUT.to_string());
         response.message = Some(format!("pyright timed out after {timeout} seconds"));
+        return response;
+    }
+
+    if let Some(wait_error) = captured.wait_error {
+        response.failure_kind = Some(failure_kinds::PROCESS_EXIT.to_string());
+        response.message = Some(bound_error_message(wait_error));
         return response;
     }
 
@@ -109,37 +117,40 @@ pub(crate) fn run_pyright(
         }
     };
 
-    // Empty stdout with exit 0 can still be a success (no diagnostics).
     if stdout_text.trim().is_empty() {
-        if captured.exit_code == Some(0) {
-            response.success = true;
-            response.diagnostics = Some(empty_diagnostics(None));
-            return response;
-        }
         response.failure_kind = Some(failure_kinds::MALFORMED_OUTPUT.to_string());
-        response.message = Some("pyright produced empty stdout with non-zero exit".to_string());
+        response.message = Some("pyright produced empty stdout instead of JSON".to_string());
         return response;
     }
 
-    match parse_pyright_json(project_root, stdout_text) {
+    match parse_pyright_for_status(project_root, stdout_text) {
         Ok(parsed) => {
-            // Success is driven by structured error diagnostics / summary, not
-            // exit code alone.
-            let error_count = parsed
-                .summary_error_count
-                .unwrap_or_else(|| count_error_severity(&parsed.diagnostics));
-            response.success = error_count == 0;
-            response.diagnostics = Some(parsed);
-            if response.success {
-                response.failure_kind = None;
-            } else {
-                response.failure_kind = Some(failure_kinds::COMPILE_ERROR.to_string());
+            let status =
+                classify_pyright_status(captured.exit_code, parsed.effective_error_count());
+            response.diagnostics = Some(parsed.into_bridge());
+            match status {
+                PyrightStatus::Success => {
+                    response.success = true;
+                    response.failure_kind = None;
+                }
+                PyrightStatus::CompileError => {
+                    response.failure_kind = Some(failure_kinds::COMPILE_ERROR.to_string());
+                }
+                PyrightStatus::ProcessExit => {
+                    response.failure_kind = Some(failure_kinds::PROCESS_EXIT.to_string());
+                    response.message = Some(match captured.exit_code {
+                        Some(code) => format!(
+                            "pyright exited with status code {code} without error diagnostics"
+                        ),
+                        None => "pyright terminated without an exit code".to_string(),
+                    });
+                }
             }
             response
         }
         Err(message) => {
             response.failure_kind = Some(failure_kinds::MALFORMED_OUTPUT.to_string());
-            response.message = Some(message);
+            response.message = Some(bound_error_message(message));
             // If JSON is unusable, do not pretend validation passed solely on exit.
             response.success = false;
             response
@@ -157,9 +168,16 @@ struct ParsedPyright {
     summary_error_count: Option<u64>,
     summary_warning_count: Option<u64>,
     summary_information_count: Option<u64>,
+    observed_error_count: u64,
 }
 
 impl ParsedPyright {
+    fn effective_error_count(&self) -> u64 {
+        self.summary_error_count
+            .unwrap_or(0)
+            .max(self.observed_error_count)
+    }
+
     fn into_bridge(self) -> BridgeDiagnostics {
         BridgeDiagnostics {
             available: true,
@@ -177,35 +195,35 @@ impl ParsedPyright {
     }
 }
 
-fn empty_diagnostics(reason: Option<String>) -> BridgeDiagnostics {
-    BridgeDiagnostics {
-        available: reason.is_none(),
-        reason,
-        diagnostics: vec![],
-        diagnostic_count: 0,
-        returned_diagnostic_count: 0,
-        diagnostics_truncated: false,
-        invalid_diagnostics_omitted: 0,
-        external_results_omitted: 0,
-        summary_error_count: Some(0),
-        summary_warning_count: Some(0),
-        summary_information_count: Some(0),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PyrightStatus {
+    Success,
+    CompileError,
+    ProcessExit,
+}
+
+fn classify_pyright_status(exit_code: Option<i32>, error_count: u64) -> PyrightStatus {
+    match (exit_code, error_count > 0) {
+        (None, _) => PyrightStatus::ProcessExit,
+        (Some(_), true) => PyrightStatus::CompileError,
+        (Some(0), false) => PyrightStatus::Success,
+        (Some(_), false) => PyrightStatus::ProcessExit,
     }
 }
 
-fn count_error_severity(diagnostics: &[BridgeDiagnostic]) -> u64 {
-    diagnostics.iter().filter(|d| d.severity == "error").count() as u64
-}
-
 /// Parse complete Pyright `--outputjson` body. Never call with truncated JSON.
+#[cfg(test)]
 pub(crate) fn parse_pyright_json(
     project_root: &Path,
     stdout: &str,
 ) -> Result<BridgeDiagnostics, String> {
+    parse_pyright_for_status(project_root, stdout).map(ParsedPyright::into_bridge)
+}
+
+fn parse_pyright_for_status(project_root: &Path, stdout: &str) -> Result<ParsedPyright, String> {
     let value: Value = serde_json::from_str(stdout)
         .map_err(|error| format!("pyright JSON parse failed: {error}"))?;
-    let parsed = parse_pyright_value(project_root, &value)?;
-    Ok(parsed.into_bridge())
+    parse_pyright_value(project_root, &value)
 }
 
 fn parse_pyright_value(project_root: &Path, value: &Value) -> Result<ParsedPyright, String> {
@@ -228,9 +246,17 @@ fn parse_pyright_value(project_root: &Path, value: &Value) -> Result<ParsedPyrig
     let mut diagnostics = Vec::new();
     let mut invalid = 0usize;
     let mut external = 0usize;
+    let mut observed_error_count = 0u64;
     let mut seen = std::collections::BTreeSet::new();
 
     for item in general {
+        if item
+            .get("severity")
+            .and_then(Value::as_str)
+            .is_some_and(|severity| severity.eq_ignore_ascii_case("error"))
+        {
+            observed_error_count = observed_error_count.saturating_add(1);
+        }
         match parse_one_diagnostic(project_root, item) {
             Ok(diag) => {
                 let key = (
@@ -268,6 +294,7 @@ fn parse_pyright_value(project_root: &Path, value: &Value) -> Result<ParsedPyrig
         summary_error_count,
         summary_warning_count,
         summary_information_count,
+        observed_error_count,
     })
 }
 
@@ -358,7 +385,7 @@ fn zero_to_one(value: Option<u64>) -> Option<u64> {
 }
 
 fn bound_message(value: &str) -> String {
-    let cleaned: String = value
+    let cleaned: String = sanitize_bridge_text(value)
         .chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
         .take(MAX_DIAGNOSTIC_MESSAGE_CHARS)
@@ -367,7 +394,10 @@ fn bound_message(value: &str) -> String {
 }
 
 fn bound_rule(value: &str) -> String {
-    value.chars().take(MAX_RULE_CHARS).collect()
+    sanitize_bridge_text(value)
+        .chars()
+        .take(MAX_RULE_CHARS)
+        .collect()
 }
 
 fn cmp_diagnostics(a: &BridgeDiagnostic, b: &BridgeDiagnostic) -> Ordering {
@@ -420,6 +450,12 @@ mod tests {
   }}
 }}"#
         )
+    }
+
+    #[test]
+    fn status_machine_never_succeeds_without_an_exit_code() {
+        assert_eq!(classify_pyright_status(None, 0), PyrightStatus::ProcessExit);
+        assert_eq!(classify_pyright_status(None, 2), PyrightStatus::ProcessExit);
     }
 
     #[test]

@@ -131,12 +131,9 @@ fn key_tool_output_schemas_include_expected_fields() {
         "returned_diagnostic_count",
         "diagnostics_truncated",
         "invalid_diagnostics_omitted",
-        "first_diagnostic",
         "test_summary",
-        "failed_tests",
         "failed_test_details",
-        "first_failed_test",
-        "failed_tests_truncated",
+        "failed_test_details_truncated",
         "truncated",
     ] {
         assert!(
@@ -144,9 +141,17 @@ fn key_tool_output_schemas_include_expected_fields() {
             "cargo_test diagnostics schema missing {field}"
         );
     }
-    assert_eq!(diagnostics_props["failed_tests"]["type"], "array");
-    assert_eq!(diagnostics_props["failed_tests"]["maxItems"], 20);
-    assert_eq!(diagnostics_props["failed_tests"]["items"]["type"], "string");
+    for removed in [
+        "first_diagnostic",
+        "failed_tests",
+        "first_failed_test",
+        "failed_tests_truncated",
+    ] {
+        assert!(
+            !diagnostics_props.contains_key(removed),
+            "cargo_test diagnostics schema must not retain removed field {removed}"
+        );
+    }
     assert_eq!(diagnostics_props["diagnostics"]["maxItems"], 20);
     assert_eq!(diagnostics_props["failed_test_details"]["maxItems"], 20);
     assert_eq!(
@@ -154,7 +159,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         json!(["structured_validation_parser"])
     );
     assert_eq!(
-        diagnostics_props["failed_tests_truncated"]["type"],
+        diagnostics_props["failed_test_details_truncated"]["type"],
         "boolean"
     );
     assert_eq!(
@@ -886,8 +891,9 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         "does not include stdout/stderr",
         "structured diagnostics",
         "bounded validation metadata",
-        "parser version 2",
-        "backward-compatible",
+        "parser version 3",
+        "canonical diagnostics",
+        "failed_test_details",
         "no root-cause inference",
         "latest_status",
         "historical_failures",
@@ -895,6 +901,17 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         assert!(
             description.contains(phrase),
             "validation output schema should mention {phrase}: {description}"
+        );
+    }
+    for forbidden in [
+        "backward-compatible",
+        "first_diagnostic",
+        "first_failed_test",
+        "failed_tests,",
+    ] {
+        assert!(
+            !description.contains(forbidden),
+            "validation output schema must not mention removed compatibility phrase {forbidden}: {description}"
         );
     }
     let review_description = output_props["review_evidence"]["description"]
@@ -1014,8 +1031,9 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         "does not include stdout/stderr",
         "structured diagnostics",
         "bounded validation metadata",
-        "parser version 2",
-        "backward-compatible",
+        "parser version 3",
+        "canonical diagnostics",
+        "failed_test_details",
         "no root-cause inference",
         "parser.available remains false when session ledger events lack those fields",
         "latest_status",
@@ -1024,6 +1042,17 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         assert!(
             description.contains(phrase),
             "handoff validation output schema should mention {phrase}: {description}"
+        );
+    }
+    for forbidden in [
+        "backward-compatible",
+        "first_diagnostic",
+        "first_failed_test",
+        "failed_tests,",
+    ] {
+        assert!(
+            !description.contains(forbidden),
+            "handoff validation output schema must not mention removed compatibility phrase {forbidden}: {description}"
         );
     }
     let review_description = output_props["review_evidence"]["description"]

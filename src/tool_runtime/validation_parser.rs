@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::cmp::Ordering;
 
 pub(crate) const PARSER_KIND: &str = "structured_validation_parser";
-pub(crate) const PARSER_VERSION: u8 = 2;
+pub(crate) const PARSER_VERSION: u8 = 3;
 pub(crate) const PARSER_LIMITATIONS: [&str; 3] = [
     "bounded validation excerpts only",
     "deterministic evidence extraction; no root-cause inference",
@@ -39,21 +39,13 @@ pub(crate) struct ValidationDiagnostics {
     pub(crate) returned_diagnostic_count: usize,
     pub(crate) diagnostics_truncated: bool,
     pub(crate) invalid_diagnostics_omitted: usize,
-    /// Equals `diagnostics.first()` when present; retained for compatibility.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) first_diagnostic: Option<CargoDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) test_summary: Option<CargoTestSummary>,
-    /// Sanitized failed test names from the bounded excerpt (max 20,
-    /// deterministic first-seen order).
-    pub(crate) failed_tests: Vec<String>,
+    /// Bounded failed-test evidence (max 20, deterministic first-seen order).
     pub(crate) failed_test_details: Vec<FailedTestDetail>,
-    /// Equals `failed_tests.first()` when present; retained for compatibility.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) first_failed_test: Option<String>,
     /// True when more than 20 unique safe names were seen, or the excerpt was
-    /// truncated and the summary failed count exceeds captured names.
-    pub(crate) failed_tests_truncated: bool,
+    /// truncated and the summary failed count exceeds captured details.
+    pub(crate) failed_test_details_truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) truncated: Option<bool>,
 }
@@ -118,18 +110,18 @@ pub(crate) fn parse_cargo_test_diagnostics(
         return diagnostics_unavailable(parsed.invalid);
     }
 
-    let failed_tests: Vec<String> = all_failed_tests
+    let failed_test_names: Vec<String> = all_failed_tests
         .into_iter()
         .take(MAX_FAILED_TESTS)
         .collect();
-    let failed_test_details = failed_test_details(&lines, &failed_tests);
+    let failed_test_details = failed_test_details(&lines, &failed_test_names);
     let summary_failed = test_summary
         .as_ref()
         .and_then(|summary| summary.failed)
         .unwrap_or(0);
-    let failed_tests_truncated = unique_failed_count > MAX_FAILED_TESTS
-        || (truncated && summary_failed > failed_tests.len() as u64);
-    let diagnostic_count = if test_summary.is_some() || !failed_tests.is_empty() {
+    let failed_test_details_truncated = unique_failed_count > MAX_FAILED_TESTS
+        || (truncated && summary_failed > failed_test_details.len() as u64);
+    let diagnostic_count = if test_summary.is_some() || !failed_test_details.is_empty() {
         test_summary
             .as_ref()
             .and_then(|summary| summary.failed)
@@ -141,8 +133,6 @@ pub(crate) fn parse_cargo_test_diagnostics(
     let diagnostics_truncated = truncated || parsed.total > MAX_DIAGNOSTICS;
     let diagnostics = parsed.items;
     let returned_diagnostic_count = diagnostics.len();
-    let first_diagnostic = diagnostics.first().cloned();
-    let first_failed_test = failed_tests.first().cloned();
 
     ValidationDiagnostics {
         available: true,
@@ -153,12 +143,9 @@ pub(crate) fn parse_cargo_test_diagnostics(
         returned_diagnostic_count,
         diagnostics_truncated,
         invalid_diagnostics_omitted: parsed.invalid,
-        first_diagnostic,
         test_summary,
-        failed_tests,
         failed_test_details,
-        first_failed_test,
-        failed_tests_truncated,
+        failed_test_details_truncated,
         truncated: Some(truncated),
     }
 }
@@ -251,7 +238,6 @@ fn parse_rust_diagnostics(lines: &[&str]) -> ParsedDiagnostics {
 fn diagnostics_from_rust(parsed: ParsedDiagnostics, truncated: bool) -> ValidationDiagnostics {
     let diagnostics_truncated = truncated || parsed.total > MAX_DIAGNOSTICS;
     let returned_diagnostic_count = parsed.items.len();
-    let first_diagnostic = parsed.items.first().cloned();
     ValidationDiagnostics {
         available: true,
         parser: PARSER_KIND,
@@ -261,12 +247,9 @@ fn diagnostics_from_rust(parsed: ParsedDiagnostics, truncated: bool) -> Validati
         returned_diagnostic_count,
         diagnostics_truncated,
         invalid_diagnostics_omitted: parsed.invalid,
-        first_diagnostic,
         test_summary: None,
-        failed_tests: Vec::new(),
         failed_test_details: Vec::new(),
-        first_failed_test: None,
-        failed_tests_truncated: false,
+        failed_test_details_truncated: false,
         truncated: Some(truncated),
     }
 }
@@ -281,12 +264,9 @@ fn diagnostics_unavailable(invalid: usize) -> ValidationDiagnostics {
         returned_diagnostic_count: 0,
         diagnostics_truncated: false,
         invalid_diagnostics_omitted: invalid,
-        first_diagnostic: None,
         test_summary: None,
-        failed_tests: Vec::new(),
         failed_test_details: Vec::new(),
-        first_failed_test: None,
-        failed_tests_truncated: false,
+        failed_test_details_truncated: false,
         truncated: None,
     }
 }

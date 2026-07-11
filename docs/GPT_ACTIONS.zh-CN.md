@@ -123,7 +123,7 @@ start_coding_task -> inspect -> edit -> validate -> show_changes -> workspace_hy
 
 需要另一个 operator 或 client 接手时，使用 `session_handoff_summary`。
 
-通过 generic `callRuntimeTool` 调用只读 `validation_summary`，使用 flattened `project`、`session_id` 和可选 `limit`。它没有 dedicated GPT Action operation，因此 focused surface 仍为 25 operations，而 runtime catalog 为 75 tools。它只查询 session ledger 中已有的 bounded parser-v2 evidence，不会重新运行 Cargo、shell、agent work 或读取文件。Diagnostics 与 failed-test details 都有固定边界并经过 sanitization，不返回完整 stdout/stderr，也不进行 root-cause inference。可在两次 validation 之间用它指导 targeted fix，最后仍用 `finish_coding_task` 得到 overall closeout verdict。
+通过 generic `callRuntimeTool` 调用只读 `validation_summary`，使用 flattened `project`、`session_id` 和可选 `limit`。它没有 dedicated GPT Action operation，因此 focused surface 仍为 25 operations，而 runtime catalog 为 75 tools。它只查询 session ledger 中已有的 bounded parser-v3 evidence，不会重新运行 Cargo、shell、agent work 或读取文件。Diagnostics 与 failed-test details 都有固定边界并经过 sanitization，不返回完整 stdout/stderr，也不进行 root-cause inference。可在两次 validation 之间用它指导 targeted fix，最后仍用 `finish_coding_task` 得到 overall closeout verdict。
 
 ## Advanced / Escape-Hatch Tools
 

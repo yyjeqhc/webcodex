@@ -274,15 +274,6 @@ test result: FAILED. 7 passed; 3 failed; 1 ignored; 0 measured; 0 filtered out\n
     assert_eq!(diagnostics["test_summary"]["failed"], 3);
     assert_eq!(diagnostics["test_summary"]["ignored"], 1);
     assert_eq!(
-        diagnostics["failed_tests"],
-        json!([
-            "tests::first_failure",
-            "tests::second_failure",
-            "tests::third_failure"
-        ])
-    );
-    assert_eq!(diagnostics["first_failed_test"], "tests::first_failure");
-    assert_eq!(
         diagnostics["failed_test_details"].as_array().unwrap().len(),
         3
     );
@@ -291,11 +282,19 @@ test result: FAILED. 7 passed; 3 failed; 1 ignored; 0 measured; 0 filtered out\n
         "tests::first_failure"
     );
     assert_eq!(
+        diagnostics["failed_test_details"][1]["name"],
+        "tests::second_failure"
+    );
+    assert_eq!(
+        diagnostics["failed_test_details"][2]["name"],
+        "tests::third_failure"
+    );
+    assert_eq!(
         diagnostics["failed_test_details"][0]["failure_kind"],
         "panic"
     );
     assert!(diagnostics["failed_test_details"][0]["file"].is_null());
-    assert_eq!(diagnostics["failed_tests_truncated"], false);
+    assert_eq!(diagnostics["failed_test_details_truncated"], false);
     assert_eq!(diagnostics["truncated"], false);
 
     let diagnostics_json = diagnostics.to_string();
@@ -308,7 +307,7 @@ test result: FAILED. 7 passed; 3 failed; 1 ignored; 0 measured; 0 filtered out\n
 }
 
 #[tokio::test]
-async fn cargo_test_passing_output_includes_empty_failed_tests_diagnostics() {
+async fn cargo_test_passing_output_includes_empty_failed_test_details_diagnostics() {
     let runtime = runtime_with_agent_project("cargo-pass-diag");
     let mut caps = ShellClientCapabilities::default();
     caps.shell = true;
@@ -356,8 +355,8 @@ test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out\n",
     let diagnostics = &result.output["diagnostics"];
     assert_eq!(diagnostics["available"], true);
     assert_eq!(diagnostics["diagnostic_count"], 0);
-    assert_eq!(diagnostics["failed_tests"], json!([]));
-    assert_eq!(diagnostics["failed_tests_truncated"], false);
+    assert_eq!(diagnostics["failed_test_details"], json!([]));
+    assert_eq!(diagnostics["failed_test_details_truncated"], false);
     assert_eq!(diagnostics["test_summary"]["passed"], 12);
     assert_eq!(diagnostics["test_summary"]["failed"], 0);
 }
@@ -417,9 +416,11 @@ test result: ok. 0 passed; 0 failed; 2 ignored\n",
     assert_eq!(diagnostics["test_summary"]["failed"], 1);
     assert_eq!(diagnostics["test_summary"]["ignored"], 3);
     assert_eq!(diagnostics["diagnostic_count"], 1);
-    assert_eq!(diagnostics["failed_tests"], json!(["tests::broken"]));
-    assert_eq!(diagnostics["first_failed_test"], "tests::broken");
-    assert_eq!(diagnostics["failed_tests_truncated"], false);
+    assert_eq!(
+        diagnostics["failed_test_details"][0]["name"],
+        "tests::broken"
+    );
+    assert_eq!(diagnostics["failed_test_details_truncated"], false);
 }
 
 #[tokio::test]

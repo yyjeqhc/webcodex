@@ -318,7 +318,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "validation",
-                open_object_schema("Ledger-derived validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Parser version 2 provides bounded structured diagnostics from bounded validation metadata while retaining backward-compatible first_diagnostic, failed_tests, and first_failed_test fields. Full and summary_only closeout preserve the same validation evidence. Does not include stdout/stderr bodies and performs no root-cause inference; parser.available remains false when session ledger events lack those fields. latest_status and historical_failures retain the existing final-state and resolved-history semantics."),
+                open_object_schema("Ledger-derived validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Parser version 3 provides bounded structured diagnostics from bounded validation metadata using canonical diagnostics and failed_test_details fields only. Full and summary_only closeout preserve the same validation evidence. Does not include stdout/stderr bodies and performs no root-cause inference; parser.available remains false when session ledger events lack those fields. latest_status and historical_failures retain the existing final-state and resolved-history semantics."),
             ),
             (
                 "review_evidence",
@@ -478,7 +478,7 @@ fn validation_parser_metadata_schema() -> Value {
         "properties": {
             "available": { "type": "boolean" },
             "kind": { "type": "string", "enum": ["structured_validation_parser"] },
-            "version": { "type": "integer", "enum": [2] },
+            "version": { "type": "integer", "enum": [3] },
             "source": { "type": "string", "enum": ["bounded_validation_metadata"] },
             "raw_output_exposed": { "type": "boolean", "enum": [false] },
             "limitations": {
@@ -539,27 +539,19 @@ fn validation_diagnostics_schema() -> Value {
             "returned_diagnostic_count": { "type": "integer", "minimum": 0, "maximum": 20 },
             "diagnostics_truncated": { "type": "boolean" },
             "invalid_diagnostics_omitted": { "type": "integer", "minimum": 0 },
-            "first_diagnostic": cargo_diagnostic_schema(),
             "test_summary": cargo_test_summary_schema(),
-            "failed_tests": {
-                "type": "array",
-                "maxItems": 20,
-                "uniqueItems": true,
-                "items": { "type": "string", "maxLength": 240 }
-            },
             "failed_test_details": {
                 "type": "array",
                 "maxItems": 20,
                 "items": failed_test_detail_schema()
             },
-            "first_failed_test": { "type": "string", "maxLength": 240 },
-            "failed_tests_truncated": { "type": "boolean" },
+            "failed_test_details_truncated": { "type": "boolean" },
             "truncated": { "type": "boolean" }
         },
         "required": [
             "available", "parser", "diagnostics", "returned_diagnostic_count",
-            "diagnostics_truncated", "invalid_diagnostics_omitted", "failed_tests",
-            "failed_test_details", "failed_tests_truncated"
+            "diagnostics_truncated", "invalid_diagnostics_omitted",
+            "failed_test_details", "failed_test_details_truncated"
         ]
     })
 }

@@ -414,7 +414,7 @@ fn validation_failure_kind(
                 .as_ref()
                 .and_then(|summary| summary.failed)
                 .is_some_and(|failed| failed > 0)
-                || !diagnostics.failed_tests.is_empty()
+                || !diagnostics.failed_test_details.is_empty()
         })
     {
         return "test_failure";

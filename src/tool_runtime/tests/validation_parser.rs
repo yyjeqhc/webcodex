@@ -5,9 +5,9 @@ use crate::tool_runtime::validation_parser::{
 };
 
 #[test]
-fn structured_parser_v2_identity_and_limit_contract_are_stable() {
+fn structured_parser_v3_identity_and_limit_contract_are_stable() {
     assert_eq!(PARSER_KIND, "structured_validation_parser");
-    assert_eq!(PARSER_VERSION, 2);
+    assert_eq!(PARSER_VERSION, 3);
     assert_eq!(
         PARSER_LIMITATIONS,
         [
@@ -40,10 +40,6 @@ fn cargo_check_parser_returns_sorted_deduplicated_bounded_diagnostics() {
     assert_eq!(diagnostics.diagnostics.len(), 20);
     assert_eq!(diagnostics.diagnostics_truncated, true);
     assert_eq!(diagnostics.invalid_diagnostics_omitted, 0);
-    assert_eq!(
-        diagnostics.first_diagnostic,
-        diagnostics.diagnostics.first().cloned()
-    );
     assert_eq!(diagnostics.diagnostics[0].severity, "error");
     assert_eq!(diagnostics.diagnostics[0].file.as_deref(), Some("src/a.rs"));
     assert_eq!(diagnostics.diagnostics[0].message, "missing name");
@@ -142,14 +138,6 @@ fn cargo_test_parser_returns_bounded_failure_details_without_payloads() {
                   test result: FAILED. 0 passed; 3 failed; 0 ignored\n";
     let diagnostics = parse_cargo_test_diagnostics(output, "", false);
 
-    assert_eq!(
-        diagnostics.failed_tests,
-        vec!["tests::asserts", "tests::panics", "tests::unknown"]
-    );
-    assert_eq!(
-        diagnostics.first_failed_test.as_deref(),
-        Some("tests::asserts")
-    );
     assert_eq!(diagnostics.failed_test_details.len(), 3);
     assert_eq!(diagnostics.failed_test_details[0].name, "tests::asserts");
     assert_eq!(diagnostics.failed_test_details[0].failure_kind, "assertion");
@@ -187,16 +175,14 @@ fn cargo_test_parser_caps_failed_test_details_at_twenty_in_first_seen_order() {
 
     let diagnostics = parse_cargo_test_diagnostics(&output, "", true);
 
-    assert_eq!(diagnostics.failed_tests.len(), 20);
     assert_eq!(diagnostics.failed_test_details.len(), 20);
-    assert_eq!(diagnostics.failed_tests[0], "tests::case_1");
-    assert_eq!(diagnostics.failed_tests[19], "tests::case_20");
+    assert_eq!(diagnostics.failed_test_details[0].name, "tests::case_1");
     assert_eq!(diagnostics.failed_test_details[19].name, "tests::case_20");
     assert!(diagnostics
         .failed_test_details
         .iter()
         .all(|detail| detail.failure_kind == "unknown"));
-    assert_eq!(diagnostics.failed_tests_truncated, true);
+    assert_eq!(diagnostics.failed_test_details_truncated, true);
 }
 
 #[test]
@@ -209,7 +195,7 @@ fn cargo_test_parser_extracts_compile_diagnostics_before_tests_run() {
 
     assert_eq!(diagnostics.available, true);
     assert_eq!(diagnostics.test_summary, None);
-    assert!(diagnostics.failed_tests.is_empty());
+    assert!(diagnostics.failed_test_details.is_empty());
     assert_eq!(diagnostics.diagnostics.len(), 1);
     assert_eq!(diagnostics.diagnostics[0].code.as_deref(), Some("E0308"));
 }
@@ -225,7 +211,7 @@ fn cargo_check_parser_extracts_e_code_and_file_span() {
     assert_eq!(diagnostics.available, true);
     assert_eq!(diagnostics.parser, PARSER_KIND);
     assert_eq!(diagnostics.diagnostic_count, Some(1));
-    let first = diagnostics.first_diagnostic.as_ref().unwrap();
+    let first = &diagnostics.diagnostics[0];
     assert_eq!(first.severity, "error");
     assert_eq!(first.code.as_deref(), Some("E0308"));
     assert_eq!(first.file.as_deref(), Some("src/lib.rs"));
@@ -244,7 +230,7 @@ fn cargo_check_parser_handles_warning_without_e_code() {
 
     assert_eq!(diagnostics.available, true);
     assert_eq!(diagnostics.diagnostic_count, Some(1));
-    let first = diagnostics.first_diagnostic.as_ref().unwrap();
+    let first = &diagnostics.diagnostics[0];
     assert_eq!(first.severity, "warning");
     assert_eq!(first.code, None);
     assert_eq!(first.file.as_deref(), Some("src/lib.rs"));
@@ -264,7 +250,7 @@ fn cargo_check_parser_returns_unavailable_for_unrelated_text() {
     assert_eq!(diagnostics.available, false);
     assert_eq!(diagnostics.parser, PARSER_KIND);
     assert_eq!(diagnostics.reason, Some(NO_STABLE_DIAGNOSTICS_REASON));
-    assert_eq!(diagnostics.first_diagnostic, None);
+    assert!(diagnostics.diagnostics.is_empty());
 }
 
 #[test]
@@ -286,7 +272,7 @@ fn cargo_test_parser_extracts_summary_counts() {
 }
 
 #[test]
-fn cargo_test_parser_extracts_first_failed_test_name() {
+fn cargo_test_parser_extracts_failed_test_detail_name() {
     let diagnostics = parse_cargo_test_diagnostics(
         "running 1 test\ntest tests::example_fails ... FAILED\n",
         "",
@@ -295,19 +281,16 @@ fn cargo_test_parser_extracts_first_failed_test_name() {
 
     assert_eq!(diagnostics.available, true);
     assert_eq!(diagnostics.diagnostic_count, Some(1));
+    assert_eq!(diagnostics.failed_test_details.len(), 1);
     assert_eq!(
-        diagnostics.failed_tests,
-        vec!["tests::example_fails".to_string()]
+        diagnostics.failed_test_details[0].name,
+        "tests::example_fails"
     );
-    assert_eq!(
-        diagnostics.first_failed_test.as_deref(),
-        Some("tests::example_fails")
-    );
-    assert_eq!(diagnostics.failed_tests_truncated, false);
+    assert_eq!(diagnostics.failed_test_details_truncated, false);
 }
 
 #[test]
-fn cargo_test_parser_extracts_bounded_failed_test_names() {
+fn cargo_test_parser_extracts_bounded_failed_test_details() {
     let diagnostics = parse_cargo_test_diagnostics(
         "test tests::first_failure ... FAILED\n\
          test tests::second_failure ... FAILED\n\
@@ -320,18 +303,18 @@ fn cargo_test_parser_extracts_bounded_failed_test_names() {
     assert_eq!(diagnostics.available, true);
     assert_eq!(diagnostics.diagnostic_count, Some(3));
     assert_eq!(
-        diagnostics.failed_tests,
+        diagnostics
+            .failed_test_details
+            .iter()
+            .map(|detail| detail.name.as_str())
+            .collect::<Vec<_>>(),
         vec![
-            "tests::first_failure".to_string(),
-            "tests::second_failure".to_string(),
-            "tests::third_failure".to_string(),
+            "tests::first_failure",
+            "tests::second_failure",
+            "tests::third_failure",
         ]
     );
-    assert_eq!(
-        diagnostics.first_failed_test.as_deref(),
-        Some("tests::first_failure")
-    );
-    assert_eq!(diagnostics.failed_tests_truncated, false);
+    assert_eq!(diagnostics.failed_test_details_truncated, false);
     let summary = diagnostics.test_summary.as_ref().unwrap();
     assert_eq!(summary.passed, Some(7));
     assert_eq!(summary.failed, Some(3));
@@ -339,7 +322,7 @@ fn cargo_test_parser_extracts_bounded_failed_test_names() {
 }
 
 #[test]
-fn cargo_test_parser_dedupes_failed_test_names_in_first_seen_order() {
+fn cargo_test_parser_dedupes_failed_test_details_in_first_seen_order() {
     let diagnostics = parse_cargo_test_diagnostics(
         "test tests::alpha ... FAILED\n\
          test tests::beta ... FAILED\n\
@@ -351,23 +334,19 @@ fn cargo_test_parser_dedupes_failed_test_names_in_first_seen_order() {
     );
 
     assert_eq!(
-        diagnostics.failed_tests,
-        vec![
-            "tests::alpha".to_string(),
-            "tests::beta".to_string(),
-            "tests::gamma".to_string(),
-        ]
+        diagnostics
+            .failed_test_details
+            .iter()
+            .map(|detail| detail.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["tests::alpha", "tests::beta", "tests::gamma"]
     );
-    assert_eq!(
-        diagnostics.first_failed_test.as_deref(),
-        Some("tests::alpha")
-    );
-    assert_eq!(diagnostics.failed_tests_truncated, false);
+    assert_eq!(diagnostics.failed_test_details_truncated, false);
     assert_eq!(diagnostics.diagnostic_count, Some(3));
 }
 
 #[test]
-fn cargo_test_parser_keeps_up_to_twenty_failed_tests() {
+fn cargo_test_parser_keeps_up_to_twenty_failed_test_details() {
     let mut stdout = String::new();
     for i in 1..=12 {
         stdout.push_str(&format!("test tests::case_{i} ... FAILED\n"));
@@ -376,19 +355,16 @@ fn cargo_test_parser_keeps_up_to_twenty_failed_tests() {
 
     let diagnostics = parse_cargo_test_diagnostics(&stdout, "", false);
 
-    assert_eq!(diagnostics.failed_tests.len(), 12);
-    assert_eq!(diagnostics.failed_tests[0], "tests::case_1");
-    assert_eq!(diagnostics.failed_tests[11], "tests::case_12");
-    assert_eq!(diagnostics.failed_tests_truncated, false);
+    assert_eq!(diagnostics.failed_test_details.len(), 12);
+    assert_eq!(diagnostics.failed_test_details[0].name, "tests::case_1");
+    assert_eq!(diagnostics.failed_test_details[11].name, "tests::case_12");
+    assert_eq!(diagnostics.failed_test_details_truncated, false);
     assert_eq!(diagnostics.diagnostic_count, Some(12));
-    assert_eq!(
-        diagnostics.first_failed_test.as_deref(),
-        Some("tests::case_1")
-    );
 }
 
 #[test]
-fn cargo_test_parser_marks_failed_tests_truncated_when_tail_truncated_and_summary_exceeds_names() {
+fn cargo_test_parser_marks_failed_test_details_truncated_when_tail_truncated_and_summary_exceeds_names(
+) {
     let diagnostics = parse_cargo_test_diagnostics(
         "test tests::one ... FAILED\n\
          test tests::two ... FAILED\n\
@@ -399,12 +375,16 @@ fn cargo_test_parser_marks_failed_tests_truncated_when_tail_truncated_and_summar
 
     assert_eq!(diagnostics.available, true);
     assert_eq!(diagnostics.diagnostic_count, Some(5));
-    assert_eq!(diagnostics.failed_tests.len(), 2);
+    assert_eq!(diagnostics.failed_test_details.len(), 2);
     assert_eq!(
-        diagnostics.failed_tests,
-        vec!["tests::one".to_string(), "tests::two".to_string()]
+        diagnostics
+            .failed_test_details
+            .iter()
+            .map(|detail| detail.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["tests::one", "tests::two"]
     );
-    assert_eq!(diagnostics.failed_tests_truncated, true);
+    assert_eq!(diagnostics.failed_test_details_truncated, true);
     assert_eq!(diagnostics.truncated, Some(true));
 }
 
@@ -427,12 +407,9 @@ fn cargo_test_parser_aggregates_multiple_harness_summaries() {
     assert_eq!(summary.failed, Some(1));
     assert_eq!(summary.ignored, Some(3));
     assert_eq!(diagnostics.diagnostic_count, Some(1));
-    assert_eq!(diagnostics.failed_tests, vec!["tests::broken".to_string()]);
-    assert_eq!(
-        diagnostics.first_failed_test.as_deref(),
-        Some("tests::broken")
-    );
-    assert_eq!(diagnostics.failed_tests_truncated, false);
+    assert_eq!(diagnostics.failed_test_details.len(), 1);
+    assert_eq!(diagnostics.failed_test_details[0].name, "tests::broken");
+    assert_eq!(diagnostics.failed_test_details_truncated, false);
 }
 
 #[test]
@@ -451,11 +428,9 @@ fn cargo_test_parser_aggregates_when_first_harness_passes_and_later_fails() {
     assert_eq!(summary.failed, Some(2));
     assert_eq!(summary.ignored, Some(1));
     assert_eq!(diagnostics.diagnostic_count, Some(2));
-    assert_eq!(
-        diagnostics.failed_tests,
-        vec!["tests::later_fail".to_string()]
-    );
-    assert_eq!(diagnostics.failed_tests_truncated, false);
+    assert_eq!(diagnostics.failed_test_details.len(), 1);
+    assert_eq!(diagnostics.failed_test_details[0].name, "tests::later_fail");
+    assert_eq!(diagnostics.failed_test_details_truncated, false);
 }
 
 #[test]
@@ -471,8 +446,8 @@ fn cargo_test_parser_aggregated_truncation_uses_summed_failed_count() {
     );
 
     assert_eq!(diagnostics.diagnostic_count, Some(5));
-    assert_eq!(diagnostics.failed_tests.len(), 2);
-    assert_eq!(diagnostics.failed_tests_truncated, true);
+    assert_eq!(diagnostics.failed_test_details.len(), 2);
+    assert_eq!(diagnostics.failed_test_details_truncated, true);
     let summary = diagnostics.test_summary.as_ref().unwrap();
     assert_eq!(summary.passed, Some(1));
     assert_eq!(summary.failed, Some(5));
@@ -500,7 +475,7 @@ fn parse_cargo_test_counts_does_not_use_last_summary_wins() {
 }
 
 #[test]
-fn cargo_test_parser_passing_run_returns_empty_failed_tests() {
+fn cargo_test_parser_passing_run_returns_empty_failed_test_details() {
     let diagnostics = parse_cargo_test_diagnostics(
         "test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out\n",
         "",
@@ -509,9 +484,8 @@ fn cargo_test_parser_passing_run_returns_empty_failed_tests() {
 
     assert_eq!(diagnostics.available, true);
     assert_eq!(diagnostics.diagnostic_count, Some(0));
-    assert!(diagnostics.failed_tests.is_empty());
-    assert_eq!(diagnostics.first_failed_test, None);
-    assert_eq!(diagnostics.failed_tests_truncated, false);
+    assert!(diagnostics.failed_test_details.is_empty());
+    assert_eq!(diagnostics.failed_test_details_truncated, false);
     let summary = diagnostics.test_summary.as_ref().unwrap();
     assert_eq!(summary.passed, Some(12));
     assert_eq!(summary.failed, Some(0));
@@ -532,16 +506,10 @@ fn cargo_test_parser_ignores_unsafe_text_and_invalid_test_names() {
     );
 
     assert_eq!(diagnostics.available, true);
-    assert_eq!(
-        diagnostics.failed_tests,
-        vec!["tests::safe_fail".to_string()]
-    );
-    assert_eq!(
-        diagnostics.first_failed_test.as_deref(),
-        Some("tests::safe_fail")
-    );
+    assert_eq!(diagnostics.failed_test_details.len(), 1);
+    assert_eq!(diagnostics.failed_test_details[0].name, "tests::safe_fail");
     assert_eq!(diagnostics.diagnostic_count, Some(1));
-    assert_eq!(diagnostics.failed_tests_truncated, false);
+    assert_eq!(diagnostics.failed_test_details_truncated, false);
 
     let json = serde_json::to_string(&diagnostics).unwrap();
     for raw in [

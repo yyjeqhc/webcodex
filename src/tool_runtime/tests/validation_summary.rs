@@ -230,7 +230,7 @@ async fn validation_summary_preserves_history_bounds_and_safe_diagnostics() {
     assert_eq!(diagnostics["diagnostics_truncated"], true);
     assert_eq!(diagnostics["diagnostics"].as_array().unwrap().len(), 20);
     assert_eq!(validation["parser"]["kind"], "structured_validation_parser");
-    assert_eq!(validation["parser"]["version"], 2);
+    assert_eq!(validation["parser"]["version"], 3);
     assert_safe_public_validation_output(&result.output);
 
     let min_clamped = runtime

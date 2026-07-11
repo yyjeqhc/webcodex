@@ -83,7 +83,7 @@ Validation evidence follows one shared path rather than a parallel verdict model
 ```text
 bounded validation-tool result metadata
         -> session ledger
-        -> structured_validation_parser v2
+        -> structured_validation_parser v3
         -> validation_events aggregation
         -> finish_coding_task / session_handoff_summary / validation_summary
 ```

@@ -175,7 +175,7 @@ start_coding_task
 
 ### Validation Intelligence MVP
 
-Validation parser v2 (`structured_validation_parser`, version 2) deterministically extracts structured evidence from bounded, sanitized metadata already recorded for validation-like tools. A failing `cargo_check` can expose up to 20 sorted diagnostics with safe project-relative locations and messages of at most 240 Unicode scalars. A failing `cargo_test` can expose up to 20 failed-test names and conservative `assertion` / `panic` / `unknown` details without panic bodies, assertion values, or backtraces.
+Validation parser v3 (`structured_validation_parser`, version 3) deterministically extracts structured evidence from bounded, sanitized metadata already recorded for validation-like tools. A failing `cargo_check` can expose up to 20 sorted diagnostics with safe project-relative locations and messages of at most 240 Unicode scalars. A failing `cargo_test` can expose up to 20 `failed_test_details` entries with conservative `assertion` / `panic` / `unknown` classification without panic bodies, assertion values, or backtraces.
 
 The parser never retains or returns complete stdout/stderr, never executes diagnostic text, and does not infer root causes. Incomplete excerpts are represented with `truncated`, `diagnostics_truncated`, omitted locations, and `unknown` classifications rather than guesses. `validation.status` remains the ledger history (`mixed` is preserved), while `latest_status` and `historical_failures` distinguish the final run from earlier failures. Resolved failures remain visible as audit evidence but do not lower an otherwise passing final task outcome; zero-test runs do not resolve earlier `cargo_test` failures.
 
@@ -207,7 +207,7 @@ Do not expose secrets in prompts, examples, tool output, docs, or committed conf
 - Agent-registered project model with `agent:<client_id>:<project_id>` ids.
 - Structured source editing tools for scoped changes.
 - Patch validation, Cargo validation helpers, Git diff/status tools, and bounded shell/job execution.
-- Coding-task sessions with validation parser v2 evidence, read-only `validation_summary`, handoff, finish verdicts, diff evidence, and hygiene summaries.
+- Coding-task sessions with validation parser v3 evidence, read-only `validation_summary`, handoff, finish verdicts, diff evidence, and hygiene summaries.
 - Authentication paths for quick shared-key evaluation and production deployments.
 - Documentation for first setup, concepts, MCP, GPT Actions, security, release notes, and roadmap.
 

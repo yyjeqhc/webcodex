@@ -151,7 +151,7 @@ fn validation_output_metadata_without_stable_diagnostics_makes_parser_available(
     assert_eq!(validation["status"], "passed");
     assert!(validation["reason"].is_null());
     assert_eq!(validation["parser"]["kind"], PARSER_KIND);
-    assert_eq!(validation["parser"]["version"], 2);
+    assert_eq!(validation["parser"]["version"], 3);
     assert_eq!(
         validation["parser"]["source"],
         "bounded_validation_metadata"
@@ -273,19 +273,12 @@ fn validation_summary_wires_cargo_check_diagnostics_from_captured_excerpt() {
     assert_eq!(diagnostics["diagnostics_truncated"], false);
     assert_eq!(diagnostics["invalid_diagnostics_omitted"], 0);
     assert_eq!(diagnostics["diagnostics"].as_array().unwrap().len(), 1);
-    assert_eq!(diagnostics["first_diagnostic"]["severity"], "error");
-    assert_eq!(diagnostics["first_diagnostic"]["code"], "E0308");
-    assert_eq!(diagnostics["first_diagnostic"]["file"], "src/lib.rs");
-    assert_eq!(diagnostics["first_diagnostic"]["line"], 12);
-    assert_eq!(diagnostics["first_diagnostic"]["column"], 5);
-    assert_eq!(
-        diagnostics["first_diagnostic"]["message"],
-        "mismatched types"
-    );
-    assert_eq!(
-        diagnostics["first_diagnostic"],
-        diagnostics["diagnostics"][0]
-    );
+    assert_eq!(diagnostics["diagnostics"][0]["severity"], "error");
+    assert_eq!(diagnostics["diagnostics"][0]["code"], "E0308");
+    assert_eq!(diagnostics["diagnostics"][0]["file"], "src/lib.rs");
+    assert_eq!(diagnostics["diagnostics"][0]["line"], 12);
+    assert_eq!(diagnostics["diagnostics"][0]["column"], 5);
+    assert_eq!(diagnostics["diagnostics"][0]["message"], "mismatched types");
     assert_eq!(
         validation["latest_failure"]["failure_kind"],
         "compile_error"
@@ -323,8 +316,6 @@ fn validation_summary_wires_cargo_test_summary_from_captured_excerpt() {
     assert_eq!(diagnostics["test_summary"]["passed"], 0);
     assert_eq!(diagnostics["test_summary"]["failed"], 1);
     assert_eq!(diagnostics["test_summary"]["ignored"], 0);
-    assert_eq!(diagnostics["first_failed_test"], "tests::fails");
-    assert_eq!(diagnostics["failed_tests"], json!(["tests::fails"]));
     assert_eq!(
         diagnostics["failed_test_details"][0]["name"],
         "tests::fails"
@@ -333,7 +324,7 @@ fn validation_summary_wires_cargo_test_summary_from_captured_excerpt() {
         diagnostics["failed_test_details"][0]["failure_kind"],
         "unknown"
     );
-    assert_eq!(diagnostics["failed_tests_truncated"], false);
+    assert_eq!(diagnostics["failed_test_details_truncated"], false);
     assert_eq!(diagnostics["truncated"], false);
     assert_eq!(validation["latest_failure"]["failure_kind"], "test_failure");
 }
@@ -431,7 +422,7 @@ fn zero_tests_success_is_not_classified_as_test_failure() {
 }
 
 #[test]
-fn validation_summary_exposes_failed_tests_on_latest_and_latest_failure() {
+fn validation_summary_exposes_failed_test_details_on_latest_and_latest_failure() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);
     record_finished_tool(
@@ -454,15 +445,23 @@ fn validation_summary_exposes_failed_tests_on_latest_and_latest_failure() {
 
     let session = store.summary(&session.session_id, Some(50)).unwrap();
     let validation = validation_summary_for_session(&session);
-    let expected_names = json!(["tests::first", "tests::second", "tests::third"]);
+    let expected_names = ["tests::first", "tests::second", "tests::third"];
 
     for path in ["latest", "latest_failure"] {
         let diagnostics = &validation[path]["diagnostics"];
         assert_eq!(diagnostics["available"], true, "{path}");
         assert_eq!(diagnostics["diagnostic_count"], 3, "{path}");
-        assert_eq!(diagnostics["failed_tests"], expected_names, "{path}");
-        assert_eq!(diagnostics["first_failed_test"], "tests::first", "{path}");
-        assert_eq!(diagnostics["failed_tests_truncated"], false, "{path}");
+        let names: Vec<&str> = diagnostics["failed_test_details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|detail| detail["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, expected_names, "{path}");
+        assert_eq!(
+            diagnostics["failed_test_details_truncated"], false,
+            "{path}"
+        );
         assert_eq!(diagnostics["test_summary"]["failed"], 3, "{path}");
         assert_eq!(diagnostics["truncated"], false, "{path}");
     }

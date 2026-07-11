@@ -192,8 +192,9 @@ If adding or renaming a runtime tool, update **all** of:
   too large for GPT Actions. Daily GPT Action discovery should prefer
   `callRuntimeTool(tool="tool_manifest")`; focused `listRuntimeTools` calls
   should pass `summary_only=true` with `category`, `features`, or `limit`.
-  Current tool count is around 65; the response-size issue is schema/metadata
-  expansion, not runtime tool system sprawl.
+  Prefer `runtime_status` or the tool manifest for the current tool count;
+  the response-size issue is expanded schema/metadata, not a fixed tool
+  count or runtime tool system sprawl.
 - `list_projects` project entries expose `capabilities`; smoke selection should
   prefer `capabilities.recommended_for_smoke=true`, and git smoke must require
   `capabilities.git_available=true`. `agent:special:test-mcp` may be safe but
@@ -250,9 +251,9 @@ Every agent final response must include:
 
 Subsequent ordinary development tasks **inherit** the safety (§2), editing (§3),
 branch/commit (§4), validation (§5), test organization (§6), architecture (§7),
-and session (§8) rules defined in this document. User prompts do **not** need to
-repeat default no-tag / no-push / no-publish / no-release / no-rebase /
-no-amend / no-secrets directives each time.
+session (§8), and internal API evolution (§14) rules defined in this document.
+User prompts do **not** need to repeat default no-tag / no-push / no-publish /
+no-release / no-rebase / no-amend / no-secrets directives each time.
 
 An explicit release prompt may override only the default no-tag, no-push,
 no-GitHub-Release, and no-npm-publish rules when all §2 Release Exception
@@ -388,3 +389,33 @@ Do not skip ahead to later phases until earlier phases are stable and tested.
    - Implement **only after** subject model and tests are stable.
    - Must not include blank OAuth field fallback, open anonymous bridge, or
      plaintext shared key storage.
+
+---
+
+## 14. Internal API Evolution / Compatibility Policy
+
+This is a **standing decision** for WebCodex as an **internal / self-use**
+project. There are no supported external API consumers, public SDKs, or
+third-party stable clients of the runtime tool surface today.
+
+Until this standing decision is **explicitly revised**:
+
+1. **Do not retain compatibility fields for hypothetical consumers.**
+2. **Do not emit both a canonical field and an alias field** for the same
+   concept in the same response.
+3. **Do not add** deprecated aliases, legacy fallbacks, dual-output shapes, or
+   version-translation layers without a concrete migration requirement.
+4. **When duplicate representations are found**, choose one canonical
+   structured representation and delete the others from outputs, schemas,
+   tests, and docs in the same change.
+
+Before keeping any compatibility layer, name a **specific consumer** or a
+**specific public contract** that still requires it. Vague claims such as
+"there might be old consumers" are not sufficient.
+
+A `version` (or parser version) field may identify protocol shape and aid
+debugging. It is **not** a reason to keep duplicate or alias fields.
+
+When external stable consumers genuinely exist later, revise this standing
+decision explicitly and define a bounded migration window for that concrete
+contract.

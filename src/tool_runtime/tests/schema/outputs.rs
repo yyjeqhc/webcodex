@@ -127,8 +127,14 @@ fn key_tool_output_schemas_include_expected_fields() {
         "parser",
         "reason",
         "diagnostic_count",
+        "diagnostics",
+        "returned_diagnostic_count",
+        "diagnostics_truncated",
+        "invalid_diagnostics_omitted",
+        "first_diagnostic",
         "test_summary",
         "failed_tests",
+        "failed_test_details",
         "first_failed_test",
         "failed_tests_truncated",
         "truncated",
@@ -139,7 +145,14 @@ fn key_tool_output_schemas_include_expected_fields() {
         );
     }
     assert_eq!(diagnostics_props["failed_tests"]["type"], "array");
+    assert_eq!(diagnostics_props["failed_tests"]["maxItems"], 20);
     assert_eq!(diagnostics_props["failed_tests"]["items"]["type"], "string");
+    assert_eq!(diagnostics_props["diagnostics"]["maxItems"], 20);
+    assert_eq!(diagnostics_props["failed_test_details"]["maxItems"], 20);
+    assert_eq!(
+        diagnostics_props["parser"]["enum"],
+        json!(["structured_validation_parser"])
+    );
     assert_eq!(
         diagnostics_props["failed_tests_truncated"]["type"],
         "boolean"

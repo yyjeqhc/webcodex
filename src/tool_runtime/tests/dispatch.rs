@@ -268,7 +268,7 @@ test result: FAILED. 7 passed; 3 failed; 1 ignored; 0 measured; 0 filtered out\n
 
     let diagnostics = &result.output["diagnostics"];
     assert_eq!(diagnostics["available"], true);
-    assert_eq!(diagnostics["parser"], "minimal_bounded_tail_parser");
+    assert_eq!(diagnostics["parser"], "structured_validation_parser");
     assert_eq!(diagnostics["diagnostic_count"], 3);
     assert_eq!(diagnostics["test_summary"]["passed"], 7);
     assert_eq!(diagnostics["test_summary"]["failed"], 3);
@@ -282,6 +282,19 @@ test result: FAILED. 7 passed; 3 failed; 1 ignored; 0 measured; 0 filtered out\n
         ])
     );
     assert_eq!(diagnostics["first_failed_test"], "tests::first_failure");
+    assert_eq!(
+        diagnostics["failed_test_details"].as_array().unwrap().len(),
+        3
+    );
+    assert_eq!(
+        diagnostics["failed_test_details"][0]["name"],
+        "tests::first_failure"
+    );
+    assert_eq!(
+        diagnostics["failed_test_details"][0]["failure_kind"],
+        "panic"
+    );
+    assert!(diagnostics["failed_test_details"][0]["file"].is_null());
     assert_eq!(diagnostics["failed_tests_truncated"], false);
     assert_eq!(diagnostics["truncated"], false);
 

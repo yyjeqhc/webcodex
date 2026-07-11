@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_schema};
+use super::common::{nullable_schema, schema_type, wrapped_output_schema};
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
@@ -90,7 +90,7 @@ fn cargo_output_schema(include_zero_tests_metadata: bool) -> Value {
             (
                 "diagnostics",
                 cargo_test_diagnostics_schema(
-                    "Bounded cargo_test diagnostics parsed only from stdout_tail/stderr_tail. Includes sanitized failed test names (max 10), test_summary counts, and truncation metadata. Never includes panic messages, assertion diffs, stack traces, source bodies, absolute paths, tokens, secrets, root-cause inference, or fix recommendations.",
+                    "Structured validation parser v2 evidence extracted deterministically from bounded cargo_test stdout/stderr metadata. Includes at most 20 diagnostics, failed-test names/details, test_summary counts, and explicit omission/truncation metadata. Never includes panic bodies, assertion values, backtraces, source bodies, absolute paths, tokens, secrets, root-cause inference, or fix recommendations.",
                 ),
             ),
         ]);
@@ -107,10 +107,11 @@ fn cargo_test_diagnostics_schema(description: &str) -> Value {
                 "boolean",
                 "True when a test result summary or at least one safe failed test name was parsed.",
             ),
-            "parser": schema_type(
-                "string",
-                "Stable parser identifier (minimal_bounded_tail_parser).",
-            ),
+            "parser": {
+                "type": "string",
+                "enum": ["structured_validation_parser"],
+                "description": "Stable structured validation parser v2 identifier."
+            },
             "reason": nullable_schema(
                 "string",
                 "Why diagnostics are unavailable, when available is false.",
@@ -119,6 +120,27 @@ fn cargo_test_diagnostics_schema(description: &str) -> Value {
                 "integer",
                 "Prefer test_summary.failed; otherwise the number of safely captured failed test names.",
             ),
+            "diagnostics": {
+                "type": "array",
+                "maxItems": 20,
+                "items": cargo_diagnostic_schema(),
+                "description": "Bounded sorted, deduplicated rustc diagnostics from the captured excerpt."
+            },
+            "returned_diagnostic_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 20
+            },
+            "diagnostics_truncated": schema_type(
+                "boolean",
+                "True when the diagnostic list or captured validation excerpt is incomplete.",
+            ),
+            "invalid_diagnostics_omitted": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Diagnostic headers omitted because they could not be represented safely."
+            },
+            "first_diagnostic": cargo_diagnostic_schema(),
             "test_summary": {
                 "type": "object",
                 "description": "Aggregated cargo test result summary counts across all harnesses in the bounded tails.",
@@ -129,20 +151,30 @@ fn cargo_test_diagnostics_schema(description: &str) -> Value {
                 },
                 "additionalProperties": false,
             },
-            "failed_tests": array_schema(
-                schema_type(
-                    "string",
-                    "Sanitized failed test name (A-Z a-z 0-9 _ : - < > . only).",
-                ),
-                "Up to 10 unique sanitized failed test names in first-seen order.",
-            ),
+            "failed_tests": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": {
+                    "type": "string",
+                    "maxLength": 240,
+                    "description": "Sanitized failed test name."
+                },
+                "description": "Up to 20 unique sanitized failed test names in deterministic first-seen order."
+            },
+            "failed_test_details": {
+                "type": "array",
+                "maxItems": 20,
+                "items": failed_test_detail_schema(),
+                "description": "Conservative assertion, panic, or unknown evidence without payload bodies."
+            },
             "first_failed_test": nullable_schema(
                 "string",
                 "Compatibility alias for failed_tests[0].",
             ),
             "failed_tests_truncated": schema_type(
                 "boolean",
-                "True when more than 10 unique safe names were seen, or the bounded tail was truncated and the aggregated summary failed count exceeds captured names.",
+                "True when more than 20 unique safe names were seen, or the bounded excerpt was truncated and the aggregated summary failed count exceeds captured names.",
             ),
             "truncated": schema_type(
                 "boolean",
@@ -150,5 +182,36 @@ fn cargo_test_diagnostics_schema(description: &str) -> Value {
             ),
         },
         "additionalProperties": false,
+    })
+}
+
+fn cargo_diagnostic_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "severity": { "type": "string", "enum": ["error", "warning", "unknown"] },
+            "code": { "type": "string", "maxLength": 64 },
+            "file": { "type": "string", "maxLength": 512 },
+            "line": { "type": "integer", "minimum": 1 },
+            "column": { "type": "integer", "minimum": 1 },
+            "message": { "type": "string", "maxLength": 240 }
+        },
+        "required": ["severity", "message"]
+    })
+}
+
+fn failed_test_detail_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "name": { "type": "string", "maxLength": 240 },
+            "failure_kind": { "type": "string", "enum": ["assertion", "panic", "unknown"] },
+            "file": { "anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}] },
+            "line": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] },
+            "column": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] }
+        },
+        "required": ["name", "failure_kind", "file", "line", "column"]
     })
 }

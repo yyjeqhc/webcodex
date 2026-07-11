@@ -24,11 +24,18 @@ This roadmap is intentionally short. WebCodex 0.2.x is about making online AI co
 - Workspace-only symbol search with project-relative results.
 - ToolRuntime, MCP, generic GPT Action, OAuth, schema, and startup capability synchronization.
 
+## LSP Phase 3 Multi-Language: Completed
+
+- Language registry (`lsp/language.rs`): one `LanguageProfile` per server owns extensions/`languageId`s, project markers, executable resolution, `default_args`, and the constrained read-only `initialize` profile; the supervisor and navigation handlers carry no per-language branches.
+- Python (`pyright`) and TypeScript/JavaScript (`typescript-language-server`) added alongside Rust, validated end-to-end against a real pyright.
+
 ## Future LSP Work
 
-- Broader diagnostics fidelity beyond the constrained rust-analyzer profile.
+- Fan `workspace_symbols` across every detected language in a polyglot project (currently the first detected language answers).
+- A multi-language `start_coding_task.semantic_navigation` startup summary (today it is a Rust-focused readiness hint; the runtime tools are already multi-language).
+- Broader diagnostics fidelity beyond the constrained read-only profiles.
 - Explicitly designed write capabilities such as rename and code actions (not part of the read-only MVP).
-- More languages.
+- More languages (each is one registry profile plus its read-only safety profile and tests).
 
 ## Validation Intelligence MVP: Completed
 

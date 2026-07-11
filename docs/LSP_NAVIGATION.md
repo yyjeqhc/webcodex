@@ -1,7 +1,10 @@
 # LSP Navigation
 
-Read-only Rust semantic navigation for agent-backed projects, powered by an
-agent-side rust-analyzer under a constrained profile.
+Read-only semantic navigation for agent-backed projects, powered by
+language-specific servers under constrained per-language profiles. The tool
+surface is language-agnostic; the set of supported languages comes from a
+single agent-side registry (see [Supported Languages](#supported-languages)
+and [Adding a Language](#adding-a-language)).
 
 This document covers the seven runtime tools, the `start_coding_task`
 `semantic_navigation` capability summary, position conventions, the security
@@ -9,34 +12,58 @@ boundary, resource lifecycle, error codes, and troubleshooting.
 
 ## Overview
 
-WebCodex exposes seven read-only LSP tools:
+WebCodex exposes seven read-only LSP tools, each operating on any supported
+language:
 
 | Tool | Purpose |
 |---|---|
-| `lsp_status` | Language/server availability for a project. Never starts a server. |
-| `document_symbols` | Symbols declared in one `.rs` file. |
+| `lsp_status` | Per-language server availability for a project. Never starts a server. |
+| `document_symbols` | Symbols declared in one supported source file. |
 | `goto_definition` | Definition location(s) for a source position. |
 | `find_references` | Reference locations for a source position. |
-| `document_diagnostics` | Bounded rust-analyzer diagnostics for one `.rs` file, with explicit `fresh` / `timed_out` state. |
+| `document_diagnostics` | Bounded diagnostics for one source file, with explicit `fresh` / `timed_out` state. |
 | `hover` | Normalized, bounded hover content for a source position. |
 | `workspace_symbols` | Workspace-only symbol search with project-relative results. |
 
 All of them flow through ToolRuntime → typed agent bridge payload →
-`LspSupervisor` → rust-analyzer. The server never reads agent project files
-and never accepts arbitrary LSP methods: the bridge payload is a closed enum
-of exactly these operations, so unknown operations fail deserialization
-before reaching any agent.
+`LspSupervisor` → the language server selected for the target file's
+extension. The server never reads agent project files and never accepts
+arbitrary LSP methods: the bridge payload is a closed enum of exactly these
+operations, so unknown operations fail deserialization before reaching any
+agent.
+
+## Supported Languages
+
+The agent registry (`src/bin/webcodex_agent/lsp/language.rs`) is the single
+source of truth. Each entry pairs a language server with the file extensions,
+project markers, and constrained read-only profile it owns.
+
+| Language | Server | Extensions | Detected by |
+|---|---|---|---|
+| Rust | `rust-analyzer` | `.rs` | `Cargo.toml` |
+| Python | `pyright` (`pyright-langserver`) | `.py`, `.pyi` | `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `Pipfile`, `pyrightconfig.json` |
+| TypeScript / JavaScript | `typescript-language-server` | `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs` | `tsconfig.json`, `jsconfig.json`, `package.json` |
+
+A file's extension selects its server and the LSP `languageId` announced on
+`didOpen` (for example `.tsx` → `typescriptreact`). Result payloads report the
+language's primary label (`typescript`) for a stable vocabulary.
 
 ## Requirements
 
 - The project must be agent-backed (`agent:<client_id>:<project_id>`), and the
   owning agent must advertise the `lsp_read_only_navigation` capability
   (agents older than this feature do not).
-- rust-analyzer must be resolvable on the agent machine, in priority order:
-  1. `WEBCODEX_RUST_ANALYZER` environment variable (explicit executable path);
-  2. `rust-analyzer` on the agent's `PATH`.
-- Rust detection is `Cargo.toml` at the registered project root. Projects
-  without it report `rust` as not detected and navigation is not offered.
+- The language server must be resolvable on the agent machine, in priority
+  order, per language:
+  1. the language's env override (`WEBCODEX_RUST_ANALYZER`, `WEBCODEX_PYRIGHT`,
+     `WEBCODEX_TYPESCRIPT_LANGUAGE_SERVER`) — an explicit executable path;
+  2. the server executable (`rust-analyzer`, `pyright-langserver`,
+     `typescript-language-server`) on the agent's `PATH`.
+  Servers resolved from the env override or `PATH` receive the profile's
+  default arguments (e.g. `--stdio` for pyright and typescript-language-server).
+- Language detection uses the project markers above at the registered project
+  root. A language whose markers are absent reports as not detected, and
+  navigation for it is not offered.
 
 ## Coding-Startup Capability Summary
 
@@ -73,25 +100,30 @@ Fields:
   UTF-16 code units, not bytes). The end-of-line caret position
   `scalar_count + 1` is valid input.
 - The agent negotiates `utf-8`, `utf-16`, or `utf-32` with the server and
-  converts positions in both directions; rust-analyzer defaults to `utf-16`.
+  converts positions in both directions; most servers default to `utf-16`.
 - Result ordering is deterministic (sorted by path, then range) and
   duplicates are removed.
 
 ## Security Boundary
 
-Starting the language server must not execute repository code. The agent
-sends a pinned, constrained rust-analyzer profile in `initialize`:
+Starting a language server must not execute repository code. Each language
+profile pins a constrained read-only `initialize` payload; the fields cannot
+be overridden by environment variables and are pinned by per-language security
+regression tests. These are constrained profiles, not OS sandboxes — a server
+still reads workspace metadata to resolve the project.
 
-- `cargo.buildScripts.enable=false` and `procMacro.enable=false` — no
-  `build.rs` execution, no proc-macro loading.
-- `checkOnSave=false` — no Cargo check runs.
-- `cargo.noDeps=true` — external dependencies are not fetched or analyzed
-  (this is also why dependency navigation is unavailable).
-- `cachePriming.enable=false`, `files.watcher=server`.
-
-These fields cannot be overridden by environment variables and are pinned by
-a security regression test. This is a constrained profile, not an OS sandbox;
-rust-analyzer still reads workspace metadata (`cargo metadata`).
+- **rust-analyzer**: `cargo.buildScripts.enable=false` and
+  `procMacro.enable=false` (no `build.rs` execution, no proc-macro loading),
+  `checkOnSave=false` (no Cargo check), `cargo.noDeps=true` (external
+  dependencies are not fetched or analyzed — also why dependency navigation is
+  unavailable), plus `cachePriming.enable=false` and `files.watcher=server`.
+- **pyright**: a pure type checker that never executes project code, so the
+  code-execution boundary holds intrinsically. `diagnosticMode=openFilesOnly`
+  bounds analysis, `typeCheckingMode=basic`, and `autoImportCompletions=false`.
+- **typescript-language-server**: `disableAutomaticTypingAcquisition=true` is
+  the network boundary — it stops tsserver from downloading `@types/*` packages
+  from npm (the analog to rust's `cargo.noDeps`) — plus
+  `includePackageJsonAutoImports=off`.
 
 Result boundaries:
 
@@ -140,12 +172,12 @@ never supply document text, and there is no editor-style incremental sync.
 | Code | Meaning |
 |---|---|
 | `agent_capability_unavailable` | Project is not agent-backed, or the agent does not advertise LSP navigation. |
-| `lsp_server_unavailable` | rust-analyzer executable could not be resolved. |
+| `lsp_server_unavailable` | The language server executable could not be resolved. |
 | `lsp_server_failed` | Server crashed, exited, restart budget exhausted, or capacity exceeded. |
 | `lsp_request_timeout` | The LSP request exceeded its deadline (a cancel was sent). |
 | `lsp_protocol_error` | Malformed or protocol-violating server traffic. |
 | `invalid_project_path` | Project root failed policy or path validation (also covers escaping inputs). |
-| `unsupported_language` | Target file is not a `.rs` file. |
+| `unsupported_language` | Target file extension is not routed to any registered language server. |
 | `file_not_found` | Target file does not exist or could not be read. |
 | `document_too_large` | Target file exceeds the 8 MiB document cap. |
 | `invalid_position` / `invalid_arguments` | Position or argument validation failed. |
@@ -155,13 +187,18 @@ never supply document text, and there is no editor-style incremental sync.
 
 ## Known Limitations
 
-- Rust only; one server kind (rust-analyzer).
-- Read-only: no rename, code actions, or other write-side operations.
+- Read-only: no rename, code actions, or other write-side operations, for any
+  language.
+- One server per language; `workspace_symbols` (which carries no file path)
+  targets the first detected language. Fanning a project-scoped query across
+  every detected language's server is a deliberate follow-up, not implemented.
 - `document_diagnostics` is fast semantic feedback from the constrained
-  rust-analyzer profile (no Cargo check, no build scripts, no proc macros);
-  it never substitutes for final Cargo validation.
-- No dependency navigation (`cargo.noDeps=true`): definitions that resolve
-  into external crates are omitted and counted.
+  read-only profile (e.g. for Rust: no Cargo check, no build scripts, no proc
+  macros); it never substitutes for final language-native validation.
+- No dependency navigation: definitions that resolve outside the project root
+  (external crates/packages, sysroot/stdlib) are omitted and counted. This is
+  enforced per profile (`cargo.noDeps=true` for Rust,
+  `disableAutomaticTypingAcquisition=true` for TypeScript).
 - Full-text sync only (`full_text_sync_only`): document state refreshes from
   disk per request; there is no incremental (`didChange` range) sync and no
   unsaved-buffer concept. Edits made through WebCodex tools are picked up on
@@ -173,12 +210,36 @@ never supply document text, and there is no editor-style incremental sync.
 
 | Symptom | Likely cause / fix |
 |---|---|
-| `semantic_navigation.status = "unavailable"` | rust-analyzer not installed or not on the agent's `PATH`; set `WEBCODEX_RUST_ANALYZER` to an executable path. |
+| `lsp_status` reports a language `unavailable` | Its server is not installed or not on the agent's `PATH`; set the language's env override (`WEBCODEX_RUST_ANALYZER`, `WEBCODEX_PYRIGHT`, `WEBCODEX_TYPESCRIPT_LANGUAGE_SERVER`) to an executable path. |
+| `unsupported_language` on a real source file | The file extension is not routed by any profile; the error message lists the supported extensions. |
 | `status = "agent_capability_unavailable"` | Agent binary predates LSP navigation; upgrade the agent. |
-| `status = "probe_timeout"` on every startup | Agent transport is congested or the agent host is overloaded; navigation tools may still work with their longer 30 s budget. |
 | `lsp_server_failed` with capacity message | More than 4 distinct project roots navigated concurrently; idle servers are reaped after 15 minutes, or reduce concurrent projects. |
-| `document_diagnostics` returns `fresh=false`, `timed_out=true` | rust-analyzer did not publish fresh diagnostics within the 2 s wait (common right after a large edit or cold start); the stale/empty snapshot is a successful result — retry after a moment. |
-| `rust_not_detected` on a Rust repo | No `Cargo.toml` at the registered project root (e.g. the root points at a parent directory). |
+| `document_diagnostics` returns `fresh=false`, `timed_out=true` | The server did not publish fresh diagnostics within the 2 s wait (common right after a large edit or cold start); the stale/empty snapshot is a successful result — retry after a moment. |
+| A language reports not detected on its own repo | No project marker at the registered root (e.g. no `Cargo.toml` / `pyproject.toml` / `tsconfig.json`, or the root points at a parent directory). |
+
+> **Coding-startup note:** the `start_coding_task.semantic_navigation` summary
+> currently reports **Rust** readiness specifically (it is a Rust-focused
+> startup hint). The seven runtime tools work for every
+> [supported language](#supported-languages) regardless of that summary.
+
+## Adding a Language
+
+The generic supervisor and navigation handlers hold no per-language knowledge,
+so adding a language is additive and localized:
+
+1. Add a variant to `LspServerKind` in `supervisor.rs` (a pure discriminant —
+   it carries no behavior).
+2. Add a `LanguageProfile` entry to `LANGUAGES` in `language.rs`: extensions
+   (with their `languageId`), project markers, env override, executable,
+   `default_args`, and a constrained read-only `initialization_options`
+   function. Set `unusable_command_probe` / `startup_stderr_classifier` only if
+   the server needs them.
+3. Extend the `ALL_KINDS` list in the `language.rs` tests, and add a security
+   regression test pinning the new profile's `initialize` options.
+
+No changes to process management, request routing, position conversion, or the
+bridge contract are required. The `real_pyright_document_symbols_end_to_end`
+ignored test shows how to smoke-test a real server end to end.
 
 ## Related Docs
 

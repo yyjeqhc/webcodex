@@ -66,6 +66,7 @@ fn shell_lsp_request(payload: AgentLspPayload) -> ShellAgentShellRequest {
         timeout_secs: 60,
         requested_by: "test".to_string(),
         created_at: 0,
+        validation: None,
         lsp: Some(payload),
     }
 }
@@ -278,6 +279,7 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         timeout_secs: 10,
         requested_by: "t".into(),
         created_at: 0,
+        validation: None,
         lsp: Some(AgentLspPayload {
             project_id: "demo".into(),
             request: AgentLspRequest::Status,
@@ -1023,6 +1025,7 @@ fn missing_lsp_payload_returns_structured_error() {
         timeout_secs: 5,
         requested_by: "t".into(),
         created_at: 0,
+        validation: None,
         lsp: None,
     };
     let result = handle_lsp_request(
@@ -1063,6 +1066,7 @@ fn lsp_request_ignores_command_field() {
         timeout_secs: 5,
         requested_by: "t".into(),
         created_at: 0,
+        validation: None,
         lsp: Some(AgentLspPayload {
             project_id: "demo".into(),
             request: AgentLspRequest::Status,

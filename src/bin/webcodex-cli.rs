@@ -22,6 +22,10 @@ use std::path::PathBuf;
 mod lsp_bridge;
 
 #[allow(dead_code)]
+#[path = "../validation_bridge.rs"]
+mod validation_bridge;
+
+#[allow(dead_code)]
 #[path = "../shell_protocol.rs"]
 mod shell_protocol;
 

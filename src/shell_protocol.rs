@@ -425,6 +425,12 @@ pub struct ShellAgentShellRequest {
     pub timeout_secs: u64,
     pub requested_by: String,
     pub created_at: i64,
+    /// Typed validation bridge payload. Present only for `kind = "validation"`.
+    /// Defaults to `None` so older request bodies continue to deserialize.
+    /// Never carries arbitrary shell commands — only declarative adapter
+    /// requests with project-relative paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation: Option<crate::validation_bridge::ValidationBridgeRequest>,
     /// Typed read-only LSP navigation payload. Present only for `kind = "lsp"`.
     /// Defaults to `None` so older request bodies continue to deserialize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1054,6 +1060,7 @@ mod envelope_tests {
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 123,
+            validation: None,
             lsp: None,
         };
         let env = AgentEnvelope::Request { request };

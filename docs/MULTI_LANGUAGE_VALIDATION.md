@@ -1,6 +1,7 @@
 # Multi-Language Validation — Design
 
-Status: **proposed** (design; implementation phased below)
+Status: **in progress** (foundation implemented; public multi-language tools not
+shipped)
 
 This document proposes extending WebCodex validation from Rust-only
 (`cargo_check` / `cargo_test` / `cargo_fmt`) to a language-agnostic validation
@@ -29,6 +30,9 @@ Rust; this closes that asymmetry.
 - No change to verdict semantics in `validation_summary` /
   `validation_events` (mixed/passed/failed, historical failures) — only new
   event sources feeding the same aggregation.
+- **WebCodex does not yet product-support Python validation.** An internal
+  Pyright adapter/parser exists to prove the agent-side bridge; there is no
+  public `typecheck` tool and no MCP/OpenAPI exposure for Python validation.
 
 ## 2. Current Architecture (recap)
 
@@ -79,8 +83,9 @@ would violate the no-absolute-path invariant.
 **Consequence:** structured, absolute-path validation is not a pure
 server-side command runner like `cargo_*`. It needs an **agent-side adapter**
 that runs the tool, relativizes + validates + bounds the output into the
-shared `ValidationDiagnostics` shape, and returns that already-safe structure
-across the bridge — the same shape the LSP tools already use. See D5.
+shared diagnostics shape, and returns that already-safe structure
+across the bridge — the same shape the LSP tools already use. See D5
+(**accepted**).
 
 Key safety invariants already enforced and to be preserved verbatim:
 - Only **bounded** validation-output metadata is parsed — never full bodies.
@@ -89,10 +94,40 @@ Key safety invariants already enforced and to be preserved verbatim:
   scrubbed (`looks_sensitive`); messages/names/codes are length-bounded.
 - Diagnostics capped (20), failed tests capped (20), deterministic sort+dedup.
 
+### 2.2 Pre-execution rejections are not validation evidence
+
+Local parameter validation failures (for example synchronous `timeout_secs`
+outside `1..=120`), schema rejections, permission denials, session guard
+denials, and other command-not-started outcomes:
+
+- **must not** be recorded as `cargo_check` / `cargo_test` / `cargo_fmt`
+  validation execution failures;
+- **must not** make `validation_summary` report `mixed` / `failed`;
+- **may** remain ordinary tool failure / session events for audit;
+- are filtered at validation-event generation when there is no execution
+  evidence (`exit_code` and `validation_output_summary` both absent).
+
+Only calls that actually entered validation execution form validation ledger
+evidence.
+
+### 2.3 Synchronous timeout contract (cargo_* / run_shell)
+
+Shared public contract for synchronous agent-wait tools:
+
+| Field | Rule |
+|---|---|
+| `timeout_secs` minimum | 1 |
+| `timeout_secs` maximum | 120 |
+| Out of range | **reject** with `failure_kind=invalid_arguments` before enqueue (no silent clamp) |
+| Error text | names the calling tool; never leaks `runShell` / underlying shell request details |
+| Defaults | `cargo_*` → 120; `run_shell` → 60 |
+
+`search_project_text` keeps its own clamp-to-1..120 semantics and is unchanged.
+`run_job` remains the path for longer-running work.
+
 ## 3. `ValidationProfile` registry
 
-New module `tool_runtime/validation/registry.rs` (name TBD), analogous to
-`lsp/language.rs`:
+Internal module `tool_runtime/validation_profile/` (Rust profile implemented):
 
 ```rust
 struct ValidationProfile {
@@ -128,47 +163,81 @@ Design notes:
   | black | `black --check --quiet` | exit code + `would reformat <file>` lines |
   | prettier | `prettier --check` | exit code + file list |
 - Absolute paths in structured output (pyright emits absolute `file`) are made
-  **project-relative and re-validated** through the existing
-  `sanitize_file_path` gate; anything escaping the project is dropped (counted
-  as `invalid_diagnostics_omitted`), exactly like the LSP `external_results`
+  **project-relative and re-validated** on the agent; anything escaping the
+  project is dropped (counted as `external_results_omitted` /
+  `invalid_diagnostics_omitted`), exactly like the LSP `external_results`
   handling.
 - Positions from LSP-style tools are **0-based**; normalize to the 1-based
   convention used across WebCodex results.
 - Structured parsers still pass every string field through the existing
-  `sanitize_bounded_value` / `looks_sensitive` guards and the 20/20 caps.
+  length/safety guards and the 20/20 caps.
 
-## 4. Tool surface — the load-bearing decision
+### 3.1 Agent-side validation bridge (implemented)
 
-The registry is settled; the open decision is how models invoke it. Options:
+Shared contract: `src/validation_bridge.rs`
 
-- **D1a — Generic per-kind tools (recommended).** Add
+- **Protocol version:** `VALIDATION_BRIDGE_PROTOCOL_VERSION = 1`
+- **Result format:** `webcodex.validation_bridge_result.v1`
+- **Agent request kind:** `validation` (never falls through to shell)
+- **Request:** declarative `ValidationBridgeRequest` (`adapter_id`, `language`,
+  `validation_kind`, agent-local `project_id`, project-relative `cwd`/`targets`,
+  `timeout_secs` in `1..=120`). **No shell command strings.**
+- **Response:** sanitized `ValidationBridgeResponse` with
+  `command_started`, `exit_code`, `failure_kind`, bounded
+  `BridgeDiagnostics` (project-relative paths only). **No raw Pyright JSON,
+  no absolute paths, no unbounded stdout/stderr.**
+
+Agent modules: `src/bin/webcodex_agent/validation/`
+
+| Concern | Location |
+|---|---|
+| Adapter registry (metadata) | `registry.rs` — stable `adapter_id`s |
+| Execution + path sanitization | `execute.rs`, `path.rs` |
+| Pyright adapter + parser | `pyright.rs` (builds `pyright --outputjson` locally) |
+| Dispatch entry | `mod.rs` + `dispatch.rs` kind branch |
+
+Separation of concerns:
+
+| Layer | Role |
+|---|---|
+| `ValidationProfile` (server) | Language/capability metadata for future public tools |
+| Agent adapter registry | Executable discovery, argv, parse, sanitize |
+| Bridge protocol | Cross server↔agent data contract |
+
+Server must not hold parser function pointers. Adapter ids are shared strings;
+consistency is enforced by tests.
+
+### 3.2 Complete JSON capture policy (Pyright)
+
+- **Hard byte cap:** `MAX_VALIDATION_STDOUT_BYTES` = 2 MiB.
+- Capture must be **complete JSON only**. If the cap is exceeded:
+  - return `failure_kind=output_too_large` (also documented as
+    `validation_output_oversized` synonym intent — wire kind is
+    `output_too_large`);
+  - **do not** tail-truncate and attempt parse;
+  - **do not** parse incomplete JSON.
+- Stderr is at most a short summary across the bridge (or omitted).
+- Pass/fail uses structured diagnostics / summary (`errorCount` /
+  error-severity diagnostics), not exit code alone.
+
+## 4. Tool surface — decisions
+
+- **D1 — Accepted: generic per-kind tools (future public surface).** Add
   `typecheck`, `run_tests`, `lint`, `format_check`, each taking
   `{ project, language?, cwd?, … }`. `language` is optional and auto-detected
-  from project markers when omitted. They serve Python and TypeScript now;
-  **Rust keeps `cargo_*`** (its battle-tested, arg-rich adapter) and the
-  generic tools reject `language="rust"` with a pointer to `cargo_check`, so
-  there is exactly one canonical Rust entry (no dual surface — AGENTS.md §14).
-  All new tools are `callRuntimeTool`-only (0 new GPT Actions; budget stays
-  25/30). *Pro:* consistent per-kind shape, small surface, additive. *Con:*
-  Rust is a documented exception until a future migration.
-- **D1b — One `validate(project, kind, language?, …)` tool.** Single tool,
-  `kind ∈ {typecheck,lint,test,format}`. *Pro:* smallest surface (1 tool).
-  *Con:* collapses distinct operations behind a mode param; less discoverable;
-  diverges from the established per-kind `cargo_*`/`validation_kind` pattern.
-- **D1c — Explicit per-language tools** (`python_typecheck`, `ts_test`, …).
-  *Pro:* most discoverable. *Con:* 3 languages × 3–4 kinds ≈ 9–12 tools;
-  worst fit for the tool budget and the registry philosophy.
-
-**Recommendation: D1a.** It matches the existing per-kind vocabulary, keeps the
-surface small and additive, respects the GPT Action budget, and leaves a clean
-future path to fold Rust in. Phase 1 ships only `typecheck` + `run_tests`
-(Python); `lint`/`format_check` and TypeScript follow.
-
-Second decision:
-- **D2 — Auto-detect vs explicit `language`.** Recommended: optional
-  `language`, auto-detected from the same manifest markers the LSP registry
-  uses; ambiguous/polyglot roots require an explicit `language` and otherwise
-  return a clear `language_required` error (no silent guess).
+  from project markers when omitted. They serve Python and TypeScript;
+  **Rust keeps `cargo_*`** and generic tools reject `language="rust"` with a
+  pointer to `cargo_check`, so there is exactly one canonical Rust entry
+  (no dual surface — AGENTS.md §14). All new tools are `callRuntimeTool`-only
+  (0 new GPT Actions; budget stays 25/30).
+  - **Current status:** public tools **not implemented**.
+- **D2 — Open:** auto-detect language with explicit override +
+  `language_required` for ambiguous roots (recommended).
+- **D3 — Open:** pytest evidence source (JUnit XML vs text).
+- **D4 — Open:** lint severity policy for finish verdicts.
+- **D5 — Accepted: agent-side adapter for absolute-path tools.** Execution,
+  parse, path relativization, and sanitization happen on the agent. The bridge
+  carries only declarative requests and already-safe diagnostics.
 
 ## 5. Evidence-flow integration
 
@@ -177,114 +246,77 @@ There are two evidence-capture paths, chosen per adapter:
 - **Server-side text re-parse (existing, relative-path tools).** Used by
   `cargo_*`: the tool stores bounded stdout/stderr tails on the ledger event
   (`validation_output_summary`), and `validation_diagnostics_from_summary`
-  re-parses them by tool name. Any structured tool that emits relative paths
-  (e.g. `tsc` with a project-relative invocation) can reuse this path.
+  re-parses them by tool name.
 - **Agent-side structured capture (new, absolute-path tools).** Used by
-  pyright/ruff/eslint: the agent-side adapter runs the tool, relativizes and
-  sanitizes into `ValidationDiagnostics` (§2.1), and returns that structure.
-  The server stores the **already-safe structured diagnostics** on the event
-  rather than raw text, so no server-side re-parse and no root are needed.
-  `validation_diagnostics_from_summary` reads the stored structure directly
-  for these tools.
-
-Additive changes, both paths:
-- `validation_kind_for_tool` gains the new tool names (mapping to `check` for
-  typecheck, `test`, and new `lint`/`format` kinds). Reuse existing kinds where
-  they map cleanly so `validation_summary` status logic is unchanged.
-- `validation_failure_kind` gains `lint_error` (new) and reuses
-  `compile_error` (typecheck errors), `test_failure`, `format_diff`,
-  `timeout`, `process_exit`.
-- The ledger event records the `language` + adapter tool name and which capture
-  path produced it, so downstream picks the right reader.
-
-`validation_summary`, `finish_coding_task`, and `session_handoff_summary`
-consume the same aggregated shape and need **no changes** beyond surfacing
-`language` per event (already free-form).
+  pyright (internal): the agent-side adapter runs the tool, relativizes and
+  sanitizes into bridge diagnostics, and returns that structure. Future public
+  tools will store the already-safe structure on the session event.
 
 ## 6. Security & safety
 
 Unchanged from the Rust path and enforced by shared helpers:
-- Only bounded excerpts parsed; no raw stdout/stderr bodies stored or returned.
-- Paths project-relative + non-escaping; secrets scrubbed; fields length-capped;
-  20/20 result caps; deterministic ordering.
+- Only bounded excerpts / bridge diagnostics stored; no raw stdout/stderr
+  bodies returned to the model for structured adapters.
+- Paths project-relative + non-escaping; fields length-capped; 20 diagnostic
+  cap; deterministic ordering.
 - Read-only: formatters run in check mode; no writes, no autofix, no installs.
-- No network: `--outputjson`/`--check` are local; pyright/tsserver never
-  execute project code; pytest **does** import project code to collect tests
-  (documented limitation — same trust level as running `cargo test`, and only
-  under an agent-backed project the operator already trusts to run shells).
-- Missing toolchain → a clean `tool_unavailable` result (like LSP
+- No network: `--outputjson`/`--check` are local.
+- Missing toolchain → clean `tool_unavailable` (like LSP
   `lsp_server_unavailable`), never an install attempt.
 
-## 7. AGENTS.md §7 synchronization checklist (per new tool)
+## 7. AGENTS.md §7 synchronization checklist (per new public tool)
 
 Adding each generic tool must update, in one change:
 1. `ToolCall` enum + parser
 2. `KNOWN_TOOL_NAMES`
 3. tool metadata
-4. registry input/output schema (`registry/tool_specs`, `input_schemas`,
-   `output_schemas`)
-5. OAuth runtime tool policy (scope: `runtime`/`project`; read-only)
-6. OpenAPI accepted names/examples — **`callRuntimeTool` only, no dedicated
-   Action** (keep ≤30; currently 25)
+4. registry input/output schema
+5. OAuth runtime tool policy
+6. OpenAPI accepted names — **`callRuntimeTool` only**
 7. MCP schema tests
 8. consistency tests
 
-Plus: `validation_kind_for_tool`, `validation_diagnostics_from_summary`, and
-the runtime tool count references.
+Plus: `validation_kind_for_tool`, diagnostics readers, and runtime tool count
+references. **Not done yet** — no public multi-language tools in this phase.
 
-## 8. Phasing
+## 8. Implementation status
 
-- **Phase 0 — Foundation (no public surface).** `ValidationProfile` registry +
-  Python parsers (pyright JSON, pytest) producing `ValidationDiagnostics`, with
-  unit tests over captured real-tool fixtures. Decision-independent; de-risks
-  the parsing, which is the hard part.
-- **Phase 1 — Python tools.** `typecheck` (pyright) + `run_tests` (pytest)
-  wired through all §7 points; evidence flows into `validation_summary`.
-  Validate end-to-end against real pyright/pytest (ignored smoke tests, like
-  `real_pyright_document_symbols_end_to_end`).
-- **Phase 2 — Python lint/format + TypeScript.** `lint` (ruff/eslint),
-  `format_check` (black/prettier), and the TS adapters (`tsc`, `vitest`/`jest`).
-- **Phase 3 — Startup awareness.** Extend the coding-startup capability summary
-  so the chat window knows which languages it can *validate* (parallels the
-  Rust-only `semantic_navigation` summary note).
+| Item | Status |
+|---|---|
+| Rust `ValidationProfile` foundation | **implemented** |
+| Agent-side validation bridge foundation | **implemented** |
+| Internal Pyright adapter/parser | **implemented** (fixture/fake-exec tests) |
+| Public `typecheck` / `run_tests` / `lint` / `format_check` | **not implemented** |
+| Python LSP | **not implemented** (existing multi-language *navigation* LSP is separate) |
+| Product claim "Python validation supported" | **false / not claimed** |
+| `cargo_*` migration onto bridge | **not done** (intentionally unchanged) |
 
-## 9. Testing strategy
+## 9. Phasing
 
-- **Parser unit tests** over real captured fixtures (pyright JSON with
-  absolute paths → relativized; pytest failures/summaries; tsc text) — assert
-  bounded, deterministic, secret-safe output and path relativization.
-- **Fake-command routing tests** (mirror the LSP fake server): a stub script
-  emitting canned pyright/pytest output validates command selection, structured
-  parsing, and evidence recording without the real toolchain.
-- **Real-tool ignored smoke tests**: `real_pyright_typecheck_*`,
-  `real_pytest_*` (and TS) — run the true toolchain end to end through the
-  runtime, gated `#[ignore]` like the LSP real-server tests.
-- **Evidence-flow tests**: a failing typecheck event yields
-  `validation_summary.status="failed"` with `failure_kind="compile_error"` and
-  relativized diagnostics; a mixed sequence stays `mixed` with correct
-  `historical_failures`.
+- **Phase 0 — Foundation (partially done).** Rust ValidationProfile + agent-side
+  bridge + internal Pyright adapter/parser with fixture/fake-executable tests.
+  No public surface.
+- **Phase 1 — Python tools.** Public `typecheck` (pyright) + `run_tests`
+  (pytest) through §7 points; evidence into `validation_summary`.
+- **Phase 2 — Python lint/format + TypeScript.**
+- **Phase 3 — Startup awareness** of which languages can be validated.
 
-## 10. Open decisions (need confirmation)
+## 10. Testing strategy
 
-- **D1** — tool surface shape (recommend D1a: generic per-kind tools, Rust
-  stays on `cargo_*`).
+- **Parser unit tests** over fixtures (pyright JSON with absolute paths →
+  relativized).
+- **Fake-command routing tests:** stub `pyright` on `PATH` emitting canned JSON.
+- **Bridge security tests:** absolute path leak checks, traversal reject,
+  oversized output, malformed JSON, adapter/language mismatch.
+- **No real Pyright install required** for CI unit tests.
+- **Real-tool ignored smoke tests** (future): `real_pyright_typecheck_*`.
+
+## 11. Open decisions (remaining)
+
 - **D2** — auto-detect language with explicit override + `language_required`
   error for ambiguous roots (recommended).
-- **D3** — pytest evidence source: JUnit XML (robust, needs a temp file) vs
-  text scrape (no temp file, slightly less precise). Recommend JUnit XML with
-  text fallback.
-- **D4** — lint severity policy: does a lint **warning** (ruff/eslint) count as
-  a validation *failure*, or only errors? Recommend: lint failure = non-zero
-  exit (tool-defined), surfaced as `lint_error`, but never lowers a
-  `finish_coding_task` verdict on its own (advisory, like diagnostics).
-- **D5 (new, load-bearing)** — where absolute-path tools run and relativize.
-  Recommend: an **agent-side validation adapter** in `webcodex_agent`
-  (sibling to `lsp/`) that reuses the LSP path-relativization and produces the
-  shared `ValidationDiagnostics` already project-relative and bounded, returned
-  over the bridge — rather than shipping absolute paths to the server. This
-  makes structured multi-language validation a bridge feature like LSP, not a
-  plain `run_shell`-style capture. It is the biggest structural choice here and
-  should be confirmed before Phase 1.
+- **D3** — pytest evidence source: JUnit XML vs text scrape.
+- **D4** — lint severity policy for finish verdicts.
 
 ## Related
 

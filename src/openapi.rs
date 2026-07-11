@@ -2794,12 +2794,12 @@ mod tests {
             json!(["matches", "files_with_matches", "count"])
         );
         assert_eq!(flattened_props["timeout_secs"]["type"], "integer");
-        // Search timeout is server-clamped; schema must not reject out-of-range
-        // integers with minimum/maximum constraints.
+        // Search timeout is server-clamped; the dedicated SearchProjectTextRequest
+        // schema must not reject out-of-range integers with minimum/maximum.
+        // ToolCallRequest.timeout_secs is a shared flattened field also used by
+        // cargo_*/run_shell (which declare 1..120); do not require it to omit bounds.
         assert!(search_props["timeout_secs"].get("minimum").is_none());
         assert!(search_props["timeout_secs"].get("maximum").is_none());
-        assert!(flattened_props["timeout_secs"].get("minimum").is_none());
-        assert!(flattened_props["timeout_secs"].get("maximum").is_none());
         let search_timeout_desc = search_props["timeout_secs"]["description"]
             .as_str()
             .unwrap_or("");

@@ -39,6 +39,8 @@ mod shell_protocol;
 mod startup;
 mod tool_runtime;
 mod users_http;
+#[allow(dead_code)]
+mod validation_bridge;
 mod workspace_checkpoint;
 
 pub(crate) use auth::{get_db, json_error, AuthMiddleware};

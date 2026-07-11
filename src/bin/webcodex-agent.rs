@@ -14,6 +14,10 @@ use tracing_subscriber::EnvFilter;
 mod lsp_bridge;
 
 #[allow(dead_code)]
+#[path = "../validation_bridge.rs"]
+mod validation_bridge;
+
+#[allow(dead_code)]
 #[path = "../shell_protocol.rs"]
 mod shell_protocol;
 
@@ -2591,6 +2595,7 @@ shell_profile = "../rust"
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         }
     }
@@ -2651,6 +2656,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         }
     }
@@ -2686,6 +2692,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         }
     }
@@ -2719,6 +2726,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         }
     }
@@ -3193,6 +3201,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         }
     }
@@ -3225,6 +3234,7 @@ shell_profile = "../rust"
             timeout_secs: 30,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         }
     }
@@ -5732,6 +5742,7 @@ shell_profile = "../rust"
             timeout_secs: 60,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         };
 
@@ -5835,6 +5846,7 @@ shell_profile = "../rust"
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         };
         let pdir = projects_dir(&cfg);
@@ -5898,6 +5910,7 @@ shell_profile = "../rust"
                 timeout_secs: 10,
                 requested_by: "tester".to_string(),
                 created_at: 0,
+                validation: None,
                 lsp: None,
             };
             let ran = dispatch_request(
@@ -5957,6 +5970,7 @@ shell_profile = "../rust"
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         }
     }

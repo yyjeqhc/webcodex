@@ -1963,6 +1963,7 @@ mod tests {
             timeout_secs: 5,
             requested_by: "tester".to_string(),
             created_at: 0,
+            validation: None,
             lsp: None,
         }
     }

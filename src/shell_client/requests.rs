@@ -100,6 +100,7 @@ impl ShellClientRegistry {
             timeout_secs: 30,
             requested_by,
             created_at: now_ts(),
+            validation: None,
             lsp: None,
         };
         let mut inner = self.inner.lock().await;
@@ -145,6 +146,7 @@ impl ShellClientRegistry {
             timeout_secs: body.timeout_secs,
             requested_by,
             created_at: now_ts(),
+            validation: None,
             lsp: None,
         };
         let mut inner = self.inner.lock().await;
@@ -209,6 +211,7 @@ impl ShellClientRegistry {
             timeout_secs: 30,
             requested_by,
             created_at: now_ts(),
+            validation: None,
             lsp: None,
         };
         let mut inner = self.inner.lock().await;
@@ -270,6 +273,7 @@ impl ShellClientRegistry {
             timeout_secs: timeout_secs.max(1),
             requested_by,
             created_at: now_ts(),
+            validation: None,
             lsp: Some(payload),
         };
         let mut inner = self.inner.lock().await;

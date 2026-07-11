@@ -85,6 +85,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
+            "validation_summary",
             "validate_patch",
             "apply_patch_checked",
         ],
@@ -223,7 +224,13 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "Validate: use cargo_check / cargo_test / validate_patch when applicable. raw run_shell is a bounded escape hatch, not the primary editing or validation path.",
         manifest_purpose:
             "Use structured validation; run_shell is a bounded diagnostics escape hatch, not the primary validation path.",
-        tools: &["cargo_check", "cargo_test", "validate_patch", "run_shell"],
+        tools: &[
+            "cargo_check",
+            "cargo_test",
+            "validation_summary",
+            "validate_patch",
+            "run_shell",
+        ],
     },
     ToolRecommendedFlow {
         name: "review",
@@ -239,6 +246,7 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "finish_coding_task",
             "session_summary",
             "session_handoff_summary",
+            "validation_summary",
         ],
     },
 ];
@@ -272,6 +280,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
+            "validation_summary",
             // review
             "show_changes",
             "git_diff_hunks",
@@ -301,6 +310,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "workspace_hygiene_check",
             "finish_coding_task",
             "session_handoff_summary",
+            "validation_summary",
             "tool_manifest",
         ],
     },
@@ -330,6 +340,7 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
+            "validation_summary",
             "list_jobs",
             "show_changes",
             "finish_coding_task",

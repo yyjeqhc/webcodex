@@ -1,11 +1,13 @@
-use super::AgentCapability::GitOrShell;
+use super::AgentCapability::{GitOrShell, OwnerOnly};
 use super::ToolVisibility::ModelVisible;
 use super::{
     creates_or_binds_session, def, extra_accepted_flattened_args,
     requires_explicit_business_session, ToolDefinition, TOOL_CATEGORY_SESSION,
+    TOOL_CATEGORY_VALIDATION,
 };
 use crate::tool_runtime::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::ReadOnly, RUNTIME_READ, TOOL_PROVIDER_CONTROL,
+    ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ, RUNTIME_READ,
+    TOOL_PROVIDER_CONTROL,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -60,6 +62,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ReadOnly,
         Some(RUNTIME_READ),
         false,
+        NoPath,
+        false,
+        false,
+    )),
+    requires_explicit_business_session(def(
+        "validation_summary",
+        ModelVisible,
+        TOOL_CATEGORY_VALIDATION,
+        Some(OwnerOnly),
+        TOOL_PROVIDER_CONTROL,
+        ReadOnly,
+        Some(PROJECT_READ),
+        true,
         NoPath,
         false,
         false,

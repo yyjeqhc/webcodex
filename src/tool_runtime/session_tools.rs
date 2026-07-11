@@ -37,6 +37,14 @@ impl ToolRuntime {
             ToolCall::SessionSummary { session_id, limit } => {
                 self.session_summary_tool(session_id, limit)
             }
+            ToolCall::ValidationSummary {
+                project,
+                session_id,
+                limit,
+            } => {
+                self.validation_summary_tool(project, session_id, limit, auth)
+                    .await
+            }
             ToolCall::PostSessionMessage {
                 session_id,
                 kind,

@@ -8,15 +8,23 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use super::session_context::{
+    session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
+};
 use super::sessions::{SessionEvent, SessionSummary};
 use super::validation_parser::{
     parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, ValidationDiagnostics,
     PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION, VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
 };
+use super::{ToolResult, ToolRuntime};
+use crate::auth::AuthContext;
 
 const DEFAULT_VALIDATION_EVENT_LIMIT: usize = 10;
 const VALIDATION_SOURCE: &str = "session_ledger";
 const VALIDATION_PARSER_SOURCE: &str = "bounded_validation_metadata";
+const DEFAULT_PUBLIC_VALIDATION_EVENT_LIMIT: usize = 20;
+const MAX_PUBLIC_VALIDATION_EVENT_LIMIT: usize = 100;
+const PUBLIC_VALIDATION_SESSION_EVENT_LIMIT: usize = 200;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ValidationEvent {
@@ -96,6 +104,59 @@ struct ValidationHistoricalFailures {
 
 pub(crate) fn validation_summary_for_session(summary: &SessionSummary) -> Value {
     validation_summary_from_events(&summary.events, DEFAULT_VALIDATION_EVENT_LIMIT)
+}
+
+impl ToolRuntime {
+    pub(crate) async fn validation_summary_tool(
+        &self,
+        project: String,
+        session_id: String,
+        limit: Option<usize>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
+            Ok(resolved) => resolved,
+            Err(err) => return err.into_tool_result(),
+        };
+        let Some(summary) = self
+            .sessions
+            .summary(&session_id, Some(PUBLIC_VALIDATION_SESSION_EVENT_LIMIT))
+        else {
+            return unknown_session_result(&session_id);
+        };
+        if summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
+            let mismatch = SessionProjectMismatch {
+                session_project: summary.project.unwrap_or_else(|| "<unscoped>".to_string()),
+                request_project: resolved.resolved_id,
+            };
+            return session_project_mismatch_result(&session_id, "validation_summary", &mismatch);
+        }
+        let limit = limit
+            .unwrap_or(DEFAULT_PUBLIC_VALIDATION_EVENT_LIMIT)
+            .clamp(1, MAX_PUBLIC_VALIDATION_EVENT_LIMIT);
+        let mut validation = validation_summary_from_events(&summary.events, limit);
+        remove_public_validation_input_summaries(&mut validation);
+        ToolResult::ok(json!({
+            "project": resolved.resolved_id,
+            "session_id": session_id,
+            "validation": validation,
+        }))
+    }
+}
+
+fn remove_public_validation_input_summaries(validation: &mut Value) {
+    for field in ["latest", "latest_success", "latest_failure"] {
+        if let Some(event) = validation.get_mut(field).and_then(Value::as_object_mut) {
+            event.remove("input_summary");
+        }
+    }
+    if let Some(events) = validation.get_mut("events").and_then(Value::as_array_mut) {
+        for event in events {
+            if let Some(event) = event.as_object_mut() {
+                event.remove("input_summary");
+            }
+        }
+    }
 }
 
 pub(crate) fn skipped_validation_summary() -> Value {

@@ -488,7 +488,7 @@ fn coding_task_semantic_navigation_output_schema_is_explicit_and_surface_counts_
     let specs = registered_tool_specs();
     let runtime_tool_count = specs.len();
     assert_eq!(
-        runtime_tool_count, 74,
+        runtime_tool_count, 75,
         "runtime tool count must remain stable"
     );
     assert_eq!(runtime_tool_count, known_tool_names().count());

@@ -127,6 +127,16 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Read bounded structured validation evidence already present in an
+    /// explicit project-scoped session ledger. Never executes validation,
+    /// shell commands, agent requests, or project file reads.
+    ValidationSummary {
+        project: String,
+        session_id: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
     /// Post a bounded session-local ledger message for collaboration, progress,
     /// guidance, or design discussion. This is session metadata only.
     PostSessionMessage {
@@ -1068,6 +1078,7 @@ impl ToolCall {
             Self::StartCodingTask { .. } => "start_coding_task",
             Self::FinishCodingTask { .. } => "finish_coding_task",
             Self::SessionSummary { .. } => "session_summary",
+            Self::ValidationSummary { .. } => "validation_summary",
             Self::PostSessionMessage { .. } => "post_session_message",
             Self::ListSessionMessages { .. } => "list_session_messages",
             Self::ResolveSessionMessage { .. } => "resolve_session_message",
@@ -1318,6 +1329,7 @@ impl ToolCall {
             Self::StartCodingTask { project, .. } | Self::FinishCodingTask { project, .. } => {
                 Some(project.as_str())
             }
+            Self::ValidationSummary { project, .. } => Some(project.as_str()),
             Self::SessionHandoffSummary { project, .. } => project.as_deref(),
             _ => None,
         }

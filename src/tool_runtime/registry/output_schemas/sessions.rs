@@ -88,6 +88,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
+        "validation_summary" => Some(validation_summary_tool_output_schema()),
         "post_session_message" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             (
@@ -402,6 +403,208 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         _ => None,
     }
+}
+
+fn validation_summary_tool_output_schema() -> Value {
+    let mut schema = wrapped_output_schema(vec![
+        (
+            "project",
+            schema_type("string", "Resolved complete runtime project id."),
+        ),
+        (
+            "session_id",
+            schema_type("string", "Explicit business session id queried."),
+        ),
+        ("validation", validation_evidence_schema()),
+    ]);
+    schema["properties"]["output"]["additionalProperties"] = json!(false);
+    schema
+}
+
+fn validation_evidence_schema() -> Value {
+    let event = validation_event_schema();
+    json!({
+        "type": "object",
+        "description": "Bounded deterministic validation evidence derived only from safe session-ledger metadata. Never contains commands, raw event payloads, validation excerpts, full stdout/stderr, environment variables, or root-cause inference.",
+        "additionalProperties": false,
+        "properties": {
+            "available": schema_type("boolean", "True when validation-like ledger events exist."),
+            "status": { "type": "string", "enum": ["not_run", "passed", "failed", "mixed", "unknown"] },
+            "reason": { "anyOf": [{"type": "string"}, {"type": "null"}] },
+            "latest": { "anyOf": [event.clone(), {"type": "null"}] },
+            "latest_status": { "type": "string", "enum": ["not_run", "passed", "failed", "unknown"] },
+            "historical_failures": validation_historical_failures_schema(),
+            "source": { "type": "string", "enum": ["session_ledger"] },
+            "events_total": { "type": "integer", "minimum": 0 },
+            "successes": { "type": "integer", "minimum": 0 },
+            "failures": { "type": "integer", "minimum": 0 },
+            "latest_success": event.clone(),
+            "latest_failure": event.clone(),
+            "events": {
+                "type": "array",
+                "maxItems": 100,
+                "items": event,
+                "description": "Bounded validation history only; never raw session events."
+            },
+            "parser": validation_parser_metadata_schema(),
+            "cargo_test_zero_tests_run": schema_type("boolean", "True when a successful cargo_test event explicitly reported zero tests run."),
+            "skipped": schema_type("boolean", "True only when validation summary generation was explicitly skipped by a closeout caller.")
+        },
+        "required": [
+            "available", "status", "reason", "latest", "latest_status",
+            "historical_failures", "source", "events_total", "events", "parser",
+            "cargo_test_zero_tests_run"
+        ]
+    })
+}
+
+fn validation_historical_failures_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "count": { "type": "integer", "minimum": 0 },
+            "resolved": { "type": "boolean" },
+            "unresolved": { "type": "boolean" }
+        },
+        "required": ["count", "resolved", "unresolved"]
+    })
+}
+
+fn validation_parser_metadata_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "available": { "type": "boolean" },
+            "kind": { "type": "string", "enum": ["structured_validation_parser"] },
+            "version": { "type": "integer", "enum": [2] },
+            "source": { "type": "string", "enum": ["bounded_validation_metadata"] },
+            "raw_output_exposed": { "type": "boolean", "enum": [false] },
+            "limitations": {
+                "type": "array",
+                "maxItems": 3,
+                "items": { "type": "string", "maxLength": 160 }
+            },
+            "reason": { "type": "string", "maxLength": 160 }
+        },
+        "required": ["available", "kind", "version", "source", "raw_output_exposed", "limitations"]
+    })
+}
+
+fn validation_event_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "tool_name": { "type": "string", "enum": ["cargo_fmt", "cargo_check", "cargo_test", "validate_patch", "apply_patch_checked"] },
+            "validation_kind": { "type": "string", "enum": ["format", "check", "test", "patch_preflight", "patch_apply_checked"] },
+            "success": { "type": "boolean" },
+            "failure_kind": { "type": "string", "enum": ["compile_error", "test_failure", "timeout", "process_exit", "format_diff", "unknown"] },
+            "exit_code": { "type": "integer" },
+            "summary": { "type": "string", "maxLength": 80 },
+            "project": { "type": "string", "maxLength": 512 },
+            "session_id": { "type": "string", "maxLength": 128 },
+            "started_at": { "type": "integer" },
+            "completed_at": { "type": "integer" },
+            "duration_ms": { "type": "integer", "minimum": 0 },
+            "affected_paths": {
+                "type": "array",
+                "maxItems": 20,
+                "items": { "type": "string", "maxLength": 512 }
+            },
+            "diagnostics": validation_diagnostics_schema(),
+            "tests_detected": { "type": "boolean" },
+            "tests_run_count": { "type": "integer", "minimum": 0 },
+            "zero_tests_run": { "type": "boolean" }
+        },
+        "required": ["tool_name", "validation_kind", "success", "failure_kind", "summary", "session_id"]
+    })
+}
+
+fn validation_diagnostics_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "available": { "type": "boolean" },
+            "parser": { "type": "string", "enum": ["structured_validation_parser"] },
+            "reason": { "type": "string", "maxLength": 160 },
+            "diagnostic_count": { "type": "integer", "minimum": 0 },
+            "diagnostics": {
+                "type": "array",
+                "maxItems": 20,
+                "items": cargo_diagnostic_schema()
+            },
+            "returned_diagnostic_count": { "type": "integer", "minimum": 0, "maximum": 20 },
+            "diagnostics_truncated": { "type": "boolean" },
+            "invalid_diagnostics_omitted": { "type": "integer", "minimum": 0 },
+            "first_diagnostic": cargo_diagnostic_schema(),
+            "test_summary": cargo_test_summary_schema(),
+            "failed_tests": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": { "type": "string", "maxLength": 240 }
+            },
+            "failed_test_details": {
+                "type": "array",
+                "maxItems": 20,
+                "items": failed_test_detail_schema()
+            },
+            "first_failed_test": { "type": "string", "maxLength": 240 },
+            "failed_tests_truncated": { "type": "boolean" },
+            "truncated": { "type": "boolean" }
+        },
+        "required": [
+            "available", "parser", "diagnostics", "returned_diagnostic_count",
+            "diagnostics_truncated", "invalid_diagnostics_omitted", "failed_tests",
+            "failed_test_details", "failed_tests_truncated"
+        ]
+    })
+}
+
+fn cargo_diagnostic_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "severity": { "type": "string", "enum": ["error", "warning", "unknown"] },
+            "code": { "type": "string", "maxLength": 64 },
+            "file": { "type": "string", "maxLength": 512 },
+            "line": { "type": "integer", "minimum": 1 },
+            "column": { "type": "integer", "minimum": 1 },
+            "message": { "type": "string", "maxLength": 240 }
+        },
+        "required": ["severity", "message"]
+    })
+}
+
+fn failed_test_detail_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "name": { "type": "string", "maxLength": 240 },
+            "failure_kind": { "type": "string", "enum": ["assertion", "panic", "unknown"] },
+            "file": { "anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}] },
+            "line": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] },
+            "column": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] }
+        },
+        "required": ["name", "failure_kind", "file", "line", "column"]
+    })
+}
+
+fn cargo_test_summary_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "passed": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "integer", "minimum": 0 },
+            "ignored": { "type": "integer", "minimum": 0 }
+        }
+    })
 }
 
 fn review_evidence_schema(description: &str) -> Value {

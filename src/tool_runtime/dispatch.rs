@@ -262,6 +262,7 @@ impl ToolRuntime {
 
             call @ (ToolCall::StartSession { .. }
             | ToolCall::SessionSummary { .. }
+            | ToolCall::ValidationSummary { .. }
             | ToolCall::PostSessionMessage { .. }
             | ToolCall::ListSessionMessages { .. }
             | ToolCall::ResolveSessionMessage { .. }

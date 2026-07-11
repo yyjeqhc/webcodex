@@ -1318,8 +1318,17 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    // cargo_* are validation; validate_patch/apply_patch_checked are patch.
-    assert_eq!(names, vec!["cargo_fmt", "cargo_check", "cargo_test"]);
+    // cargo_* and validation_summary are validation;
+    // validate_patch/apply_patch_checked remain patch.
+    assert_eq!(
+        names,
+        vec![
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "validation_summary"
+        ]
+    );
 }
 
 #[tokio::test]

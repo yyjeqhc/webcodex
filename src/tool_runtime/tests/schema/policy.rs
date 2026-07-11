@@ -208,6 +208,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         vec![
             "finish_coding_task",
             "session_summary",
+            "validation_summary",
             "post_session_message",
             "list_session_messages",
             "resolve_session_message",

@@ -76,11 +76,8 @@ pub(crate) struct CargoDiagnostic {
 pub(crate) struct FailedTestDetail {
     pub(crate) name: String,
     pub(crate) failure_kind: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) file: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) line: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) column: Option<u64>,
 }
 

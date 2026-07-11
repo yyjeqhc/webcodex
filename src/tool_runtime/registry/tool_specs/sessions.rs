@@ -2,7 +2,7 @@ use super::super::input_schemas::{
     current_session_input_schema, list_session_messages_input_schema,
     post_session_message_input_schema, resolve_session_message_input_schema,
     session_discussion_summary_input_schema, session_handoff_summary_input_schema,
-    session_summary_input_schema, start_session_input_schema,
+    session_summary_input_schema, start_session_input_schema, validation_summary_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -18,6 +18,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "session_summary",
             "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, and guards. Uses durable ledger data where session persistence is configured; does not rely on current-session binding.",
             session_summary_input_schema(),
+        ),
+        tool_spec(
+            "validation_summary",
+            "Read bounded structured validation evidence already recorded in an explicit project-scoped session ledger. Does not run Cargo or shell commands, enqueue an agent request, read project files, mutate the workspace, or replace finish_coding_task.",
+            validation_summary_input_schema(),
         ),
         tool_spec(
             "post_session_message",

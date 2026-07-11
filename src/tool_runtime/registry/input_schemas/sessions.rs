@@ -148,6 +148,33 @@ pub(crate) fn session_summary_input_schema() -> Value {
     ])
 }
 
+pub(crate) fn validation_summary_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Required complete runtime project id from list_projects. Must match the project scoped to session_id."
+            },
+            "session_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Required explicit wc_sess_* business session id. The tool never falls back to current session."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 20,
+                "description": "Maximum validation history events returned. Defaults to 20 and is clamped to 1..100; per-event parser evidence keeps its own fixed bounds."
+            }
+        },
+        "required": ["project", "session_id"],
+        "additionalProperties": false
+    })
+}
+
 pub(crate) fn session_discussion_summary_input_schema() -> Value {
     json!({
         "type": "object",

@@ -434,6 +434,7 @@ mod tests {
         let registry_names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
         assert!(registry_names.contains(&"start_session"));
         assert!(registry_names.contains(&"session_summary"));
+        assert!(registry_names.contains(&"validation_summary"));
         assert!(registry_names.contains(&"bind_current_session"));
         assert!(registry_names.contains(&"current_session"));
         assert!(registry_names.contains(&"unbind_current_session"));
@@ -456,6 +457,7 @@ mod tests {
             .collect();
         assert!(names.iter().any(|name| name == "start_session"));
         assert!(names.iter().any(|name| name == "session_summary"));
+        assert!(names.iter().any(|name| name == "validation_summary"));
         assert!(names.iter().any(|name| name == "bind_current_session"));
         assert!(names.iter().any(|name| name == "current_session"));
         assert!(names.iter().any(|name| name == "unbind_current_session"));
@@ -490,6 +492,7 @@ mod tests {
         };
         assert!(tool_description("start_session").contains("explicit wc_sess_* session_id"));
         assert!(tool_description("session_summary").contains("session ledger"));
+        assert!(tool_description("validation_summary").contains("does not run cargo"));
         assert!(tool_description("session_handoff_summary")
             .contains("does not depend on current-session binding"));
         for name in [
@@ -518,6 +521,18 @@ mod tests {
             .unwrap()
             .iter()
             .any(|field| field == "session_id"));
+        let validation_summary = tools
+            .iter()
+            .find(|tool| tool["name"] == "validation_summary")
+            .expect("missing MCP validation_summary tool");
+        assert_eq!(
+            validation_summary["inputSchema"]["required"],
+            json!(["project", "session_id"])
+        );
+        assert_eq!(
+            validation_summary["inputSchema"]["additionalProperties"],
+            false
+        );
         for name in ["read_file", "run_shell", "write_project_file"] {
             let tool = tools
                 .iter()

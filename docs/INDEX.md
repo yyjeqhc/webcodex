@@ -14,7 +14,7 @@ Start with the README, [QUICK_START.md](QUICK_START.md), and [DEMO.md](DEMO.md).
 
 ## Client Integration
 
-6. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) - remote MCP endpoint, authentication, default coding loop, and common MCP errors.
+6. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) - remote MCP endpoint, authentication, default coding loop, read-only LSP intelligence, and common MCP errors.
 7. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) - Custom GPT setup, OpenAPI import, authentication, and workflow guidance.
 8. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) - screenshots used by MCP and GPT Actions guides.
 
@@ -37,7 +37,7 @@ Start with the README, [QUICK_START.md](QUICK_START.md), and [DEMO.md](DEMO.md).
 
 18. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) / [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) - agent project registry format and runtime project ids.
 19. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) - QUIC, WebSocket, polling, fallback, and transport validation.
-20. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) - agent auth, identity, protocol, and redacted policy summaries.
+20. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) - agent auth, identity, typed read-only LSP bridge, protocol, and redacted policy summaries.
 21. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) - prepared shell environment snapshots and safety boundaries.
 22. [LSP_NAVIGATION.md](LSP_NAVIGATION.md) - read-only Rust LSP navigation tools, startup capability summary, boundaries, limits, and error codes.
 

@@ -129,19 +129,27 @@ finish:
 导航到 dependencies。它们不提供 client-controlled document synchronization，也不
 提供任何 write operation。已验证且打开的 `.rs` 文件只通过当前磁盘内容进行 full-text
 sync。`document_diagnostics` 使用 bounded rust-analyzer publications，并明确返回
-`fresh` / `timed_out`；它是快速语义反馈，不是 Cargo check。可用性取决于所选 agent 是否声明
+`fresh` / `timed_out`；它是快速语义反馈，不是 Cargo check。在 constrained profile 下，
+可能没有 diagnostic publication；此时会成功返回 empty 或 stale 结果，并设置
+`fresh=false`、`timed_out=true`。可用性取决于所选 agent 是否声明
 `lsp_read_only_navigation`。
 
 当 `start_coding_task.semantic_navigation.recommended=true` 时，推荐：
 
 ```text
-document_symbols
+start_coding_task
+→ document_symbols / workspace_symbols
 → goto_definition / find_references / hover
 → read_file
+→ edit
+→ document_diagnostics
+→ cargo_check / cargo_test
 ```
 
 尚不知道相关源码文件时，可将 `workspace_symbols` 作为 bounded 补充；它不替代更聚焦的
 `document_symbols` flow。
+所有 symbol 和 hover locations 都会经过 workspace filtering。Dependency navigation
+仍不支持。`document_diagnostics` 不能替代最终 Cargo validation。
 
 semantic navigation 不可用时，使用：
 

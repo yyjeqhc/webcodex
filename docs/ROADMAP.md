@@ -16,11 +16,18 @@ This roadmap is intentionally short. WebCodex 0.2.x is about making online AI co
 - Read-only symbol navigation.
 - Startup capability awareness.
 
+## LSP Phase 2 Read-Only MVP: Completed
+
+- Disk-backed full-text document refresh (`didOpen` / `didChange`), without editor-style incremental sync.
+- Bounded `document_diagnostics` with explicit freshness and timeout semantics.
+- Normalized, bounded hover.
+- Workspace-only symbol search with project-relative results.
+- ToolRuntime, MCP, generic GPT Action, OAuth, schema, and startup capability synchronization.
+
 ## Future LSP Work
 
-- Diagnostics.
-- Workspace symbols.
-- Rename and code actions.
+- Broader diagnostics fidelity beyond the constrained rust-analyzer profile.
+- Explicitly designed write capabilities such as rename and code actions (not part of the read-only MVP).
 - More languages.
 
 ## Future Coding Intelligence

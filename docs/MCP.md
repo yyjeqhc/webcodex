@@ -131,19 +131,28 @@ client-controlled document synchronization or any write operation. Validated
 open `.rs` files refresh from current disk content with full-text sync only.
 `document_diagnostics` uses bounded rust-analyzer publications and returns
 explicit `fresh` / `timed_out` state; it is fast semantic feedback, not Cargo
-check. Availability depends on the selected agent advertising
+check. Under the constrained profile, no diagnostic publication may arrive;
+that is a successful empty or stale result with `fresh=false` and
+`timed_out=true`. Availability depends on the selected agent advertising
 `lsp_read_only_navigation`.
 
-When `start_coding_task.semantic_navigation.recommended=true`, prefer:
+When `start_coding_task.semantic_navigation.recommended=true`, use:
 
 ```text
-document_symbols
+start_coding_task
+→ document_symbols / workspace_symbols
 → goto_definition / find_references / hover
 → read_file
+→ edit
+→ document_diagnostics
+→ cargo_check / cargo_test
 ```
 
 Use `workspace_symbols` as a bounded fallback when the relevant source file is
 not yet known; it does not replace the more focused `document_symbols` flow.
+All symbol and hover locations are workspace-filtered. Dependency navigation
+remains unsupported. `document_diagnostics` never substitutes for final Cargo
+validation.
 
 When semantic navigation is unavailable, use:
 

@@ -75,8 +75,23 @@ find references、document diagnostics、hover，以及 workspace symbols。Agen
 diagnostics 使用每个 server instance 独立的 bounded `publishDiagnostics` cache，
 并明确报告结果是否 fresh，或共享的两秒等待是否 timed out。
 
+带 document 的 operations 只接受 project-relative `.rs` path。Agent 从 canonical
+project root 读取已验证的普通文件，在启动 server 前执行 LSP document byte cap，
+并发送 disk-backed full-text `didOpen` / `didChange` notifications。模型不能提供
+document text 或 incremental edit payload。Workspace-symbol query 会 trim，trim 后
+必须非空且不超过 200 字符；result limit 会 clamp 到 1..200。
+
+Diagnostics cache 对每个 server instance 最多保留 256 个 URI，每个 URI 最多 500 条
+raw diagnostics，并且只保留 latest publication。`fresh=true` 表示 publication version
+匹配当前 document，或观察到 prepare generation 之后的新 publication；
+`timed_out=true` 是成功返回 stale/empty 结果，不是 transport error。Server unavailable
+或 crash 仍返回 structured LSP error。Hover 和 symbol results 会在 transport 前完成
+normalize 和 bound。
+
 不提供 arbitrary LSP-method passthrough。Agent 只在已注册 project boundary 内
-解析请求，并在本地运行 language server。未声明
+解析请求，并在本地运行 language server。
+Project 外部、dependency、registry 和 sysroot locations 会从 public results 中省略；
+不会返回 absolute path 或 file URI。未声明
 `lsp_read_only_navigation` 的旧 agent 会被视为这些 tools 不可用，并安全失败；
 其他已支持的操作仍可继续使用。
 

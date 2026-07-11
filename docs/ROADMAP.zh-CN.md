@@ -16,11 +16,18 @@
 - read-only symbol navigation。
 - startup capability awareness。
 
+## LSP Phase 2 Read-Only MVP：已完成
+
+- disk-backed full-text document refresh（`didOpen` / `didChange`），不支持 editor-style incremental sync。
+- bounded `document_diagnostics`，明确提供 freshness 和 timeout 语义。
+- normalized、bounded hover。
+- workspace-only symbol search，结果只含 project-relative path。
+- ToolRuntime、MCP、generic GPT Action、OAuth、schema 和 startup capability 同步。
+
 ## 后续 LSP 工作
 
-- diagnostics。
-- workspace symbols。
-- rename 和 code actions。
+- constrained rust-analyzer profile 之外更完整的 diagnostics fidelity。
+- 经过明确设计的 rename、code action 等写能力（不属于 read-only MVP）。
 - 更多 languages。
 
 ## 后续 Coding Intelligence

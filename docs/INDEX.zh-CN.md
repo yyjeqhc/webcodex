@@ -14,7 +14,7 @@
 
 ## Client Integration
 
-6. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、默认 coding loop 和常见 MCP 错误。
+6. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、默认 coding loop、read-only LSP intelligence 和常见 MCP 错误。
 7. [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) / [GPT_ACTIONS.md](GPT_ACTIONS.md) - Custom GPT 设置、OpenAPI 导入、认证和 workflow guidance。
 8. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) - MCP 和 GPT Actions 指南使用的截图。
 
@@ -37,7 +37,7 @@
 
 18. [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) / [AGENT_PROJECTS.md](AGENT_PROJECTS.md) - agent project registry 格式和 runtime project ids。
 19. [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) / [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) - QUIC、WebSocket、polling、fallback 和 transport validation。
-20. [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) / [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) - agent auth、identity、protocol 和 redacted policy summaries。
+20. [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) / [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) - agent auth、identity、typed read-only LSP bridge、protocol 和 redacted policy summaries。
 21. [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) / [SHELL_PROFILES.md](SHELL_PROFILES.md) - prepared shell environment snapshots 和 safety boundaries。
 22. [LSP_NAVIGATION.md](LSP_NAVIGATION.md) - 只读 Rust LSP 导航工具、startup capability summary、边界、限制和 error codes。
 

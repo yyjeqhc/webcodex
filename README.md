@@ -150,13 +150,27 @@ For a walkthrough of the expected tool flow, see [docs/DEMO.md](docs/DEMO.md).
 WebCodex is designed around a conservative coding loop:
 
 1. `start_coding_task` - create an explicit session and collect bounded startup context.
-2. Inspect - use `list_project_files`, `search_project_text`, `read_file`, optional read-only LSP navigation (`lsp_status`, `document_symbols`, `goto_definition`, `find_references`), and Git status tools.
+2. Inspect - use `list_project_files`, `search_project_text`, `read_file`, optional read-only LSP intelligence (`lsp_status`, `document_symbols`, `workspace_symbols`, `goto_definition`, `find_references`, `hover`), and Git status tools.
 3. Edit - prefer `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
 4. Validate - run `validate_patch`, `cargo_fmt`, `cargo_check`, or `cargo_test` where appropriate.
 5. Inspect outcome - use `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`.
 6. Finish - use `finish_coding_task` or `session_handoff_summary` for a compact closeout.
 
 `start_coding_task` always returns a compact `semantic_navigation` summary so the coding loop can decide whether to prefer the seven Rust LSP tools. Its bounded status-only probe inspects Rust workspace detection, rust-analyzer availability, and an existing supervisor slot without starting rust-analyzer, running Cargo, or injecting symbol, definition, or reference data. The capability is read-only and workspace-only; dependency navigation remains limited by `cargo.noDeps=true`. Open Rust documents are refreshed from validated workspace files with bounded full-text `didChange` notifications; editor-style incremental synchronization is not supported. An unavailable, crashed, legacy, disconnected, or timed-out LSP path does not block coding-task startup or change its startup verdict.
+
+For Rust projects, the recommended semantic feedback loop is:
+
+```text
+start_coding_task
+→ document_symbols / workspace_symbols
+→ goto_definition / find_references / hover
+→ read_file
+→ edit
+→ document_diagnostics
+→ cargo_check / cargo_test
+```
+
+`document_diagnostics` is quick, bounded rust-analyzer feedback. The constrained profile can return no diagnostics or time out waiting for a fresh publication, and it never replaces final Cargo validation.
 
 `run_shell` and `run_job` exist for bounded escape hatches. They are powerful and should not be the default editing or validation path.
 

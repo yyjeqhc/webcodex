@@ -70,13 +70,30 @@ The server routes project tool calls to the owning connected agent.
 Agents that support read-only LSP intelligence register the
 `lsp_read_only_navigation` capability. The server sends only typed
 `AgentLspRequest` operations: status, document symbols, go to definition, find
-references, document diagnostics, hover, and workspace symbols. The agent returns a versioned
-`AgentLspResultEnvelope` with a success result or a structured error. Document
+references, document diagnostics, hover, and workspace symbols. The agent
+returns a versioned `AgentLspResultEnvelope` with a success result or a
+structured error. Document
 diagnostics use an instance-local bounded `publishDiagnostics` cache and report
 whether the result is fresh or the shared two-second wait timed out.
 
+Document-bearing operations accept project-relative `.rs` paths only. The agent
+reads the validated regular file from the canonical project root, enforces the
+LSP document byte cap before server startup, and sends disk-backed full-text
+`didOpen` / `didChange` notifications. Models cannot supply document text or an
+incremental edit payload. Workspace-symbol queries are trimmed, non-empty, and
+bounded to 200 characters; result limits are clamped to 1..200.
+
+For diagnostics, each server instance retains the latest publication for at
+most 256 URIs and at most 500 raw diagnostics per URI. `fresh=true` means a
+matching current document version or a publication newer than the prepare
+generation was observed. `timed_out=true` is a successful stale/empty result,
+not a transport error. Server unavailability and crashes remain structured LSP
+errors. Hover and symbol results are normalized and bounded before transport.
+
 There is no arbitrary LSP-method passthrough. The agent resolves requests only
 inside the registered project boundary and runs the language server locally.
+External, dependency, registry, and sysroot locations are omitted from public
+results; absolute paths and file URIs are never returned.
 An older agent that does not advertise `lsp_read_only_navigation` is treated as
 unavailable for these tools and fails safely; its other supported operations
 continue to work.

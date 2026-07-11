@@ -150,6 +150,27 @@ impl NavFixture {
             },
         })
     }
+
+    fn hover(&self, line: usize, column: usize) -> Value {
+        self.request(AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::Hover {
+                path: "src/main.rs".into(),
+                line,
+                column,
+            },
+        })
+    }
+
+    fn workspace_symbols(&self, query: &str, limit: usize) -> Value {
+        self.request(AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::WorkspaceSymbols {
+                query: query.into(),
+                limit,
+            },
+        })
+    }
 }
 
 #[test]
@@ -498,6 +519,172 @@ fn document_diagnostics_ignores_wrong_external_and_malformed_notifications() {
     assert_eq!(malformed["success"], true, "{malformed}");
     assert_eq!(malformed["result"]["fresh"], true);
     assert_eq!(malformed["result"]["timed_out"], false);
+}
+
+#[test]
+fn hover_normalizes_markup_content_string_and_marked_string_forms() {
+    let markdown = NavFixture::new("hover_markup_markdown").hover(1, 1);
+    assert_eq!(markdown["success"], true, "{markdown}");
+    assert_eq!(markdown["result"]["hover"]["kind"], "markdown");
+    assert_eq!(markdown["result"]["hover"]["value"], "**main** docs");
+    assert_eq!(
+        markdown["result"]["hover"]["range"]["start"],
+        serde_json::json!({"line": 1, "column": 1})
+    );
+
+    let plaintext = NavFixture::new("hover_markup_plaintext").hover(1, 1);
+    assert_eq!(plaintext["result"]["hover"]["kind"], "plaintext");
+    assert_eq!(plaintext["result"]["hover"]["value"], "plain docs");
+
+    let string = NavFixture::new("hover_string").hover(1, 1);
+    assert_eq!(string["result"]["hover"]["kind"], "markdown");
+    assert_eq!(string["result"]["hover"]["value"], "string docs");
+
+    let marked = NavFixture::new("hover_marked_string").hover(1, 1);
+    let marked_value = marked["result"]["hover"]["value"].as_str().unwrap();
+    assert!(marked_value.starts_with("```rust\n"), "{marked_value}");
+    assert!(marked_value.ends_with("\n```"), "{marked_value}");
+}
+
+#[test]
+fn hover_normalizes_arrays_null_bounds_ranges_and_utf16() {
+    let array = NavFixture::new("hover_array").hover(1, 1);
+    assert_eq!(array["success"], true, "{array}");
+    let value = array["result"]["hover"]["value"].as_str().unwrap();
+    assert!(value.starts_with("first\n\n```rust"), "{value}");
+    assert!(value.ends_with("\n\nlast"), "{value}");
+
+    let null = NavFixture::new("hover_null").hover(1, 1);
+    assert_eq!(null["success"], true, "{null}");
+    assert_eq!(null["result"]["hover"], serde_json::Value::Null);
+    assert_eq!(null["result"]["truncated"], false);
+
+    let oversized = NavFixture::new("hover_oversized").hover(1, 1);
+    assert_eq!(oversized["result"]["truncated"], true);
+    assert!(
+        oversized["result"]["hover"]["value"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count()
+            <= 16 * 1024
+    );
+
+    let invalid = NavFixture::new("hover_invalid_range").hover(1, 1);
+    assert_eq!(invalid["result"]["hover"]["range"], serde_json::Value::Null);
+    assert_eq!(invalid["result"]["range_omitted"], true);
+
+    let emoji = NavFixture::new("hover_utf16").hover(3, 4);
+    assert_eq!(emoji["success"], true, "{emoji}");
+    assert_eq!(
+        emoji["result"]["hover"]["range"],
+        serde_json::json!({
+            "start": {"line": 3, "column": 4},
+            "end": {"line": 3, "column": 5}
+        })
+    );
+}
+
+#[test]
+fn hover_sanitizes_private_material_and_rejects_malformed_contents() {
+    let sanitized = NavFixture::new("hover_sanitizer").hover(1, 1);
+    assert_eq!(sanitized["success"], true, "{sanitized}");
+    let serialized = sanitized.to_string();
+    assert!(!serialized.contains("file://"), "{serialized}");
+    assert!(!serialized.contains("/secret/"), "{serialized}");
+    assert!(!serialized.contains("\\u0001"), "{serialized}");
+
+    let malformed = NavFixture::new("hover_malformed").hover(1, 1);
+    assert_eq!(malformed["success"], false, "{malformed}");
+    assert_eq!(malformed["error"]["code"], "lsp_protocol_error");
+}
+
+#[test]
+fn workspace_symbols_supports_information_workspace_and_uri_only_shapes() {
+    let information = NavFixture::new("workspace_symbol_information").workspace_symbols("Tool", 50);
+    assert_eq!(information["success"], true, "{information}");
+    let symbol = &information["result"]["symbols"][0];
+    assert_eq!(symbol["name"], "ToolRuntime");
+    assert_eq!(symbol["kind"], "struct");
+    assert_eq!(symbol["kind_code"], 23);
+    assert_eq!(symbol["container_name"], "runtime");
+    assert_eq!(symbol["path"], "src/main.rs");
+    assert!(symbol["range"].is_object());
+
+    let workspace = NavFixture::new("workspace_symbol").workspace_symbols("Agent", 50);
+    assert_eq!(workspace["result"]["symbols"][0]["name"], "AgentBridge");
+    assert_eq!(workspace["result"]["symbols"][0]["path"], "src/other.rs");
+    assert!(!workspace.to_string().contains("hidden"));
+
+    let uri_only = NavFixture::new("workspace_uri_only").workspace_symbols("Deferred", 50);
+    assert_eq!(uri_only["result"]["symbols"][0]["path"], "src/main.rs");
+    assert_eq!(
+        uri_only["result"]["symbols"][0]["range"],
+        serde_json::Value::Null
+    );
+
+    let empty = NavFixture::new("workspace_empty").workspace_symbols("Nothing", 50);
+    assert_eq!(empty["result"]["symbols"], serde_json::json!([]));
+    assert_eq!(empty["result"]["total_results"], 0);
+}
+
+#[test]
+fn workspace_symbols_sorts_deduplicates_filters_and_truncates() {
+    let duplicates = NavFixture::new("workspace_duplicates").workspace_symbols("Any", 50);
+    assert_eq!(duplicates["result"]["total_results"], 3);
+    assert_eq!(duplicates["result"]["returned_count"], 2);
+    assert_eq!(duplicates["result"]["symbols"][0]["name"], "Alpha");
+    assert_eq!(duplicates["result"]["symbols"][1]["name"], "Zulu");
+
+    let external = NavFixture::new("workspace_external").workspace_symbols("Any", 50);
+    assert_eq!(external["result"]["returned_count"], 1);
+    assert_eq!(external["result"]["external_results_omitted"], 1);
+    assert!(!external.to_string().contains("/usr/lib"));
+    assert!(!external.to_string().contains("file://"));
+
+    let malformed = NavFixture::new("workspace_malformed").workspace_symbols("Any", 50);
+    assert_eq!(malformed["result"]["returned_count"], 1, "{malformed}");
+    assert_eq!(malformed["result"]["invalid_results_omitted"], 4);
+
+    let overflow = NavFixture::new("workspace_overflow").workspace_symbols("Symbol", 20);
+    assert_eq!(overflow["result"]["total_results"], 230);
+    assert_eq!(overflow["result"]["returned_count"], 20);
+    assert_eq!(overflow["result"]["truncated"], true);
+}
+
+#[test]
+fn workspace_symbols_validates_query_and_sanitizes_names() {
+    let trimmed = NavFixture::new("workspace_empty").workspace_symbols("  ToolRuntime  ", 50);
+    assert_eq!(trimmed["success"], true, "{trimmed}");
+    assert_eq!(trimmed["result"]["query"], "ToolRuntime");
+
+    for query in ["", "   "] {
+        let fixture = NavFixture::new("workspace_empty");
+        let result = fixture.workspace_symbols(query, 50);
+        assert_eq!(result["success"], false, "query={query:?}: {result}");
+        assert_eq!(result["error"]["code"], "invalid_arguments");
+        assert!(!fixture.marker.exists());
+    }
+    let long = "x".repeat(201);
+    let fixture = NavFixture::new("workspace_empty");
+    let result = fixture.workspace_symbols(&long, 50);
+    assert_eq!(result["success"], false);
+    assert!(!fixture.marker.exists());
+
+    let fixture = NavFixture::new("workspace_empty");
+    let absolute = fixture.workspace_symbols("/tmp/private", 50);
+    assert_eq!(absolute["success"], false);
+    assert!(!fixture.marker.exists());
+
+    let sanitized = NavFixture::new("workspace_sanitizer").workspace_symbols("Safe", 50);
+    assert_eq!(sanitized["success"], true, "{sanitized}");
+    assert_eq!(sanitized["result"]["symbols"][0]["name"], "<path>");
+    assert_eq!(
+        sanitized["result"]["symbols"][0]["container_name"],
+        "<path>"
+    );
+    assert!(!sanitized.to_string().contains("file://"));
+    assert!(!sanitized.to_string().contains("/secret/"));
 }
 
 #[test]

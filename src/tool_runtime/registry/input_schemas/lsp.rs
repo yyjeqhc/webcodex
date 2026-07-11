@@ -65,6 +65,62 @@ pub(crate) fn document_diagnostics_input_schema() -> Value {
     schema
 }
 
+pub(crate) fn hover_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        (
+            "project",
+            "string",
+            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            true,
+        ),
+        (
+            "path",
+            "string",
+            "Project-relative UTF-8 path to a .rs file.",
+            true,
+        ),
+        ("line", "integer", "1-based line number.", true),
+        (
+            "column",
+            "integer",
+            "1-based Unicode scalar column (end-of-line caret allowed at length+1).",
+            true,
+        ),
+    ]));
+    schema["properties"]["line"]["minimum"] = json!(1);
+    schema["properties"]["column"]["minimum"] = json!(1);
+    schema
+}
+
+pub(crate) fn workspace_symbols_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        (
+            "project",
+            "string",
+            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            true,
+        ),
+        (
+            "query",
+            "string",
+            "Non-empty workspace symbol query after trimming (1..200 characters).",
+            true,
+        ),
+        (
+            "limit",
+            "integer",
+            "Maximum workspace symbols to return (default 50, clamped to 1..200).",
+            false,
+        ),
+    ]));
+    schema["properties"]["query"]["minLength"] = json!(1);
+    schema["properties"]["query"]["maxLength"] = json!(200);
+    schema["properties"]["limit"]["minimum"] = json!(1);
+    schema["properties"]["limit"]["maximum"] = json!(200);
+    schema["properties"]["limit"]["default"] = json!(50);
+    schema
+}
+
 pub(crate) fn goto_definition_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
         (

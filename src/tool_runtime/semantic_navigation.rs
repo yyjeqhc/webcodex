@@ -19,16 +19,20 @@ pub(crate) const DEFAULT_SEMANTIC_NAVIGATION_PROBE_TIMEOUT: Duration = Duration:
 
 const RUST_LANGUAGE: &str = "rust";
 const RUST_ANALYZER_SERVER: &str = "rust-analyzer";
-const SEMANTIC_NAVIGATION_TOOLS: [&str; 4] = [
+const SEMANTIC_NAVIGATION_TOOLS: [&str; 7] = [
     "lsp_status",
     "document_symbols",
     "goto_definition",
     "find_references",
+    "document_diagnostics",
+    "hover",
+    "workspace_symbols",
 ];
-const SEMANTIC_NAVIGATION_PREFERRED_FLOW: [&str; 5] = [
+const SEMANTIC_NAVIGATION_PREFERRED_FLOW: [&str; 6] = [
     "document_symbols",
     "goto_definition",
     "find_references",
+    "hover",
     "read_file",
     "search_project_text",
 ];

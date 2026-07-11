@@ -120,6 +120,8 @@ finish:
 - `lsp_status`
 - `document_symbols`
 - `document_diagnostics`
+- `hover`
+- `workspace_symbols`
 - `goto_definition`
 - `find_references`
 
@@ -134,9 +136,12 @@ sync。`document_diagnostics` 使用 bounded rust-analyzer publications，并明
 
 ```text
 document_symbols
-→ goto_definition / find_references
+→ goto_definition / find_references / hover
 → read_file
 ```
+
+尚不知道相关源码文件时，可将 `workspace_symbols` 作为 bounded 补充；它不替代更聚焦的
+`document_symbols` flow。
 
 semantic navigation 不可用时，使用：
 

@@ -1,8 +1,9 @@
 use super::support::*;
 use crate::lsp_bridge::{
     parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspResultEnvelope,
-    DocumentDiagnosticsResult, DocumentSymbolsResult, LocationsResult, LspAvailabilityStatus,
-    LspStatusResult, PublicDiagnostic, PublicLocation, PublicPosition, PublicRange, PublicSymbol,
+    DocumentDiagnosticsResult, DocumentSymbolsResult, HoverResult, LocationsResult,
+    LspAvailabilityStatus, LspStatusResult, PublicDiagnostic, PublicHover, PublicLocation,
+    PublicPosition, PublicRange, PublicSymbol, PublicWorkspaceSymbol, WorkspaceSymbolsResult,
     AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::{
@@ -21,6 +22,8 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
         "lsp_status",
         "document_symbols",
         "document_diagnostics",
+        "hover",
+        "workspace_symbols",
         "goto_definition",
         "find_references",
     ] {
@@ -45,6 +48,8 @@ fn lsp_tools_are_registered_read_only_and_not_shell_like() {
         "lsp_status",
         "document_symbols",
         "document_diagnostics",
+        "hover",
+        "workspace_symbols",
         "goto_definition",
         "find_references",
     ] {
@@ -103,6 +108,33 @@ fn lsp_input_schemas_have_required_bounds() {
         .get("relatedInformation")
         .is_none());
 
+    let hover = &by_name["hover"].input_schema;
+    assert_eq!(
+        hover["required"],
+        json!(["project", "path", "line", "column"])
+    );
+    assert_eq!(hover["properties"]["line"]["minimum"], 1);
+    assert_eq!(hover["properties"]["column"]["minimum"], 1);
+    assert_eq!(hover["additionalProperties"], false);
+    let hover_output = &by_name["hover"].output_schema["properties"]["output"]["properties"];
+    assert_eq!(
+        hover_output["hover"]["anyOf"][0]["properties"]["value"]["maxLength"],
+        16384
+    );
+
+    let workspace = &by_name["workspace_symbols"].input_schema;
+    assert_eq!(workspace["required"], json!(["project", "query"]));
+    assert_eq!(workspace["properties"]["query"]["minLength"], 1);
+    assert_eq!(workspace["properties"]["query"]["maxLength"], 200);
+    assert_eq!(workspace["properties"]["limit"]["default"], 50);
+    assert_eq!(workspace["properties"]["limit"]["maximum"], 200);
+    assert_eq!(workspace["additionalProperties"], false);
+    let workspace_item = &by_name["workspace_symbols"].output_schema["properties"]["output"]
+        ["properties"]["symbols"]["items"];
+    assert_eq!(workspace_item["additionalProperties"], false);
+    assert!(workspace_item["properties"].get("uri").is_none());
+    assert!(workspace_item["properties"].get("data").is_none());
+
     let goto = &by_name["goto_definition"].input_schema;
     assert_eq!(
         goto["required"],
@@ -151,6 +183,14 @@ fn lsp_input_schemas_have_required_bounds() {
             flat_diagnostics.iter().any(|item| item == field),
             "diagnostics missing flattened {field}: {flat_diagnostics:?}"
         );
+    }
+    let flat_hover = accepted_flattened_args_for_spec(&by_name["hover"]);
+    for field in ["project", "path", "line", "column", "session_id"] {
+        assert!(flat_hover.iter().any(|item| item == field));
+    }
+    let flat_workspace = accepted_flattened_args_for_spec(&by_name["workspace_symbols"]);
+    for field in ["project", "query", "limit", "session_id"] {
+        assert!(flat_workspace.iter().any(|item| item == field));
     }
 }
 
@@ -292,6 +332,41 @@ fn document_diagnostics_result(path: &str) -> DocumentDiagnosticsResult {
         published_version: Some(2),
         invalid_results_omitted: 0,
         related_information_omitted: 0,
+    }
+}
+
+fn hover_result(path: &str) -> HoverResult {
+    HoverResult {
+        project: "demo".into(),
+        path: path.into(),
+        position: PublicPosition { line: 1, column: 1 },
+        hover: Some(PublicHover {
+            kind: "markdown".into(),
+            value: "`main`".into(),
+            range: None,
+        }),
+        truncated: false,
+        range_omitted: false,
+    }
+}
+
+fn workspace_symbols_result() -> WorkspaceSymbolsResult {
+    WorkspaceSymbolsResult {
+        project: "demo".into(),
+        query: "ToolRuntime".into(),
+        symbols: vec![PublicWorkspaceSymbol {
+            name: "ToolRuntime".into(),
+            kind: "struct".into(),
+            kind_code: 23,
+            container_name: None,
+            path: "src/tool_runtime/mod.rs".into(),
+            range: None,
+        }],
+        total_results: 1,
+        returned_count: 1,
+        truncated: false,
+        external_results_omitted: 0,
+        invalid_results_omitted: 0,
     }
 }
 
@@ -564,6 +639,109 @@ async fn document_diagnostics_result_boundary_rejects_embedded_absolute_paths() 
 }
 
 #[tokio::test]
+async fn hover_dispatches_typed_normalized_result() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent(&runtime, "lsp-hover", "demo", tmp.path(), true).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::Hover {
+                        project,
+                        path: "src/main.rs".into(),
+                        line: 1,
+                        column: 1,
+                        session_id: None,
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    complete_lsp_agent_request(&runtime, "lsp-hover", hover_result("src/main.rs")).await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["hover"]["kind"], "markdown");
+    assert_eq!(result.output["path"], "src/main.rs");
+    assert!(!result.output.to_string().contains("file://"));
+}
+
+#[tokio::test]
+async fn workspace_symbols_dispatches_typed_bounded_result() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent(&runtime, "lsp-workspace", "demo", tmp.path(), true).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::WorkspaceSymbols {
+                        project,
+                        query: "  ToolRuntime  ".into(),
+                        limit: Some(50),
+                        session_id: None,
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    complete_lsp_agent_request(&runtime, "lsp-workspace", workspace_symbols_result()).await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["query"], "ToolRuntime");
+    assert_eq!(
+        result.output["symbols"][0]["path"],
+        "src/tool_runtime/mod.rs"
+    );
+    assert!(!result.output.to_string().contains("file://"));
+}
+
+#[tokio::test]
+async fn hover_and_workspace_symbols_validate_arguments_before_agent_enqueue() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent(&runtime, "lsp-invalid", "demo", tmp.path(), true).await;
+    for call in [
+        ToolCall::Hover {
+            project: project.clone(),
+            path: "src/main.rs".into(),
+            line: 0,
+            column: 1,
+            session_id: None,
+        },
+        ToolCall::WorkspaceSymbols {
+            project: project.clone(),
+            query: "   ".into(),
+            limit: None,
+            session_id: None,
+        },
+        ToolCall::WorkspaceSymbols {
+            project: project.clone(),
+            query: "x".repeat(201),
+            limit: None,
+            session_id: None,
+        },
+    ] {
+        let result = runtime
+            .dispatch_with_auth(call, Some(&auth_context(None, true)))
+            .await;
+        assert!(!result.success, "{result:?}");
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("invalid_arguments"),
+            "{result:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn goto_definition_multiple_locations() {
     let runtime = test_runtime();
     let tmp = tempfile::tempdir().unwrap();
@@ -726,7 +904,7 @@ fn malformed_agent_envelope_is_rejected() {
 
 #[test]
 fn typed_payload_rejects_arbitrary_operation() {
-    let bad = r#"{"project_id":"p","request":{"operation":"workspace_symbols"}}"#;
+    let bad = r#"{"project_id":"p","request":{"operation":"arbitrary_passthrough","method":"workspace/symbol"}}"#;
     assert!(serde_json::from_str::<AgentLspPayload>(bad).is_err());
     let old_request = r#"{"request_id":"r","client_id":"c","command":"echo","timeout_secs":1,"requested_by":"t","created_at":1}"#;
     let req: crate::shell_protocol::ShellAgentShellRequest =

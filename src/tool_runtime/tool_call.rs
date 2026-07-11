@@ -865,6 +865,26 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Hover information at a 1-based Unicode scalar position.
+    Hover {
+        project: String,
+        path: String,
+        line: usize,
+        column: usize,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Bounded workspace symbols matching a non-empty query.
+    WorkspaceSymbols {
+        project: String,
+        query: String,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Goto definition at a 1-based Unicode scalar position.
     GotoDefinition {
         project: String,
@@ -1107,6 +1127,8 @@ impl ToolCall {
             Self::LspStatus { .. } => "lsp_status",
             Self::DocumentSymbols { .. } => "document_symbols",
             Self::DocumentDiagnostics { .. } => "document_diagnostics",
+            Self::Hover { .. } => "hover",
+            Self::WorkspaceSymbols { .. } => "workspace_symbols",
             Self::GotoDefinition { .. } => "goto_definition",
             Self::FindReferences { .. } => "find_references",
             Self::ListProjects => "list_projects",
@@ -1167,6 +1189,8 @@ impl ToolCall {
             | Self::LspStatus { session_id, .. }
             | Self::DocumentSymbols { session_id, .. }
             | Self::DocumentDiagnostics { session_id, .. }
+            | Self::Hover { session_id, .. }
+            | Self::WorkspaceSymbols { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. } => session_id.as_deref(),
             _ => None,
@@ -1222,6 +1246,8 @@ impl ToolCall {
             | Self::LspStatus { session_id, .. }
             | Self::DocumentSymbols { session_id, .. }
             | Self::DocumentDiagnostics { session_id, .. }
+            | Self::Hover { session_id, .. }
+            | Self::WorkspaceSymbols { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. } => {
                 if session_id.is_none() {
@@ -1285,6 +1311,8 @@ impl ToolCall {
             | Self::LspStatus { project, .. }
             | Self::DocumentSymbols { project, .. }
             | Self::DocumentDiagnostics { project, .. }
+            | Self::Hover { project, .. }
+            | Self::WorkspaceSymbols { project, .. }
             | Self::GotoDefinition { project, .. }
             | Self::FindReferences { project, .. } => Some(project.as_str()),
             Self::StartCodingTask { project, .. } | Self::FinishCodingTask { project, .. } => {

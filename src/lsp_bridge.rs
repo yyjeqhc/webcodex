@@ -26,6 +26,10 @@ pub const DEFAULT_DOCUMENT_DIAGNOSTICS_LIMIT: usize = 100;
 pub const MIN_DOCUMENT_DIAGNOSTICS_LIMIT: usize = 1;
 pub const MAX_DOCUMENT_DIAGNOSTICS_LIMIT: usize = 200;
 
+pub const DEFAULT_WORKSPACE_SYMBOLS_LIMIT: usize = 50;
+pub const MIN_WORKSPACE_SYMBOLS_LIMIT: usize = 1;
+pub const MAX_WORKSPACE_SYMBOLS_LIMIT: usize = 200;
+
 pub const MAX_ERROR_MESSAGE_CHARS: usize = 240;
 
 /// Stable error codes for the agent LSP bridge and public tools.
@@ -84,6 +88,16 @@ pub enum AgentLspRequest {
         #[serde(default = "default_document_diagnostics_limit")]
         limit: usize,
     },
+    Hover {
+        path: String,
+        line: usize,
+        column: usize,
+    },
+    WorkspaceSymbols {
+        query: String,
+        #[serde(default = "default_workspace_symbols_limit")]
+        limit: usize,
+    },
     GotoDefinition {
         path: String,
         line: usize,
@@ -108,6 +122,10 @@ fn default_document_symbols_limit() -> usize {
 
 fn default_document_diagnostics_limit() -> usize {
     DEFAULT_DOCUMENT_DIAGNOSTICS_LIMIT
+}
+
+fn default_workspace_symbols_limit() -> usize {
+    DEFAULT_WORKSPACE_SYMBOLS_LIMIT
 }
 
 fn default_goto_definition_limit() -> usize {
@@ -253,6 +271,49 @@ pub struct DocumentDiagnosticsResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicHover {
+    pub kind: String,
+    pub value: String,
+    #[serde(default)]
+    pub range: Option<PublicRange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HoverResult {
+    pub project: String,
+    pub path: String,
+    pub position: PublicPosition,
+    #[serde(default)]
+    pub hover: Option<PublicHover>,
+    pub truncated: bool,
+    pub range_omitted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicWorkspaceSymbol {
+    pub name: String,
+    pub kind: String,
+    pub kind_code: i64,
+    #[serde(default)]
+    pub container_name: Option<String>,
+    pub path: String,
+    #[serde(default)]
+    pub range: Option<PublicRange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceSymbolsResult {
+    pub project: String,
+    pub query: String,
+    pub symbols: Vec<PublicWorkspaceSymbol>,
+    pub total_results: usize,
+    pub returned_count: usize,
+    pub truncated: bool,
+    pub external_results_omitted: usize,
+    pub invalid_results_omitted: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocationsResult {
     pub project: String,
     pub path: String,
@@ -377,6 +438,12 @@ pub fn clamp_document_diagnostics_limit(limit: Option<usize>) -> usize {
     )
 }
 
+pub fn clamp_workspace_symbols_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_WORKSPACE_SYMBOLS_LIMIT)
+        .clamp(MIN_WORKSPACE_SYMBOLS_LIMIT, MAX_WORKSPACE_SYMBOLS_LIMIT)
+}
+
 /// Best-effort redaction of absolute-path-looking material in error text.
 ///
 /// Replaces `file:` URIs, absolute POSIX paths (including quoted, bracketed,
@@ -470,6 +537,15 @@ mod tests {
                 path: "src/main.rs".to_string(),
                 limit: 100,
             },
+            AgentLspRequest::Hover {
+                path: "src/main.rs".to_string(),
+                line: 10,
+                column: 4,
+            },
+            AgentLspRequest::WorkspaceSymbols {
+                query: "ToolRuntime".to_string(),
+                limit: 50,
+            },
             AgentLspRequest::GotoDefinition {
                 path: "src/main.rs".to_string(),
                 line: 10,
@@ -498,7 +574,7 @@ mod tests {
 
     #[test]
     fn arbitrary_operation_is_rejected() {
-        let json = r#"{"project_id":"p","request":{"operation":"workspace_symbols","query":"x"}}"#;
+        let json = r#"{"project_id":"p","request":{"operation":"arbitrary_passthrough","method":"workspace/symbol"}}"#;
         let err = serde_json::from_str::<AgentLspPayload>(json).unwrap_err();
         assert!(
             err.to_string().contains("unknown variant") || err.to_string().contains("operation")
@@ -512,6 +588,14 @@ mod tests {
         match payload.request {
             AgentLspRequest::DocumentSymbols { limit, .. } => {
                 assert_eq!(limit, DEFAULT_DOCUMENT_SYMBOLS_LIMIT);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        let workspace = r#"{"project_id":"p","request":{"operation":"workspace_symbols","query":"ToolRuntime"}}"#;
+        let payload: AgentLspPayload = serde_json::from_str(workspace).unwrap();
+        match payload.request {
+            AgentLspRequest::WorkspaceSymbols { limit, .. } => {
+                assert_eq!(limit, DEFAULT_WORKSPACE_SYMBOLS_LIMIT);
             }
             other => panic!("unexpected {other:?}"),
         }

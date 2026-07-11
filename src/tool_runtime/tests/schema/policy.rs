@@ -470,6 +470,16 @@ fn required_agent_capability_matches_metadata_risk_table() {
             AgentCapability::LspReadOnlyNavigation,
         ),
         (
+            "hover",
+            ToolRisk::ReadOnly,
+            AgentCapability::LspReadOnlyNavigation,
+        ),
+        (
+            "workspace_symbols",
+            ToolRisk::ReadOnly,
+            AgentCapability::LspReadOnlyNavigation,
+        ),
+        (
             "goto_definition",
             ToolRisk::ReadOnly,
             AgentCapability::LspReadOnlyNavigation,

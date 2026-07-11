@@ -70,6 +70,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "upload_id" => json!("wc_upload_test_1"),
         "edits" => json!([{"kind": "replace_exact", "old_text": "a", "new_text": "b"}]),
         "prompt" => json!("summarize"),
+        "query" => json!("ToolRuntime"),
         "job_id" => json!("job_123"),
         "session_id" => json!("wc_sess_existing"),
         "checkpoint_id" => json!("wc_ckpt_1234"),

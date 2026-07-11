@@ -3,9 +3,10 @@
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::lsp_bridge::{
     clamp_document_diagnostics_limit, clamp_document_symbols_limit, clamp_find_references_limit,
-    clamp_goto_definition_limit, error_codes, is_known_error_code, parse_agent_lsp_result_envelope,
-    redact_absolute_paths, AgentLspPayload, AgentLspRequest, DocumentDiagnosticsResult,
-    DocumentSymbolsResult, LocationsResult, LspStatusResult,
+    clamp_goto_definition_limit, clamp_workspace_symbols_limit, error_codes, is_known_error_code,
+    parse_agent_lsp_result_envelope, redact_absolute_paths, AgentLspPayload, AgentLspRequest,
+    DocumentDiagnosticsResult, DocumentSymbolsResult, HoverResult, LocationsResult,
+    LspStatusResult, WorkspaceSymbolsResult,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -45,6 +46,50 @@ impl ToolRuntime {
                     AgentLspRequest::DocumentDiagnostics {
                         path,
                         limit: clamp_document_diagnostics_limit(limit),
+                    },
+                )
+                .await
+            }
+            ToolCall::Hover {
+                project,
+                path,
+                line,
+                column,
+                session_id: _,
+            } => {
+                if line < 1 || column < 1 {
+                    return ToolResult::err(format!(
+                        "{}: line and column must be >= 1",
+                        error_codes::INVALID_ARGUMENTS
+                    ));
+                }
+                self.call_agent_lsp(project, AgentLspRequest::Hover { path, line, column })
+                    .await
+            }
+            ToolCall::WorkspaceSymbols {
+                project,
+                query,
+                limit,
+                session_id: _,
+            } => {
+                let query = query.trim().to_string();
+                if query.is_empty() || query.chars().count() > 200 {
+                    return ToolResult::err(format!(
+                        "{}: query must contain 1..200 non-whitespace characters",
+                        error_codes::INVALID_ARGUMENTS
+                    ));
+                }
+                if redact_absolute_paths(&query) != query {
+                    return ToolResult::err(format!(
+                        "{}: query must not contain absolute path material",
+                        error_codes::INVALID_ARGUMENTS
+                    ));
+                }
+                self.call_agent_lsp(
+                    project,
+                    AgentLspRequest::WorkspaceSymbols {
+                        query,
+                        limit: clamp_workspace_symbols_limit(limit),
                     },
                 )
                 .await
@@ -239,6 +284,10 @@ fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result
         }
         AgentLspRequest::DocumentDiagnostics { .. } => {
             roundtrip_typed_result::<DocumentDiagnosticsResult>(result)
+        }
+        AgentLspRequest::Hover { .. } => roundtrip_typed_result::<HoverResult>(result),
+        AgentLspRequest::WorkspaceSymbols { .. } => {
+            roundtrip_typed_result::<WorkspaceSymbolsResult>(result)
         }
         AgentLspRequest::GotoDefinition { .. } | AgentLspRequest::FindReferences { .. } => {
             roundtrip_typed_result::<LocationsResult>(result)

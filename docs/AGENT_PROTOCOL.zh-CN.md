@@ -70,7 +70,7 @@ Server 会把 project tool calls 路由到拥有该项目的 connected agent。
 支持只读 LSP intelligence 的 agent 会注册
 `lsp_read_only_navigation` capability。Server 只发送 typed
 `AgentLspRequest` operations：status、document symbols、go to definition 和
-find references，以及 document diagnostics。Agent 返回带版本的
+find references、document diagnostics、hover，以及 workspace symbols。Agent 返回带版本的
 `AgentLspResultEnvelope`，其中包含成功结果或 structured error。Document
 diagnostics 使用每个 server instance 独立的 bounded `publishDiagnostics` cache，
 并明确报告结果是否 fresh，或共享的两秒等待是否 timed out。

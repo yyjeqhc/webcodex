@@ -59,7 +59,8 @@ pub(super) use line_edits::{
 };
 pub(super) use lsp::{
     document_diagnostics_input_schema, document_symbols_input_schema, find_references_input_schema,
-    goto_definition_input_schema, lsp_status_input_schema,
+    goto_definition_input_schema, hover_input_schema, lsp_status_input_schema,
+    workspace_symbols_input_schema,
 };
 pub(super) use patches::{apply_patch_checked_input_schema, apply_patch_input_schema};
 pub(super) use projects::{create_project_input_schema, register_project_input_schema};

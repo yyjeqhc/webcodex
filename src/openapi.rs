@@ -2452,6 +2452,8 @@ mod tests {
             );
         }
         assert!(tool_desc.contains("document_diagnostics"));
+        assert!(tool_desc.contains("hover"));
+        assert!(tool_desc.contains("workspace_symbols"));
         let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
             .as_object()
             .unwrap();
@@ -2461,6 +2463,26 @@ mod tests {
                 "callRuntimeTool must expose flattened document_diagnostics field {field}"
             );
         }
+        for field in ["line", "column", "query"] {
+            assert!(
+                properties.contains_key(field),
+                "callRuntimeTool must expose flattened LSP field {field}"
+            );
+        }
+        let operation_ids = spec["paths"]
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|path| {
+                path.as_object()
+                    .into_iter()
+                    .flat_map(|methods| methods.values())
+            })
+            .filter_map(|operation| operation["operationId"].as_str())
+            .collect::<Vec<_>>();
+        assert!(!operation_ids.contains(&"hover"));
+        assert!(!operation_ids.contains(&"workspaceSymbols"));
+        assert_eq!(operation_ids.len(), 25);
     }
 
     #[test]

@@ -120,6 +120,8 @@ Current LSP tools are:
 - `lsp_status`
 - `document_symbols`
 - `document_diagnostics`
+- `hover`
+- `workspace_symbols`
 - `goto_definition`
 - `find_references`
 
@@ -136,9 +138,12 @@ When `start_coding_task.semantic_navigation.recommended=true`, prefer:
 
 ```text
 document_symbols
-→ goto_definition / find_references
+→ goto_definition / find_references / hover
 → read_file
 ```
+
+Use `workspace_symbols` as a bounded fallback when the relevant source file is
+not yet known; it does not replace the more focused `document_symbols` flow.
 
 When semantic navigation is unavailable, use:
 

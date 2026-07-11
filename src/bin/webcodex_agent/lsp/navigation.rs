@@ -15,9 +15,10 @@ use super::supervisor::{
 };
 use crate::lsp_bridge::{
     bound_error_message, error_codes, redact_absolute_paths, AgentLspPayload, AgentLspRequest,
-    AgentLspResultEnvelope, DocumentDiagnosticsResult, DocumentSymbolsResult, LocationsResult,
-    LspAvailabilityStatus, LspServerStatusEntry, LspStatusResult, PublicDiagnostic, PublicLocation,
-    PublicPosition, PublicRange, PublicSymbol, AGENT_LSP_REQUEST_KIND,
+    AgentLspResultEnvelope, DocumentDiagnosticsResult, DocumentSymbolsResult, HoverResult,
+    LocationsResult, LspAvailabilityStatus, LspServerStatusEntry, LspStatusResult,
+    PublicDiagnostic, PublicHover, PublicLocation, PublicPosition, PublicRange, PublicSymbol,
+    PublicWorkspaceSymbol, WorkspaceSymbolsResult, AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::ShellAgentShellRequest;
 use serde_json::{json, Value};
@@ -33,6 +34,8 @@ const MAX_DIAGNOSTIC_SOURCE_CHARS: usize = 128;
 const MAX_DIAGNOSTIC_CODE_CHARS: usize = 128;
 const MAX_DIAGNOSTIC_TOTAL_TEXT_CHARS: usize = 64 * 1024;
 const DIAGNOSTICS_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_HOVER_VALUE_CHARS: usize = 16 * 1024;
+const MAX_WORKSPACE_SYMBOL_FIELD_CHARS: usize = 256;
 
 pub(crate) fn is_lsp_request_kind(kind: &str) -> bool {
     kind == AGENT_LSP_REQUEST_KIND
@@ -94,6 +97,27 @@ fn execute_lsp(
         AgentLspRequest::DocumentDiagnostics { path, limit } => {
             let result =
                 document_diagnostics(&payload.project_id, &project_root, supervisor, path, *limit)?;
+            Ok(AgentLspResultEnvelope::ok(result))
+        }
+        AgentLspRequest::Hover { path, line, column } => {
+            let result = hover(
+                &payload.project_id,
+                &project_root,
+                supervisor,
+                path,
+                *line,
+                *column,
+            )?;
+            Ok(AgentLspResultEnvelope::ok(result))
+        }
+        AgentLspRequest::WorkspaceSymbols { query, limit } => {
+            let result = workspace_symbols(
+                &payload.project_id,
+                &project_root,
+                supervisor,
+                query,
+                *limit,
+            )?;
             Ok(AgentLspResultEnvelope::ok(result))
         }
         AgentLspRequest::GotoDefinition {
@@ -418,6 +442,102 @@ fn document_diagnostics(
     })
 }
 
+fn hover(
+    project_id: &str,
+    project_root: &Path,
+    supervisor: &LspSupervisor,
+    relative_path: &str,
+    line: usize,
+    column: usize,
+) -> Result<HoverResult, AgentLspResultEnvelope> {
+    let file = resolve_rust_file(project_root, relative_path)?;
+    let uri = file_uri(&file)?;
+    let text = read_document_text(&file)?;
+    let encoding = supervisor
+        .prepare_document(
+            project_root,
+            LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
+        )
+        .map_err(map_lsp_error)?;
+    let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, encoding)
+        .map_err(|message| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, message))?;
+    let value = supervisor
+        .request_with_document(
+            project_root,
+            LspServerKind::RustAnalyzer,
+            &uri,
+            "rust",
+            &text,
+            "textDocument/hover",
+            json!({
+                "textDocument": {"uri": uri},
+                "position": {"line": lsp_line, "character": lsp_character}
+            }),
+        )
+        .map_err(map_lsp_error)?;
+    let (hover, truncated, range_omitted) = normalize_hover(&value, &text, encoding)?;
+    Ok(HoverResult {
+        project: project_id.to_string(),
+        path: normalize_relative_path(relative_path),
+        position: PublicPosition { line, column },
+        hover,
+        truncated,
+        range_omitted,
+    })
+}
+
+fn workspace_symbols(
+    project_id: &str,
+    project_root: &Path,
+    supervisor: &LspSupervisor,
+    query: &str,
+    limit: usize,
+) -> Result<WorkspaceSymbolsResult, AgentLspResultEnvelope> {
+    let query = query.trim();
+    if query.is_empty() || query.chars().count() > 200 {
+        return Err(AgentLspResultEnvelope::err(
+            error_codes::INVALID_ARGUMENTS,
+            "query must contain 1..200 non-whitespace characters",
+        ));
+    }
+    if redact_absolute_paths(query) != query {
+        return Err(AgentLspResultEnvelope::err(
+            error_codes::INVALID_ARGUMENTS,
+            "query must not contain absolute path material",
+        ));
+    }
+    let limit = limit.clamp(1, 200);
+    let (value, encoding) = supervisor
+        .request_with_position_encoding(
+            project_root,
+            LspServerKind::RustAnalyzer,
+            "workspace/symbol",
+            json!({"query": query}),
+        )
+        .map_err(map_lsp_error)?;
+    let (mut symbols, total_results, external_results_omitted, invalid_results_omitted) =
+        normalize_workspace_symbols(project_root, &value, encoding);
+    symbols.sort_by(|left, right| {
+        workspace_symbol_sort_key(left).cmp(&workspace_symbol_sort_key(right))
+    });
+    symbols.dedup();
+    let truncated = symbols.len() > limit;
+    symbols.truncate(limit);
+    Ok(WorkspaceSymbolsResult {
+        project: project_id.to_string(),
+        query: query.to_string(),
+        returned_count: symbols.len(),
+        symbols,
+        total_results,
+        truncated,
+        external_results_omitted,
+        invalid_results_omitted,
+    })
+}
+
 fn goto_definition(
     project_id: &str,
     project_root: &Path,
@@ -648,6 +768,249 @@ fn project_relative_path(project_root: &Path, absolute: &Path) -> Option<String>
     Some(text.replace('\\', "/"))
 }
 
+fn normalize_hover(
+    value: &Value,
+    text: &str,
+    encoding: PositionEncoding,
+) -> Result<(Option<PublicHover>, bool, bool), AgentLspResultEnvelope> {
+    if value.is_null() {
+        return Ok((None, false, false));
+    }
+    let object = value.as_object().ok_or_else(|| {
+        AgentLspResultEnvelope::err(error_codes::LSP_PROTOCOL_ERROR, "malformed hover result")
+    })?;
+    let contents = object.get("contents").ok_or_else(|| {
+        AgentLspResultEnvelope::err(
+            error_codes::LSP_PROTOCOL_ERROR,
+            "hover result is missing contents",
+        )
+    })?;
+    let (kind, raw_value) = normalize_hover_contents(contents).ok_or_else(|| {
+        AgentLspResultEnvelope::err(
+            error_codes::LSP_PROTOCOL_ERROR,
+            "hover contents use an unsupported shape",
+        )
+    })?;
+    let (value, truncated) = bound_hover_value(&raw_value);
+    let (range, range_omitted) = match object.get("range") {
+        Some(range) => match convert_range_from_text(text, range, encoding) {
+            Some(range) => (Some(range), false),
+            None => (None, true),
+        },
+        None => (None, false),
+    };
+    Ok((
+        Some(PublicHover { kind, value, range }),
+        truncated,
+        range_omitted,
+    ))
+}
+
+fn normalize_hover_contents(contents: &Value) -> Option<(String, String)> {
+    match contents {
+        Value::String(value) => Some(("markdown".to_string(), value.clone())),
+        Value::Object(object) => {
+            let value = object.get("value")?.as_str()?;
+            if let Some(kind) = object.get("kind") {
+                let kind = kind.as_str()?;
+                if !matches!(kind, "markdown" | "plaintext") {
+                    return None;
+                }
+                return Some((kind.to_string(), value.to_string()));
+            }
+            let language = object.get("language")?.as_str()?;
+            Some((
+                "markdown".to_string(),
+                fenced_marked_string(language, value),
+            ))
+        }
+        Value::Array(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    Value::String(value) => values.push(value.clone()),
+                    Value::Object(object) => {
+                        let language = object.get("language")?.as_str()?;
+                        let value = object.get("value")?.as_str()?;
+                        values.push(fenced_marked_string(language, value));
+                    }
+                    _ => return None,
+                }
+            }
+            Some(("markdown".to_string(), values.join("\n\n")))
+        }
+        _ => None,
+    }
+}
+
+fn fenced_marked_string(language: &str, value: &str) -> String {
+    let language = language
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '+' | '#')
+        })
+        .take(32)
+        .collect::<String>();
+    let language = if language.is_empty() {
+        "text"
+    } else {
+        &language
+    };
+    let mut current_run = 0usize;
+    let mut longest_run = 0usize;
+    for character in value.chars() {
+        if character == '`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    let fence = "`".repeat(longest_run.saturating_add(1).max(3));
+    format!("{fence}{language}\n{value}\n{fence}")
+}
+
+fn bound_hover_value(value: &str) -> (String, bool) {
+    let sanitized = redact_absolute_paths(value)
+        .chars()
+        .map(|character| match character {
+            '\n' | '\t' => character,
+            '\r' => '\n',
+            character if character.is_control() => ' ',
+            character => character,
+        })
+        .collect::<String>();
+    if sanitized.chars().count() <= MAX_HOVER_VALUE_CHARS {
+        return (sanitized, false);
+    }
+    (
+        sanitized
+            .chars()
+            .take(MAX_HOVER_VALUE_CHARS.saturating_sub(1))
+            .collect::<String>()
+            + "…",
+        true,
+    )
+}
+
+fn normalize_workspace_symbols(
+    project_root: &Path,
+    value: &Value,
+    encoding: PositionEncoding,
+) -> (Vec<PublicWorkspaceSymbol>, usize, usize, usize) {
+    if value.is_null() {
+        return (Vec::new(), 0, 0, 0);
+    }
+    let Some(items) = value.as_array() else {
+        return (Vec::new(), 1, 0, 1);
+    };
+    let mut symbols = Vec::new();
+    let mut external = 0usize;
+    let mut invalid = 0usize;
+    let mut cache = LineCache::new();
+    for item in items {
+        match normalize_workspace_symbol(project_root, item, encoding, &mut cache) {
+            WorkspaceSymbolNormalize::Ok(symbol) => symbols.push(symbol),
+            WorkspaceSymbolNormalize::External => external += 1,
+            WorkspaceSymbolNormalize::Invalid => invalid += 1,
+        }
+    }
+    (symbols, items.len(), external, invalid)
+}
+
+enum WorkspaceSymbolNormalize {
+    Ok(PublicWorkspaceSymbol),
+    External,
+    Invalid,
+}
+
+fn normalize_workspace_symbol(
+    project_root: &Path,
+    value: &Value,
+    encoding: PositionEncoding,
+    cache: &mut LineCache,
+) -> WorkspaceSymbolNormalize {
+    let Some(object) = value.as_object() else {
+        return WorkspaceSymbolNormalize::Invalid;
+    };
+    let Some(name) = object.get("name").and_then(Value::as_str) else {
+        return WorkspaceSymbolNormalize::Invalid;
+    };
+    let name = bound_diagnostic_field(name, MAX_WORKSPACE_SYMBOL_FIELD_CHARS);
+    if name.is_empty() {
+        return WorkspaceSymbolNormalize::Invalid;
+    }
+    let Some(kind_code) = object.get("kind").and_then(Value::as_i64) else {
+        return WorkspaceSymbolNormalize::Invalid;
+    };
+    let Some(location) = object.get("location").and_then(Value::as_object) else {
+        return WorkspaceSymbolNormalize::Invalid;
+    };
+    let Some(uri) = location.get("uri").and_then(Value::as_str) else {
+        return WorkspaceSymbolNormalize::Invalid;
+    };
+    let path = match classify_uri_against_project_root(project_root, uri) {
+        ProjectUriClassification::InsideProject(path) => path,
+        ProjectUriClassification::OutsideProject => return WorkspaceSymbolNormalize::External,
+        ProjectUriClassification::Unsupported => return WorkspaceSymbolNormalize::Invalid,
+    };
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("rs"))
+    {
+        return WorkspaceSymbolNormalize::Invalid;
+    }
+    let Some(relative_path) = project_relative_path(project_root, &path) else {
+        return WorkspaceSymbolNormalize::External;
+    };
+    let range = match location.get("range") {
+        Some(range) => match convert_range(cache, &path, range, encoding) {
+            Some(range) => Some(range),
+            None => return WorkspaceSymbolNormalize::Invalid,
+        },
+        None => None,
+    };
+    let container_name = object
+        .get("containerName")
+        .and_then(Value::as_str)
+        .map(|value| bound_diagnostic_field(value, MAX_WORKSPACE_SYMBOL_FIELD_CHARS))
+        .filter(|value| !value.is_empty());
+    WorkspaceSymbolNormalize::Ok(PublicWorkspaceSymbol {
+        name,
+        kind: symbol_kind_name(kind_code).to_string(),
+        kind_code,
+        container_name,
+        path: relative_path,
+        range,
+    })
+}
+
+fn workspace_symbol_sort_key(
+    symbol: &PublicWorkspaceSymbol,
+) -> (
+    &str,
+    &str,
+    &str,
+    Option<(usize, usize, usize, usize)>,
+    Option<&str>,
+) {
+    (
+        symbol.name.as_str(),
+        symbol.kind.as_str(),
+        symbol.path.as_str(),
+        symbol.range.as_ref().map(|range| {
+            (
+                range.start.line,
+                range.start.column,
+                range.end.line,
+                range.end.column,
+            )
+        }),
+        symbol.container_name.as_deref(),
+    )
+}
+
 fn normalize_diagnostic(
     value: &Value,
     document_path: &Path,
@@ -859,13 +1222,21 @@ fn convert_range(
     range: &Value,
     encoding: PositionEncoding,
 ) -> Option<PublicRange> {
+    let text = cache.text(path)?;
+    convert_range_from_text(text, range, encoding)
+}
+
+fn convert_range_from_text(
+    text: &str,
+    range: &Value,
+    encoding: PositionEncoding,
+) -> Option<PublicRange> {
     let start = range.get("start")?;
     let end = range.get("end")?;
     let start_line = u32::try_from(start.get("line")?.as_u64()?).ok()?;
     let start_character = u32::try_from(start.get("character")?.as_u64()?).ok()?;
     let end_line = u32::try_from(end.get("line")?.as_u64()?).ok()?;
     let end_character = u32::try_from(end.get("character")?.as_u64()?).ok()?;
-    let text = cache.text(path)?;
     let (sl, sc) = lsp_to_public(text, start_line, start_character, encoding)?;
     let (el, ec) = lsp_to_public(text, end_line, end_character, encoding)?;
     let range = PublicRange {

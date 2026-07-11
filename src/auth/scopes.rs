@@ -668,6 +668,11 @@ mod tests {
                 "document_diagnostics",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
+            ("hover", OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)),
+            (
+                "workspace_symbols",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
             (
                 "workspace_checkpoint_create",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
@@ -726,6 +731,8 @@ mod tests {
             "workspace_checkpoint_restore",
             "show_changes",
             "document_diagnostics",
+            "hover",
+            "workspace_symbols",
             "read_file",
             "write_project_file",
             "artifact_upload_begin",

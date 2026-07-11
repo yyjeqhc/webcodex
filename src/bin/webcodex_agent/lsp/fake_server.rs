@@ -366,6 +366,54 @@ fn write_result(writer: &mut impl Write, id: Option<u64>, method: &str) -> io::R
                 r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{main_uri}","range":{{"start":{{"line":3,"character":0}},"end":{{"line":3,"character":4}}}}}}]"#
             ),
         },
+        "textDocument/hover" => match scenario.as_str() {
+            "hover_markup_markdown" => r#"{"contents":{"kind":"markdown","value":"**main** docs"},"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}}}"#.to_string(),
+            "hover_markup_plaintext" => r#"{"contents":{"kind":"plaintext","value":"plain docs"}}"#.to_string(),
+            "hover_string" => r#"{"contents":"string docs"}"#.to_string(),
+            "hover_marked_string" => r#"{"contents":{"language":"rust","value":"fn main() {}"}}"#.to_string(),
+            "hover_array" => r#"{"contents":["first",{"language":"rust","value":"let value = 1;"},"last"]}"#.to_string(),
+            "hover_null" => "null".to_string(),
+            "hover_oversized" => format!(
+                r#"{{"contents":{{"kind":"markdown","value":"{}"}}}}"#,
+                "h".repeat(20_000)
+            ),
+            "hover_invalid_range" => r#"{"contents":"docs","range":{"start":{"line":999,"character":0},"end":{"line":999,"character":1}}}"#.to_string(),
+            "hover_utf16" => r#"{"contents":"emoji","range":{"start":{"line":2,"character":3},"end":{"line":2,"character":5}}}"#.to_string(),
+            "hover_sanitizer" => r#"{"contents":{"kind":"markdown","value":"source file:///secret/main.rs\u0001\nnext"}}"#.to_string(),
+            "hover_malformed" => r#"{"contents":{"kind":"html","value":"bad"}}"#.to_string(),
+            _ => r#"{"contents":{"kind":"markdown","value":"hover"}}"#.to_string(),
+        },
+        "workspace/symbol" => match scenario.as_str() {
+            "workspace_symbol_information" => format!(
+                r#"[{{"name":"ToolRuntime","kind":23,"containerName":"runtime","location":{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}}}]"#
+            ),
+            "workspace_symbol" => format!(
+                r#"[{{"name":"AgentBridge","kind":5,"tags":[1],"location":{{"uri":"{other_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":3}}}}}},"data":{{"hidden":true}}}}]"#
+            ),
+            "workspace_uri_only" => format!(
+                r#"[{{"name":"Deferred","kind":12,"location":{{"uri":"{main_uri}"}}}}]"#
+            ),
+            "workspace_empty" => "null".to_string(),
+            "workspace_duplicates" => format!(
+                r#"[{{"name":"Zulu","kind":12,"location":{{"uri":"{main_uri}","range":{{"start":{{"line":3,"character":0}},"end":{{"line":3,"character":2}}}}}}}},{{"name":"Alpha","kind":23,"location":{{"uri":"{other_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":2}}}}}}}},{{"name":"Alpha","kind":23,"location":{{"uri":"{other_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":2}}}}}}}}]"#
+            ),
+            "workspace_external" => format!(
+                r#"[{{"name":"Local","kind":12,"location":{{"uri":"{main_uri}"}}}},{{"name":"External","kind":12,"location":{{"uri":"{external_uri}"}}}}]"#
+            ),
+            "workspace_malformed" => format!(
+                r#"[7,{{"name":"","kind":12,"location":{{"uri":"{main_uri}"}}}},{{"name":"NoKind","location":{{"uri":"{main_uri}"}}}},{{"name":"BadRange","kind":12,"location":{{"uri":"{main_uri}","range":{{"start":{{"line":999,"character":0}},"end":{{"line":999,"character":1}}}}}}}},{{"name":"Valid","kind":12,"location":{{"uri":"{main_uri}"}}}}]"#
+            ),
+            "workspace_overflow" => {
+                let items = (0..230)
+                    .map(|index| format!(r#"{{"name":"Symbol{index:03}","kind":12,"location":{{"uri":"{main_uri}"}}}}"#))
+                    .collect::<Vec<_>>();
+                format!("[{}]", items.join(","))
+            }
+            "workspace_sanitizer" => format!(
+                r#"[{{"name":"file:///secret/name","kind":12,"containerName":"/secret/container","location":{{"uri":"{main_uri}"}}}}]"#
+            ),
+            _ => "[]".to_string(),
+        },
         _ => format!(
             r#"{{"method":"{}","cwd":"{}"}}"#,
             json_escape(method),

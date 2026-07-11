@@ -70,7 +70,7 @@ The server routes project tool calls to the owning connected agent.
 Agents that support read-only LSP intelligence register the
 `lsp_read_only_navigation` capability. The server sends only typed
 `AgentLspRequest` operations: status, document symbols, go to definition, find
-references, and document diagnostics. The agent returns a versioned
+references, document diagnostics, hover, and workspace symbols. The agent returns a versioned
 `AgentLspResultEnvelope` with a success result or a structured error. Document
 diagnostics use an instance-local bounded `publishDiagnostics` cache and report
 whether the result is fresh or the shared two-second wait timed out.

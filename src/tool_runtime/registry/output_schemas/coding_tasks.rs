@@ -198,20 +198,20 @@ fn semantic_navigation_schema() -> Value {
             },
             "tools": {
                 "type": "array",
-                "maxItems": 4,
+                "maxItems": 7,
                 "uniqueItems": true,
                 "items": {
                     "type": "string",
-                    "enum": ["lsp_status", "document_symbols", "goto_definition", "find_references"]
+                    "enum": ["lsp_status", "document_symbols", "goto_definition", "find_references", "document_diagnostics", "hover", "workspace_symbols"]
                 }
             },
             "preferred_flow": {
                 "type": "array",
-                "maxItems": 5,
+                "maxItems": 6,
                 "uniqueItems": true,
                 "items": {
                     "type": "string",
-                    "enum": ["document_symbols", "goto_definition", "find_references", "read_file", "search_project_text"]
+                    "enum": ["document_symbols", "goto_definition", "find_references", "hover", "read_file", "search_project_text"]
                 }
             },
             "limitations": {

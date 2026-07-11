@@ -125,6 +125,60 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("integer", "Related-information entries intentionally not expanded."),
             ),
         ])),
+        "hover" => Some(wrapped_output_schema(vec![
+            (
+                "project",
+                schema_type("string", "Resolved runtime project id."),
+            ),
+            (
+                "path",
+                schema_type("string", "Project-relative source path."),
+            ),
+            ("position", position_schema()),
+            ("hover", hover_schema()),
+            (
+                "truncated",
+                schema_type("boolean", "Whether normalized hover text exceeded 16 KiB."),
+            ),
+            (
+                "range_omitted",
+                schema_type("boolean", "Whether a malformed optional hover range was omitted."),
+            ),
+        ])),
+        "workspace_symbols" => Some(wrapped_output_schema(vec![
+            (
+                "project",
+                schema_type("string", "Resolved runtime project id."),
+            ),
+            ("query", schema_type("string", "Trimmed symbol query.")),
+            (
+                "symbols",
+                array_schema(
+                    workspace_symbol_schema(),
+                    "Bounded, sorted, deduplicated workspace-only symbols.",
+                ),
+            ),
+            (
+                "total_results",
+                schema_type("integer", "Raw server result count before filtering."),
+            ),
+            (
+                "returned_count",
+                schema_type("integer", "Workspace symbols returned after deduplication and truncation."),
+            ),
+            (
+                "truncated",
+                schema_type("boolean", "Whether valid workspace symbols exceeded the caller limit."),
+            ),
+            (
+                "external_results_omitted",
+                schema_type("integer", "External/dependency symbol locations omitted."),
+            ),
+            (
+                "invalid_results_omitted",
+                schema_type("integer", "Malformed symbol results omitted."),
+            ),
+        ])),
         "goto_definition" | "find_references" => Some(wrapped_output_schema(vec![
             (
                 "project",
@@ -202,6 +256,56 @@ fn diagnostic_schema() -> Value {
                 "maxItems": 3,
                 "items": {"type": "string", "enum": ["unnecessary", "deprecated", "unknown"]}
             }
+        }
+    })
+}
+
+fn hover_schema() -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "value", "range"],
+                "properties": {
+                    "kind": {"type": "string", "enum": ["markdown", "plaintext"]},
+                    "value": {"type": "string", "maxLength": 16384},
+                    "range": {
+                        "anyOf": [range_schema(), {"type": "null"}]
+                    }
+                }
+            },
+            {"type": "null"}
+        ]
+    })
+}
+
+fn workspace_symbol_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "kind_code", "container_name", "path", "range"],
+        "properties": {
+            "name": {"type": "string", "maxLength": 256},
+            "kind": {"type": "string"},
+            "kind_code": {"type": "integer"},
+            "container_name": nullable_schema("string", "Bounded container name, when provided."),
+            "path": {"type": "string", "description": "Project-relative source path."},
+            "range": {
+                "anyOf": [range_schema(), {"type": "null"}]
+            }
+        }
+    })
+}
+
+fn range_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["start", "end"],
+        "properties": {
+            "start": position_schema(),
+            "end": position_schema()
         }
     })
 }

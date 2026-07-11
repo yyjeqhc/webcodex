@@ -531,6 +531,23 @@ impl LspSupervisor {
         self.request_with_timeout_inner(validated_project_root, kind, method, params, timeout, None)
     }
 
+    pub(crate) fn request_with_position_encoding(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        method: &str,
+        params: Value,
+    ) -> Result<(Value, PositionEncoding), LspError> {
+        self.request_with_timeout_and_encoding_inner(
+            validated_project_root,
+            kind,
+            method,
+            params,
+            self.inner.config.request_timeout,
+            None,
+        )
+    }
+
     fn request_with_timeout_inner(
         &self,
         validated_project_root: &Path,
@@ -540,6 +557,26 @@ impl LspSupervisor {
         timeout: Duration,
         document: Option<DocumentOpen<'_>>,
     ) -> Result<Value, LspError> {
+        self.request_with_timeout_and_encoding_inner(
+            validated_project_root,
+            kind,
+            method,
+            params,
+            timeout,
+            document,
+        )
+        .map(|(value, _)| value)
+    }
+
+    fn request_with_timeout_and_encoding_inner(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+        document: Option<DocumentOpen<'_>>,
+    ) -> Result<(Value, PositionEncoding), LspError> {
         let key = ProcessKey {
             project_root: canonical_project_root(validated_project_root)?,
             kind,
@@ -574,7 +611,7 @@ impl LspSupervisor {
                 }
             }
             match server.request(method, params.clone(), timeout) {
-                Ok(value) => return Ok(value),
+                Ok(value) => return Ok((value, server.position_encoding())),
                 Err(error) if attempt == 0 && error.permits_restart() => {
                     last_error = Some(error);
                 }

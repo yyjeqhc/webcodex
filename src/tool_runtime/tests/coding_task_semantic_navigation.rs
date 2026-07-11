@@ -189,7 +189,10 @@ async fn coding_task_semantic_navigation_available_is_recommended_and_bounded() 
             "lsp_status",
             "document_symbols",
             "goto_definition",
-            "find_references"
+            "find_references",
+            "document_diagnostics",
+            "hover",
+            "workspace_symbols"
         ])
     );
     assert_eq!(
@@ -198,6 +201,7 @@ async fn coding_task_semantic_navigation_available_is_recommended_and_bounded() 
             "document_symbols",
             "goto_definition",
             "find_references",
+            "hover",
             "read_file",
             "search_project_text"
         ])
@@ -471,8 +475,8 @@ async fn coding_task_semantic_navigation_compact_read_only_keeps_full_shape() {
     let semantic = &result.output["semantic_navigation"];
     assert_eq!(semantic.as_object().unwrap().len(), 11);
     assert_eq!(semantic["status"], "available");
-    assert_eq!(semantic["tools"].as_array().unwrap().len(), 4);
-    assert_eq!(semantic["preferred_flow"].as_array().unwrap().len(), 5);
+    assert_eq!(semantic["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(semantic["preferred_flow"].as_array().unwrap().len(), 6);
     assert_eq!(result.output["session"]["mode"], "read_only");
     assert_eq!(result.output["session"]["guards"]["deny_write_tools"], true);
     assert_eq!(result.output["session"]["guards"]["deny_shell_tools"], true);
@@ -484,7 +488,7 @@ fn coding_task_semantic_navigation_output_schema_is_explicit_and_surface_counts_
     let specs = registered_tool_specs();
     let runtime_tool_count = specs.len();
     assert_eq!(
-        runtime_tool_count, 72,
+        runtime_tool_count, 74,
         "runtime tool count must remain stable"
     );
     assert_eq!(runtime_tool_count, known_tool_names().count());
@@ -515,7 +519,8 @@ fn coding_task_semantic_navigation_output_schema_is_explicit_and_surface_counts_
             "probe_failed"
         ])
     );
-    assert_eq!(semantic["properties"]["tools"]["maxItems"], 4);
+    assert_eq!(semantic["properties"]["tools"]["maxItems"], 7);
+    assert_eq!(semantic["properties"]["preferred_flow"]["maxItems"], 6);
     assert!(semantic["properties"]["reason_code"]["anyOf"]
         .as_array()
         .unwrap()

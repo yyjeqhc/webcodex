@@ -1,6 +1,7 @@
 use super::super::input_schemas::{
     document_diagnostics_input_schema, document_symbols_input_schema, find_references_input_schema,
-    goto_definition_input_schema, lsp_status_input_schema,
+    goto_definition_input_schema, hover_input_schema, lsp_status_input_schema,
+    workspace_symbols_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -21,6 +22,16 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "document_diagnostics",
             "Read-only bounded diagnostics for a project-relative .rs file via agent-side rust-analyzer publishDiagnostics. Returns normalized 1-based Unicode scalar ranges and explicit freshness/timeout state; it does not run Cargo check.",
             document_diagnostics_input_schema(),
+        ),
+        tool_spec(
+            "hover",
+            "Read-only hover for a project-relative .rs file at a 1-based Unicode scalar position via agent-side rust-analyzer. MarkupContent and MarkedString forms are normalized to bounded markdown/plaintext; invalid optional ranges are omitted.",
+            hover_input_schema(),
+        ),
+        tool_spec(
+            "workspace_symbols",
+            "Read-only bounded workspace/symbol query via agent-side rust-analyzer. Requires a non-empty 1..200 character query; results are workspace-filtered, sorted, deduplicated, and use project-relative paths only.",
+            workspace_symbols_input_schema(),
         ),
         tool_spec(
             "goto_definition",

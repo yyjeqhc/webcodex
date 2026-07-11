@@ -30,9 +30,19 @@ This roadmap is intentionally short. WebCodex 0.2.x is about making online AI co
 - Explicitly designed write capabilities such as rename and code actions (not part of the read-only MVP).
 - More languages.
 
+## Validation Intelligence MVP: Completed
+
+- Deterministic structured extraction from bounded safe validation metadata.
+- Bounded cargo-check diagnostics and cargo-test failed-test evidence.
+- Conservative validation failure-kind classification without root-cause inference.
+- Shared finish/handoff evidence plus the read-only `validation_summary` session query.
+- ToolRuntime, MCP, generic GPT Action, OAuth, and schema synchronization (75 runtime tools, 25 GPT Action operations).
+
 ## Future Coding Intelligence
 
-- Test failure summary improvements.
+- Richer multi-language validation adapters.
+- Optional machine-readable Cargo JSON integration.
+- Review and rollback UX.
 
 ## Later
 

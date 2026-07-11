@@ -96,6 +96,7 @@ validate:
   cargo_check
   cargo_test
   cargo_fmt
+  validation_summary
 
 review:
   show_changes
@@ -112,6 +113,28 @@ path metadata. It does not read file contents or perform semantic/LSP analysis;
 use `read_file` afterward to inspect README, rules, manifests, or source.
 
 `start_coding_task` returns the session id used by later review and finish tools. `finish_coding_task` is the preferred closeout for a completed task; `session_handoff_summary` is for passing context to another operator or later client.
+
+## Validation Intelligence
+
+`validation_summary` reads existing validation evidence for a required full `project` id and explicit `session_id`; optional `limit` defaults to 20 and is clamped to 1..100. It is read-only under `project:read`, works in read-only or deny-shell/deny-write sessions, does not use current-session fallback, and does not run Cargo, shell, agent requests, or project file reads. Calling it does not add a validation event to the ledger.
+
+Parser v2 is deterministic structured extraction from bounded safe validation metadata, not AI root-cause analysis. `cargo_check` failures may return at most 20 sorted, deduplicated diagnostics; messages are capped at 240 Unicode scalars and unsafe or absolute locations are omitted. `cargo_test` failures may return at most 20 failed-test names and details classified conservatively as `assertion`, `panic`, or `unknown`. Panic bodies, assertion values, backtraces, commands, environment variables, and complete stdout/stderr are never returned.
+
+When the captured excerpt is incomplete, inspect `truncated`, `diagnostics_truncated`, `failed_tests_truncated`, `invalid_diagnostics_omitted`, and `unknown`/omitted fields. Do not treat missing detail as proof that no other diagnostic exists. `validation.status` may remain `mixed`; `latest_status=passed` means the latest decisive validation passed, while `historical_failures` preserves whether earlier failures are resolved or unresolved. Resolved failures remain useful audit evidence and do not by themselves lower the final task outcome. A zero-test cargo run does not resolve an earlier cargo-test failure.
+
+Recommended flow:
+
+```text
+edit
+→ document_diagnostics
+→ cargo_check / cargo_test
+→ validation_summary
+→ targeted fix
+→ cargo_check / cargo_test
+→ finish_coding_task
+```
+
+`validation_summary` is not a replacement for `finish_coding_task`: it reports validation evidence only, without workspace, jobs, diff, hygiene, or overall verdict.
 
 ## Read-Only LSP Navigation
 

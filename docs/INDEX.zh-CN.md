@@ -14,8 +14,8 @@
 
 ## Client Integration
 
-6. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、默认 coding loop、read-only LSP intelligence 和常见 MCP 错误。
-7. [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) / [GPT_ACTIONS.md](GPT_ACTIONS.md) - Custom GPT 设置、OpenAPI 导入、认证和 workflow guidance。
+6. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、默认 coding loop、read-only LSP 与 validation intelligence，以及常见 MCP 错误。
+7. [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) / [GPT_ACTIONS.md](GPT_ACTIONS.md) - Custom GPT 设置、OpenAPI 导入、认证、generic validation-summary access 和 workflow guidance。
 8. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) - MCP 和 GPT Actions 指南使用的截图。
 
 ## 安装与运维

@@ -30,9 +30,19 @@
 - 经过明确设计的 rename、code action 等写能力（不属于 read-only MVP）。
 - 更多 languages。
 
+## Validation Intelligence MVP：已完成
+
+- 从 bounded safe validation metadata 做确定性的结构化提取。
+- bounded cargo-check diagnostics 和 cargo-test failed-test evidence。
+- 不做 root-cause inference 的保守 validation failure-kind 分类。
+- finish/handoff 共享增强证据，并提供只读 session query `validation_summary`。
+- ToolRuntime、MCP、generic GPT Action、OAuth 和 schema 同步（75 个 runtime tools，25 个 GPT Action operations）。
+
 ## 后续 Coding Intelligence
 
-- 改进 test failure summary。
+- 更丰富的 multi-language validation adapters。
+- 可选的 machine-readable Cargo JSON integration。
+- review 和 rollback UX。
 
 ## Later
 

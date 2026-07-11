@@ -103,6 +103,7 @@ validate:
   cargo_check
   cargo_test
   cargo_fmt
+  validation_summary
 
 review:
   show_changes
@@ -121,6 +122,8 @@ start_coding_task -> inspect -> edit -> validate -> show_changes -> workspace_hy
 ```
 
 Use `session_handoff_summary` when another operator or client needs to continue the task.
+
+Call read-only `validation_summary` through generic `callRuntimeTool` with flattened `project`, `session_id`, and optional `limit`; it has no dedicated GPT Action operation, so the focused surface remains 25 operations while the runtime catalog has 75 tools. It queries bounded parser-v2 evidence already in the session ledger and does not rerun Cargo, shell, agent work, or file reads. Diagnostics and failed-test details are bounded and sanitized, complete stdout/stderr is never returned, and no root-cause inference is performed. Use it between validation runs for targeted fixes, then use `finish_coding_task` for the overall closeout verdict.
 
 ## Advanced And Escape-Hatch Tools
 

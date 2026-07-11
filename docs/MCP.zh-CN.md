@@ -96,6 +96,7 @@ validate:
   cargo_check
   cargo_test
   cargo_fmt
+  validation_summary
 
 review:
   show_changes
@@ -112,6 +113,28 @@ finish:
 规则、manifest 或源码。
 
 `start_coding_task` 返回 session id，后续 review 和 finish tools 可以继续使用。`finish_coding_task` 是完成任务的推荐收口工具；`session_handoff_summary` 用于把上下文交给另一个 operator 或后续 client。
+
+## Validation Intelligence
+
+`validation_summary` 读取已有 validation evidence，必须传完整 `project` id 和显式 `session_id`；可选 `limit` 默认 20，并限制在 1..100。它是 `project:read` 只读工具，可用于 read-only、deny-shell 或 deny-write session，不会回退到 current session，也不会运行 Cargo、shell、agent request 或读取项目文件。调用自身不会向 ledger 增加 validation event。
+
+Parser v2 只对 bounded safe validation metadata 做确定性的结构化提取，不是 AI root-cause analysis。`cargo_check` 失败最多返回 20 条稳定排序、去重后的 diagnostics；message 最长 240 个 Unicode scalar，不安全或绝对路径 location 会被省略。`cargo_test` 失败最多返回 20 个 failed-test name 和 detail，并保守分类为 `assertion`、`panic` 或 `unknown`。不会返回 panic body、assertion values、backtrace、command、环境变量或完整 stdout/stderr。
+
+当捕获 excerpt 不完整时，检查 `truncated`、`diagnostics_truncated`、`failed_tests_truncated`、`invalid_diagnostics_omitted` 以及 `unknown`/省略字段。缺少 detail 不代表没有其他 diagnostic。`validation.status` 可以继续为 `mixed`；`latest_status=passed` 表示最新 decisive validation 已通过，`historical_failures` 则保留更早 failure 是 resolved 还是 unresolved。resolved failure 仍是有用的 audit evidence，但不会仅凭自身降低最终 task outcome。zero-tests cargo run 不会解决之前的 cargo-test failure。
+
+推荐流程：
+
+```text
+edit
+→ document_diagnostics
+→ cargo_check / cargo_test
+→ validation_summary
+→ targeted fix
+→ cargo_check / cargo_test
+→ finish_coding_task
+```
+
+`validation_summary` 不替代 `finish_coding_task`：它只查询 validation evidence，不提供 workspace、jobs、diff、hygiene 或 overall verdict。
 
 ## 只读 LSP 导航
 

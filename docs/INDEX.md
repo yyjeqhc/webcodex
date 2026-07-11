@@ -14,8 +14,8 @@ Start with the README, [QUICK_START.md](QUICK_START.md), and [DEMO.md](DEMO.md).
 
 ## Client Integration
 
-6. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) - remote MCP endpoint, authentication, default coding loop, read-only LSP intelligence, and common MCP errors.
-7. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) - Custom GPT setup, OpenAPI import, authentication, and workflow guidance.
+6. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) - remote MCP endpoint, authentication, default coding loop, read-only LSP and validation intelligence, and common MCP errors.
+7. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) - Custom GPT setup, OpenAPI import, authentication, generic validation-summary access, and workflow guidance.
 8. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) - screenshots used by MCP and GPT Actions guides.
 
 ## Setup And Operation

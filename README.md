@@ -153,8 +153,9 @@ WebCodex is designed around a conservative coding loop:
 2. Inspect - use `list_project_files`, `search_project_text`, `read_file`, optional read-only LSP intelligence (`lsp_status`, `document_symbols`, `workspace_symbols`, `goto_definition`, `find_references`, `hover`), and Git status tools.
 3. Edit - prefer `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
 4. Validate - run `validate_patch`, `cargo_fmt`, `cargo_check`, or `cargo_test` where appropriate.
-5. Inspect outcome - use `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`.
-6. Finish - use `finish_coding_task` or `session_handoff_summary` for a compact closeout.
+5. Inspect validation evidence - use `validation_summary` to query the existing session ledger without rerunning tests.
+6. Inspect outcome - use `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`.
+7. Finish - use `finish_coding_task` or `session_handoff_summary` for a compact closeout.
 
 `start_coding_task` always returns a compact `semantic_navigation` summary so the coding loop can decide whether to prefer the seven Rust LSP tools. Its bounded status-only probe inspects Rust workspace detection, rust-analyzer availability, and an existing supervisor slot without starting rust-analyzer, running Cargo, or injecting symbol, definition, or reference data. The capability is read-only and workspace-only; dependency navigation remains limited by `cargo.noDeps=true`. Open Rust documents are refreshed from validated workspace files with bounded full-text `didChange` notifications; editor-style incremental synchronization is not supported. An unavailable, crashed, legacy, disconnected, or timed-out LSP path does not block coding-task startup or change its startup verdict.
 
@@ -172,6 +173,24 @@ start_coding_task
 
 `document_diagnostics` is quick, bounded rust-analyzer feedback. The constrained profile can return no diagnostics or time out waiting for a fresh publication, and it never replaces final Cargo validation.
 
+### Validation Intelligence MVP
+
+Validation parser v2 (`structured_validation_parser`, version 2) deterministically extracts structured evidence from bounded, sanitized metadata already recorded for validation-like tools. A failing `cargo_check` can expose up to 20 sorted diagnostics with safe project-relative locations and messages of at most 240 Unicode scalars. A failing `cargo_test` can expose up to 20 failed-test names and conservative `assertion` / `panic` / `unknown` details without panic bodies, assertion values, or backtraces.
+
+The parser never retains or returns complete stdout/stderr, never executes diagnostic text, and does not infer root causes. Incomplete excerpts are represented with `truncated`, `diagnostics_truncated`, omitted locations, and `unknown` classifications rather than guesses. `validation.status` remains the ledger history (`mixed` is preserved), while `latest_status` and `historical_failures` distinguish the final run from earlier failures. Resolved failures remain visible as audit evidence but do not lower an otherwise passing final task outcome; zero-test runs do not resolve earlier `cargo_test` failures.
+
+`validation_summary(project, session_id, limit?)` is a read-only query over existing session evidence. It does not run Cargo, shell, an agent request, or file reads, and it is not a replacement for `finish_coding_task`, which still owns overall closeout. Recommended loop:
+
+```text
+edit
+→ document_diagnostics
+→ cargo_check / cargo_test
+→ validation_summary
+→ targeted fix
+→ cargo_check / cargo_test
+→ finish_coding_task
+```
+
 `run_shell` and `run_job` exist for bounded escape hatches. They are powerful and should not be the default editing or validation path.
 
 ## Safety Model
@@ -188,7 +207,7 @@ Do not expose secrets in prompts, examples, tool output, docs, or committed conf
 - Agent-registered project model with `agent:<client_id>:<project_id>` ids.
 - Structured source editing tools for scoped changes.
 - Patch validation, Cargo validation helpers, Git diff/status tools, and bounded shell/job execution.
-- Coding-task sessions with handoff, finish verdicts, diff evidence, and hygiene summaries.
+- Coding-task sessions with validation parser v2 evidence, read-only `validation_summary`, handoff, finish verdicts, diff evidence, and hygiene summaries.
 - Authentication paths for quick shared-key evaluation and production deployments.
 - Documentation for first setup, concepts, MCP, GPT Actions, security, release notes, and roadmap.
 

@@ -39,6 +39,15 @@ fn run() -> io::Result<()> {
         }
         stderr.flush()?;
     }
+    // Exit before any LSP traffic while emitting a rustup-style missing
+    // component error. Used to assert initialize failures surface bounded
+    // stderr diagnostics without a real rust-analyzer install.
+    if scenario == "missing_component_stderr" {
+        eprintln!(
+            "error: Unknown binary 'rust-analyzer' in official toolchain 'stable-x86_64-unknown-linux-gnu'."
+        );
+        std::process::exit(1);
+    }
 
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());

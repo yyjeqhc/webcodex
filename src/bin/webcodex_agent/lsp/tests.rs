@@ -741,6 +741,123 @@ fn lsp_initialize_failure_consumes_the_single_restart_budget() {
 }
 
 #[test]
+fn lsp_initialize_pre_exit_with_stderr_surfaces_component_missing_diagnostic() {
+    let fixture = Fixture::new("missing_component_stderr");
+    let error = fixture
+        .supervisor
+        .request(
+            &fixture.root,
+            LspServerKind::RustAnalyzer,
+            "fake/unreachable",
+            json!({}),
+        )
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(
+        matches!(error, LspError::RestartExhausted(_)),
+        "unexpected error: {error:?}"
+    );
+    assert!(
+        message
+            .contains("rust-analyzer component is not installed for the active rustup toolchain"),
+        "missing component diagnostic not surfaced: {message}"
+    );
+    assert!(
+        !message.contains("/root/") && !message.contains("file://"),
+        "diagnostic must not leak absolute paths: {message}"
+    );
+    assert_eq!(fixture.starts(), 2);
+}
+
+#[test]
+fn lsp_rustup_proxy_without_component_is_not_available() {
+    let temp = tempfile::tempdir().unwrap();
+    let bin = temp.path().join("bin");
+    let rustup_home = temp.path().join("rustup");
+    let toolchain = "stable-x86_64-unknown-linux-gnu";
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(rustup_home.join("toolchains").join(toolchain).join("bin")).unwrap();
+    fs::write(
+        rustup_home.join("settings.toml"),
+        format!("default_toolchain = \"{toolchain}\"\n"),
+    )
+    .unwrap();
+    // Mimic cargo-bin rustup shims: rust-analyzer -> rustup.
+    let rustup_bin = bin.join("rustup");
+    fs::write(&rustup_bin, b"#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&rustup_bin).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&rustup_bin, perms).unwrap();
+        std::os::unix::fs::symlink("rustup", bin.join("rust-analyzer")).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        // Non-unix CI: skip symlink-specific assertion.
+        return;
+    }
+
+    let command = LspCommand::new(bin.join("rust-analyzer"));
+    // Point detection at the fixture rustup home without spawning anything.
+    let previous_home = env::var_os("RUSTUP_HOME");
+    let previous_toolchain = env::var_os("RUSTUP_TOOLCHAIN");
+    env::set_var("RUSTUP_HOME", &rustup_home);
+    env::remove_var("RUSTUP_TOOLCHAIN");
+    let available_missing = command.is_available();
+
+    // Installing the component binary under the active toolchain restores
+    // availability without needing to execute the proxy.
+    let component = rustup_home
+        .join("toolchains")
+        .join(toolchain)
+        .join("bin")
+        .join("rust-analyzer");
+    fs::write(&component, b"#!/bin/sh\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&component).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&component, perms).unwrap();
+    }
+    let available_installed = command.is_available();
+
+    // Always restore process env before assertions so a failure cannot leak.
+    match previous_home {
+        Some(value) => env::set_var("RUSTUP_HOME", value),
+        None => env::remove_var("RUSTUP_HOME"),
+    }
+    match previous_toolchain {
+        Some(value) => env::set_var("RUSTUP_TOOLCHAIN", value),
+        None => env::remove_var("RUSTUP_TOOLCHAIN"),
+    }
+
+    assert!(
+        !available_missing,
+        "rustup shim without component must not report available"
+    );
+    assert!(
+        available_installed,
+        "rustup shim with installed component must report available"
+    );
+}
+
+#[test]
+fn summarize_lsp_startup_stderr_classifies_rustup_missing_component() {
+    let summary = summarize_lsp_startup_stderr(
+        "error: Unknown binary 'rust-analyzer' in official toolchain 'stable-x86_64-unknown-linux-gnu'.\n",
+    )
+    .unwrap();
+    assert_eq!(
+        summary,
+        "rust-analyzer component is not installed for the active rustup toolchain"
+    );
+    assert!(summarize_lsp_startup_stderr("   \n\t  ").is_none());
+}
+
+#[test]
 fn lsp_exit_immediately_after_initialize_is_detected_and_bounded() {
     let fixture = Fixture::new("exit_after_initialize");
     let error = fixture

@@ -202,11 +202,21 @@ impl LspCommand {
 
     fn is_available(&self) -> bool {
         let program = Path::new(&self.program);
-        if program.is_absolute() || program.components().count() > 1 {
-            is_executable_file(program)
+        let resolved = if program.is_absolute() || program.components().count() > 1 {
+            if !is_executable_file(program) {
+                return false;
+            }
+            program.to_path_buf()
         } else {
-            find_executable_on_path(&program.to_string_lossy()).is_some()
-        }
+            match find_executable_on_path(&program.to_string_lossy()) {
+                Some(path) => path,
+                None => return false,
+            }
+        };
+        // rustup installs a PATH shim named `rust-analyzer` even when the
+        // component is missing. Treat that as unavailable without spawning
+        // the language server or running Cargo.
+        !is_unusable_rustup_proxy(&resolved)
     }
 }
 
@@ -992,6 +1002,180 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+/// True when `path` is a rustup proxy for `rust-analyzer` whose active
+/// toolchain does not install the component binary.
+///
+/// Detection is filesystem-only: no process spawn, no Cargo, no network.
+/// When toolchain resolution is ambiguous, returns `false` so callers keep
+/// the previous PATH-executable semantics instead of inventing unavailability.
+fn is_unusable_rustup_proxy(path: &Path) -> bool {
+    let file_name = path.file_name().and_then(|name| name.to_str());
+    if file_name != Some("rust-analyzer") && file_name != Some("rust-analyzer.exe") {
+        return false;
+    }
+    if !looks_like_rustup_proxy(path) {
+        return false;
+    }
+    let Some(toolchain) = active_rustup_toolchain() else {
+        return false;
+    };
+    let Some(rustup_home) = rustup_home_dir() else {
+        return false;
+    };
+    let component = rustup_home
+        .join("toolchains")
+        .join(toolchain)
+        .join("bin")
+        .join("rust-analyzer");
+    !is_executable_file(&component)
+}
+
+fn looks_like_rustup_proxy(path: &Path) -> bool {
+    // rustup installs cargo-bin shims as symlinks (or hardlinks) to `rustup`.
+    // Follow one level of symlink; if the target basename is `rustup`, treat
+    // this as a proxy. Hardlinks share the same file as a nearby `rustup`.
+    if let Ok(target) = fs::read_link(path) {
+        let target_name = target.file_name().and_then(|name| name.to_str());
+        if target_name == Some("rustup") || target_name == Some("rustup.exe") {
+            return true;
+        }
+        // Absolute/relative multi-component links that still resolve to rustup.
+        let resolved = if target.is_absolute() {
+            target
+        } else if let Some(parent) = path.parent() {
+            parent.join(target)
+        } else {
+            return false;
+        };
+        let name = resolved.file_name().and_then(|name| name.to_str());
+        return name == Some("rustup") || name == Some("rustup.exe");
+    }
+    // Hardlink / same-file check against sibling `rustup` next to the shim.
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let sibling = parent.join("rustup");
+    if !sibling.exists() {
+        return false;
+    }
+    match (fs::metadata(path), fs::metadata(&sibling)) {
+        (Ok(left), Ok(right)) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                left.dev() == right.dev() && left.ino() == right.ino()
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (left, right);
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn rustup_home_dir() -> Option<PathBuf> {
+    if let Some(value) = env::var_os("RUSTUP_HOME") {
+        if !value.is_empty() {
+            return Some(PathBuf::from(value));
+        }
+    }
+    let home = env::var_os("HOME").filter(|value| !value.is_empty())?;
+    Some(PathBuf::from(home).join(".rustup"))
+}
+
+fn active_rustup_toolchain() -> Option<String> {
+    if let Ok(value) = env::var("RUSTUP_TOOLCHAIN") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() && !trimmed.contains(['/', '\\', '\n', '\r', '\0']) {
+            return Some(trimmed.to_string());
+        }
+    }
+    let settings = rustup_home_dir()?.join("settings.toml");
+    let contents = fs::read_to_string(settings).ok()?;
+    parse_default_toolchain(&contents)
+}
+
+fn parse_default_toolchain(settings_toml: &str) -> Option<String> {
+    // Minimal TOML scrape for `default_toolchain = "..."` — avoids a new
+    // dependency and ignores overrides (path-specific toolchains).
+    for line in settings_toml.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("default_toolchain") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim();
+        let value = rest
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| rest.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(rest)
+            .trim();
+        if !value.is_empty() && !value.contains(['/', '\\', '\n', '\r', '\0']) {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// Map bounded stderr capture into a short, path-free startup diagnostic.
+///
+/// Prefer stable classification for known rustup component-missing failures so
+/// operators do not need raw process stderr.
+fn summarize_lsp_startup_stderr(raw: &str) -> Option<String> {
+    let compact = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>();
+    let compact = compact.trim();
+    if compact.is_empty() {
+        return None;
+    }
+    let lower = compact.to_ascii_lowercase();
+    if (lower.contains("unknown binary") && lower.contains("rust-analyzer"))
+        || lower.contains("does not have the binary rust-analyzer")
+        || lower.contains("does not have the binary `rust-analyzer`")
+        || lower.contains("rustup component add rust-analyzer")
+    {
+        return Some(
+            "rust-analyzer component is not installed for the active rustup toolchain".to_string(),
+        );
+    }
+    // Fall back to the first non-empty line. Absolute paths are redacted by
+    // `bound_error_message` at the public bridge boundary.
+    let first = compact
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    let safe: String = first.chars().take(160).collect();
+    if first.chars().count() > 160 {
+        Some(format!("{safe}…"))
+    } else if safe.is_empty() {
+        None
+    } else {
+        Some(safe)
+    }
+}
+
+fn combine_initialize_failure(error: &LspError, stderr_summary: Option<String>) -> String {
+    let base = match error {
+        LspError::InitializeFailed(message) => message.clone(),
+        other => other.to_string(),
+    };
+    match stderr_summary {
+        Some(summary) if !base.contains(&summary) => format!("{base}: {summary}"),
+        _ => base,
+    }
+}
+
 fn remaining_until(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
 }
@@ -1433,10 +1617,27 @@ impl ServerInstance {
 
         if let Err(error) = server.initialize(initialize_timeout) {
             // Use the configured shutdown budget, never a fixed default.
+            // Shutdown also joins the stderr drain thread so the bounded capture
+            // is complete before we classify the failure.
             let _ = server.shutdown(shutdown_timeout);
-            return Err(LspError::InitializeFailed(error.to_string()));
+            let stderr_summary = server.startup_stderr_summary();
+            return Err(LspError::InitializeFailed(combine_initialize_failure(
+                &error,
+                stderr_summary,
+            )));
         }
         Ok(server)
+    }
+
+    /// Bounded, path-light summary of captured language-server stderr for
+    /// initialize/start failures. Never returns absolute executable paths.
+    fn startup_stderr_summary(&self) -> Option<String> {
+        let bytes: Vec<u8> = lock_unpoison(&self.stderr).bytes.iter().copied().collect();
+        if bytes.is_empty() {
+            return None;
+        }
+        let raw = String::from_utf8_lossy(&bytes);
+        summarize_lsp_startup_stderr(&raw)
     }
 
     fn initialize(&self, timeout: Duration) -> Result<(), LspError> {

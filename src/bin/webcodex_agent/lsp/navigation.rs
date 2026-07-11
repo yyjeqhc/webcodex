@@ -1504,9 +1504,13 @@ fn map_lsp_error(error: LspError) -> AgentLspResultEnvelope {
             error_codes::LSP_SERVER_FAILED,
             "language server exited".to_string(),
         ),
-        LspError::SpawnFailed(_) | LspError::InitializeFailed(_) => (
+        LspError::SpawnFailed(message) => (
             error_codes::LSP_SERVER_FAILED,
-            "language server failed to start".to_string(),
+            bound_error_message(format!("failed to spawn language server: {message}")),
+        ),
+        LspError::InitializeFailed(message) => (
+            error_codes::LSP_SERVER_FAILED,
+            bound_error_message(format!("language server initialize failed: {message}")),
         ),
         LspError::InvalidProjectRoot(_) => (
             error_codes::INVALID_PROJECT_PATH,

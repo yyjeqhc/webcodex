@@ -39,6 +39,8 @@ mod shell_protocol;
 mod startup;
 mod tool_runtime;
 mod users_http;
+#[allow(dead_code)] // Agent-side constructors are exercised by webcodex-agent.
+mod validation_bridge;
 mod workspace_checkpoint;
 
 pub(crate) use auth::{get_db, json_error, AuthMiddleware};

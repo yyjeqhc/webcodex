@@ -9,6 +9,7 @@ pub(crate) mod patches;
 pub(crate) mod projects;
 pub(crate) mod shell;
 pub(crate) mod transport;
+pub(crate) mod validation;
 
 pub(crate) use artifacts::{handle_artifact_file_request, is_artifact_request_kind};
 pub(crate) use checkpoints::{handle_checkpoint_file_request, is_checkpoint_request_kind};

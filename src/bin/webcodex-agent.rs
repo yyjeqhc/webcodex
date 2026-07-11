@@ -13,6 +13,10 @@ use tracing_subscriber::EnvFilter;
 #[path = "../lsp_bridge.rs"]
 mod lsp_bridge;
 
+#[allow(dead_code)] // Parser/contract exercised by the agent validation adapter and tests.
+#[path = "../validation_bridge.rs"]
+mod validation_bridge;
+
 #[allow(dead_code)]
 #[path = "../shell_protocol.rs"]
 mod shell_protocol;

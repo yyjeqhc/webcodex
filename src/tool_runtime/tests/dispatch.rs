@@ -454,7 +454,7 @@ async fn cargo_test_agent_timeout_is_not_validation_failed() {
 
     let result = task.await.unwrap();
     assert!(!result.success);
-    assert_ne!(result.output["failure_kind"], "validation_failed");
+    assert_eq!(result.output["failure_kind"], "timeout");
 }
 
 #[tokio::test]

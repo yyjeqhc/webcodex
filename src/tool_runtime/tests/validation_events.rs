@@ -55,9 +55,9 @@ fn validation_summary_is_unavailable_without_validation_events() {
     assert_eq!(
         validation["parser"]["limitations"],
         json!([
-            "bounded tails only",
-            "no root-cause inference",
-            "no full stdout/stderr bodies"
+            "bounded validation excerpts only",
+            "deterministic evidence extraction; no root-cause inference",
+            "no full stdout/stderr bodies; incomplete excerpts may omit fields or report unknown"
         ])
     );
     assert_eq!(
@@ -258,11 +258,27 @@ fn validation_summary_wires_cargo_check_diagnostics_from_captured_excerpt() {
     assert_eq!(diagnostics["available"], true);
     assert_eq!(diagnostics["parser"], PARSER_KIND);
     assert_eq!(diagnostics["diagnostic_count"], 1);
+    assert_eq!(diagnostics["returned_diagnostic_count"], 1);
+    assert_eq!(diagnostics["diagnostics_truncated"], false);
+    assert_eq!(diagnostics["invalid_diagnostics_omitted"], 0);
+    assert_eq!(diagnostics["diagnostics"].as_array().unwrap().len(), 1);
     assert_eq!(diagnostics["first_diagnostic"]["severity"], "error");
     assert_eq!(diagnostics["first_diagnostic"]["code"], "E0308");
     assert_eq!(diagnostics["first_diagnostic"]["file"], "src/lib.rs");
     assert_eq!(diagnostics["first_diagnostic"]["line"], 12);
     assert_eq!(diagnostics["first_diagnostic"]["column"], 5);
+    assert_eq!(
+        diagnostics["first_diagnostic"]["message"],
+        "mismatched types"
+    );
+    assert_eq!(
+        diagnostics["first_diagnostic"],
+        diagnostics["diagnostics"][0]
+    );
+    assert_eq!(
+        validation["latest_failure"]["failure_kind"],
+        "compile_error"
+    );
     assert_eq!(diagnostics["truncated"], false);
     assert_no_raw_validation_output_fields(&validation, "validation summary");
 }
@@ -298,8 +314,109 @@ fn validation_summary_wires_cargo_test_summary_from_captured_excerpt() {
     assert_eq!(diagnostics["test_summary"]["ignored"], 0);
     assert_eq!(diagnostics["first_failed_test"], "tests::fails");
     assert_eq!(diagnostics["failed_tests"], json!(["tests::fails"]));
+    assert_eq!(
+        diagnostics["failed_test_details"][0]["name"],
+        "tests::fails"
+    );
+    assert_eq!(
+        diagnostics["failed_test_details"][0]["failure_kind"],
+        "unknown"
+    );
     assert_eq!(diagnostics["failed_tests_truncated"], false);
     assert_eq!(diagnostics["truncated"], false);
+    assert_eq!(validation["latest_failure"]["failure_kind"], "test_failure");
+}
+
+#[test]
+fn validation_failure_kind_prefers_safe_metadata_and_specific_evidence() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    for (tool, output, expected) in [
+        (
+            "cargo_test",
+            json!({
+                "exit_code": 101,
+                "stdout_tail": "",
+                "stderr_tail": "error[E0308]: mismatched types\n --> src/lib.rs:2:1\n",
+                "stdout_truncated": false,
+                "stderr_truncated": false
+            }),
+            "compile_error",
+        ),
+        (
+            "cargo_test",
+            json!({
+                "exit_code": -1,
+                "failure_kind": "timeout",
+                "stdout_tail": "test tests::name ... FAILED\n",
+                "stderr_tail": "",
+                "stdout_truncated": false,
+                "stderr_truncated": false
+            }),
+            "timeout",
+        ),
+        (
+            "cargo_fmt",
+            json!({
+                "exit_code": 1,
+                "stdout_tail": "Diff in src/lib.rs:1:\n-old\n+new\n",
+                "stderr_tail": "",
+                "stdout_truncated": false,
+                "stderr_truncated": false
+            }),
+            "format_diff",
+        ),
+        (
+            "cargo_check",
+            json!({
+                "exit_code": 2,
+                "stdout_tail": "",
+                "stderr_tail": "process exited without diagnostics\n",
+                "stdout_truncated": false,
+                "stderr_truncated": false
+            }),
+            "process_exit",
+        ),
+    ] {
+        record_finished_tool(
+            &store,
+            &session.session_id,
+            tool,
+            json!({"project": "agent:eval:demo"}),
+            false,
+            output,
+        );
+        let summary = store.summary(&session.session_id, Some(100)).unwrap();
+        let validation = validation_summary_for_session(&summary);
+        assert_eq!(validation["latest"]["failure_kind"], expected, "{tool}");
+    }
+}
+
+#[test]
+fn zero_tests_success_is_not_classified_as_test_failure() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 0,
+            "zero_tests_run": true
+        }),
+    );
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["latest"]["failure_kind"], "unknown");
 }
 
 #[test]

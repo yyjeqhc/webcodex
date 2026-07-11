@@ -340,9 +340,10 @@ impl ToolRuntime {
                 ))
             }
         };
-        if let Some(error) = output.error {
+        let timed_out = looks_like_command_timeout(output.exit_code, &output.stderr, timeout_secs);
+        if let Some(error) = output.error.as_ref().filter(|_| !timed_out) {
             return ToolResult::err(command_rejected_message(
-                error,
+                error.clone(),
                 "verify the project id/cwd and agent connectivity, then retry or use run_shell for custom diagnostics.",
             ));
         }
@@ -394,9 +395,13 @@ impl ToolRuntime {
         if passed {
             ToolResult::ok(payload)
         } else {
-            if validation_failed {
-                payload["failure_kind"] = json!(CARGO_VALIDATION_FAILURE_KIND);
-            }
+            payload["failure_kind"] = json!(if timed_out {
+                "timeout"
+            } else if validation_failed {
+                CARGO_VALIDATION_FAILURE_KIND
+            } else {
+                "process_exit"
+            });
             ToolResult {
                 success: false,
                 output: payload,

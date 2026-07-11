@@ -1,8 +1,218 @@
 use crate::tool_runtime::cargo::parse_cargo_test_counts;
 use crate::tool_runtime::validation_parser::{
     parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, NO_STABLE_DIAGNOSTICS_REASON,
-    PARSER_KIND,
+    PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
 };
+
+#[test]
+fn structured_parser_v2_identity_and_limit_contract_are_stable() {
+    assert_eq!(PARSER_KIND, "structured_validation_parser");
+    assert_eq!(PARSER_VERSION, 2);
+    assert_eq!(
+        PARSER_LIMITATIONS,
+        [
+            "bounded validation excerpts only",
+            "deterministic evidence extraction; no root-cause inference",
+            "no full stdout/stderr bodies; incomplete excerpts may omit fields or report unknown",
+        ]
+    );
+}
+
+#[test]
+fn cargo_check_parser_returns_sorted_deduplicated_bounded_diagnostics() {
+    let mut stderr = String::from(
+        "warning: unused value\n --> src/z.rs:9:3\n\
+         error[E0308]: mismatched types\n --> src/lib.rs:42:9\n\
+         error[E0308]: mismatched types\n --> src/lib.rs:42:9\n\
+         error[E0425]: missing name\n --> src/a.rs:2:1\n",
+    );
+    for index in 0..22 {
+        stderr.push_str(&format!(
+            "error[E0001]: bounded diagnostic {index}\n --> src/generated_{index}.rs:1:1\n"
+        ));
+    }
+
+    let diagnostics = parse_cargo_check_diagnostics("", &stderr, false);
+
+    assert_eq!(diagnostics.available, true);
+    assert_eq!(diagnostics.diagnostic_count, Some(25));
+    assert_eq!(diagnostics.returned_diagnostic_count, 20);
+    assert_eq!(diagnostics.diagnostics.len(), 20);
+    assert_eq!(diagnostics.diagnostics_truncated, true);
+    assert_eq!(diagnostics.invalid_diagnostics_omitted, 0);
+    assert_eq!(
+        diagnostics.first_diagnostic,
+        diagnostics.diagnostics.first().cloned()
+    );
+    assert_eq!(diagnostics.diagnostics[0].severity, "error");
+    assert_eq!(diagnostics.diagnostics[0].file.as_deref(), Some("src/a.rs"));
+    assert_eq!(diagnostics.diagnostics[0].message, "missing name");
+}
+
+#[test]
+fn cargo_check_parser_sanitizes_messages_and_omits_unsafe_spans() {
+    let unicode = "界".repeat(300);
+    let diagnostics = parse_cargo_check_diagnostics(
+        "",
+        &format!(
+            "\u{1b}[31merror[E0308]\u{1b}[0m: {unicode}\u{7}\n --> /root/private.rs:4:2\n\
+             warning: safe warning\n --> ../escape.rs:0:0\n\
+             error: uri span\n --> file:///tmp/private.rs:9:1\n\
+             note: TOKEN=must-not-leak\nhelp: run dangerous command\n"
+        ),
+        true,
+    );
+
+    assert_eq!(diagnostics.available, true);
+    assert_eq!(diagnostics.diagnostic_count, Some(3));
+    assert_eq!(diagnostics.returned_diagnostic_count, 3);
+    assert_eq!(diagnostics.diagnostics_truncated, true);
+    assert_eq!(diagnostics.diagnostics[0].message.chars().count(), 240);
+    assert!(diagnostics
+        .diagnostics
+        .iter()
+        .all(|item| item.file.is_none()));
+    assert!(diagnostics
+        .diagnostics
+        .iter()
+        .all(|item| item.line.is_none() && item.column.is_none()));
+    let encoded = serde_json::to_string(&diagnostics).unwrap();
+    for forbidden in [
+        "\u{1b}",
+        "\u{7}",
+        "/root",
+        "../",
+        "file://",
+        "TOKEN=",
+        "dangerous command",
+    ] {
+        assert!(
+            !encoded.contains(forbidden),
+            "leaked {forbidden:?}: {encoded}"
+        );
+    }
+}
+
+#[test]
+fn cargo_check_parser_counts_invalid_diagnostics_without_guessing() {
+    let diagnostics = parse_cargo_check_diagnostics(
+        "",
+        "error[E0308]: TOKEN=secret\n --> src/lib.rs:1:1\n\
+         error[E0425]: safe message\n --> src/lib.rs:not-a-line:1\n",
+        false,
+    );
+
+    assert_eq!(diagnostics.diagnostic_count, Some(1));
+    assert_eq!(diagnostics.returned_diagnostic_count, 1);
+    assert_eq!(diagnostics.invalid_diagnostics_omitted, 1);
+    assert_eq!(diagnostics.diagnostics[0].message, "safe message");
+    assert_eq!(diagnostics.diagnostics[0].file, None);
+}
+
+#[test]
+fn cargo_check_parser_does_not_return_note_or_help_bodies() {
+    let diagnostics = parse_cargo_check_diagnostics(
+        "",
+        "error[E0308]: mismatched types\n --> src/lib.rs:12:5\n\
+         note: private implementation detail\n\
+         help: execute this suggested command\n",
+        false,
+    );
+
+    let encoded = serde_json::to_string(&diagnostics).unwrap();
+    assert!(encoded.contains("mismatched types"));
+    assert!(!encoded.contains("private implementation detail"));
+    assert!(!encoded.contains("execute this suggested command"));
+}
+
+#[test]
+fn cargo_test_parser_returns_bounded_failure_details_without_payloads() {
+    let output = "test tests::asserts ... FAILED\n\
+                  thread 'tests::asserts' panicked at src/tests.rs:84:5:\n\
+                  assertion `left == right` failed\n\
+                  left: supersecret-left\n\
+                  right: supersecret-right\n\
+                  test tests::panics ... FAILED\n\
+                  thread 'tests::panics' panicked at /root/private.rs:9:2:\n\
+                  private panic body\n\
+                  stack backtrace:\n\
+                  0: private::frame\n\
+                  test tests::unknown ... FAILED\n\
+                  test tests::asserts ... FAILED\n\
+                  test result: FAILED. 0 passed; 3 failed; 0 ignored\n";
+    let diagnostics = parse_cargo_test_diagnostics(output, "", false);
+
+    assert_eq!(
+        diagnostics.failed_tests,
+        vec!["tests::asserts", "tests::panics", "tests::unknown"]
+    );
+    assert_eq!(
+        diagnostics.first_failed_test.as_deref(),
+        Some("tests::asserts")
+    );
+    assert_eq!(diagnostics.failed_test_details.len(), 3);
+    assert_eq!(diagnostics.failed_test_details[0].name, "tests::asserts");
+    assert_eq!(diagnostics.failed_test_details[0].failure_kind, "assertion");
+    assert_eq!(
+        diagnostics.failed_test_details[0].file.as_deref(),
+        Some("src/tests.rs")
+    );
+    assert_eq!(diagnostics.failed_test_details[0].line, Some(84));
+    assert_eq!(diagnostics.failed_test_details[0].column, Some(5));
+    assert_eq!(diagnostics.failed_test_details[1].failure_kind, "panic");
+    assert_eq!(diagnostics.failed_test_details[1].file, None);
+    assert_eq!(diagnostics.failed_test_details[2].failure_kind, "unknown");
+    let encoded = serde_json::to_string(&diagnostics).unwrap();
+    for forbidden in [
+        "supersecret",
+        "private panic body",
+        "stack backtrace",
+        "private::frame",
+        "/root",
+    ] {
+        assert!(
+            !encoded.contains(forbidden),
+            "leaked {forbidden:?}: {encoded}"
+        );
+    }
+}
+
+#[test]
+fn cargo_test_parser_caps_failed_test_details_at_twenty_in_first_seen_order() {
+    let mut output = String::new();
+    for index in 1..=22 {
+        output.push_str(&format!("test tests::case_{index} ... FAILED\n"));
+    }
+    output.push_str("test result: FAILED. 0 passed; 22 failed; 0 ignored\n");
+
+    let diagnostics = parse_cargo_test_diagnostics(&output, "", true);
+
+    assert_eq!(diagnostics.failed_tests.len(), 20);
+    assert_eq!(diagnostics.failed_test_details.len(), 20);
+    assert_eq!(diagnostics.failed_tests[0], "tests::case_1");
+    assert_eq!(diagnostics.failed_tests[19], "tests::case_20");
+    assert_eq!(diagnostics.failed_test_details[19].name, "tests::case_20");
+    assert!(diagnostics
+        .failed_test_details
+        .iter()
+        .all(|detail| detail.failure_kind == "unknown"));
+    assert_eq!(diagnostics.failed_tests_truncated, true);
+}
+
+#[test]
+fn cargo_test_parser_extracts_compile_diagnostics_before_tests_run() {
+    let diagnostics = parse_cargo_test_diagnostics(
+        "",
+        "error[E0308]: mismatched types\n --> src/lib.rs:8:3\n",
+        false,
+    );
+
+    assert_eq!(diagnostics.available, true);
+    assert_eq!(diagnostics.test_summary, None);
+    assert!(diagnostics.failed_tests.is_empty());
+    assert_eq!(diagnostics.diagnostics.len(), 1);
+    assert_eq!(diagnostics.diagnostics[0].code.as_deref(), Some("E0308"));
+}
 
 #[test]
 fn cargo_check_parser_extracts_e_code_and_file_span() {
@@ -157,7 +367,7 @@ fn cargo_test_parser_dedupes_failed_test_names_in_first_seen_order() {
 }
 
 #[test]
-fn cargo_test_parser_caps_failed_tests_at_ten_and_marks_truncated() {
+fn cargo_test_parser_keeps_up_to_twenty_failed_tests() {
     let mut stdout = String::new();
     for i in 1..=12 {
         stdout.push_str(&format!("test tests::case_{i} ... FAILED\n"));
@@ -166,18 +376,10 @@ fn cargo_test_parser_caps_failed_tests_at_ten_and_marks_truncated() {
 
     let diagnostics = parse_cargo_test_diagnostics(&stdout, "", false);
 
-    assert_eq!(diagnostics.failed_tests.len(), 10);
+    assert_eq!(diagnostics.failed_tests.len(), 12);
     assert_eq!(diagnostics.failed_tests[0], "tests::case_1");
-    assert_eq!(diagnostics.failed_tests[9], "tests::case_10");
-    assert!(!diagnostics
-        .failed_tests
-        .iter()
-        .any(|name| name == "tests::case_11"));
-    assert!(!diagnostics
-        .failed_tests
-        .iter()
-        .any(|name| name == "tests::case_12"));
-    assert_eq!(diagnostics.failed_tests_truncated, true);
+    assert_eq!(diagnostics.failed_tests[11], "tests::case_12");
+    assert_eq!(diagnostics.failed_tests_truncated, false);
     assert_eq!(diagnostics.diagnostic_count, Some(12));
     assert_eq!(
         diagnostics.first_failed_test.as_deref(),

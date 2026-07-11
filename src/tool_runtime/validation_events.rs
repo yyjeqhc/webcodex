@@ -22,6 +22,7 @@ pub(crate) struct ValidationEvent {
     pub(crate) tool_name: String,
     pub(crate) validation_kind: &'static str,
     pub(crate) success: bool,
+    pub(crate) failure_kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) exit_code: Option<i64>,
     pub(crate) summary: String,
@@ -289,6 +290,7 @@ fn validation_event_from_finished(
     };
     let input_summary = started.and_then(|event| event.input_summary.clone());
     let diagnostics = validation_diagnostics_from_summary(finished);
+    let failure_kind = validation_failure_kind(finished, success, diagnostics.as_ref());
     let (tests_detected, tests_run_count, zero_tests_run) = cargo_test_run_metadata(finished);
     let outcome = if success { "succeeded" } else { "failed" };
 
@@ -296,6 +298,7 @@ fn validation_event_from_finished(
         tool_name: finished.tool_name.clone(),
         validation_kind,
         success,
+        failure_kind,
         exit_code: finished.exit_code,
         summary: format!("{} {}", finished.tool_name, outcome),
         project,
@@ -310,6 +313,88 @@ fn validation_event_from_finished(
         tests_run_count,
         zero_tests_run,
     })
+}
+
+fn validation_failure_kind(
+    finished: &SessionEvent,
+    success: bool,
+    diagnostics: Option<&ValidationDiagnostics>,
+) -> &'static str {
+    if success {
+        return "unknown";
+    }
+    if matches!(
+        finished
+            .failure_kind
+            .as_deref()
+            .or(finished.error_kind.as_deref()),
+        Some("timeout" | "timed_out" | "command_timeout")
+    ) {
+        return "timeout";
+    }
+
+    let has_compile_error = diagnostics.is_some_and(|diagnostics| {
+        diagnostics
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == "error")
+    });
+    if matches!(finished.tool_name.as_str(), "cargo_check" | "cargo_test") && has_compile_error {
+        return "compile_error";
+    }
+
+    if finished.tool_name == "cargo_test"
+        && diagnostics.is_some_and(|diagnostics| {
+            diagnostics
+                .test_summary
+                .as_ref()
+                .and_then(|summary| summary.failed)
+                .is_some_and(|failed| failed > 0)
+                || !diagnostics.failed_tests.is_empty()
+        })
+    {
+        return "test_failure";
+    }
+
+    if finished.tool_name == "cargo_fmt" && cargo_fmt_has_stable_diff_metadata(finished) {
+        return "format_diff";
+    }
+
+    if finished.exit_code.is_some_and(|exit_code| exit_code != 0)
+        || matches!(
+            finished
+                .failure_kind
+                .as_deref()
+                .or(finished.error_kind.as_deref()),
+            Some(
+                "command_exit_nonzero"
+                    | "command_spawn_failed"
+                    | "command_wait_failed"
+                    | "command_output_failed"
+            )
+        )
+    {
+        return "process_exit";
+    }
+    "unknown"
+}
+
+fn cargo_fmt_has_stable_diff_metadata(finished: &SessionEvent) -> bool {
+    let Some(summary) = finished.validation_output_summary.as_ref() else {
+        return false;
+    };
+    ["stdout_tail_excerpt", "stderr_tail_excerpt"]
+        .iter()
+        .filter_map(|key| summary.get(*key).and_then(Value::as_str))
+        .flat_map(str::lines)
+        .map(str::trim_start)
+        .filter_map(|line| line.strip_prefix("Diff in "))
+        .any(|location| {
+            let location = location.trim_end_matches(':');
+            location
+                .rsplit_once(':')
+                .is_some_and(|(_, line)| line.parse::<u64>().is_ok_and(|line| line > 0))
+        })
 }
 
 fn matching_start(

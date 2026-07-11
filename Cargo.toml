@@ -36,6 +36,13 @@ rustls-pemfile = "2"
 # `rustls-tls-webpki-roots` feature, so it does not add a new major version.
 webpki-roots = "0.26"
 
+# Release binaries ship via the npm wrapper; optimize for size without
+# changing runtime behavior (panic unwinding stays enabled).
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+
 [dev-dependencies]
 tempfile = "3"
 urlencoding = "2"

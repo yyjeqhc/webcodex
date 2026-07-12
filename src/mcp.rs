@@ -1,5 +1,8 @@
 use crate::auth::AuthContext;
 use crate::json_error;
+use crate::tool_request_trace::{
+    estimate_json_bytes, jsonrpc_id_safe, new_trace_id, ToolRequestLifecycle,
+};
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
@@ -32,6 +35,13 @@ struct McpToolCallParams {
 
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
     depot.obtain::<Arc<ToolRuntime>>().ok().cloned()
+}
+
+fn tool_name_from_params(params: &Value) -> Option<String> {
+    params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Outcome of handling a single MCP JSON-RPC request.
@@ -87,44 +97,91 @@ pub async fn mcp_info(depot: &mut Depot, res: &mut Response) {
 
 #[handler]
 pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let mut guard = ToolRequestLifecycle::new("mcp", new_trace_id(), "-", "POST /mcp", None);
+    guard.received();
+
     let Some(runtime) = runtime(depot) else {
+        // Size unknown without building the json_error body for measurement.
+        guard.response_serialized(500, None, Some(false), None, "error_runtime_missing");
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Tool runtime not configured",
         ));
+        guard.handler_returned(500, None, Some(false), None, "error_runtime_missing");
         return;
     };
     let request: JsonRpcRequest = match req.parse_json().await {
         Ok(request) => request,
         Err(e) => {
+            guard.set_jsonrpc_id("none");
+            guard.parsed("parse_error");
+            let body = rpc_error(None, -32700, format!("Parse error: {}", e));
+            let estimated = estimate_json_bytes(&body);
+            guard.response_serialized(400, estimated, Some(false), None, "parse_error");
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(rpc_error(None, -32700, format!("Parse error: {}", e))));
+            res.render(Json(body));
+            guard.handler_returned(400, estimated, Some(false), None, "parse_error");
             return;
         }
     };
+
+    guard.set_jsonrpc_id(jsonrpc_id_safe(request.id.as_ref()));
+    guard.set_method(request.method.clone());
+    let tool_name = if request.method == "tools/call" {
+        tool_name_from_params(&request.params)
+    } else {
+        None
+    };
+    guard.set_tool_name(tool_name);
+    guard.parsed("ok");
+
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    match handle_mcp_request(&runtime, request, auth.as_ref()).await {
-        McpOutcome::Ok(body) => res.render(Json(body)),
+    let outcome =
+        handle_mcp_request_with_lifecycle(&runtime, request, auth.as_ref(), Some(&mut guard)).await;
+
+    match outcome {
+        McpOutcome::Ok(body) => {
+            // Protocol success: valid JSON-RPC result envelope.
+            // Tool success: only meaningful for tools/call (isError / structuredContent.success).
+            let tool_success = body
+                .get("result")
+                .and_then(|r| r.get("structuredContent"))
+                .and_then(|s| s.get("success"))
+                .and_then(|v| v.as_bool());
+            let estimated = estimate_json_bytes(&body);
+            guard.response_serialized(200, estimated, Some(true), tool_success, "ok");
+            res.render(Json(body));
+            guard.handler_returned(200, estimated, Some(true), tool_success, "ok");
+        }
         McpOutcome::BadRequest(body) => {
+            let estimated = estimate_json_bytes(&body);
+            guard.response_serialized(400, estimated, Some(false), None, "bad_request");
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(Json(body));
+            guard.handler_returned(400, estimated, Some(false), None, "bad_request");
         }
         McpOutcome::Forbidden {
             body,
             required_scope,
         } => {
+            let estimated = estimate_json_bytes(&body);
+            guard.response_serialized(403, estimated, Some(false), None, "forbidden");
             res.status_code(StatusCode::FORBIDDEN);
             let challenge = crate::auth::oauth_insufficient_scope_challenge(required_scope);
             if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
                 res.headers_mut().insert("www-authenticate", val);
             }
             res.render(Json(body));
+            guard.handler_returned(403, estimated, Some(false), None, "forbidden");
         }
         McpOutcome::Notification => {
             // JSON-RPC notifications carry no `id`; the server MUST NOT reply
             // with a JSON-RPC body. Acknowledge with 202 and an empty body.
+            // Empty body size is known (0) without JSON serialization.
+            guard.response_serialized(202, Some(0), Some(true), None, "notification");
             res.status_code(StatusCode::ACCEPTED);
+            guard.handler_returned(202, Some(0), Some(true), None, "notification");
         }
     }
 }
@@ -133,10 +190,21 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
 ///
 /// Business logic stays in `ToolRuntime`; this function only frames the
 /// JSON-RPC envelope and translates tool results into MCP content blocks.
+/// Test-friendly wrapper: no lifecycle hooks.
+#[cfg_attr(not(test), allow(dead_code))]
 async fn handle_mcp_request(
     runtime: &ToolRuntime,
     request: JsonRpcRequest,
     auth: Option<&AuthContext>,
+) -> McpOutcome {
+    handle_mcp_request_with_lifecycle(runtime, request, auth, None).await
+}
+
+async fn handle_mcp_request_with_lifecycle(
+    runtime: &ToolRuntime,
+    request: JsonRpcRequest,
+    auth: Option<&AuthContext>,
+    mut lifecycle: Option<&mut ToolRequestLifecycle>,
 ) -> McpOutcome {
     let is_oauth2 = auth.is_some_and(|ctx| ctx.is_oauth_token());
 
@@ -209,6 +277,12 @@ async fn handle_mcp_request(
                 }
             };
             let session_id = strip_reserved_session_id(&mut params.arguments);
+            // Emit dispatch_started only after params parse succeeds and before
+            // ToolRuntime work begins.
+            if let Some(lc) = lifecycle.as_deref_mut() {
+                lc.set_tool_name(Some(params.name.clone()));
+                lc.dispatch_started();
+            }
             let outcome = runtime
                 .call_tool_with_context(
                     KernelToolCallRequest {
@@ -227,8 +301,18 @@ async fn handle_mcp_request(
                 Some(ToolCallErrorStatus::InsufficientScope {
                     required_scope,
                     description,
-                }) => return oauth_forbidden(required_scope, description),
+                }) => {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("forbidden");
+                        lc.dispatch_finished(false, Some(false), "forbidden");
+                    }
+                    return oauth_forbidden(required_scope, description);
+                }
                 Some(ToolCallErrorStatus::InvalidArguments { message }) => {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("invalid_arguments");
+                        lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                    }
                     return McpOutcome::BadRequest(rpc_error(id, -32602, message));
                 }
                 None => outcome
@@ -236,6 +320,20 @@ async fn handle_mcp_request(
                     .expect("tool kernel outcome without error must include result"),
             };
             debug_assert_eq!(outcome.success, result.success);
+            if let Some(lc) = lifecycle.as_deref() {
+                // Protocol layer produced a JSON-RPC result (not -32xxx).
+                // Tool kernel success is independent (isError / structuredContent).
+                let category = if result.success {
+                    "success"
+                } else {
+                    "tool_error"
+                };
+                if result.success {
+                    lc.dispatch_finished(true, Some(true), category);
+                } else {
+                    lc.dispatch_finished(true, Some(false), category);
+                }
+            }
             let text = serde_json::to_string_pretty(&json!({
                 "success": result.success,
                 "output": result.output.clone(),

@@ -37,6 +37,7 @@ mod runtime_http;
 mod shell_client;
 mod shell_protocol;
 mod startup;
+mod tool_request_trace;
 mod tool_runtime;
 mod users_http;
 #[allow(dead_code)]
@@ -380,6 +381,10 @@ only for local/trusted-network demos."
     let base = format!("http://localhost:{}", port);
     tracing::info!("Runtime base: {}", base);
     tracing::info!("MCP endpoint: {}/mcp", base);
+    tracing::info!(
+        tool_request_trace = crate::config::tool_request_trace_enabled(),
+        "tool_request_trace"
+    );
     tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
     tracing::info!("MCP App console: {}/console", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);

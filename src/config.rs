@@ -334,6 +334,14 @@ pub(crate) fn env_flag(key: &str) -> Option<bool> {
     }
 }
 
+/// Gated tool-request lifecycle tracing (`WEBCODEX_TOOL_REQUEST_TRACE`).
+///
+/// Default **false**. When false, MCP/API handlers must not serialize response
+/// bodies solely to measure size, and no lifecycle events are emitted.
+pub(crate) fn tool_request_trace_enabled() -> bool {
+    env_flag("WEBCODEX_TOOL_REQUEST_TRACE").unwrap_or(false)
+}
+
 pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
     if let Ok(path) = std::env::var("WEBCODEX_ENV_FILE") {
         return Ok(vec![load_env_file_candidate(Path::new(&path), false)?]);
@@ -784,5 +792,24 @@ mod tests {
         assert_eq!(std::env::var("WEBCODEX_TOKEN").unwrap(), "new");
 
         std::env::remove_var("WEBCODEX_ENV_FILE");
+    }
+
+    #[test]
+    fn tool_request_trace_defaults_off() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_TOOL_REQUEST_TRACE");
+        assert!(!tool_request_trace_enabled());
+    }
+
+    #[test]
+    fn tool_request_trace_true_enables() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_TOOL_REQUEST_TRACE", "true");
+        assert!(tool_request_trace_enabled());
+        std::env::set_var("WEBCODEX_TOOL_REQUEST_TRACE", "false");
+        assert!(!tool_request_trace_enabled());
+        std::env::set_var("WEBCODEX_TOOL_REQUEST_TRACE", "maybe");
+        assert!(!tool_request_trace_enabled());
+        std::env::remove_var("WEBCODEX_TOOL_REQUEST_TRACE");
     }
 }

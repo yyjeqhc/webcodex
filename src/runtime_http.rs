@@ -1,5 +1,6 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::json_error;
+use crate::tool_request_trace::{estimate_json_bytes, new_trace_id, ToolRequestLifecycle};
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
@@ -119,13 +120,21 @@ pub async fn tools_list(req: &mut Request, depot: &mut Depot, res: &mut Response
 
 #[handler]
 pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let mut guard =
+        ToolRequestLifecycle::new("api", new_trace_id(), "-", "POST /api/tools/call", None);
+    guard.received();
+
     let audit = ActionAudit::start(req, depot, "/api/tools/call", "callTool");
     let Some(runtime) = runtime(depot) else {
+        guard.parsed("error_runtime_missing");
+        // Do not invent size=0 for json_error envelopes we did not measure.
+        guard.response_serialized(500, None, Some(false), None, "error_runtime_missing");
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Tool runtime not configured",
         ));
+        guard.handler_returned(500, None, Some(false), None, "error_runtime_missing");
         return;
     };
     // Parse the body as a raw JSON value so we can apply the params/arguments
@@ -135,22 +144,35 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
     let body: Value = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
+            guard.parsed("parse_error");
+            guard.response_serialized(400, None, Some(false), None, "parse_error");
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(json_error(
                 StatusCode::BAD_REQUEST,
                 format!("Invalid JSON: {}", e),
             ));
+            guard.handler_returned(400, None, Some(false), None, "parse_error");
             return;
         }
     };
     let (tool, params) = match extract_tool_call(&body) {
         Ok(pair) => pair,
         Err(msg) => {
+            // Params-level failure: not yet in ToolRuntime.
+            guard.parsed("invalid_tool_call");
+            guard.response_serialized(400, None, Some(false), None, "invalid_tool_call");
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(json_error(StatusCode::BAD_REQUEST, msg));
+            guard.handler_returned(400, None, Some(false), None, "invalid_tool_call");
             return;
         }
     };
+    guard.set_tool_name(Some(tool.clone()));
+    guard.parsed("ok");
+    // dispatch_started only after argument extraction succeeds and immediately
+    // before ToolRuntime dispatch.
+    guard.dispatch_started();
+
     let session_id = extract_recording_session_id(&body);
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let outcome = runtime
@@ -172,18 +194,63 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             required_scope,
             description,
         }) => {
+            guard.dispatch_failed("insufficient_scope");
+            guard.dispatch_finished(false, Some(false), "insufficient_scope");
+            // oauth insufficient-scope body is rendered by helper; size not measured.
+            guard.response_serialized(403, None, Some(false), Some(false), "insufficient_scope");
             crate::auth::render_oauth_insufficient_scope(res, required_scope, description);
+            guard.handler_returned(403, None, Some(false), Some(false), "insufficient_scope");
         }
         Some(ToolCallErrorStatus::InvalidArguments { message }) => {
+            guard.dispatch_failed("invalid_arguments");
+            guard.dispatch_finished(false, Some(false), "invalid_arguments");
+            guard.response_serialized(400, None, Some(false), Some(false), "invalid_arguments");
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(json_error(StatusCode::BAD_REQUEST, message));
+            guard.handler_returned(400, None, Some(false), Some(false), "invalid_arguments");
         }
         None => {
             let result = outcome
                 .result
                 .expect("tool kernel outcome without error must include result");
             debug_assert_eq!(outcome.success, result.success);
+            let tool_success = result.success;
+            // HTTP/API protocol success tracks the rendered status (200 vs 400).
+            let protocol_success = tool_success;
+            if tool_success {
+                guard.dispatch_finished(true, Some(true), "success");
+            } else {
+                guard.dispatch_finished(true, Some(false), "tool_error");
+            }
+            let status = if tool_success {
+                StatusCode::OK
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            // Serialize only when tracing is enabled (estimate_json_bytes gates).
+            let estimated = if guard.enabled() {
+                serde_json::to_value(&result)
+                    .ok()
+                    .and_then(|v| estimate_json_bytes(&v))
+            } else {
+                None
+            };
+            let category = if tool_success { "ok" } else { "tool_error" };
+            guard.response_serialized(
+                status.as_u16(),
+                estimated,
+                Some(protocol_success),
+                Some(tool_success),
+                category,
+            );
             render_result(res, &audit, &tool, outcome.project, result);
+            guard.handler_returned(
+                status.as_u16(),
+                estimated,
+                Some(protocol_success),
+                Some(tool_success),
+                category,
+            );
         }
     }
 }

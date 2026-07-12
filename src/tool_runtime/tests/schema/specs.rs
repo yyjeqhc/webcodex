@@ -223,9 +223,12 @@ fn tool_specs_input_schema_fields_are_declared_and_safe() {
 #[test]
 fn mcp_tools_list_exposes_registered_tool_spec_input_schemas() {
     let mcp_source = include_str!("../../../mcp.rs");
+    // Default MCP tools/list is built from registered_tool_specs via
+    // mcp_tools_list_payload (compact mode may omit outputSchema only).
     assert!(
-        mcp_source.contains("\"tools\": registered_tool_specs()"),
-        "MCP tools/list should expose registered ToolSpec rows directly so inputSchema stays in parity"
+        mcp_source.contains("mcp_tools_list_payload")
+            && mcp_source.contains("registered_tool_specs()"),
+        "MCP tools/list should build from registered ToolSpec rows so inputSchema stays in parity"
     );
 
     let specs = registered_tool_specs();

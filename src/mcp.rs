@@ -6,7 +6,7 @@ use crate::tool_request_trace::{
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
-use crate::tool_runtime::{registered_tool_specs, ToolRuntime};
+use crate::tool_runtime::{registered_tool_specs, ToolRuntime, ToolSpec};
 use salvo::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -42,6 +42,32 @@ fn tool_name_from_params(params: &Value) -> Option<String> {
         .get("name")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
+}
+
+/// MCP tools/list payload. When `WEBCODEX_MCP_COMPACT_SCHEMAS=true`, omit
+/// `outputSchema` only (name/description/inputSchema/annotations retained).
+/// This is an A/B compatibility experiment — not a permanent API change.
+fn mcp_tools_list_payload() -> Value {
+    let compact = crate::config::mcp_compact_schemas_enabled();
+    let tools: Vec<Value> = registered_tool_specs()
+        .into_iter()
+        .map(|spec| mcp_tool_spec_json(spec, compact))
+        .collect();
+    json!({ "tools": tools })
+}
+
+fn mcp_tool_spec_json(spec: ToolSpec, compact: bool) -> Value {
+    if compact {
+        json!({
+            "name": spec.name,
+            "description": spec.description,
+            "inputSchema": spec.input_schema,
+            "annotations": spec.annotations,
+        })
+    } else {
+        // Match ToolSpec's camelCase serde so default behavior is unchanged.
+        serde_json::to_value(spec).unwrap_or_else(|_| json!({}))
+    }
 }
 
 /// Outcome of handling a single MCP JSON-RPC request.
@@ -259,12 +285,7 @@ async fn handle_mcp_request_with_lifecycle(
             }),
         ),
         "ping" => rpc_result(id, json!({})),
-        "tools/list" => rpc_result(
-            id,
-            json!({
-                "tools": registered_tool_specs()
-            }),
-        ),
+        "tools/list" => rpc_result(id, mcp_tools_list_payload()),
         "tools/call" => {
             let mut params: McpToolCallParams = match serde_json::from_value(request.params) {
                 Ok(params) => params,
@@ -523,6 +544,108 @@ mod tests {
             assert!(tool["inputSchema"].is_object());
             assert!(tool["outputSchema"].is_object());
         }
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_list_default_retains_output_schema() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        let runtime = test_runtime();
+        let outcome =
+            handle_mcp_request(&runtime, rpc("tools/list", Some(json!(1)), json!({})), None).await;
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("expected Ok");
+        };
+        let tools = value["result"]["tools"].as_array().expect("tools array");
+        assert!(!tools.is_empty());
+        for tool in tools {
+            assert!(tool["name"].is_string());
+            assert!(tool["description"].is_string());
+            assert!(tool["inputSchema"].is_object());
+            assert!(
+                tool["outputSchema"].is_object(),
+                "default mode must keep outputSchema for {}",
+                tool["name"]
+            );
+            assert!(tool["annotations"].is_object() || tool.get("annotations").is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_list_compact_omits_output_schema_only() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+        let runtime = test_runtime();
+        let outcome =
+            handle_mcp_request(&runtime, rpc("tools/list", Some(json!(2)), json!({})), None).await;
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("expected Ok");
+        };
+        let tools = value["result"]["tools"].as_array().expect("tools array");
+        assert!(!tools.is_empty());
+        for tool in tools {
+            assert!(tool["name"].is_string(), "{tool:?}");
+            assert!(tool["description"].is_string(), "{tool:?}");
+            assert!(tool["inputSchema"].is_object(), "{tool:?}");
+            assert!(
+                tool.get("outputSchema").is_none(),
+                "compact mode must omit outputSchema for {}",
+                tool["name"]
+            );
+            // First-version experiment keeps annotations to reduce variables.
+            assert!(
+                tool.get("annotations").is_some(),
+                "compact mode keeps annotations for {}",
+                tool["name"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_list_compact_is_smaller_than_full_serialized() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        let full = serde_json::to_vec(&mcp_tools_list_payload()).expect("full serialize");
+        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+        let compact = serde_json::to_vec(&mcp_tools_list_payload()).expect("compact serialize");
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        assert!(
+            compact.len() < full.len(),
+            "compact={} full={}",
+            compact.len(),
+            full.len()
+        );
+        // Guard against accidental total collapse (must still list many tools).
+        assert!(
+            compact.len() > 10_000,
+            "compact unexpectedly tiny: {}",
+            compact.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_call_still_returns_structured_content_under_compact_flag() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+        let runtime = test_runtime();
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(3)),
+                json!({"name": "list_projects", "arguments": {}}),
+            ),
+            None,
+        )
+        .await;
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("expected Ok, got {outcome:?}");
+        };
+        assert!(value["result"]["content"].is_array());
+        assert!(value["result"]["structuredContent"].is_object());
+        assert!(value["result"]["structuredContent"]["success"].is_boolean());
     }
 
     #[tokio::test]

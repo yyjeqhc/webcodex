@@ -342,6 +342,15 @@ pub(crate) fn tool_request_trace_enabled() -> bool {
     env_flag("WEBCODEX_TOOL_REQUEST_TRACE").unwrap_or(false)
 }
 
+/// Experimental MCP `tools/list` compact schemas switch.
+///
+/// When true, MCP discovery omits `outputSchema` only (keeps name, description,
+/// inputSchema, annotations). Default false — production behavior unchanged.
+/// Invalid / unset values follow `env_flag` and default to false.
+pub(crate) fn mcp_compact_schemas_enabled() -> bool {
+    env_flag("WEBCODEX_MCP_COMPACT_SCHEMAS").unwrap_or(false)
+}
+
 pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
     if let Ok(path) = std::env::var("WEBCODEX_ENV_FILE") {
         return Ok(vec![load_env_file_candidate(Path::new(&path), false)?]);
@@ -793,7 +802,27 @@ mod tests {
 
         std::env::remove_var("WEBCODEX_ENV_FILE");
     }
+    #[test]
+    fn mcp_compact_schemas_defaults_off() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        assert!(!mcp_compact_schemas_enabled());
+    }
 
+    #[test]
+    fn mcp_compact_schemas_true_enables() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+        assert!(mcp_compact_schemas_enabled());
+        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "1");
+        assert!(mcp_compact_schemas_enabled());
+        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+        assert!(!mcp_compact_schemas_enabled());
+        std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "maybe");
+        // Invalid values are treated as unset by env_flag -> default false.
+        assert!(!mcp_compact_schemas_enabled());
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    }
     #[test]
     fn tool_request_trace_defaults_off() {
         let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();

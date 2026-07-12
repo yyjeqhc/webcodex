@@ -385,6 +385,10 @@ only for local/trusted-network demos."
         tool_request_trace = crate::config::tool_request_trace_enabled(),
         "tool_request_trace"
     );
+    tracing::info!(
+        mcp_compact_schemas = crate::config::mcp_compact_schemas_enabled(),
+        "mcp_compact_schemas"
+    );
     tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
     tracing::info!("MCP App console: {}/console", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);

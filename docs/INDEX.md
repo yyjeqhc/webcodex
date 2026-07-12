@@ -51,3 +51,5 @@ Start with the README, [QUICK_START.md](QUICK_START.md), and [DEMO.md](DEMO.md).
 
 26. [TESTING.md](TESTING.md) - test lanes, test layout, and ignored-test inventory.
 27. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) - local end-to-end validation scripts and documentation scan guidance.
+28. [../AGENTS.md](../AGENTS.md) - agent execution contract (safety, editing, git, validation, architecture musts).
+29. [agent/architecture-decisions.md](agent/architecture-decisions.md), [agent/oauth-bridge-plan.md](agent/oauth-bridge-plan.md), [agent/openapi-guidelines.md](agent/openapi-guidelines.md), [agent/release-process.md](agent/release-process.md) - long-form design moved out of AGENTS.md.

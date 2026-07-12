@@ -7,10 +7,11 @@ Guide for autonomous agents (Codex, GLM, ChatGPT, MCP, GPT Action) developing ag
 ## 1. Project Identity
 
 - **Project:** WebCodex
-- **Default project id:** `agent:oe:private-drop`
-- **Default path:** `/root/git/private-drop`
+- **Default managed project id:** `agent:oe:private-drop`
+- **Repository path:** `/root/git/private-drop` (deployment/project location may vary)
 - Current development branch may vary; **inspect `git status` and `git log` before editing**.
 - Do not assume `main` is the active branch.
+- Do not infer repository identity from the directory name alone; confirm the project id and active repository when needed.
 
 ---
 
@@ -66,7 +67,7 @@ Release operations are allowed only when all conditions below are true:
 ## 4. Branch and Commit Rules
 
 - Always check `git status` and `git log` before editing.
-- Worktree must be clean before starting.
+- If the worktree is not clean, inspect existing changes first. Continue only when the existing changes are unrelated, understood, and will not be overwritten. Stop when ownership is unclear, changes overlap the requested work, or existing work may be lost.
 - Create a local commit **only when explicitly requested**.
 - Commit message prefix convention:
   - `feat:` — new functionality
@@ -186,8 +187,7 @@ If adding or renaming a runtime tool, update **all** of:
 - Keep **destructive actions consequential**: shell/job execution, raw writes, patch application, delete/restore/discard, imports, and generic dispatch.
 - `callRuntimeTool` is advanced/generic; use dedicated Actions only for stable
   common workflows that fit the operation budget.
-- WebCodex GPT Actions must stay below the 30-operation GPT Actions limit. The
-  current OpenAPI surface is 25 operations.
+- WebCodex GPT Actions must stay below the 30-operation GPT Actions limit. Verify the current OpenAPI operation count through generation/tests rather than relying on this document for a fixed count.
 - `listRuntimeTools` full detail discovery includes expanded schemas and may be
   too large for GPT Actions. Daily GPT Action discovery should prefer
   `callRuntimeTool(tool="tool_manifest")`; focused `listRuntimeTools` calls
@@ -242,7 +242,7 @@ Every agent final response must include:
 - **Behavior changes** — what differs at runtime (if any)
 - **Validation run** — commands executed and their outcomes
 - **Full suite yes/no** — whether `cargo test --bin webcodex` was run
-- **Commit hash** — if a commit was created
+- **Commit status** — commit hash if a commit was created; otherwise explicitly state `no commit created`
 - **Known limitations** — skipped checks, ignored tests, or deferred work
 
 ---

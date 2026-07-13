@@ -190,6 +190,7 @@ impl ToolRuntime {
                 "session_id": session_summary.session_id,
                 "mode": session_summary.mode,
                 "guards": session_summary.guards,
+                "lifecycle": session_summary.lifecycle,
                 "explicit_session_id_recommended": true,
                 "explicit_session_id_fields": {
                     "tool_business_input": "session_id",

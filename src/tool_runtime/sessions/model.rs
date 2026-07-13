@@ -56,6 +56,26 @@ pub(crate) struct CurrentSessionKey {
     pub(crate) resolved_project: String,
 }
 
+/// Workflow session lifecycle state (Phase 1: field only; no close/archive paths).
+///
+/// Wire values use snake_case (`"active"`, `"closed"`, `"archived"`). Missing
+/// ledger fields default to [`SessionLifecycle::Active`] so pre-lifecycle JSON
+/// remains readable without migration.
+///
+/// Phase 1 code paths only create and persist `Active`. `Closed` / `Archived`
+/// are reserved for later phases and must not be produced yet. LRU eviction is
+/// capacity management, not a lifecycle transition to `Archived`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionLifecycle {
+    #[default]
+    Active,
+    /// Reserved — Phase 2. Not produced or enforced in Phase 1.
+    Closed,
+    /// Reserved — Phase 3+. Not produced or enforced in Phase 1.
+    Archived,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct SessionRecord {
     pub(super) session_id: String,
@@ -63,6 +83,8 @@ pub(super) struct SessionRecord {
     pub(super) title: Option<String>,
     pub(super) mode: SessionMode,
     pub(super) guards: SessionGuards,
+    /// Explicit lifecycle; always set in memory. Default on load: Active.
+    pub(super) lifecycle: SessionLifecycle,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
     pub(super) events: VecDeque<SessionEvent>,
@@ -105,6 +127,9 @@ pub(super) struct PersistedSessionRecord {
     pub(super) title: Option<String>,
     pub(super) mode: SessionMode,
     pub(super) guards: SessionGuards,
+    /// Optional on disk for ledger compatibility; missing → Active.
+    #[serde(default)]
+    pub(super) lifecycle: SessionLifecycle,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
     pub(super) events: Vec<SessionEvent>,
@@ -395,6 +420,7 @@ pub(crate) struct SessionSummary {
     pub(crate) title: Option<String>,
     pub(crate) mode: SessionMode,
     pub(crate) guards: SessionGuards,
+    pub(crate) lifecycle: SessionLifecycle,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
     pub(crate) counts: SessionCounts,

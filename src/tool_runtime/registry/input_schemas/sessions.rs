@@ -10,6 +10,16 @@ pub(crate) fn session_mode_schema(description: &str) -> Value {
     })
 }
 
+/// Workflow session lifecycle wire values. Phase 1 only produces `active`;
+/// `closed` / `archived` are reserved for later phases.
+pub(crate) fn session_lifecycle_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": ["active", "closed", "archived"],
+        "description": description,
+    })
+}
+
 pub(crate) fn session_guards_schema(description: &str) -> Value {
     json!({
         "type": "object",

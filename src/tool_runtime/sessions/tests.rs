@@ -1,7 +1,10 @@
 use super::super::project_instructions::ProjectInstructionsSnapshot;
 use super::super::tool_inputs::SessionMode;
 use super::events::{changed_paths_for_tool, SessionToolClassification};
-use super::model::{MAX_VALIDATION_EXCERPT_CHARS, MESSAGE_ID_PREFIX};
+use super::model::{
+    PersistedSessionLedger, PersistedSessionRecord, SessionLifecycle, MAX_VALIDATION_EXCERPT_CHARS,
+    MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+};
 use super::persistence::write_ledger_atomic;
 use super::*;
 use serde_json::{json, Value};
@@ -128,6 +131,7 @@ fn session_store_persists_and_restores_basic_session() {
     assert_eq!(summary.session_id, session.session_id);
     assert_eq!(summary.project.as_deref(), Some("agent:oe:private-drop"));
     assert_eq!(summary.title.as_deref(), Some("persistent work"));
+    assert_eq!(summary.lifecycle, SessionLifecycle::Active);
 }
 
 #[test]
@@ -984,6 +988,7 @@ fn ledger_round_trip_preserves_session_events_and_messages() {
     let summary = restored.summary(&session.session_id, Some(20)).unwrap();
     assert_eq!(summary.project.as_deref(), Some("proj"));
     assert_eq!(summary.title.as_deref(), Some("persist"));
+    assert_eq!(summary.lifecycle, SessionLifecycle::Active);
     assert_eq!(summary.counts.tool_calls, 1);
     assert!(summary
         .events
@@ -995,4 +1000,142 @@ fn ledger_round_trip_preserves_session_events_and_messages() {
     // Process-local bindings are intentionally not durable.
     let key = test_binding_key("proj");
     assert!(restored.current_session(&key).is_none());
+}
+
+// --- Workflow session lifecycle (Phase 1: field + ledger default only) ---
+
+#[test]
+fn new_session_defaults_lifecycle_to_active() {
+    let store = SessionStore::default();
+    let summary = store.start_session(None, Some("lifecycle".to_string()));
+    assert_eq!(summary.lifecycle, SessionLifecycle::Active);
+
+    // Summary JSON exposes lifecycle for observability.
+    let value = serde_json::to_value(&summary).unwrap();
+    assert_eq!(value["lifecycle"], "active");
+}
+
+#[test]
+fn persisted_ledger_writes_and_reads_lifecycle_active() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let session = store.start_session(Some("proj".to_string()), Some("with lifecycle".to_string()));
+    assert_eq!(session.lifecycle, SessionLifecycle::Active);
+
+    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let ledger_value: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(ledger_value["version"], SESSION_LEDGER_VERSION);
+    assert_eq!(ledger_value["sessions"][0]["lifecycle"], "active");
+    assert_eq!(
+        ledger_value["sessions"][0]["session_id"].as_str().unwrap(),
+        session.session_id
+    );
+
+    let restored = persistent_store(ledger);
+    let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+    assert_eq!(summary.lifecycle, SessionLifecycle::Active);
+}
+
+#[test]
+fn legacy_ledger_without_lifecycle_loads_as_active() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger_path = tmp.path().join("sessions.json");
+    // Pre-lifecycle JSON shape: no `lifecycle` key on the session record.
+    let legacy = json!({
+        "version": SESSION_LEDGER_VERSION,
+        "sessions": [{
+            "session_id": "wc_sess_legacylifecycle01",
+            "project": "proj-legacy",
+            "title": "old row",
+            "mode": "normal",
+            "guards": {
+                "deny_write_tools": false,
+                "deny_shell_tools": false
+            },
+            "created_at": 1_700_000_000,
+            "updated_at": 1_700_000_100,
+            "events": [],
+            "messages": []
+        }]
+    });
+    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+    // Missing field must not fail serde (#[serde(default)] → Active).
+    let restored = persistent_store(ledger_path);
+    let status = restored.status();
+    assert_eq!(status.restored_sessions, 1);
+    assert_eq!(status.last_persist_error, None);
+
+    let summary = restored
+        .summary("wc_sess_legacylifecycle01", Some(10))
+        .unwrap();
+    assert_eq!(summary.lifecycle, SessionLifecycle::Active);
+    assert_eq!(summary.project.as_deref(), Some("proj-legacy"));
+    assert_eq!(summary.title.as_deref(), Some("old row"));
+    assert_eq!(summary.mode, SessionMode::Normal);
+}
+
+#[test]
+fn lifecycle_ledger_round_trip_preserves_active() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let session = store.start_session(None, Some("round trip".to_string()));
+    assert_eq!(session.lifecycle, SessionLifecycle::Active);
+
+    let restored = persistent_store(ledger);
+    let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+    assert_eq!(summary.lifecycle, SessionLifecycle::Active);
+    assert_eq!(summary.session_id, session.session_id);
+}
+
+#[test]
+fn persisted_session_record_serde_defaults_missing_lifecycle() {
+    // Direct serde check: omit lifecycle entirely; deserialize succeeds as Active.
+    let json = r#"{
+        "session_id": "wc_sess_serde_default_ok",
+        "project": null,
+        "title": null,
+        "mode": "normal",
+        "guards": {"deny_write_tools": false, "deny_shell_tools": false},
+        "created_at": 10,
+        "updated_at": 20,
+        "events": [],
+        "messages": []
+    }"#;
+    let record: PersistedSessionRecord = serde_json::from_str(json).unwrap();
+    assert_eq!(record.lifecycle, SessionLifecycle::Active);
+    assert!(record.session_id.starts_with(SESSION_ID_PREFIX));
+
+    let ledger_json = format!(
+        r#"{{"version":{version},"sessions":[{record}]}}"#,
+        version = SESSION_LEDGER_VERSION,
+        record = json
+    );
+    let ledger: PersistedSessionLedger = serde_json::from_str(&ledger_json).unwrap();
+    assert_eq!(ledger.version, SESSION_LEDGER_VERSION);
+    assert_eq!(ledger.sessions.len(), 1);
+    assert_eq!(ledger.sessions[0].lifecycle, SessionLifecycle::Active);
+}
+
+#[test]
+fn session_lifecycle_wire_values_are_snake_case() {
+    assert_eq!(
+        serde_json::to_value(SessionLifecycle::Active).unwrap(),
+        json!("active")
+    );
+    assert_eq!(
+        serde_json::to_value(SessionLifecycle::Closed).unwrap(),
+        json!("closed")
+    );
+    assert_eq!(
+        serde_json::to_value(SessionLifecycle::Archived).unwrap(),
+        json!("archived")
+    );
+    assert_eq!(
+        serde_json::from_value::<SessionLifecycle>(json!("active")).unwrap(),
+        SessionLifecycle::Active
+    );
+    assert_eq!(SessionLifecycle::default(), SessionLifecycle::Active);
 }

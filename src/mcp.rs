@@ -650,6 +650,10 @@ mod tests {
 
     #[tokio::test]
     async fn session_tools_exposed_in_registry_and_mcp() {
+        // tools/list outputSchema depends on WEBCODEX_MCP_COMPACT_SCHEMAS; take
+        // the shared env lock so parallel compact-schema tests cannot strip it.
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
         let runtime = test_runtime();
         let specs = registered_tool_specs();
         let registry_names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();

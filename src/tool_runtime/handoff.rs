@@ -178,6 +178,7 @@ impl ToolRuntime {
             "title": summary.title,
             "mode": summary.mode,
             "guards": summary.guards,
+            "lifecycle": summary.lifecycle,
             "created_at": summary.created_at,
             "updated_at": summary.updated_at,
             "counts": counts,

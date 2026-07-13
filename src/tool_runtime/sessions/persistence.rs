@@ -31,6 +31,7 @@ impl PersistedSessionRecord {
             title: record.title.clone(),
             mode: record.mode,
             guards: record.guards,
+            lifecycle: record.lifecycle,
             created_at: record.created_at,
             updated_at: record.updated_at,
             events: record.events.iter().skip(event_skip).cloned().collect(),
@@ -69,6 +70,8 @@ impl PersistedSessionRecord {
             title: self.title.map(|value| bound_summary_string(value.trim())),
             mode: self.mode,
             guards: SessionGuards::effective(self.mode, self.guards),
+            // Missing ledger field deserializes via #[serde(default)] → Active.
+            lifecycle: self.lifecycle,
             created_at: self.created_at,
             updated_at: self.updated_at.max(self.created_at),
             events,

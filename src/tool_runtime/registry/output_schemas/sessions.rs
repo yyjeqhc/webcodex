@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-use super::super::input_schemas::{session_guards_schema, session_mode_schema};
+use super::super::input_schemas::{
+    session_guards_schema, session_lifecycle_schema, session_mode_schema,
+};
 use super::common::{
     array_schema, evidence_history_schema, evidence_integrity_schema, job_lifecycle_summary_schema,
     nullable_schema, open_object_schema, permission_summary_schema, schema_type,
@@ -37,6 +39,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 session_guards_schema("Effective task guard settings for this session."),
             ),
             (
+                "lifecycle",
+                session_lifecycle_schema(
+                    "Workflow session lifecycle. Phase 1 always returns active; closed/archived are reserved.",
+                ),
+            ),
+            (
                 "created_at",
                 schema_type("integer", "Unix timestamp in seconds."),
             ),
@@ -62,6 +70,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "guards",
                 session_guards_schema("Effective task guard settings for this session."),
+            ),
+            (
+                "lifecycle",
+                session_lifecycle_schema(
+                    "Workflow session lifecycle. Missing on pre-lifecycle ledgers is treated as active on load; Phase 1 always surfaces active.",
+                ),
             ),
             (
                 "created_at",
@@ -206,6 +220,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "guards",
                 session_guards_schema("Effective session guards."),
+            ),
+            (
+                "lifecycle",
+                session_lifecycle_schema(
+                    "Workflow session lifecycle. Phase 1 always returns active.",
+                ),
             ),
             (
                 "created_at",

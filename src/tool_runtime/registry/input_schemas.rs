@@ -68,8 +68,8 @@ pub(super) use sessions::{
     current_session_input_schema, list_session_messages_input_schema,
     post_session_message_input_schema, resolve_session_message_input_schema,
     session_discussion_summary_input_schema, session_guards_schema,
-    session_handoff_summary_input_schema, session_mode_schema, session_summary_input_schema,
-    start_session_input_schema, validation_summary_input_schema,
+    session_handoff_summary_input_schema, session_lifecycle_schema, session_mode_schema,
+    session_summary_input_schema, start_session_input_schema, validation_summary_input_schema,
 };
 pub(super) use testing::with_common_testing_metadata;
 pub(super) use text_edits::{

@@ -19,12 +19,12 @@ use super::events::{
 use super::model::{
     CurrentSessionKey, ListSessionMessagesFilter, PersistedSessionLedger, PersistedSessionRecord,
     PostSessionMessageInput, SessionCounts, SessionCreateOptions, SessionDiscussionSummary,
-    SessionEvent, SessionGuardDenial, SessionGuards, SessionInboxHint, SessionMessage,
-    SessionMessageError, SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary,
-    SessionTransport, ToolCallRecorderMetadata, ToolCallStart, DEFAULT_MAX_EVENTS_PER_SESSION,
-    DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS, DEFAULT_MESSAGE_LIST_LIMIT,
-    DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_MESSAGE_LIST_LIMIT, MAX_SUMMARY_LIMIT,
-    MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    SessionEvent, SessionGuardDenial, SessionGuards, SessionInboxHint, SessionLifecycle,
+    SessionMessage, SessionMessageError, SessionMessageStatus, SessionRecord, SessionStoreStatus,
+    SessionSummary, SessionTransport, ToolCallRecorderMetadata, ToolCallStart,
+    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS,
+    DEFAULT_MESSAGE_LIST_LIMIT, DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_MESSAGE_LIST_LIMIT,
+    MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::persistence::{load_persisted_sessions, write_ledger_atomic};
 use super::query::{
@@ -181,6 +181,8 @@ impl SessionStore {
             title: opts.title,
             mode: opts.mode,
             guards,
+            // Phase 1: create always yields Active; no close/archive paths yet.
+            lifecycle: SessionLifecycle::Active,
             created_at: now,
             updated_at: now,
             messages: VecDeque::new(),
@@ -830,6 +832,7 @@ impl SessionStoreInner {
             title: record.title.clone(),
             mode: record.mode,
             guards: record.guards,
+            lifecycle: record.lifecycle,
             created_at: record.created_at,
             updated_at: record.updated_at,
             counts,

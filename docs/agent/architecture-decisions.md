@@ -77,8 +77,15 @@ Audit, and not lifecycle tracing.
 **Default mode is frictionless** (`dev_auto_approve`): no human wait, no client
 changes, no blocking for approval UX. Hard safety (path, secrets, session
 guards, scopes, agent policy) remains independent and **not overridable** by
-permission mode. Full design, modes, risk model, and phased rollout:
-[`permission-model.md`](permission-model.md).
+permission mode.
+
+**Implementation (Phase 1/2):** module under `src/tool_runtime/permissions/`;
+authoritative single evaluation at ToolRuntime **dispatch** before mutation;
+kernel reuses the attached decision and does not re-evaluate. Modes:
+`dev_auto_approve` / `audit_only` allow; `require_approval` and invalid
+`WEBCODEX_PERMISSION_MODE` fail closed (deny; approval workflow not
+implemented). Full design, **Implementation Status**, mode matrix, and later
+phases: [`permission-model.md`](permission-model.md).
 
 ---
 

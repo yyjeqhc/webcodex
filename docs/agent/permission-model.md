@@ -1,12 +1,20 @@
 # Permission Model — Decision Layer for Tool Execution
 
-Design for a **default-frictionless**, **auditable**, and **progressively
-enableable** permission model for WebCodex. This document is **Phase 0 only**:
-design text. No Rust, config, database, OpenAPI, MCP, or test changes ship with
-this file.
+Design and **implementation status** for a **default-frictionless**, **auditable**,
+and **progressively enableable** permission model for WebCodex.
 
-**Status:** design for documentation and implementation planning; not product
-behavior today beyond the existing scaffold.
+**Status (as of Phase 1/2 on `refactor/session-boundaries`):**
+
+| Phase | State |
+|---|---|
+| Phase 0 — design | Done |
+| Phase 1 — types / mode config / module split | **Implemented** |
+| Phase 2 — single pre-exec evaluator gate | **Implemented** |
+| Phase 3+ — richer risk, audit correlation, real approval | Not implemented |
+
+This document is the single place for both the standing design and the current
+runtime facts. **When design text and code disagree, code wins.** Design
+sections below that describe future behavior are marked as such.
 
 **Audience:** agents and maintainers working on self-hosted WebCodex.
 
@@ -24,108 +32,178 @@ behavior today beyond the existing scaffold.
 
 ---
 
-## 1. Baseline facts (current scaffold)
+## Implementation Status
 
-### Module home
+### Module layout (implemented)
 
-Permission scaffolding lives at:
+Permission lives under **`src/tool_runtime/permissions/`** (not a top-level
+`src/permissions.rs`):
 
-- **`src/tool_runtime/permissions.rs`** (not a top-level `src/permissions.rs`)
-
-Supporting pieces:
-
-| Area | Location | Role today |
-|---|---|---|
-| Risk / “requires permission” metadata | `tool_definition` + `tool_policy.rs` | `requires_permission()`, `permission_risk()` from tool metadata |
-| Annotations | `registry/annotations.rs` | MCP-style `readOnlyHint` / `destructiveHint` / … |
-| Dispatch hooks | `dispatch.rs`, `kernel.rs` | Build decision, attach to result, optional ledger attach |
-| Workflow ledger | `sessions/model.rs`, `sessions/store.rs` | `SessionEvent.permission`, `record_permission_decision` |
-| Profile surface | `runtime_info`, coding-task / handoff summaries | `permission_profile_payload()`, `permission_summary_from_events` |
-| Output schemas | `registry/output_schemas/common.rs` | Profile enums include permission mode values; keep public names minimal and avoid duplicate aliases |
-| Hard guards | session guard, path safety, scopes, agent capability | Independent of permission status machine |
-| Action Audit | `action_audit.rs`, `action_audit_sessions` | HTTP/operator facts; no permission fields today |
-| Lifecycle trace | `tool_request_trace.rs` | Opt-in request path observation; no permission state |
-
-### Existing capabilities
-
-1. **Default policy string is hard-coded** `dev_auto_approve`
-   (`DEFAULT_PERMISSION_POLICY`). There is no env-driven mode switch yet.
-2. **`permission_decision_for_tool`** returns a decision only when
-   `runtime_tool_requires_permission(tool_name)` is true (write / destructive /
-   shell-like tools via metadata). Otherwise returns `None` (no permission
-   object on the result).
-3. **Every such decision is immediately `status: "auto_approved"`** with
-   `reason: "dev_auto_approve"`. No waiting, no UI, no queue.
-4. **Risk labels** come from tool metadata / policy overrides, not per-call
-   argument inspection. Current labels include roughly:
-   `write`, `patch`, `artifact_write`, `destructive`, `shell`, `job`,
-   `validation`.
-5. **Decision shape** (`PermissionDecision`) today:
-
-   | Field | Meaning today |
-   |---|---|
-   | `required` | Always `true` when a decision is emitted |
-   | `policy` | Always `dev_auto_approve` |
-   | `request_id` | `wc_perm_*` UUID |
-   | `status` | Always `auto_approved` (when emitted) |
-   | `reason` | Policy name echo |
-   | `risk` | Risk string from metadata |
-   | `tool_name` | Tool name |
-   | `project` | Optional project id from the call |
-
-6. **Attachment timing (important):** today the decision is **created before**
-   inner dispatch, but **attached after** execution, and **suppressed** when
-   `is_hard_denied_output` detects hard-deny outcomes (session guard, path
-   policy, sensitive path strings, etc.). Permission does **not** gate
-   execution; hard safety runs inside / around the tool path independently.
-7. **Workflow Session integration:** if a tool-call start was recorded,
-   `record_permission_decision` copies the decision onto the in-flight start
-   and the finished ledger event. Summaries
-   (`permission_summary_from_events`) aggregate statuses including future
-   `approved` / `denied` / `requested` / `hard_denied` buckets that the
-   scaffold mostly does not produce yet.
-8. **Release recommendation** is a string only:
-   `RELEASE_RECOMMENDED_PERMISSION_POLICY = "require_approval"`. No state
-   machine, no pending queue, no approve API.
-
-### Missing capabilities
-
-| Capability | Status |
+| File | Role |
 |---|---|
-| Configurable permission mode env | Missing |
-| Pre-mutation allow / deny / pending gate | Missing (post-hoc annotation only) |
-| Real `require_approval` pending queue | Missing |
-| Approve / deny operators or API | Missing |
-| `audit_only` recommended-vs-executed split | Missing |
-| Stable reason codes separate from policy name | Minimal (`reason` ≈ policy) |
-| Trace id / decision duration on permission records | Missing |
-| Parameter-bound approval tokens | Missing |
-| Persistence of pending approvals across restart | Missing |
-| Permission fields on Action Audit rows | Missing |
+| `mod.rs` | Attach/suppress helpers, hard-deny detection, profile/summary, deny results |
+| `model.rs` | `PermissionMode`, `PermissionOutcome`, `PermissionDecision`, env/constant names |
+| `evaluator.rs` | **`PermissionEvaluator`** — single evaluation entry |
+| `policy.rs` | Mode → decision mapping, `WEBCODEX_PERMISSION_MODE` resolution |
+| `risk.rs` | **Classification facade only** (delegates to tool metadata / `tool_policy`) |
+| `tests.rs` | Unit tests for modes, outcomes, hard-deny suppress |
 
-### Existing hook points (implementation later)
+Supporting (outside the module, unchanged ownership):
 
-Recommended reuse, not reimplementation:
+| Area | Location | Role |
+|---|---|---|
+| Risk / requires-permission metadata | `tool_definition` + `tool_policy.rs` | Source of labels for the risk facade |
+| Annotations | `registry/annotations.rs` | MCP-style discovery hints (not the gate) |
+| Authoritative gate | `dispatch.rs` | Evaluate once → allow/deny → execute → attach |
+| Kernel reuse | `kernel.rs` | Reuses attached decision from output; **does not re-evaluate** |
+| Workflow ledger | `sessions/*` | Optional `SessionEvent.permission` attach |
+| Runtime wiring | `runtime.rs` | Holds `PermissionEvaluator::from_env()` |
+| Hard safety | session guard, path policy, scopes, agent auth | Independent of permission mode |
 
-1. **ToolRuntime dispatch** (`dispatch.rs` path after session/project guard and
-   agent auth; before or around `dispatch_authorized_inner`) — single place to
-   evaluate policy for concrete `ToolCall`s.
-2. **Kernel wrapper** (`kernel.rs`) — keep permission semantics unified so
-   generic `call_runtime_tool` and MCP do not diverge; avoid double-evaluate /
-   double-attach when both layers touch the same call (today both can touch
-   permission; Phase 1 should collapse to one evaluator call).
-3. **`runtime_tool_requires_permission` / `permission_risk`** — classification
-   source of truth.
-4. **`is_hard_denied_output` + hard guards** — remain independent “hard safety”
-   path; permission mode must not override them.
-5. **Optional ledger attach** via existing `SessionEvent.permission` — keep
-   format stable; do not invent a parallel ledger event kind in early phases.
-6. **Action Audit / lifecycle trace** — correlate later by ids only; do not
-   store full permission state machines there.
+### Capability matrix
+
+#### Implemented
+
+| Capability | Code fact |
+|---|---|
+| Module split (model / evaluator / policy / risk) | `permissions/*` |
+| Env-driven mode | `WEBCODEX_PERMISSION_MODE` via `EffectivePermissionConfig::from_env` |
+| Default when unset / empty | `dev_auto_approve` |
+| `PermissionEvaluator` single entry | `evaluator.rs` |
+| Authoritative gate at ToolRuntime dispatch | `dispatch.rs` after session/auth guards, **before** `dispatch_authorized_inner` |
+| One evaluation per tool request | Dispatch evaluates; kernel only `permission_decision_from_output` |
+| Pre-mutation allow/deny | Denied decisions return before inner dispatch |
+| Mode: `dev_auto_approve` | Executes; wire `status=auto_approved`, `reason=dev_auto_approve` |
+| Mode: `audit_only` | Executes; wire `status=audit_only_allowed`, `reason=audit_only` |
+| Mode: `require_approval` | **Does not execute**; `status=denied`, `reason=require_approval_not_implemented` |
+| Invalid mode | **Does not execute**; fail-closed deny (`policy=invalid`, `reason=invalid_permission_mode:…`) |
+| `wc_perm_*` request id per decision | `PermissionDecision::new` |
+| Attach decision to tool output | `add_permission_to_result` |
+| Suppress attach on hard-deny tool output | `is_hard_denied_output` after execution |
+| Profile payload for operators | `permission_profile_payload` / `runtime_status` |
+| Ledger attach when session start exists | `record_permission_decision` |
+| Read-only / non-permission tools | Evaluator returns `None` — **no** fake approval object |
+
+#### Partially implemented
+
+| Capability | What exists | What does not |
+|---|---|---|
+| Risk classification | Coarse labels from tool metadata via `risk.rs` facade (`write`, `patch`, `shell`, …) | Argument-bound risk, full risk engine, git/network/release subclasses as gates |
+| `audit_only` semantics | Distinct outcome + allow execution | Rich `recommended_outcome` / shadow recommendation fields beyond status/reason |
+| `require_approval` as a mode name | Accepted config; honest pre-exec **deny** | Pending queue, approve/deny, consumption |
+| Decision field model | Wire-stable `status` / `policy` / `reason` / `risk` | Design-doc names like `outcome` / `decision_id` / `reason_code` as separate wire fields |
+| Summary counters | Count `approved` / `requested` / `hard_denied` if present on ledger | Evaluator does not emit real pending approvals |
+
+#### Designed but not implemented
+
+| Capability | Notes |
+|---|---|
+| Real pending state machine | `pending` → approve/deny/timeout/consume |
+| Parameter-bound approval tokens / digests | One-shot consume rules |
+| Durable pending across restart | Store + expiry |
+| Approve / deny HTTP or operator API | |
+| Approval UI / notifications | |
+| Permission fields on Action Audit rows | Optional correlation only (Phase 4 plan) |
+| Lifecycle trace permission fields | Optional join by ids later |
+| RBAC / multi-tenant policy | Explicit non-goal near-term |
+| SQLite migration for permissions | None today |
+| Startup hard-fail on invalid mode | Invalid mode is **request-time fail-closed deny**, not necessarily process abort |
+
+#### Explicitly deferred
+
+- Multi-person approval / quorum
+- Distributed policy service
+- Model self-approve
+- Merging Permission with Workflow Session or Action Audit ownership
+- Moving all path/sensitive checks into the evaluator (they remain tool-internal hard safety)
 
 ---
 
-## 2. Design principles
+### Current execution chain (code order)
+
+Authoritative path is **ToolRuntime dispatch** (`dispatch.rs`), not the kernel
+wrapper. Approximate order for a normal tool call that reaches the permission
+gate:
+
+```text
+request / project resolution / current-session binding
+  → session existence + project-mismatch guards (as applicable)
+  → tool-disabled check
+  → session guard (e.g. read_only) before mutation
+  → record tool_call_started (when a workflow session is in play)
+  → agent authorization
+  → PermissionEvaluator.evaluate  (exactly once when this path is taken)
+  → if decision present and !allows_execution:
+        structured permission_denied result
+        attach the same PermissionDecision
+        optional ledger record
+        return  (no tool execution / no agent enqueue)
+  → tool execution (dispatch_authorized_inner)
+  → hard tool-internal safety checks remain effective
+        (path policy, sensitive paths, etc. still run inside tools —
+         they were not all moved in front of the evaluator)
+  → if hard-denied output: suppress permission attach
+  → else attach the same PermissionDecision + optional ledger record
+  → finish ledger / result recording
+```
+
+**Kernel** (`kernel.rs`): builds the `ToolCall`, may record an outer wrapper
+session, then calls dispatch. After dispatch returns it **reuses**
+`permission` from the result output for outer ledger attach. It does **not**
+call `PermissionEvaluator` again (no second `wc_perm_*` id).
+
+### Current mode behavior matrix
+
+| Mode | Executes permission-bearing tools? | Wire `status` | Typical `reason` |
+|---|---|---|---|
+| `dev_auto_approve` | **yes** | `auto_approved` | `dev_auto_approve` |
+| `audit_only` | **yes** | `audit_only_allowed` | `audit_only` |
+| `require_approval` | **no** | `denied` | `require_approval_not_implemented` |
+| invalid mode | **no** | `denied` | `invalid_permission_mode:{value}` |
+
+Config:
+
+| Rule | Behavior |
+|---|---|
+| Env var | `WEBCODEX_PERMISSION_MODE` |
+| Unset / empty / whitespace | `dev_auto_approve` |
+| Known values | `dev_auto_approve`, `audit_only`, `require_approval` |
+| Unknown non-empty value | `EffectivePermissionConfig::InvalidMode` → deny before execution |
+| Default development experience | No human approval, no client changes, no extra wait, no UI required |
+
+Non-permission tools (`tool_requires_permission` false): evaluator returns
+`None`; no `output.permission` object; tools still subject to hard safety.
+
+### Invariants (must hold)
+
+1. **One permission decision per request** that reaches the gate for a
+   permission-bearing tool (one evaluate call on the dispatch path).
+2. **One `wc_perm_*` request id** per that decision.
+3. **Kernel does not re-evaluate** — only reuses the attached decision.
+4. **`require_approval` must not silently fall back to auto-approve.**
+5. **Invalid configuration must not fall back to default allow** — fail closed
+   (deny execution) for permission-bearing tools.
+6. **Hard safety must not be bypassed by permission mode** (including
+   `dev_auto_approve` / `audit_only`).
+7. **Read-only / not-required tools must not invent fake approval records.**
+8. **Hard-denied tool outcomes suppress soft permission attach** so auto-approve
+   metadata is not claimed on policy/session/path hard denies.
+
+### Default development experience
+
+With no env set (or explicit `dev_auto_approve`):
+
+- No human approval step
+- No client protocol changes required
+- No pending wait
+- No approval UI
+- Existing self-hosted write/shell/job flows continue as before
+- Permission metadata still appears on permission-bearing successes for handoff /
+  summaries when not suppressed by hard deny
+
+---
+
+## 1. Design principles
 
 1. **Permission is a decision layer**, not a Session manager.
 2. **Workflow Session** provides optional task context and evidence storage.
@@ -134,9 +212,10 @@ Recommended reuse, not reimplementation:
 4. **Action Audit** records that an HTTP/API action happened (facts).
 5. **Lifecycle Trace** observes request handling (timing, success categories).
    It never owns approval state.
-6. **Default mode must match today’s development experience**: no popups, no
-   waits, no client changes, no blocked tool calls due to permission UX.
-7. **Richer permission ability is off or auto-approve by default.**
+6. **Default mode must match the frictionless development experience**: no
+   popups, no waits, no client changes, no blocked tool calls due to permission
+   UX (under `dev_auto_approve`).
+7. **Richer permission ability is opt-in** (`audit_only`, future real approval).
 8. **Permission must never create, switch, or close** a Workflow Session.
 9. **Audit must never reverse-control** permission decisions.
 10. **Do not over-design** for multi-party approval, RBAC, or distributed policy
@@ -144,7 +223,7 @@ Recommended reuse, not reimplementation:
 
 ---
 
-## 3. Layering model
+## 2. Layering model
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -152,8 +231,10 @@ Recommended reuse, not reimplementation:
 ├─────────────────────────────────────────────────────────────┤
 │ Hard safety rules  (path, secrets, session guard, project) │
 │   — not overridable by permission mode                      │
+│   — session/project guards often before permission;         │
+│     path/sensitive checks often still inside tools          │
 ├─────────────────────────────────────────────────────────────┤
-│ Permission Decision  (configurable: auto / audit / future) │
+│ Permission Decision  (configurable soft policy)             │
 ├─────────────────────────────────────────────────────────────┤
 │ ToolRuntime mutation / shell / job execution                 │
 ├─────────────────────────────────────────────────────────────┤
@@ -171,133 +252,103 @@ Do not collapse these into one mega-“permission” module.
 
 ---
 
-## 4. Permission modes
+## 3. Permission modes
 
-### Recommended minimal set
+### Mode set
 
-| Mode | Default? | Execution | Human wait | Primary purpose |
+| Mode | Default? | Execution today | Human wait | Primary purpose |
 |---|---|---|---|---|
-| **`dev_auto_approve`** | **Yes** | Allow (after hard safety) | Never | Local/self-hosted development efficiency |
-| **`audit_only`** | No | Allow (after hard safety) | Never | Shadow recommendations + richer logs |
-| **`require_approval`** | No | High-risk may **pending** | Yes (when implemented) | Future real gate |
-
+| **`dev_auto_approve`** | **Yes** | Allow (after pre-exec permission allow + hard safety) | Never | Local/self-hosted development efficiency |
+| **`audit_only`** | No | Allow; distinct decision status | Never | Shadow / audit-style labeling without blocking |
+| **`require_approval`** | No | **Denied** until real approval is implemented | N/A today | Future human gate (name reserved; no fake approve) |
 
 ### Mode semantics
 
 #### `dev_auto_approve` (default)
 
-- All requests that pass hard safety continue to execute.
-- No pending state is ever entered.
-- Decisions for permission-bearing tools are **`auto_approved`**.
-- Development efficiency equals current behavior.
-- Decisions remain recordable for handoff summaries and audit correlation.
+- Permission-bearing tools that pass the gate execute.
+- No pending state.
+- Decision: **`status: auto_approved`**, **`reason: dev_auto_approve`**.
+- Development efficiency equals the pre-permission-gate product behavior for
+  default mode.
 
 #### `audit_only`
 
-- Execution path identical to `dev_auto_approve` after hard safety.
-- Evaluator still computes a **recommendation** (e.g. “would require human
-  confirmation if `require_approval` were on”) and a risk level.
-- Recommendation **must not** block, delay, or alter tool success/failure.
-- Outcome should be distinct from true approval, e.g.
-  **`audit_only_allowed`**, with optional `recommended_outcome` metadata in
-  logs/ledger (implementation may store recommendation as reason_code fields
-  rather than inventing many statuses).
+- Execution allowed like `dev_auto_approve` for permission-bearing tools.
+- Decision: **`status: audit_only_allowed`**, **`reason: audit_only`**.
+- Must not block, delay, or alter success/failure relative to hard safety and
+  tool logic.
+- Richer “would have required approval” recommendation metadata is still
+  design-level (see partially implemented).
 
-#### `require_approval` (future; not enabled in Phase 0–3)
+#### `require_approval` (name reserved; **not** a working approval workflow)
 
-- High-risk tools may enter **`pending`** until explicit approve / deny.
-- Must not pretend to support this until a real state machine + consumption
-  rules exist.
-- Read-only / not-required tools still proceed without friction.
-- Hard safety still applies **before** and **independently of** approval.
+- **Current implementation:** always **deny before mutation** with
+  `reason: require_approval_not_implemented`.
+- Must **not** emit `auto_approved` while this mode is selected.
+- Read-only / not-required tools still proceed without a permission object.
+- Hard safety still applies independently.
+- Real `pending` / approve / deny is **deferred** (see later phases).
 
-### Modes considered and **not** recommended for v1
+### Modes not in the minimal set
 
-| Mode | Why not in minimal set |
+| Mode | Why not |
 |---|---|
-| `deny_by_default` | Too hostile for self-use default; folds into `require_approval` + risk rules later if needed |
-| Separate “release mode” enum | Prefer env profile docs (`require_approval` when operators want gates), not a parallel enum |
-| Per-tool mode overrides in env | Premature; use metadata + one global mode first |
-
-**Recommendation:** implement configuration for the minimal three-mode set above,
-starting with `dev_auto_approve`, then `audit_only`, and only add
-`require_approval` when a real approval workflow is required.
+| `deny_by_default` | Hostile for self-use default; fold into risk rules later if needed |
+| Separate “release mode” enum | Prefer documenting `require_approval` when operators want gates |
+| Per-tool mode overrides in env | Premature; metadata + one global mode first |
 
 ---
 
-## 5. Decision model
+## 4. Decision model
 
-Conceptual structure (fields may evolve; semantics matter more than exact
-Rust shape):
+### Wire shape today (`PermissionDecision`)
 
-```rust
-PermissionDecision {
-    decision_id,       // e.g. wc_perm_* (today: request_id)
-    mode,              // active PermissionMode
-    outcome,           // see outcomes below
-    policy,            // stable policy id (may equal mode name initially)
-    reason_code,       // machine-stable code, not free prose
-    risk_level,        // classification label (not the decision)
-    tool_name,
-    project,           // optional
-    workflow_session_id, // optional wc_sess_*
-    request_trace_id,  // optional lifecycle / server trace id
-    created_at,
-    // future (require_approval only):
-    // recommended_outcome, param_digest, expires_at, consumed_at, …
-}
-```
+Serialized field names are **wire-stable** for ledger / handoff clients:
 
-### Field semantics
-
-| Field | Semantics |
+| Field | Meaning |
 |---|---|
-| `decision_id` | Unique id for this evaluation (`wc_perm_*`). Not a session id. |
-| `mode` | Effective permission mode for this evaluation. |
-| `outcome` | What the permission layer decided for **execution eligibility**. |
-| `policy` | Named policy profile that produced the outcome (start with mode name). |
-| `reason_code` | Stable code (`dev_auto_approve`, `hard_safety_denied`, `approval_required`, `invalid_arguments_skipped`, …). |
-| `risk_level` | Risk classification of the tool/call class. Independent of outcome. |
-| `tool_name` | Runtime tool name. |
-| `project` | Optional resolved/requested project id when known. |
-| `workflow_session_id` | Optional `wc_sess_*` **already resolved** by the call path; never invented. |
-| `request_trace_id` | Optional lifecycle trace id when tracing is enabled. |
-| `created_at` | Decision time (for expiry / audit). |
+| `required` | `true` when a decision is emitted |
+| `policy` | Mode / policy name (`dev_auto_approve`, `audit_only`, `require_approval`, or `invalid`) |
+| `request_id` | `wc_perm_*` UUID (design name: decision id) |
+| `status` | Wire name for outcome (`auto_approved`, `audit_only_allowed`, `denied`, …) |
+| `reason` | Stable-ish code or policy echo (`dev_auto_approve`, `require_approval_not_implemented`, `invalid_permission_mode:…`) |
+| `risk` | Coarse risk label from metadata facade |
+| `tool_name` | Runtime tool name |
+| `project` | Optional project id from the call |
 
-### Outcomes (do not conflate with protocol success)
+Internal typed enums (`PermissionMode`, `PermissionOutcome`) map to these
+strings. Design docs may say **outcome**; the **serialized field remains
+`status`**.
 
-| Outcome | Meaning | Execution |
+### Outcomes (execution eligibility)
+
+| Outcome (wire `status`) | Meaning | Execution |
 |---|---|---|
-| **`not_required`** | Tool class does not enter the permission-bearing set | Proceed (subject to hard safety) |
-| **`auto_approved`** | Mode auto-approved a permission-bearing tool | Proceed |
-| **`audit_only_allowed`** | Executed under `audit_only`; recommendation recorded | Proceed |
-| **`approved`** | Explicit human/operator approval consumed | Proceed once |
-| **`denied`** | Permission layer denied (or approval denied) | **Do not** mutate |
-| **`pending`** | Waiting for approve/deny (`require_approval` only) | **Do not** mutate |
-| **`hard_denied`** (internal/category only, not a permission outcome) | Hard safety blocked; not a soft permission deny | **Do not** mutate |
+| *(no object — not required)* | Tool class not permission-bearing | Proceed (hard safety still applies) |
+| **`auto_approved`** | Default mode allowed | Proceed |
+| **`audit_only_allowed`** | Audit mode allowed | Proceed |
+| **`approved`** | Explicit human approval consumed | Proceed once (**not produced today**) |
+| **`denied`** | Permission layer denied | **Do not** mutate |
+| **`requested`** / pending | Waiting for approve/deny | **Do not** mutate (**not produced today**) |
+| **`hard_denied`** | Category for hard safety in summaries | Not a soft permission outcome; hard-deny path **suppresses** soft attach |
 
 Notes:
 
-- **HTTP/MCP protocol success** (200, JSON-RPC result envelope) is not
-  `approved`. A tool may return a structured error after `auto_approved`.
-- Today’s scaffold uses `status` instead of `outcome` and mostly only emits
-  `auto_approved`. Renames can stay compatible (`status` as wire alias) if
-  implementation chooses gradual migration; prefer one canonical name in new
-  design: **`outcome`**.
-- Summary counters already anticipate `approved`, `denied`, `requested`
-  (pending), `hard_denied`. Align future names: prefer **`pending`** over
-  `requested` on the wire when implementing, with a one-time mapping if ledger
-  history used `requested`.
+- HTTP/MCP protocol success is not “approved.” A tool may still fail after
+  `auto_approved`.
+- Summary counters historically use **`requested`** for pending; design may
+  prefer `pending` later with a one-time mapping if needed.
+- Unknown / unparsable `status` **fails closed** (`allows_execution` = false).
 
 ### Risk vs outcome
 
-- **High risk ≠ deny.** Under `dev_auto_approve`, high-risk tools still
-  `auto_approved` after hard safety.
-- **Low risk ≠ skip hard safety.** Path checks and scopes still apply.
+- **High risk ≠ deny** under `dev_auto_approve` / `audit_only`.
+- **Low risk ≠ skip hard safety.**
 
 ---
 
-## 6. Risk classification
+## 5. Risk classification
 
 ### Goals
 
@@ -306,9 +357,16 @@ Notes:
   per-tool switchboards.
 - Keep risk labels independent of permission outcomes.
 
-### Current labels (preserve / map, do not thrash)
+### Current implementation
 
-From `tool_definition` / `tool_policy` today:
+`risk.rs` is a **thin facade**:
+
+- `tool_requires_permission` → `runtime_tool_requires_permission`
+- `classify_tool_risk` → `runtime_tool_permission_risk`
+
+It is **not** a completed argument-aware risk engine.
+
+### Current labels (from tool metadata / policy)
 
 | Label | Typical source |
 |---|---|
@@ -320,89 +378,88 @@ From `tool_definition` / `tool_policy` today:
 | `job` | Job lifecycle tools |
 | `validation` | Validation capture tools |
 
-### Conceptual risk classes (design map)
-
-These are **product classes**. Implementation may continue to emit the current
-string labels, mapping into this taxonomy in docs and future gates:
+### Conceptual classes (design map — not all gated today)
 
 | Conceptual class | Approx. current label / signal | Notes |
 |---|---|---|
-| read-only | `readOnlyHint` / no permission required | No permission object today |
-| workspace mutation | `write`, `patch` | Edits inside allowed project root |
+| read-only | `readOnlyHint` / no permission required | No permission object |
+| workspace mutation | `write`, `patch` | Inside allowed project root |
 | process execution | `shell`, `job` | Commands / background jobs |
-| destructive filesystem | `destructive` | Deletes / overwrites with higher impact |
-| git history mutation | (future finer label if needed) | Prefer hard agent rules over soft gate |
+| destructive filesystem | `destructive` | Higher impact deletes/overwrites |
+| git history mutation | (future finer label if needed) | Prefer hard agent rules |
 | network access | open-world / shell profiles | Often inherits shell risk |
-| release / deployment | (policy + agent rules) | Hard safety: no deploy/publish unless explicit |
+| release / deployment | policy + agent rules | Hard safety: no deploy/publish unless explicit |
 | credential-sensitive | sensitive path / secret rules | Hard deny / redaction, not soft approve |
 
 ### Rules
 
 1. Do **not** hard-code large temporary per-tool matrices in the evaluator.
 2. Extend `ToolDefinition` / metadata when a new class is needed.
-3. Annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`) remain
-   discovery hints; permission risk remains the authoritative runtime label.
+3. Annotations remain discovery hints; runtime risk labels remain authoritative
+   for the permission facade.
 4. Default `dev_auto_approve` still obeys **hard safety** for high-risk ops.
 
 ---
 
-## 7. Configurable policy vs hard safety
+## 6. Configurable policy vs hard safety
 
 ### Configurable permission policy (soft)
 
-Examples:
-
-- Whether humans must confirm high-risk tools (`require_approval`).
-- Whether to shadow-recommend confirmations (`audit_only`).
-- Whether to attach auto-approval metadata (`dev_auto_approve` vs `disabled`).
+- Whether to auto-approve (`dev_auto_approve`).
+- Whether to label audit-style decisions (`audit_only`).
+- Whether to require a human gate (`require_approval` — currently hard-denies
+  as not implemented rather than pending).
 
 ### Hard safety rules (not overridable by mode)
 
-Aligned with `AGENTS.md` / `SECURITY.md` / existing runtime guards:
-
 | Hard rule | Enforcement home (examples) |
 |---|---|
-| No push / release / deploy / npm publish without explicit request | Agent contract + operational practice; not a soft approve checkbox |
+| No push / release / deploy / npm publish without explicit request | Agent contract + operational practice |
 | No secret / token / `.env` exfiltration | Path denial, redaction, logging rules |
 | Stay inside resolved project / allowed roots | Path policy, project resolution |
-| `read_only` Workflow Session denies write/shell/job-like tools | Session guard **before** mutation |
+| `read_only` Workflow Session denies write/shell/job-like tools | Session guard **before** mutation (and typically before soft permission) |
 | Unknown explicit `session_id` → `unknown_session_id` | Session resolution |
 | OAuth / scope insufficient | Scope check |
 | Agent capability missing | `agent_authorization` |
-| Sensitive / traversal path rejection | File tools + `policy_rejected` / hard deny detection |
+| Sensitive / traversal path rejection | File tools + `policy_rejected` / hard-deny detection |
 
 **Permission mode must never weaken these.** Auto-approval only means “no
-extra human gate after hard safety passes.”
+extra human gate after the soft policy allows execution.”
+
+Hard-deny detection used when attaching permission after execution includes
+structured kinds such as `policy_rejected`, `session_guard_denied`,
+`unknown_session_id`, and error-string markers for sensitive/traversal paths
+(`is_hard_denied_output`).
 
 ---
 
-## 8. Request processing order
+## 7. Request processing order
 
-### Recommended pipeline
+### Implemented pipeline (summary)
 
 ```text
 Tool Request
     ↓
-Request validation / parse ToolCall
+Parse / validation (kernel or surface) — invalid args: no fake approval
     ↓
 AuthN + scope / agent capability (as today)
     ↓
-Resolve explicit Workflow Session context (if any)
-    · unknown id → fail; no silent current-session invent
-    · session guard (read_only / closed rules) before mutation
+Resolve Workflow Session context (if any)
+    · unknown id → fail; no silent invent
+    · session guard before mutation
     ↓
-Classify risk (metadata)
-    ↓
-Evaluate Permission Policy (mode + risk + optional session context)
+PermissionEvaluator (once at dispatch)
     ↓
 Decision:
-    allow (auto_approved | approved | audit_only_allowed | not_required)
-    deny
-    pending   (require_approval only; unimplemented until Phase 4+)
+    allow (auto_approved | audit_only_allowed)
+    deny  (require_approval_not_implemented | invalid mode | …)
+    (pending — designed only)
     ↓
-Tool execution (ToolRuntime mutation)  — only on allow
+Tool execution — only on allow
     ↓
-Record result in Workflow evidence / Action Audit / optional trace
+Hard tool-internal checks still apply
+    ↓
+Attach same decision unless hard-denied; record optional ledger / audit / trace
 ```
 
 ### Ordering requirements
@@ -411,86 +468,65 @@ Record result in Workflow evidence / Action Audit / optional trace
 |---|---|
 | Permission check **before** mutation | Prevent “execute then pretend to ask” |
 | Parse/validation failure → **no misleading approval record** | Invalid args are not `auto_approved` successes |
-| `deny` / `pending` → **no** ToolRuntime mutation | Side-effect free wait/deny |
-| Hard safety may run before or as part of “allow” | Absolute blocks stay independent |
+| `deny` → **no** ToolRuntime mutation / agent enqueue | Side-effect free deny |
+| Hard safety remains effective | Absolute blocks stay independent |
 | Auto-approve path stays **cheap** | Default mode is hot path for every write tool |
-| Evaluator **never executes** tools | Pure decision function + persistence of decision only |
-
-### Alignment with today’s code
-
-Today: decision is pre-built as `auto_approved`, tool runs, then decision is
-dropped on hard deny and otherwise attached. Phases 1–2 should move to
-**evaluate → (optional hard pre-checks) → execute only if allowed**, while
-keeping default outcomes identical for successful write tools.
+| Evaluator **never executes** tools | Pure decision function |
 
 ---
 
-## 9. Workflow Session integration
+## 8. Workflow Session integration
 
 | Topic | Decision |
 |---|---|
-| `workflow_session_id` | Optional context on the decision when the call path already resolved a `wc_sess_*` |
+| `workflow_session_id` | Optional context when the call path already resolved a `wc_sess_*` (not a field on today’s `PermissionDecision` wire struct) |
 | Auto-create session | **Forbidden** for permission reasons |
-| Implicit current-session fallback | **Forbidden** inside the evaluator; only use session ids the outer call path already resolved under existing explicit/current-session rules |
-| Closed / missing session | Permission still evaluates for the tool call; ledger attach is skipped if there is no valid start event |
-| `read_only` session | Session **guard** denies write-like tools **before** soft permission; recommend recording guard failure as hard deny / guard error, not as `auto_approved` |
-| Permission as Session event | **Recommendation:** keep attaching to existing `tool_call_finished` (and start metadata) via `permission` field; **do not** add a separate ledger event kind in early phases |
+| Implicit current-session fallback | **Forbidden** inside the evaluator |
+| Closed / missing session | Permission still evaluates for the tool call; ledger attach skipped without a valid start |
+| `read_only` session | Session **guard** denies write-like tools; not soft `auto_approved` |
+| Permission on Session events | Attach to existing tool-call start/finish via `permission` field; no separate ledger event kind in early phases |
 
-### Should Permission Decision become its own Session event?
-
-| Approach | Pros | Cons |
-|---|---|---|
-| **Embed on tool_call events (recommended)** | Stable ledger format; already implemented; summaries work | Less ideal for long-lived pending spanning many events |
-| Separate `permission_decision` event kind | Clear pending lifecycle history | Schema change; risk of dual sources of truth |
-
-For pending approvals (Phase 4+), store **pending records outside the ledger**
-(or in a dedicated store), and only mirror final outcome onto the tool-call
-event when execution proceeds or is denied. Prefer **not** expanding ledger
-schema until required.
+For future pending approvals, store **pending records outside the ledger** (or
+in a dedicated store), and only mirror final outcome onto the tool-call event.
+Prefer **not** expanding ledger schema until required.
 
 ---
 
-## 10. Action Audit integration
+## 9. Action Audit integration
 
 | Topic | Decision |
 |---|---|
 | Concepts | **Permission Decision ≠ Action Audit Record** |
 | Permission | Why allowed / denied / pending (policy rationale) |
-| Action Audit | What HTTP/API action occurred (endpoint, status, duration, redacted ids) |
-| Correlation | Optional via `request_trace_id`, tool `request_id` / decision id, and/or `workflow_session_id` (see session-correlation) |
+| Action Audit | What HTTP/API action occurred |
+| Correlation | Optional later via ids only — **not implemented** |
 | Transactions | **No** strong transaction across SQLite audit and JSON ledger |
-| Cascading deletes | **None** — independent retention |
-| Audit write failure | See below |
+| Cascading deletes | **None** |
 
-### Audit write failure vs tool execution
-
-| Mode | If Action Audit write fails | If permission decision persist fails |
+| Mode | If Action Audit write fails | If permission decision attach fails |
 |---|---|---|
-| `dev_auto_approve` | **Do not** block tool execution | Prefer not to block; log warning |
-| `audit_only` | Do not block execution; log | Do not block; log (recommendation lost is acceptable) |
-| `require_approval` | Do not treat audit failure as approve | **Must** not execute if approval state cannot be durably recorded when that mode requires durability |
+| `dev_auto_approve` | **Do not** block tool execution | Prefer not to block; log |
+| `audit_only` | Do not block execution | Do not block |
+| `require_approval` (future real gate) | Do not treat audit failure as approve | **Must** not execute if approval state cannot be durably recorded when durability is required |
 
-Conservative default for this self-hosted project: **observability failures
-must not invent denials in default modes**, and must not invent approvals in
-`require_approval`.
+Observability failures must not invent denials in default modes, and must not
+invent approvals when a real approval mode exists.
 
 ---
 
-## 11. Lifecycle Trace integration
+## 10. Lifecycle Trace integration
 
 - Module: `tool_request_trace.rs`, env `WEBCODEX_TOOL_REQUEST_TRACE` (default
   **false**).
-- Trace records operational lifecycle only (trace id, method, tool name,
-  duration, sizes, success categories).
-- **Must not** hold pending approval state or become a permission store.
-- Future permission logs may **include** `request_trace_id` when present for
-  joinability; enabling permission modes does not require enabling trace.
+- Operational lifecycle only; **must not** hold pending approval state.
+- Future logs may include joinable ids; enabling permission modes does not
+  require enabling trace.
 
 ---
 
-## 12. Pending / approval state machine (design only)
+## 11. Pending / approval state machine (design only)
 
-Minimal states for a future `require_approval` implementation:
+Minimal states for a **future** real `require_approval` implementation:
 
 ```text
 pending ──approve──► approved ──consume──► consumed
@@ -500,31 +536,24 @@ pending ──approve──► approved ──consume──► consumed
    └──cancel────────► cancelled
 ```
 
-### Recommended answers (minimal, safe, deferrable)
-
 | Question | Recommendation |
 |---|---|
-| Is approval one-shot? | **Yes.** One approved decision authorizes one execution consumption. |
-| Bound to tool + param digest? | **Yes.** Store tool name + stable hash of **normalized, redacted** argument summary. Never store full secrets/contents. |
-| Params change after approve? | **Old approval invalid** (digest mismatch → new pending or deny). |
-| Reuse / double consume? | **Forbidden.** Second attempt needs a new decision. |
-| Timeout | Configurable later; safe default e.g. short TTL (minutes). Expired ≠ approved. |
-| Restart while pending | **Pending does not auto-approve.** Prefer durable store if mode is on; if store lost, treat as expired/cancelled and require re-request. |
-| Who can approve/deny? | Local operator / authenticated admin surface only. No multi-party quorum in v1. No model self-approve. |
-| Client timeout while pending | Tool call returns structured `pending` / not-executed error; does not mutate. |
+| Is approval one-shot? | **Yes.** |
+| Bound to tool + param digest? | **Yes.** Redacted normalized summary hash only. |
+| Params change after approve? | Old approval invalid. |
+| Reuse / double consume? | **Forbidden.** |
+| Timeout | Configurable later; expired ≠ approved. |
+| Restart while pending | Pending does **not** auto-approve. |
+| Who can approve/deny? | Local operator / authenticated admin only. No model self-approve. |
+| Client timeout while pending | Structured not-executed error; no mutation. |
 
-### Explicit non-implementation now
-
-Do not ship half a state machine that always returns `auto_approved` while
-advertising `require_approval` as active. Until Phase 4 is complete, the mode
-must either be **unavailable** (config reject / fall back with clear log) or
-**documented as not implemented** and refused at config validation.
+**Today:** selecting `require_approval` does **not** enter this machine; it
+denies with `require_approval_not_implemented` so the product never pretends
+approval works.
 
 ---
 
-## 13. Default configuration
-
-Recommended form:
+## 12. Default configuration
 
 ```text
 WEBCODEX_PERMISSION_MODE=dev_auto_approve
@@ -534,144 +563,128 @@ WEBCODEX_PERMISSION_MODE=dev_auto_approve
 |---|---|
 | Default when unset | **`dev_auto_approve`** |
 | Unset must not enter pending | Absolute |
-| Illegal value | Fail closed at startup **or** fall back to `dev_auto_approve` with a loud error log — pick one in Phase 1; prefer **startup fail** for unknown modes once the env is introduced, to avoid silent policy drift. Until then, hard-coded default remains. |
-| Independent trace switch | Keep `WEBCODEX_TOOL_REQUEST_TRACE` separate (default false). Do not couple. |
-| Independent audit DB | Action Audit remains its existing enablement path; no new required switch for default permission mode. |
-| Client changes | **None** for default mode. |
+| Illegal value | **Fail closed on permission-bearing tools** (deny; do not fall back to allow). Process startup is not required to abort. |
+| Independent trace switch | `WEBCODEX_TOOL_REQUEST_TRACE` (default false) |
+| Independent Action Audit | Existing enablement path only |
+| Client changes | **None** for default mode |
 
-`runtime_status` / coding-task permission profile payloads should continue to
-advertise the effective policy for operators (already do so for
-`dev_auto_approve`).
-
----
-
-## 14. Observability
-
-### Safe fields to record (future structured logs / summaries)
-
-- decision id  
-- mode  
-- outcome  
-- policy  
-- reason code  
-- risk level  
-- tool name  
-- workflow session id (if any)  
-- trace id (if any)  
-- evaluation duration  
-- project id (if any)  
-- param **digest** only (never raw args) when approvals exist  
-
-### Forbidden to record
-
-- Full tool parameters  
-- File contents / patches / diffs  
-- Secrets, tokens, credentials  
-- User prompts / chat content  
-- Large tool results / stdout / stderr  
-
-This matches existing ledger and `SECURITY.md` redaction expectations.
+`runtime_status` / coding-task permission profile payloads advertise effective
+`policy`, `auto_approve`, `human_approval_required`, and
+`release_recommended_policy` (`require_approval` as a recommendation string only).
 
 ---
 
-## 15. Compatibility guarantees (for future implementation)
+## 13. Observability
+
+### Safe fields
+
+- decision / request id (`wc_perm_*`)
+- mode / policy
+- outcome / status
+- reason
+- risk level
+- tool name
+- workflow session id (if any, via ledger context)
+- trace id (if any)
+- project id (if any)
+- param **digest** only when approvals exist later
+
+### Forbidden
+
+- Full tool parameters
+- File contents / patches / diffs
+- Secrets, tokens, credentials
+- User prompts / chat content
+- Large tool results / stdout / stderr
+
+Matches ledger and `SECURITY.md` redaction expectations.
+
+---
+
+## 14. Compatibility guarantees (default mode)
 
 | Surface | Guarantee under default mode |
 |---|---|
-| Tool behavior | Unchanged vs today |
-| `tools/list` | Unchanged |
-| `tools/call` result | Unchanged unless optional metadata is explicitly designed; today’s `output.permission` for high-risk tools remains acceptable |
-| Clients | No required changes |
-| Workflow Session ID / ledger format | Unchanged in Phases 0–3 |
+| Tool behavior | Unchanged vs frictionless self-hosted development |
+| `tools/list` | Unchanged by permission modes |
+| `tools/call` result | Optional `output.permission` on permission-bearing tools when attach is not suppressed |
+| Clients | No required changes for `dev_auto_approve` |
+| Workflow Session ID / ledger format | Stable attach field; no new event kind |
 | Action Audit routes | Unchanged |
 | Hard safety | Never bypassed by any mode |
 
 ---
 
-## 16. Non-goals (this phase and near-term)
+## 15. Non-goals (near-term)
 
-- No approval UI  
-- No notification system  
-- No multi-person approval  
-- No RBAC / multi-tenant policy engine  
-- No distributed policy service  
-- No modifications to current permission Rust code in Phase 0  
-- No database migration in Phase 0  
-- No Session correlation implementation tied to this doc  
-- No MCP / OpenAPI changes in Phase 0  
-- No enabling of real `require_approval`  
-- **No code in this design round**
+- No approval UI
+- No notification system
+- No multi-person approval
+- No RBAC / multi-tenant policy engine
+- No distributed policy service
+- No SQLite permission migration until a real store is required
+- No formal Action Audit ↔ Permission coupling until Phase 4
+- No pretending `require_approval` is a working human gate
 
 ---
 
-## 17. Phased implementation plan
+## 16. Phased plan
 
-### Phase 0 — Design only (this document)
+### Phase 0 — Design only — **done**
 
-- Deliverables: this file + index/architecture pointers.
-- Risk: design drift from code — mitigated by baseline section above.
-- Validate: markdown links, `git diff --check`, human review.
+Design document and architecture pointers.
 
-### Phase 1 — Types and decision model cleanup
+### Phase 1 — Types, mode config, module split — **done**
 
-- Clarify `PermissionDecision` fields/outcomes; keep default `auto_approved`.
-- Optional: introduce mode enum wired to **hard-coded or env default**
-  `dev_auto_approve` without behavior change.
-- Collapse double-evaluate paths (kernel vs dispatch) carefully.
-- Risk: accidental rename breaks handoff summary tests.
-- Validate: `cargo test --bin webcodex session`, `metadata`, focused
-  permission/handoff tests; `cargo fmt` / `cargo check`.
+- `PermissionMode` / `PermissionOutcome` / `PermissionDecision`
+- `WEBCODEX_PERMISSION_MODE` resolution
+- Module layout under `permissions/`
+- Default remains `dev_auto_approve`
 
-### Phase 2 — Unified pre-exec evaluator call (still auto-approve)
+### Phase 2 — Unified pre-exec evaluator — **done**
 
-- Call evaluator at a single ToolRuntime entry **before** mutation.
-- Still always allow under default mode after hard safety.
-- Record decision the same way (or better) without changing client UX.
-- Risk: ordering bugs (approve recorded on parse failure); double ledger
-  writes.
-- Validate: write-tool tests still see `auto_approved`; invalid args tests
-  never claim approval; guard denial tests never claim approval.
+- Single `PermissionEvaluator` call at dispatch before mutation
+- Kernel reuses decision; no second evaluation
+- Mode matrix: allow for auto/audit; deny for require_approval (not implemented)
+  and invalid config
+- Hard-deny suppress on attach retained
 
-### Phase 3 — `audit_only`
+### Phase 3 — Risk classification improvement (default execution unchanged)
 
-- Add mode + recommendation fields / safe logs.
-- Execution unchanged.
-- Risk: log volume; accidental blocking if recommendation wired wrong.
-- Validate: mode matrix tests; prove execution success independent of
-  recommendation.
+- Deepen metadata-driven risk labels / facade clarity
+- Still no default-mode friction
+- Must not claim a full risk engine until argument-bound rules exist
 
-### Phase 4 — Durable pending / approve / deny (default off)
+### Phase 4 — Optional Permission ↔ Action Audit / trace correlation
 
-- Persist pending; approve/deny API or local operator tool; one-shot consume;
-  param digest.
-- Config default remains `dev_auto_approve`.
-- Risk: stuck pendings; restart consistency; security of approve endpoint.
-- Validate: never auto-approve when mode is `require_approval`; restart tests;
-  digest mismatch tests; no mutation on pending/deny.
+- Optional ids only; no ownership merge
+- No strong transactions
+- Default mode still frictionless
 
-### Phase 5 — UI / client entry only if real demand
+### Phase 5 — Real pending / approval only if genuine demand
 
-- Minimal operator UI or CLI.
-- Risk: scope creep into multi-tenant product.
-- Validate: usability on self-hosted single-operator setup only.
+- Durable pending; approve/deny; one-shot consume; param digest
+- Config default remains `dev_auto_approve`
+- Until this ships, `require_approval` stays **honest deny**
+  (`require_approval_not_implemented`), never fake auto-approve
 
-### Phase ordering assessment
+### Ordering assessment
 
-The proposed order is **sound** for a self-use project: document → type
-cleanup → pre-gate without behavior change → shadow mode → real gate → UI.
-Each phase is independently reviewable and revertible. **Do not skip to
-Phase 4** without Phase 2 ordering fixed, or pending will race mutations.
+Document → types → pre-gate without default UX change → richer risk/audit
+correlation → real gate only with demand. **Do not** implement pending without
+the single pre-exec evaluation invariant.
 
 ---
 
-## 18. Summary for implementers
+## 17. Summary for implementers
 
-1. Keep **`dev_auto_approve`** as the default forever until an operator opts in.
+1. Keep **`dev_auto_approve`** as the default until an operator opts in.
 2. Treat permission as a **pure decision + optional record**, not session/audit
    ownership.
-3. Reuse **tool metadata** for risk; keep **hard safety** supreme.
-4. Prefer **embedding** decisions on existing tool-call ledger events.
-5. Implement **pending** only with one-shot, digest-bound, durable, default-off
-   semantics.
-6. Measure success by: **zero friction in default mode**, honest audit when
-   enabled, and no bypass of project/session/secret rules.
+3. Reuse **tool metadata** for risk via the facade; keep **hard safety** supreme.
+4. Evaluate **once** at dispatch; kernel **reuses** only.
+5. Prefer **embedding** decisions on existing tool-call ledger events.
+6. Implement **pending** only with one-shot, digest-bound, durable, default-off
+   semantics — and only when there is a real product need.
+7. Measure success by: **zero friction in default mode**, honest behavior when
+   modes are set, and no bypass of project/session/secret rules.

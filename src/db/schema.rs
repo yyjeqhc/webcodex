@@ -6,17 +6,70 @@ use std::sync::Mutex;
 impl Database {
     pub fn open(db_path: &PathBuf) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
+        // Single-operator deployment: prefer durability + predictable locking
+        // over multi-writer shared-cache gymnastics. WAL lets readers (CLI
+        // inspect, sqlite3) coexist with the server without default BUSY.
+        conn.execute_batch(
+            "
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
+            PRAGMA foreign_keys = ON;
+            ",
+        )?;
         let db = Self {
             conn: Mutex::new(conn),
         };
         db.init_tables()?;
+        // Personal-use instance: reclaim dead auth rows on every open rather
+        // than running a background reaper.
+        let now = chrono::Utc::now().timestamp();
+        db.purge_stale_auth_rows(now)?;
         Ok(db)
+    }
+
+    /// Delete expired / used / revoked auth material that can never be used
+    /// again. Safe to call repeatedly; returns the total number of deleted rows.
+    pub fn purge_stale_auth_rows(&self, now: i64) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let mut deleted = 0usize;
+        deleted += conn.execute(
+            "DELETE FROM oauth_authorization_codes
+             WHERE expires_at <= ?1 OR used_at IS NOT NULL OR revoked_at IS NOT NULL",
+            rusqlite::params![now],
+        )?;
+        deleted += conn.execute(
+            "DELETE FROM oauth_access_tokens
+             WHERE expires_at <= ?1 OR revoked_at IS NOT NULL",
+            rusqlite::params![now],
+        )?;
+        deleted += conn.execute(
+            "DELETE FROM oauth_refresh_tokens
+             WHERE expires_at <= ?1 OR revoked_at IS NOT NULL",
+            rusqlite::params![now],
+        )?;
+        deleted += conn.execute(
+            "DELETE FROM pairing_codes
+             WHERE expires_at <= ?1 OR used_at IS NOT NULL",
+            rusqlite::params![now],
+        )?;
+        deleted += conn.execute(
+            "DELETE FROM api_keys
+             WHERE revoked_at IS NOT NULL
+                OR (expires_at IS NOT NULL AND expires_at <= ?1)",
+            rusqlite::params![now],
+        )?;
+        deleted += conn.execute(
+            "DELETE FROM account_credentials
+             WHERE revoked_at IS NOT NULL",
+            [],
+        )?;
+        Ok(deleted)
     }
 
     fn init_tables(&self) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
-        // Drop prototype tables that no longer have product callers. Safe on
-        // fresh DBs (IF EXISTS) and cleans long-lived installs once.
+        // Drop prototype tables that no longer have product callers.
         Self::drop_legacy_tables(&conn)?;
 
         conn.execute_batch(

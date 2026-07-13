@@ -97,6 +97,251 @@ mod tests {
     }
 
     #[test]
+    fn open_enables_wal_busy_timeout_and_foreign_keys() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("pragma.db")).unwrap();
+        let conn = db.conn_for_tests();
+        let journal: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal.to_lowercase(), "wal");
+        let foreign_keys: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(foreign_keys, 1);
+        let busy_timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(busy_timeout, 5000);
+    }
+
+    #[test]
+    fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("purge.db")).unwrap();
+        let now = 1_700_000_000;
+        let user = UserRecord {
+            id: "u-1".to_string(),
+            username: "alice".to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        };
+        db.create_user(&user).unwrap();
+
+        // Live + dead API keys.
+        db.insert_api_key(
+            &ApiKeyRecord {
+                id: "k-live".to_string(),
+                user_id: "u-1".to_string(),
+                name: "live".to_string(),
+                key_prefix: "wc_pat_live".to_string(),
+                created_at: now,
+                last_used_at: None,
+                revoked_at: None,
+                scopes: "runtime:read".to_string(),
+                expires_at: None,
+                kind: "user".to_string(),
+                allowed_client_id: None,
+            },
+            "hash-live",
+        )
+        .unwrap();
+        db.insert_api_key(
+            &ApiKeyRecord {
+                id: "k-revoked".to_string(),
+                user_id: "u-1".to_string(),
+                name: "revoked".to_string(),
+                key_prefix: "wc_pat_rev".to_string(),
+                created_at: now,
+                last_used_at: None,
+                revoked_at: Some(now - 1),
+                scopes: "runtime:read".to_string(),
+                expires_at: None,
+                kind: "user".to_string(),
+                allowed_client_id: None,
+            },
+            "hash-revoked",
+        )
+        .unwrap();
+        db.insert_api_key(
+            &ApiKeyRecord {
+                id: "k-expired".to_string(),
+                user_id: "u-1".to_string(),
+                name: "expired".to_string(),
+                key_prefix: "wc_pat_exp".to_string(),
+                created_at: now,
+                last_used_at: None,
+                revoked_at: None,
+                scopes: "runtime:read".to_string(),
+                expires_at: Some(now - 10),
+                kind: "user".to_string(),
+                allowed_client_id: None,
+            },
+            "hash-expired",
+        )
+        .unwrap();
+
+        // Live + dead pairing codes.
+        db.insert_pairing_code(&crate::models::PairingCodeRecord {
+            id: "p-live".to_string(),
+            code_hash: "pair-live".to_string(),
+            user_id: "u-1".to_string(),
+            username: "alice".to_string(),
+            client_id: "laptop".to_string(),
+            created_at: now,
+            expires_at: now + 600,
+            used_at: None,
+            user_token_name: None,
+            agent_token_name: None,
+        })
+        .unwrap();
+        db.insert_pairing_code(&crate::models::PairingCodeRecord {
+            id: "p-dead".to_string(),
+            code_hash: "pair-dead".to_string(),
+            user_id: "u-1".to_string(),
+            username: "alice".to_string(),
+            client_id: "laptop".to_string(),
+            created_at: now - 1000,
+            expires_at: now - 1,
+            used_at: None,
+            user_token_name: None,
+            agent_token_name: None,
+        })
+        .unwrap();
+
+        let client = OAuthClientRecord {
+            id: "oc-1".to_string(),
+            client_id: "wc_client_test".to_string(),
+            client_secret_hash: "secret-hash".to_string(),
+            name: "test".to_string(),
+            owner_user_id: "u-1".to_string(),
+            redirect_uris: "https://example.com/cb".to_string(),
+            allowed_scopes: "runtime:read".to_string(),
+            created_at: now,
+            revoked_at: None,
+        };
+        db.insert_oauth_client(&client).unwrap();
+
+        // Live access token + expired + revoked.
+        db.insert_oauth_access_token(&OAuthAccessTokenRecord {
+            id: "at-live".to_string(),
+            token_hash: "ath-live".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: "u-1".to_string(),
+            user_id: Some("u-1".to_string()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        })
+        .unwrap();
+        db.insert_oauth_access_token(&OAuthAccessTokenRecord {
+            id: "at-exp".to_string(),
+            token_hash: "ath-exp".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: "u-1".to_string(),
+            user_id: Some("u-1".to_string()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now - 100,
+            expires_at: now - 1,
+            revoked_at: None,
+            last_used_at: None,
+        })
+        .unwrap();
+        db.insert_oauth_access_token(&OAuthAccessTokenRecord {
+            id: "at-rev".to_string(),
+            token_hash: "ath-rev".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: "u-1".to_string(),
+            user_id: Some("u-1".to_string()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: Some(now - 1),
+            last_used_at: None,
+        })
+        .unwrap();
+
+        // Used authorization code should be purged.
+        db.insert_oauth_authorization_code(
+            &OAuthAuthorizationCodeRecord {
+                id: "ac-used".to_string(),
+                code_hash: "ach-used".to_string(),
+                client_id: client.client_id.clone(),
+                subject_kind: "managed_user".to_string(),
+                subject_id: "u-1".to_string(),
+                user_id: Some("u-1".to_string()),
+                redirect_uri: "https://example.com/cb".to_string(),
+                scopes: "runtime:read".to_string(),
+                code_challenge: None,
+                code_challenge_method: None,
+                resource: None,
+                shared_key_hash: None,
+                created_at: now,
+                expires_at: now + 60,
+                used_at: Some(now),
+                revoked_at: None,
+            },
+            "ach-used",
+        )
+        .unwrap();
+
+        let deleted = db.purge_stale_auth_rows(now).unwrap();
+        assert!(
+            deleted >= 5,
+            "expected several stale rows purged, got {deleted}"
+        );
+
+        assert!(db.get_api_key_by_hash("hash-live").unwrap().is_some());
+        assert!(db.get_api_key_by_id("k-revoked").unwrap().is_none());
+        assert!(db.get_api_key_by_id("k-expired").unwrap().is_none());
+        assert!(db.get_pairing_code_by_hash("pair-live").unwrap().is_some());
+        assert!(db.get_pairing_code_by_hash("pair-dead").unwrap().is_none());
+        assert!(db
+            .get_oauth_access_token_by_hash("ath-live")
+            .unwrap()
+            .is_some());
+        assert!(db
+            .get_oauth_access_token_by_hash("ath-exp")
+            .unwrap()
+            .is_none());
+        // Revoked rows are deleted, not merely filtered.
+        {
+            let conn = db.conn_for_tests();
+            let remaining: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM oauth_access_tokens WHERE id = 'at-rev'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(remaining, 0);
+            let codes: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM oauth_authorization_codes WHERE id = 'ac-used'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(codes, 0);
+        }
+    }
+
+    #[test]
     fn api_key_records_round_trip_and_revoked_keys_are_ignored() {
         let tmp = tempfile::tempdir().unwrap();
         let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
@@ -1180,21 +1425,21 @@ mod tests {
                 ) VALUES (
                     'legacy-code', 'legacy-code-hash', 'legacy-client', 'legacy-user',
                     'https://example.com/callback', 'runtime:read', NULL, NULL, NULL, 'legacy-hash',
-                    1, 301, NULL, NULL
+                    1700000000, 4102444800, NULL, NULL
                 );
                 INSERT INTO oauth_access_tokens (
                     id, token_hash, client_id, user_id, scopes, resource, shared_key_hash,
                     created_at, expires_at, revoked_at, last_used_at
                 ) VALUES (
                     'legacy-access', 'legacy-access-hash', 'legacy-client', 'legacy-user',
-                    'runtime:read', NULL, 'legacy-hash', 1, 3601, NULL, NULL
+                    'runtime:read', NULL, 'legacy-hash', 1700000000, 4102444800, NULL, NULL
                 );
                 INSERT INTO oauth_refresh_tokens (
                     id, token_hash, client_id, user_id, scopes, resource, shared_key_hash,
                     created_at, expires_at, revoked_at, last_used_at, rotated_from_id
                 ) VALUES (
                     'legacy-refresh', 'legacy-refresh-hash', 'legacy-client', 'legacy-user',
-                    'runtime:read', NULL, 'legacy-hash', 1, 2592001, NULL, NULL, NULL
+                    'runtime:read', NULL, 'legacy-hash', 1700000000, 4102444800, NULL, NULL, NULL
                 );
                 ",
             )

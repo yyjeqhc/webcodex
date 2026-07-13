@@ -4,8 +4,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::helpers::{
-    run_command_sync, shell_escape_simple, shell_join_paths, validate_limited_cleanup_paths,
-    validate_project_relative_path,
+    run_command_sync_bounded, shell_escape_simple, shell_join_paths,
+    validate_limited_cleanup_paths, validate_project_relative_path, LocalRunFailure,
 };
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
@@ -1426,17 +1426,17 @@ impl ToolRuntime {
             }
         } else {
             let root = proj.root();
-            let result = tokio::task::spawn_blocking(move || {
-                run_command_sync("git status --porcelain", &root, 30)
-            })
-            .await;
-            match result {
+            match run_command_sync_bounded("git status --porcelain".to_string(), root, 30).await {
                 Ok((exit_code, stdout, stderr, _)) => ToolResult::ok(json!({
                     "stdout": stdout,
                     "stderr": stderr,
                     "exit_code": exit_code,
                 })),
-                Err(e) => ToolResult::err(format!("task join error: {}", e)),
+                Err(LocalRunFailure::HardTimeout { bound_secs }) => ToolResult::err(format!(
+                    "local git status did not return within {} seconds (hard bound)",
+                    bound_secs
+                )),
+                Err(LocalRunFailure::Join(e)) => ToolResult::err(format!("task join error: {}", e)),
             }
         }
     }
@@ -1493,15 +1493,17 @@ impl ToolRuntime {
             }
         } else {
             let root = proj.root();
-            let result =
-                tokio::task::spawn_blocking(move || run_command_sync(&cmd, &root, 30)).await;
-            match result {
+            match run_command_sync_bounded(cmd, root, 30).await {
                 Ok((exit_code, stdout, stderr, _)) => ToolResult::ok(json!({
                     "stdout": stdout,
                     "stderr": stderr,
                     "exit_code": exit_code,
                 })),
-                Err(e) => ToolResult::err(format!("task join error: {}", e)),
+                Err(LocalRunFailure::HardTimeout { bound_secs }) => ToolResult::err(format!(
+                    "local git diff did not return within {} seconds (hard bound)",
+                    bound_secs
+                )),
+                Err(LocalRunFailure::Join(e)) => ToolResult::err(format!("task join error: {}", e)),
             }
         }
     }
@@ -1663,8 +1665,7 @@ impl ToolRuntime {
             };
         }
         let root = proj.root();
-        let result = tokio::task::spawn_blocking(move || run_command_sync(&cmd, &root, 30)).await;
-        match result {
+        match run_command_sync_bounded(cmd, root, 30).await {
             Ok((exit_code, stdout, _stderr, _)) => {
                 let (porcelain, diff_stat) = split_diff_summary(&stdout);
                 let porcelain_summary = parse_porcelain_summary(&porcelain);
@@ -1679,7 +1680,11 @@ impl ToolRuntime {
                     "exit_code": exit_code,
                 }))
             }
-            Err(e) => ToolResult::err(format!("task join error: {}", e)),
+            Err(LocalRunFailure::HardTimeout { bound_secs }) => ToolResult::err(format!(
+                "local git diff summary did not return within {} seconds (hard bound)",
+                bound_secs
+            )),
+            Err(LocalRunFailure::Join(e)) => ToolResult::err(format!("task join error: {}", e)),
         }
     }
 

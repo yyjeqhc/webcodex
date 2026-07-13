@@ -1186,24 +1186,25 @@ mod tests {
         let lost = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(lost.status, "lost");
         assert!(lost.error.unwrap().contains("disconnected"));
+        let view = registry.get_client_view("quic-disc").await.unwrap();
         assert_eq!(
-            registry
-                .get_client_view("quic-disc")
-                .await
-                .unwrap()
-                .pending_requests,
-            0
+            view.pending_requests, 0,
+            "disconnect must reconcile pending job requests"
         );
         assert!(
-            !registry
-                .get_client_view("quic-disc")
-                .await
-                .unwrap()
-                .connected,
+            !view.connected,
             "quic transport disconnect must release active lease immediately"
         );
 
-        let (_request_id, _rx) = registry
+        // Offline enqueue gate (intentionally rejects work for clients outside
+        // the online window). Previously this test enqueued after disconnect
+        // and asserted pending_requests == 1 as a proxy for "notifier removed
+        // so the pump no longer drains the queue". That proxy is no longer
+        // valid: enqueue itself must fail fast rather than silently pile up
+        // against a dead agent. Notifier removal still happens in
+        // reconcile_disconnect (covered above by pending cleanup + offline
+        // connected flag); this asserts the post-disconnect contract.
+        let err = registry
             .enqueue_run(
                 ShellRunRequest {
                     client_id: "quic-disc".to_string(),
@@ -1216,16 +1217,19 @@ mod tests {
                 "tester".to_string(),
             )
             .await
-            .unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+            .expect_err("enqueue against a disconnected agent must fail");
+        assert!(
+            err.contains("offline"),
+            "post-disconnect enqueue must fail as offline, got: {err}"
+        );
         assert_eq!(
             registry
                 .get_client_view("quic-disc")
                 .await
                 .unwrap()
                 .pending_requests,
-            1,
-            "disconnected notifier must not keep pumping queued requests"
+            0,
+            "offline gate must not leave dangling queued requests"
         );
     }
 

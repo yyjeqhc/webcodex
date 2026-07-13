@@ -1,4 +1,6 @@
-use super::jobs::{ensure_dispatch_supported_locked, ensure_queue_capacity_locked};
+use super::jobs::{
+    command_preview, ensure_dispatch_supported_locked, ensure_queue_capacity_locked,
+};
 use super::state::{PendingShellRequest, ShellClientRegistryInner};
 use super::validation::{validate_file_request, validate_id, validate_run_request};
 use super::{now_ts, ShellClientRegistry};
@@ -65,6 +67,56 @@ pub(super) fn remove_pending_request_locked(
 fn remove_request_from_queues_locked(inner: &mut ShellClientRegistryInner, request_id: &str) {
     for queue in inner.queues_by_client.values_mut() {
         queue.retain(|id| id != request_id);
+    }
+}
+
+/// Resolve every in-flight *synchronous* tool request (no `job_id`) owned by
+/// `client_id` with a disconnect error, instead of leaving its oneshot waiter
+/// parked until the calling tool's own timeout fires.
+///
+/// Sync requests (`enqueue_run`/`enqueue_file_op`/`enqueue_project_op`/
+/// `enqueue_lsp`) carry a live `waiter` but `job_id: None`. The oneshot
+/// `Sender` lives in the shared registry, not in the transport handler, so
+/// aborting the connection task does not drop it — without this drain the
+/// caller (e.g. an MCP `run_shell`/`read_file`) blocks for the full wait
+/// timeout (tens of seconds) after the agent goes away. Job-backed requests
+/// are handled separately by `reconcile_disconnect` (they transition their job
+/// to `lost`) and are intentionally skipped here.
+pub(super) fn resolve_disconnected_sync_requests_locked(
+    inner: &mut ShellClientRegistryInner,
+    client_id: &str,
+    error: &str,
+) {
+    let request_ids: Vec<String> = inner
+        .pending_by_id
+        .iter()
+        .filter(|(_, pending)| pending.job_id.is_none() && pending.request.client_id == client_id)
+        .map(|(request_id, _)| request_id.clone())
+        .collect();
+    for request_id in request_ids {
+        let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
+            continue;
+        };
+        if let Some(queue) = inner.queues_by_client.get_mut(client_id) {
+            queue.retain(|id| id != &request_id);
+        }
+        if let Some(waiter) = pending.waiter.take() {
+            let response = ShellRunResponse {
+                success: false,
+                request_id: request_id.clone(),
+                client_id: client_id.to_string(),
+                cwd: pending.request.cwd.clone(),
+                command_preview: command_preview(&pending.request.command),
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: Some(error.to_string()),
+            };
+            // The receiver may already be gone if the caller timed out first;
+            // a failed send is expected and safe to ignore.
+            let _ = waiter.send(response);
+        }
     }
 }
 

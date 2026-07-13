@@ -1,5 +1,6 @@
 use super::auth::{assert_shell_client_access, shell_client_visible_to_auth, ShellClientAuthGroup};
 use super::jobs::{is_final_job_status, offline_last_seen};
+use super::requests::resolve_disconnected_sync_requests_locked;
 use super::state::{NotifierEntry, ShellClientRecord, ShellClientRegistryInner};
 use super::validation::{
     normalize_project_summaries, trim_string, validate_agent_instance_id, validate_id,
@@ -218,6 +219,16 @@ impl ShellClientRegistry {
                 }
             }
         }
+        // Synchronous tool requests (run_shell/read_file/write/lsp/project ops)
+        // carry a live oneshot waiter but no job_id, so the job loop above skips
+        // them. Fail them fast here; otherwise the calling tool blocks until its
+        // own wait timeout (tens of seconds) after the agent has already gone,
+        // which surfaces as an unresponsive MCP `tools/call`.
+        resolve_disconnected_sync_requests_locked(
+            &mut inner,
+            client_id,
+            "agent went offline: transport disconnected before returning a result",
+        );
     }
 
     #[cfg(test)]

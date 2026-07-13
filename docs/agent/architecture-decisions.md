@@ -61,6 +61,25 @@ Full design, validation table, and phased rollout:
 [`session-correlation.md`](session-correlation.md). Dual-model detail:
 [`session-model.md`](session-model.md).
 
+### Permission decision layer (standing)
+
+Permission is a **decision layer** for whether a tool invocation may proceed
+under the active mode. It is **not** a Workflow Session manager, not Action
+Audit, and not lifecycle tracing.
+
+| Layer | Owns |
+|---|---|
+| Permission | allow / deny / pending / auto-approve outcomes (configurable) |
+| Workflow Session | task context and bounded evidence (`wc_sess_*`) |
+| Action Audit | HTTP/operator action facts (SQLite) |
+| Lifecycle trace | optional request-path observation |
+
+**Default mode is frictionless** (`dev_auto_approve`): no human wait, no client
+changes, no blocking for approval UX. Hard safety (path, secrets, session
+guards, scopes, agent policy) remains independent and **not overridable** by
+permission mode. Full design, modes, risk model, and phased rollout:
+[`permission-model.md`](permission-model.md).
+
 ---
 
 ## 2. Internal API evolution (background)

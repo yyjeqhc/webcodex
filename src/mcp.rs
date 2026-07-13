@@ -553,34 +553,50 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_tools_list_returns_same_names_as_runtime() {
+        // Name parity with the runtime registry must hold under both full and
+        // compact schema modes. Schema shape is covered by dedicated tests:
+        // `mcp_tools_list_default_retains_output_schema` and
+        // `mcp_tools_list_compact_omits_output_schema_only`.
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         let runtime = test_runtime();
-        let outcome = handle_mcp_request(
-            &runtime,
-            rpc("tools/list", Some(Value::from(3)), json!({})),
-            None,
-        )
-        .await;
-        let value = match outcome {
-            McpOutcome::Ok(v) => v,
-            other => panic!("expected Ok, got {:?}", other),
-        };
-        let tools = value["result"]["tools"].as_array().unwrap();
-        let names: Vec<String> = tools
-            .iter()
-            .map(|t| t["name"].as_str().unwrap().to_string())
-            .collect();
         let runtime_names: Vec<String> = registered_tool_specs()
             .iter()
             .map(|s| s.name.clone())
             .collect();
-        assert_eq!(names, runtime_names);
-        // Each tool entry must carry MCP-required fields.
-        for tool in tools {
-            assert!(tool["name"].is_string());
-            assert!(tool["description"].is_string());
-            assert!(tool["inputSchema"].is_object());
-            assert!(tool["outputSchema"].is_object());
+
+        for compact in [false, true] {
+            if compact {
+                std::env::set_var("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+            } else {
+                std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+            }
+            let outcome = handle_mcp_request(
+                &runtime,
+                rpc("tools/list", Some(Value::from(3)), json!({})),
+                None,
+            )
+            .await;
+            let value = match outcome {
+                McpOutcome::Ok(v) => v,
+                other => panic!("expected Ok (compact={compact}), got {other:?}"),
+            };
+            let tools = value["result"]["tools"].as_array().unwrap();
+            let names: Vec<String> = tools
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect();
+            assert_eq!(
+                names, runtime_names,
+                "tools/list names must match runtime registry (compact={compact})"
+            );
+            // Fields retained in both modes (compact only drops outputSchema).
+            for tool in tools {
+                assert!(tool["name"].is_string());
+                assert!(tool["description"].is_string());
+                assert!(tool["inputSchema"].is_object());
+            }
         }
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
     }
 
     #[tokio::test]
@@ -1402,6 +1418,10 @@ mod tests {
 
     #[tokio::test]
     async fn http_mcp_tools_list_success() {
+        // Default (non-compact) HTTP tools/list: full schema fields present.
+        // Compact-mode shape is covered by mcp_tools_list_compact_*.
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let runtime = Arc::new(test_runtime());
@@ -1426,7 +1446,11 @@ mod tests {
             assert!(tool["name"].is_string());
             assert!(tool["description"].is_string());
             assert!(tool["inputSchema"].is_object());
-            assert!(tool["outputSchema"].is_object());
+            assert!(
+                tool["outputSchema"].is_object(),
+                "default HTTP tools/list must include outputSchema for {}",
+                tool["name"]
+            );
         }
     }
 

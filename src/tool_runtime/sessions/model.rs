@@ -39,12 +39,10 @@ pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS: &str = "unexpected_
 pub(crate) const TOOL_CALL_RECORDING_SESSION_ID_FIELD: &str = "recording_session_id";
 pub(crate) const TOOL_EXPECTED_FAILURE_FIELD: &str = "expected_failure";
 pub(crate) const TOOL_EXPECTED_FAILURE_KIND_FIELD: &str = "expected_failure_kind";
-pub(crate) const TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD: &str = "test_expect_failure_kind";
 pub(crate) const TOOL_ASSERTION_NAME_FIELD: &str = "assertion_name";
 pub(crate) const TOOL_CALL_EXPECTATION_METADATA_FIELDS: &[&str] = &[
     TOOL_EXPECTED_FAILURE_FIELD,
     TOOL_EXPECTED_FAILURE_KIND_FIELD,
-    TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
     TOOL_ASSERTION_NAME_FIELD,
 ];
 

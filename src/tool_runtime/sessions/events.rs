@@ -13,7 +13,7 @@ use super::model::{
     TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MISMATCH,
     TOOL_EXPECTATION_RESULT_NONE, TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
     TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS, TOOL_EXPECTED_FAILURE_FIELD,
-    TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
+    TOOL_EXPECTED_FAILURE_KIND_FIELD,
 };
 use super::util::{bound_summary_string, validation_excerpt};
 
@@ -54,7 +54,6 @@ pub(crate) fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCal
         .unwrap_or(false);
     let expected_failure_kind = obj
         .get(TOOL_EXPECTED_FAILURE_KIND_FIELD)
-        .or_else(|| obj.get(TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())

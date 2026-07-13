@@ -69,7 +69,6 @@ fn from_tool_name_strips_testing_metadata_before_parsing() {
             "job_id": "abc",
             "expected_failure": true,
             "expected_failure_kind": "job_not_found",
-            "test_expect_failure_kind": "job_not_found",
             "assertion_name": "missing job negative path"
         }),
     )
@@ -81,6 +80,27 @@ fn from_tool_name_strips_testing_metadata_before_parsing() {
             include_command_preview: false,
         } if job_id == "abc"
     ));
+}
+
+#[test]
+fn from_tool_name_does_not_treat_removed_failure_kind_alias_as_metadata() {
+    let (call, metadata) = ToolCall::from_tool_name_with_recorder_metadata(
+        "job_status",
+        json!({
+            "job_id": "abc",
+            "expected_failure": true,
+            "test_expect_failure_kind": "job_not_found",
+            "assertion_name": "removed alias"
+        }),
+    )
+    .unwrap();
+    assert!(matches!(call, ToolCall::JobStatus { .. }));
+    assert!(metadata.expectation.expected_failure);
+    assert_eq!(metadata.expectation.expected_failure_kind, None);
+    assert_eq!(
+        metadata.expectation.assertion_name.as_deref(),
+        Some("removed alias")
+    );
 }
 
 #[test]

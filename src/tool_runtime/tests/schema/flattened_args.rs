@@ -68,7 +68,6 @@ fn critical_call_runtime_tool_flattened_args_remain_accepted() {
     for field in [
         "expected_failure",
         "expected_failure_kind",
-        "test_expect_failure_kind",
         "assertion_name",
         "summary_only",
         "include_command_preview",
@@ -80,6 +79,7 @@ fn critical_call_runtime_tool_flattened_args_remain_accepted() {
             "critical callRuntimeTool flattened arg {field} must remain accepted"
         );
     }
+    assert!(!accepted_fields.contains("test_expect_failure_kind"));
 }
 
 #[test]

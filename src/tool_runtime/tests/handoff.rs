@@ -506,7 +506,7 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
             "session_id": &sid,
             "confirm": false,
             "expected_failure": true,
-            "test_expect_failure_kind": "confirmation_required",
+            "expected_failure_kind": "confirmation_required",
             "assertion_name": "direct stop_job confirm gate"
         }),
         Some(&auth),

@@ -3,7 +3,6 @@ use serde_json::{json, Value};
 use super::super::super::tool_spec::ToolSpec;
 use crate::tool_runtime::sessions::{
     TOOL_ASSERTION_NAME_FIELD, TOOL_EXPECTED_FAILURE_FIELD, TOOL_EXPECTED_FAILURE_KIND_FIELD,
-    TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
 };
 
 pub(crate) fn with_common_testing_metadata(mut spec: ToolSpec) -> ToolSpec {
@@ -28,14 +27,6 @@ pub(crate) fn with_common_testing_metadata(mut spec: ToolSpec) -> ToolSpec {
             json!({
                 "type": "string",
                 "description": "Optional testing/smoke metadata only. Expected structured failure_kind or error_kind for an expected failure. Does not change tool behavior or safety decisions."
-            })
-        });
-    properties
-        .entry(TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD.to_string())
-        .or_insert_with(|| {
-            json!({
-                "type": "string",
-                "description": "Alias for expected_failure_kind for testing/smoke callers. Matches structured failure_kind or error_kind and does not change tool behavior."
             })
         });
     properties

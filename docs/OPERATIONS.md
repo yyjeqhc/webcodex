@@ -660,8 +660,8 @@ testing metadata:
 }
 ```
 
-`expected_failure`, `expected_failure_kind`, `test_expect_failure_kind`, and
-`assertion_name` are ledger metadata only. They do not change authorization,
+`expected_failure`, `expected_failure_kind`, and `assertion_name` are ledger
+metadata only. They do not change authorization,
 permission decisions, hard guards, execution, `command_started`, or the
 immediate success/error result. `finish_coding_task` and
 `session_handoff_summary` classify matching expected failures separately from

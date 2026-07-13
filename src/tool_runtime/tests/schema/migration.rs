@@ -1425,7 +1425,6 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
     for field in [
         "expected_failure",
         "expected_failure_kind",
-        "test_expect_failure_kind",
         "assertion_name",
         "summary_only",
         "include_command_preview",
@@ -1437,6 +1436,7 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
             "callRuntimeTool must keep flattened GPT Action field {field}"
         );
     }
+    assert!(!tool_call_properties.contains_key("test_expect_failure_kind"));
     let tool_description = tool_call_properties["tool"]["description"]
         .as_str()
         .unwrap();

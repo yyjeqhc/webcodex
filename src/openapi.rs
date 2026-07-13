@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 
 use crate::tool_runtime::sessions::{
     TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_EXPECTED_FAILURE_FIELD,
-    TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
+    TOOL_EXPECTED_FAILURE_KIND_FIELD,
 };
 use crate::tool_runtime::{
     accepted_flattened_args_for_spec, registered_tool_specs, ALLOW_CROSS_PROJECT_SESSION_FIELD,
@@ -1973,13 +1973,6 @@ fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
         json!({
             "type": "string",
             "description": "Flattened testing/smoke metadata only. Expected structured failure_kind or error_kind when expected_failure=true. Mismatches are surfaced in handoff/finish summaries and do not change tool behavior."
-        }),
-    );
-    properties.insert(
-        TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD.to_string(),
-        json!({
-            "type": "string",
-            "description": "Flattened testing/smoke alias for expected_failure_kind. Matches structured failure_kind or error_kind and does not change authorization, permissions, execution, or immediate output."
         }),
     );
     properties.insert(

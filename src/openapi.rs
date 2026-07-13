@@ -270,7 +270,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation(
                     "getRuntimeStatus",
                     "Get runtime status",
-                    "Read-only runtime health/observability summary with service metadata, registered agents, project counts, and job counts. Never exposes tokens, secrets, full env, or stdout/stderr. Call first when troubleshooting.",
+                    "Read-only runtime health/observability summary with service metadata, registered agent count/online_count/stale_count, project counts, and job counts. Never exposes tokens, secrets, full env, or stdout/stderr. Call first when troubleshooting.",
                     "EmptyRequest",
                     "ToolResult"
                 )
@@ -3454,10 +3454,12 @@ mod tests {
             spec["paths"]["/api/runtime/status"]["post"]["operationId"],
             "getRuntimeStatus"
         );
-        assert!(spec["paths"]["/api/runtime/status"]["post"]["description"]
+        let description = spec["paths"]["/api/runtime/status"]["post"]["description"]
             .as_str()
-            .unwrap()
-            .contains("observability"));
+            .unwrap();
+        assert!(description.contains("observability"));
+        assert!(description.contains("stale_count"));
+        assert!(!description.contains("offline_count"));
     }
 
     #[test]

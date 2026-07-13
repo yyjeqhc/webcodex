@@ -155,12 +155,8 @@ impl ToolRuntime {
         let online_count = clients.iter().filter(|c| c.connected).count();
         // `stale_count` = registered agents whose `last_seen` is older than the
         // online window (status == "stale"). Truly offline agents are removed
-        // from the registry on disconnect, so they never appear here; the
-        // legacy `offline_count` field is retained (it mirrors `stale_count`
-        // for the registered set) for backward compatibility with existing
-        // callers/tests.
+        // from the registry on disconnect, so they never appear here.
         let stale_count = agent_count.saturating_sub(online_count);
-        let offline_count = stale_count;
         let clients_summary: Vec<Value> = clients
             .iter()
             .map(|c| {
@@ -190,7 +186,6 @@ impl ToolRuntime {
             "count": agent_count,
             "online_count": online_count,
             "stale_count": stale_count,
-            "offline_count": offline_count,
             "clients": clients_summary,
             "summary": agent_health_summary(&clients, &agent_jobs, now),
         });
@@ -311,6 +306,9 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
         },
         "agents": {
+            "count": status.pointer("/agents/count").cloned().unwrap_or_else(|| json!(0)),
+            "online_count": status.pointer("/agents/online_count").cloned().unwrap_or_else(|| json!(0)),
+            "stale_count": status.pointer("/agents/stale_count").cloned().unwrap_or_else(|| json!(0)),
             "summary": status.pointer("/agents/summary").cloned().unwrap_or_else(|| json!({
                 "count": 0,
                 "online": 0,

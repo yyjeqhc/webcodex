@@ -549,7 +549,6 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
     }
 
     let online = agent_count(runtime, "online_count", "online");
-    let offline = agent_count(runtime, "offline_count", "offline");
     let stale = agent_count(runtime, "stale_count", "stale");
     if online == 0 {
         verdict.fail_reason(
@@ -557,12 +556,6 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
             "start a webcodex-agent and rerun ops status",
         );
     } else {
-        if offline > 0 {
-            verdict.warn_reason(
-                format!("offline_agents:{}", offline),
-                "inspect offline agents with ops agents",
-            );
-        }
         if stale > 0 {
             verdict.warn_reason(
                 format!("stale_agents:{}", stale),
@@ -597,7 +590,6 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
         },
         "agents": {
             "online_count": online,
-            "offline_count": offline,
             "stale_count": stale,
             "clients": agent_clients(runtime),
         },
@@ -630,7 +622,6 @@ pub(crate) fn ops_agents_report(server_url: &str, runtime: &Option<Value>) -> Op
     };
     let clients = agent_clients(runtime);
     let online = agent_count(runtime, "online_count", "online");
-    let offline = agent_count(runtime, "offline_count", "offline");
     let stale = agent_count(runtime, "stale_count", "stale");
     let active_jobs = clients
         .iter()
@@ -640,12 +631,6 @@ pub(crate) fn ops_agents_report(server_url: &str, runtime: &Option<Value>) -> Op
         verdict.fail_reason(
             "no_online_agents",
             "start a webcodex-agent and rerun ops agents",
-        );
-    }
-    if offline > 0 {
-        verdict.warn_reason(
-            format!("offline_agents:{}", offline),
-            "inspect offline agents and restart them if needed",
         );
     }
     if stale > 0 {
@@ -663,7 +648,6 @@ pub(crate) fn ops_agents_report(server_url: &str, runtime: &Option<Value>) -> Op
     let summary = json!({
         "runtime_reachable": true,
         "online_count": online,
-        "offline_count": offline,
         "stale_count": stale,
         "active_jobs": active_jobs,
         "agents": clients,
@@ -925,9 +909,8 @@ pub(crate) fn render_ops_status(report: &OpsReport, json_output: bool) -> Result
     ));
     out.push_str("Agents:\n");
     out.push_str(&format!(
-        "  online/offline/stale: {}/{}/{}\n",
+        "  online/stale: {}/{}\n",
         display_value(&report.summary["agents"]["online_count"]),
-        display_value(&report.summary["agents"]["offline_count"]),
         display_value(&report.summary["agents"]["stale_count"])
     ));
     for client in report.summary["agents"]["clients"]

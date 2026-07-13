@@ -313,7 +313,6 @@ fn runtime_status_fixture() -> Value {
         },
         "agents": {
             "online_count": 1,
-            "offline_count": 0,
             "stale_count": 0,
             "summary": {
                 "online": 1,
@@ -629,10 +628,10 @@ fn ops_status_runtime_ok_passes() {
 fn ops_status_no_online_agents_fails() {
     let mut runtime = runtime_status_fixture();
     runtime["agents"]["online_count"] = json!(0);
-    runtime["agents"]["offline_count"] = json!(1);
+    runtime["agents"]["stale_count"] = json!(1);
     runtime["agents"]["summary"]["online"] = json!(0);
-    runtime["agents"]["summary"]["offline"] = json!(1);
-    runtime["agents"]["summary"]["clients"][0]["status"] = json!("offline");
+    runtime["agents"]["summary"]["stale"] = json!(1);
+    runtime["agents"]["summary"]["clients"][0]["status"] = json!("stale");
     let report = ops_status_report("https://ops.example.test", &Some(runtime));
     assert_eq!(report.verdict.status, "fail");
     assert!(report
@@ -654,13 +653,11 @@ fn ops_status_active_jobs_warns() {
 }
 
 #[test]
-fn ops_agents_maps_online_offline_stale_and_jobs() {
+fn ops_agents_maps_online_stale_and_jobs() {
     let mut runtime = runtime_status_fixture();
     runtime["agents"]["online_count"] = json!(1);
-    runtime["agents"]["offline_count"] = json!(1);
     runtime["agents"]["stale_count"] = json!(1);
     runtime["agents"]["summary"]["online"] = json!(1);
-    runtime["agents"]["summary"]["offline"] = json!(1);
     runtime["agents"]["summary"]["stale"] = json!(1);
     runtime["agents"]["summary"]["clients"] = json!([
         {
@@ -685,8 +682,8 @@ fn ops_agents_maps_online_offline_stale_and_jobs() {
     let report = ops_agents_report("https://ops.example.test", &Some(runtime));
     assert_eq!(report.verdict.status, "warn");
     assert_eq!(report.summary["online_count"], 1);
-    assert_eq!(report.summary["offline_count"], 1);
     assert_eq!(report.summary["stale_count"], 1);
+    assert!(report.summary.get("offline_count").is_none());
     assert_eq!(report.summary["active_jobs"], 1);
 }
 
@@ -875,6 +872,9 @@ fn ops_json_and_human_outputs_do_not_contain_secret_values() {
     assert!(!json_output.contains("WEBCODEX_TOKEN="));
     assert!(!human_output.contains(secret));
     assert!(!human_output.contains("WEBCODEX_TOKEN="));
+    assert!(human_output.contains("online/stale: 1/0"), "{human_output}");
+    assert!(!human_output.contains("online/offline/stale"));
+    assert!(!json_output.contains("offline_count"));
 }
 
 #[tokio::test]

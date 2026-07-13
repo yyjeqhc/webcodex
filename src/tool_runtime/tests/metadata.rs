@@ -928,6 +928,14 @@ fn runtime_status_input_schema_exposes_compact_flags() {
         "runtime_status compact flags must stay optional: {required:?}"
     );
 
+    let output_schema = crate::tool_runtime::registry::output_schema_for_tool("runtime_status");
+    let agents_description = output_schema["properties"]["output"]["properties"]["agents"]
+        ["description"]
+        .as_str()
+        .expect("runtime_status agents output description");
+    assert!(agents_description.contains("stale_count"));
+    assert!(!agents_description.contains("offline_count"));
+
     let openapi = crate::openapi::build_openapi_spec();
     let tool_call_properties = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
         .as_object()
@@ -1491,6 +1499,9 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
             "/build/git_dirty",
             "/tools/count",
             "/jobs/active_count",
+            "/agents/count",
+            "/agents/online_count",
+            "/agents/stale_count",
             "/agents/summary/online",
             "/projects/effective/status",
             "/projects/effective/count",
@@ -1506,6 +1517,10 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
         assert_eq!(summary["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(summary["agents"]["summary"]["count"], 1);
         assert_eq!(summary["agents"]["summary"]["online"], 1);
+        assert_eq!(summary["agents"]["count"], 1);
+        assert_eq!(summary["agents"]["online_count"], 1);
+        assert_eq!(summary["agents"]["stale_count"], 0);
+        assert!(summary["agents"].get("offline_count").is_none());
         assert_eq!(summary["projects"]["effective"]["count"], 1);
         assert_eq!(summary["projects"]["effective"]["status"], "ok");
         assert!(summary["tools"].get("names").is_none());
@@ -1733,8 +1748,8 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     let agents = &result.output["agents"];
     assert_eq!(agents["count"], 1);
     assert_eq!(agents["online_count"], 1);
-    assert_eq!(agents["offline_count"], 0);
     assert_eq!(agents["stale_count"], 0);
+    assert!(agents.get("offline_count").is_none());
     assert_eq!(agents["summary"]["online"], 1);
     assert_eq!(agents["summary"]["offline"], 0);
     assert_eq!(agents["summary"]["stale"], 0);
@@ -1937,7 +1952,7 @@ async fn runtime_status_marks_stale_websocket_agent_with_last_seen() {
     assert_eq!(agents["count"], 1);
     assert_eq!(agents["online_count"], 0);
     assert_eq!(agents["stale_count"], 1);
-    assert_eq!(agents["offline_count"], 1);
+    assert!(agents.get("offline_count").is_none());
     let entry = &agents["clients"][0];
     assert_eq!(entry["client_id"], "ws-stale");
     assert_eq!(entry["transport"], "websocket");

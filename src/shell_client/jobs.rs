@@ -196,14 +196,26 @@ pub(super) fn ensure_queue_capacity_locked(
     Ok(())
 }
 
-/// Ensure a request target exists before enqueueing work for the agent pump.
-/// Callers must already hold `inner`.
+/// Ensure a request target exists and is currently online before enqueueing
+/// work for the agent pump. Callers must already hold `inner`.
+///
+/// Online is defined by `CLIENT_ONLINE_WINDOW_SECS` against `last_seen`. Without
+/// this gate, a registered-but-disconnected agent still accepts enqueues that
+/// can only fail after the caller's wait timeout (or pile up until
+/// `MAX_QUEUED_REQUESTS_PER_CLIENT` and then permanently reject new work for
+/// that client until process restart) — a major amplifier of MCP "no reply".
 pub(super) fn ensure_dispatch_supported_locked(
     inner: &ShellClientRegistryInner,
     client_id: &str,
 ) -> Result<(), String> {
     if !inner.clients.contains_key(client_id) {
         return Err(format!("unknown shell client: {}", client_id));
+    }
+    if !client_is_connected_locked(inner, client_id) {
+        return Err(format!(
+            "shell client {} is offline (no keepalive within {}s); reconnect the agent before retrying",
+            client_id, CLIENT_ONLINE_WINDOW_SECS
+        ));
     }
     Ok(())
 }

@@ -2941,6 +2941,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn registry_rejects_enqueue_when_client_offline() {
+        // Registered-but-stale agents must fail fast at enqueue rather than
+        // accepting work that can only time out (or fill the 256-deep queue).
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "stale".to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: None,
+                policy: None,
+            })
+            .await
+            .unwrap();
+        registry
+            .set_last_seen_for_test("stale", now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
+            .await;
+
+        let err = registry
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: "stale".to_string(),
+                    cwd: None,
+                    command: "echo hi".to_string(),
+                    stdin: None,
+                    timeout_secs: 5,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("offline"),
+            "enqueue against a stale agent must fail fast as offline: {err}"
+        );
+        let view = registry.get_client_view("stale").await.unwrap();
+        assert_eq!(view.pending_requests, 0);
+        assert!(!view.connected);
+    }
+
+    #[tokio::test]
     async fn reconcile_disconnect_marks_running_jobs_lost() {
         let registry = ShellClientRegistry::default();
         registry

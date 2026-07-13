@@ -10,7 +10,7 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 mod action_audit;
-mod action_sessions;
+mod action_audit_sessions;
 mod admin_cli;
 mod agent_quic;
 mod agent_tokens_http;

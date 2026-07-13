@@ -1,5 +1,5 @@
 use super::*;
-use crate::action_sessions::{record_action_event, ActionAuditEventInput};
+use crate::action_audit_sessions::{record_action_event, ActionAuditEventInput};
 use crate::Database;
 use salvo::prelude::{affix_state, Response, Router, StatusCode};
 use salvo::test::{ResponseExt, TestClient};

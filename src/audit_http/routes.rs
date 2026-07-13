@@ -1,5 +1,5 @@
 use super::responses::{bad_json, bad_request, no_db, not_found, query_failed, sanitize_event};
-use crate::action_sessions::{compute_stats, decode_event, ActionEventView};
+use crate::action_audit_sessions::{compute_stats, decode_event, ActionEventView};
 use crate::get_db;
 use salvo::prelude::*;
 use serde::Deserialize;

@@ -1,4 +1,4 @@
-use crate::action_sessions::{
+use crate::action_audit_sessions::{
     record_action_event, request_action_session_id, ActionAuditEventInput,
 };
 use crate::get_db;

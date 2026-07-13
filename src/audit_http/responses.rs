@@ -1,4 +1,4 @@
-use crate::action_sessions::{sanitize_value_for_read, ActionEventView};
+use crate::action_audit_sessions::{sanitize_value_for_read, ActionEventView};
 use crate::json_error;
 use salvo::prelude::*;
 

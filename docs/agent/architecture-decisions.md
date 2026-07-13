@@ -13,6 +13,8 @@ Related product docs: [`ARCHITECTURE.md`](../ARCHITECTURE.md),
 
 WebCodex has **two different "session" concepts**. They share a name in casual
 speech but are **not interchangeable** and must not be merged by accident.
+Full naming, lifecycle, compatibility, and non-goals:
+[`session-model.md`](session-model.md).
 
 ### Workflow session (coding / tool ledger)
 

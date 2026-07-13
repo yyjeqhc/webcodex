@@ -10,7 +10,7 @@ use super::tool_inputs::{
 };
 use super::tool_result::ToolResult;
 use super::{ToolCall, ToolRuntime};
-use crate::action_sessions::secret_like_value;
+use crate::action_audit_sessions::secret_like_value;
 use crate::projects::ProjectConfig;
 use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
 

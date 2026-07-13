@@ -186,7 +186,9 @@ Product detail (consequential labels, discovery, artifacts, smoke paths):
 
 Architecture note — two different "session" concepts (workflow ledger vs
 HTTP action audit), responsibilities, and non-goals:
-[`docs/agent/architecture-decisions.md`](docs/agent/architecture-decisions.md).
+[`docs/agent/session-model.md`](docs/agent/session-model.md) (detail) and
+[`docs/agent/architecture-decisions.md`](docs/agent/architecture-decisions.md)
+(summary).
 
 ### Compatibility (must)
 

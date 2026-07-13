@@ -15,64 +15,12 @@ impl Database {
 
     fn init_tables(&self) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
+        // Drop prototype tables that no longer have product callers. Safe on
+        // fresh DBs (IF EXISTS) and cleans long-lived installs once.
+        Self::drop_legacy_tables(&conn)?;
+
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS messages (
-                id TEXT PRIMARY KEY,
-                channel TEXT NOT NULL,
-                kind TEXT NOT NULL CHECK(kind IN ('text', 'file')),
-                title TEXT,
-                text TEXT,
-                file_name TEXT,
-                file_path TEXT,
-                file_size INTEGER,
-                mime_type TEXT,
-                created_at INTEGER NOT NULL,
-                expires_at INTEGER
-            );
-            CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
-            CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
-
-            CREATE TABLE IF NOT EXISTS command_requests (
-                id TEXT PRIMARY KEY,
-                project TEXT NOT NULL,
-                command TEXT NOT NULL,
-                command_text TEXT,
-                reason TEXT,
-                status TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                approved_at INTEGER,
-                executed_at INTEGER,
-                exit_code INTEGER,
-                stdout_tail TEXT,
-                stderr_tail TEXT,
-                error TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_command_requests_created_at ON command_requests(created_at DESC);
-
-            CREATE TABLE IF NOT EXISTS codex_goals (
-                id TEXT PRIMARY KEY,
-                project TEXT NOT NULL,
-                title TEXT NOT NULL,
-                summary TEXT,
-                status TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                expires_at INTEGER NOT NULL,
-                closed_at INTEGER,
-                error TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_codex_goals_created_at ON codex_goals(created_at DESC);
-
-            CREATE TABLE IF NOT EXISTS agent_specs (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                base_url TEXT NOT NULL,
-                auth_token TEXT NOT NULL,
-                openapi_json TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_specs_updated_at ON agent_specs(updated_at DESC);
-
+            "
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
@@ -131,16 +79,6 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_pairing_codes_hash ON pairing_codes(code_hash);
             CREATE INDEX IF NOT EXISTS idx_pairing_codes_expires_at ON pairing_codes(expires_at);
 
-            CREATE TABLE IF NOT EXISTS agent_model_profiles (
-                id TEXT PRIMARY KEY,
-                base_url TEXT NOT NULL,
-                api_key TEXT NOT NULL,
-                model TEXT NOT NULL,
-                temperature REAL,
-                max_rounds INTEGER,
-                updated_at INTEGER NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS action_sessions (
                 session_id TEXT PRIMARY KEY,
                 title TEXT,
@@ -183,33 +121,10 @@ impl Database {
                 request_bytes INTEGER,
                 response_bytes INTEGER,
                 FOREIGN KEY(session_id) REFERENCES action_sessions(session_id)
-            );",
-        )?;
-        let has_command_text = {
-            let mut stmt = conn.prepare("PRAGMA table_info(command_requests)")?;
-            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-            let mut found = false;
-            for row in rows {
-                if row? == "command_text" {
-                    found = true;
-                    break;
-                }
-            }
-            found
-        };
-        if !has_command_text {
-            conn.execute(
-                "ALTER TABLE command_requests ADD COLUMN command_text TEXT",
-                [],
-            )?;
-        }
-        // Phase 2 multi-user auth: evolve the legacy users/api_keys tables in
-        // place. Fresh DBs already declare the new columns in CREATE TABLE
-        // above; this block migrates pre-existing DBs forward without dropping
-        // data or breaking audit/jobs/project tables.
-        // Phase 2a: OAuth2 tables for opaque DB-backed tokens.
-        conn.execute_batch(
-            "
+            );
+            CREATE INDEX IF NOT EXISTS idx_action_events_session_started
+                ON action_events(session_id, started_at DESC);
+
             CREATE TABLE IF NOT EXISTS oauth_clients (
                 id TEXT PRIMARY KEY,
                 client_id TEXT NOT NULL UNIQUE,
@@ -293,22 +208,26 @@ impl Database {
             ",
         )?;
 
+        // Evolve pre-existing DBs in place (fresh DBs already have full columns
+        // from CREATE TABLE above).
         Self::migrate_oauth_bridge_columns(&conn)?;
         Self::migrate_users_and_api_keys(&conn)?;
+        Ok(())
+    }
+
+    /// Remove tables that belonged to retired product surfaces (inbox messages,
+    /// codex goals/commands, outbound agent specs with plaintext secrets, and
+    /// desktop task prototypes). No remaining code path reads or writes these.
+    fn drop_legacy_tables(conn: &Connection) -> anyhow::Result<()> {
         conn.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS account_credentials (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                credential_hash TEXT NOT NULL UNIQUE,
-                credential_prefix TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                last_used_at INTEGER,
-                revoked_at INTEGER,
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_account_credentials_hash ON account_credentials(credential_hash);
-            CREATE INDEX IF NOT EXISTS idx_account_credentials_user_id ON account_credentials(user_id);
+            DROP TABLE IF EXISTS messages;
+            DROP TABLE IF EXISTS command_requests;
+            DROP TABLE IF EXISTS codex_goals;
+            DROP TABLE IF EXISTS agent_specs;
+            DROP TABLE IF EXISTS agent_model_profiles;
+            DROP TABLE IF EXISTS desktop_tasks;
+            DROP TABLE IF EXISTS desktop_task_events;
             ",
         )?;
         Ok(())

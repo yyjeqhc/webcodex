@@ -52,10 +52,7 @@ pub use config::CodexConfig;
 pub use config::Config;
 pub use config::OAuth2Config;
 pub use db::{Database, RotateResult};
-pub use models::{
-    ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
-    CodexGoalRecord, CommandAuditRecord, Message, MessageKind,
-};
+pub use models::{ActionEventRecord, ActionSessionRecord};
 pub(crate) use openapi::openapi_json;
 pub(crate) use shell_client::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
@@ -539,120 +536,5 @@ mod tests {
         let filename = "file\"name.txt";
         let safe = filename.replace('"', "_");
         assert_eq!(safe, "file_name.txt");
-    }
-
-    #[test]
-    fn test_command_request_claim_is_atomic() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
-        let record = CommandAuditRecord {
-            id: "req-1".to_string(),
-            project: "p".to_string(),
-            command: "smoke".to_string(),
-            command_text: Some("echo ok".to_string()),
-            reason: Some("test".to_string()),
-            status: "pending".to_string(),
-            created_at: 1,
-            approved_at: None,
-            executed_at: None,
-            exit_code: None,
-            stdout_tail: None,
-            stderr_tail: None,
-            error: None,
-        };
-        db.insert_command_request(&record).unwrap();
-        let claimed = db
-            .claim_command_request_for_execution("req-1", 2, 0)
-            .unwrap()
-            .unwrap();
-        assert_eq!(claimed.status, "running");
-        assert_eq!(claimed.approved_at, Some(2));
-        assert_eq!(claimed.command_text.as_deref(), Some("echo ok"));
-        let second = db
-            .claim_command_request_for_execution("req-1", 3, 0)
-            .unwrap();
-        assert!(second.is_none());
-        let current = db.get_command_request("req-1").unwrap().unwrap();
-        assert_eq!(current.status, "running");
-        assert_eq!(current.approved_at, Some(2));
-    }
-
-    #[test]
-    fn test_command_request_claim_respects_ttl() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
-        let record = CommandAuditRecord {
-            id: "old-req".to_string(),
-            project: "p".to_string(),
-            command: "smoke".to_string(),
-            command_text: Some("echo ok".to_string()),
-            reason: None,
-            status: "pending".to_string(),
-            created_at: 10,
-            approved_at: None,
-            executed_at: None,
-            exit_code: None,
-            stdout_tail: None,
-            stderr_tail: None,
-            error: None,
-        };
-        db.insert_command_request(&record).unwrap();
-        let claimed = db
-            .claim_command_request_for_execution("old-req", 100, 50)
-            .unwrap();
-        assert!(claimed.is_none());
-        let current = db.get_command_request("old-req").unwrap().unwrap();
-        assert_eq!(current.status, "pending");
-    }
-
-    #[test]
-    fn test_command_request_reject_only_pending() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
-        let record = CommandAuditRecord {
-            id: "reject-req".to_string(),
-            project: "p".to_string(),
-            command: "smoke".to_string(),
-            command_text: Some("echo ok".to_string()),
-            reason: None,
-            status: "pending".to_string(),
-            created_at: 1,
-            approved_at: None,
-            executed_at: None,
-            exit_code: None,
-            stdout_tail: None,
-            stderr_tail: None,
-            error: None,
-        };
-        db.insert_command_request(&record).unwrap();
-        let rejected = db
-            .reject_command_request("reject-req", 2, "no")
-            .unwrap()
-            .unwrap();
-        assert_eq!(rejected.status, "rejected");
-        assert_eq!(rejected.error.as_deref(), Some("no"));
-        let second = db.reject_command_request("reject-req", 3, "again").unwrap();
-        assert!(second.is_none());
-    }
-
-    #[test]
-    fn test_message_serialization() {
-        let msg = Message {
-            id: "test-id".to_string(),
-            channel: "inbox".to_string(),
-            kind: MessageKind::Text,
-            title: Some("Test".to_string()),
-            text: Some("Hello".to_string()),
-            file_name: None,
-            file_path: None,
-            file_size: None,
-            mime_type: None,
-            created_at: 1234567890,
-            expires_at: None,
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("test-id"));
-        assert!(json.contains("inbox"));
-        assert!(json.contains("text"));
     }
 }

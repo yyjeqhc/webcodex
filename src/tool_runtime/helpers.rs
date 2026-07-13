@@ -8,14 +8,25 @@ pub(crate) fn run_command_sync(
     timeout_secs: u64,
 ) -> (i32, String, String, u64) {
     let start = Instant::now();
-    let spawn = std::process::Command::new("sh")
+    let mut command = std::process::Command::new("sh");
+    command
         .arg("-c")
         .arg(cmd)
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn();
-    let mut child = match spawn {
+        .stderr(std::process::Stdio::piped());
+    // Put the command in its own process group so its whole subtree can be
+    // reaped as a group. Argument 0 makes the child a group leader whose pgid
+    // equals its pid. Without this, a backgrounded grandchild that inherits the
+    // stdout/stderr pipes (e.g. `some-daemon &`) keeps the pipe write-end open,
+    // and `wait_with_output()` below blocks on pipe EOF *forever* — the exact
+    // intermittent "no reply" hang this guards against.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = match command.spawn() {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -26,42 +37,23 @@ pub(crate) fn run_command_sync(
             );
         }
     };
+    // Under `process_group(0)` the child's pid is also its process-group id.
+    let pgid = child.id();
     let timeout = Duration::from_secs(timeout_secs);
+    let mut timed_out = false;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) => {
                 if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let output = child.wait_with_output();
-                    let elapsed = start.elapsed().as_millis() as u64;
-                    return match output {
-                        Ok(out) => {
-                            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                            let mut stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                            if !stderr.is_empty() && !stderr.ends_with('\n') {
-                                stderr.push('\n');
-                            }
-                            stderr.push_str(&format!(
-                                "Command timed out after {} seconds",
-                                timeout_secs
-                            ));
-                            (-1, stdout, stderr, elapsed)
-                        }
-                        Err(e) => (
-                            -1,
-                            String::new(),
-                            format!(
-                                "Command timed out after {} seconds; failed to collect output: {}",
-                                timeout_secs, e
-                            ),
-                            elapsed,
-                        ),
-                    };
+                    timed_out = true;
+                    break;
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(e) => {
+                // Still reap the group so a spawned subtree is not leaked.
+                reap_process_group(pgid);
                 return (
                     -1,
                     String::new(),
@@ -71,22 +63,75 @@ pub(crate) fn run_command_sync(
             }
         }
     }
-    match child.wait_with_output() {
+    // Whether the command timed out or exited on its own, reap the entire
+    // process group before draining output. This kills any backgrounded
+    // grandchildren still holding the stdout/stderr pipes so `wait_with_output`
+    // observes EOF promptly instead of blocking indefinitely. On a clean exit
+    // with no stragglers the signal simply finds nothing to kill.
+    reap_process_group(pgid);
+    let output = child.wait_with_output();
+    let elapsed = start.elapsed().as_millis() as u64;
+    match output {
         Ok(out) => {
-            let elapsed = start.elapsed().as_millis() as u64;
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            let code = out.status.code().unwrap_or(-1);
-            (code, stdout, stderr, elapsed)
+            let mut stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            if timed_out {
+                if !stderr.is_empty() && !stderr.ends_with('\n') {
+                    stderr.push('\n');
+                }
+                stderr.push_str(&format!("Command timed out after {} seconds", timeout_secs));
+                (-1, stdout, stderr, elapsed)
+            } else {
+                let code = out.status.code().unwrap_or(-1);
+                (code, stdout, stderr, elapsed)
+            }
         }
+        Err(e) if timed_out => (
+            -1,
+            String::new(),
+            format!(
+                "Command timed out after {} seconds; failed to collect output: {}",
+                timeout_secs, e
+            ),
+            elapsed,
+        ),
         Err(e) => (
             -1,
             String::new(),
             format!("Failed to collect command output: {}", e),
-            start.elapsed().as_millis() as u64,
+            elapsed,
         ),
     }
 }
+
+/// Best-effort SIGKILL of an entire process group (`kill(-pgid, SIGKILL)`; a
+/// negative target signals every process in the group). Reaps background
+/// grandchildren a synchronous command may have left holding its stdout/stderr
+/// pipes, which would otherwise block `wait_with_output()` on pipe EOF forever.
+///
+/// `pgid` is always our own child's pid (made a group leader via
+/// `process_group(0)`), so this only ever targets that command's own subtree —
+/// never an unrelated or caller-supplied pid. Uses the direct syscall rather
+/// than shelling out: `run_command_sync` is a hot path, and the `kill` binary
+/// rejects negative pgid arguments on some coreutils builds. Failure (e.g. the
+/// group already fully exited, ESRCH) is expected and ignored. No-op on
+/// non-Unix targets.
+#[cfg(unix)]
+fn reap_process_group(pgid: u32) {
+    // Guard against ever signalling pid 0 / -1 ("current group" / "all
+    // processes") if a caller somehow passed a zero id.
+    if pgid == 0 {
+        return;
+    }
+    // SAFETY: plain syscall with no memory arguments; a stale/invalid pgid
+    // yields ESRCH which we deliberately ignore.
+    unsafe {
+        libc::kill(-(pgid as i32), libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn reap_process_group(_pgid: u32) {}
 
 pub(crate) fn resolve_local_cwd(
     proj: &crate::projects::ProjectConfig,
@@ -360,4 +405,61 @@ pub(crate) fn read_lines_from(
     // 1-based line number to request for the next chunk.
     let next_line = end_idx + 1;
     (selected, next_line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression guard for the local-command infinite hang: a shell that exits
+    /// immediately after backgrounding a long-lived process which inherits the
+    /// stdout/stderr pipes must NOT make `run_command_sync` block on pipe EOF.
+    /// Before the process-group reap this returned only after the background
+    /// `sleep` exited (~5s); now the group is killed and it returns promptly.
+    #[cfg(unix)]
+    #[test]
+    fn run_command_sync_does_not_hang_on_backgrounded_pipe_holder() {
+        let dir = std::env::temp_dir();
+        let start = Instant::now();
+        let (code, stdout, _stderr, _ms) = run_command_sync("echo done; sleep 5 &", &dir, 10);
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "run_command_sync blocked on a backgrounded pipe holder for {:?}",
+            start.elapsed()
+        );
+        assert_eq!(code, 0, "foreground command should still report success");
+        assert!(stdout.contains("done"), "stdout was: {stdout:?}");
+    }
+
+    /// A normal command's exit code and output are unchanged by the reap.
+    #[cfg(unix)]
+    #[test]
+    fn run_command_sync_preserves_exit_code_and_output() {
+        let dir = std::env::temp_dir();
+        let (code, stdout, _stderr, _ms) = run_command_sync("echo hello", &dir, 10);
+        assert_eq!(code, 0);
+        assert_eq!(stdout.trim(), "hello");
+
+        let (code, _stdout, _stderr, _ms) = run_command_sync("exit 3", &dir, 10);
+        assert_eq!(code, 3, "non-zero exit codes must survive the reap");
+    }
+
+    /// A genuinely slow foreground command still hits the timeout path.
+    #[cfg(unix)]
+    #[test]
+    fn run_command_sync_times_out_foreground_command() {
+        let dir = std::env::temp_dir();
+        let start = Instant::now();
+        let (code, _stdout, stderr, _ms) = run_command_sync("sleep 30", &dir, 1);
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "timeout should fire near 1s, took {:?}",
+            start.elapsed()
+        );
+        assert_eq!(code, -1);
+        assert!(
+            stderr.contains("timed out"),
+            "expected timeout note, got: {stderr:?}"
+        );
+    }
 }

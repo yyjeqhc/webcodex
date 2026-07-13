@@ -36,6 +36,14 @@ rustls-pemfile = "2"
 # `rustls-tls-webpki-roots` feature, so it does not add a new major version.
 webpki-roots = "0.26"
 
+# Unix process-group reap for synchronous local commands (`run_command_sync`).
+# A direct `kill(-pgid, SIGKILL)` reliably reaps background grandchildren that
+# inherit the stdout/stderr pipes — otherwise `wait_with_output` blocks on pipe
+# EOF forever — without spawning a `kill` process on every local command.
+# Already present transitively; pinned to the resolved 0.2 line.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Release binaries ship via the npm wrapper; optimize for size without
 # changing runtime behavior (panic unwinding stays enabled).
 [profile.release]

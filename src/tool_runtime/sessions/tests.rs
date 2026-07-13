@@ -1,5 +1,7 @@
 use super::super::project_instructions::ProjectInstructionsSnapshot;
 use super::super::tool_inputs::SessionMode;
+use super::events::{changed_paths_for_tool, SessionToolClassification};
+use super::model::{MAX_VALIDATION_EXCERPT_CHARS, MESSAGE_ID_PREFIX};
 use super::persistence::write_ledger_atomic;
 use super::*;
 use serde_json::{json, Value};

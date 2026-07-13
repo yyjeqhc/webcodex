@@ -1,4 +1,4 @@
-//! In-memory SessionStore: create, bind, record events/messages, and trigger persistence.
+//! In-memory SessionStore: create sessions, record events, and trigger persistence.
 use super::super::permissions::PermissionDecision;
 use super::super::tool_inputs::SessionMode;
 use serde_json::Value;
@@ -14,34 +14,31 @@ use super::events::{
     validation_output_summary_for_tool_result, SessionToolClassification,
 };
 use super::model::{
-    CurrentSessionKey, ListSessionMessagesFilter, PersistedSessionLedger, PersistedSessionRecord,
-    PostSessionMessageInput, SessionCounts, SessionCreateOptions, SessionDiscussionSummary,
-    SessionEvent, SessionGuardDenial, SessionGuards, SessionInboxHint, SessionMessage,
-    SessionMessageError, SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary,
-    SessionTransport, ToolCallRecorderMetadata, ToolCallStart, DEFAULT_MAX_EVENTS_PER_SESSION,
-    DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS, DEFAULT_MESSAGE_LIST_LIMIT,
-    DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_MESSAGE_LIST_LIMIT, MAX_SUMMARY_LIMIT,
-    MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    CurrentSessionKey, PersistedSessionLedger, PersistedSessionRecord, SessionCounts,
+    SessionCreateOptions, SessionEvent, SessionGuardDenial, SessionGuards, SessionRecord,
+    SessionStoreStatus, SessionSummary, SessionTransport, ToolCallRecorderMetadata, ToolCallStart,
+    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS,
+    DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_SUMMARY_LIMIT, SESSION_ID_PREFIX,
+    SESSION_LEDGER_VERSION,
 };
 use super::persistence::{load_persisted_sessions, write_ledger_atomic};
-use super::query::{
-    build_discussion_summary, build_inbox_hint, build_messages_summary, validate_message_tags,
-    validate_message_text, validate_resolution_text,
-};
+use super::query::build_messages_summary;
 use super::util::{
     bound_event_error_summary, bound_summary_string, now_ts, redact_and_bound_value,
 };
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionStore {
-    inner: Arc<Mutex<SessionStoreInner>>,
+    /// Shared session map, bindings, and LRU metadata.
+    /// `pub(super)` so `bindings` / `messages` can implement focused `impl` blocks.
+    pub(super) inner: Arc<Mutex<SessionStoreInner>>,
     persistence_write_mutex: Arc<Mutex<()>>,
 }
 
 #[derive(Debug)]
 pub(super) struct SessionStoreInner {
-    sessions: HashMap<String, SessionRecord>,
-    current_sessions: HashMap<CurrentSessionKey, String>,
+    pub(super) sessions: HashMap<String, SessionRecord>,
+    pub(super) current_sessions: HashMap<CurrentSessionKey, String>,
     lru: VecDeque<String>,
     max_sessions: usize,
     max_events_per_session: usize,
@@ -192,42 +189,6 @@ impl SessionStore {
         let mut inner = self.inner.lock().expect("session store mutex poisoned");
         inner.touch(session_id);
         inner.summary(session_id, limit)
-    }
-
-    pub(crate) fn bind_current_session(
-        &self,
-        key: CurrentSessionKey,
-        session_id: &str,
-    ) -> Option<SessionSummary> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.touch(session_id);
-        let summary = inner.summary(session_id, Some(DEFAULT_SUMMARY_LIMIT))?;
-        inner
-            .current_sessions
-            .insert(key, session_id.trim().to_string());
-        Some(summary)
-    }
-
-    pub(crate) fn current_session(&self, key: &CurrentSessionKey) -> Option<SessionSummary> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        let session_id = inner.current_sessions.get(key).cloned()?;
-        inner.touch(&session_id);
-        match inner.summary(&session_id, Some(DEFAULT_SUMMARY_LIMIT)) {
-            Some(summary) => Some(summary),
-            None => {
-                inner.current_sessions.remove(key);
-                None
-            }
-        }
-    }
-
-    pub(crate) fn current_session_id(&self, key: &CurrentSessionKey) -> Option<String> {
-        self.current_session(key).map(|summary| summary.session_id)
-    }
-
-    pub(crate) fn unbind_current_session(&self, key: &CurrentSessionKey) -> bool {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.current_sessions.remove(key).is_some()
     }
 
     pub(crate) fn contains_session(&self, session_id: &str) -> bool {
@@ -514,137 +475,6 @@ impl SessionStore {
         Some(event_id)
     }
 
-    pub(crate) fn post_message(
-        &self,
-        input: PostSessionMessageInput,
-    ) -> Result<SessionMessage, SessionMessageError> {
-        let message = {
-            let mut inner = self.inner.lock().expect("session store mutex poisoned");
-            inner.touch(&input.session_id);
-            let Some(record) = inner.sessions.get_mut(&input.session_id) else {
-                return Err(SessionMessageError::UnknownSession);
-            };
-            let message = validate_message_text(input.message)?;
-            let tags = validate_message_tags(input.tags)?;
-            if let Some(reply_to) = input.reply_to.as_deref() {
-                let found = record
-                    .messages
-                    .iter()
-                    .any(|message| message.message_id == reply_to);
-                if !found {
-                    return Err(SessionMessageError::UnknownMessage);
-                }
-            }
-            let now = now_ts();
-            let message = SessionMessage {
-                message_id: format!("{MESSAGE_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
-                session_id: input.session_id.clone(),
-                created_at: now,
-                kind: input.kind,
-                status: SessionMessageStatus::Open,
-                priority: input.priority,
-                message,
-                tags,
-                reply_to: input.reply_to,
-                resolved_at: None,
-                resolution: None,
-            };
-            record.updated_at = now;
-            record.messages.push_back(message.clone());
-            while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
-                record.messages.pop_front();
-            }
-            message
-        };
-        self.persist_after_mutation();
-        Ok(message)
-    }
-
-    pub(crate) fn list_messages(
-        &self,
-        session_id: &str,
-        filter: ListSessionMessagesFilter,
-    ) -> Result<Vec<SessionMessage>, SessionMessageError> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.touch(session_id);
-        let Some(record) = inner.sessions.get(session_id) else {
-            return Err(SessionMessageError::UnknownSession);
-        };
-        let limit = filter
-            .limit
-            .unwrap_or(DEFAULT_MESSAGE_LIST_LIMIT)
-            .clamp(0, MAX_MESSAGE_LIST_LIMIT);
-        Ok(record
-            .messages
-            .iter()
-            .filter(|message| filter.kind.is_none_or(|kind| message.kind == kind))
-            .filter(|message| filter.status.is_none_or(|status| message.status == status))
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect())
-    }
-
-    pub(crate) fn resolve_message(
-        &self,
-        session_id: &str,
-        message_id: &str,
-        resolution: Option<String>,
-    ) -> Result<SessionMessage, SessionMessageError> {
-        let message = {
-            let mut inner = self.inner.lock().expect("session store mutex poisoned");
-            inner.touch(session_id);
-            let Some(record) = inner.sessions.get_mut(session_id) else {
-                return Err(SessionMessageError::UnknownSession);
-            };
-            let Some(message) = record
-                .messages
-                .iter_mut()
-                .find(|message| message.message_id == message_id)
-            else {
-                return Err(SessionMessageError::UnknownMessage);
-            };
-            let resolution = match resolution {
-                Some(value) => Some(validate_resolution_text(value)?),
-                None => None,
-            };
-            if message.status == SessionMessageStatus::Open {
-                message.status = SessionMessageStatus::Resolved;
-                message.resolved_at = Some(now_ts());
-            }
-            if resolution.is_some() {
-                message.resolution = resolution;
-            }
-            record.updated_at = now_ts();
-            message.clone()
-        };
-        self.persist_after_mutation();
-        Ok(message)
-    }
-
-    pub(crate) fn discussion_summary(
-        &self,
-        session_id: &str,
-        limit: Option<usize>,
-    ) -> Result<SessionDiscussionSummary, SessionMessageError> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.touch(session_id);
-        let Some(record) = inner.sessions.get(session_id) else {
-            return Err(SessionMessageError::UnknownSession);
-        };
-        let limit = limit
-            .unwrap_or(DEFAULT_MESSAGE_LIST_LIMIT)
-            .clamp(0, MAX_MESSAGE_LIST_LIMIT);
-        Ok(build_discussion_summary(record, limit))
-    }
-
-    pub(crate) fn inbox_hint(&self, session_id: &str) -> Option<SessionInboxHint> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.touch(session_id);
-        let record = inner.sessions.get(session_id)?;
-        build_inbox_hint(record)
-    }
-
     fn push_event(&self, event: SessionEvent) {
         let persisted = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
@@ -667,7 +497,7 @@ impl SessionStore {
         }
     }
 
-    fn persist_after_mutation(&self) {
+    pub(super) fn persist_after_mutation(&self) {
         self.persist_after_mutation_with(write_ledger_atomic);
     }
 
@@ -720,7 +550,7 @@ impl SessionStoreInner {
         }
     }
 
-    fn touch(&mut self, session_id: &str) {
+    pub(super) fn touch(&mut self, session_id: &str) {
         self.lru.retain(|id| id != session_id);
         if self.sessions.contains_key(session_id) {
             self.lru.push_back(session_id.to_string());
@@ -736,7 +566,7 @@ impl SessionStoreInner {
         }
     }
 
-    fn summary(&self, session_id: &str, limit: Option<usize>) -> Option<SessionSummary> {
+    pub(super) fn summary(&self, session_id: &str, limit: Option<usize>) -> Option<SessionSummary> {
         let record = self.sessions.get(session_id)?;
         let limit = limit
             .unwrap_or(DEFAULT_SUMMARY_LIMIT)

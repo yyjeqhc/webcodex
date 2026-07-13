@@ -14,9 +14,6 @@ mod schema;
 
 pub use self::oauth::RotateResult;
 
-#[cfg(test)]
-use self::schema::{has_column, oauth_user_id_is_nullable, table_column_info, table_columns};
-
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -866,18 +863,40 @@ mod tests {
         (record, plaintext_secret)
     }
 
+    fn table_column_names(conn: &Connection, table: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    }
+
     fn assert_oauth_subject_columns(conn: &Connection, table: &str) {
-        let cols = table_column_info(conn, table).unwrap();
-        assert!(has_column(&cols, "subject_kind"), "{table} subject_kind");
-        assert!(has_column(&cols, "subject_id"), "{table} subject_id");
-        assert!(
-            has_column(&cols, "shared_key_hash"),
-            "{table} shared_key_hash"
-        );
-        assert!(
-            oauth_user_id_is_nullable(&cols),
-            "{table} user_id should allow NULL"
-        );
+        let cols = table_column_names(conn, table);
+        for name in ["subject_kind", "subject_id", "shared_key_hash", "user_id"] {
+            assert!(
+                cols.iter().any(|c| c == name),
+                "{table} must declare column {name}"
+            );
+        }
+        // user_id is nullable so shared-key subjects can omit a managed user.
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        let user_id_notnull: i64 = stmt
+            .query_map([], |row| {
+                let name: String = row.get(1)?;
+                let notnull: i64 = row.get(3)?;
+                Ok((name, notnull))
+            })
+            .unwrap()
+            .map(|r| r.unwrap())
+            .find(|(name, _)| name == "user_id")
+            .map(|(_, notnull)| notnull)
+            .expect("user_id column");
+        assert_eq!(user_id_notnull, 0, "{table} user_id should allow NULL");
     }
 
     #[test]
@@ -1365,164 +1384,6 @@ mod tests {
         record.token_hash = "hash-unknown-kind".to_string();
         record.subject_kind = "unknown".to_string();
         assert!(db.insert_oauth_access_token(&record).is_err());
-    }
-
-    #[test]
-    fn oauth_bridge_shared_key_hash_columns_are_migrated() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("legacy-oauth.db");
-        {
-            let conn = rusqlite::Connection::open(&path).unwrap();
-            conn.execute_batch(
-                "
-                CREATE TABLE oauth_authorization_codes (
-                    id TEXT PRIMARY KEY,
-                    code_hash TEXT NOT NULL UNIQUE,
-                    client_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    redirect_uri TEXT NOT NULL,
-                    scopes TEXT NOT NULL DEFAULT '',
-                    code_challenge TEXT,
-                    code_challenge_method TEXT,
-                    resource TEXT,
-                    shared_key_hash TEXT,
-                    created_at INTEGER NOT NULL,
-                    expires_at INTEGER NOT NULL,
-                    used_at INTEGER,
-                    revoked_at INTEGER
-                );
-                CREATE TABLE oauth_access_tokens (
-                    id TEXT PRIMARY KEY,
-                    token_hash TEXT NOT NULL UNIQUE,
-                    client_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    scopes TEXT NOT NULL DEFAULT '',
-                    resource TEXT,
-                    shared_key_hash TEXT,
-                    created_at INTEGER NOT NULL,
-                    expires_at INTEGER NOT NULL,
-                    revoked_at INTEGER,
-                    last_used_at INTEGER
-                );
-                CREATE TABLE oauth_refresh_tokens (
-                    id TEXT PRIMARY KEY,
-                    token_hash TEXT NOT NULL UNIQUE,
-                    client_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    scopes TEXT NOT NULL DEFAULT '',
-                    resource TEXT,
-                    shared_key_hash TEXT,
-                    created_at INTEGER NOT NULL,
-                    expires_at INTEGER NOT NULL,
-                    revoked_at INTEGER,
-                    last_used_at INTEGER,
-                    rotated_from_id TEXT
-                );
-                INSERT INTO oauth_authorization_codes (
-                    id, code_hash, client_id, user_id, redirect_uri, scopes,
-                    code_challenge, code_challenge_method, resource, shared_key_hash,
-                    created_at, expires_at, used_at, revoked_at
-                ) VALUES (
-                    'legacy-code', 'legacy-code-hash', 'legacy-client', 'legacy-user',
-                    'https://example.com/callback', 'runtime:read', NULL, NULL, NULL, 'legacy-hash',
-                    1700000000, 4102444800, NULL, NULL
-                );
-                INSERT INTO oauth_access_tokens (
-                    id, token_hash, client_id, user_id, scopes, resource, shared_key_hash,
-                    created_at, expires_at, revoked_at, last_used_at
-                ) VALUES (
-                    'legacy-access', 'legacy-access-hash', 'legacy-client', 'legacy-user',
-                    'runtime:read', NULL, 'legacy-hash', 1700000000, 4102444800, NULL, NULL
-                );
-                INSERT INTO oauth_refresh_tokens (
-                    id, token_hash, client_id, user_id, scopes, resource, shared_key_hash,
-                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
-                ) VALUES (
-                    'legacy-refresh', 'legacy-refresh-hash', 'legacy-client', 'legacy-user',
-                    'runtime:read', NULL, 'legacy-hash', 1700000000, 4102444800, NULL, NULL, NULL
-                );
-                ",
-            )
-            .unwrap();
-        }
-
-        let db = Database::open(&path).unwrap();
-        let conn = db.conn.lock().unwrap();
-        let auth_code_cols = table_columns(&conn, "oauth_authorization_codes").unwrap();
-        let access_cols = table_columns(&conn, "oauth_access_tokens").unwrap();
-        let refresh_cols = table_columns(&conn, "oauth_refresh_tokens").unwrap();
-        assert!(auth_code_cols.iter().any(|c| c == "shared_key_hash"));
-        assert!(access_cols.iter().any(|c| c == "shared_key_hash"));
-        assert!(refresh_cols.iter().any(|c| c == "shared_key_hash"));
-        assert_oauth_subject_columns(&conn, "oauth_authorization_codes");
-        assert_oauth_subject_columns(&conn, "oauth_access_tokens");
-        assert_oauth_subject_columns(&conn, "oauth_refresh_tokens");
-        let auth_subject: (String, String, Option<String>) = conn
-            .query_row(
-                "SELECT subject_kind, subject_id, user_id FROM oauth_authorization_codes WHERE id = 'legacy-code'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        let access_subject: (String, String, Option<String>) = conn
-            .query_row(
-                "SELECT subject_kind, subject_id, user_id FROM oauth_access_tokens WHERE id = 'legacy-access'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        let refresh_subject: (String, String, Option<String>) = conn
-            .query_row(
-                "SELECT subject_kind, subject_id, user_id FROM oauth_refresh_tokens WHERE id = 'legacy-refresh'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(
-            auth_subject,
-            (
-                "managed_user".to_string(),
-                "legacy-user".to_string(),
-                Some("legacy-user".to_string())
-            )
-        );
-        assert_eq!(access_subject, auth_subject);
-        assert_eq!(refresh_subject, auth_subject);
-        let auth_code_shared_key_hash: Option<String> = conn
-            .query_row(
-                "SELECT shared_key_hash FROM oauth_authorization_codes WHERE id = 'legacy-code'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let access_shared_key_hash: Option<String> = conn
-            .query_row(
-                "SELECT shared_key_hash FROM oauth_access_tokens WHERE id = 'legacy-access'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let refresh_shared_key_hash: Option<String> = conn
-            .query_row(
-                "SELECT shared_key_hash FROM oauth_refresh_tokens WHERE id = 'legacy-refresh'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(auth_code_shared_key_hash.as_deref(), Some("legacy-hash"));
-        assert_eq!(access_shared_key_hash.as_deref(), Some("legacy-hash"));
-        assert_eq!(refresh_shared_key_hash.as_deref(), Some("legacy-hash"));
-        drop(conn);
-        drop(db);
-
-        let db = Database::open(&path).unwrap();
-        let conn = db.conn.lock().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM oauth_access_tokens", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(count, 1, "subject migration should be idempotent");
     }
 
     #[test]

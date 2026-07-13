@@ -311,8 +311,11 @@ impl ToolRuntime {
         };
 
         let project = tool_project(&call);
-        let permission =
-            super::permissions::permission_decision_for_tool(call.tool_name(), project.as_deref());
+        // Unified evaluator entry (same as dispatch). When both layers touch the
+        // same call, each records against its own session start; decision shape
+        // remains identical under dev_auto_approve.
+        let permission = super::permissions::PermissionEvaluator::from_env()
+            .evaluate(call.tool_name(), project.as_deref());
         let mut result = self
             .dispatch_with_auth_transport_options_and_metadata(
                 call,

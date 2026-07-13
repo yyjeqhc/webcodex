@@ -215,8 +215,12 @@ impl ToolRuntime {
             }
             return err;
         }
+        // Single decision entry: Tool Request → PermissionEvaluator → Decision.
+        // Attach remains post-exec with hard-deny filter (hard safety never
+        // overridden by permission mode). Phase 2 may move evaluation before
+        // mutation without changing the evaluator API.
         let permission =
-            permissions::permission_decision_for_tool(call.tool_name(), call.project());
+            permissions::PermissionEvaluator::from_env().evaluate(call.tool_name(), call.project());
         let mut result = self.dispatch_authorized_inner(call, auth, transport).await;
         let permission = permission.filter(|_| {
             !permissions::is_hard_denied_output(&result.output, result.error.as_deref())

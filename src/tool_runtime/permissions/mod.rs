@@ -1,52 +1,47 @@
-use serde::{Deserialize, Serialize};
+//! Permission decision layer for high-risk tool execution.
+//!
+//! Module layout:
+//! - [`model`] — modes, outcomes, [`PermissionDecision`], constants
+//! - [`evaluator`] — single evaluation entry ([`PermissionEvaluator`])
+//! - [`policy`] — mode behavior (`dev_auto_approve`, `audit_only`, …)
+//! - [`risk`] — coarse risk classification facade
+//!
+//! Hard safety (session guard, path policy, scopes) lives outside this module
+//! and is never bypassed by permission mode. See
+//! `docs/agent/permission-model.md`.
+
+mod evaluator;
+mod model;
+mod policy;
+mod risk;
+
+#[cfg(test)]
+mod tests;
+
+pub(crate) use evaluator::PermissionEvaluator;
+pub(crate) use model::{PermissionDecision, PermissionMode, DEFAULT_PERMISSION_RECENT_LIMIT};
+pub(crate) use policy::EffectivePermissionConfig;
+
+// Test-facing surface: mode parsing, outcomes, constants, compatibility wrapper.
+#[cfg(test)]
+pub(crate) use evaluator::permission_decision_for_tool;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use model::{
+    PermissionModeParseError, PermissionOutcome, DEFAULT_PERMISSION_POLICY, PERMISSION_MODE_ENV,
+    RELEASE_RECOMMENDED_PERMISSION_POLICY,
+};
+#[cfg(test)]
+pub(crate) use policy::resolve_permission_mode;
+
 use serde_json::{json, Value};
 
 use super::sessions::SessionEvent;
-use super::tool_definition::{runtime_tool_permission_risk, runtime_tool_requires_permission};
 use super::tool_result::ToolResult;
 
-pub(crate) const DEFAULT_PERMISSION_POLICY: &str = "dev_auto_approve";
-pub(crate) const RELEASE_RECOMMENDED_PERMISSION_POLICY: &str = "require_approval";
-pub(crate) const DEFAULT_PERMISSION_RECENT_LIMIT: usize = 20;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct PermissionDecision {
-    pub(crate) required: bool,
-    pub(crate) policy: String,
-    pub(crate) request_id: String,
-    pub(crate) status: String,
-    pub(crate) reason: String,
-    pub(crate) risk: String,
-    pub(crate) tool_name: String,
-    pub(crate) project: Option<String>,
-}
-
+/// Operator-facing permission profile (runtime_status / coding-task startup).
 pub(crate) fn permission_profile_payload() -> Value {
-    json!({
-        "policy": DEFAULT_PERMISSION_POLICY,
-        "human_approval_required": false,
-        "auto_approve": true,
-        "release_recommended_policy": RELEASE_RECOMMENDED_PERMISSION_POLICY,
-    })
-}
-
-pub(crate) fn permission_decision_for_tool(
-    tool_name: &str,
-    project: Option<&str>,
-) -> Option<PermissionDecision> {
-    if !runtime_tool_requires_permission(tool_name) {
-        return None;
-    }
-    Some(PermissionDecision {
-        required: true,
-        policy: DEFAULT_PERMISSION_POLICY.to_string(),
-        request_id: format!("wc_perm_{}", uuid::Uuid::new_v4().simple()),
-        status: "auto_approved".to_string(),
-        reason: DEFAULT_PERMISSION_POLICY.to_string(),
-        risk: runtime_tool_permission_risk(tool_name).to_string(),
-        tool_name: tool_name.to_string(),
-        project: project.map(str::to_string),
-    })
+    policy::permission_profile_payload_for(&EffectivePermissionConfig::from_env())
 }
 
 pub(crate) fn add_permission_to_result(result: &mut ToolResult, permission: &PermissionDecision) {
@@ -65,6 +60,8 @@ pub(crate) fn add_permission_to_result(result: &mut ToolResult, permission: &Per
     result.output = Value::Object(output);
 }
 
+/// Detect hard-safety denials on tool output. Independent of permission mode:
+/// auto-approve must never suppress these outcomes.
 pub(crate) fn is_hard_denied_output(output: &Value, error: Option<&str>) -> bool {
     let structured_hard_deny = [
         "policy_rejected",
@@ -139,9 +136,10 @@ pub(crate) fn permission_summary_from_events(events: &[SessionEvent], limit: usi
 
     let manual_approved_count = approved_count;
     let total_approved_count = manual_approved_count + auto_approved_count;
+    let config = EffectivePermissionConfig::from_env();
 
     json!({
-        "policy": DEFAULT_PERMISSION_POLICY,
+        "policy": config.policy_name(),
         "events_total": events_total,
         "required_count": required_count,
         "auto_approved_count": auto_approved_count,
@@ -151,7 +149,7 @@ pub(crate) fn permission_summary_from_events(events: &[SessionEvent], limit: usi
         "denied_count": denied_count,
         "pending_count": pending_count,
         "hard_denied_count": hard_denied_count,
-        "human_approval_required": false,
+        "human_approval_required": config.human_approval_required(),
         "recent": recent,
     })
 }

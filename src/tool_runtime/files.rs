@@ -6,9 +6,11 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Duration;
 
+#[cfg(test)]
+use super::helpers::run_command_sync;
 use super::helpers::{
-    looks_like_command_timeout, run_command_sync, shell_escape_simple, shell_join_paths,
-    validate_limited_cleanup_paths, validate_project_relative_path,
+    looks_like_command_timeout, run_command_sync_bounded, shell_escape_simple, shell_join_paths,
+    validate_limited_cleanup_paths, validate_project_relative_path, LocalRunFailure,
 };
 use super::tool_inputs::{ApplyTextEditInput, ApplyTextEditKind};
 use super::tool_result::ToolResult;
@@ -3794,15 +3796,17 @@ impl ToolRuntime {
             };
         }
         let root = proj.root();
-        let result = tokio::task::spawn_blocking(move || {
-            run_command_sync(&cmd, &root, effective_timeout_secs)
-        })
-        .await;
-        match result {
+        match run_command_sync_bounded(cmd, root, effective_timeout_secs).await {
             Ok((exit_code, stdout, stderr, _)) => {
                 search_project_text_output(&project, &options, &stdout, Some(exit_code), &stderr)
             }
-            Err(e) => ToolResult::err(format!("task join error: {}", e)),
+            // Outer hard bound (command timeout + grace) fired: treat as a
+            // search timeout so the MCP request still returns a structured error
+            // instead of parking forever on a wedged output drain.
+            Err(LocalRunFailure::HardTimeout { bound_secs: _ }) => {
+                search_timeout_tool_result(&options, Some("local_hard_bound"))
+            }
+            Err(LocalRunFailure::Join(e)) => ToolResult::err(format!("task join error: {}", e)),
         }
     }
 }

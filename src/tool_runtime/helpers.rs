@@ -133,6 +133,45 @@ fn reap_process_group(pgid: u32) {
 #[cfg(not(unix))]
 fn reap_process_group(_pgid: u32) {}
 
+/// Grace added on top of a local command's own `timeout_secs` to form the
+/// outer bound in [`run_command_sync_bounded`]. Covers the post-exit group
+/// reap and output drain, which are normally near-instant.
+pub(crate) const LOCAL_RUN_HARD_GRACE_SECS: u64 = 10;
+
+/// Failure surfaced by [`run_command_sync_bounded`]'s outer backstop rather
+/// than by the command itself (a command's own non-zero exit / timeout is
+/// reported through the `Ok` tuple).
+pub(crate) enum LocalRunFailure {
+    /// The blocking task did not come back within
+    /// `timeout_secs + LOCAL_RUN_HARD_GRACE_SECS`. `run_command_sync` bounds
+    /// the wait on the direct child and reaps its process group, but the
+    /// output drain can still wedge if a descendant escapes the group (e.g.
+    /// via `setsid`) while holding the stdout/stderr pipes. This converts
+    /// that wedge into a prompt timeout error instead of an unbounded await;
+    /// the detached blocking thread is abandoned until the straggler exits,
+    /// since `spawn_blocking` cannot be cancelled.
+    HardTimeout { bound_secs: u64 },
+    /// The blocking task panicked or the runtime is shutting down.
+    Join(String),
+}
+
+/// Run [`run_command_sync`] on the blocking pool, bounded by an outer hard
+/// timeout so a wedged output drain can never park the caller — and with it
+/// the MCP request driving it — indefinitely.
+pub(crate) async fn run_command_sync_bounded(
+    cmd: String,
+    cwd: PathBuf,
+    timeout_secs: u64,
+) -> Result<(i32, String, String, u64), LocalRunFailure> {
+    let bound_secs = timeout_secs.saturating_add(LOCAL_RUN_HARD_GRACE_SECS);
+    let task = tokio::task::spawn_blocking(move || run_command_sync(&cmd, &cwd, timeout_secs));
+    match tokio::time::timeout(Duration::from_secs(bound_secs), task).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(e)) => Err(LocalRunFailure::Join(e.to_string())),
+        Err(_) => Err(LocalRunFailure::HardTimeout { bound_secs }),
+    }
+}
+
 pub(crate) fn resolve_local_cwd(
     proj: &crate::projects::ProjectConfig,
     cwd: Option<&str>,

@@ -3,9 +3,10 @@ use std::time::Duration;
 
 use super::helpers::{
     bounded_tail, command_failed_message, command_rejected_message, command_timeout_message,
-    looks_like_command_timeout, resolve_local_cwd, resolve_sync_timeout_secs, run_command_sync,
-    sync_timeout_out_of_range_result, COMMAND_STDIO_TAIL_CHARS, DEFAULT_RUN_SHELL_TIMEOUT_SECS,
-    MAX_SYNC_TIMEOUT_SECS, MIN_SYNC_TIMEOUT_SECS,
+    looks_like_command_timeout, resolve_local_cwd, resolve_sync_timeout_secs,
+    run_command_sync_bounded, sync_timeout_out_of_range_result, LocalRunFailure,
+    COMMAND_STDIO_TAIL_CHARS, DEFAULT_RUN_SHELL_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS,
+    MIN_SYNC_TIMEOUT_SECS,
 };
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
@@ -179,12 +180,15 @@ impl ToolRuntime {
             }
         } else {
             let cwd_path = resolve_local_cwd(&proj, cwd.as_deref())?;
-            let result = tokio::task::spawn_blocking({
-                let cmd = command;
-                move || run_command_sync(&cmd, &cwd_path, timeout)
-            })
-            .await
-            .map_err(|e| format!("task join error: {}", e))?;
+            let result = run_command_sync_bounded(command, cwd_path, timeout)
+                .await
+                .map_err(|failure| match failure {
+                    LocalRunFailure::HardTimeout { bound_secs } => format!(
+                        "local command did not return within {} seconds (hard bound); an orphaned background process may still be holding its output pipes",
+                        bound_secs
+                    ),
+                    LocalRunFailure::Join(e) => format!("task join error: {}", e),
+                })?;
             Ok(ProjectCommandOutput {
                 exit_code: Some(result.0),
                 stdout: result.1,
@@ -338,12 +342,7 @@ impl ToolRuntime {
                     )
                 }
             };
-            let result = tokio::task::spawn_blocking({
-                let cmd = command;
-                move || run_command_sync(&cmd, &cwd_path, timeout)
-            })
-            .await;
-            match result {
+            match run_command_sync_bounded(command, cwd_path, timeout).await {
                 Ok((exit_code, stdout, stderr, duration_ms)) => {
                     if exit_code == 0 {
                         ToolResult::ok(Self::run_shell_success_output(
@@ -362,7 +361,20 @@ impl ToolRuntime {
                         )
                     }
                 }
-                Err(e) => Self::run_shell_tool_failure_result(
+                // The command's own timeout is reported through the Ok tuple;
+                // this arm means the post-exit output drain wedged (a
+                // descendant escaped the process group while holding the
+                // pipes) and the outer backstop fired instead of parking the
+                // MCP request indefinitely.
+                Err(LocalRunFailure::HardTimeout { bound_secs }) => {
+                    Self::run_shell_tool_failure_result(
+                        command_timeout_message(bound_secs, "", ""),
+                        "timeout",
+                        true,
+                        false,
+                    )
+                }
+                Err(LocalRunFailure::Join(e)) => Self::run_shell_tool_failure_result(
                     command_rejected_message(
                         format!("task join error: {}", e),
                         "retry the command; if the worker keeps failing, inspect server logs.",

@@ -311,11 +311,9 @@ impl ToolRuntime {
         };
 
         let project = tool_project(&call);
-        // Unified evaluator entry (same as dispatch). When both layers touch the
-        // same call, each records against its own session start; decision shape
-        // remains identical under dev_auto_approve.
-        let permission = super::permissions::PermissionEvaluator::from_env()
-            .evaluate(call.tool_name(), project.as_deref());
+        // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
+        // only reuses the attached decision for the outer recording session —
+        // never re-evaluate (no second request id / inconsistent outcome).
         let mut result = self
             .dispatch_with_auth_transport_options_and_metadata(
                 call,
@@ -326,15 +324,12 @@ impl ToolRuntime {
                 recorder_metadata,
             )
             .await;
-        let permission = permission.filter(|_| {
-            !super::permissions::is_hard_denied_output(&result.output, result.error.as_deref())
-        });
-        if let Some(permission) = permission.as_ref() {
-            if let Some(start) = session_event.as_mut() {
-                self.sessions
-                    .record_permission_decision(start, permission.clone());
+        if let Some(start) = session_event.as_mut() {
+            if let Some(permission) =
+                super::permissions::permission_decision_from_output(&result.output)
+            {
+                self.sessions.record_permission_decision(start, permission);
             }
-            super::permissions::add_permission_to_result(&mut result, permission);
         }
         if let Some(mismatch) = recording_session_project_mismatch.as_ref() {
             session_context::add_session_project_mismatch_warning(

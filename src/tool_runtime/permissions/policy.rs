@@ -41,7 +41,7 @@ impl EffectivePermissionConfig {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn with_mode(mode: PermissionMode) -> Self {
         Self::Active(mode)
     }

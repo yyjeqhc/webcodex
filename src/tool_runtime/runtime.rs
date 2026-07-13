@@ -1,5 +1,6 @@
 use super::checkpoint;
 use super::local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller};
+use super::permissions::PermissionEvaluator;
 use super::runtime_info::RuntimeInfo;
 use super::sessions;
 use crate::config::CodexConfig;
@@ -21,6 +22,10 @@ pub struct ToolRuntime {
     pub(crate) local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
     pub(crate) job_killer: Arc<dyn LocalJobKiller>,
     pub(crate) semantic_navigation_probe_timeout: Duration,
+    /// Authoritative permission evaluator for this runtime instance.
+    /// Resolved once at construction (`WEBCODEX_PERMISSION_MODE`); dispatch
+    /// evaluates once per tool request before mutation.
+    pub(crate) permission_evaluator: PermissionEvaluator,
 }
 
 impl ToolRuntime {
@@ -39,6 +44,7 @@ impl ToolRuntime {
             job_killer: Arc::new(SystemJobKiller),
             semantic_navigation_probe_timeout:
                 super::semantic_navigation::DEFAULT_SEMANTIC_NAVIGATION_PROBE_TIMEOUT,
+            permission_evaluator: PermissionEvaluator::from_env(),
         }
     }
 
@@ -70,6 +76,13 @@ impl ToolRuntime {
     #[cfg(test)]
     pub(crate) fn with_semantic_navigation_probe_timeout(mut self, timeout: Duration) -> Self {
         self.semantic_navigation_probe_timeout = timeout;
+        self
+    }
+
+    /// Replace the permission evaluator (tests: mode matrix / single-eval counters).
+    #[cfg(test)]
+    pub(crate) fn with_permission_evaluator(mut self, evaluator: PermissionEvaluator) -> Self {
+        self.permission_evaluator = evaluator;
         self
     }
 }

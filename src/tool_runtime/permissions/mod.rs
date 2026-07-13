@@ -19,12 +19,14 @@ mod risk;
 mod tests;
 
 pub(crate) use evaluator::PermissionEvaluator;
-pub(crate) use model::{PermissionDecision, PermissionMode, DEFAULT_PERMISSION_RECENT_LIMIT};
+pub(crate) use model::{PermissionDecision, DEFAULT_PERMISSION_RECENT_LIMIT};
 pub(crate) use policy::EffectivePermissionConfig;
 
 // Test-facing surface: mode parsing, outcomes, constants, compatibility wrapper.
 #[cfg(test)]
 pub(crate) use evaluator::permission_decision_for_tool;
+#[cfg(test)]
+pub(crate) use model::PermissionMode;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use model::{
@@ -58,6 +60,44 @@ pub(crate) fn add_permission_to_result(result: &mut ToolResult, permission: &Per
         serde_json::to_value(permission).unwrap_or(Value::Null),
     );
     result.output = Value::Object(output);
+}
+
+/// Structured denial when the permission layer blocks execution before mutation.
+///
+/// Stable, diagnostic messages without tool parameters or sensitive content.
+/// Callers attach the same [`PermissionDecision`] via [`add_permission_to_result`].
+pub(crate) fn permission_execution_denied_result(decision: &PermissionDecision) -> ToolResult {
+    let message = match decision.reason.as_str() {
+        "require_approval_not_implemented" => {
+            "permission denied: require_approval is not implemented; tool execution blocked"
+                .to_string()
+        }
+        reason if reason.starts_with("invalid_permission_mode:") => format!(
+            "permission denied: invalid {env} configuration; tool execution blocked",
+            env = model::PERMISSION_MODE_ENV
+        ),
+        other => format!("permission denied: {other}"),
+    };
+    ToolResult::err_with_output(
+        message.clone(),
+        json!({
+            "error": message,
+            "error_kind": "permission_denied",
+            "failure_kind": "permission_denied",
+            "permission_reason": decision.reason,
+            "permission_policy": decision.policy,
+            "permission_status": decision.status,
+        }),
+    )
+}
+
+/// Deserialize a permission decision previously attached to tool output.
+///
+/// Used to reuse the single authoritative decision (e.g. outer recording
+/// session) without re-evaluating.
+pub(crate) fn permission_decision_from_output(output: &Value) -> Option<PermissionDecision> {
+    let value = output.get("permission")?;
+    serde_json::from_value(value.clone()).ok()
 }
 
 /// Detect hard-safety denials on tool output. Independent of permission mode:

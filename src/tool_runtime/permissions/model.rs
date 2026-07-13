@@ -118,6 +118,17 @@ impl PermissionOutcome {
         }
     }
 
+    /// Whether this outcome authorizes tool mutation / execution.
+    ///
+    /// Centralized so call sites never ad-hoc match outcomes. `audit_only`
+    /// allows execution; denied / pending / hard-denied do not.
+    pub(crate) fn allows_execution(self) -> bool {
+        matches!(
+            self,
+            Self::AutoApproved | Self::AuditOnlyAllowed | Self::Approved
+        )
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn parse(raw: &str) -> Option<Self> {
         match raw {
@@ -152,6 +163,15 @@ impl PermissionDecision {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn outcome(&self) -> Option<PermissionOutcome> {
         PermissionOutcome::parse(&self.status)
+    }
+
+    /// Whether this decision authorizes tool mutation / execution.
+    ///
+    /// Unknown or unparsable `status` values fail closed (do not execute).
+    pub(crate) fn allows_execution(&self) -> bool {
+        self.outcome()
+            .map(PermissionOutcome::allows_execution)
+            .unwrap_or(false)
     }
 
     pub(crate) fn new(

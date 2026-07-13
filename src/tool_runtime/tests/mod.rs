@@ -16,6 +16,7 @@ mod hygiene;
 mod jobs;
 mod lsp;
 mod metadata;
+mod permission_gate;
 mod schema;
 mod sessions;
 mod sessions_current;

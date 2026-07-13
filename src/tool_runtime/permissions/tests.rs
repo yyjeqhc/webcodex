@@ -1,8 +1,10 @@
-//! Permission Phase 1 unit tests: modes, evaluator, hard-safety independence.
+//! Permission unit tests: modes, evaluator, execution gate, hard-safety independence.
 
 use super::policy::{self, EffectivePermissionConfig};
 use super::*;
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 const WRITE_TOOL: &str = "write_project_file";
 const READ_TOOL: &str = "read_file";
@@ -184,4 +186,100 @@ fn permission_decision_for_tool_wrapper_uses_evaluator() {
     assert_eq!(a.policy, b.policy);
     assert_eq!(a.status, b.status);
     assert_eq!(a.reason, b.reason);
+}
+
+#[test]
+fn allows_execution_is_centralized_by_outcome() {
+    assert!(PermissionOutcome::AutoApproved.allows_execution());
+    assert!(PermissionOutcome::AuditOnlyAllowed.allows_execution());
+    assert!(PermissionOutcome::Approved.allows_execution());
+    assert!(!PermissionOutcome::Denied.allows_execution());
+    assert!(!PermissionOutcome::Pending.allows_execution());
+    assert!(!PermissionOutcome::HardDenied.allows_execution());
+
+    let auto = PermissionEvaluator::with_mode(PermissionMode::DevAutoApprove)
+        .evaluate(WRITE_TOOL, None)
+        .unwrap();
+    assert!(auto.allows_execution());
+
+    let audit = PermissionEvaluator::with_mode(PermissionMode::AuditOnly)
+        .evaluate(WRITE_TOOL, None)
+        .unwrap();
+    assert!(audit.allows_execution());
+
+    let require = PermissionEvaluator::with_mode(PermissionMode::RequireApproval)
+        .evaluate(WRITE_TOOL, None)
+        .unwrap();
+    assert!(!require.allows_execution());
+
+    let invalid = PermissionEvaluator::with_config(EffectivePermissionConfig::from_raw(Some(
+        "not_a_real_mode",
+    )))
+    .evaluate(WRITE_TOOL, None)
+    .unwrap();
+    assert!(!invalid.allows_execution());
+
+    // Unparsable status fails closed.
+    let mut bogus = auto.clone();
+    bogus.status = "totally_unknown_status".to_string();
+    assert!(!bogus.allows_execution());
+}
+
+#[test]
+fn permission_execution_denied_result_is_stable_and_non_approving() {
+    let decision = PermissionEvaluator::with_mode(PermissionMode::RequireApproval)
+        .evaluate(WRITE_TOOL, None)
+        .unwrap();
+    let result = permission_execution_denied_result(&decision);
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "permission_denied");
+    assert_eq!(result.output["failure_kind"], "permission_denied");
+    assert_eq!(
+        result.output["permission_reason"],
+        "require_approval_not_implemented"
+    );
+    let err = result.error.as_deref().unwrap();
+    assert!(err.contains("require_approval"), "{err}");
+    assert!(err.contains("not implemented"), "{err}");
+    // Must not look like hard-deny (permission attach must remain).
+    assert!(!is_hard_denied_output(
+        &result.output,
+        result.error.as_deref()
+    ));
+
+    let invalid =
+        PermissionEvaluator::with_config(EffectivePermissionConfig::from_raw(Some("weird_mode")))
+            .evaluate(WRITE_TOOL, None)
+            .unwrap();
+    let invalid_result = permission_execution_denied_result(&invalid);
+    assert!(!invalid_result.success);
+    let msg = invalid_result.error.as_deref().unwrap();
+    assert!(msg.contains(PERMISSION_MODE_ENV), "{msg}");
+    assert!(
+        !msg.contains("auto_approved"),
+        "must not pretend auto-approve: {msg}"
+    );
+}
+
+#[test]
+fn evaluate_counter_increments_once_per_call() {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let evaluator = PermissionEvaluator::with_mode(PermissionMode::DevAutoApprove)
+        .with_eval_counter(counter.clone());
+    let _ = evaluator.evaluate(WRITE_TOOL, None);
+    let _ = evaluator.evaluate(READ_TOOL, None);
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn permission_decision_from_output_roundtrips() {
+    let decision = PermissionEvaluator::with_mode(PermissionMode::DevAutoApprove)
+        .evaluate(WRITE_TOOL, Some("agent:oe:private-drop"))
+        .unwrap();
+    let mut result = ToolResult::ok(json!({"ok": true}));
+    add_permission_to_result(&mut result, &decision);
+    let restored = permission_decision_from_output(&result.output).expect("permission present");
+    assert_eq!(restored.request_id, decision.request_id);
+    assert_eq!(restored.status, decision.status);
+    assert_eq!(restored.policy, decision.policy);
 }

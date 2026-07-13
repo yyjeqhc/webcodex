@@ -215,12 +215,41 @@ impl ToolRuntime {
             }
             return err;
         }
-        // Single decision entry: Tool Request → PermissionEvaluator → Decision.
-        // Attach remains post-exec with hard-deny filter (hard safety never
-        // overridden by permission mode). Phase 2 may move evaluation before
-        // mutation without changing the evaluator API.
-        let permission =
-            permissions::PermissionEvaluator::from_env().evaluate(call.tool_name(), call.project());
+        // Authoritative single evaluation (kernel must not re-evaluate).
+        // Order: session/auth guards above → permission gate → mutation below.
+        // Path/sensitive hard checks still run inside tools; hard-deny filter
+        // suppresses permission attach so soft policy never overrides them.
+        let permission = self
+            .permission_evaluator
+            .evaluate(call.tool_name(), call.project());
+        if let Some(decision) = permission.as_ref() {
+            if !decision.allows_execution() {
+                let mut result = permissions::permission_execution_denied_result(decision);
+                if let Some(start) = session_start.as_mut() {
+                    self.sessions
+                        .record_permission_decision(start, decision.clone());
+                }
+                permissions::add_permission_to_result(&mut result, decision);
+                if let Some(session_id) = session_id.as_deref() {
+                    if let Some(mismatch) = session_project_mismatch.as_ref() {
+                        add_session_project_mismatch_warning(
+                            &mut result,
+                            mismatch,
+                            allow_cross_project_session,
+                        );
+                    }
+                    let event_id = self.sessions.record_tool_call_finished(
+                        session_start,
+                        result.success,
+                        &result.output,
+                        result.error.as_deref(),
+                        None,
+                    );
+                    add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                }
+                return result;
+            }
+        }
         let mut result = self.dispatch_authorized_inner(call, auth, transport).await;
         let permission = permission.filter(|_| {
             !permissions::is_hard_denied_output(&result.output, result.error.as_deref())

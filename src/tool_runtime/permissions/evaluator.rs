@@ -1,16 +1,24 @@
 //! Permission evaluation entry point.
 //!
-//! Future call chain (Phase 2+ will move this fully before mutation):
+//! Authoritative call chain (Phase 2):
 //!
 //! ```text
-//! Tool Request → PermissionEvaluator → PermissionDecision → ToolRuntime
+//! request validation / hard session+auth guards
+//!   → PermissionEvaluator (once)
+//!   → allow / deny gate
+//!   → tool execution (on allow)
+//!   → attach the same PermissionDecision to the result
 //! ```
 //!
-//! Phase 1 keeps post-exec attach timing; only the decision function is unified.
+//! The evaluator does **not** execute tools and does **not** override hard safety.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use super::model::PermissionDecision;
 use super::policy::{decide_for_required_tool, EffectivePermissionConfig};
 use super::risk::{classify_tool_risk, tool_requires_permission};
+#[cfg(test)]
 use super::PermissionMode;
 
 /// Evaluates whether a tool invocation is permission-bearing and, if so, the
@@ -19,6 +27,8 @@ use super::PermissionMode;
 #[derive(Debug, Clone)]
 pub(crate) struct PermissionEvaluator {
     config: EffectivePermissionConfig,
+    /// Optional counter incremented on every [`Self::evaluate`] (tests).
+    eval_count: Option<Arc<AtomicUsize>>,
 }
 
 impl PermissionEvaluator {
@@ -26,24 +36,36 @@ impl PermissionEvaluator {
     pub(crate) fn from_env() -> Self {
         Self {
             config: EffectivePermissionConfig::from_env(),
+            eval_count: None,
         }
     }
 
     /// Evaluator fixed to a known mode (unit tests / explicit wiring).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn with_mode(mode: PermissionMode) -> Self {
         Self {
             config: EffectivePermissionConfig::with_mode(mode),
+            eval_count: None,
         }
     }
 
     /// Evaluator from an already-resolved config (including invalid mode).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn with_config(config: EffectivePermissionConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            eval_count: None,
+        }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Attach a shared evaluation counter (tests prove single-eval).
+    #[cfg(test)]
+    pub(crate) fn with_eval_counter(mut self, counter: Arc<AtomicUsize>) -> Self {
+        self.eval_count = Some(counter);
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn config(&self) -> &EffectivePermissionConfig {
         &self.config
     }
@@ -57,6 +79,9 @@ impl PermissionEvaluator {
         tool_name: &str,
         project: Option<&str>,
     ) -> Option<PermissionDecision> {
+        if let Some(counter) = self.eval_count.as_ref() {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
         if !tool_requires_permission(tool_name) {
             return None;
         }
@@ -72,8 +97,8 @@ impl PermissionEvaluator {
 
 /// Compatibility wrapper around [`PermissionEvaluator::from_env`].
 ///
-/// Call sites should prefer [`PermissionEvaluator`] when they already hold a
-/// resolved config; this remains the thin env-backed helper.
+/// Call sites should prefer the runtime-held [`PermissionEvaluator`]; this
+/// remains the thin env-backed helper for unit tests and profile helpers.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn permission_decision_for_tool(
     tool_name: &str,

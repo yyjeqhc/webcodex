@@ -68,6 +68,11 @@ use startup::{server_cli_action, ServerCliAction};
 // Main
 // ============================================================================
 
+/// Whole-service HTTP request timeout (defense in depth). Must stay above the
+/// MCP dispatch hard bound (150s) plus response-write margin so the inner,
+/// better-reported timeouts always fire first.
+const REQUEST_HARD_TIMEOUT_SECS: u64 = 300;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match server_cli_action(std::env::args().skip(1)) {
@@ -325,6 +330,16 @@ only for local/trusted-network demos."
         .push(Router::with_path("styles.css").get(console_web::console_styles_css));
 
     let mut router = Router::new()
+        // Whole-service backstop: no handler may hold an HTTP request open
+        // forever. Sized well above every legitimate request — sync agent
+        // waits are <= ~122s and MCP dispatch is hard-bounded at 150s — so it
+        // only fires on a genuinely unbounded hang, converting a permanently
+        // silent request into an explicit 503. Long-lived work is unaffected:
+        // agent polling replies immediately and WebSocket connections live in
+        // a task spawned after the (fast) upgrade handshake completes.
+        .hoop(salvo::timeout::Timeout::new(
+            std::time::Duration::from_secs(REQUEST_HARD_TIMEOUT_SECS),
+        ))
         .hoop(affix_state::inject(config.clone()))
         .hoop(affix_state::inject(db.clone()))
         .hoop(affix_state::inject(authorize_session_store.clone()))

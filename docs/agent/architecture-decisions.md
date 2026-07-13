@@ -43,6 +43,24 @@ When docs or code say "session", identify which kind is meant. Cross-wiring
 workflow ledger APIs to audit UUIDs (or the reverse) is a design change, not a
 drive-by fix.
 
+### Correlation decision (standing)
+
+If the two systems are linked later, use **optional, explicit, one-way**
+correlation only:
+
+| Decision | Choice |
+|---|---|
+| Direction | Action Audit → `workflow_session_id: Option<String>` (`wc_sess_*`) |
+| Authority | Store on the audit side (prefer event/record); Workflow Session does not own an Action Audit id list |
+| Lifecycle | Independent; audit never drives Workflow create/close/guards |
+| Inference | Forbidden from current Action Session, time, thread, connection, or current-session fallback |
+| Missing field | Keep unlinked behavior |
+| Bad format | Parameter error; never silent remap |
+
+Full design, validation table, and phased rollout:
+[`session-correlation.md`](session-correlation.md). Dual-model detail:
+[`session-model.md`](session-model.md).
+
 ---
 
 ## 2. Internal API evolution (background)

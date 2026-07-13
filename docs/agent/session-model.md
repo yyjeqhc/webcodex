@@ -183,22 +183,21 @@ identity rules, and blur security/guard boundaries. Keep two implementations.
 
 ## 5. Future association (explicit only)
 
-If product needs to relate the two, use **explicit optional** fields, for
-example:
+Full design: [`session-correlation.md`](session-correlation.md).
 
-- `workflow_session_id` (a `wc_sess_*`) on an audit event or audit session row
-- a generic `correlation_id` shared by both sides when a client supplies one
+Summary only (do not implement from this section alone):
 
-Rules for any future link:
+- **Direction:** Action Audit side holds optional `workflow_session_id`
+  (`wc_sess_*`); prefer **event/record** level first.
+- **Optional & explicit:** absence is normal; no inference from current Action
+  Audit Session, time, thread, connection, or current-session bindings.
+- **Independent lifecycle:** audit must not create/close/transition Workflow
+  Sessions; correlation is not ownership.
+- **Validation sketch:** missing → unlinked; malformed → parameter error;
+  well-formed but unknown → store without create or fallback.
+- **Named migration** required before SQLite / OpenAPI / external JSON change.
 
-1. Optional — absence is normal.
-2. Explicit — client or tool must set it; server does not invent the link.
-3. Validated independently — a bad `workflow_session_id` must not invent a
-   workflow session from audit data.
-4. Documented as a named migration if it changes SQLite schema, OpenAPI, or
-   external JSON.
-
-Until that design ships, code and docs must treat the systems as unlinked.
+Until that design is implemented, code must treat the systems as unlinked.
 
 ---
 
@@ -273,7 +272,7 @@ Renaming tables, routes, or serialized field names does.
 | Wrapper field `recording_session_id`? | Workflow Session (recorder metadata only) |
 | Header `x-action-session-id`? | Action Audit Session |
 | Should these share one store or state machine? | **No** |
-| Need a link later? | Optional explicit `workflow_session_id` / correlation id |
+| Need a link later? | Optional explicit `workflow_session_id` — see [`session-correlation.md`](session-correlation.md) |
 
 ---
 
@@ -281,6 +280,8 @@ Renaming tables, routes, or serialized field names does.
 
 - [`AGENTS.md`](../../AGENTS.md) — executable Session invariants
 - [`architecture-decisions.md`](architecture-decisions.md) — dual-model summary
+- [`session-correlation.md`](session-correlation.md) — optional one-way
+  Action Audit → Workflow Session correlation design
 - [`openapi-guidelines.md`](openapi-guidelines.md) — `session_id` vs
   `recording_session_id` on GPT Actions
 - [`../CONCEPTS.md`](../CONCEPTS.md) — product vocabulary (Workflow Session in

@@ -52,4 +52,4 @@
 26. [TESTING.md](TESTING.md) - test lanes、test layout 和 ignored-test inventory。
 27. [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) / [E2E_VALIDATION.md](E2E_VALIDATION.md) - 本地端到端验证脚本和文档扫描建议。
 28. [../AGENTS.md](../AGENTS.md) - Agent 执行契约（安全、编辑、Git、验证、架构必须项）。
-29. [agent/architecture-decisions.md](agent/architecture-decisions.md)、[agent/session-model.md](agent/session-model.md)、[agent/oauth-bridge-plan.md](agent/oauth-bridge-plan.md)、[agent/openapi-guidelines.md](agent/openapi-guidelines.md)、[agent/release-process.md](agent/release-process.md) - 从 AGENTS.md 迁出的长文设计说明（Session 双模型、OAuth bridge、OpenAPI、release）。
+29. [agent/architecture-decisions.md](agent/architecture-decisions.md)、[agent/session-model.md](agent/session-model.md)、[agent/session-correlation.md](agent/session-correlation.md)、[agent/oauth-bridge-plan.md](agent/oauth-bridge-plan.md)、[agent/openapi-guidelines.md](agent/openapi-guidelines.md)、[agent/release-process.md](agent/release-process.md) - 从 AGENTS.md 迁出的长文设计说明（Session 双模型、可选 Session 关联、OAuth bridge、OpenAPI、release）。

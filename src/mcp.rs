@@ -15,6 +15,15 @@ use std::sync::Arc;
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const MCP_RESERVED_SESSION_ID_FIELD: &str = "_session_id";
 
+/// Hard upper bound on a single MCP JSON-RPC dispatch, applied in `mcp_post`.
+///
+/// Chosen above every per-tool wait (sync agent waits are clamped to
+/// `wait_timeout_secs <= 120` plus a few seconds of margin), so it can only
+/// fire when a dispatch path hangs without its own bound. Its job is to turn
+/// an otherwise-permanently-silent HTTP request into an explicit JSON-RPC
+/// error the client can surface.
+const MCP_DISPATCH_HARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
+
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
     #[serde(default)]
@@ -163,8 +172,36 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     guard.parsed("ok");
 
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let outcome =
-        handle_mcp_request_with_lifecycle(&runtime, request, auth.as_ref(), Some(&mut guard)).await;
+    // Defense-in-depth backstop: every tool bounds its own agent/subprocess
+    // waits at <= 124s, so this outer limit never preempts a legitimate inner
+    // timeout. It only fires if a dispatch path hangs without a bound (the
+    // failure mode behind "MCP request never gets a reply"), converting a
+    // silently dead HTTP request into an observable JSON-RPC error.
+    let request_id = request.id.clone();
+    let outcome = match tokio::time::timeout(
+        MCP_DISPATCH_HARD_TIMEOUT,
+        handle_mcp_request_with_lifecycle(&runtime, request, auth.as_ref(), Some(&mut guard)),
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            let body = rpc_error(
+                request_id,
+                -32000,
+                format!(
+                    "server-side dispatch exceeded {}s hard limit; the tool may still be running — check session/job status before retrying",
+                    MCP_DISPATCH_HARD_TIMEOUT.as_secs()
+                ),
+            );
+            let estimated = estimate_json_bytes(&body);
+            guard.response_serialized(500, estimated, Some(false), None, "dispatch_hard_timeout");
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(Json(body));
+            guard.handler_returned(500, estimated, Some(false), None, "dispatch_hard_timeout");
+            return;
+        }
+    };
 
     match outcome {
         McpOutcome::Ok(body) => {

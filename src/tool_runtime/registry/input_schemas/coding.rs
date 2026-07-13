@@ -104,7 +104,7 @@ pub(crate) fn finish_coding_task_input_schema() -> Value {
             },
             "summary_only": {
                 "type": "boolean",
-                "description": "When true, return compact closeout fields only: workspace_clean, hygiene_clean, jobs, permissions, tool_failures, validation, task_outcome, evidence_history, evidence_integrity, informational_notes, legacy verdict, warnings, and suggested_next_actions. Omits show_changes payloads, handoff details, command text, stdout/stderr, tails, and excerpts."
+                "description": "When true, return compact closeout fields only: workspace_clean, hygiene_clean, jobs, permissions, tool_failures, validation, task_outcome, evidence_history, evidence_integrity, informational_notes, warnings, and suggested_next_actions. Omits show_changes payloads, handoff details, command text, stdout/stderr, tails, and excerpts."
             }
         },
         "required": ["project", "session_id"],

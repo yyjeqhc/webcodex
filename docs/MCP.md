@@ -134,7 +134,7 @@ edit
 → finish_coding_task
 ```
 
-`validation_summary` is not a replacement for `finish_coding_task`: it reports validation evidence only, without workspace, jobs, diff, hygiene, or overall verdict.
+`validation_summary` is not a replacement for `finish_coding_task`: it reports validation evidence only, without workspace, jobs, diff, hygiene, or final task/evidence outcomes.
 
 ## Read-Only LSP Navigation
 

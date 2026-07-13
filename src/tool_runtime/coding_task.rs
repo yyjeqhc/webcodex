@@ -463,8 +463,6 @@ impl ToolRuntime {
             "evidence_history",
             "evidence_integrity",
             "informational_notes",
-            "verdict",
-            "finish_verdict",
         ] {
             output[field] = compact.get(field).cloned().unwrap_or(Value::Null);
         }
@@ -737,7 +735,10 @@ fn compact_finish_output(output: &Value, resolved_unexpected_validation_failures
     );
     let verdict = compact.get("verdict").cloned().unwrap_or_else(|| json!({}));
     compact["suggested_next_actions"] = json!(merged_suggested_next_actions(&compact, &verdict));
-    compact["finish_verdict"] = verdict;
+    compact
+        .as_object_mut()
+        .expect("compact finish output is an object")
+        .remove("verdict");
     compact
 }
 

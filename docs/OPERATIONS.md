@@ -531,11 +531,12 @@ Review order for coding closeout is deterministic: call `show_changes`, inspect
 `clean`, `warnings`, `hunks_truncated`, and `suggested_next_actions`; then call
 `workspace_hygiene_check`, inspect `clean`, `findings`, `warnings`, and
 `suggested_next_actions`; then use `session_handoff_summary` or
-`finish_coding_task` with `summary_only=true` for the compact aggregate verdict.
+`finish_coding_task` with `summary_only=true` for compact canonical outcomes.
 `show_changes` and `workspace_hygiene_check` expose top-level `verdict`
 summaries; read them first, but keep the detailed fields as the auditable basis.
-For final closeout reporting, use `finish_coding_task.finish_verdict` or
-`finish_coding_task.verdict`, not nested `show_changes.verdict` or
+For final closeout reporting, use `finish_coding_task.task_outcome`,
+`finish_coding_task.evidence_history`, and
+`finish_coding_task.evidence_integrity`, not nested `show_changes.verdict` or
 `workspace_hygiene_check.verdict`.
 
 Discovery taxonomy is intentional: `start_coding_task` and
@@ -573,14 +574,13 @@ pass `include_workspace=true` and `include_validation=true`. For finish, pass
 `session_handoff_summary.include_workspace`: it controls the nested handoff
 workspace block when `include_handoff=true`; the top-level finish
 workspace/show_changes check keeps its existing default behavior.
-For `finish_coding_task(summary_only=true)`, `output.finish_verdict` is an
-alias of `output.verdict`; read `status`, `blocking`, and `blocking_reasons`
-from either final closeout verdict, not from nested review tool verdicts. The
-compact detail fields remain the final auditable basis. The verdict is an
-additive UX summary and does not change authorization, permissions, guards,
-session binding, expected-failure classification, MCP direct errors, or job
-lifecycle behavior. Top-level `suggested_next_actions` mirrors the final
-closeout actions from the verdict.
+For `finish_coding_task`, including `summary_only=true`, read final task
+completion from `output.task_outcome`, validation history from
+`output.evidence_history`, and assertion/evidence quality from
+`output.evidence_integrity`. These canonical fields do not change
+authorization, permissions, guards, session binding, expected-failure
+classification, MCP direct errors, or job lifecycle behavior. Top-level
+`suggested_next_actions` contains the bounded final closeout actions.
 
 For `summary_only=true` final outputs, sanity checks should reject stdout/stderr
 bodies, command text, tails, and excerpts. Raw lower-level diagnostic/status
@@ -600,7 +600,7 @@ itself. The jobs summary includes only metadata such as `job_id`, `kind`,
 `status`, `project`, and timestamps; it does not include raw stdout/stderr,
 tails, excerpts, or command text.
 
-Compact handoff/finish verdict rules:
+Compact handoff/finish outcome rules:
 
 - PASS: `workspace_clean=true`, `jobs.blocking_active_count=0`,
   `tool_failures.unexpected_count=0`,
@@ -624,9 +624,9 @@ Compact handoff/finish verdict rules:
   unresolved/latest failure.
 
 Unresolved validation failures and non-validation tool failures remain
-blocking. Callers should still inspect `validation.historical_failures` and
-`finish_verdict.warning_reasons` to distinguish resolved validation feedback
-from a clean first-pass run.
+blocking. Callers should inspect `validation.historical_failures`,
+`evidence_history.status`, and `evidence_integrity.warning_reasons` to
+distinguish resolved validation feedback from a clean first-pass run.
 
 For a read-only handoff without finish aggregation:
 

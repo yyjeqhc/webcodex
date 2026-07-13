@@ -20,7 +20,7 @@ agent 桥 → agent 执行），信任边界清晰（服务器永不碰文件系
 45 天做出 15.4 万行、1856 个测试、成文威胁模型、schema 防漂移测试、eval 对照
 脚本、双语文档——这不是 demo 纪律，是产品纪律。真正决定"做没做好"的是三件事：
 **把权限审批从脚手架变成真闸门**（见 4.1，这是产品灵魂但目前是 no-op）、
-**做概念减法**（两套 session、双 verdict、断言框架，见 4.2）、以及**采用/分发**
+**做概念减法**（两套 session、断言框架，见 4.2）、以及**采用/分发**
 （工程之外的事）。
 
 **3. 架构设计怎么样？——核心决策全对，边缘有中期债。**
@@ -127,9 +127,9 @@ CLI（server up / connect / pairing / doctor / 服务安装）、systemd + nginx
   `SessionRecord` 没有状态字段，`finish_coding_task` 不改变会话（可无限次
   finish），只有 LRU 淘汰。closeout 目前是"报告"不是"状态迁移"——文档与
   实现有真实缺口。
-- **双 verdict 表示迁移中。** legacy `verdict{}` 与新的 `task_outcome /
-  evidence_history / evidence_integrity` 并行输出，"能不能交付"同时有两个
-  答案。迁移应尽快收尾，删掉旧形态。
+- **closeout outcome 已收束。** `finish_coding_task` 只输出规范的
+  `task_outcome / evidence_history / evidence_integrity`，不再并行输出 legacy
+  `verdict{}` 或其 alias。
 - **断言/期望框架的收益存疑。** 工具参数可带 `expected_failure /
   assertion_name`，账本对每次调用做 matched/unexpected 分类并影响 closeout
   阻断——这是把一套测试 DSL 织进了生产账本，而 `8a30e0f` 的"已恢复失败
@@ -206,8 +206,8 @@ SECURITY.md，并与 4.1 的审批闸门形成体系（"不可信内容 + 高危
    页面（现有只读 console 是合适的宿主）；按风险分级（shell/job 必审，
    结构化编辑可配置）。这一步完成之前，不宜宣传给低信任场景用。
 2. **会话概念收敛**：给 SessionRecord 加生命周期状态（active/finished/
-   handed_off），finish 变成状态迁移；合并或桥接两套 session；删除 legacy
-   verdict。做完这步再谈新工作流功能。
+   handed_off），finish 变成状态迁移；合并或桥接两套 session。做完这步再谈
+   新工作流功能。
 3. **持久层硬化包**（一次 PR 可完成）：WAL + busy_timeout + foreign_keys、
    令牌后台清扫、僵尸表清除、出站凭据加密或声明。
 4. **SECURITY.md 增补 prompt injection 章节**，与 1 的闸门呼应。
@@ -228,7 +228,7 @@ SECURITY.md，并与 4.1 的审批闸门形成体系（"不可信内容 + 高危
 | 分层与边界 | ★★★★★ | 协议无关内核 + agent 信任边界，教科书级 |
 | 协议/接口设计 | ★★★★☆ | 封闭类型协议优秀；手写 OpenAPI 是维护热点 |
 | 安全模型 | ★★★★☆ | 认证/脱敏/威胁模型扎实；审批闸门未实装、注入未点名 |
-| 工作流概念完整性 | ★★★☆☆ | 闭环成立且机制谨慎；双 session/双 verdict/断言框架待减法 |
+| 工作流概念完整性 | ★★★☆☆ | 闭环成立且机制谨慎；双 session/断言框架待减法，closeout outcome 已收束 |
 | 持久层 | ★★★☆☆ | 单机定位下够用；WAL/GC/明文凭据/僵尸表需一次硬化 |
 | 测试与防回归 | ★★★★★ | 1856 测试 + 防漂移 + 对照评测，单人项目罕见 |
 | 文档 | ★★★★☆ | 双语、诚实、有 non-goals；个别子系统滞后 |

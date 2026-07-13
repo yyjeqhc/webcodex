@@ -119,14 +119,6 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 array_schema(open_object_schema("Compact finish warning."), "Bounded compact summary_only warnings."),
             ),
             (
-                "verdict",
-                open_object_schema("Legacy aggregate closeout verdict for full and summary_only output: task_outcome fail or evidence_integrity error maps to blocking fail; otherwise task_outcome warn or evidence_integrity warning maps to non-blocking warn; otherwise pass. Resolved evidence history alone does not lower the verdict."),
-            ),
-            (
-                "finish_verdict",
-                open_object_schema("Alias of the legacy verdict for full and summary_only finish_coding_task output. Callers should report this final closeout verdict instead of nested show_changes.verdict or workspace_hygiene_check.verdict."),
-            ),
-            (
                 "task_outcome",
                 task_outcome_schema("Final task completion outcome with status pass/warn/fail, blocking, and task-only reasons. Resolved validation history and expected-failure audit metadata do not lower this status."),
             ),
@@ -147,7 +139,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "suggested_next_actions",
-                array_schema(schema_type("string", "Short suggested action."), "Top-level summary_only final closeout actions. May be non-empty when final verdict suggested_next_actions is non-empty, and preserves bounded finish actions."),
+                array_schema(schema_type("string", "Short suggested action."), "Top-level full and summary_only final closeout actions derived from task outcome and evidence integrity. Preserves bounded finish actions."),
             ),
         ])),
         _ => None,

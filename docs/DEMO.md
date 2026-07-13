@@ -42,7 +42,7 @@ changes without a diff, run workspace hygiene, and finish. Do not edit files.
 - Validation result and whether it is appropriate for the change type.
 - `show_changes` output, including warnings and truncation flags.
 - `workspace_hygiene_check` findings.
-- Final `finish_coding_task` verdict.
+- Final `finish_coding_task` task/evidence outcomes.
 - Any handoff notes, open risks, or rollback instructions.
 
 ## Safety Notes

@@ -97,7 +97,7 @@ Sessions are task-continuity evidence, not a full surveillance log. They record 
 
 ### Handoff / Finish
 
-`finish_coding_task` is the normal closeout tool. It can include review evidence, workspace hygiene, validation summary, job state, warnings, and a compact verdict.
+`finish_coding_task` is the normal closeout tool. It can include review evidence, workspace hygiene, validation summary, job state, warnings, and canonical task/evidence outcomes.
 
 `session_handoff_summary` is the read-only handoff tool. Use it when another operator, client, or later session needs to continue from the current state.
 

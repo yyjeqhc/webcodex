@@ -854,12 +854,12 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         "finish_coding_task output schema should include review_evidence"
     );
     assert!(
-        output_props.contains_key("verdict"),
-        "finish_coding_task output schema should include verdict"
+        !output_props.contains_key("verdict"),
+        "finish_coding_task output schema should omit legacy verdict"
     );
     assert!(
-        output_props.contains_key("finish_verdict"),
-        "finish_coding_task output schema should include finish_verdict alias"
+        !output_props.contains_key("finish_verdict"),
+        "finish_coding_task output schema should omit finish_verdict alias"
     );
     for field in [
         "task_outcome",
@@ -932,16 +932,6 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
             "finish review_evidence schema should mention {phrase}: {review_description}"
         );
     }
-    let finish_verdict_description = output_props["finish_verdict"]["description"]
-        .as_str()
-        .unwrap()
-        .to_lowercase();
-    for phrase in ["alias", "verdict", "summary_only"] {
-        assert!(
-            finish_verdict_description.contains(phrase),
-            "finish_verdict schema should mention {phrase}: {finish_verdict_description}"
-        );
-    }
     let suggested_description = output_props["suggested_next_actions"]["description"]
         .as_str()
         .unwrap()
@@ -950,7 +940,8 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         "top-level",
         "final closeout actions",
         "summary_only",
-        "may be non-empty",
+        "task outcome",
+        "evidence integrity",
     ] {
         assert!(
             suggested_description.contains(phrase),

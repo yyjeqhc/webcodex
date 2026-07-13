@@ -1236,7 +1236,7 @@ fn schemas() -> Value {
                 },
                 "summary_only": {
                     "type": "boolean",
-                    "description": "Flattened list_tools/runtime_status/session_handoff_summary/finish_coding_task flag. For list_tools, returns compact tool summaries without full schemas. For runtime_status, aliases compact=true. For handoff/finish, returns compact verdict fields and omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened list_tools/runtime_status/session_handoff_summary/finish_coding_task flag. For list_tools, returns compact tool summaries without full schemas. For runtime_status, aliases compact=true. For handoff/finish, returns compact closeout outcome fields and omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts. Used only when `params` and `arguments` are absent."
                 },
                 "upload_id": {
                     "type": "string",

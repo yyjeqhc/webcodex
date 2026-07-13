@@ -42,7 +42,7 @@ changes without a diff, run workspace hygiene, and finish. Do not edit files.
 - validation result 是否匹配变更类型。
 - `show_changes` 输出，包括 warnings 和 truncation flags。
 - `workspace_hygiene_check` findings。
-- 最终 `finish_coding_task` verdict。
+- 最终 `finish_coding_task` task/evidence outcomes。
 - handoff notes、open risks 或 rollback instructions。
 
 ## 安全提示

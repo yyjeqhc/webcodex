@@ -134,7 +134,7 @@ edit
 → finish_coding_task
 ```
 
-`validation_summary` 不替代 `finish_coding_task`：它只查询 validation evidence，不提供 workspace、jobs、diff、hygiene 或 overall verdict。
+`validation_summary` 不替代 `finish_coding_task`：它只查询 validation evidence，不提供 workspace、jobs、diff、hygiene 或最终 task/evidence outcomes。
 
 ## 只读 LSP 导航
 

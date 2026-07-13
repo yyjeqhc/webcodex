@@ -85,14 +85,14 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     let finish_output_props = finish_output["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
-    assert!(
-        finish_output_props.contains_key("verdict"),
-        "finish_coding_task output schema should include verdict"
-    );
-    assert!(
-        finish_output_props.contains_key("finish_verdict"),
-        "finish_coding_task output schema should include finish_verdict"
-    );
+    assert!(!finish_output_props.contains_key("verdict"));
+    assert!(!finish_output_props.contains_key("finish_verdict"));
+    for field in ["task_outcome", "evidence_history", "evidence_integrity"] {
+        assert!(
+            finish_output_props.contains_key(field),
+            "finish_coding_task output schema should include {field}"
+        );
+    }
 
     let openapi = crate::openapi::build_openapi_spec();
     let tool_call = &openapi["components"]["schemas"]["ToolCallRequest"];
@@ -1086,8 +1086,8 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     assert_eq!(result.output["evidence_history"]["status"], "clean");
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
     assert!(result.output["informational_notes"].is_array());
-    assert_eq!(result.output["verdict"]["status"], "fail");
-    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
+    assert_finish_uses_canonical_outcomes(&result.output);
 }
 
 #[tokio::test]
@@ -1194,48 +1194,29 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     );
     assert_review_evidence_tools_safe(&result.output["review_evidence"]);
     assert!(result.output["warnings"].as_array().unwrap().is_empty());
-    assert!(result.output.get("verdict").is_some());
-    assert!(result.output.get("finish_verdict").is_some());
-    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
+    assert_finish_uses_canonical_outcomes(&result.output);
     assert!(result.output["suggested_next_actions"].is_array());
-    let verdict = &result.output["verdict"];
-    assert_workflow_verdict_shape(verdict);
-    assert_eq!(verdict["status"], "warn");
-    assert_eq!(verdict["blocking"], false);
-    let finish_verdict = &result.output["finish_verdict"];
-    assert_workflow_verdict_shape(finish_verdict);
-    assert_eq!(finish_verdict["status"], "warn");
-    assert_eq!(finish_verdict["blocking"], false);
+    let task_outcome = &result.output["task_outcome"];
+    assert_task_outcome_shape(task_outcome);
+    assert_eq!(task_outcome["status"], "warn");
+    assert_eq!(task_outcome["blocking"], false);
     assert_reason_list_contains(
-        verdict,
+        task_outcome,
         "warning_reasons",
         "validation_not_run_with_review_evidence",
     );
-    assert_reason_list_contains(
-        finish_verdict,
-        "warning_reasons",
-        "validation_not_run_with_review_evidence",
-    );
-    assert_reason_list_not_contains(verdict, "warning_reasons", "validation_not_run");
-    assert!(verdict["suggested_next_actions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|action| action.as_str()
-            == Some("decide whether task-appropriate validation is needed before closeout")));
+    assert_reason_list_not_contains(task_outcome, "warning_reasons", "validation_not_run");
     assert!(result.output["suggested_next_actions"]
         .as_array()
         .unwrap()
         .iter()
         .any(|action| action.as_str()
             == Some("decide whether task-appropriate validation is needed before closeout")));
-    assert_verdict_actions_mirrored_at_top_level(&result.output);
-    assert!(!verdict["suggested_next_actions"]
+    assert!(!result.output["suggested_next_actions"]
         .as_array()
         .unwrap()
         .iter()
         .any(|action| action.as_str() == Some("run validation before closeout when available")));
-    assert_compact_verdict_safe(verdict, "finish compact verdict");
 
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in ["recent_events", "recent_failed_tools", "command"] {
@@ -1367,19 +1348,20 @@ async fn finish_coding_task_summary_only_includes_review_evidence_for_docs_only_
         .iter()
         .any(|tool| tool.as_str() == Some("show_changes")));
     assert_review_evidence_tools_safe(&result.output["review_evidence"]);
-    let verdict = &result.output["verdict"];
-    assert_workflow_verdict_shape(verdict);
-    assert_eq!(verdict["status"], "warn");
+    let task_outcome = &result.output["task_outcome"];
+    assert_task_outcome_shape(task_outcome);
+    assert_eq!(task_outcome["status"], "warn");
     assert_reason_list_contains(
-        verdict,
+        task_outcome,
         "warning_reasons",
         "validation_not_run_with_review_evidence",
     );
-    assert_reason_list_not_contains(verdict, "warning_reasons", "validation_not_run");
+    assert_reason_list_not_contains(task_outcome, "warning_reasons", "validation_not_run");
+    assert_finish_uses_canonical_outcomes(&result.output);
 }
 
 #[tokio::test]
-async fn finish_coding_task_summary_only_verdict_fails_for_dirty_workspace() {
+async fn finish_coding_task_summary_only_outcome_fails_for_dirty_workspace() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "add readme");
@@ -1425,15 +1407,14 @@ async fn finish_coding_task_summary_only_verdict_fails_for_dirty_workspace() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["workspace_clean"], false);
     assert_eq!(result.output["task_outcome"]["status"], "fail");
-    assert_eq!(result.output["verdict"]["status"], "fail");
-    assert_eq!(result.output["verdict"]["blocking"], true);
-    assert_workflow_verdict_shape(&result.output["verdict"]);
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
+    assert_task_outcome_shape(&result.output["task_outcome"]);
     assert_reason_list_contains(
-        &result.output["verdict"],
+        &result.output["task_outcome"],
         "blocking_reasons",
         "workspace_dirty",
     );
-    assert_compact_verdict_safe(&result.output["verdict"], "dirty finish verdict");
+    assert_finish_uses_canonical_outcomes(&result.output);
 }
 
 #[tokio::test]
@@ -1535,19 +1516,20 @@ async fn finish_coding_task_summary_only_passes_with_resolved_historical_validat
         result.output["validation"]["historical_failures"]["unresolved"],
         false
     );
-    let verdict = &result.output["verdict"];
-    assert_workflow_verdict_shape(verdict);
     assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_task_outcome_shape(&result.output["task_outcome"]);
     assert_eq!(
         result.output["evidence_history"]["status"],
         "mixed_resolved"
     );
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
-    assert_eq!(verdict["status"], "pass");
-    assert_eq!(verdict["blocking"], false);
-    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
-    assert_reason_list_not_contains(verdict, "blocking_reasons", "validation_mixed");
-    assert!(!verdict["suggested_next_actions"]
+    assert_reason_list_not_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "validation_mixed",
+    );
+    assert!(!result.output["suggested_next_actions"]
         .as_array()
         .unwrap()
         .iter()
@@ -1563,7 +1545,7 @@ async fn finish_coding_task_summary_only_passes_with_resolved_historical_validat
             == Some(
                 "historical validation failures were resolved by later successful validation"
             )));
-    assert_compact_verdict_safe(verdict, "resolved validation finish verdict");
+    assert_finish_uses_canonical_outcomes(&result.output);
 }
 
 #[tokio::test]
@@ -1622,32 +1604,37 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
         result.output["validation"]["historical_failures"]["unresolved"],
         false
     );
-    let verdict = &result.output["finish_verdict"];
-    assert_workflow_verdict_shape(verdict);
     assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
     assert_eq!(
         result.output["evidence_history"]["status"],
         "mixed_resolved"
     );
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
-    assert_eq!(verdict["status"], "pass");
-    assert_eq!(verdict["blocking"], false);
-    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
-    assert_reason_list_not_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+    assert_reason_list_not_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
     assert_action_list_not_contains(
         &result.output["suggested_next_actions"],
         "review unexpected failed tool calls before proceeding",
     );
-    assert_action_list_not_contains(
-        &verdict["suggested_next_actions"],
-        "review unexpected failed tool calls before proceeding",
-    );
     assert_eq!(full.output["task_outcome"], result.output["task_outcome"]);
-    assert_eq!(full.output["verdict"], result.output["verdict"]);
+    assert_eq!(
+        full.output["evidence_history"],
+        result.output["evidence_history"]
+    );
+    assert_eq!(
+        full.output["evidence_integrity"],
+        result.output["evidence_integrity"]
+    );
     assert_eq!(
         full.output["suggested_next_actions"],
         result.output["suggested_next_actions"]
     );
+    assert_finish_uses_canonical_outcomes(&result.output);
+    assert_finish_uses_canonical_outcomes(&full.output);
 }
 
 #[tokio::test]
@@ -1696,10 +1683,9 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_c
         "mixed_resolved"
     );
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
-    assert_eq!(result.output["verdict"]["status"], "pass");
-    assert_eq!(result.output["verdict"]["blocking"], false);
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
     assert_reason_list_not_contains(
-        &result.output["verdict"],
+        &result.output["task_outcome"],
         "blocking_reasons",
         "unexpected_tool_failures",
     );
@@ -1747,10 +1733,9 @@ async fn finish_coding_task_summary_only_keeps_cargo_fmt_failure_blocking_when_o
         true
     );
     assert_eq!(result.output["task_outcome"]["status"], "fail");
-    assert_eq!(result.output["verdict"]["status"], "fail");
-    assert_eq!(result.output["verdict"]["blocking"], true);
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
     assert_reason_list_contains(
-        &result.output["verdict"],
+        &result.output["task_outcome"],
         "blocking_reasons",
         "unexpected_tool_failures",
     );
@@ -1809,23 +1794,27 @@ async fn finish_coding_task_summary_only_warns_for_cargo_test_zero_tests_success
         result.output["validation"]["cargo_test_zero_tests_run"],
         true
     );
-    let verdict = &result.output["finish_verdict"];
-    assert_workflow_verdict_shape(verdict);
     assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
     assert_eq!(result.output["evidence_history"]["status"], "clean");
     assert_eq!(result.output["evidence_integrity"]["status"], "warning");
-    assert_eq!(verdict["status"], "warn");
-    assert_eq!(verdict["blocking"], false);
-    assert_eq!(result.output["finish_verdict"], result.output["verdict"]);
-    assert_reason_list_not_contains(verdict, "blocking_reasons", "unexpected_successes");
-    assert_reason_list_contains(verdict, "warning_reasons", "unexpected_successes");
-    assert_reason_list_contains(verdict, "warning_reasons", "cargo_test_zero_tests");
-    assert!(verdict["suggested_next_actions"]
+    assert_reason_list_contains(
+        &result.output["evidence_integrity"],
+        "warning_reasons",
+        "unexpected_successes",
+    );
+    assert_reason_list_contains(
+        &result.output["evidence_integrity"],
+        "warning_reasons",
+        "cargo_test_zero_tests",
+    );
+    assert!(result.output["suggested_next_actions"]
         .as_array()
         .unwrap()
         .iter()
         .any(|action| action.as_str()
             == Some("cargo_test ran zero tests; verify the test filter or command")));
+    assert_finish_uses_canonical_outcomes(&result.output);
 }
 
 #[tokio::test]
@@ -1894,10 +1883,9 @@ async fn finish_coding_task_summary_only_keeps_cargo_test_failure_blocking_after
         "mixed_unresolved"
     );
     assert_eq!(result.output["evidence_integrity"]["status"], "warning");
-    assert_eq!(result.output["verdict"]["status"], "fail");
-    assert_eq!(result.output["verdict"]["blocking"], true);
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
     assert_reason_list_contains(
-        &result.output["verdict"],
+        &result.output["task_outcome"],
         "blocking_reasons",
         "unexpected_tool_failures",
     );
@@ -1906,15 +1894,11 @@ async fn finish_coding_task_summary_only_keeps_cargo_test_failure_blocking_after
         "review unexpected failed tool calls before proceeding",
     );
     assert_action_list_contains(
-        &result.output["verdict"]["suggested_next_actions"],
-        "review unexpected failed tool calls before proceeding",
-    );
-    assert_action_list_contains(
         &result.output["suggested_next_actions"],
         "cargo_test ran zero tests; verify the test filter or command",
     );
     assert_reason_list_contains(
-        &result.output["verdict"],
+        &result.output["evidence_integrity"],
         "warning_reasons",
         "cargo_test_zero_tests",
     );
@@ -1963,11 +1947,13 @@ async fn finish_coding_task_summary_only_blocks_unresolved_cargo_fmt_failure() {
         result.output["validation"]["historical_failures"]["unresolved"],
         true
     );
-    let verdict = &result.output["finish_verdict"];
-    assert_workflow_verdict_shape(verdict);
-    assert_eq!(verdict["status"], "fail");
-    assert_eq!(verdict["blocking"], true);
-    assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
     assert_action_list_contains(
         &result.output["suggested_next_actions"],
         "review unexpected failed tool calls before proceeding",
@@ -2012,11 +1998,13 @@ async fn finish_coding_task_summary_only_keeps_non_validation_tool_failures_bloc
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(result.output["validation"]["status"], "passed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
-    let verdict = &result.output["finish_verdict"];
-    assert_workflow_verdict_shape(verdict);
-    assert_eq!(verdict["status"], "fail");
-    assert_eq!(verdict["blocking"], true);
-    assert_reason_list_contains(verdict, "blocking_reasons", "unexpected_tool_failures");
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
 }
 
 #[tokio::test]
@@ -2134,7 +2122,7 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
     assert_eq!(result.output["jobs"]["blocking_active_count"], 1);
     assert_eq!(result.output["jobs"]["nonblocking_active_count"], 0);
     assert_eq!(result.output["task_outcome"]["status"], "fail");
-    assert_eq!(result.output["verdict"]["blocking"], true);
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
     assert_eq!(
         result.output["jobs"]["recent"][0]["job_id"],
         run.output["job_id"]
@@ -2356,15 +2344,14 @@ fn assert_startup_verdict_shape(verdict: &Value) {
     );
 }
 
-fn assert_workflow_verdict_shape(verdict: &Value) {
-    assert_status_string(verdict);
-    assert!(verdict["blocking"].is_boolean(), "blocking bool: {verdict}");
-    for key in [
-        "blocking_reasons",
-        "warning_reasons",
-        "suggested_next_actions",
-    ] {
-        assert!(verdict[key].is_array(), "{key} array: {verdict}");
+fn assert_task_outcome_shape(task_outcome: &Value) {
+    assert_status_string(task_outcome);
+    assert!(
+        task_outcome["blocking"].is_boolean(),
+        "blocking bool: {task_outcome}"
+    );
+    for key in ["blocking_reasons", "warning_reasons"] {
+        assert!(task_outcome[key].is_array(), "{key} array: {task_outcome}");
     }
 }
 
@@ -2376,19 +2363,12 @@ fn assert_status_string(value: &Value) {
     );
 }
 
-fn assert_verdict_actions_mirrored_at_top_level(output: &Value) {
-    let top_level = output["suggested_next_actions"]
-        .as_array()
-        .expect("top-level suggested_next_actions array");
-    for action in output["finish_verdict"]["suggested_next_actions"]
-        .as_array()
-        .expect("finish verdict suggested_next_actions array")
-    {
-        assert!(
-            top_level.iter().any(|candidate| candidate == action),
-            "top-level suggested_next_actions should include final verdict action {action}: {output}"
-        );
-    }
+fn assert_finish_uses_canonical_outcomes(output: &Value) {
+    assert!(output["task_outcome"].is_object(), "{output}");
+    assert!(output["evidence_history"].is_object(), "{output}");
+    assert!(output["evidence_integrity"].is_object(), "{output}");
+    assert!(output.get("verdict").is_none(), "{output}");
+    assert!(output.get("finish_verdict").is_none(), "{output}");
 }
 
 fn assert_action_list_contains(actions: &Value, action: &str) {

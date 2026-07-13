@@ -66,7 +66,7 @@ create  →  active use  →  message/event append  →  checkpoint (optional)
 | **Message / event write** | `push_event` (`tool_call_started` / `tool_call_finished`, …); `post_message` / resolve | Updates `updated_at`; bounded queues may drop oldest |
 | **Checkpoint** | Workspace checkpoint tools (`workspace_checkpoint_*`) under project state dir | **Not** a session lifecycle transition; optional continuity artifact linked by product use, not by a session status |
 | **Handoff** | `session_handoff_summary` | **Read-only aggregate**; does not close, archive, or change mode |
-| **Finish** | `finish_coding_task` | **Closeout report** (workspace, validation, hygiene, optional handoff, verdict); still **appends** ledger events for nested calls (e.g. `show_changes`); does **not** mark the session closed |
+| **Finish** | `finish_coding_task` | **Closeout report** (workspace, validation, hygiene, optional handoff, canonical task/evidence outcomes); still **appends** ledger events for nested calls (e.g. `show_changes`); does **not** mark the session closed |
 
 ### 1.3 Explicit close / archive today
 
@@ -74,7 +74,7 @@ create  →  active use  →  message/event append  →  checkpoint (optional)
 |---|---|---|
 | Explicit **close** API / tool | **No** | No `close_session`, no `status=closed` on Workflow Session |
 | Explicit **archive** | **No** | No archive state, cold store, or retention worker |
-| Product “finish” | **Yes** as summary only | `finish_coding_task` produces a finish verdict; session remains in the store and remains usable for further tools if the client keeps the id |
+| Product “finish” | **Yes** as summary only | `finish_coding_task` produces task/evidence outcomes; session remains in the store and remains usable for further tools if the client keeps the id |
 | Process-local unbind | **Yes** | Current-session **binding** may be unbound; that does not close the Workflow Session record |
 | Capacity eviction | **Yes** | When `sessions.len() > max_sessions`, oldest LRU entry is **removed** from the map (and no longer queryable). Eviction is capacity management, **not** a named lifecycle state |
 | Persistence restore | **Yes** | JSON ledger may restore sessions on restart; restored sessions are again fully “active” for append/query |

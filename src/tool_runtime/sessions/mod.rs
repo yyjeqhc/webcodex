@@ -25,14 +25,14 @@ mod tests;
 // helpers stay `pub(super)` / module-private.
 pub(crate) use events::{strip_tool_call_expectation_metadata, tool_failure_summary_from_events};
 pub(crate) use model::{
-    CurrentSessionKey, ListSessionMessagesFilter, PostSessionMessageInput, SessionCreateOptions,
-    SessionDiscussionCounts, SessionDiscussionSummary, SessionEvent, SessionGuardDenial,
-    SessionGuards, SessionMessage, SessionMessageError, SessionMessageKind, SessionMessagePriority,
-    SessionMessageStatus, SessionSummary, SessionTransport, ToolCallRecorderMetadata,
-    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_SESSIONS, TOOL_ASSERTION_NAME_FIELD,
-    TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
-    TOOL_EXPECTED_FAILURE_FIELD, TOOL_EXPECTED_FAILURE_KIND_FIELD,
-    TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
+    CurrentSessionKey, ListSessionMessagesFilter, PostSessionMessageInput, SessionCloseError,
+    SessionCreateOptions, SessionDiscussionCounts, SessionDiscussionSummary, SessionEvent,
+    SessionGuardDenial, SessionGuards, SessionLifecycle, SessionLifecycleDenial, SessionMessage,
+    SessionMessageError, SessionMessageKind, SessionMessagePriority, SessionMessageStatus,
+    SessionSummary, SessionTransport, ToolCallRecorderMetadata, DEFAULT_MAX_EVENTS_PER_SESSION,
+    DEFAULT_MAX_SESSIONS, TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
+    TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE, TOOL_EXPECTED_FAILURE_FIELD,
+    TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
 };
 pub(crate) use store::SessionStore;
 

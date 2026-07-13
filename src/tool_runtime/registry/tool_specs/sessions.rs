@@ -1,5 +1,5 @@
 use super::super::input_schemas::{
-    current_session_input_schema, list_session_messages_input_schema,
+    close_session_input_schema, current_session_input_schema, list_session_messages_input_schema,
     post_session_message_input_schema, resolve_session_message_input_schema,
     session_discussion_summary_input_schema, session_handoff_summary_input_schema,
     session_summary_input_schema, start_session_input_schema, validation_summary_input_schema,
@@ -16,8 +16,13 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "session_summary",
-            "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, and guards. Uses durable ledger data where session persistence is configured; does not rely on current-session binding.",
+            "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, guards, and lifecycle. Uses durable ledger data where session persistence is configured; does not rely on current-session binding.",
             session_summary_input_schema(),
+        ),
+        tool_spec(
+            "close_session",
+            "Explicitly close a workflow session (Active to Closed) for a required session_id. Query remains available; write/shell/mutation tools are denied. Idempotent when already closed. Never uses current-session; unknown ids fail without create. finish_coding_task does not close.",
+            close_session_input_schema(),
         ),
         tool_spec(
             "validation_summary",

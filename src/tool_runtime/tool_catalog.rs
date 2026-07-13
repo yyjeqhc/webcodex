@@ -145,6 +145,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "start_coding_task",
             "finish_coding_task",
             "session_summary",
+            "close_session",
             "post_session_message",
             "list_session_messages",
             "resolve_session_message",

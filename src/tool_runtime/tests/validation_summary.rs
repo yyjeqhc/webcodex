@@ -34,8 +34,8 @@ fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized(
     }
 
     let specs = registered_tool_specs();
-    assert_eq!(specs.len(), 75);
-    assert_eq!(known_tool_names().count(), 75);
+    assert_eq!(specs.len(), 76);
+    assert_eq!(known_tool_names().count(), 76);
     let spec = spec_named(&specs, "validation_summary");
     assert_eq!(spec.input_schema["additionalProperties"], false);
     assert_eq!(

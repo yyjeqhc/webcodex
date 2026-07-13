@@ -10,8 +10,10 @@ pub(crate) fn session_mode_schema(description: &str) -> Value {
     })
 }
 
-/// Workflow session lifecycle wire values. Phase 1 only produces `active`;
-/// `closed` / `archived` are reserved for later phases.
+/// Workflow session lifecycle wire values.
+///
+/// Phase 2: create yields `active`; explicit `close_session` yields `closed`.
+/// `archived` remains reserved for later phases. Missing ledger field → active.
 pub(crate) fn session_lifecycle_schema(description: &str) -> Value {
     json!({
         "type": "string",
@@ -156,6 +158,15 @@ pub(crate) fn session_summary_input_schema() -> Value {
             false,
         ),
     ])
+}
+
+pub(crate) fn close_session_input_schema() -> Value {
+    object_schema(vec![(
+        "session_id",
+        "string",
+        "Required explicit wc_sess_* id to close. Never falls back to current-session. Unknown ids fail without creating a session. Idempotent when already closed. finish_coding_task does not close.",
+        true,
+    )])
 }
 
 pub(crate) fn validation_summary_input_schema() -> Value {

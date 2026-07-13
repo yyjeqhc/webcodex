@@ -65,7 +65,7 @@ pub(super) use lsp::{
 pub(super) use patches::{apply_patch_checked_input_schema, apply_patch_input_schema};
 pub(super) use projects::{create_project_input_schema, register_project_input_schema};
 pub(super) use sessions::{
-    current_session_input_schema, list_session_messages_input_schema,
+    close_session_input_schema, current_session_input_schema, list_session_messages_input_schema,
     post_session_message_input_schema, resolve_session_message_input_schema,
     session_discussion_summary_input_schema, session_guards_schema,
     session_handoff_summary_input_schema, session_lifecycle_schema, session_mode_schema,

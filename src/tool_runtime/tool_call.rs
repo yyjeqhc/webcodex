@@ -127,6 +127,13 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Explicitly close a workflow session (`Active → Closed`). Requires an
+    /// explicit `session_id` (never current-session fallback). Idempotent when
+    /// already closed. Does not archive, evict, or unbind current-session.
+    CloseSession {
+        session_id: String,
+    },
+
     /// Read bounded structured validation evidence already present in an
     /// explicit project-scoped session ledger. Never executes validation,
     /// shell commands, agent requests, or project file reads.
@@ -1078,6 +1085,7 @@ impl ToolCall {
             Self::StartCodingTask { .. } => "start_coding_task",
             Self::FinishCodingTask { .. } => "finish_coding_task",
             Self::SessionSummary { .. } => "session_summary",
+            Self::CloseSession { .. } => "close_session",
             Self::ValidationSummary { .. } => "validation_summary",
             Self::PostSessionMessage { .. } => "post_session_message",
             Self::ListSessionMessages { .. } => "list_session_messages",

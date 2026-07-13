@@ -56,24 +56,64 @@ pub(crate) struct CurrentSessionKey {
     pub(crate) resolved_project: String,
 }
 
-/// Workflow session lifecycle state (Phase 1: field only; no close/archive paths).
+/// Workflow session lifecycle state.
 ///
 /// Wire values use snake_case (`"active"`, `"closed"`, `"archived"`). Missing
 /// ledger fields default to [`SessionLifecycle::Active`] so pre-lifecycle JSON
 /// remains readable without migration.
 ///
-/// Phase 1 code paths only create and persist `Active`. `Closed` / `Archived`
-/// are reserved for later phases and must not be produced yet. LRU eviction is
-/// capacity management, not a lifecycle transition to `Archived`.
+/// Transitions (Phase 2):
+/// - Create always yields [`SessionLifecycle::Active`].
+/// - Explicit `close_session` may transition `Active → Closed`.
+/// - `Closed → Active` is not allowed (no reopen in this phase).
+/// - `Archived` is reserved for Phase 3+ and is never produced yet.
+///
+/// LRU eviction remains capacity management, not a lifecycle transition.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionLifecycle {
     #[default]
     Active,
-    /// Reserved — Phase 2. Not produced or enforced in Phase 1.
+    /// Explicitly closed; query remains allowed, mutations are denied.
     Closed,
-    /// Reserved — Phase 3+. Not produced or enforced in Phase 1.
+    /// Reserved — Phase 3+. Not produced yet; treated like Closed for denial.
     Archived,
+}
+
+impl SessionLifecycle {
+    /// True when the session still accepts work mutations (tools / messages).
+    pub(crate) fn allows_mutation(self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Closed => "closed",
+            Self::Archived => "archived",
+        }
+    }
+}
+
+/// Result of an explicit close attempt on a known session.
+#[derive(Debug, Clone)]
+pub(crate) struct SessionCloseOutcome {
+    pub(crate) summary: SessionSummary,
+    /// True when the session was already `Closed` (or `Archived`); no new
+    /// transition event was recorded.
+    pub(crate) already_closed: bool,
+}
+
+/// Explicit close failures. Unknown ids never create a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SessionCloseError {
+    UnknownSession,
+}
+
+/// Lifecycle-based tool denial (orthogonal to mode/guards).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SessionLifecycleDenial {
+    pub(crate) lifecycle: SessionLifecycle,
 }
 
 #[derive(Debug, Clone)]
@@ -398,6 +438,11 @@ pub(crate) struct SessionInboxHint {
 pub(crate) enum SessionMessageError {
     UnknownSession,
     UnknownMessage,
+    /// Message-board mutation denied because the workflow session is closed
+    /// (or archived). Query tools remain available.
+    SessionClosed {
+        lifecycle: SessionLifecycle,
+    },
     InvalidInput(String),
 }
 

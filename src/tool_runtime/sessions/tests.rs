@@ -1139,3 +1139,175 @@ fn session_lifecycle_wire_values_are_snake_case() {
     );
     assert_eq!(SessionLifecycle::default(), SessionLifecycle::Active);
 }
+
+// --- Workflow session lifecycle (Phase 2: explicit close) ---
+
+#[test]
+fn active_to_closed_succeeds_and_emits_session_closed_event() {
+    let store = SessionStore::default();
+    let session = store.start_session(None, Some("close me".to_string()));
+    assert_eq!(session.lifecycle, SessionLifecycle::Active);
+
+    let outcome = store.close_session(&session.session_id).unwrap();
+    assert!(!outcome.already_closed);
+    assert_eq!(outcome.summary.lifecycle, SessionLifecycle::Closed);
+    assert_eq!(outcome.summary.session_id, session.session_id);
+
+    let summary = store.summary(&session.session_id, Some(20)).unwrap();
+    assert_eq!(summary.lifecycle, SessionLifecycle::Closed);
+    let closed_events: Vec<_> = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "session_closed")
+        .collect();
+    assert_eq!(closed_events.len(), 1);
+    assert_eq!(closed_events[0].tool_name, "close_session");
+    assert_eq!(closed_events[0].status.as_deref(), Some("succeeded"));
+}
+
+#[test]
+fn closed_lifecycle_persists_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let session = store.start_session(Some("proj".to_string()), Some("close persist".to_string()));
+    store.close_session(&session.session_id).unwrap();
+
+    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let ledger_value: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(ledger_value["version"], SESSION_LEDGER_VERSION);
+    assert_eq!(ledger_value["sessions"][0]["lifecycle"], "closed");
+
+    let restored = persistent_store(ledger);
+    let summary = restored.summary(&session.session_id, Some(20)).unwrap();
+    assert_eq!(summary.lifecycle, SessionLifecycle::Closed);
+    assert!(summary
+        .events
+        .iter()
+        .any(|event| event.kind == "session_closed"));
+}
+
+#[test]
+fn closed_session_denies_mutation_tools_allows_query() {
+    let store = SessionStore::default();
+    let session = store.start_session(None, Some("closed query".to_string()));
+    store.close_session(&session.session_id).unwrap();
+
+    // Write / shell blocked.
+    let write_denial = store
+        .lifecycle_denial(&session.session_id, "write_project_file")
+        .expect("write denied on closed");
+    assert_eq!(write_denial.lifecycle, SessionLifecycle::Closed);
+    let shell_denial = store
+        .lifecycle_denial(&session.session_id, "run_shell")
+        .expect("shell denied on closed");
+    assert_eq!(shell_denial.lifecycle, SessionLifecycle::Closed);
+    assert!(store
+        .lifecycle_denial(&session.session_id, "post_session_message")
+        .is_some());
+    assert!(store
+        .lifecycle_denial(&session.session_id, "workspace_checkpoint_create")
+        .is_some());
+
+    // Query / pure read still allowed; close remains idempotent path.
+    assert!(store
+        .lifecycle_denial(&session.session_id, "read_file")
+        .is_none());
+    assert!(store
+        .lifecycle_denial(&session.session_id, "session_summary")
+        .is_none());
+    assert!(store
+        .lifecycle_denial(&session.session_id, "close_session")
+        .is_none());
+
+    // Message board mutations fail with SessionClosed; list still works.
+    let post = store.post_message(PostSessionMessageInput {
+        session_id: session.session_id.clone(),
+        kind: SessionMessageKind::Note,
+        message: "after close".to_string(),
+        tags: Vec::new(),
+        reply_to: None,
+        priority: SessionMessagePriority::Normal,
+    });
+    assert!(matches!(
+        post,
+        Err(SessionMessageError::SessionClosed {
+            lifecycle: SessionLifecycle::Closed
+        })
+    ));
+    let listed = store
+        .list_messages(
+            &session.session_id,
+            ListSessionMessagesFilter {
+                kind: None,
+                status: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+    assert!(listed.is_empty());
+
+    let summary = store.summary(&session.session_id, Some(10)).unwrap();
+    assert_eq!(summary.lifecycle, SessionLifecycle::Closed);
+    assert_eq!(summary.session_id, session.session_id);
+}
+
+#[test]
+fn repeated_close_is_idempotent_without_duplicate_events() {
+    let store = SessionStore::default();
+    let session = store.start_session(None, Some("idempotent".to_string()));
+    let first = store.close_session(&session.session_id).unwrap();
+    assert!(!first.already_closed);
+    let second = store.close_session(&session.session_id).unwrap();
+    assert!(second.already_closed);
+    assert_eq!(second.summary.lifecycle, SessionLifecycle::Closed);
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    let closed_count = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "session_closed")
+        .count();
+    assert_eq!(
+        closed_count, 1,
+        "repeat close must not append another event"
+    );
+}
+
+#[test]
+fn unknown_session_close_fails_without_create() {
+    let store = SessionStore::default();
+    let missing = "wc_sess_missingclose01";
+    let err = store.close_session(missing).unwrap_err();
+    assert_eq!(err, SessionCloseError::UnknownSession);
+    assert!(!store.contains_session(missing));
+    assert!(store.summary(missing, None).is_none());
+}
+
+#[test]
+fn eviction_does_not_produce_closed_lifecycle() {
+    // Capacity eviction removes the record; it is not a Closed transition.
+    let store = SessionStore::new(1, 10);
+    let first = store.start_session(None, Some("evict me".to_string()));
+    let _second = store.start_session(None, Some("survivor".to_string()));
+    assert!(!store.contains_session(&first.session_id));
+    assert!(store.summary(&first.session_id, None).is_none());
+    // Evicted id is unknown, not Closed — close must not invent a session.
+    assert_eq!(
+        store.close_session(&first.session_id).unwrap_err(),
+        SessionCloseError::UnknownSession
+    );
+    assert!(!store.contains_session(&first.session_id));
+}
+
+#[test]
+fn closed_session_does_not_reopen() {
+    let store = SessionStore::default();
+    let session = store.start_session(None, Some("no reopen".to_string()));
+    store.close_session(&session.session_id).unwrap();
+    // Only path that could "reopen" would be inventing Active; close stays Closed.
+    let again = store.close_session(&session.session_id).unwrap();
+    assert!(again.already_closed);
+    assert_eq!(again.summary.lifecycle, SessionLifecycle::Closed);
+    assert!(!again.summary.lifecycle.allows_mutation());
+}

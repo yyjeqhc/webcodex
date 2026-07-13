@@ -41,7 +41,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "lifecycle",
                 session_lifecycle_schema(
-                    "Workflow session lifecycle. Phase 1 always returns active; closed/archived are reserved.",
+                    "Workflow session lifecycle. Create returns active; close_session transitions to closed.",
                 ),
             ),
             (
@@ -74,7 +74,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "lifecycle",
                 session_lifecycle_schema(
-                    "Workflow session lifecycle. Missing on pre-lifecycle ledgers is treated as active on load; Phase 1 always surfaces active.",
+                    "Workflow session lifecycle. Missing on pre-lifecycle ledgers is treated as active on load; closed after explicit close_session.",
                 ),
             ),
             (
@@ -100,6 +100,28 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "object",
                     "Summary-only projection of project-local instructions loaded at session start (no content bodies). Present when the session was created with a project. Project-local guidance only; does not override system/platform/WebCodex safety policy.",
                 ),
+            ),
+        ])),
+        "close_session" => Some(wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success.")),
+            (
+                "session_id",
+                schema_type("string", "Explicit wc_sess_* id that was closed."),
+            ),
+            (
+                "lifecycle",
+                session_lifecycle_schema("Lifecycle after close; always closed on success."),
+            ),
+            (
+                "already_closed",
+                schema_type(
+                    "boolean",
+                    "True when the session was already closed (or archived); no new transition event was recorded.",
+                ),
+            ),
+            (
+                "updated_at",
+                schema_type("integer", "Unix timestamp of the session's last update."),
             ),
         ])),
         "validation_summary" => Some(validation_summary_tool_output_schema()),
@@ -224,7 +246,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "lifecycle",
                 session_lifecycle_schema(
-                    "Workflow session lifecycle. Phase 1 always returns active.",
+                    "Workflow session lifecycle. active until explicit close_session; closed sessions remain queryable.",
                 ),
             ),
             (

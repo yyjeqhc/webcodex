@@ -3,8 +3,8 @@
 use super::session_context::{
     add_session_project_mismatch_warning, add_session_telemetry_hint, current_session_key,
     current_session_unavailable_result, is_current_session_eligible, session_guard_denied_result,
-    session_project_mismatch_requires_escape, session_project_mismatch_result,
-    unknown_session_result, SessionProjectMismatch,
+    session_lifecycle_denied_result, session_project_mismatch_requires_escape,
+    session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
 };
 use super::{
     permissions, session_context, sessions, tool_disabled_result_from_definition, ToolCall,
@@ -167,6 +167,33 @@ impl ToolRuntime {
             return result;
         }
         if let Some(session_id) = session_id.as_deref() {
+            // Lifecycle denial is orthogonal to mode/guards and wins first.
+            if let Some(denial) = self.sessions.lifecycle_denial(session_id, call.tool_name()) {
+                let session_start = self.sessions.record_tool_call_started_with_metadata(
+                    Some(session_id),
+                    transport,
+                    call.tool_name(),
+                    &call.session_log_arguments(),
+                    None,
+                    recorder_metadata.clone(),
+                );
+                let mut result =
+                    session_lifecycle_denied_result(session_id, call.tool_name(), denial);
+                let error_kind = result
+                    .output
+                    .get("error_kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("session_closed");
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_start,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some(error_kind),
+                );
+                add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                return result;
+            }
             if let Some(denial) = self.sessions.guard_denial(session_id, call.tool_name()) {
                 let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
@@ -295,6 +322,7 @@ impl ToolRuntime {
 
             call @ (ToolCall::StartSession { .. }
             | ToolCall::SessionSummary { .. }
+            | ToolCall::CloseSession { .. }
             | ToolCall::ValidationSummary { .. }
             | ToolCall::PostSessionMessage { .. }
             | ToolCall::ListSessionMessages { .. }

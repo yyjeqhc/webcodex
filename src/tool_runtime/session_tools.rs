@@ -1,8 +1,8 @@
 //! Runtime handlers for session and current-session tool calls.
 
 use super::session_context::{
-    current_session_key, current_session_unavailable_result, session_message_error_result,
-    unknown_session_result,
+    current_session_key, current_session_unavailable_result, session_lifecycle_denied_result,
+    session_message_error_result, unknown_session_result,
 };
 use super::tool_inputs::SessionMode;
 use super::{sessions, ToolCall, ToolResult, ToolRuntime};
@@ -37,6 +37,7 @@ impl ToolRuntime {
             ToolCall::SessionSummary { session_id, limit } => {
                 self.session_summary_tool(session_id, limit)
             }
+            ToolCall::CloseSession { session_id } => self.close_session_tool(session_id),
             ToolCall::ValidationSummary {
                 project,
                 session_id,
@@ -159,6 +160,19 @@ impl ToolRuntime {
         }
     }
 
+    pub(crate) fn close_session_tool(&self, session_id: String) -> ToolResult {
+        match self.sessions.close_session(&session_id) {
+            Ok(outcome) => ToolResult::ok(json!({
+                "success": true,
+                "session_id": outcome.summary.session_id,
+                "lifecycle": outcome.summary.lifecycle,
+                "already_closed": outcome.already_closed,
+                "updated_at": outcome.summary.updated_at,
+            })),
+            Err(sessions::SessionCloseError::UnknownSession) => unknown_session_result(&session_id),
+        }
+    }
+
     pub(crate) fn post_session_message_tool(
         &self,
         session_id: String,
@@ -267,6 +281,15 @@ impl ToolRuntime {
         let Some(summary) = self.sessions.summary(&session_id, None) else {
             return unknown_session_result(&session_id);
         };
+        if !summary.lifecycle.allows_mutation() {
+            return session_lifecycle_denied_result(
+                &session_id,
+                "bind_current_session",
+                sessions::SessionLifecycleDenial {
+                    lifecycle: summary.lifecycle,
+                },
+            );
+        }
         if summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
             return ToolResult::err_with_output(
                 "session_project_mismatch",

@@ -18,13 +18,14 @@ use super::events::{
 };
 use super::model::{
     CurrentSessionKey, ListSessionMessagesFilter, PersistedSessionLedger, PersistedSessionRecord,
-    PostSessionMessageInput, SessionCounts, SessionCreateOptions, SessionDiscussionSummary,
-    SessionEvent, SessionGuardDenial, SessionGuards, SessionInboxHint, SessionLifecycle,
-    SessionMessage, SessionMessageError, SessionMessageStatus, SessionRecord, SessionStoreStatus,
-    SessionSummary, SessionTransport, ToolCallRecorderMetadata, ToolCallStart,
-    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS,
-    DEFAULT_MESSAGE_LIST_LIMIT, DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_MESSAGE_LIST_LIMIT,
-    MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    PostSessionMessageInput, SessionCloseError, SessionCloseOutcome, SessionCounts,
+    SessionCreateOptions, SessionDiscussionSummary, SessionEvent, SessionGuardDenial,
+    SessionGuards, SessionInboxHint, SessionLifecycle, SessionLifecycleDenial, SessionMessage,
+    SessionMessageError, SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary,
+    SessionTransport, ToolCallRecorderMetadata, ToolCallStart, DEFAULT_MAX_EVENTS_PER_SESSION,
+    DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS, DEFAULT_MESSAGE_LIST_LIMIT,
+    DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_MESSAGE_LIST_LIMIT, MAX_SUMMARY_LIMIT,
+    MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::persistence::{load_persisted_sessions, write_ledger_atomic};
 use super::query::{
@@ -181,7 +182,7 @@ impl SessionStore {
             title: opts.title,
             mode: opts.mode,
             guards,
-            // Phase 1: create always yields Active; no close/archive paths yet.
+            // Create always yields Active; only explicit close transitions later.
             lifecycle: SessionLifecycle::Active,
             created_at: now,
             updated_at: now,
@@ -216,6 +217,56 @@ impl SessionStore {
     pub(crate) fn guard_state(&self, session_id: &str) -> Option<(SessionMode, SessionGuards)> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.guard_state(session_id)
+    }
+
+    pub(crate) fn lifecycle_state(&self, session_id: &str) -> Option<SessionLifecycle> {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.lifecycle_state(session_id)
+    }
+
+    /// Explicit close: `Active → Closed`. Idempotent for already-closed sessions.
+    ///
+    /// Never creates a session for an unknown id. Does not bind/unbind
+    /// current-session. Emits a single `session_closed` ledger event only on
+    /// a real `Active → Closed` transition.
+    pub(crate) fn close_session(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionCloseOutcome, SessionCloseError> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() || !is_valid_session_id(session_id) {
+            return Err(SessionCloseError::UnknownSession);
+        }
+        let outcome = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.close_session(session_id)?
+        };
+        self.persist_after_mutation();
+        Ok(outcome)
+    }
+
+    /// Authoritative lifecycle check used by dispatch/kernel before mutation.
+    ///
+    /// Closed/Archived sessions deny write-like, shell-like, and a small set of
+    /// session-local mutations (messages, checkpoint create/restore/delete).
+    /// Query tools and pure reads remain allowed. `close_session` itself is
+    /// never denied so repeated close stays idempotent.
+    pub(crate) fn lifecycle_denial(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+    ) -> Option<SessionLifecycleDenial> {
+        let lifecycle = self.lifecycle_state(session_id)?;
+        if lifecycle.allows_mutation() {
+            return None;
+        }
+        if tool_name == "close_session" {
+            return None;
+        }
+        if lifecycle_blocks_tool(tool_name) {
+            return Some(SessionLifecycleDenial { lifecycle });
+        }
+        None
     }
 
     /// Authoritative guard check used by dispatch/kernel before mutation.
@@ -525,6 +576,69 @@ impl SessionStore {
 ///
 /// Map fields stay private; sibling modules must use these helpers so create,
 /// bind, message, and event mutations cannot bypass the store.
+/// Tools blocked on Closed/Archived workflow sessions.
+///
+/// Query and pure-read tools remain allowed. Message-board mutations and
+/// session-scoped checkpoint mutations are blocked even when metadata marks
+/// them read-only (they still change durable session/project evidence).
+fn lifecycle_blocks_tool(tool_name: &str) -> bool {
+    let classification = SessionToolClassification::for_tool(tool_name);
+    if classification.write_like || classification.shell_like {
+        return true;
+    }
+    matches!(
+        tool_name,
+        "post_session_message"
+            | "resolve_session_message"
+            | "workspace_checkpoint_create"
+            | "workspace_checkpoint_restore"
+            | "workspace_checkpoint_delete"
+    )
+}
+
+fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
+    SessionEvent {
+        event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+        session_id: session_id.to_string(),
+        kind: "session_closed".to_string(),
+        timestamp: now,
+        transport: "system".to_string(),
+        tool_name: "close_session".to_string(),
+        project: None,
+        resolved_project: None,
+        risk_class: "read_only".to_string(),
+        read_like: true,
+        write_like: false,
+        shell_like: false,
+        git_like: false,
+        change_summary_like: false,
+        diff_review_like: false,
+        started_at: Some(now),
+        finished_at: Some(now),
+        duration_ms: Some(0),
+        status: Some("succeeded".to_string()),
+        exit_code: None,
+        failure_kind: None,
+        error_kind: None,
+        expected_failure: None,
+        expected_failure_kind: None,
+        assertion_name: None,
+        actual_failure_kind: None,
+        failure_expectation_result: None,
+        warning_kind: None,
+        session_project: None,
+        request_project: None,
+        allow_cross_project_session_required: None,
+        allow_cross_project_session: None,
+        error_message_summary: None,
+        changed_paths: Vec::new(),
+        job_id: None,
+        input_summary: None,
+        validation_output_summary: None,
+        permission: None,
+    }
+}
+
 impl SessionStoreInner {
     // --- create / lifecycle ---
 
@@ -536,6 +650,55 @@ impl SessionStoreInner {
         self.enforce_session_bound();
         self.summary(&session_id, Some(DEFAULT_SUMMARY_LIMIT))
             .expect("newly inserted session must summarize")
+    }
+
+    /// Explicit lifecycle close. Unknown ids fail without create.
+    pub(super) fn close_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<SessionCloseOutcome, SessionCloseError> {
+        self.touch(session_id);
+        let lifecycle = self
+            .sessions
+            .get(session_id)
+            .map(|record| record.lifecycle)
+            .ok_or(SessionCloseError::UnknownSession)?;
+        match lifecycle {
+            SessionLifecycle::Closed | SessionLifecycle::Archived => {
+                let summary = self
+                    .summary(session_id, Some(DEFAULT_SUMMARY_LIMIT))
+                    .expect("known closed session must summarize");
+                Ok(SessionCloseOutcome {
+                    summary,
+                    already_closed: true,
+                })
+            }
+            SessionLifecycle::Active => {
+                let now = now_ts();
+                // Soft-stop system event: only the Active → Closed transition.
+                let event = session_closed_system_event(session_id, now);
+                let max_events = self.max_events_per_session;
+                {
+                    let record = self
+                        .sessions
+                        .get_mut(session_id)
+                        .expect("session present after lifecycle read");
+                    record.lifecycle = SessionLifecycle::Closed;
+                    record.updated_at = now;
+                    record.events.push_back(event);
+                    while record.events.len() > max_events {
+                        record.events.pop_front();
+                    }
+                }
+                let summary = self
+                    .summary(session_id, Some(DEFAULT_SUMMARY_LIMIT))
+                    .expect("just-closed session must summarize");
+                Ok(SessionCloseOutcome {
+                    summary,
+                    already_closed: false,
+                })
+            }
+        }
     }
 
     // --- bindings (process-local) ---
@@ -579,6 +742,11 @@ impl SessionStoreInner {
         let Some(record) = self.sessions.get_mut(&input.session_id) else {
             return Err(SessionMessageError::UnknownSession);
         };
+        if !record.lifecycle.allows_mutation() {
+            return Err(SessionMessageError::SessionClosed {
+                lifecycle: record.lifecycle,
+            });
+        }
         let message = validate_message_text(input.message)?;
         let tags = validate_message_tags(input.tags)?;
         if let Some(reply_to) = input.reply_to.as_deref() {
@@ -648,6 +816,11 @@ impl SessionStoreInner {
         let Some(record) = self.sessions.get_mut(session_id) else {
             return Err(SessionMessageError::UnknownSession);
         };
+        if !record.lifecycle.allows_mutation() {
+            return Err(SessionMessageError::SessionClosed {
+                lifecycle: record.lifecycle,
+            });
+        }
         let Some(message) = record
             .messages
             .iter_mut()
@@ -749,6 +922,10 @@ impl SessionStoreInner {
         self.sessions
             .get(session_id)
             .map(|record| (record.mode, record.guards))
+    }
+
+    pub(super) fn lifecycle_state(&self, session_id: &str) -> Option<SessionLifecycle> {
+        self.sessions.get(session_id).map(|record| record.lifecycle)
     }
 
     fn to_persisted_ledger(&self) -> PersistedSessionLedger {

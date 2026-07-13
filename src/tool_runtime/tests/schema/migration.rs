@@ -109,6 +109,18 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             None,
         ),
         ExpectedToolPolicy::new(
+            "close_session",
+            "session",
+            "read_only",
+            true,
+            false,
+            false,
+            false,
+            "explicit_business_session",
+            false,
+            None,
+        ),
+        ExpectedToolPolicy::new(
             "validation_summary",
             "validation",
             "read_only",

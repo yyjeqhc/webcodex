@@ -205,6 +205,53 @@ impl ToolRuntime {
             };
         }
         if let Some(session_id) = context.session_id {
+            // Lifecycle denial wins before mode/guards: Closed is orthogonal to
+            // read_only and must not be confused with session_guard_denied.
+            if let Some(denial) = self
+                .sessions
+                .lifecycle_denial(session_id, &request.tool_name)
+            {
+                let session_event = self.sessions.record_tool_call_started_with_metadata(
+                    Some(session_id),
+                    context.transport.into(),
+                    &request.tool_name,
+                    &session_log_arguments_for_tool_request(
+                        &request.tool_name,
+                        &concrete_arguments,
+                    ),
+                    None,
+                    recorder_metadata.clone(),
+                );
+                let mut result = session_context::session_lifecycle_denied_result(
+                    session_id,
+                    &request.tool_name,
+                    denial,
+                );
+                let error_kind = result
+                    .output
+                    .get("error_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("session_closed");
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_event,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some(error_kind),
+                );
+                super::add_session_telemetry_hint(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    event_id,
+                );
+                return ToolCallOutcome {
+                    success: false,
+                    result: Some(result),
+                    error_status: None,
+                    project: None,
+                };
+            }
             if let Some(denial) = self.sessions.guard_denial(session_id, &request.tool_name) {
                 let session_event = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),

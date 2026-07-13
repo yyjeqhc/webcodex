@@ -1,6 +1,7 @@
 use super::sessions;
 use super::tool_definition::{
-    runtime_tool_allows_current_session_fallback, runtime_tool_requires_session_project_escape,
+    runtime_tool_allows_current_session_fallback, runtime_tool_is_shell_like,
+    runtime_tool_requires_session_project_escape,
 };
 use super::{ToolCall, ToolResult};
 use crate::auth::AuthContext;
@@ -136,6 +137,34 @@ pub(crate) fn session_guard_denied_result(
     )
 }
 
+/// Lifecycle denial for Closed/Archived workflow sessions (write/shell/mutation).
+pub(crate) fn session_lifecycle_denied_result(
+    session_id: &str,
+    tool_name: &str,
+    denial: sessions::SessionLifecycleDenial,
+) -> ToolResult {
+    let lifecycle = denial.lifecycle.as_str();
+    let error_kind = match denial.lifecycle {
+        sessions::SessionLifecycle::Closed => "session_closed",
+        sessions::SessionLifecycle::Archived => "session_archived",
+        sessions::SessionLifecycle::Active => "session_lifecycle_denied",
+    };
+    let mut output = json!({
+        "error_kind": error_kind,
+        "session_id": session_id,
+        "tool_name": tool_name,
+        "lifecycle": lifecycle,
+    });
+    // Match shell-guard shape so callers can detect "command never started".
+    if runtime_tool_is_shell_like(tool_name) {
+        output["command_started"] = Value::Bool(false);
+    }
+    ToolResult::err_with_output(
+        format!("{error_kind}: {tool_name} blocked on {lifecycle} session"),
+        output,
+    )
+}
+
 pub(crate) fn session_message_error_result(
     session_id: &str,
     message_id: Option<&str>,
@@ -154,6 +183,20 @@ pub(crate) fn session_message_error_result(
                 "message_id": message_id,
             }),
         ),
+        sessions::SessionMessageError::SessionClosed { lifecycle } => {
+            let error_kind = match lifecycle {
+                sessions::SessionLifecycle::Archived => "session_archived",
+                _ => "session_closed",
+            };
+            ToolResult::err_with_output(
+                format!("{error_kind}: session message mutation blocked"),
+                json!({
+                    "error_kind": error_kind,
+                    "session_id": session_id,
+                    "lifecycle": lifecycle.as_str(),
+                }),
+            )
+        }
         sessions::SessionMessageError::InvalidInput(message) => ToolResult::err_with_output(
             message.clone(),
             json!({

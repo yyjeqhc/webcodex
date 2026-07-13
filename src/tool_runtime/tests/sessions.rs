@@ -481,3 +481,192 @@ async fn start_session_unknown_project_fails_with_candidates() {
     assert_eq!(result.output["project"], "missing-repo");
     assert!(result.output["candidates"].as_array().unwrap().len() >= 3);
 }
+
+// --- Phase 2: close_session tool ---
+
+#[tokio::test]
+async fn close_session_tool_active_to_closed_and_query_still_works() {
+    let runtime = test_runtime();
+    let started = runtime
+        .dispatch(ToolCall::StartSession {
+            project: None,
+            title: Some("close tool".to_string()),
+            mode: SessionMode::Normal,
+            deny_write_tools: false,
+            deny_shell_tools: false,
+        })
+        .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+    assert_eq!(started.output["lifecycle"], "active");
+
+    let closed = runtime
+        .dispatch(ToolCall::CloseSession {
+            session_id: session_id.clone(),
+        })
+        .await;
+    assert!(closed.success, "{:?}", closed.error);
+    assert_eq!(closed.output["lifecycle"], "closed");
+    assert_eq!(closed.output["already_closed"], false);
+    assert_eq!(closed.output["session_id"], session_id);
+
+    let summary = runtime
+        .dispatch(ToolCall::SessionSummary {
+            session_id: session_id.clone(),
+            limit: Some(20),
+        })
+        .await;
+    assert!(summary.success, "{:?}", summary.error);
+    assert_eq!(summary.output["lifecycle"], "closed");
+    assert_eq!(summary.output["session_id"], session_id);
+
+    let again = runtime
+        .dispatch(ToolCall::CloseSession {
+            session_id: session_id.clone(),
+        })
+        .await;
+    assert!(again.success, "{:?}", again.error);
+    assert_eq!(again.output["already_closed"], true);
+    assert_eq!(again.output["lifecycle"], "closed");
+}
+
+#[tokio::test]
+async fn close_session_unknown_id_fails_without_create() {
+    let runtime = test_runtime();
+    let missing = "wc_sess_toolmissingclose01";
+    let result = runtime
+        .dispatch(ToolCall::CloseSession {
+            session_id: missing.to_string(),
+        })
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_session_id");
+    assert_eq!(result.output["session_id"], missing);
+    assert!(!runtime.sessions.contains_session(missing));
+}
+
+#[tokio::test]
+async fn close_session_requires_explicit_session_id_no_current_fallback() {
+    // close_session must not accept empty/missing business session_id via parse.
+    let err = ToolCall::from_tool_name("close_session", serde_json::json!({})).unwrap_err();
+    assert!(
+        err.contains("session_id") || err.contains("missing field"),
+        "expected required session_id parse failure, got: {err}"
+    );
+    let err_null =
+        ToolCall::from_tool_name("close_session", serde_json::json!({"session_id": null}))
+            .unwrap_err();
+    assert!(
+        err_null.contains("session_id") || err_null.contains("invalid"),
+        "expected null session_id rejection, got: {err_null}"
+    );
+}
+
+#[tokio::test]
+async fn closed_session_blocks_write_tools_and_message_post() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("README.md"), "hello\n").unwrap();
+    let runtime = runtime_with_project(root, "demo");
+    let session = runtime
+        .sessions
+        .start_session(Some("demo".to_string()), Some("closed writes".to_string()));
+    runtime.sessions.close_session(&session.session_id).unwrap();
+
+    let write = runtime
+        .dispatch(ToolCall::WriteProjectFile {
+            project: "demo".to_string(),
+            path: "should-not-write.txt".to_string(),
+            content: "blocked".to_string(),
+            session_id: Some(session.session_id.clone()),
+            overwrite: None,
+            expected_sha256: None,
+            expected_content_prefix: None,
+        })
+        .await;
+    assert!(!write.success);
+    assert_eq!(write.output["error_kind"], "session_closed");
+    assert_eq!(write.output["lifecycle"], "closed");
+    assert!(!root.join("should-not-write.txt").exists());
+
+    let post = runtime
+        .dispatch(ToolCall::PostSessionMessage {
+            session_id: session.session_id.clone(),
+            kind: SessionMessageKind::Note,
+            message: "after close".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .await;
+    assert!(!post.success);
+    assert_eq!(post.output["error_kind"], "session_closed");
+}
+
+#[tokio::test]
+async fn finish_coding_task_does_not_auto_close_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-finish-no-close", "demo", tmp.path())
+            .await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("finish no close".to_string()));
+    assert_eq!(
+        runtime
+            .sessions
+            .lifecycle_state(&session.session_id)
+            .unwrap(),
+        super::super::sessions::SessionLifecycle::Active
+    );
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: true,
+                        include_diff: Some(false),
+                        include_workspace: Some(true),
+                        include_hygiene: Some(false),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(false),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "coding-finish-no-close")
+        .await
+        .expect("finish_coding_task should inspect workspace through the agent");
+    complete_patch_agent_request(
+        &runtime,
+        "coding-finish-no-close",
+        &req.request_id,
+        0,
+        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        "",
+    )
+    .await;
+    let finish = task.await.unwrap();
+    assert!(finish.success, "{:?}", finish.error);
+    assert_eq!(
+        runtime
+            .sessions
+            .lifecycle_state(&session.session_id)
+            .unwrap(),
+        super::super::sessions::SessionLifecycle::Active,
+        "finish_coding_task must remain report-only (finish != close)"
+    );
+}

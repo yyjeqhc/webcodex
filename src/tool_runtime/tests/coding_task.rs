@@ -914,6 +914,9 @@ async fn start_coding_task_unknown_manifest_intent_precedes_session_creation_and
         })
         .await;
     assert!(sentinel.success, "{:?}", sentinel.error);
+    // Persistent ledger writes on a background thread; flush before reading
+    // the file so this assertion is not a race against the writer.
+    runtime.sessions.flush_persistence();
     let ledger_before = fs::read(&ledger).expect("sentinel session should persist");
 
     let result = runtime
@@ -934,6 +937,7 @@ async fn start_coding_task_unknown_manifest_intent_precedes_session_creation_and
     assert_eq!(result.output["code"], "unknown_tool_manifest_intent");
     assert_eq!(result.output["intent"], "not_a_real_intent");
     assert!(result.output["available_intents"].is_array());
+    runtime.sessions.flush_persistence();
     assert_eq!(
         fs::read(&ledger).unwrap(),
         ledger_before,

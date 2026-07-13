@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 use super::events::{
@@ -43,6 +43,207 @@ pub(crate) struct SessionStore {
     /// transition helpers without touching the maps directly.
     pub(super) inner: Arc<Mutex<SessionStoreInner>>,
     persistence_write_mutex: Arc<Mutex<()>>,
+    /// Background ledger writer for persistent stores. `None` for in-memory
+    /// stores or when the writer thread could not be spawned (mutations then
+    /// fall back to the synchronous write path).
+    writer: Option<Arc<LedgerWriterGuard>>,
+}
+
+/// Coordinates a dedicated OS thread that owns session-ledger serialize +
+/// atomic disk write. Callers only mark dirty (or flush); they never block
+/// async Tokio workers on full-store JSON + `fs::write`.
+///
+/// Why this exists: every `push_event` used to call `persist_after_mutation`
+/// synchronously on the request path, holding a global write mutex while
+/// cloning/serializing up to max_sessions×max_events and renaming on disk.
+/// Under concurrent MCP tools/call traffic that saturates the async runtime
+/// and surfaces as intermittent "no reply" hangs.
+struct LedgerWriterGuard {
+    shared: Arc<LedgerWriterShared>,
+    join: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+struct LedgerWriterShared {
+    state: Mutex<LedgerWriterState>,
+    cvar: Condvar,
+}
+
+struct LedgerWriterState {
+    /// Set by mutation paths; cleared when the writer begins a snapshot.
+    dirty: bool,
+    /// Monotonic counter advanced every time `dirty` is set. Flush waiters
+    /// wait until `writes_completed` reaches the generation they observed.
+    dirty_generation: u64,
+    /// Generation of the last completed write cycle.
+    writes_completed: u64,
+    shutdown: bool,
+}
+
+impl std::fmt::Debug for LedgerWriterGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LedgerWriterGuard").finish_non_exhaustive()
+    }
+}
+
+impl LedgerWriterGuard {
+    fn spawn(
+        store_inner: Arc<Mutex<SessionStoreInner>>,
+        write_mutex: Arc<Mutex<()>>,
+    ) -> Option<Arc<Self>> {
+        let shared = Arc::new(LedgerWriterShared {
+            state: Mutex::new(LedgerWriterState {
+                dirty: false,
+                dirty_generation: 0,
+                writes_completed: 0,
+                shutdown: false,
+            }),
+            cvar: Condvar::new(),
+        });
+        let shared_thread = Arc::clone(&shared);
+        let join = std::thread::Builder::new()
+            .name("session-ledger-writer".to_string())
+            .spawn(move || ledger_writer_loop(shared_thread, store_inner, write_mutex))
+            .ok()?;
+        Some(Arc::new(Self {
+            shared,
+            join: Mutex::new(Some(join)),
+        }))
+    }
+
+    fn mark_dirty(&self) {
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("session ledger writer state poisoned");
+        state.dirty = true;
+        state.dirty_generation = state.dirty_generation.saturating_add(1);
+        self.shared.cvar.notify_one();
+    }
+
+    /// Block until every dirty mark observed so far has been written (or the
+    /// writer has shut down). Used by tests that re-open the ledger file and
+    /// by Drop for a best-effort durable shutdown.
+    ///
+    /// Must also wait out an in-flight write: the writer clears `dirty` before
+    /// serializing, so a flush that only checked `dirty` could return while
+    /// the file was still being written.
+    fn flush(&self) {
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("session ledger writer state poisoned");
+        while !state.shutdown && (state.dirty || state.writes_completed < state.dirty_generation) {
+            // Spurious wakeups are fine; re-check the condition.
+            state = self
+                .shared
+                .cvar
+                .wait(state)
+                .expect("session ledger writer state poisoned");
+        }
+    }
+}
+
+impl Drop for LedgerWriterGuard {
+    fn drop(&mut self) {
+        {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .expect("session ledger writer state poisoned");
+            // Keep dirty as-is so the loop performs one final write before exit.
+            state.shutdown = true;
+            self.shared.cvar.notify_one();
+        }
+        if let Some(join) = self
+            .join
+            .lock()
+            .expect("session ledger writer join mutex poisoned")
+            .take()
+        {
+            let _ = join.join();
+        }
+    }
+}
+
+fn ledger_writer_loop(
+    shared: Arc<LedgerWriterShared>,
+    store_inner: Arc<Mutex<SessionStoreInner>>,
+    write_mutex: Arc<Mutex<()>>,
+) {
+    loop {
+        let generation = {
+            let mut state = shared
+                .state
+                .lock()
+                .expect("session ledger writer state poisoned");
+            while !state.dirty && !state.shutdown {
+                state = shared
+                    .cvar
+                    .wait(state)
+                    .expect("session ledger writer state poisoned");
+            }
+            if !state.dirty {
+                // shutdown with nothing pending
+                break;
+            }
+            let generation = state.dirty_generation;
+            state.dirty = false;
+            generation
+        };
+
+        // Snapshot + write under the same write mutex used by the synchronous
+        // test hook (`persist_after_mutation_with`), so a custom delayed write
+        // cannot race an older snapshot past a newer background write without
+        // the lock ordering the two.
+        let _write_guard = write_mutex
+            .lock()
+            .expect("session persistence mutex poisoned");
+        let snapshot = {
+            let inner = store_inner.lock().expect("session store mutex poisoned");
+            let path = inner
+                .persistence
+                .as_ref()
+                .map(|persistence| persistence.path.clone());
+            path.map(|path| (path, inner.to_persisted_ledger()))
+        };
+        let result = match snapshot {
+            Some((path, ledger)) => write_ledger_atomic(&path, &ledger).map_err(|err| {
+                bound_summary_string(&format!("persist_failed: {}: {err}", path.display()))
+            }),
+            None => Ok(()),
+        };
+        {
+            let mut inner = store_inner.lock().expect("session store mutex poisoned");
+            if let Some(persistence) = inner.persistence.as_mut() {
+                match &result {
+                    Ok(()) => persistence.last_persist_error = None,
+                    Err(error) => {
+                        tracing::warn!("session ledger persistence failed: {}", error);
+                        persistence.last_persist_error = Some(error.clone());
+                    }
+                }
+            }
+        }
+        {
+            let mut state = shared
+                .state
+                .lock()
+                .expect("session ledger writer state poisoned");
+            state.writes_completed = generation;
+            // Wake flush waiters; if dirty was re-set during the write the
+            // loop body runs again without waiting.
+            shared.cvar.notify_all();
+            if state.shutdown && !state.dirty {
+                break;
+            }
+        }
+        // Drop write_guard at end of iteration so a concurrent
+        // persist_after_mutation_with can interleave between cycles.
+        drop(_write_guard);
+    }
 }
 
 #[derive(Debug)]
@@ -86,6 +287,7 @@ impl SessionStore {
                 persistence: None,
             })),
             persistence_write_mutex: Arc::new(Mutex::new(())),
+            writer: None,
         }
     }
 
@@ -97,20 +299,38 @@ impl SessionStore {
         let path = path.into();
         let (sessions, lru, restored_sessions, last_persist_error) =
             load_persisted_sessions(&path, max_sessions, max_events_per_session);
+        let inner = Arc::new(Mutex::new(SessionStoreInner {
+            sessions,
+            current_sessions: HashMap::new(),
+            lru,
+            max_sessions,
+            max_events_per_session,
+            persistence: Some(SessionPersistence {
+                path,
+                restored_sessions,
+                last_persist_error,
+            }),
+        }));
+        let persistence_write_mutex = Arc::new(Mutex::new(()));
+        // Prefer the background writer so mutation paths never park a Tokio
+        // worker on full-ledger serialize + disk I/O. If the OS thread cannot
+        // be spawned, fall back to the synchronous write path.
+        let writer =
+            LedgerWriterGuard::spawn(Arc::clone(&inner), Arc::clone(&persistence_write_mutex));
         Self {
-            inner: Arc::new(Mutex::new(SessionStoreInner {
-                sessions,
-                current_sessions: HashMap::new(),
-                lru,
-                max_sessions,
-                max_events_per_session,
-                persistence: Some(SessionPersistence {
-                    path,
-                    restored_sessions,
-                    last_persist_error,
-                }),
-            })),
-            persistence_write_mutex: Arc::new(Mutex::new(())),
+            inner,
+            persistence_write_mutex,
+            writer,
+        }
+    }
+
+    /// Block until every pending ledger mutation has been written to disk.
+    /// No-op for in-memory stores. Required before re-opening the ledger file
+    /// from another `SessionStore` (background writes are otherwise deferred).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn flush_persistence(&self) {
+        if let Some(writer) = &self.writer {
+            writer.flush();
         }
     }
 
@@ -534,6 +754,13 @@ impl SessionStore {
     }
 
     pub(super) fn persist_after_mutation(&self) {
+        if let Some(writer) = &self.writer {
+            // Fire-and-forget: the dedicated writer thread serializes and
+            // writes. Callers that need durability before reading the file
+            // must call `flush_persistence`.
+            writer.mark_dirty();
+            return;
+        }
         self.persist_after_mutation_with(write_ledger_atomic);
     }
 

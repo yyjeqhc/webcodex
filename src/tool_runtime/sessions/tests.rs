@@ -112,6 +112,13 @@ fn persistent_store(path: PathBuf) -> SessionStore {
     SessionStore::with_persistence(path, 10, 10)
 }
 
+/// Flush deferred ledger writes, then open a fresh store from the same path.
+/// Required because persistent stores write on a background thread.
+fn flush_and_restore(store: &SessionStore, path: PathBuf) -> SessionStore {
+    store.flush_persistence();
+    SessionStore::with_persistence(path, 10, 10)
+}
+
 #[test]
 fn session_store_persists_and_restores_basic_session() {
     let tmp = tempfile::tempdir().unwrap();
@@ -122,7 +129,7 @@ fn session_store_persists_and_restores_basic_session() {
         Some("persistent work".to_string()),
     );
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let status = restored.status();
     assert_eq!(status.persistence, "enabled");
     assert_eq!(status.restored_sessions, 1);
@@ -153,7 +160,7 @@ fn session_messages_survive_restore() {
         "ledger snapshot wired",
     );
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let messages = restored
         .list_messages(&session.session_id, ListSessionMessagesFilter::default())
         .unwrap();
@@ -182,7 +189,7 @@ fn session_events_survive_restore() {
     );
     store.record_tool_call_finished(start, true, &json!({}), None, None);
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let summary = restored.summary(&session.session_id, Some(10)).unwrap();
     assert_eq!(summary.events.len(), 2);
     assert_eq!(summary.counts.tool_calls, 1);
@@ -219,7 +226,7 @@ fn validation_output_summary_survives_restore_sanitized() {
         None,
     );
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let summary = restored.summary(&session.session_id, Some(10)).unwrap();
     let finished = summary
         .events
@@ -275,6 +282,7 @@ fn malicious_persisted_validation_output_summary_is_resanitized_on_restore() {
         );
     }
 
+    store.flush_persistence();
     let mut ledger_value: Value =
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
     let events = ledger_value["sessions"][0]["events"]
@@ -302,7 +310,7 @@ fn malicious_persisted_validation_output_summary_is_resanitized_on_restore() {
     }
     std::fs::write(&ledger, serde_json::to_vec_pretty(&ledger_value).unwrap()).unwrap();
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let summary = restored.summary(&session.session_id, Some(10)).unwrap();
     let cargo_finished = summary
         .events
@@ -364,12 +372,13 @@ fn legacy_session_events_without_validation_output_summary_restore() {
     );
     store.record_tool_call_finished(start, true, &json!({"exit_code": 0}), None, None);
 
+    store.flush_persistence();
     let ledger_text = std::fs::read_to_string(&ledger).unwrap();
     assert!(
         !ledger_text.contains("validation_output_summary"),
         "legacy fixture should omit validation_output_summary: {ledger_text}"
     );
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let summary = restored.summary(&session.session_id, Some(10)).unwrap();
     let finished = summary
         .events
@@ -402,7 +411,7 @@ fn resolved_message_survives_restore() {
         )
         .unwrap();
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let messages = restored
         .list_messages(
             &session.session_id,
@@ -487,7 +496,7 @@ fn concurrent_persistence_reloads_current_snapshot_before_write() {
     delayed_write.join().unwrap();
     newer_mutation.join().unwrap();
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let messages = restored
         .list_messages(&session.session_id, ListSessionMessagesFilter::default())
         .unwrap();
@@ -513,10 +522,11 @@ fn project_instructions_content_not_persisted_or_leaked_after_restore() {
         )),
     });
 
+    store.flush_persistence();
     let serialized = std::fs::read_to_string(&ledger).unwrap();
     assert!(!serialized.contains(secret_body));
     assert!(!serialized.contains("project_instructions"));
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let summary = restored.summary(&session.session_id, Some(10)).unwrap();
     assert!(summary.project_instructions.is_none());
     let summary_json = serde_json::to_string(&summary).unwrap();
@@ -984,6 +994,7 @@ fn ledger_round_trip_preserves_session_events_and_messages() {
         "checkpoint",
     );
 
+    store.flush_persistence();
     let restored = SessionStore::with_persistence(&ledger, 10, 50);
     let summary = restored.summary(&session.session_id, Some(20)).unwrap();
     assert_eq!(summary.project.as_deref(), Some("proj"));
@@ -1023,6 +1034,7 @@ fn persisted_ledger_writes_and_reads_lifecycle_active() {
     let session = store.start_session(Some("proj".to_string()), Some("with lifecycle".to_string()));
     assert_eq!(session.lifecycle, SessionLifecycle::Active);
 
+    store.flush_persistence();
     let raw = std::fs::read_to_string(&ledger).unwrap();
     let ledger_value: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(ledger_value["version"], SESSION_LEDGER_VERSION);
@@ -1032,7 +1044,7 @@ fn persisted_ledger_writes_and_reads_lifecycle_active() {
         session.session_id
     );
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let summary = restored.summary(&session.session_id, Some(10)).unwrap();
     assert_eq!(summary.lifecycle, SessionLifecycle::Active);
 }
@@ -1084,7 +1096,7 @@ fn lifecycle_ledger_round_trip_preserves_active() {
     let session = store.start_session(None, Some("round trip".to_string()));
     assert_eq!(session.lifecycle, SessionLifecycle::Active);
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let summary = restored.summary(&session.session_id, Some(10)).unwrap();
     assert_eq!(summary.lifecycle, SessionLifecycle::Active);
     assert_eq!(summary.session_id, session.session_id);
@@ -1173,12 +1185,13 @@ fn closed_lifecycle_persists_round_trip() {
     let session = store.start_session(Some("proj".to_string()), Some("close persist".to_string()));
     store.close_session(&session.session_id).unwrap();
 
+    store.flush_persistence();
     let raw = std::fs::read_to_string(&ledger).unwrap();
     let ledger_value: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(ledger_value["version"], SESSION_LEDGER_VERSION);
     assert_eq!(ledger_value["sessions"][0]["lifecycle"], "closed");
 
-    let restored = persistent_store(ledger);
+    let restored = flush_and_restore(&store, ledger);
     let summary = restored.summary(&session.session_id, Some(20)).unwrap();
     assert_eq!(summary.lifecycle, SessionLifecycle::Closed);
     assert!(summary

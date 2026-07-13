@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+mod action_compact;
 mod import_http;
 mod jobs;
 mod project_files;
@@ -75,6 +76,38 @@ fn render_result(
     event.project = project;
     audit.record(event);
     res.render(Json(result));
+}
+
+/// Audit the full tool result, then optionally compact the client-facing body.
+///
+/// ActionAudit always records the pre-compact execution payload. Compaction
+/// only affects the GPT Action HTTP response when the experiment flag is on.
+fn prepare_action_tools_call_response(
+    audit: &ActionAudit,
+    tool: &str,
+    project: Option<String>,
+    result: crate::tool_runtime::ToolResult,
+) -> (StatusCode, crate::tool_runtime::ToolResult) {
+    let status = if result.success {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    // Audit the full execution payload so compacting the client body does not
+    // erase operator-visible tool output from the action audit trail.
+    let mut event = ActionAuditRecord::new(tool.to_string(), result.success, status)
+        .error(result.error.clone())
+        .summary(json!({
+            "output": result.output.clone(),
+        }));
+    event.project = project;
+    audit.record(event);
+    let response = if crate::config::action_compact_responses_enabled() {
+        action_compact::compact_action_tool_result(tool, result)
+    } else {
+        result
+    };
+    (status, response)
 }
 
 #[handler]
@@ -222,14 +255,12 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             } else {
                 guard.dispatch_finished(true, Some(false), "tool_error");
             }
-            let status = if tool_success {
-                StatusCode::OK
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            // Serialize only when tracing is enabled (estimate_json_bytes gates).
+            // Audit full result; optionally compact only the HTTP response body.
+            // Trace size reflects what ChatGPT receives (post-compact when on).
+            let (status, response) =
+                prepare_action_tools_call_response(&audit, &tool, outcome.project, result);
             let estimated = if guard.enabled() {
-                serde_json::to_value(&result)
+                serde_json::to_value(&response)
                     .ok()
                     .and_then(|v| estimate_json_bytes(&v))
             } else {
@@ -243,7 +274,8 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
                 Some(tool_success),
                 category,
             );
-            render_result(res, &audit, &tool, outcome.project, result);
+            res.status_code(status);
+            res.render(Json(response));
             guard.handler_returned(
                 status.as_u16(),
                 estimated,
@@ -838,6 +870,9 @@ mod tests {
 
     #[tokio::test]
     async fn http_start_coding_task_manifest_intent_survives_null_params_wrapper() {
+        // Hold the env lock so a parallel compact-experiment test cannot flip
+        // WEBCODEX_ACTION_COMPACT_RESPONSES and drop tool_manifest from the body.
+        let _compact = ActionCompactEnvGuard::disabled();
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let tmp_proj = tempfile::tempdir().unwrap();
@@ -873,6 +908,208 @@ mod tests {
                     .as_u64()
                     .unwrap()
         );
+    }
+
+    // =========================================================================
+    // GPT Action compact response experiment (WEBCODEX_ACTION_COMPACT_RESPONSES)
+    // =========================================================================
+
+    /// Serialize access to `WEBCODEX_ACTION_COMPACT_RESPONSES` and restore the
+    /// previous process value when dropped.
+    struct ActionCompactEnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        previous: Option<String>,
+    }
+
+    impl ActionCompactEnvGuard {
+        fn set(enabled: bool) -> Self {
+            let lock = crate::admin_cli::TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var("WEBCODEX_ACTION_COMPACT_RESPONSES").ok();
+            if enabled {
+                std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "true");
+            } else {
+                std::env::remove_var("WEBCODEX_ACTION_COMPACT_RESPONSES");
+            }
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+
+        fn enabled() -> Self {
+            Self::set(true)
+        }
+
+        fn disabled() -> Self {
+            Self::set(false)
+        }
+    }
+
+    impl Drop for ActionCompactEnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", value),
+                None => std::env::remove_var("WEBCODEX_ACTION_COMPACT_RESPONSES"),
+            }
+        }
+    }
+
+    fn start_coding_task_call_body(project: &str) -> Value {
+        json!({
+            "tool": "start_coding_task",
+            "project": project,
+            "include_runtime_status": false,
+            "include_git": false,
+            "include_recent_commits": false,
+            "include_rules": false,
+            "include_tool_manifest": true,
+        })
+    }
+
+    #[tokio::test]
+    async fn http_start_coding_task_default_response_is_full() {
+        let _compact = ActionCompactEnvGuard::disabled();
+
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&start_coding_task_call_body("agent:importer:demo"))
+            .send(&service)
+            .await;
+
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert!(body["output"].get("compact").is_none());
+        let session_id = body["output"]["session"]["session_id"]
+            .as_str()
+            .expect("full response keeps nested session.session_id");
+        assert!(session_id.starts_with("wc_sess_"));
+        assert!(body["output"]["tool_manifest"].is_object());
+        assert!(body["output"]["recommended_flow"].is_object());
+        assert!(body["output"]["startup_verdict"].is_object());
+    }
+
+    #[tokio::test]
+    async fn http_start_coding_task_compact_mode_shrinks_payload_and_keeps_ids() {
+        let _compact = ActionCompactEnvGuard::enabled();
+
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        // Full-mode reference size (same tool path; temporarily disable compact).
+        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "false");
+        let mut full_resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&start_coding_task_call_body("agent:importer:demo"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&full_resp), StatusCode::OK);
+        let full_body: Value = full_resp.take_json().await.unwrap();
+        let full_bytes = serde_json::to_vec(&full_body).unwrap().len();
+        let full_session = full_body["output"]["session"]["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(full_body["output"]["tool_manifest"].is_object());
+
+        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "true");
+        let mut compact_resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&start_coding_task_call_body("agent:importer:demo"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&compact_resp), StatusCode::OK);
+        let compact_body: Value = compact_resp.take_json().await.unwrap();
+        let compact_bytes = serde_json::to_vec(&compact_body).unwrap().len();
+
+        assert_eq!(compact_body["success"], true);
+        assert_eq!(compact_body["output"]["compact"], true);
+        let compact_session = compact_body["output"]["session_id"]
+            .as_str()
+            .expect("compact response must include session_id");
+        assert!(compact_session.starts_with("wc_sess_"));
+        assert_eq!(
+            compact_body["output"]["task_id"].as_str(),
+            Some(compact_session)
+        );
+        assert!(compact_body["output"]["summary"].is_string());
+        assert!(compact_body["output"]["next_steps"].is_array());
+        assert!(compact_body["output"].get("tool_manifest").is_none());
+        assert!(compact_body["output"].get("recommended_flow").is_none());
+        assert!(compact_body["output"].get("session").is_none());
+        assert!(
+            compact_bytes < full_bytes / 2,
+            "compact bytes ({compact_bytes}) should be under half of full ({full_bytes})"
+        );
+        // Both modes create real sessions (execution unchanged).
+        assert_ne!(compact_session, full_session);
+    }
+
+    #[tokio::test]
+    async fn http_start_coding_task_compact_mode_preserves_error_payload() {
+        let _compact = ActionCompactEnvGuard::enabled();
+
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "start_coding_task",
+                "project": "agent:importer:does-not-exist",
+                "include_runtime_status": false,
+                "include_git": false,
+                "include_tool_manifest": false,
+            }))
+            .send(&service)
+            .await;
+
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(
+            body["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "compact mode must not drop error text: {body}"
+        );
+        assert!(
+            body.get("output").is_some(),
+            "error ToolResult still carries output field"
+        );
+        assert!(
+            body["output"].get("compact").is_none(),
+            "errors must not be rewritten into compact success shape"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_compact_mode_does_not_change_list_tools() {
+        let _compact = ActionCompactEnvGuard::enabled();
+
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "list_tools"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert!(body["output"]["tools"].is_array());
+        assert!(body["output"].get("compact").is_none());
     }
 
     #[test]

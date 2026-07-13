@@ -351,6 +351,17 @@ pub(crate) fn mcp_compact_schemas_enabled() -> bool {
     env_flag("WEBCODEX_MCP_COMPACT_SCHEMAS").unwrap_or(false)
 }
 
+/// Experimental GPT Action response compact switch.
+///
+/// When true, `POST /api/tools/call` (callRuntimeTool) may shrink selected
+/// success payloads after tool execution — especially `start_coding_task` —
+/// to reduce ChatGPT continuation friction. Default **false**: full responses
+/// unchanged. Does **not** affect MCP, tools/list, OpenAPI schemas, tool
+/// execution, session ledger, or permission decisions.
+pub(crate) fn action_compact_responses_enabled() -> bool {
+    env_flag("WEBCODEX_ACTION_COMPACT_RESPONSES").unwrap_or(false)
+}
+
 pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
     if let Ok(path) = std::env::var("WEBCODEX_ENV_FILE") {
         return Ok(vec![load_env_file_candidate(Path::new(&path), false)?]);
@@ -822,6 +833,29 @@ mod tests {
         // Invalid values are treated as unset by env_flag -> default false.
         assert!(!mcp_compact_schemas_enabled());
         std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    }
+
+    #[test]
+    fn action_compact_responses_defaults_off() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_ACTION_COMPACT_RESPONSES");
+        assert!(!action_compact_responses_enabled());
+    }
+
+    #[test]
+    fn action_compact_responses_true_enables() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "true");
+        assert!(action_compact_responses_enabled());
+        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "1");
+        assert!(action_compact_responses_enabled());
+        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "yes");
+        assert!(action_compact_responses_enabled());
+        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "false");
+        assert!(!action_compact_responses_enabled());
+        std::env::set_var("WEBCODEX_ACTION_COMPACT_RESPONSES", "maybe");
+        assert!(!action_compact_responses_enabled());
+        std::env::remove_var("WEBCODEX_ACTION_COMPACT_RESPONSES");
     }
     #[test]
     fn tool_request_trace_defaults_off() {

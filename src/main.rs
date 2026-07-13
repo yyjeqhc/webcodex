@@ -401,6 +401,10 @@ only for local/trusted-network demos."
         mcp_compact_schemas = crate::config::mcp_compact_schemas_enabled(),
         "mcp_compact_schemas"
     );
+    tracing::info!(
+        action_compact_responses = crate::config::action_compact_responses_enabled(),
+        "action_compact_responses"
+    );
     tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
     tracing::info!("MCP App console: {}/console", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);

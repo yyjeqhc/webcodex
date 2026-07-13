@@ -690,3 +690,309 @@ fn session_summary_includes_bounded_message_summary() {
         .get("messages")
         .is_some());
 }
+
+fn test_binding_key(project: &str) -> CurrentSessionKey {
+    CurrentSessionKey {
+        principal_kind: "test".to_string(),
+        principal_id: "principal-1".to_string(),
+        transport: SessionTransport::Api.as_str().to_string(),
+        resolved_project: project.to_string(),
+    }
+}
+
+/// Create-entry funnel: convenience wrappers must produce the same shape as
+/// the authoritative `start_session_with_options` path.
+#[test]
+fn start_session_wrappers_funnel_to_single_create_entry() {
+    let store = SessionStore::default();
+
+    let via_start = store.start_session(Some("proj-a".to_string()), Some("t1".to_string()));
+    let via_guards = store.start_session_with_guards(
+        Some("proj-a".to_string()),
+        Some("t2".to_string()),
+        SessionMode::Normal,
+        SessionGuards::default(),
+    );
+    let via_options = store.start_session_with_options(SessionCreateOptions {
+        project: Some("proj-a".to_string()),
+        title: Some("t3".to_string()),
+        mode: SessionMode::Normal,
+        guards: SessionGuards::default(),
+        project_instructions: None,
+    });
+    let via_read_only = store.start_session_with_guards(
+        Some("proj-a".to_string()),
+        Some("ro".to_string()),
+        SessionMode::ReadOnly,
+        SessionGuards::default(),
+    );
+
+    for summary in [&via_start, &via_guards, &via_options, &via_read_only] {
+        assert!(summary.session_id.starts_with("wc_sess_"));
+        assert!(store.contains_session(&summary.session_id));
+        assert_eq!(summary.project.as_deref(), Some("proj-a"));
+    }
+    assert_eq!(via_start.mode, SessionMode::Normal);
+    assert!(!via_start.guards.deny_write_tools);
+    assert!(!via_start.guards.deny_shell_tools);
+    assert_eq!(via_read_only.mode, SessionMode::ReadOnly);
+    assert!(via_read_only.guards.deny_write_tools);
+    assert!(via_read_only.guards.deny_shell_tools);
+    assert!(store
+        .guard_denial(&via_read_only.session_id, "write_project_file")
+        .is_some());
+    assert!(store
+        .guard_denial(&via_start.session_id, "write_project_file")
+        .is_none());
+}
+
+/// Unknown sessions never accept events or messages, and are not recreated.
+#[test]
+fn unknown_session_mutations_do_not_recreate_session() {
+    let store = SessionStore::default();
+    let missing = "wc_sess_does_not_exist";
+
+    assert!(!store.contains_session(missing));
+    assert!(store.summary(missing, None).is_none());
+    assert!(store
+        .record_tool_call_started(
+            Some(missing),
+            SessionTransport::Api,
+            "read_file",
+            &json!({"project": "demo", "path": "a.rs"}),
+        )
+        .is_none());
+    assert!(!store.contains_session(missing));
+
+    let post = store.post_message(PostSessionMessageInput {
+        session_id: missing.to_string(),
+        kind: SessionMessageKind::Note,
+        message: "nope".to_string(),
+        tags: Vec::new(),
+        reply_to: None,
+        priority: SessionMessagePriority::Normal,
+    });
+    assert!(matches!(post, Err(SessionMessageError::UnknownSession)));
+    assert!(!store.contains_session(missing));
+
+    let resolve = store.resolve_message(missing, "wc_msg_x", None);
+    assert!(matches!(resolve, Err(SessionMessageError::UnknownSession)));
+}
+
+/// Evicted (capacity-bound) sessions stay gone: events must not revive them.
+#[test]
+fn evicted_session_is_not_reactivated_by_events_or_messages() {
+    let store = SessionStore::new(1, 10);
+    let first = store.start_session(None, Some("first".to_string()));
+    let second = store.start_session(None, Some("second".to_string()));
+
+    assert!(!store.contains_session(&first.session_id));
+    assert!(store.contains_session(&second.session_id));
+
+    assert!(store
+        .record_tool_call_started(
+            Some(&first.session_id),
+            SessionTransport::Api,
+            "read_file",
+            &json!({"project": "demo", "path": "a.rs"}),
+        )
+        .is_none());
+    assert!(!store.contains_session(&first.session_id));
+    assert!(store.summary(&first.session_id, None).is_none());
+
+    let post = store.post_message(PostSessionMessageInput {
+        session_id: first.session_id.clone(),
+        kind: SessionMessageKind::Note,
+        message: "revive?".to_string(),
+        tags: Vec::new(),
+        reply_to: None,
+        priority: SessionMessagePriority::Normal,
+    });
+    assert!(matches!(post, Err(SessionMessageError::UnknownSession)));
+    assert!(!store.contains_session(&first.session_id));
+}
+
+#[test]
+fn bind_unbind_current_session_is_consistent() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+    let key = test_binding_key("proj");
+
+    assert!(store.current_session(&key).is_none());
+    let bound = store
+        .bind_current_session(key.clone(), &session.session_id)
+        .expect("bind known session");
+    assert_eq!(bound.session_id, session.session_id);
+    assert_eq!(
+        store.current_session_id(&key).as_deref(),
+        Some(session.session_id.as_str())
+    );
+
+    assert!(store.unbind_current_session(&key));
+    assert!(!store.unbind_current_session(&key));
+    assert!(store.current_session(&key).is_none());
+
+    // Unknown session cannot be bound.
+    assert!(store
+        .bind_current_session(key.clone(), "wc_sess_missing")
+        .is_none());
+    assert!(store.current_session(&key).is_none());
+}
+
+#[test]
+fn stale_binding_is_cleared_when_session_missing() {
+    let store = SessionStore::new(1, 10);
+    let first = store.start_session(Some("proj".to_string()), None);
+    let key = test_binding_key("proj");
+    store
+        .bind_current_session(key.clone(), &first.session_id)
+        .unwrap();
+
+    // Evict first by creating a second session (max_sessions = 1).
+    let _second = store.start_session(Some("proj".to_string()), None);
+    assert!(!store.contains_session(&first.session_id));
+
+    // Lookup must clear the stale binding rather than returning a ghost id.
+    assert!(store.current_session(&key).is_none());
+    assert!(store.current_session_id(&key).is_none());
+}
+
+#[test]
+fn message_post_and_resolve_round_trip_through_store() {
+    let store = SessionStore::default();
+    let session = store.start_session(None, None);
+    let posted = store
+        .post_message(PostSessionMessageInput {
+            session_id: session.session_id.clone(),
+            kind: SessionMessageKind::Todo,
+            message: "do the thing".to_string(),
+            tags: vec!["work".to_string()],
+            reply_to: None,
+            priority: SessionMessagePriority::High,
+        })
+        .unwrap();
+    assert_eq!(posted.status, SessionMessageStatus::Open);
+
+    let listed = store
+        .list_messages(
+            &session.session_id,
+            ListSessionMessagesFilter {
+                kind: Some(SessionMessageKind::Todo),
+                status: Some(SessionMessageStatus::Open),
+                limit: Some(10),
+            },
+        )
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].message_id, posted.message_id);
+
+    let resolved = store
+        .resolve_message(
+            &session.session_id,
+            &posted.message_id,
+            Some("shipped".to_string()),
+        )
+        .unwrap();
+    assert_eq!(resolved.status, SessionMessageStatus::Resolved);
+    assert_eq!(resolved.resolution.as_deref(), Some("shipped"));
+    let first_resolved_at = resolved.resolved_at.expect("resolved_at set");
+
+    // Resolved messages are not reopened by a second resolve.
+    let again = store
+        .resolve_message(
+            &session.session_id,
+            &posted.message_id,
+            Some("still done".to_string()),
+        )
+        .unwrap();
+    assert_eq!(again.status, SessionMessageStatus::Resolved);
+    assert_eq!(again.resolved_at, Some(first_resolved_at));
+    assert_eq!(again.resolution.as_deref(), Some("still done"));
+
+    let open = store
+        .list_messages(
+            &session.session_id,
+            ListSessionMessagesFilter {
+                kind: None,
+                status: Some(SessionMessageStatus::Open),
+                limit: None,
+            },
+        )
+        .unwrap();
+    assert!(open.is_empty());
+}
+
+#[test]
+fn read_only_guards_block_write_and_shell_classifications() {
+    let store = SessionStore::default();
+    let normal =
+        store.start_session_with_guards(None, None, SessionMode::Normal, SessionGuards::default());
+    let read_only = store.start_session_with_guards(
+        None,
+        None,
+        SessionMode::ReadOnly,
+        SessionGuards::default(),
+    );
+
+    assert!(store
+        .guard_denial(&normal.session_id, "write_project_file")
+        .is_none());
+    assert!(store
+        .guard_denial(&normal.session_id, "run_shell")
+        .is_none());
+
+    let write_denial = store
+        .guard_denial(&read_only.session_id, "write_project_file")
+        .expect("write denied");
+    assert_eq!(write_denial.guard, "deny_write_tools");
+    assert_eq!(write_denial.mode, SessionMode::ReadOnly);
+
+    let shell_denial = store
+        .guard_denial(&read_only.session_id, "run_shell")
+        .expect("shell denied");
+    assert_eq!(shell_denial.guard, "deny_shell_tools");
+
+    // Reads remain allowed under read_only.
+    assert!(store
+        .guard_denial(&read_only.session_id, "read_file")
+        .is_none());
+}
+
+#[test]
+fn ledger_round_trip_preserves_session_events_and_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 50);
+    let session = store.start_session(Some("proj".to_string()), Some("persist".to_string()));
+    let start = store
+        .record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Api,
+            "read_file",
+            &json!({"project": "proj", "path": "src/lib.rs"}),
+        )
+        .unwrap();
+    store.record_tool_call_finished(Some(start), true, &json!({}), None, None);
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Progress,
+        "checkpoint",
+    );
+
+    let restored = SessionStore::with_persistence(&ledger, 10, 50);
+    let summary = restored.summary(&session.session_id, Some(20)).unwrap();
+    assert_eq!(summary.project.as_deref(), Some("proj"));
+    assert_eq!(summary.title.as_deref(), Some("persist"));
+    assert_eq!(summary.counts.tool_calls, 1);
+    assert!(summary
+        .events
+        .iter()
+        .any(|event| event.kind == "tool_call_finished"));
+    assert_eq!(summary.messages.total, 1);
+    assert_eq!(summary.messages.progress, 1);
+
+    // Process-local bindings are intentionally not durable.
+    let key = test_binding_key("proj");
+    assert!(restored.current_session(&key).is_none());
+}

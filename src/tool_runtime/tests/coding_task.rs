@@ -611,6 +611,412 @@ async fn start_coding_task_compact_startup_verdict_accepts_clean_workspace() {
     assert_compact_verdict_safe(verdict, "startup clean verdict");
 }
 
+/// Shared helper: start_coding_task with git inspection against a real temp repo.
+async fn start_coding_task_with_git_inspection(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    auth: &AuthContext,
+    compact_startup: bool,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::from_tool_name(
+                        "start_coding_task",
+                        json!({
+                            "project": project,
+                            "include_runtime_status": true,
+                            "compact_startup": compact_startup,
+                            "include_git": true,
+                            "include_recent_commits": false,
+                            "include_rules": false,
+                            "include_tool_manifest": true
+                        }),
+                    )
+                    .unwrap(),
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(runtime, client_id)
+        .await
+        .expect("start_coding_task should inspect workspace git status");
+    complete_agent_request_by_running_locally(runtime, client_id, req).await;
+    task.await.unwrap()
+}
+
+fn assert_startup_nonblocking_dirty(result: &ToolResult, workspace_reason: &str) {
+    assert!(result.success, "{:?}", result.error);
+    let session_id = result.output["session"]["session_id"]
+        .as_str()
+        .expect("session_id");
+    assert!(session_id.starts_with("wc_sess_"), "{session_id}");
+    let verdict = &result.output["startup_verdict"];
+    assert_startup_verdict_shape(verdict);
+    assert_eq!(
+        verdict["blocking"], false,
+        "dirty workspace must not block: {verdict}"
+    );
+    assert_ne!(
+        verdict["status"], "fail",
+        "dirty workspace must not fail startup: {verdict}"
+    );
+    assert_eq!(verdict["status"], "warn");
+    assert_check_status(verdict, "workspace", "warn");
+    assert_check_reason(verdict, "workspace", workspace_reason);
+    assert_eq!(result.output["git"]["clean"], false);
+    assert!(
+        result.output["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["kind"] == "dirty_worktree"),
+        "top-level dirty_worktree warning expected: {}",
+        result.output["warnings"]
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_untracked_only_is_nonblocking_warning() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    fs::write(tmp.path().join("report.md"), "audit report\n").unwrap();
+    let report_before = fs::read_to_string(tmp.path().join("report.md")).unwrap();
+
+    let runtime = test_runtime();
+    let client_id = "coding-start-untracked";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result =
+        start_coding_task_with_git_inspection(&runtime, client_id, &project, &auth, true).await;
+
+    assert_startup_nonblocking_dirty(&result, "workspace_dirty");
+    assert_eq!(result.output["git"]["counts"]["untracked"], 1);
+    assert_eq!(result.output["git"]["counts"]["modified"], 0);
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("report.md")).unwrap(),
+        report_before,
+        "start_coding_task must not modify untracked report.md"
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_tracked_modified_is_nonblocking_and_allows_continued_edit() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    commit_file(
+        tmp.path(),
+        "src/example.rs",
+        "fn main() {\n    println!(\"head\");\n}\n",
+        "add example",
+    );
+    // Pre-existing worktree change (M) that must be preserved as the edit baseline.
+    let dirty_content = "fn main() {\n    println!(\"user-wip\");\n}\n";
+    fs::write(tmp.path().join("src/example.rs"), dirty_content).unwrap();
+
+    let runtime = test_runtime();
+    let client_id = "coding-start-modified";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result =
+        start_coding_task_with_git_inspection(&runtime, client_id, &project, &auth, false).await;
+
+    assert_startup_nonblocking_dirty(&result, "workspace_dirty");
+    assert_eq!(result.output["git"]["counts"]["modified"], 1);
+    assert_eq!(result.output["git"]["counts"]["unstaged"], 1);
+
+    // Worktree content is the real baseline: edit must match current disk, not HEAD.
+    let worktree = fs::read_to_string(tmp.path().join("src/example.rs")).unwrap();
+    assert_eq!(worktree, dirty_content);
+    assert!(worktree.contains("user-wip"));
+    assert!(!worktree.contains("head"));
+
+    let (updated, out) = crate::tool_runtime::files::apply_line_edit_content(
+        &worktree,
+        "src/example.rs",
+        crate::tool_runtime::files::LineEditOperation::Replace,
+        Some(2),
+        Some(2),
+        None,
+        "    println!(\"user-wip-plus-agent\");",
+        None,
+        Some("    println!(\"user-wip\");"),
+    )
+    .expect("continued edit on already-modified worktree content must succeed");
+    assert_eq!(out["changed"], true);
+    assert!(updated.contains("user-wip-plus-agent"));
+    assert!(
+        updated.contains("fn main()"),
+        "must preserve surrounding worktree content: {updated}"
+    );
+    assert!(
+        !updated.contains("head"),
+        "must not revert to HEAD content: {updated}"
+    );
+
+    // Applying against HEAD-only content with the same worktree expected_prefix fails,
+    // proving the tool is not using HEAD as the silent baseline.
+    let head_content = "fn main() {\n    println!(\"head\");\n}\n";
+    let head_err = crate::tool_runtime::files::apply_line_edit_content(
+        head_content,
+        "src/example.rs",
+        crate::tool_runtime::files::LineEditOperation::Replace,
+        Some(2),
+        Some(2),
+        None,
+        "    println!(\"user-wip-plus-agent\");",
+        None,
+        Some("    println!(\"user-wip\");"),
+    )
+    .unwrap_err();
+    assert!(
+        head_err.contains("expected_old_prefix mismatch")
+            || head_err.contains("Rejected before write"),
+        "HEAD baseline should not satisfy worktree prefix: {head_err}"
+    );
+
+    // Persist continued edit and confirm disk still differs from a clean checkout.
+    fs::write(tmp.path().join("src/example.rs"), &updated).unwrap();
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("src/example.rs")).unwrap(),
+        updated
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_staged_changes_are_nonblocking() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    commit_file(tmp.path(), "src/example.rs", "fn a() {}\n", "add example");
+    fs::write(
+        tmp.path().join("src/example.rs"),
+        "fn a() { /* staged */ }\n",
+    )
+    .unwrap();
+    let (exit_code, stdout, stderr, _) =
+        crate::tool_runtime::helpers::run_command_sync("git add -- src/example.rs", tmp.path(), 30);
+    assert_eq!(exit_code, 0, "git add failed\n{stdout}\n{stderr}");
+
+    let runtime = test_runtime();
+    let client_id = "coding-start-staged";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result =
+        start_coding_task_with_git_inspection(&runtime, client_id, &project, &auth, true).await;
+
+    assert_startup_nonblocking_dirty(&result, "workspace_dirty");
+    assert_eq!(result.output["git"]["counts"]["staged"], 1);
+    // Staging area must remain intact (no auto unstage).
+    let (exit_code, status_stdout, stderr, _) =
+        crate::tool_runtime::helpers::run_command_sync("git status --porcelain", tmp.path(), 30);
+    assert_eq!(exit_code, 0, "{stderr}");
+    assert!(
+        status_stdout.lines().any(|line| line.starts_with("M ")),
+        "staged entry should remain staged: {status_stdout}"
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_mixed_dirty_workspace_summarizes_counts_without_blocking() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "tracked.rs", "tracked\n", "add tracked");
+    commit_file(tmp.path(), "staged.rs", "staged-base\n", "add staged");
+    fs::write(tmp.path().join("tracked.rs"), "tracked-mod\n").unwrap();
+    fs::write(tmp.path().join("staged.rs"), "staged-mod\n").unwrap();
+    let (exit_code, _, stderr, _) =
+        crate::tool_runtime::helpers::run_command_sync("git add -- staged.rs", tmp.path(), 30);
+    assert_eq!(exit_code, 0, "{stderr}");
+    fs::write(tmp.path().join("notes.md"), "notes\n").unwrap();
+
+    let runtime = test_runtime();
+    let client_id = "coding-start-mixed";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result =
+        start_coding_task_with_git_inspection(&runtime, client_id, &project, &auth, false).await;
+
+    assert_startup_nonblocking_dirty(&result, "workspace_dirty");
+    assert_eq!(result.output["git"]["counts"]["modified"], 2);
+    assert_eq!(result.output["git"]["counts"]["staged"], 1);
+    assert_eq!(result.output["git"]["counts"]["unstaged"], 1);
+    assert_eq!(result.output["git"]["counts"]["untracked"], 1);
+    assert!(
+        result.output["git"]["changed_files_count"]
+            .as_u64()
+            .unwrap()
+            >= 3,
+        "changed_files_count: {}",
+        result.output["git"]["changed_files_count"]
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_conflict_state_is_nonblocking_warning() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "conflicted.rs", "base\n", "base");
+    let (exit_code, _, stderr, _) =
+        crate::tool_runtime::helpers::run_command_sync("git checkout -b other", tmp.path(), 30);
+    assert_eq!(exit_code, 0, "{stderr}");
+    commit_file(tmp.path(), "conflicted.rs", "other-side\n", "other");
+    let (exit_code, _, stderr, _) =
+        crate::tool_runtime::helpers::run_command_sync("git checkout -", tmp.path(), 30);
+    assert_eq!(exit_code, 0, "{stderr}");
+    commit_file(tmp.path(), "conflicted.rs", "main-side\n", "main");
+    let (exit_code, _, stderr, _) =
+        crate::tool_runtime::helpers::run_command_sync("git merge other || true", tmp.path(), 30);
+    assert_eq!(exit_code, 0, "merge helper failed: {stderr}");
+    // Ensure conflict markers exist on disk for inspection.
+    let conflict_body = fs::read_to_string(tmp.path().join("conflicted.rs")).unwrap();
+    assert!(
+        conflict_body.contains("<<<<<<<") || conflict_body.contains("other-side"),
+        "expected conflict content: {conflict_body}"
+    );
+
+    let runtime = test_runtime();
+    let client_id = "coding-start-conflict";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result =
+        start_coding_task_with_git_inspection(&runtime, client_id, &project, &auth, true).await;
+
+    assert_startup_nonblocking_dirty(&result, "workspace_conflicts");
+    assert!(
+        result.output["git"]["counts"]["conflicted"]
+            .as_u64()
+            .unwrap()
+            >= 1,
+        "conflicted count: {}",
+        result.output["git"]["counts"]
+    );
+    // Session still usable for read/inspect of conflicted path content.
+    assert!(
+        fs::read_to_string(tmp.path().join("conflicted.rs"))
+            .unwrap()
+            .contains("main-side")
+            || fs::read_to_string(tmp.path().join("conflicted.rs"))
+                .unwrap()
+                .contains("<<<<<<<"),
+        "conflict file must remain readable"
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_unknown_project_still_fails() {
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_coding_task",
+                json!({
+                    "project": "agent:missing:does-not-exist",
+                    "include_runtime_status": false,
+                    "include_git": false,
+                    "include_recent_commits": false,
+                    "include_rules": false,
+                    "include_tool_manifest": false
+                }),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+    assert!(
+        !result.success,
+        "unresolvable project must fail: {:?}",
+        result.output
+    );
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .contains("project")
+            || result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .contains("not found")
+            || result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .contains("unknown"),
+        "expected project resolution error: {:?}",
+        result.error
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_agent_offline_is_still_blocking() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-start-offline", "demo", tmp.path()).await;
+    // Transport disconnect leaves the agent offline while project id may still resolve.
+    runtime
+        .shell_clients
+        .reconcile_disconnect("coding-start-offline", "inst")
+        .await;
+
+    let auth = auth_context(None, true);
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_coding_task",
+                json!({
+                    "project": project,
+                    "include_runtime_status": true,
+                    "compact_startup": true,
+                    "include_git": false,
+                    "include_recent_commits": false,
+                    "include_rules": false,
+                    "include_tool_manifest": true
+                }),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+
+    // Project resolution or agent health may fail closed — either is blocking.
+    if result.success {
+        let verdict = &result.output["startup_verdict"];
+        assert_startup_verdict_shape(verdict);
+        assert_eq!(
+            verdict["blocking"], true,
+            "agent offline / unreachable must remain blocking: {verdict}"
+        );
+        assert_eq!(verdict["status"], "fail");
+    } else {
+        assert!(
+            result.error.is_some(),
+            "infrastructure failure must surface an error"
+        );
+    }
+}
+
 #[tokio::test]
 async fn start_coding_task_filters_compact_tool_manifest_by_categories() {
     let tmp = tempfile::tempdir().unwrap();

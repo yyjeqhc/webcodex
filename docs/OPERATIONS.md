@@ -443,10 +443,17 @@ Startup sanity verdict rules:
   `jobs.active_count=0`, an agent is online when the task depends on an agent
   project, and requested git/workspace status is clean.
 - WARN: runtime status or git/workspace was not requested, validation has not
-  run yet, or `tool_manifest.truncated=true` with
-  `truncation_reason="limit"`.
-- FAIL: runtime status failed, blocking jobs are active, requested git/workspace
-  status is dirty, or tool manifest generation failed.
+  run yet, `tool_manifest.truncated=true` with `truncation_reason="limit"`, or
+  the requested git/workspace status is dirty (tracked, staged, untracked, or
+  conflicted). Dirty workspace is an expected development state and does **not**
+  prevent starting a coding task. Existing worktree changes must be inspected
+  and preserved; they are not automatically reverted, stashed, cleaned, or
+  overwritten.
+- FAIL: runtime status failed, blocking jobs are active, agent required for the
+  task is offline, tool manifest generation failed, or another infrastructure /
+  safety condition makes the project inaccessible or the requested work unsafe
+  or impossible. Startup blocking is reserved for those conditions — not for a
+  dirty Git worktree.
 
 The response also includes `output.permissions`. The current self-hosted
 development profile is `policy=dev_auto_approve`, `auto_approve=true`, and

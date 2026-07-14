@@ -57,7 +57,8 @@ pub(crate) fn compact_start_coding_task_output(output: &Value) -> Value {
         .and_then(|v| v.get("suggested_next_actions"))
         .cloned()
         .unwrap_or_else(|| json!([]));
-    let summary = build_startup_summary(status, blocking, &project, &session_id);
+    let git = compact_git_workspace(output.get("git"));
+    let summary = build_startup_summary(status, blocking, &project, &session_id, &git);
     let semantic_navigation = compact_semantic_navigation(output.get("semantic_navigation"));
     let warnings = compact_warnings(output.get("warnings"));
 
@@ -75,6 +76,7 @@ pub(crate) fn compact_start_coding_task_output(output: &Value) -> Value {
             "blocking": blocking,
             "suggested_next_actions": next_steps,
         },
+        "git": git,
         "semantic_navigation": semantic_navigation,
         "warnings": warnings,
         "deterministic": true,
@@ -119,16 +121,64 @@ fn compact_warnings(warnings: Option<&Value>) -> Value {
     }
 }
 
+/// Keep only operator-critical workspace status for compact Action responses.
+///
+/// Full file lists, show_changes payloads, and recent commits are omitted so
+/// dirty worktrees stay visible without reintroducing bulk.
+fn compact_git_workspace(git: Option<&Value>) -> Value {
+    let Some(git) = git.filter(|v| v.is_object()) else {
+        return Value::Null;
+    };
+    let counts = git.get("counts").cloned().unwrap_or_else(|| json!({}));
+    json!({
+        "available": git.get("available").cloned().unwrap_or(Value::Null),
+        "clean": git.get("clean").cloned().unwrap_or(Value::Null),
+        "changed_files_count": git
+            .get("changed_files_count")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "counts": {
+            "modified": counts.get("modified").cloned().unwrap_or(json!(0)),
+            "added": counts.get("added").cloned().unwrap_or(json!(0)),
+            "deleted": counts.get("deleted").cloned().unwrap_or(json!(0)),
+            "renamed": counts.get("renamed").cloned().unwrap_or(json!(0)),
+            "copied": counts.get("copied").cloned().unwrap_or(json!(0)),
+            "untracked": counts.get("untracked").cloned().unwrap_or(json!(0)),
+            "conflicted": counts.get("conflicted").cloned().unwrap_or(json!(0)),
+            "staged": counts.get("staged").cloned().unwrap_or(json!(0)),
+            "unstaged": counts.get("unstaged").cloned().unwrap_or(json!(0)),
+        },
+    })
+}
+
 fn build_startup_summary(
     status: &str,
     blocking: bool,
     project: &Value,
     session_id: &Value,
+    git: &Value,
 ) -> String {
     let project = project.as_str().unwrap_or("unknown project");
     let session = session_id.as_str().unwrap_or("unknown session");
     if blocking {
-        format!("Startup {status} (blocking) for {project}; session {session}. Follow next_steps before editing.")
+        return format!(
+            "Startup {status} (blocking) for {project}; session {session}. Follow next_steps before editing."
+        );
+    }
+    let dirty = git.get("clean").and_then(Value::as_bool) == Some(false);
+    let conflicted = git
+        .pointer("/counts/conflicted")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0;
+    if conflicted {
+        format!(
+            "Startup {status} for {project}; session {session} ready with merge/rebase conflicts. Inspect and preserve existing worktree state; not a startup failure."
+        )
+    } else if dirty {
+        format!(
+            "Startup {status} for {project}; session {session} ready with existing worktree changes. Inspect and preserve them while editing; not a startup failure."
+        )
     } else {
         format!(
             "Startup {status} for {project}; session {session} ready. Use session_id on later tools."
@@ -175,8 +225,22 @@ mod tests {
                 "sources": [{"path": "AGENTS.md", "first_lines": ["# Rules"]}]
             },
             "git": {
+                "available": true,
                 "clean": true,
-                "recent_commits": [{"subject": "init"}, {"subject": "more"}]
+                "changed_files_count": 0,
+                "counts": {
+                    "modified": 0,
+                    "added": 0,
+                    "deleted": 0,
+                    "renamed": 0,
+                    "copied": 0,
+                    "untracked": 0,
+                    "conflicted": 0,
+                    "staged": 0,
+                    "unstaged": 0
+                },
+                "recent_commits": [{"subject": "init"}, {"subject": "more"}],
+                "show_changes": {"files": ["bulk"]}
             },
             "semantic_navigation": {
                 "supported": true,
@@ -191,8 +255,13 @@ mod tests {
                 "schema_version": 1,
                 "count": 75,
                 "tools": [
-                    {"name": "start_coding_task", "accepted_flattened_args": ["project", "title"]},
-                    {"name": "read_file", "accepted_flattened_args": ["project", "path"]}
+                    {"name": "start_coding_task", "accepted_flattened_args": ["project", "title"], "purpose": "start a coding task with startup context"},
+                    {"name": "read_file", "accepted_flattened_args": ["project", "path"], "purpose": "read a project file range"},
+                    {"name": "show_changes", "accepted_flattened_args": ["project", "session_id"], "purpose": "review worktree changes"},
+                    {"name": "workspace_hygiene_check", "accepted_flattened_args": ["project"], "purpose": "hygiene findings"},
+                    {"name": "finish_coding_task", "accepted_flattened_args": ["project", "session_id"], "purpose": "close out a coding task"},
+                    {"name": "replace_line_range", "accepted_flattened_args": ["project", "path", "start_line", "end_line", "content"], "purpose": "line edit"},
+                    {"name": "cargo_test", "accepted_flattened_args": ["project", "filter"], "purpose": "run cargo test"}
                 ]
             },
             "recommended_flow": {
@@ -237,6 +306,8 @@ mod tests {
         );
         assert_eq!(compact["startup_verdict"]["status"], "pass");
         assert_eq!(compact["startup_verdict"]["blocking"], false);
+        assert_eq!(compact["git"]["clean"], true);
+        assert_eq!(compact["git"]["changed_files_count"], 0);
         assert_eq!(compact["semantic_navigation"]["recommended"], true);
     }
 
@@ -250,7 +321,6 @@ mod tests {
             "runtime_status",
             "permissions",
             "rules",
-            "git",
             "recommended_flow",
         ] {
             assert!(
@@ -258,6 +328,10 @@ mod tests {
                 "compact output must drop {dropped}"
             );
         }
+        // Compact git keeps clean/counts only — not bulk show_changes/commits.
+        assert!(compact.get("git").is_some());
+        assert!(compact["git"].get("show_changes").is_none());
+        assert!(compact["git"].get("recent_commits").is_none());
         assert!(
             compact.pointer("/startup_verdict/checks").is_none(),
             "compact startup_verdict must omit verbose checks"
@@ -270,6 +344,63 @@ mod tests {
             compact.pointer("/resolved_project/path").is_none(),
             "compact resolved_project must omit path"
         );
+    }
+
+    #[test]
+    fn compact_start_coding_task_preserves_dirty_workspace_warning_without_blocking() {
+        let mut full = sample_start_coding_task_output();
+        full["git"] = json!({
+            "available": true,
+            "clean": false,
+            "changed_files_count": 2,
+            "counts": {
+                "modified": 1,
+                "added": 0,
+                "deleted": 0,
+                "renamed": 0,
+                "copied": 0,
+                "untracked": 1,
+                "conflicted": 0,
+                "staged": 0,
+                "unstaged": 1
+            }
+        });
+        full["startup_verdict"] = json!({
+            "status": "warn",
+            "blocking": false,
+            "checks": [
+                {"name": "workspace", "status": "warn", "reason": "workspace_dirty"}
+            ],
+            "suggested_next_actions": [
+                "inspect existing worktree changes with show_changes and preserve them while editing"
+            ]
+        });
+        full["warnings"] = json!([{
+            "kind": "dirty_worktree",
+            "changed_files_count": 2,
+            "message": "workspace has existing tracked or untracked changes; inspect and preserve them while editing"
+        }]);
+
+        let compact = compact_start_coding_task_output(&full);
+        assert_eq!(compact["startup_verdict"]["status"], "warn");
+        assert_eq!(compact["startup_verdict"]["blocking"], false);
+        assert_eq!(compact["git"]["clean"], false);
+        assert_eq!(compact["git"]["changed_files_count"], 2);
+        assert_eq!(compact["git"]["counts"]["modified"], 1);
+        assert_eq!(compact["git"]["counts"]["untracked"], 1);
+        assert!(compact["summary"]
+            .as_str()
+            .unwrap()
+            .contains("existing worktree changes"));
+        assert!(compact["summary"]
+            .as_str()
+            .unwrap()
+            .contains("not a startup failure"));
+        assert_eq!(compact["warnings"][0]["kind"], "dirty_worktree");
+        assert!(compact["next_steps"][0]
+            .as_str()
+            .unwrap()
+            .contains("preserve"));
     }
 
     #[test]

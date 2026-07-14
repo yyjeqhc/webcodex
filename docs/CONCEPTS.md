@@ -93,6 +93,8 @@ Use GPT Actions if you are building a Custom GPT. GPT Actions exposes a focused 
 
 A session is a bounded task record. `start_coding_task` creates the recommended coding session and returns an explicit `session_id`. Keep that id and pass it to later review, validation, handoff, or finish calls when the tool accepts it.
 
+Dirty workspace is an expected development state and does not prevent starting a coding task. Existing worktree changes (tracked modified, staged, untracked, renamed, deleted, or conflicted) must be inspected and preserved. They are not automatically reverted, stashed, cleaned, or overwritten. Startup blocking is reserved for conditions that make the project inaccessible or the requested work unsafe or impossible (missing project path, resolution failure, agent offline when required, permission denial, or path safety failures). Review and finish tools may still treat a dirty closeout as non-pass evidence.
+
 Sessions are task-continuity evidence, not a full surveillance log. They record bounded, redacted facts such as tool names, status, project id, validation summaries, permission decisions, and closeout state.
 
 ### Handoff / Finish

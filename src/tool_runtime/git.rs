@@ -167,6 +167,7 @@ pub(crate) fn non_git_show_changes_payload(
             "renamed": 0,
             "copied": 0,
             "untracked": 0,
+            "conflicted": 0,
             "staged": 0,
             "unstaged": 0,
         },
@@ -300,9 +301,17 @@ fn porcelain_path(path_part: &str) -> (String, Option<String>) {
     }
 }
 
+fn is_unmerged_status(x: char, y: char) -> bool {
+    // Porcelain v1 unmerged/conflict pairs (UU, AA, DD, AU, UA, DU, UD, ...).
+    x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D')
+}
+
 fn status_label(x: char, y: char) -> &'static str {
     if x == '?' && y == '?' {
         return "untracked";
+    }
+    if is_unmerged_status(x, y) {
+        return "conflicted";
     }
     if x == 'R' || y == 'R' {
         "renamed"
@@ -344,6 +353,7 @@ pub(crate) fn parse_show_changes_output(
     let mut renamed = 0usize;
     let mut copied = 0usize;
     let mut untracked = 0usize;
+    let mut conflicted = 0usize;
     let mut staged_count = 0usize;
     let mut unstaged_count = 0usize;
 
@@ -368,8 +378,9 @@ pub(crate) fn parse_show_changes_output(
         }
         let status = status_label(x, y);
         let is_untracked = status == "untracked";
-        let staged = !is_untracked && x != ' ' && x != '?';
-        let unstaged = !is_untracked && y != ' ' && y != '?';
+        let is_conflicted = status == "conflicted";
+        let staged = !is_untracked && !is_conflicted && x != ' ' && x != '?';
+        let unstaged = !is_untracked && !is_conflicted && y != ' ' && y != '?';
         match status {
             "modified" => modified += 1,
             "added" => added += 1,
@@ -377,6 +388,7 @@ pub(crate) fn parse_show_changes_output(
             "renamed" => renamed += 1,
             "copied" => copied += 1,
             "untracked" => untracked += 1,
+            "conflicted" => conflicted += 1,
             _ => {}
         }
         if staged {
@@ -392,7 +404,13 @@ pub(crate) fn parse_show_changes_output(
         file.insert("unstaged".to_string(), json!(unstaged));
         file.insert(
             "kind".to_string(),
-            json!(if is_untracked { "untracked" } else { "tracked" }),
+            json!(if is_untracked {
+                "untracked"
+            } else if is_conflicted {
+                "conflicted"
+            } else {
+                "tracked"
+            }),
         );
         if let Some(old_path) = old_path {
             file.insert("old_path".to_string(), json!(old_path));
@@ -402,6 +420,13 @@ pub(crate) fn parse_show_changes_output(
 
     let clean = files.is_empty();
     let mut warnings = Vec::new();
+    if conflicted > 0 {
+        warnings.push(json!({
+            "kind": "workspace_conflicts",
+            "conflicted": conflicted,
+            "message": "workspace has unresolved merge/rebase conflicts; inspect carefully and preserve conflict markers until intentionally resolved",
+        }));
+    }
     for file in &files {
         if file["kind"] != "untracked" {
             continue;
@@ -440,6 +465,7 @@ pub(crate) fn parse_show_changes_output(
             "renamed": renamed,
             "copied": copied,
             "untracked": untracked,
+            "conflicted": conflicted,
             "staged": staged_count,
             "unstaged": unstaged_count,
         },

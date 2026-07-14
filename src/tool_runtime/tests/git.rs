@@ -457,6 +457,7 @@ fn show_changes_reports_untracked_file() {
     );
     assert_eq!(output["clean"], false);
     assert_eq!(output["counts"]["untracked"], 1);
+    assert_eq!(output["counts"]["conflicted"], 0);
     assert_eq!(output["files"][0]["status"], "untracked");
     assert_eq!(output["files"][0]["staged"], false);
     assert_eq!(output["warnings"][0]["kind"], "untracked_smoke_file");
@@ -467,6 +468,39 @@ fn show_changes_reports_untracked_file() {
         .unwrap()
         .iter()
         .any(|v| v.as_str().unwrap().contains("untracked")));
+}
+
+#[test]
+fn show_changes_reports_conflicted_file() {
+    let output = parse_show_changes_output(
+        "agent:oe:webcodex",
+        "## main\nUU conflicted.rs",
+        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+        "",
+        None,
+        20,
+        80,
+        Some(0),
+        "",
+    );
+    assert_eq!(output["clean"], false);
+    assert_eq!(output["counts"]["conflicted"], 1);
+    assert_eq!(output["counts"]["modified"], 0);
+    assert_eq!(output["files"][0]["path"], "conflicted.rs");
+    assert_eq!(output["files"][0]["status"], "conflicted");
+    assert_eq!(output["files"][0]["kind"], "conflicted");
+    assert!(
+        output["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["kind"] == "workspace_conflicts"),
+        "expected workspace_conflicts warning: {}",
+        output["warnings"]
+    );
+    // Review/closeout verdict still treats dirty worktree as fail; startup is separate.
+    assert_eq!(output["verdict"]["status"], "fail");
+    assert_reason_list_contains(&output["verdict"], "blocking_reasons", "workspace_dirty");
 }
 
 #[test]

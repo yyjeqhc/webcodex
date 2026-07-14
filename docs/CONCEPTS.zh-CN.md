@@ -93,6 +93,8 @@ https://your-domain.example/openapi.json
 
 session 是有界任务记录。`start_coding_task` 创建推荐的 coding session，并返回显式 `session_id`。保存该 id，并在后续 review、validation、handoff 或 finish tool 支持时传入。
 
+脏工作区是预期中的开发状态，**不会**阻止启动 coding task。已有的 worktree 改动（tracked modified、staged、untracked、renamed、deleted 或 conflicted）必须先检查并保留；不得自动 revert、stash、clean 或覆盖。Startup blocking 仅保留给项目不可访问、或请求的工作不安全/不可能的情况（路径不存在、解析失败、所需 agent 离线、权限拒绝、路径安全失败等）。review/finish 工具在收口时仍可将 dirty closeout 作为非 pass 证据。
+
 session 是 task-continuity evidence，不是完整监控日志。它记录有界、redacted 的事实，例如 tool name、status、project id、validation summaries、permission decisions 和 closeout state。
 
 ### Handoff / Finish

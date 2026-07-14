@@ -179,6 +179,11 @@ impl ToolRuntime {
         } else {
             Value::Null
         };
+        // Surface dirty/conflict worktree state at top-level so compact Action
+        // responses that omit full git payloads still keep the warning reason.
+        if include_git && !git.is_null() {
+            append_workspace_warnings(&workspace_payload_from_git_summary(&git), &mut warnings);
+        }
         let recommended_flow = match &tool_manifest {
             Some(manifest) => recommended_flow_payload_for_manifest_tools(manifest),
             None => recommended_flow_payload(),
@@ -699,6 +704,23 @@ fn workspace_payload_from_show_changes(show_changes: &Value) -> Value {
     })
 }
 
+/// Map startup `git` summary fields into the workspace warning shape.
+fn workspace_payload_from_git_summary(git: &Value) -> Value {
+    let counts = git.get("counts").cloned().unwrap_or_else(|| json!({}));
+    json!({
+        "clean": git.get("clean").and_then(Value::as_bool).unwrap_or(false),
+        "git_available": git
+            .get("available")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        "changed_files_count": git
+            .get("changed_files_count")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| changed_files_count_from_counts(&counts)),
+        "counts": counts,
+    })
+}
+
 fn compact_finish_output(output: &Value, resolved_unexpected_validation_failures: usize) -> Value {
     let hygiene_checked = output
         .get("hygiene")
@@ -790,9 +812,14 @@ fn startup_verdict(
             Some("workspace_not_checked") => {
                 push_unique_action(&mut actions, "run show_changes before editing or finishing")
             }
-            Some("workspace_dirty") => {
-                push_unique_action(&mut actions, "review workspace changes with show_changes")
-            }
+            Some("workspace_dirty") => push_unique_action(
+                &mut actions,
+                "inspect existing worktree changes with show_changes and preserve them while editing",
+            ),
+            Some("workspace_conflicts") => push_unique_action(
+                &mut actions,
+                "review merge/rebase conflicts carefully; do not reset or overwrite conflict markers unless resolving them",
+            ),
             Some("active_jobs_present") | Some("blocking_active_jobs") => {
                 push_unique_action(&mut actions, "inspect active jobs before proceeding")
             }
@@ -859,9 +886,20 @@ fn workspace_check(output: &Value, git_requested: bool) -> (&'static str, Option
     if git.get("available").and_then(Value::as_bool) == Some(false) {
         return ("warn", Some("git_unavailable"));
     }
+    // Dirty worktrees (tracked, staged, untracked, or conflicted) are expected
+    // development state. Startup must warn and continue — never block session
+    // creation solely because git status is not clean. Blocking remains for
+    // infrastructure/safety failures handled by other startup checks.
+    let conflicted = git
+        .pointer("/counts/conflicted")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if conflicted > 0 {
+        return ("warn", Some("workspace_conflicts"));
+    }
     match git.get("clean").and_then(Value::as_bool) {
         Some(true) => ("pass", None),
-        Some(false) => ("fail", Some("workspace_dirty")),
+        Some(false) => ("warn", Some("workspace_dirty")),
         None => ("warn", Some("workspace_unknown")),
     }
 }
@@ -1072,6 +1110,7 @@ fn changed_files_count_from_counts(counts: &Value) -> u64 {
         "renamed",
         "copied",
         "untracked",
+        "conflicted",
     ]
     .iter()
     .map(|key| counts.get(*key).and_then(Value::as_u64).unwrap_or(0))
@@ -1084,13 +1123,23 @@ fn append_workspace_warnings(workspace: &Value, warnings: &mut Vec<Value>) {
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
+        let conflicted = workspace
+            .pointer("/counts/conflicted")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let message = if conflicted > 0 {
+            "workspace has merge/rebase conflicts; inspect and preserve existing worktree state"
+        } else {
+            "workspace has existing tracked or untracked changes; inspect and preserve them while editing"
+        };
         warnings.push(json!({
             "kind": "dirty_worktree",
             "changed_files_count": workspace
                 .get("changed_files_count")
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
-            "message": "workspace has tracked or untracked changes",
+            "conflicted": conflicted,
+            "message": message,
         }));
     }
     if !workspace

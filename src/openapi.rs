@@ -64,10 +64,11 @@ fn public_url() -> String {
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
 /// 6. advanced/generic entry point (`callRuntimeTool`)
 ///
-/// The compatibility edit tools `replace_in_file` and `write_project_file`
-/// remain runtime tools reachable through `callRuntimeTool`; dedicated GPT
-/// Actions should prefer structured line edits, `apply_text_edits`, or
-/// `apply_patch_checked`.
+/// Compatibility edit tools (line/pattern helpers, raw `apply_patch`, and
+/// whole-file write) remain runtime tools reachable through `callRuntimeTool`.
+/// Prefer `apply_text_edits` for precise local edits and `apply_patch_checked`
+/// for multi-file patches; use `write_project_file` only for create or
+/// intentional full rewrite.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",

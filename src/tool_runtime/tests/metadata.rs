@@ -1353,11 +1353,9 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         "read_file",
         "search_project_text",
         "show_changes",
-        "replace_line_range",
-        "insert_at_line",
-        "delete_line_range",
         "apply_text_edits",
         "apply_patch_checked",
+        "write_project_file",
         "cargo_check",
         "cargo_test",
         "validate_patch",
@@ -1371,6 +1369,26 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
             "recommended_flows should mention {tool}: {serialized}"
         );
     }
+    for tool in ["replace_line_range", "insert_at_line", "delete_line_range"] {
+        assert!(
+            !serialized.contains(tool),
+            "recommended_flows should not rank compatibility edit tool {tool}: {serialized}"
+        );
+    }
+    // Avoid substring false positives against apply_patch_checked.
+    let edit_tools = result.output["recommended_flows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|flow| flow["name"] == "edit")
+        .expect("edit flow")["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !edit_tools.iter().any(|tool| tool == "apply_patch"),
+        "recommended edit flow must not rank raw apply_patch: {edit_tools:?}"
+    );
     assert!(
         serialized.contains("run_shell")
             && serialized.contains("escape hatch")

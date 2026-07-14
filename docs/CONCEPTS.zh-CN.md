@@ -63,7 +63,7 @@ ToolRuntime 是与协议无关的执行层。MCP、GPT Actions 和 REST wrapper 
 
 - Discovery：`runtime_status`、`list_projects`、`list_agents`、`tool_manifest`。
 - Inspect：`list_project_files`、`search_project_text`、`read_file`、`git_status`、`git_diff_hunks`。
-- Edit：`replace_line_range`、`insert_at_line`、`delete_line_range`、`apply_text_edits`、`apply_patch_checked`。
+- Edit：`apply_text_edits`（局部精确）、`apply_patch_checked`（多文件 checked patch）、`write_project_file`（新建/整文件重写）。行/模式类工具仍为兼容路径。
 - Validate：`validate_patch`、`cargo_fmt`、`cargo_check`、`cargo_test`。
 - Review：`show_changes`、`workspace_hygiene_check`。
 - Finish：`finish_coding_task`、`session_handoff_summary`。

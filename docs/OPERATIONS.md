@@ -478,17 +478,28 @@ require `capabilities.git_available=true`; a project such as
 
 ### 3. Edit with structured tools
 
-Prefer structured line edits when line numbers are known:
+#### Preferred workflow
+
+1. Read and inspect the **current worktree** (`read_file`, `show_changes`). Dirty
+   worktrees are a valid baseline; protect existing user edits. Do not rebuild
+   file content from HEAD and overwrite the current file.
+2. **Precise local edits:** `apply_text_edits` (canonical). Ordered exact
+   replace/insert/delete with optional hash/prefix/anchor guards.
+3. **Multi-file / complex unified diffs:** `apply_patch_checked` (canonical).
+   Preflight first; apply only when validation passes. Prefer over raw
+   `apply_patch`.
+4. **New files or intentional whole-file rewrite:** `write_project_file`. Not the
+   default for ordinary local edits.
+5. **Compatibility tools** (`replace_line_range`, `insert_at_line`,
+   `delete_line_range`, `replace_in_file`, `replace_exact_block`,
+   `insert_before_pattern`, `insert_after_pattern`) remain supported for special
+   cases; prefer `apply_text_edits` for new workflows.
 
 ```json
-{"tool": "replace_line_range", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "start_line": 42, "end_line": 45, "new_text": "new content"}}
-{"tool": "insert_at_line", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "line": 50, "text": "inserted line"}}
-{"tool": "delete_line_range", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "start_line": 60, "end_line": 65}}
+{"tool": "apply_text_edits", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "edits": [{"kind": "replace_exact", "old_text": "old", "new_text": "new"}]}}
+{"tool": "apply_patch_checked", "params": {"project": "agent:workstation:my-repo", "patch": "diff --git ..."}}
+{"tool": "write_project_file", "params": {"project": "agent:workstation:my-repo", "path": "src/new.rs", "content": "fn main() {}\n"}}
 ```
-
-Use `apply_text_edits` for coordinated exact edits in one UTF-8 file. Use
-`apply_patch_checked` for broader multi-file diffs after `validate_patch`. Use
-whole-file writes only for new files or deliberate small overwrites.
 
 ### 4. Validate
 

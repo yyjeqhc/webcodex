@@ -92,11 +92,12 @@ inspect:
   read_file
 
 edit:
-  replace_line_range
-  insert_at_line
-  delete_line_range
-  apply_text_edits
-  apply_patch_checked
+  apply_text_edits          # 规范：局部精确单文件编辑
+  apply_patch_checked       # 规范：多文件 checked patch
+  write_project_file        # 仅新建或有意整文件重写
+  # 兼容（仍支持）：replace_line_range, insert_at_line,
+  # delete_line_range, replace_in_file, replace_exact_block,
+  # insert_before_pattern, insert_after_pattern, 裸 apply_patch
 
 validate:
   validate_patch

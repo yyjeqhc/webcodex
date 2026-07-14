@@ -62,9 +62,10 @@ and [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
 
 - **Inspect before edit:** read relevant code/docs and existing diffs first.
 - **Minimal change:** keep edits scoped to the requested task.
-- **Prefer structured edit tools** when available (`replace_line_range`,
-  `insert_at_line`, `delete_line_range`, `apply_text_edits`,
-  `apply_patch_checked`, or equivalent editor patches).
+- **Prefer structured edit tools** when available (`apply_text_edits` for
+  precise local edits, `apply_patch_checked` for multi-file patches,
+  `write_project_file` only for create/intentional full rewrite; line/pattern
+  tools remain compatibility paths).
 - **Do not** use shell `sed` / `perl` / `python` as the primary editing mechanism.
 - Shell is for **inspection, tests, and bounded diagnostics only**.
 - Do not weaken, delete, or skip critical assertions, security checks, schema

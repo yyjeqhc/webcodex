@@ -260,7 +260,7 @@ Use compact summaries: `runtime_status(summary_only=true)`, focused `tool_manife
 
 ### Shell Or Job Feels Too Broad
 
-Prefer structured tools first: `read_file`, `search_project_text`, line edits, `apply_text_edits`, `validate_patch`, `cargo_fmt`, `cargo_check`, `cargo_test`, `show_changes`, and `workspace_hygiene_check`.
+Prefer structured tools first: `read_file`, `search_project_text`, `apply_text_edits`, `apply_patch_checked`, `validate_patch`, `cargo_fmt`, `cargo_check`, `cargo_test`, `show_changes`, and `workspace_hygiene_check`.
 
 ## Next Docs
 

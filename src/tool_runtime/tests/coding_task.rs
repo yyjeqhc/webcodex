@@ -299,10 +299,12 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
     let edit = result.output["recommended_flow"]["edit"]
         .as_array()
         .unwrap();
-    assert!(contains_string(edit, "replace_line_range"));
-    assert!(contains_string(edit, "insert_at_line"));
-    assert!(contains_string(edit, "delete_line_range"));
     assert!(contains_string(edit, "apply_text_edits"));
+    assert!(contains_string(edit, "apply_patch_checked"));
+    assert!(contains_string(edit, "write_project_file"));
+    assert!(!contains_string(edit, "replace_line_range"));
+    assert!(!contains_string(edit, "insert_at_line"));
+    assert!(!contains_string(edit, "delete_line_range"));
 
     assert_eq!(result.output["rules"]["present"], true);
     assert_eq!(result.output["rules"]["sources"][0]["path"], "AGENTS.md");
@@ -3092,11 +3094,9 @@ async fn start_coding_task_without_manifest_keeps_full_default_recommended_flow(
 
     let flow = &result.output["recommended_flow"];
     for tool in [
-        "replace_line_range",
-        "insert_at_line",
-        "delete_line_range",
         "apply_text_edits",
         "apply_patch_checked",
+        "write_project_file",
     ] {
         assert!(
             flow["edit"]
@@ -3105,6 +3105,22 @@ async fn start_coding_task_without_manifest_keeps_full_default_recommended_flow(
                 .iter()
                 .any(|entry| entry == tool),
             "full default edit flow should include {tool}"
+        );
+    }
+    for tool in [
+        "replace_line_range",
+        "insert_at_line",
+        "delete_line_range",
+        "replace_in_file",
+        "apply_patch",
+    ] {
+        assert!(
+            !flow["edit"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == tool),
+            "full default edit flow should not rank compatibility/advanced tool {tool}"
         );
     }
     assert!(

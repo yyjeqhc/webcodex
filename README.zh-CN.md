@@ -151,7 +151,7 @@ WebCodex 围绕保守的 coding loop 设计：
 
 1. `start_coding_task` - 创建显式 session，并收集有界 startup context。
 2. Inspect - 使用 `list_project_files`、`search_project_text`、`read_file` 和 Git status tools。
-3. Edit - 优先使用 `replace_line_range`、`insert_at_line`、`delete_line_range`、`apply_text_edits` 或 `apply_patch_checked`。
+3. Edit - 局部精确修改优先 `apply_text_edits`；多文件协调 patch 用 `apply_patch_checked`；新建或有意整文件重写用 `write_project_file`。行/模式类工具仍可用，作为兼容路径。
 4. Validate - 根据项目运行 `validate_patch`、`cargo_fmt`、`cargo_check` 或 `cargo_test`。
 5. Inspect outcome - 使用 `show_changes`、`git_diff_hunks` 和 `workspace_hygiene_check`。
 6. Finish - 使用 `finish_coding_task` 或 `session_handoff_summary` 做收口。

@@ -151,7 +151,7 @@ WebCodex is designed around a conservative coding loop:
 
 1. `start_coding_task` - create an explicit session and collect bounded startup context.
 2. Inspect - use `list_project_files`, `search_project_text`, `read_file`, optional read-only LSP intelligence (`lsp_status`, `document_symbols`, `workspace_symbols`, `goto_definition`, `find_references`, `hover`), and Git status tools.
-3. Edit - prefer `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
+3. Edit - prefer `apply_text_edits` for precise local edits; `apply_patch_checked` for multi-file patches; `write_project_file` only for create or intentional full rewrite. Line/pattern tools remain available as compatibility paths.
 4. Validate - run `validate_patch`, `cargo_fmt`, `cargo_check`, or `cargo_test` where appropriate.
 5. Inspect validation evidence - use `validation_summary` to query the existing session ledger without rerunning tests.
 6. Inspect outcome - use `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`.

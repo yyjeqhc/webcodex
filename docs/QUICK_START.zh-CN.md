@@ -260,7 +260,7 @@ agent connect、runtime checks、MCP 和 GPT Actions 都使用同一个 `WEBCODE
 
 ### Shell Or Job Feels Too Broad
 
-优先使用结构化工具：`read_file`、`search_project_text`、line edits、`apply_text_edits`、`validate_patch`、`cargo_fmt`、`cargo_check`、`cargo_test`、`show_changes` 和 `workspace_hygiene_check`。
+优先使用结构化工具：`read_file`、`search_project_text`、`apply_text_edits`、`apply_patch_checked`、`validate_patch`、`cargo_fmt`、`cargo_check`、`cargo_test`、`show_changes` 和 `workspace_hygiene_check`。
 
 ## 下一步文档
 

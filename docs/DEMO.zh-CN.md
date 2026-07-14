@@ -26,7 +26,7 @@ changes without a diff, run workspace hygiene, and finish. Do not edit files.
 
 1. `start_coding_task`
 2. `list_project_files`、`search_project_text` 或 `read_file`
-3. `replace_line_range`、`insert_at_line`、`delete_line_range`、`apply_text_edits` 或 `apply_patch_checked`
+3. `apply_text_edits`（局部精确）、`apply_patch_checked`（多文件）或 `write_project_file`（新建/整文件重写）
 4. `validate_patch`、`cargo_fmt`、`cargo_check` 或 `cargo_test`
 5. `show_changes`
 6. 需要定向 diff 检查时使用 `git_diff_hunks`

@@ -988,13 +988,13 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     assert_eq!(
         edit_prefix,
         vec![
-            "replace_line_range",
-            "insert_at_line",
-            "delete_line_range",
             "apply_text_edits",
             "apply_patch_checked",
+            "write_project_file",
+            "replace_line_range",
+            "insert_at_line",
         ],
-        "preferred edit tools should lead the edit category"
+        "canonical edit tools should lead the edit category"
     );
     // recommended_flows are short and non-empty.
     let flows = recommended_flows();
@@ -1005,9 +1005,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     let joined_flows = flows.join("\n").to_lowercase();
     for phrase in [
         "inspect: use read_file, search_project_text, and show_changes before editing",
-        "edit: prefer replace_line_range / insert_at_line / delete_line_range",
-        "apply_text_edits for batches",
-        "apply_patch_checked for broad diffs",
+        "edit: prefer apply_text_edits for precise local edits",
+        "apply_patch_checked for multi-file patches",
+        "write_project_file only for create/intentional full rewrite",
+        "line/pattern tools are compatibility paths",
         "validate: use cargo_check / cargo_test / validate_patch",
         "raw run_shell is a bounded escape hatch",
         "not the primary editing or validation path",
@@ -1456,7 +1457,7 @@ fn project_overview_manifest_profiles_match_intended_workflows() {
 }
 
 #[test]
-fn coding_intent_includes_line_edit_and_cleanup_tools() {
+fn coding_intent_includes_canonical_edit_and_cleanup_tools() {
     use crate::tool_runtime::tool_definition::TOOL_MANIFEST_INTENTS;
 
     let coding = TOOL_MANIFEST_INTENTS
@@ -1464,9 +1465,6 @@ fn coding_intent_includes_line_edit_and_cleanup_tools() {
         .find(|intent| intent.name == "coding")
         .expect("coding intent");
     for required in [
-        "replace_line_range",
-        "insert_at_line",
-        "delete_line_range",
         "apply_text_edits",
         "apply_patch_checked",
         "git_status",
@@ -1478,6 +1476,21 @@ fn coding_intent_includes_line_edit_and_cleanup_tools() {
             coding.tools.contains(&required),
             "coding intent must include {required}: {:?}",
             coding.tools
+        );
+    }
+    // Compatibility line/pattern tools remain registered, but coding intent
+    // ranks only the canonical edit paths to reduce model selection noise.
+    for compat in [
+        "replace_line_range",
+        "insert_at_line",
+        "delete_line_range",
+        "replace_in_file",
+        "write_project_file",
+        "apply_patch",
+    ] {
+        assert!(
+            !coding.tools.contains(&compat),
+            "coding intent should not rank compatibility/advanced edit tool {compat}"
         );
     }
     for forbidden in ["run_shell", "run_job"] {
@@ -1540,8 +1553,16 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(
-        coding_names.contains(&"replace_line_range"),
-        "coding intent tools should expose line edits: {coding_names:?}"
+        coding_names.contains(&"apply_text_edits"),
+        "coding intent tools should expose canonical precise edits: {coding_names:?}"
+    );
+    assert!(
+        coding_names.contains(&"apply_patch_checked"),
+        "coding intent tools should expose checked patches: {coding_names:?}"
+    );
+    assert!(
+        !coding_names.contains(&"replace_line_range"),
+        "coding intent should not rank line compatibility tools: {coding_names:?}"
     );
 
     // single category filter

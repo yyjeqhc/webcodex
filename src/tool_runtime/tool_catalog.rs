@@ -97,16 +97,16 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_EDIT,
         tools: &[
+            "apply_text_edits",
+            "apply_patch_checked",
+            "write_project_file",
             "replace_line_range",
             "insert_at_line",
             "delete_line_range",
-            "apply_text_edits",
-            "apply_patch_checked",
             "replace_in_file",
             "replace_exact_block",
             "insert_before_pattern",
             "insert_after_pattern",
-            "write_project_file",
             "save_project_artifact",
             "read_project_artifact_metadata",
             "read_project_artifact",
@@ -208,15 +208,13 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit: prefer replace_line_range / insert_at_line / delete_line_range for local line edits; use apply_text_edits for batches; use apply_patch_checked for broad diffs.",
+            "Edit: prefer apply_text_edits for precise local edits; apply_patch_checked for multi-file patches; write_project_file only for create/intentional full rewrite. Line/pattern tools are compatibility paths.",
         manifest_purpose:
-            "Prefer structured line edits, batch text edits, or checked patches for source changes.",
+            "Prefer precise text edits and checked multi-file patches for source changes; whole-file write only for create or intentional full rewrite.",
         tools: &[
-            "replace_line_range",
-            "insert_at_line",
-            "delete_line_range",
             "apply_text_edits",
             "apply_patch_checked",
+            "write_project_file",
         ],
     },
     ToolRecommendedFlow {
@@ -269,12 +267,9 @@ pub(crate) const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "read_file",
             "search_project_text",
             "list_project_files",
-            // local line edit
-            "replace_line_range",
-            "insert_at_line",
-            "delete_line_range",
-            // batch / patch edit
+            // canonical precise edit
             "apply_text_edits",
+            // canonical checked multi-file patch
             "apply_patch_checked",
             // validation
             "validate_patch",

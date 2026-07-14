@@ -1,5 +1,6 @@
 //! Runtime tool dispatch and session/permission guard flow.
 
+use super::edit_tool_telemetry;
 use super::session_context::{
     add_session_project_mismatch_warning, add_session_telemetry_hint, current_session_key,
     current_session_unavailable_result, is_current_session_eligible, session_guard_denied_result,
@@ -68,6 +69,34 @@ impl ToolRuntime {
     }
 
     pub(crate) async fn dispatch_with_auth_transport_options_and_metadata(
+        &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+        use_current_session: bool,
+        allow_cross_project_session: bool,
+        recorder_metadata: sessions::ToolCallRecorderMetadata,
+    ) -> ToolResult {
+        // Phase-1 edit usage telemetry: argument-free structured log only.
+        // Does not alter execution, session ledger, Action Audit, or schemas.
+        let mut edit_usage = edit_tool_telemetry::start_edit_tool_usage(call.tool_name());
+        let result = self
+            .dispatch_with_auth_transport_options_and_metadata_inner(
+                call,
+                auth,
+                transport,
+                use_current_session,
+                allow_cross_project_session,
+                recorder_metadata,
+            )
+            .await;
+        if let Some(guard) = edit_usage.as_mut() {
+            guard.finish_with_result(&result);
+        }
+        result
+    }
+
+    async fn dispatch_with_auth_transport_options_and_metadata_inner(
         &self,
         mut call: ToolCall,
         auth: Option<&AuthContext>,

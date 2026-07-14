@@ -7,6 +7,7 @@ mod checkpoint;
 mod coding_task;
 mod coding_task_semantic_navigation;
 mod dispatch;
+mod edit_tool_telemetry;
 mod files;
 mod files_helpers;
 mod files_line_edit;

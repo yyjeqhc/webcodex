@@ -51,6 +51,15 @@ pub(crate) struct NewConnectorResult<'a> {
     pub warnings: &'a [String],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConnectorPreservedWorkspace {
+    pub task_id: String,
+    pub run_id: String,
+    pub execution_root: String,
+    pub execution_executor_ref: String,
+    pub baseline_commit: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub(crate) struct ConnectorTaskSnapshot {
     pub task_id: String,
@@ -446,6 +455,70 @@ impl Database {
         Ok(sequence)
     }
 
+    pub(crate) fn record_connector_workspace_release(
+        &self,
+        task_id: &str,
+        project_id: &str,
+        subject_id: &str,
+        released: bool,
+        cleanup_warning: Option<&str>,
+        now: i64,
+    ) -> Result<i64, ConnectorTaskStoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let task = load_task(&tx, task_id, project_id, subject_id)?
+            .ok_or(ConnectorTaskStoreError::NotFound)?;
+        if !matches!(
+            task.task_status.as_str(),
+            "ready_for_review" | "accepted" | "rejected"
+        ) || task.run_status != "completed"
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "workspace release can only follow a completed task result".to_string(),
+            ));
+        }
+        if load_result(&tx, task_id)?.is_none() {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "workspace release requires a stable task result".to_string(),
+            ));
+        }
+        if let Some(warning) = cleanup_warning {
+            tx.execute(
+                "UPDATE wc_task_results
+                 SET cleanup_warning = CASE
+                     WHEN cleanup_warning IS NULL THEN ?1
+                     ELSE cleanup_warning || '; ' || ?1
+                 END
+                 WHERE task_id = ?2",
+                params![warning, task_id],
+            )?;
+        } else if released {
+            tx.execute(
+                "UPDATE wc_task_results SET cleanup_warning = NULL WHERE task_id = ?1",
+                params![task_id],
+            )?;
+        }
+        let sequence = task.event_cursor + 1;
+        insert_event(
+            &tx,
+            task_id,
+            &task.run_id,
+            sequence,
+            "workspace_release",
+            &serde_json::json!({
+                "released": released,
+                "cleanup_warning": cleanup_warning
+            }),
+            now,
+        )?;
+        tx.execute(
+            "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
+            params![now, task_id],
+        )?;
+        tx.commit()?;
+        Ok(sequence)
+    }
+
     pub(crate) fn connector_task_events(
         &self,
         task_id: &str,
@@ -555,6 +628,32 @@ impl Database {
         }
         tx.commit()?;
         Ok(runs.len())
+    }
+
+    pub(crate) fn connector_preserved_workspaces(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ConnectorPreservedWorkspace>, ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut statement = conn.prepare(
+            "SELECT t.id, r.id, ctx.execution_root, ctx.execution_executor_ref,
+                    ctx.baseline_commit
+             FROM wc_tasks t
+             JOIN wc_runs r ON r.task_id = t.id
+             JOIN wc_run_contexts ctx ON ctx.run_id = r.id
+             WHERE t.project_id = ?1 AND r.status = 'interrupted' AND ctx.isolated = 1
+             ORDER BY r.started_at ASC",
+        )?;
+        let rows = statement.query_map(params![project_id], |row| {
+            Ok(ConnectorPreservedWorkspace {
+                task_id: row.get(0)?,
+                run_id: row.get(1)?,
+                execution_root: row.get(2)?,
+                execution_executor_ref: row.get(3)?,
+                baseline_commit: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub(crate) fn request_or_consume_connector_approval(
@@ -857,6 +956,85 @@ impl Database {
         load_task(&conn, task_id, project_id, &subject_id)?.ok_or(ConnectorTaskStoreError::NotFound)
     }
 
+    pub(crate) fn abandon_interrupted_connector_task(
+        &self,
+        task_id: &str,
+        project_id: &str,
+        actor: &str,
+        now: i64,
+    ) -> Result<ConnectorTaskResult, ConnectorTaskStoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let (run_id, cursor) = tx
+            .query_row(
+                "SELECT r.id, COALESCE(MAX(e.sequence), 0)
+                 FROM wc_tasks t
+                 JOIN wc_runs r ON r.task_id = t.id
+                 LEFT JOIN wc_task_events e ON e.task_id = t.id
+                 LEFT JOIN wc_task_results result ON result.task_id = t.id
+                 WHERE t.id = ?1 AND t.project_id = ?2
+                   AND r.status = 'interrupted' AND result.id IS NULL
+                 GROUP BY r.id ORDER BY r.started_at DESC LIMIT 1",
+                params![task_id, project_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| {
+                ConnectorTaskStoreError::InvalidState(
+                    "only an interrupted task without a Result can be abandoned".to_string(),
+                )
+            })?;
+        let result_id = new_id("wc_result");
+        let warnings = vec!["interrupted workspace changes were discarded locally"];
+        tx.execute(
+            "INSERT INTO wc_task_results
+                (id, task_id, run_id, summary, patch_artifact, patch_sha256, patch_bytes,
+                 changed_paths_json, validation_json, warnings_json, decision_status,
+                 decided_by, decided_at, cleanup_warning, created_at)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL, 0, '[]', ?5, ?6, 'rejected',
+                     ?7, ?8, NULL, ?8)",
+            params![
+                result_id,
+                task_id,
+                run_id,
+                "Interrupted task abandoned locally without capturing a patch.",
+                serde_json::to_string(&serde_json::json!({"status": "not_run"}))?,
+                serde_json::to_string(&warnings)?,
+                actor,
+                now
+            ],
+        )?;
+        insert_event(
+            &tx,
+            task_id,
+            &run_id,
+            cursor + 1,
+            "task_abandoned",
+            &serde_json::json!({
+                "actor": actor,
+                "result_id": result_id,
+                "changes_captured": false
+            }),
+            now,
+        )?;
+        tx.execute(
+            "UPDATE wc_runs SET status = 'completed', finished_at = ?1 WHERE id = ?2",
+            params![now, run_id],
+        )?;
+        tx.execute(
+            "UPDATE wc_tasks SET status = 'ready_for_review', updated_at = ?1 WHERE id = ?2",
+            params![now, task_id],
+        )?;
+        tx.execute(
+            "UPDATE wc_approvals SET state = 'expired'
+             WHERE task_id = ?1 AND state IN ('pending', 'approved')",
+            params![task_id],
+        )?;
+        tx.commit()?;
+        load_result(&conn, task_id)?
+            .ok_or_else(|| ConnectorTaskStoreError::Storage(anyhow::anyhow!("result disappeared")))
+    }
+
     pub(crate) fn decide_connector_result(
         &self,
         task_id: &str,
@@ -893,7 +1071,8 @@ impl Database {
             })?;
         let updated = tx.execute(
             "UPDATE wc_task_results
-             SET decision_status = ?1, decided_by = ?2, decided_at = ?3, cleanup_warning = ?4
+             SET decision_status = ?1, decided_by = ?2, decided_at = ?3,
+                 cleanup_warning = COALESCE(?4, cleanup_warning)
              WHERE task_id = ?5 AND decision_status = 'pending'",
             params![decision, actor, now, cleanup_warning, task_id],
         )?;
@@ -1503,6 +1682,10 @@ mod tests {
             .unwrap();
         assert_eq!(recovered.task_status, "needs_attention");
         assert_eq!(recovered.run_status, "interrupted");
+        let preserved = db.connector_preserved_workspaces("wc_proj_demo").unwrap();
+        assert_eq!(preserved.len(), 1);
+        assert_eq!(preserved[0].task_id, task.task_id);
+        assert_eq!(preserved[0].run_id, task.run_id);
         let events = db
             .connector_task_events(&task.task_id, "wc_proj_demo", "user:one", 20)
             .unwrap();
@@ -1516,6 +1699,45 @@ mod tests {
             .connector_task_events(&task.task_id, "wc_proj_demo", "user:one", 20)
             .unwrap();
         assert_eq!(events.last().unwrap().kind, "run_resumed");
+    }
+
+    #[test]
+    fn interrupted_task_can_be_abandoned_without_capturing_workspace_changes() {
+        let (_temp, db) = database();
+        bind(&db, "user:one");
+        let task = start(&db, "user:one", "abandon after restart");
+        db.interrupt_connector_runs("wc_proj_demo", 102).unwrap();
+
+        let result = db
+            .abandon_interrupted_connector_task(&task.task_id, "wc_proj_demo", "local_cli", 103)
+            .unwrap();
+        assert_eq!(result.decision_status, "rejected");
+        assert_eq!(result.patch_bytes, 0);
+        assert_eq!(result.validation["status"], "not_run");
+        assert!(db
+            .connector_preserved_workspaces("wc_proj_demo")
+            .unwrap()
+            .is_empty());
+        let decided = db
+            .connector_task(&task.task_id, "wc_proj_demo", "user:one")
+            .unwrap();
+        assert_eq!(decided.task_status, "rejected");
+        let cursor = db
+            .record_connector_workspace_release(
+                &task.task_id,
+                "wc_proj_demo",
+                "user:one",
+                true,
+                None,
+                104,
+            )
+            .unwrap();
+        assert_eq!(cursor, 4);
+        let events = db
+            .connector_task_events(&task.task_id, "wc_proj_demo", "user:one", 20)
+            .unwrap();
+        assert_eq!(events[2].kind, "task_abandoned");
+        assert_eq!(events[3].kind, "workspace_release");
     }
 
     #[test]
@@ -1541,6 +1763,17 @@ mod tests {
             102,
         )
         .unwrap();
+        let release_cursor = db
+            .record_connector_workspace_release(
+                &task.task_id,
+                "wc_proj_demo",
+                "user:one",
+                false,
+                Some("slot cleanup needs retry"),
+                103,
+            )
+            .unwrap();
+        assert_eq!(release_cursor, 3);
         let result = db
             .decide_connector_result(
                 &task.task_id,
@@ -1548,10 +1781,14 @@ mod tests {
                 "accepted",
                 "local_cli",
                 None,
-                103,
+                104,
             )
             .unwrap();
         assert_eq!(result.decision_status, "accepted");
+        assert_eq!(
+            result.cleanup_warning.as_deref(),
+            Some("slot cleanup needs retry")
+        );
         let decided = db
             .connector_task(&task.task_id, "wc_proj_demo", "user:one")
             .unwrap();

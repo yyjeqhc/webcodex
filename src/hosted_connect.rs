@@ -305,6 +305,8 @@ fn validate_public_https_url(value: &str) -> Result<(), String> {
 struct ConnectPaths {
     state: PathBuf,
     data: PathBuf,
+    cache: PathBuf,
+    cargo_target: PathBuf,
     credentials: PathBuf,
     projects: PathBuf,
     runs: PathBuf,
@@ -322,8 +324,11 @@ impl ConnectPaths {
     fn new(state: PathBuf) -> Self {
         let credentials = state.join("credentials");
         let agent = state.join("agent");
+        let cache = state.join("cache");
         Self {
             data: state.join("data"),
+            cargo_target: cache.join("cargo-target"),
+            cache,
             projects: agent.join("projects.d"),
             runs: state.join("runs"),
             results: state.join("results"),
@@ -343,6 +348,8 @@ impl ConnectPaths {
         for path in [
             &self.state,
             &self.data,
+            &self.cache,
+            &self.cargo_target,
             &self.credentials,
             &self.projects,
             &self.runs,
@@ -362,6 +369,7 @@ pub(crate) struct LocalTaskState {
     pub data: PathBuf,
     pub runs: PathBuf,
     pub projects: PathBuf,
+    pub cargo_target: PathBuf,
     pub logical_project_id: String,
 }
 
@@ -390,6 +398,7 @@ pub(crate) fn resolve_local_task_state(
         data: paths.data,
         runs: paths.runs,
         projects: paths.projects,
+        cargo_target: paths.cargo_target,
         logical_project_id: format!("wc_proj_{}", &identity[..20]),
     })
 }
@@ -682,7 +691,7 @@ async fn run_resolved(resolved: ResolvedConnect) -> Result<(), String> {
         .current_dir(&resolved.paths.state)
         .env_remove("WEBCODEX_TOKEN")
         .env_remove("WEBCODEX_AGENT_TOKEN");
-    strip_provider_credentials(&mut agent_command);
+    configure_executor_environment(&mut agent_command, &resolved.paths);
     let mut agent = spawn_logged("webcodex agent", &mut agent_command, &agent_log)?;
     wait_for_project(
         &mut agent,
@@ -842,6 +851,8 @@ async fn ensure_agent_config(
         .arg(&resolved.root)
         .arg("--allowed-root")
         .arg(&resolved.paths.runs)
+        .arg("--allowed-root")
+        .arg(&resolved.paths.cache)
         .arg("--output")
         .arg(&resolved.paths.agent_config)
         .arg("--overwrite");
@@ -1560,6 +1571,14 @@ fn nonempty_env(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn configure_executor_environment(command: &mut Command, paths: &ConnectPaths) {
+    // Cargo artifacts are executor-owned cache data, not Task Result data.
+    // Keeping the target directory outside the reusable worktree makes warm
+    // checks survive slot cleanup without exposing a new model-visible input.
+    command.env("CARGO_TARGET_DIR", &paths.cargo_target);
+    strip_provider_credentials(command);
+}
+
 fn strip_provider_credentials(command: &mut Command) {
     strip_openai_credentials(command);
     strip_cloudflare_credentials(command);
@@ -1703,6 +1722,25 @@ mod tests {
         assert_eq!(value["id"].as_str(), Some("demo"));
         assert_eq!(value["path"].as_str(), Some("/tmp/demo"));
         assert!(value.get("projects").is_none());
+    }
+
+    #[test]
+    fn executor_uses_project_scoped_cargo_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = ConnectPaths::new(temp.path().join("state"));
+        paths.create().unwrap();
+        assert!(paths.cargo_target.is_dir());
+        assert!(!paths.cargo_target.starts_with(temp.path().join("project")));
+
+        let mut command = Command::new("webcodex-agent");
+        configure_executor_environment(&mut command, &paths);
+        let configured = command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("CARGO_TARGET_DIR"))
+            .and_then(|(_, value)| value)
+            .map(PathBuf::from);
+        assert_eq!(configured.as_deref(), Some(paths.cargo_target.as_path()));
     }
 
     #[test]

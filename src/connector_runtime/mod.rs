@@ -105,6 +105,7 @@ pub(crate) struct ConnectorRuntime {
     db: Arc<Database>,
     context: ConnectorContext,
     workspace: workspace::WorkspaceManager,
+    workspace_ops: tokio::sync::Mutex<()>,
     task_locks: StdMutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
 }
 
@@ -152,11 +153,18 @@ impl ConnectorRuntime {
                 "Recovered unfinished connector runs as interrupted"
             );
         }
+        let preserved = db
+            .connector_preserved_workspaces(&context.project_id)
+            .map_err(|error| format!("failed to inspect connector workspaces: {error}"))?;
+        for warning in workspace.recover(&context, &preserved) {
+            tracing::warn!(project_id = %context.project_id, warning = %warning, "Connector workspace recovery was incomplete");
+        }
         Ok(Self {
             tools,
             db,
             context,
             workspace,
+            workspace_ops: tokio::sync::Mutex::new(()),
             task_locks: StdMutex::new(HashMap::new()),
         })
     }
@@ -246,8 +254,8 @@ impl ConnectorRuntime {
         }
 
         // Requests for one task are serialized across devices so finish cannot
-        // race an in-flight edit or command. Different tasks/users keep
-        // independent locks and may execute concurrently.
+        // race an in-flight edit or command. Read-only tasks remain concurrent;
+        // writable task start/finish also coordinate the reusable write slot.
         let task_lock = arguments
             .get("task_id")
             .and_then(Value::as_str)
@@ -327,26 +335,37 @@ impl ConnectorRuntime {
         let task_id = format!("wc_task_{}", uuid::Uuid::new_v4().simple());
         let run_id = format!("wc_run_{}", uuid::Uuid::new_v4().simple());
         let read_only = mode == "read_only";
+        let _workspace_guard = if read_only {
+            None
+        } else {
+            Some(self.workspace_ops.lock().await)
+        };
         let manager = self.workspace.clone();
         let context = self.context.clone();
+        let task_for_prepare = task_id.clone();
         let run_for_prepare = run_id.clone();
         let prepared = match tokio::task::spawn_blocking(move || {
-            manager.prepare(&context, &run_for_prepare, read_only)
+            manager.prepare(&context, &task_for_prepare, &run_for_prepare, read_only)
         })
         .await
         {
             Ok(Ok(prepared)) => prepared,
             Ok(Err(message)) => {
+                let guidance = if message.contains("workspace slot is occupied") {
+                    "Run 'webcodex task list', then finish, resume, or reject the task occupying the writable slot."
+                } else {
+                    "Resolve the Git/workspace issue, then start a new task."
+                };
                 return ConnectorCallOutcome::error(
                     409,
                     "workspace_preparation_failed",
                     self.sanitize_executor_string(&message),
                     false,
                     true,
-                    Some("Resolve the Git/workspace issue, then start a new task."),
+                    Some(guidance),
                     None,
                     false,
-                )
+                );
             }
             Err(error) => {
                 tracing::error!(error = %error, "connector workspace preparation task failed");
@@ -431,6 +450,7 @@ impl ConnectorRuntime {
                     "status": task.task_status,
                     "workspace": {
                         "isolated": task.isolated,
+                        "strategy": if task.isolated { "reusable_slot" } else { "target_checkout" },
                         "baseline_commit": task.baseline_commit.as_deref().map(short_oid)
                     },
                     "next": "Inspect only the files needed for this goal; then edit, validate, review, and finish."
@@ -1016,6 +1036,11 @@ impl ConnectorRuntime {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
+        let _workspace_guard = if task.isolated {
+            Some(self.workspace_ops.lock().await)
+        } else {
+            None
+        };
         let events = match self.db.connector_task_events(
             &task.task_id,
             &self.context.project_id,
@@ -1068,7 +1093,7 @@ impl ConnectorRuntime {
             };
         let validation = validation_projection(&events);
         let result_id = format!("wc_result_{}", uuid::Uuid::new_v4().simple());
-        let cursor = match self.db.finish_connector_task(
+        let mut cursor = match self.db.finish_connector_task(
             &task.task_id,
             &self.context.project_id,
             subject_id,
@@ -1087,6 +1112,40 @@ impl ConnectorRuntime {
             Ok(cursor) => cursor,
             Err(error) => return store_error_outcome(error, Some(&task)),
         };
+        let cleanup_warning = if task.isolated {
+            let manager = self.workspace.clone();
+            let task_for_release = task.clone();
+            match tokio::task::spawn_blocking(move || {
+                manager.release_task_workspace(&task_for_release)
+            })
+            .await
+            {
+                Ok(warning) => warning,
+                Err(error) => {
+                    tracing::error!(error = %error, "connector workspace release task failed");
+                    Some("connector could not release the reusable execution workspace".to_string())
+                }
+            }
+        } else {
+            None
+        }
+        .map(|warning| self.sanitize_task_string(&task, &warning));
+        if task.isolated {
+            match self.db.record_connector_workspace_release(
+                &task.task_id,
+                &self.context.project_id,
+                subject_id,
+                cleanup_warning.is_none(),
+                cleanup_warning.as_deref(),
+                now,
+            ) {
+                Ok(release_cursor) => cursor = release_cursor,
+                Err(error) => {
+                    tracing::warn!(error = %error, task_id = %task.task_id, "Could not record connector workspace release");
+                }
+            }
+        }
+        let workspace_released = !task.isolated || cleanup_warning.is_none();
         ConnectorCallOutcome::success_at(
             &task,
             cursor,
@@ -1101,7 +1160,12 @@ impl ConnectorRuntime {
                     "changed_paths": captured.changed_paths,
                     "validation": validation,
                     "warnings": captured.warnings,
-                    "decision_status": "pending"
+                    "decision_status": "pending",
+                    "cleanup_warning": cleanup_warning.clone()
+                },
+                "workspace": {
+                    "strategy": if task.isolated { "reusable_slot" } else { "target_checkout" },
+                    "released": workspace_released
                 },
                 "human_action": format!(
                     "Run 'webcodex task show {}', then accept or reject the result locally.",
@@ -2168,7 +2232,7 @@ mod tests {
         let run_id = "wc_run_0123456789abcdef0123456789abcdef";
         let prepared = connector
             .workspace
-            .prepare(&connector.context, run_id, false)
+            .prepare(&connector.context, task_id, run_id, false)
             .unwrap();
         connector
             .db
@@ -2272,7 +2336,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn writable_start_registers_a_run_specific_git_worktree() {
+    async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
         use crate::shell_client::ShellClientRegistry;
         use crate::shell_protocol::{
             ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
@@ -2362,7 +2426,7 @@ mod tests {
                     assert_eq!(request.kind, "register_project");
                     let payload: Value =
                         serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
-                    assert!(payload["id"].as_str().unwrap().starts_with("wc-run-"));
+                    assert_eq!(payload["id"], "wc-slot-write-01");
                     assert!(Path::new(payload["path"].as_str().unwrap()).is_dir());
                     agent_registry
                         .complete(ShellAgentResultRequest {
@@ -2431,6 +2495,7 @@ mod tests {
             .await;
         assert!(finished.ok, "{}", finished.body);
         assert_eq!(finished.body["data"]["status"], "ready_for_review");
+        assert_eq!(finished.body["data"]["workspace"]["released"], true);
         assert_eq!(
             finished.body["data"]["result"]["changed_paths"],
             json!(["README.md"])
@@ -2477,7 +2542,12 @@ mod tests {
                 chrono::Utc::now().timestamp(),
             )
             .unwrap();
-        assert!(!Path::new(&task.execution_root).exists());
+        assert!(Path::new(&task.execution_root).exists());
+        let resources = workspace::WorkspaceManager::resource_status(
+            Path::new(&connector.context.runs_root),
+            temp.path().join("cargo-target").as_path(),
+        );
+        assert_eq!(resources.slot_state, "idle");
     }
 
     #[tokio::test]

@@ -16,9 +16,9 @@ mod task_kernel;
 pub use self::oauth::RotateResult;
 #[allow(unused_imports)]
 pub(crate) use self::task_kernel::{
-    ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorTaskEvent,
-    ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskStoreError, NewConnectorResult,
-    NewConnectorTask,
+    ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorPreservedWorkspace,
+    ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskStoreError,
+    NewConnectorResult, NewConnectorTask,
 };
 
 pub struct Database {

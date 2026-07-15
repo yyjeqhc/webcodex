@@ -66,7 +66,7 @@ Commands:\n\
   list                       List recent tasks for this project\n\
   show TASK_ID               Show result, approvals, and timeline\n\
   accept TASK_ID             Apply a reviewed result to this checkout\n\
-  reject TASK_ID             Reject the result and discard its worktree\n\
+  reject TASK_ID             Reject the stable result; release matching leftover slot\n\
   resume TASK_ID             Resume a preserved run after runtime restart\n\
   approve TASK_ID APPROVAL   Approve one exact raw command for one use\n\
   deny TASK_ID APPROVAL      Deny one exact raw command\n\
@@ -191,18 +191,25 @@ pub(crate) fn run(command: TaskCliCommand) -> Result<String, String> {
             let tasks = db
                 .local_connector_tasks(&state.logical_project_id, limit)
                 .map_err(store_error)?;
+            let resources = WorkspaceManager::resource_status(&state.runs, &state.cargo_target);
             if json {
                 pretty_json(&json!({
                     "project": state.root,
+                    "resources": resources,
                     "tasks": tasks
                 }))
             } else if tasks.is_empty() {
                 Ok(format!(
-                    "No connector tasks found for {}.",
-                    state.root.display()
+                    "No connector tasks found for {}.\n{}",
+                    state.root.display(),
+                    resource_summary(&resources)
                 ))
             } else {
-                let mut output = format!("Tasks for {}\n", state.root.display());
+                let mut output = format!(
+                    "Tasks for {}\n{}\n",
+                    state.root.display(),
+                    resource_summary(&resources)
+                );
                 for task in tasks {
                     let goal = one_line(&task.goal, 72);
                     output.push_str(&format!(
@@ -235,6 +242,7 @@ pub(crate) fn run(command: TaskCliCommand) -> Result<String, String> {
             let mut available_actions = Vec::new();
             if task.run_status == "interrupted" {
                 available_actions.push(format!("webcodex task resume {task_id}"));
+                available_actions.push(format!("webcodex task reject {task_id}"));
             }
             if result
                 .as_ref()
@@ -317,12 +325,80 @@ fn decide_result(
     ensure_target(&state, &task.target_root)?;
     let result = db
         .local_connector_task_result(task_id, &state.logical_project_id)
-        .map_err(store_error)?
-        .ok_or_else(|| "task has no stable result to decide".to_string())?;
+        .map_err(store_error)?;
+    if result.is_none() && !accept && task.run_status == "interrupted" {
+        db.abandon_interrupted_connector_task(
+            task_id,
+            &state.logical_project_id,
+            LOCAL_ACTOR,
+            chrono::Utc::now().timestamp(),
+        )
+        .map_err(store_error)?;
+        let outcome = WorkspaceManager::release_owned_task_workspace(&task);
+        let cleanup_warning = outcome
+            .cleanup_warning
+            .as_deref()
+            .map(|warning| sanitize_cleanup_warning(&task, warning));
+        db.record_connector_workspace_release(
+            task_id,
+            &state.logical_project_id,
+            &task.owner_subject_id,
+            cleanup_warning.is_none(),
+            cleanup_warning.as_deref(),
+            chrono::Utc::now().timestamp(),
+        )
+        .map_err(store_error)?;
+        let mut output = format!(
+            "Rejected interrupted {}; its uncaptured workspace changes were discarded.",
+            task_id
+        );
+        if let Some(warning) = cleanup_warning {
+            output.push_str(&format!("\nCleanup warning: {warning}"));
+        }
+        return Ok(output);
+    }
+    let result = result.ok_or_else(|| "task has no stable result to decide".to_string())?;
+    if !accept && result.decision_status == "rejected" && result.cleanup_warning.is_some() {
+        let outcome = WorkspaceManager::release_owned_task_workspace(&task);
+        let cleanup_warning = outcome
+            .cleanup_warning
+            .as_deref()
+            .map(|warning| sanitize_cleanup_warning(&task, warning));
+        db.record_connector_workspace_release(
+            task_id,
+            &state.logical_project_id,
+            &task.owner_subject_id,
+            cleanup_warning.is_none(),
+            cleanup_warning.as_deref(),
+            chrono::Utc::now().timestamp(),
+        )
+        .map_err(store_error)?;
+        return Ok(match cleanup_warning {
+            Some(warning) => {
+                format!("Retried cleanup for rejected {task_id}.\nCleanup warning: {warning}")
+            }
+            None => format!("Rejected {task_id} is clean; its reusable workspace is available."),
+        });
+    }
     let outcome = if accept {
         WorkspaceManager::accept(&task, &result)?
     } else {
         WorkspaceManager::reject(&task, &result)?
+    };
+    let current_cleanup_warning = outcome
+        .cleanup_warning
+        .as_deref()
+        .map(|warning| sanitize_cleanup_warning(&task, warning));
+    let cleanup_warning = match (
+        result.cleanup_warning.as_deref(),
+        current_cleanup_warning.as_deref(),
+    ) {
+        (Some(existing), Some(current)) if existing != current => {
+            Some(format!("{existing}; {current}"))
+        }
+        (Some(existing), _) => Some(existing.to_string()),
+        (_, Some(current)) => Some(current.to_string()),
+        (None, None) => None,
     };
     let decision = if accept { "accepted" } else { "rejected" };
     let result = db
@@ -331,7 +407,7 @@ fn decide_result(
             &state.logical_project_id,
             decision,
             LOCAL_ACTOR,
-            outcome.cleanup_warning.as_deref(),
+            cleanup_warning.as_deref(),
             chrono::Utc::now().timestamp(),
         )
         .map_err(store_error)?;
@@ -343,12 +419,21 @@ fn decide_result(
             state.root.display()
         )
     } else {
-        format!("Rejected {}; its managed worktree was discarded.", task_id)
+        format!(
+            "Rejected {}; its stable result was discarded and the reusable workspace is available.",
+            task_id
+        )
     };
     if let Some(warning) = result.cleanup_warning {
         output.push_str(&format!("\nCleanup warning: {warning}"));
     }
     Ok(output)
+}
+
+fn sanitize_cleanup_warning(task: &crate::db::ConnectorTaskSnapshot, warning: &str) -> String {
+    warning
+        .replace(&task.execution_root, "<managed-workspace>")
+        .replace(&task.target_root, "<target-workspace>")
 }
 
 fn decide_approval(
@@ -425,6 +510,38 @@ fn one_line(value: &str, max_chars: usize) -> String {
         .collect::<String>();
     truncated.push('…');
     truncated
+}
+
+fn resource_summary(
+    resources: &crate::connector_runtime::workspace::WorkspaceResourceStatus,
+) -> String {
+    format!(
+        "Resources: writable slot {}; reusable checkout {}; shared Cargo cache {}{}.",
+        resources.slot_state,
+        format_bytes(resources.checkout.bytes),
+        format_bytes(resources.cargo_cache.bytes),
+        if resources.checkout.truncated || resources.cargo_cache.truncated {
+            " (bounded scan)"
+        } else {
+            ""
+        }
+    )
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * KIB;
+    const GIB: f64 = 1024.0 * MIB;
+    let bytes = bytes as f64;
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{} B", bytes as u64)
+    }
 }
 
 struct DecisionLock {
@@ -571,7 +688,7 @@ mod tests {
         .unwrap();
         let task_id = "wc_task_4123456789abcdef0123456789abcdef";
         let run_id = "wc_run_4123456789abcdef0123456789abcdef";
-        let prepared = manager.prepare(&context, run_id, false).unwrap();
+        let prepared = manager.prepare(&context, task_id, run_id, false).unwrap();
         let task = db
             .start_connector_task(NewConnectorTask {
                 task_id,
@@ -610,6 +727,7 @@ mod tests {
             3,
         )
         .unwrap();
+        assert_eq!(manager.release_task_workspace(&task), None);
         drop(db);
 
         let output = run(TaskCliCommand::Accept {
@@ -632,5 +750,53 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(decided.decision_status, "accepted");
+
+        let abandoned_task_id = "wc_task_5123456789abcdef0123456789abcdef";
+        let abandoned_run_id = "wc_run_5123456789abcdef0123456789abcdef";
+        let prepared = manager
+            .prepare(&context, abandoned_task_id, abandoned_run_id, false)
+            .unwrap();
+        let interrupted = db
+            .start_connector_task(NewConnectorTask {
+                task_id: abandoned_task_id,
+                run_id: abandoned_run_id,
+                project_id: &context.project_id,
+                workspace_id: &context.workspace_id,
+                subject_id: "user:owner",
+                goal: "discard interrupted work",
+                mode: "normal",
+                target_executor_ref: &context.executor_project,
+                execution_executor_ref: &prepared.execution_executor_ref,
+                target_root: &context.executor_root,
+                execution_root: &prepared.execution_root,
+                baseline_commit: prepared.baseline_commit.as_deref(),
+                baseline_tree: prepared.baseline_tree.as_deref(),
+                isolated: true,
+                now: 4,
+            })
+            .unwrap();
+        std::fs::write(
+            Path::new(&interrupted.execution_root).join("discard-me.txt"),
+            "temporary\n",
+        )
+        .unwrap();
+        db.interrupt_connector_runs(&context.project_id, 5).unwrap();
+        drop(db);
+
+        let output = run(TaskCliCommand::Reject {
+            location: TaskLocationOptions {
+                root: root.clone(),
+                state_dir: Some(state_dir.clone()),
+                profile: "personal".to_string(),
+            },
+            task_id: abandoned_task_id.to_string(),
+        })
+        .unwrap();
+        assert!(output.contains("uncaptured workspace changes were discarded"));
+        assert!(!Path::new(&interrupted.execution_root)
+            .join("discard-me.txt")
+            .exists());
+        let resources = WorkspaceManager::resource_status(&state.runs, &state.cargo_target);
+        assert_eq!(resources.slot_state, "idle");
     }
 }

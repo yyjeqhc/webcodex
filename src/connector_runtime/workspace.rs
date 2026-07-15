@@ -5,20 +5,26 @@
 //! the target checkout still matches the captured base on every changed path.
 
 use super::ConnectorContext;
-use crate::db::{ConnectorTaskResult, ConnectorTaskSnapshot};
-use serde::Serialize;
+use crate::db::{ConnectorPreservedWorkspace, ConnectorTaskResult, ConnectorTaskSnapshot};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
 
 const MAX_RESULT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RESULT_CHANGED_PATHS: usize = 1_000;
+const WRITE_SLOT_NAME: &str = "write-slot-01";
+const WRITE_SLOT_PROJECT_ID: &str = "wc-slot-write-01";
+const WORKSPACE_LEASE_VERSION: u32 = 1;
+const RESOURCE_SCAN_ENTRY_LIMIT: usize = 250_000;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedWorkspace {
+    pub run_id: String,
     pub agent_client_id: String,
     pub agent_project_id: String,
     pub execution_executor_ref: String,
@@ -26,6 +32,15 @@ pub(crate) struct PreparedWorkspace {
     pub baseline_commit: Option<String>,
     pub baseline_tree: Option<String>,
     pub isolated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct WorkspaceLease {
+    schema_version: u32,
+    slot: String,
+    task_id: String,
+    run_id: String,
+    baseline_commit: String,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +63,23 @@ pub(crate) struct PatchPreview {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DecisionOutcome {
     pub cleanup_warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct DirectoryUsage {
+    pub bytes: u64,
+    pub entries: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct WorkspaceResourceStatus {
+    pub writable_slot: String,
+    pub slot_state: String,
+    pub occupied_task_id: Option<String>,
+    pub occupied_run_id: Option<String>,
+    pub checkout: DirectoryUsage,
+    pub cargo_cache: DirectoryUsage,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +125,7 @@ impl WorkspaceManager {
     pub(crate) fn prepare(
         &self,
         context: &ConnectorContext,
+        task_id: &str,
         run_id: &str,
         read_only: bool,
     ) -> Result<PreparedWorkspace, String> {
@@ -111,6 +144,7 @@ impl WorkspaceManager {
         });
         if read_only {
             return Ok(PreparedWorkspace {
+                run_id: run_id.to_string(),
                 agent_client_id: client_id,
                 agent_project_id: String::new(),
                 execution_executor_ref: context.executor_project.clone(),
@@ -125,32 +159,51 @@ impl WorkspaceManager {
         })?;
         let baseline_tree = baseline_tree
             .ok_or_else(|| "writable tasks require a readable Git baseline tree".to_string())?;
-        let run_suffix = run_id.strip_prefix("wc_run_").unwrap_or(run_id);
-        let short = run_suffix.chars().take(24).collect::<String>();
-        let agent_project_id = format!("wc-run-{short}");
         create_private_dir(&self.runs_root)?;
         create_private_dir(&self.results_root)?;
         create_private_dir(&self.projects_dir)?;
-        let execution_root = self.runs_root.join(run_id);
+        let execution_root = self.runs_root.join(WRITE_SLOT_NAME);
         ensure_direct_child(&self.runs_root, &execution_root)?;
-        if execution_root.exists() {
-            return Err("managed execution worktree already exists for this run".to_string());
-        }
-        let output = git_output(
-            Path::new(&context.executor_root),
-            [
-                OsStr::new("worktree"),
-                OsStr::new("add"),
-                OsStr::new("--detach"),
-                execution_root.as_os_str(),
-                OsStr::new(&baseline_commit),
-            ],
+        let lease_path = workspace_lease_path(&self.runs_root, WRITE_SLOT_NAME);
+        claim_workspace_lease(
+            &lease_path,
+            &WorkspaceLease {
+                schema_version: WORKSPACE_LEASE_VERSION,
+                slot: WRITE_SLOT_NAME.to_string(),
+                task_id: task_id.to_string(),
+                run_id: run_id.to_string(),
+                baseline_commit: baseline_commit.clone(),
+            },
         )?;
-        require_success(output, "create isolated execution worktree")?;
+        let preparation = (|| {
+            let target_root = Path::new(&context.executor_root);
+            let _ = git_output(target_root, [OsStr::new("worktree"), OsStr::new("prune")]);
+            if execution_root.exists() {
+                reset_managed_slot(target_root, &execution_root, &baseline_commit)
+            } else {
+                let output = git_output(
+                    target_root,
+                    [
+                        OsStr::new("worktree"),
+                        OsStr::new("add"),
+                        OsStr::new("--detach"),
+                        execution_root.as_os_str(),
+                        OsStr::new(&baseline_commit),
+                    ],
+                )?;
+                require_success(output, "create reusable execution worktree")?;
+                verify_managed_slot(target_root, &execution_root)
+            }
+        })();
+        if let Err(error) = preparation {
+            let _ = fs::remove_file(&lease_path);
+            return Err(error);
+        }
         Ok(PreparedWorkspace {
+            run_id: run_id.to_string(),
             agent_client_id: client_id.clone(),
-            agent_project_id: agent_project_id.clone(),
-            execution_executor_ref: format!("agent:{client_id}:{agent_project_id}"),
+            agent_project_id: WRITE_SLOT_PROJECT_ID.to_string(),
+            execution_executor_ref: format!("agent:{client_id}:{WRITE_SLOT_PROJECT_ID}"),
             execution_root: execution_root.to_string_lossy().to_string(),
             baseline_commit: Some(baseline_commit),
             baseline_tree: Some(baseline_tree),
@@ -166,12 +219,13 @@ impl WorkspaceManager {
         if !prepared.isolated {
             return None;
         }
-        cleanup_workspace(
+        release_workspace_slot(
             Path::new(target_root),
             Path::new(&prepared.execution_root),
             &self.runs_root,
             &self.projects_dir,
             &prepared.agent_project_id,
+            &prepared.run_id,
         )
     }
 
@@ -273,6 +327,230 @@ impl WorkspaceManager {
             changed_paths,
             warnings: Vec::new(),
         })
+    }
+
+    /// Release the execution slot only after the stable Result has committed.
+    /// The lease binds cleanup to one run, so an older Result can never clean a
+    /// slot that has already been reused by a newer task.
+    pub(crate) fn release_task_workspace(&self, task: &ConnectorTaskSnapshot) -> Option<String> {
+        if !task.isolated {
+            return None;
+        }
+        let (_, project_id) = match parse_agent_executor_ref(&task.execution_executor_ref) {
+            Ok(value) => value,
+            Err(error) => return Some(error),
+        };
+        let execution_root = Path::new(&task.execution_root);
+        if execution_root.file_name() == Some(OsStr::new(WRITE_SLOT_NAME)) {
+            return release_workspace_slot(
+                Path::new(&task.target_root),
+                execution_root,
+                &self.runs_root,
+                &self.projects_dir,
+                &project_id,
+                &task.run_id,
+            );
+        }
+        cleanup_workspace(
+            Path::new(&task.target_root),
+            execution_root,
+            &self.runs_root,
+            &self.projects_dir,
+            &project_id,
+        )
+    }
+
+    /// Preserve interrupted task workspaces and reclaim only connector-owned
+    /// leftovers. Reusable slots remain checked out but idle; legacy per-run
+    /// worktrees are removed once no interrupted Run owns them.
+    pub(crate) fn recover(
+        &self,
+        context: &ConnectorContext,
+        preserved: &[ConnectorPreservedWorkspace],
+    ) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if let Err(error) = create_private_dir(&self.runs_root) {
+            warnings.push(error);
+            return warnings;
+        }
+        if let Err(error) = create_private_dir(&self.projects_dir) {
+            warnings.push(error);
+            return warnings;
+        }
+        let target_root = Path::new(&context.executor_root);
+        let preserved_roots = preserved
+            .iter()
+            .map(|workspace| lexical_normalize(Path::new(&workspace.execution_root)))
+            .collect::<HashSet<_>>();
+        let preserved_projects = preserved
+            .iter()
+            .filter_map(|workspace| {
+                parse_agent_executor_ref(&workspace.execution_executor_ref)
+                    .ok()
+                    .map(|(_, project_id)| project_id)
+            })
+            .collect::<HashSet<_>>();
+
+        let slot_root = self.runs_root.join(WRITE_SLOT_NAME);
+        let lease_path = workspace_lease_path(&self.runs_root, WRITE_SLOT_NAME);
+        let preserved_slot = preserved.iter().find(|workspace| {
+            lexical_normalize(Path::new(&workspace.execution_root)) == lexical_normalize(&slot_root)
+        });
+        if let Some(workspace) = preserved_slot {
+            if !lease_path.exists() {
+                match workspace.baseline_commit.as_deref() {
+                    Some(baseline_commit) => {
+                        if let Err(error) = claim_workspace_lease(
+                            &lease_path,
+                            &WorkspaceLease {
+                                schema_version: WORKSPACE_LEASE_VERSION,
+                                slot: WRITE_SLOT_NAME.to_string(),
+                                task_id: workspace.task_id.clone(),
+                                run_id: workspace.run_id.clone(),
+                                baseline_commit: baseline_commit.to_string(),
+                            },
+                        ) {
+                            warnings.push(format!(
+                                "could not restore interrupted workspace lease: {error}"
+                            ));
+                        }
+                    }
+                    None => warnings.push(
+                        "interrupted writable task is missing its baseline commit".to_string(),
+                    ),
+                }
+            } else if let Ok(lease) = read_workspace_lease(&lease_path) {
+                if lease.run_id != workspace.run_id {
+                    warnings.push(
+                        "reusable workspace lease does not match its interrupted run".to_string(),
+                    );
+                }
+            }
+        } else if !preserved_roots.contains(&lexical_normalize(&slot_root)) {
+            if lease_path.exists() {
+                match read_workspace_lease(&lease_path) {
+                    Ok(lease) => {
+                        if let Some(warning) = release_workspace_slot(
+                            target_root,
+                            &slot_root,
+                            &self.runs_root,
+                            &self.projects_dir,
+                            WRITE_SLOT_PROJECT_ID,
+                            &lease.run_id,
+                        ) {
+                            warnings.push(warning);
+                        }
+                    }
+                    Err(error) => {
+                        if slot_root.exists() {
+                            let baseline =
+                                git_text(target_root, ["rev-parse", "--verify", "HEAD^{commit}"]);
+                            if let Err(cleanup) = baseline.and_then(|baseline| {
+                                reset_managed_slot(target_root, &slot_root, &baseline)
+                            }) {
+                                warnings.push(format!(
+                                    "could not reclaim malformed workspace lease ({error}): {cleanup}"
+                                ));
+                                return warnings;
+                            }
+                        }
+                        let config = self
+                            .projects_dir
+                            .join(format!("{WRITE_SLOT_PROJECT_ID}.toml"));
+                        if let Err(cleanup) = remove_file_if_exists(&config) {
+                            warnings.push(cleanup);
+                        } else if let Err(cleanup) = fs::remove_file(&lease_path) {
+                            warnings.push(format!(
+                                "could not remove malformed workspace lease: {cleanup}"
+                            ));
+                        }
+                    }
+                }
+            } else if slot_root.exists() {
+                match git_text(target_root, ["rev-parse", "--verify", "HEAD^{commit}"])
+                    .and_then(|baseline| reset_managed_slot(target_root, &slot_root, &baseline))
+                {
+                    Ok(()) => {
+                        let config = self
+                            .projects_dir
+                            .join(format!("{WRITE_SLOT_PROJECT_ID}.toml"));
+                        if let Err(error) = remove_file_if_exists(&config) {
+                            warnings.push(error);
+                        }
+                    }
+                    Err(error) => warnings.push(error),
+                }
+            }
+        }
+
+        if let Ok(entries) = fs::read_dir(&self.runs_root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if !name.starts_with("wc_run_")
+                    || preserved_roots.contains(&lexical_normalize(&path))
+                {
+                    continue;
+                }
+                let suffix = name.strip_prefix("wc_run_").unwrap_or(name);
+                let short = suffix.chars().take(24).collect::<String>();
+                let project_id = format!("wc-run-{short}");
+                if let Some(warning) = cleanup_workspace(
+                    target_root,
+                    &path,
+                    &self.runs_root,
+                    &self.projects_dir,
+                    &project_id,
+                ) {
+                    warnings.push(warning);
+                }
+            }
+        }
+
+        if let Ok(entries) = fs::read_dir(&self.projects_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                    continue;
+                };
+                if !(stem.starts_with("wc-run-") || stem.starts_with("wc-slot-"))
+                    || preserved_projects.contains(stem)
+                {
+                    continue;
+                }
+                if let Err(error) = remove_file_if_exists(&path) {
+                    warnings.push(error);
+                }
+            }
+        }
+        let _ = git_output(target_root, [OsStr::new("worktree"), OsStr::new("prune")]);
+        warnings
+    }
+
+    pub(crate) fn resource_status(
+        runs_root: &Path,
+        cargo_target: &Path,
+    ) -> WorkspaceResourceStatus {
+        let slot_root = runs_root.join(WRITE_SLOT_NAME);
+        let lease_path = workspace_lease_path(runs_root, WRITE_SLOT_NAME);
+        let lease = read_workspace_lease(&lease_path).ok();
+        let slot_state = if lease_path.exists() {
+            "occupied"
+        } else if slot_root.exists() {
+            "idle"
+        } else {
+            "uninitialized"
+        };
+        WorkspaceResourceStatus {
+            writable_slot: WRITE_SLOT_NAME.to_string(),
+            slot_state: slot_state.to_string(),
+            occupied_task_id: lease.as_ref().map(|lease| lease.task_id.clone()),
+            occupied_run_id: lease.as_ref().map(|lease| lease.run_id.clone()),
+            checkout: directory_usage(&slot_root, RESOURCE_SCAN_ENTRY_LIMIT),
+            cargo_cache: directory_usage(cargo_target, RESOURCE_SCAN_ENTRY_LIMIT),
+        }
     }
 
     pub(crate) fn action_precondition(
@@ -451,6 +729,12 @@ impl WorkspaceManager {
         })
     }
 
+    pub(crate) fn release_owned_task_workspace(task: &ConnectorTaskSnapshot) -> DecisionOutcome {
+        DecisionOutcome {
+            cleanup_warning: cleanup_task_workspace(task),
+        }
+    }
+
     pub(crate) fn validate_resume(
         task: &ConnectorTaskSnapshot,
         runs_root: &Path,
@@ -509,6 +793,16 @@ fn cleanup_task_workspace(task: &ConnectorTaskSnapshot) -> Option<String> {
     let execution_root = Path::new(&task.execution_root);
     let runs_root = execution_root.parent()?;
     let projects_dir = runs_root.parent()?.join("agent/projects.d");
+    if execution_root.file_name() == Some(OsStr::new(WRITE_SLOT_NAME)) {
+        return release_workspace_slot(
+            Path::new(&task.target_root),
+            execution_root,
+            runs_root,
+            &projects_dir,
+            &project_id,
+            &task.run_id,
+        );
+    }
     cleanup_workspace(
         Path::new(&task.target_root),
         execution_root,
@@ -516,6 +810,156 @@ fn cleanup_task_workspace(task: &ConnectorTaskSnapshot) -> Option<String> {
         &projects_dir,
         &project_id,
     )
+}
+
+fn workspace_lease_path(runs_root: &Path, slot_name: &str) -> PathBuf {
+    runs_root.join(format!(".{slot_name}.lease.json"))
+}
+
+fn claim_workspace_lease(path: &Path, lease: &WorkspaceLease) -> Result<(), String> {
+    let bytes = serde_json::to_vec(lease)
+        .map_err(|error| format!("cannot serialize workspace lease: {error}"))?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            return Err(
+                "the reusable writable workspace slot is occupied; finish or resume its task before starting another writable task"
+                    .to_string(),
+            )
+        }
+        Err(error) => return Err(format!("cannot claim writable workspace slot: {error}")),
+    };
+    if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        let _ = fs::remove_file(path);
+        return Err(format!("cannot persist workspace lease: {error}"));
+    }
+    Ok(())
+}
+
+fn read_workspace_lease(path: &Path) -> Result<WorkspaceLease, String> {
+    let bytes = fs::read(path).map_err(|error| format!("cannot read workspace lease: {error}"))?;
+    let lease = serde_json::from_slice::<WorkspaceLease>(&bytes)
+        .map_err(|error| format!("workspace lease is malformed: {error}"))?;
+    if lease.schema_version != WORKSPACE_LEASE_VERSION
+        || lease.slot != WRITE_SLOT_NAME
+        || !lease.task_id.starts_with("wc_task_")
+        || !lease.run_id.starts_with("wc_run_")
+        || lease.baseline_commit.is_empty()
+    {
+        return Err("workspace lease contains invalid ownership metadata".to_string());
+    }
+    Ok(lease)
+}
+
+fn release_workspace_slot(
+    target_root: &Path,
+    execution_root: &Path,
+    runs_root: &Path,
+    projects_dir: &Path,
+    agent_project_id: &str,
+    expected_run_id: &str,
+) -> Option<String> {
+    if ensure_direct_child(runs_root, execution_root).is_err()
+        || execution_root.file_name() != Some(OsStr::new(WRITE_SLOT_NAME))
+    {
+        return Some("refused to release a workspace outside the managed write slot".to_string());
+    }
+    let lease_path = workspace_lease_path(runs_root, WRITE_SLOT_NAME);
+    if !lease_path.exists() {
+        return None;
+    }
+    let lease = match read_workspace_lease(&lease_path) {
+        Ok(lease) => lease,
+        Err(error) => return Some(error),
+    };
+    if lease.run_id != expected_run_id {
+        return None;
+    }
+    if execution_root.exists() {
+        if let Err(error) = reset_managed_slot(target_root, execution_root, &lease.baseline_commit)
+        {
+            return Some(error);
+        }
+    }
+    if !safe_agent_project_id(agent_project_id) {
+        return Some("execution project registration id is invalid".to_string());
+    }
+    let config = projects_dir.join(format!("{agent_project_id}.toml"));
+    if let Err(error) = remove_file_if_exists(&config) {
+        return Some(error);
+    }
+    if let Err(error) = fs::remove_file(&lease_path) {
+        return Some(format!("could not release workspace lease: {error}"));
+    }
+    None
+}
+
+fn reset_managed_slot(
+    target_root: &Path,
+    execution_root: &Path,
+    baseline_commit: &str,
+) -> Result<(), String> {
+    verify_managed_slot(target_root, execution_root)?;
+    require_success(
+        git_output(
+            execution_root,
+            [
+                OsStr::new("checkout"),
+                OsStr::new("--detach"),
+                OsStr::new("--force"),
+                OsStr::new(baseline_commit),
+            ],
+        )?,
+        "detach and reset reusable execution worktree",
+    )?;
+    require_success(
+        git_output(execution_root, [OsStr::new("clean"), OsStr::new("-ffdx")])?,
+        "clean reusable execution worktree",
+    )?;
+    Ok(())
+}
+
+fn verify_managed_slot(target_root: &Path, execution_root: &Path) -> Result<(), String> {
+    if execution_root.file_name() != Some(OsStr::new(WRITE_SLOT_NAME)) {
+        return Err("execution worktree is not a recognized managed slot".to_string());
+    }
+    let target_common = git_common_dir(target_root)?;
+    let execution_common = git_common_dir(execution_root)?;
+    if target_common != execution_common {
+        return Err("managed slot does not belong to the target Git repository".to_string());
+    }
+    let inside = git_text(execution_root, ["rev-parse", "--is-inside-work-tree"])?;
+    if inside != "true" {
+        return Err("managed slot is not a Git worktree".to_string());
+    }
+    Ok(())
+}
+
+fn git_common_dir(root: &Path) -> Result<PathBuf, String> {
+    let value = git_text(root, ["rev-parse", "--git-common-dir"])?;
+    let path = PathBuf::from(value);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    path.canonicalize()
+        .map_err(|error| format!("cannot resolve Git common directory: {error}"))
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("could not remove managed state file: {error}")),
+    }
 }
 
 fn cleanup_workspace(
@@ -680,6 +1124,49 @@ fn lexical_normalize(path: &Path) -> PathBuf {
     output
 }
 
+fn directory_usage(root: &Path, entry_limit: usize) -> DirectoryUsage {
+    if entry_limit == 0 || !root.exists() {
+        return DirectoryUsage {
+            bytes: 0,
+            entries: 0,
+            truncated: false,
+        };
+    }
+    let mut bytes = 0_u64;
+    let mut entries = 0_usize;
+    let mut truncated = false;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let Ok(children) = fs::read_dir(path) else {
+            continue;
+        };
+        for child in children.flatten() {
+            if entries >= entry_limit {
+                truncated = true;
+                pending.clear();
+                break;
+            }
+            entries += 1;
+            let Ok(metadata) = child.path().symlink_metadata() else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                pending.push(child.path());
+            } else if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len());
+            }
+        }
+    }
+    DirectoryUsage {
+        bytes,
+        entries,
+        truncated,
+    }
+}
+
 fn ensure_direct_child(root: &Path, path: &Path) -> Result<(), String> {
     if path.parent() != Some(root) || path.file_name().is_none() {
         return Err("managed path escaped its configured root".to_string());
@@ -782,7 +1269,7 @@ mod tests {
     fn task(context: &ConnectorContext, prepared: &PreparedWorkspace) -> ConnectorTaskSnapshot {
         ConnectorTaskSnapshot {
             task_id: "wc_task_0123456789abcdef0123456789abcdef".to_string(),
-            run_id: "wc_run_0123456789abcdef0123456789abcdef".to_string(),
+            run_id: prepared.run_id.clone(),
             project_id: context.project_id.clone(),
             workspace_id: context.workspace_id.clone(),
             owner_subject_id: "user:owner".to_string(),
@@ -825,7 +1312,12 @@ mod tests {
     fn isolated_result_only_reaches_target_after_acceptance() {
         let (_temp, context, manager) = fixture();
         let prepared = manager
-            .prepare(&context, "wc_run_0123456789abcdef0123456789abcdef", false)
+            .prepare(
+                &context,
+                "wc_task_0123456789abcdef0123456789abcdef",
+                "wc_run_0123456789abcdef0123456789abcdef",
+                false,
+            )
             .unwrap();
         assert!(prepared.isolated);
         fs::write(
@@ -841,6 +1333,8 @@ mod tests {
         let captured = manager.capture_result(&task).unwrap();
         assert_eq!(captured.changed_paths, vec!["README.md"]);
         assert!(captured.patch_bytes > 0);
+        assert_eq!(manager.release_task_workspace(&task), None);
+        assert!(Path::new(&prepared.execution_root).exists());
 
         let outcome = WorkspaceManager::accept(&task, &result(&task, &captured)).unwrap();
         assert_eq!(outcome.cleanup_warning, None);
@@ -848,14 +1342,19 @@ mod tests {
             fs::read_to_string(Path::new(&context.executor_root).join("README.md")).unwrap(),
             "after\n"
         );
-        assert!(!Path::new(&prepared.execution_root).exists());
+        assert!(Path::new(&prepared.execution_root).exists());
     }
 
     #[test]
     fn acceptance_fails_closed_when_target_path_changed() {
         let (_temp, context, manager) = fixture();
         let prepared = manager
-            .prepare(&context, "wc_run_1123456789abcdef0123456789abcdef", false)
+            .prepare(
+                &context,
+                "wc_task_1123456789abcdef0123456789abcdef",
+                "wc_run_1123456789abcdef0123456789abcdef",
+                false,
+            )
             .unwrap();
         fs::write(
             Path::new(&prepared.execution_root).join("README.md"),
@@ -883,7 +1382,12 @@ mod tests {
     fn command_precondition_tracks_content_without_staging_target() {
         let (_temp, context, manager) = fixture();
         let prepared = manager
-            .prepare(&context, "wc_run_2123456789abcdef0123456789abcdef", true)
+            .prepare(
+                &context,
+                "wc_task_2123456789abcdef0123456789abcdef",
+                "wc_run_2123456789abcdef0123456789abcdef",
+                true,
+            )
             .unwrap();
         let task = task(&context, &prepared);
         fs::write(
@@ -952,7 +1456,12 @@ mod tests {
     fn result_preview_rejects_tampered_patch_artifact() {
         let (_temp, context, manager) = fixture();
         let prepared = manager
-            .prepare(&context, "wc_run_3123456789abcdef0123456789abcdef", false)
+            .prepare(
+                &context,
+                "wc_task_3123456789abcdef0123456789abcdef",
+                "wc_run_3123456789abcdef0123456789abcdef",
+                false,
+            )
             .unwrap();
         fs::write(
             Path::new(&prepared.execution_root).join("README.md"),
@@ -970,5 +1479,130 @@ mod tests {
         let error = WorkspaceManager::patch_preview(&result, 1024).unwrap_err();
         assert!(error.contains("size") || error.contains("hash"));
         WorkspaceManager::reject(&task, &result).unwrap();
+    }
+
+    #[test]
+    fn writable_slot_is_exclusive_then_reused_cleanly() {
+        let (_temp, context, manager) = fixture();
+        let first = manager
+            .prepare(
+                &context,
+                "wc_task_5123456789abcdef0123456789abcdef",
+                "wc_run_5123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap();
+        fs::write(
+            Path::new(&first.execution_root).join("generated.txt"),
+            "temporary\n",
+        )
+        .unwrap();
+        git(
+            Path::new(&first.execution_root),
+            &["checkout", "-qb", "agent-branch"],
+        );
+        let occupied = manager
+            .prepare(
+                &context,
+                "wc_task_6123456789abcdef0123456789abcdef",
+                "wc_run_6123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap_err();
+        assert!(occupied.contains("occupied"));
+        let first_task = task(&context, &first);
+        assert_eq!(manager.release_task_workspace(&first_task), None);
+        assert_eq!(
+            git_text(
+                Path::new(&first.execution_root),
+                ["rev-parse", "--abbrev-ref", "HEAD"]
+            )
+            .unwrap(),
+            "HEAD"
+        );
+
+        let second = manager
+            .prepare(
+                &context,
+                "wc_task_6123456789abcdef0123456789abcdef",
+                "wc_run_6123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap();
+        assert_eq!(first.execution_root, second.execution_root);
+        assert!(!Path::new(&second.execution_root)
+            .join("generated.txt")
+            .exists());
+        assert_eq!(
+            fs::read_to_string(Path::new(&second.execution_root).join("README.md")).unwrap(),
+            "before\n"
+        );
+        let second_task = task(&context, &second);
+        assert_eq!(manager.release_task_workspace(&second_task), None);
+    }
+
+    #[test]
+    fn recovery_restores_missing_lease_for_interrupted_slot() {
+        let (_temp, context, manager) = fixture();
+        let prepared = manager
+            .prepare(
+                &context,
+                "wc_task_7123456789abcdef0123456789abcdef",
+                "wc_run_7123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap();
+        let lease_path = workspace_lease_path(&manager.runs_root, WRITE_SLOT_NAME);
+        fs::remove_file(&lease_path).unwrap();
+        let preserved = ConnectorPreservedWorkspace {
+            task_id: "wc_task_7123456789abcdef0123456789abcdef".to_string(),
+            run_id: prepared.run_id.clone(),
+            execution_root: prepared.execution_root.clone(),
+            execution_executor_ref: prepared.execution_executor_ref.clone(),
+            baseline_commit: prepared.baseline_commit.clone(),
+        };
+        assert!(manager.recover(&context, &[preserved]).is_empty());
+        assert!(lease_path.is_file());
+        let occupied = manager
+            .prepare(
+                &context,
+                "wc_task_8123456789abcdef0123456789abcdef",
+                "wc_run_8123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap_err();
+        assert!(occupied.contains("occupied"));
+        let interrupted = task(&context, &prepared);
+        assert_eq!(manager.release_task_workspace(&interrupted), None);
+    }
+
+    #[test]
+    fn recovery_reclaims_unowned_slot_after_finish_crash_window() {
+        let (_temp, context, manager) = fixture();
+        let prepared = manager
+            .prepare(
+                &context,
+                "wc_task_9123456789abcdef0123456789abcdef",
+                "wc_run_9123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap();
+        fs::write(
+            Path::new(&prepared.execution_root).join("leftover.txt"),
+            "captured before crash\n",
+        )
+        .unwrap();
+
+        assert!(manager.recover(&context, &[]).is_empty());
+        let cargo_target = manager
+            .runs_root
+            .parent()
+            .unwrap()
+            .join("cache/cargo-target");
+        let resources = WorkspaceManager::resource_status(&manager.runs_root, &cargo_target);
+        assert_eq!(resources.slot_state, "idle");
+        assert!(!Path::new(&prepared.execution_root)
+            .join("leftover.txt")
+            .exists());
     }
 }

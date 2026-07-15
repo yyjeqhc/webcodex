@@ -39,6 +39,7 @@ mod runtime_http;
 mod shell_client;
 mod shell_protocol;
 mod startup;
+mod task_cli;
 mod tool_request_trace;
 mod tool_runtime;
 mod users_http;
@@ -80,6 +81,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(stderr) = hosted_connect::run(opts).await {
                 eprintln!("{}", stderr);
                 std::process::exit(1);
+            }
+            return Ok(());
+        }
+        ServerCliAction::Task(command) => {
+            match task_cli::run(command) {
+                Ok(stdout) => println!("{}", stdout),
+                Err(stderr) => {
+                    eprintln!("{}", stderr);
+                    std::process::exit(1);
+                }
             }
             return Ok(());
         }

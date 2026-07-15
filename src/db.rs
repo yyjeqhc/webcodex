@@ -16,7 +16,9 @@ mod task_kernel;
 pub use self::oauth::RotateResult;
 #[allow(unused_imports)]
 pub(crate) use self::task_kernel::{
-    ConnectorBinding, ConnectorTaskEvent, ConnectorTaskSnapshot, ConnectorTaskStoreError,
+    ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorTaskEvent,
+    ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskStoreError, NewConnectorResult,
+    NewConnectorTask,
 };
 
 pub struct Database {
@@ -86,7 +88,15 @@ mod tests {
             assert_eq!(exists, 0, "legacy table {table} must be dropped on open");
         }
         // Active surface still exists.
-        for table in ["users", "api_keys", "action_sessions", "oauth_clients"] {
+        for table in [
+            "users",
+            "api_keys",
+            "action_sessions",
+            "oauth_clients",
+            "wc_run_contexts",
+            "wc_task_results",
+            "wc_approvals",
+        ] {
             let exists: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",

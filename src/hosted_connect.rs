@@ -307,6 +307,8 @@ struct ConnectPaths {
     data: PathBuf,
     credentials: PathBuf,
     projects: PathBuf,
+    runs: PathBuf,
+    results: PathBuf,
     logs: PathBuf,
     bootstrap_token: PathBuf,
     user_token: PathBuf,
@@ -323,6 +325,8 @@ impl ConnectPaths {
         Self {
             data: state.join("data"),
             projects: agent.join("projects.d"),
+            runs: state.join("runs"),
+            results: state.join("results"),
             logs: state.join("logs"),
             bootstrap_token: credentials.join("bootstrap-token"),
             user_token: credentials.join("webcodex-user-token"),
@@ -341,12 +345,53 @@ impl ConnectPaths {
             &self.data,
             &self.credentials,
             &self.projects,
+            &self.runs,
+            &self.results,
             &self.logs,
         ] {
             create_private_dir(path)?;
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalTaskState {
+    pub root: PathBuf,
+    pub state: PathBuf,
+    pub data: PathBuf,
+    pub runs: PathBuf,
+    pub projects: PathBuf,
+    pub logical_project_id: String,
+}
+
+pub(crate) fn resolve_local_task_state(
+    root: &Path,
+    profile: &str,
+    state_dir: Option<&Path>,
+) -> Result<LocalTaskState, String> {
+    validate_profile_name(profile)?;
+    let root = discover_project_root(root)?;
+    let identity = project_identity(&root);
+    let executor_project_id = format!("{}-{}", safe_slug(&root), &identity[..10]);
+    let state = match state_dir {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => std::env::current_dir()
+            .map_err(|error| format!("cannot read cwd: {error}"))?
+            .join(path),
+        None => default_state_base()?
+            .join(profile)
+            .join(executor_project_id),
+    };
+    let paths = ConnectPaths::new(state.clone());
+    Ok(LocalTaskState {
+        root,
+        state,
+        data: paths.data,
+        runs: paths.runs,
+        projects: paths.projects,
+        logical_project_id: format!("wc_proj_{}", &identity[..20]),
+    })
 }
 
 #[derive(Debug)]
@@ -372,10 +417,12 @@ struct ResolvedConnect {
 
 impl ResolvedConnect {
     fn resolve(opts: HostedConnectOptions) -> Result<Self, String> {
-        let root = discover_project_root(&opts.root)?;
+        let local_state =
+            resolve_local_task_state(&opts.root, &opts.profile, opts.state_dir.as_deref())?;
+        let root = local_state.root;
         let identity = project_identity(&root);
         let project_id = format!("{}-{}", safe_slug(&root), &identity[..10]);
-        let logical_project_id = format!("wc_proj_{}", &identity[..20]);
+        let logical_project_id = local_state.logical_project_id;
         let workspace_identity = format!(
             "{:x}",
             Sha256::digest(format!("{}\0{}", identity, opts.profile).as_bytes())
@@ -384,13 +431,7 @@ impl ResolvedConnect {
         let project_name = safe_slug(&root);
         let client_id = format!("hosted-{}", &identity[..12]);
         let runtime_project_id = format!("agent:{client_id}:{project_id}");
-        let state = match &opts.state_dir {
-            Some(path) if path.is_absolute() => path.clone(),
-            Some(path) => std::env::current_dir()
-                .map_err(|e| format!("cannot read cwd: {e}"))?
-                .join(path),
-            None => default_state_base()?.join(&opts.profile).join(&project_id),
-        };
+        let state = local_state.state;
         let port = match opts.port {
             Some(port) => port,
             None if opts.ingress == HostedIngress::Cloudflare && !opts.temporary => 8787,
@@ -619,6 +660,9 @@ async fn run_resolved(resolved: ResolvedConnect) -> Result<(), String> {
             &resolved.runtime_project_id,
         )
         .env("WEBCODEX_CONNECTOR_EXECUTOR_ROOT", &resolved.root)
+        .env("WEBCODEX_CONNECTOR_RUNS_ROOT", &resolved.paths.runs)
+        .env("WEBCODEX_CONNECTOR_RESULTS_ROOT", &resolved.paths.results)
+        .env("WEBCODEX_CONNECTOR_PROJECTS_DIR", &resolved.paths.projects)
         .env("WEBCODEX_CONNECTOR_PROFILE", &resolved.opts.profile);
     strip_provider_credentials(&mut server_command);
     let mut server = spawn_logged("webcodex runtime", &mut server_command, &server_log)?;
@@ -796,6 +840,8 @@ async fn ensure_agent_config(
         .arg(&resolved.paths.projects)
         .arg("--allowed-root")
         .arg(&resolved.root)
+        .arg("--allowed-root")
+        .arg(&resolved.paths.runs)
         .arg("--output")
         .arg(&resolved.paths.agent_config)
         .arg("--overwrite");

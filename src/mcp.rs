@@ -1512,6 +1512,9 @@ mod tests {
                 workspace_id: "wc_ws_1234567890".to_string(),
                 executor_project: "agent:hosted:demo".to_string(),
                 executor_root: "/workspace/demo".to_string(),
+                runs_root: "/tmp/webcodex-mcp-connector-tests/runs".to_string(),
+                results_root: "/tmp/webcodex-mcp-connector-tests/results".to_string(),
+                projects_dir: "/tmp/webcodex-mcp-connector-tests/agent/projects.d".to_string(),
                 profile: "personal".to_string(),
             },
         )
@@ -1656,7 +1659,10 @@ mod tests {
 
         let mut action_started = TestClient::post("http://localhost/api/connector/task/start")
             .bearer_auth(&user_token)
-            .json(&json!({ "goal": "exercise the Actions adapter" }))
+            .json(&json!({
+                "goal": "exercise the Actions adapter",
+                "mode": "read_only"
+            }))
             .send(&service)
             .await;
         assert_eq!(effective_status(&action_started), StatusCode::OK);
@@ -1688,7 +1694,7 @@ mod tests {
                 "method": "tools/call",
                 "params": {
                     "name": "task_start",
-                    "arguments": { "goal": "inspect the project" }
+                    "arguments": { "goal": "inspect the project", "mode": "read_only" }
                 }
             }))
             .send(&service)

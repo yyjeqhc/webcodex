@@ -319,6 +319,70 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_wc_runs_task_started
                 ON wc_runs(task_id, started_at DESC);
 
+            CREATE TABLE IF NOT EXISTS wc_run_contexts (
+                run_id TEXT PRIMARY KEY,
+                target_executor_ref TEXT NOT NULL,
+                execution_executor_ref TEXT NOT NULL,
+                target_root TEXT NOT NULL,
+                execution_root TEXT NOT NULL,
+                baseline_commit TEXT,
+                baseline_tree TEXT,
+                isolated INTEGER NOT NULL CHECK(isolated IN (0, 1)),
+                created_at INTEGER NOT NULL,
+                CHECK(isolated = 0 OR (baseline_commit IS NOT NULL AND baseline_tree IS NOT NULL)),
+                FOREIGN KEY(run_id) REFERENCES wc_runs(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS wc_task_results (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL UNIQUE,
+                run_id TEXT NOT NULL UNIQUE,
+                summary TEXT NOT NULL,
+                patch_artifact TEXT,
+                patch_sha256 TEXT,
+                patch_bytes INTEGER NOT NULL CHECK(patch_bytes >= 0),
+                changed_paths_json TEXT NOT NULL,
+                validation_json TEXT NOT NULL,
+                warnings_json TEXT NOT NULL,
+                decision_status TEXT NOT NULL
+                    CHECK(decision_status IN ('pending', 'accepted', 'rejected')),
+                decided_by TEXT,
+                decided_at INTEGER,
+                cleanup_warning TEXT,
+                created_at INTEGER NOT NULL,
+                CHECK(
+                    (patch_bytes = 0 AND patch_artifact IS NULL AND patch_sha256 IS NULL)
+                    OR
+                    (patch_bytes > 0 AND patch_artifact IS NOT NULL AND patch_sha256 IS NOT NULL)
+                ),
+                FOREIGN KEY(task_id) REFERENCES wc_tasks(id),
+                FOREIGN KEY(run_id) REFERENCES wc_runs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_task_results_decision
+                ON wc_task_results(decision_status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS wc_approvals (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                action_kind TEXT NOT NULL,
+                action_hash TEXT NOT NULL,
+                action_summary TEXT NOT NULL,
+                state TEXT NOT NULL
+                    CHECK(state IN ('pending', 'approved', 'denied', 'consumed', 'expired')),
+                requested_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                decided_by TEXT,
+                decided_at INTEGER,
+                consumed_at INTEGER,
+                CHECK(expires_at > requested_at),
+                UNIQUE(task_id, run_id, action_hash),
+                FOREIGN KEY(task_id) REFERENCES wc_tasks(id),
+                FOREIGN KEY(run_id) REFERENCES wc_runs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_approvals_task_state
+                ON wc_approvals(task_id, state, requested_at DESC);
+
             CREATE TABLE IF NOT EXISTS wc_task_events (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,

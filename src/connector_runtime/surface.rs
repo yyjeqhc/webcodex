@@ -22,7 +22,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
     vec![
         spec(
             "task_start",
-            "Start one bounded coding task in the project already connected to this chat. Returns the task_id required by later capabilities; never ask for or discover a project id.",
+            "Start one bounded coding task in the project already connected to this chat. Normal tasks use an isolated Git worktree; read_only tasks use the target checkout without write access. Returns the task_id required by later capabilities; never ask for or discover a project id.",
             json!({
                 "type": "object",
                 "properties": {
@@ -139,7 +139,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "commands_run",
-            "Explicit escape hatch for one bounded project command. Consequential execution still passes through WebCodex scope, project ownership, and permission gates.",
+            "Explicit escape hatch for one bounded project command. The exact action must receive one-time approval through the host-local WebCodex CLI before it is dispatched; approval cannot be granted or replayed by this connector.",
             json!({
                 "type": "object",
                 "properties": {
@@ -156,7 +156,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "task_review",
-            "Return the current bounded change summary and validation/action timeline for this task. Use this instead of separately aggregating git, job, agent, and session status.",
+            "Return the current bounded change summary or stable result preview plus its validation/action timeline. Use this instead of separately aggregating git, job, agent, and session status.",
             json!({
                 "type": "object",
                 "properties": {
@@ -171,7 +171,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "task_finish",
-            "Finish the active run and mark the task ready for human review. Captures a final change summary first; it never commits, pushes, deploys, or accepts the result.",
+            "Finish the active run, capture a content-addressed result patch, and mark the task ready for host-local human review. It never writes the target checkout, commits, pushes, deploys, or accepts the result.",
             json!({
                 "type": "object",
                 "properties": {

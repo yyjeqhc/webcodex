@@ -1,9 +1,10 @@
-use crate::{admin_cli, build_info, hosted_connect};
+use crate::{admin_cli, build_info, hosted_connect, task_cli};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ServerCliAction {
     Run,
     Connect(hosted_connect::HostedConnectOptions),
+    Task(task_cli::TaskCliCommand),
     Admin(admin_cli::AdminCliCommand),
     Exit {
         code: i32,
@@ -14,9 +15,10 @@ pub(crate) enum ServerCliAction {
 
 fn server_usage() -> String {
     format!(
-        "Usage: webcodex [OPTIONS]\n       webcodex connect <TARGET> --via <INGRESS> [OPTIONS]\n       webcodex <ADMIN-COMMAND>\n\n\
+        "Usage: webcodex [OPTIONS]\n       webcodex connect <TARGET> --via <INGRESS> [OPTIONS]\n       webcodex task <COMMAND> [ARGS] [OPTIONS]\n       webcodex <ADMIN-COMMAND>\n\n\
 Commands:\n\
   connect            Open the current project and connect a hosted client\n\
+  task               Review tasks and make host-local decisions\n\
   serve              Run the HTTP runtime (internal/advanced mode)\n\n\
 Options:\n\
   -h, --help       Print help and exit\n\
@@ -65,6 +67,28 @@ where
                 code: 2,
                 stdout: String::new(),
                 stderr: format!("{}\n\n{}", e, hosted_connect::usage()),
+            },
+        };
+    }
+    if args[0] == "task" {
+        if args.len() == 2 && matches!(args[1].as_str(), "--help" | "-h") {
+            return ServerCliAction::Exit {
+                code: 0,
+                stdout: task_cli::usage().to_string(),
+                stderr: String::new(),
+            };
+        }
+        return match task_cli::parse(&args[1..]) {
+            Ok(command) => ServerCliAction::Task(command),
+            Err(error) if error == "help requested" => ServerCliAction::Exit {
+                code: 0,
+                stdout: task_cli::usage().to_string(),
+                stderr: String::new(),
+            },
+            Err(error) => ServerCliAction::Exit {
+                code: 2,
+                stdout: String::new(),
+                stderr: format!("{}\n\n{}", error, task_cli::usage()),
             },
         };
     }
@@ -123,6 +147,7 @@ mod tests {
         match server_cli_action(args) {
             ServerCliAction::Run => Ok(None),
             ServerCliAction::Connect(_) => Ok(None),
+            ServerCliAction::Task(_) => Ok(None),
             ServerCliAction::Admin(_) => Ok(None),
             ServerCliAction::Exit {
                 code: 0, stdout, ..
@@ -169,6 +194,10 @@ mod tests {
             .unwrap()
             .unwrap()
             .contains("connect <TARGET>"));
+        assert!(server_cli_output(["task", "--help"])
+            .unwrap()
+            .unwrap()
+            .contains("task <COMMAND>"));
     }
 
     #[test]

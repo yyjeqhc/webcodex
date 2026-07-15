@@ -40,7 +40,7 @@ fn flattened_tool_arg_schema_from_input(input_schema: &Value) -> Option<Value> {
     Some(schema)
 }
 
-fn public_url() -> String {
+pub(crate) fn public_url() -> String {
     std::env::var("WEBCODEX_PUBLIC_URL")
         .ok()
         .map(|s| s.trim().trim_end_matches('/').to_string())
@@ -172,8 +172,12 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
 ];
 
 #[handler]
-pub async fn openapi_json(res: &mut Response) {
-    res.render(Json(build_openapi_spec()));
+pub async fn openapi_json(depot: &mut Depot, res: &mut Response) {
+    let spec = match crate::connector_runtime::http::runtime(depot) {
+        Some(_) => crate::connector_runtime::surface::build_openapi_spec(public_url()),
+        None => build_openapi_spec(),
+    };
+    res.render(Json(spec));
 }
 
 pub(crate) fn build_openapi_spec() -> Value {

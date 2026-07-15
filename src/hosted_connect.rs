@@ -356,6 +356,9 @@ struct ResolvedConnect {
     paths: ConnectPaths,
     port: u16,
     project_id: String,
+    logical_project_id: String,
+    workspace_id: String,
+    project_name: String,
     client_id: String,
     runtime_project_id: String,
     server_bin: PathBuf,
@@ -372,6 +375,13 @@ impl ResolvedConnect {
         let root = discover_project_root(&opts.root)?;
         let identity = project_identity(&root);
         let project_id = format!("{}-{}", safe_slug(&root), &identity[..10]);
+        let logical_project_id = format!("wc_proj_{}", &identity[..20]);
+        let workspace_identity = format!(
+            "{:x}",
+            Sha256::digest(format!("{}\0{}", identity, opts.profile).as_bytes())
+        );
+        let workspace_id = format!("wc_ws_{}", &workspace_identity[..20]);
+        let project_name = safe_slug(&root);
         let client_id = format!("hosted-{}", &identity[..12]);
         let runtime_project_id = format!("agent:{client_id}:{project_id}");
         let state = match &opts.state_dir {
@@ -432,6 +442,9 @@ impl ResolvedConnect {
             paths: ConnectPaths::new(state),
             port,
             project_id,
+            logical_project_id,
+            workspace_id,
+            project_name,
             client_id,
             runtime_project_id,
             server_bin,
@@ -499,8 +512,9 @@ impl ResolvedConnect {
             "blocked"
         };
         let mut output = format!(
-            "WebCodex connect preflight ({readiness})\n\n  project:  {}\n  target:   {}\n  ingress:  {}{}\n  origin:   {} (loopback only)\n  state:    {}\n",
+            "WebCodex connect preflight ({readiness})\n\n  project:  {}\n  scope:    {}\n  target:   {}\n  ingress:  {}{}\n  origin:   {} (loopback only)\n  state:    {}\n",
             self.root.display(),
+            self.logical_project_id,
             self.opts.target.as_str(),
             self.opts.ingress.as_str(),
             if self.opts.temporary { " (temporary)" } else { "" },
@@ -592,7 +606,20 @@ async fn run_resolved(resolved: ResolvedConnect) -> Result<(), String> {
         .env("WEBCODEX_ALLOW_ANONYMOUS", "false")
         .env("WEBCODEX_PUBLIC_URL", &public_url)
         .env("WEBCODEX_OAUTH2_ENABLED", "false")
-        .env("WEBCODEX_QUIC_ENABLED", "false");
+        .env("WEBCODEX_QUIC_ENABLED", "false")
+        .env("WEBCODEX_CONNECTOR_SURFACE", "task-v1")
+        .env(
+            "WEBCODEX_CONNECTOR_PROJECT_ID",
+            &resolved.logical_project_id,
+        )
+        .env("WEBCODEX_CONNECTOR_PROJECT_NAME", &resolved.project_name)
+        .env("WEBCODEX_CONNECTOR_WORKSPACE_ID", &resolved.workspace_id)
+        .env(
+            "WEBCODEX_CONNECTOR_EXECUTOR_PROJECT",
+            &resolved.runtime_project_id,
+        )
+        .env("WEBCODEX_CONNECTOR_EXECUTOR_ROOT", &resolved.root)
+        .env("WEBCODEX_CONNECTOR_PROFILE", &resolved.opts.profile);
     strip_provider_credentials(&mut server_command);
     let mut server = spawn_logged("webcodex runtime", &mut server_command, &server_log)?;
     wait_for_server(&mut server, &local_url, &server_log).await?;
@@ -616,7 +643,7 @@ async fn run_resolved(resolved: ResolvedConnect) -> Result<(), String> {
     wait_for_project(
         &mut agent,
         &local_url,
-        &user_token,
+        &bootstrap,
         &resolved.runtime_project_id,
         &agent_log,
     )
@@ -666,7 +693,7 @@ async fn run_resolved(resolved: ResolvedConnect) -> Result<(), String> {
 fn print_ready(resolved: &ResolvedConnect, public_url: &str) {
     println!("\nWebCodex connector is ready.\n");
     println!("  project:  {}", resolved.root.display());
-    println!("  scope:    {}", resolved.runtime_project_id);
+    println!("  scope:    {}", resolved.logical_project_id);
     println!("  target:   {}", resolved.opts.target.as_str());
     println!("  ingress:  {}", resolved.opts.ingress.as_str());
     match resolved.opts.ingress {
@@ -1019,7 +1046,7 @@ async fn wait_for_server(
 async fn wait_for_project(
     child: &mut ManagedChild,
     local_url: &str,
-    user_token: &str,
+    bootstrap_token: &str,
     runtime_project_id: &str,
     log: &Path,
 ) -> Result<(), String> {
@@ -1030,14 +1057,14 @@ async fn wait_for_project(
         child.try_exit(log)?;
         if let Ok(response) = client
             .post(&url)
-            .bearer_auth(user_token)
+            .bearer_auth(bootstrap_token)
             .json(&serde_json::json!({}))
             .send()
             .await
         {
             if matches!(response.status().as_u16(), 401 | 403) {
                 return Err(format!(
-                    "saved hosted-client credential was rejected by the local runtime; the state under {} is inconsistent",
+                    "local bootstrap credential was rejected while checking the executor; the state under {} is inconsistent",
                     log.parent().unwrap_or(log).display()
                 ));
             }
@@ -1166,14 +1193,16 @@ async fn wait_for_public_ingress(
                 .is_ok_and(|response| response.status().is_success());
             let action_ready = client
                 .post(format!(
-                    "{}/api/projects/list",
+                    "{}/api/connector/task/review",
                     public_url.trim_end_matches('/')
                 ))
                 .bearer_auth(&token)
-                .json(&serde_json::json!({}))
+                .json(&serde_json::json!({
+                    "task_id": "wc_task_00000000000000000000000000000000"
+                }))
                 .send()
                 .await
-                .is_ok_and(|response| response.status().is_success());
+                .is_ok_and(|response| response.status() == reqwest::StatusCode::NOT_FOUND);
             schema_ready && action_ready
         };
         if ready {

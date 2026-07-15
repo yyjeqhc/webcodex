@@ -171,6 +171,35 @@ pub(crate) fn enforce_token_surface(
     Ok(())
 }
 
+/// A `webcodex connect` process is a capability grant for one project, not a
+/// general runtime admin endpoint. Non-bootstrap user-facing credentials may
+/// therefore reach only the canonical connector API and MCP. Bootstrap stays
+/// available for local setup; agent tokens stay available for their already
+/// exact transport routes.
+pub(crate) fn enforce_project_connector_surface(
+    enabled: bool,
+    ctx: &AuthContext,
+    path: &str,
+) -> Result<(), (StatusCode, &'static str)> {
+    if !enabled || ctx.is_bootstrap() || ctx.is_agent_token() {
+        return Ok(());
+    }
+    if path == "/mcp" || path.starts_with("/api/connector/") {
+        return Ok(());
+    }
+    Err((
+        StatusCode::FORBIDDEN,
+        "project connector credentials may only access canonical connector capabilities",
+    ))
+}
+
+fn project_connector_enabled(depot: &Depot) -> bool {
+    depot
+        .obtain::<crate::connector_runtime::ConnectorRuntimeSlot>()
+        .ok()
+        .is_some_and(|slot| slot.0.is_some())
+}
+
 // ---------------------------------------------------------------------------
 // AuthMiddleware — the Salvo handler
 // ---------------------------------------------------------------------------
@@ -222,6 +251,16 @@ impl Handler for AuthMiddleware {
                         ctrl.skip_rest();
                         return;
                     }
+                    if let Err((status, msg)) = enforce_project_connector_surface(
+                        project_connector_enabled(depot),
+                        &ctx,
+                        req.uri().path(),
+                    ) {
+                        res.status_code(status);
+                        res.render(Json(serde_json::json!({"error": msg})));
+                        ctrl.skip_rest();
+                        return;
+                    }
                     depot.inject(ctx);
                     ctrl.call_next(req, depot, res).await;
                     return;
@@ -263,6 +302,16 @@ impl Handler for AuthMiddleware {
                     ctrl.skip_rest();
                     return;
                 }
+                if let Err((status, msg)) = enforce_project_connector_surface(
+                    project_connector_enabled(depot),
+                    &ctx,
+                    req.uri().path(),
+                ) {
+                    res.status_code(status);
+                    res.render(Json(serde_json::json!({"error": msg})));
+                    ctrl.skip_rest();
+                    return;
+                }
                 if let Err((scope, description)) =
                     scopes::enforce_oauth_route_scope(&ctx, req.method().as_str(), req.uri().path())
                 {
@@ -287,6 +336,16 @@ impl Handler for AuthMiddleware {
                 {
                     let ctx = shared_key_context(trimmed);
                     if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
+                        res.status_code(status);
+                        res.render(Json(serde_json::json!({"error": msg})));
+                        ctrl.skip_rest();
+                        return;
+                    }
+                    if let Err((status, msg)) = enforce_project_connector_surface(
+                        project_connector_enabled(depot),
+                        &ctx,
+                        req.uri().path(),
+                    ) {
                         res.status_code(status);
                         res.render(Json(serde_json::json!({"error": msg})));
                         ctrl.skip_rest();
@@ -348,4 +407,41 @@ pub(crate) fn json_error(status: StatusCode, msg: impl Into<String>) -> Json<ser
         "status": status.as_u16(),
         "error": msg.into(),
     }))
+}
+
+#[cfg(test)]
+mod connector_surface_tests {
+    use super::*;
+    use crate::auth::{AuthKind, SCOPE_PROJECT_READ};
+
+    fn user_context() -> AuthContext {
+        AuthContext {
+            kind: AuthKind::ApiToken,
+            user_id: Some("u1".to_string()),
+            username: Some("owner".to_string()),
+            api_key_id: Some("key".to_string()),
+            api_key_name: Some("connector".to_string()),
+            role: Some("user".to_string()),
+            scopes: vec![SCOPE_PROJECT_READ.to_string()],
+            is_bootstrap: false,
+            token_kind: Some("user".to_string()),
+            allowed_client_id: None,
+            shared_key_hash: None,
+        }
+    }
+
+    #[test]
+    fn project_connector_hard_gates_legacy_user_routes() {
+        let user = user_context();
+        assert!(
+            enforce_project_connector_surface(true, &user, "/api/connector/files/read").is_ok()
+        );
+        assert!(enforce_project_connector_surface(true, &user, "/mcp").is_ok());
+        assert!(enforce_project_connector_surface(true, &user, "/api/tools/call").is_err());
+        assert!(enforce_project_connector_surface(true, &user, "/api/projects/list").is_err());
+        assert!(enforce_project_connector_surface(false, &user, "/api/tools/call").is_ok());
+
+        let bootstrap = bootstrap_context();
+        assert!(enforce_project_connector_surface(true, &bootstrap, "/api/projects/list").is_ok());
+    }
 }

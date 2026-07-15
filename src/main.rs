@@ -20,6 +20,7 @@ mod audit_http;
 mod auth;
 mod build_info;
 mod config;
+mod connector_runtime;
 mod console_web;
 mod db;
 mod hosted_connect;
@@ -171,6 +172,17 @@ only for local/trusted-network demos."
         .with_checkpoint_state_dir(config.runtime_state_dir())
         .with_session_ledger(config.session_ledger_path()),
     );
+    let connector_runtime =
+        connector_runtime::ConnectorRuntime::from_env(tool_runtime.clone(), db.clone())
+            .map_err(std::io::Error::other)?;
+    if let Some(runtime) = connector_runtime.0.as_ref() {
+        tracing::info!(
+            project_id = %runtime.context().project_id,
+            profile = %runtime.context().profile,
+            capabilities = connector_runtime::surface::CAPABILITY_NAMES.len(),
+            "Project-bound connector surface enabled"
+        );
+    }
 
     // Custom QUIC agent transport. Default disabled;
     // only starts when WEBCODEX_QUIC_ENABLED=true. Runs a separate quinn UDP
@@ -221,6 +233,7 @@ only for local/trusted-network demos."
 
     let authed_api_router = Router::new()
         .hoop(AuthMiddleware)
+        .push(connector_runtime::http::routes())
         .push(Router::with_path("tools/list").post(runtime_http::tools_list))
         .push(Router::with_path("tools/call").post(runtime_http::tools_call))
         .push(
@@ -350,6 +363,7 @@ only for local/trusted-network demos."
         .hoop(affix_state::inject(authorize_session_store.clone()))
         .hoop(affix_state::inject(shell_registry.clone()))
         .hoop(affix_state::inject(tool_runtime.clone()))
+        .hoop(affix_state::inject(connector_runtime.clone()))
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)

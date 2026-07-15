@@ -11,8 +11,13 @@ mod accounts;
 mod audit;
 mod oauth;
 mod schema;
+mod task_kernel;
 
 pub use self::oauth::RotateResult;
+#[allow(unused_imports)]
+pub(crate) use self::task_kernel::{
+    ConnectorBinding, ConnectorTaskEvent, ConnectorTaskSnapshot, ConnectorTaskStoreError,
+};
 
 pub struct Database {
     conn: Mutex<Connection>,

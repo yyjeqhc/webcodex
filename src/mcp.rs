@@ -1,4 +1,5 @@
 use crate::auth::AuthContext;
+use crate::connector_runtime::{ConnectorRuntime, ConnectorTransport};
 use crate::json_error;
 use crate::tool_request_trace::{
     estimate_json_bytes, jsonrpc_id_safe, new_trace_id, ToolRequestLifecycle,
@@ -56,9 +57,19 @@ fn tool_name_from_params(params: &Value) -> Option<String> {
 /// MCP tools/list payload. When `WEBCODEX_MCP_COMPACT_SCHEMAS=true`, omit
 /// `outputSchema` only (name/description/inputSchema/annotations retained).
 /// This is an A/B compatibility experiment — not a permanent API change.
+#[cfg_attr(not(test), allow(dead_code))]
 fn mcp_tools_list_payload() -> Value {
+    mcp_tools_list_payload_for_connector(false)
+}
+
+fn mcp_tools_list_payload_for_connector(connector_enabled: bool) -> Value {
     let compact = crate::config::mcp_compact_schemas_enabled();
-    let tools: Vec<Value> = registered_tool_specs()
+    let specs = if connector_enabled {
+        crate::connector_runtime::surface::capability_specs()
+    } else {
+        registered_tool_specs()
+    };
+    let tools: Vec<Value> = specs
         .into_iter()
         .map(|spec| mcp_tool_spec_json(spec, compact))
         .collect();
@@ -172,6 +183,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     guard.parsed("ok");
 
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let connector = crate::connector_runtime::http::runtime(depot);
     // Defense-in-depth backstop: every tool bounds its own agent/subprocess
     // waits at <= 124s, so this outer limit never preempts a legitimate inner
     // timeout. It only fires if a dispatch path hangs without a bound (the
@@ -180,7 +192,13 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     let request_id = request.id.clone();
     let outcome = match tokio::time::timeout(
         MCP_DISPATCH_HARD_TIMEOUT,
-        handle_mcp_request_with_lifecycle(&runtime, request, auth.as_ref(), Some(&mut guard)),
+        handle_mcp_request_with_lifecycle(
+            &runtime,
+            connector.as_deref(),
+            request,
+            auth.as_ref(),
+            Some(&mut guard),
+        ),
     )
     .await
     {
@@ -210,7 +228,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             let tool_success = body
                 .get("result")
                 .and_then(|r| r.get("structuredContent"))
-                .and_then(|s| s.get("success"))
+                .and_then(|s| s.get("success").or_else(|| s.get("ok")))
                 .and_then(|v| v.as_bool());
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(200, estimated, Some(true), tool_success, "ok");
@@ -260,11 +278,12 @@ async fn handle_mcp_request(
     request: JsonRpcRequest,
     auth: Option<&AuthContext>,
 ) -> McpOutcome {
-    handle_mcp_request_with_lifecycle(runtime, request, auth, None).await
+    handle_mcp_request_with_lifecycle(runtime, None, request, auth, None).await
 }
 
 async fn handle_mcp_request_with_lifecycle(
     runtime: &ToolRuntime,
+    connector: Option<&ConnectorRuntime>,
     request: JsonRpcRequest,
     auth: Option<&AuthContext>,
     mut lifecycle: Option<&mut ToolRequestLifecycle>,
@@ -322,7 +341,10 @@ async fn handle_mcp_request_with_lifecycle(
             }),
         ),
         "ping" => rpc_result(id, json!({})),
-        "tools/list" => rpc_result(id, mcp_tools_list_payload()),
+        "tools/list" => rpc_result(
+            id,
+            mcp_tools_list_payload_for_connector(connector.is_some()),
+        ),
         "tools/call" => {
             let mut params: McpToolCallParams = match serde_json::from_value(request.params) {
                 Ok(params) => params,
@@ -334,13 +356,63 @@ async fn handle_mcp_request_with_lifecycle(
                     ));
                 }
             };
-            let session_id = strip_reserved_session_id(&mut params.arguments);
             // Emit dispatch_started only after params parse succeeds and before
             // ToolRuntime work begins.
             if let Some(lc) = lifecycle.as_deref_mut() {
                 lc.set_tool_name(Some(params.name.clone()));
                 lc.dispatch_started();
             }
+            if let Some(connector) = connector {
+                let outcome = connector
+                    .call(
+                        &params.name,
+                        params.arguments,
+                        auth,
+                        ConnectorTransport::Mcp,
+                    )
+                    .await;
+                if let Some(required_scope) = outcome.required_scope {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("forbidden");
+                        lc.dispatch_finished(false, Some(false), "forbidden");
+                    }
+                    let description = outcome
+                        .body
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("connector credential lacks the required scope")
+                        .to_string();
+                    return oauth_forbidden(Some(required_scope), description);
+                }
+                if outcome.protocol_error {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("invalid_arguments");
+                        lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                    }
+                    let message = outcome
+                        .body
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("invalid connector capability arguments")
+                        .to_string();
+                    return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+                }
+                if let Some(lc) = lifecycle.as_deref() {
+                    let category = if outcome.ok { "success" } else { "tool_error" };
+                    lc.dispatch_finished(true, Some(outcome.ok), category);
+                }
+                let text = serde_json::to_string_pretty(&outcome.body)
+                    .unwrap_or_else(|_| "{}".to_string());
+                return McpOutcome::Ok(rpc_result(
+                    id,
+                    json!({
+                        "content": [{ "type": "text", "text": text }],
+                        "structuredContent": outcome.body,
+                        "isError": !outcome.ok
+                    }),
+                ));
+            }
+            let session_id = strip_reserved_session_id(&mut params.arguments);
             let outcome = runtime
                 .call_tool_with_context(
                     KernelToolCallRequest {
@@ -597,6 +669,25 @@ mod tests {
             }
         }
         std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    }
+
+    #[test]
+    fn project_connector_tools_list_is_exact_canonical_surface() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_MCP_COMPACT_SCHEMAS");
+        let payload = mcp_tools_list_payload_for_connector(true);
+        let tools = payload["tools"].as_array().expect("tools array");
+        let names = tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, crate::connector_runtime::surface::CAPABILITY_NAMES);
+        assert_eq!(tools.len(), 8);
+        assert!(tools.iter().all(|tool| tool["inputSchema"].is_object()));
+        assert!(tools.iter().all(|tool| tool["outputSchema"].is_object()));
+        assert!(!names.contains(&"runtime_status"));
+        assert!(!names.contains(&"list_projects"));
+        assert!(!names.contains(&"start_session"));
     }
 
     #[tokio::test]
@@ -1302,6 +1393,31 @@ mod tests {
         user
     }
 
+    fn seed_api_token(
+        db: &crate::Database,
+        user: &crate::models::UserRecord,
+        scopes: &str,
+    ) -> String {
+        let plaintext = crate::auth::generate_api_token();
+        let now = chrono::Utc::now().timestamp();
+        let record = crate::models::ApiKeyRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: user.id.clone(),
+            name: "connector".to_string(),
+            key_prefix: crate::auth::token_prefix(&plaintext),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: scopes.to_string(),
+            expires_at: None,
+            kind: crate::models::TOKEN_KIND_USER.to_string(),
+            allowed_client_id: None,
+        };
+        db.insert_api_key(&record, &crate::auth::hash_token(&plaintext))
+            .unwrap();
+        plaintext
+    }
+
     fn seed_oauth_client(
         db: &crate::Database,
         user: &crate::models::UserRecord,
@@ -1382,6 +1498,46 @@ mod tests {
             )
     }
 
+    fn build_connector_test_router(
+        config: Arc<crate::Config>,
+        db: Arc<crate::Database>,
+        runtime: Arc<ToolRuntime>,
+    ) -> Router {
+        let connector = crate::connector_runtime::ConnectorRuntime::new(
+            runtime.clone(),
+            db.clone(),
+            crate::connector_runtime::ConnectorContext {
+                project_id: "wc_proj_1234567890".to_string(),
+                project_name: "demo".to_string(),
+                workspace_id: "wc_ws_1234567890".to_string(),
+                executor_project: "agent:hosted:demo".to_string(),
+                executor_root: "/workspace/demo".to_string(),
+                profile: "personal".to_string(),
+            },
+        )
+        .unwrap();
+        Router::new()
+            .hoop(affix_state::inject(config))
+            .hoop(affix_state::inject(db))
+            .hoop(affix_state::inject(runtime))
+            .hoop(affix_state::inject(
+                crate::connector_runtime::ConnectorRuntimeSlot(Some(Arc::new(connector))),
+            ))
+            .push(
+                Router::with_path("mcp")
+                    .hoop(crate::AuthMiddleware)
+                    .get(mcp_info)
+                    .post(mcp_post),
+            )
+            .push(
+                Router::with_path("api")
+                    .hoop(crate::AuthMiddleware)
+                    .push(crate::connector_runtime::http::routes())
+                    .push(Router::with_path("tools/call").post(crate::runtime_http::tools_call)),
+            )
+            .push(Router::with_path("openapi.json").get(crate::openapi::openapi_json))
+    }
+
     /// Effective HTTP status: the explicitly set status_code, or OK when the
     /// handler only rendered a body (Salvo defaults Json bodies to 200).
     fn effective_status(resp: &Response) -> StatusCode {
@@ -1452,6 +1608,119 @@ mod tests {
                 tool["name"]
             );
         }
+    }
+
+    #[tokio::test]
+    async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "connector-owner");
+        let user_token = seed_api_token(
+            &db,
+            &user,
+            "runtime:read project:read project:write job:run",
+        );
+        let runtime = Arc::new(test_runtime());
+        let service = Service::new(build_connector_test_router(config, db, runtime));
+
+        let mut schema = TestClient::get("http://localhost/openapi.json")
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&schema), StatusCode::OK);
+        let schema_body: Value = schema.take_json().await.unwrap();
+        assert_eq!(schema_body["paths"].as_object().unwrap().len(), 8);
+        assert!(schema_body["paths"]
+            .get("/api/connector/task/start")
+            .is_some());
+        assert!(schema_body["paths"].get("/api/tools/call").is_none());
+
+        let mut listed = TestClient::post("http://localhost/mcp")
+            .bearer_auth(&user_token)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 20,
+                "method": "tools/list",
+                "params": {}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&listed), StatusCode::OK);
+        let listed_body: Value = listed.take_json().await.unwrap();
+        let names = listed_body["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, crate::connector_runtime::surface::CAPABILITY_NAMES);
+
+        let mut action_started = TestClient::post("http://localhost/api/connector/task/start")
+            .bearer_auth(&user_token)
+            .json(&json!({ "goal": "exercise the Actions adapter" }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&action_started), StatusCode::OK);
+        let action_body: Value = action_started.take_json().await.unwrap();
+        assert_eq!(action_body["ok"], true);
+        assert!(action_body["task_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_task_"));
+        assert!(action_body.get("success").is_none());
+
+        let mut legacy = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth(&user_token)
+            .json(&json!({ "name": "runtime_status", "arguments": {} }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&legacy), StatusCode::FORBIDDEN);
+        let legacy_body: Value = legacy.take_json().await.unwrap();
+        assert!(legacy_body["error"]
+            .as_str()
+            .unwrap()
+            .contains("canonical connector capabilities"));
+
+        let mut started = TestClient::post("http://localhost/mcp")
+            .bearer_auth(&user_token)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 21,
+                "method": "tools/call",
+                "params": {
+                    "name": "task_start",
+                    "arguments": { "goal": "inspect the project" }
+                }
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&started), StatusCode::OK);
+        let started_body: Value = started.take_json().await.unwrap();
+        assert_eq!(started_body["result"]["structuredContent"]["ok"], true);
+        assert!(started_body["result"]["structuredContent"]["task_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_task_"));
+        assert!(started_body["result"]["structuredContent"]
+            .get("success")
+            .is_none());
+
+        let mut hidden = TestClient::post("http://localhost/mcp")
+            .bearer_auth(&user_token)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 22,
+                "method": "tools/call",
+                "params": { "name": "runtime_status", "arguments": {} }
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&hidden), StatusCode::BAD_REQUEST);
+        let hidden_body: Value = hidden.take_json().await.unwrap();
+        assert_eq!(hidden_body["error"]["code"], -32602);
+        assert!(hidden_body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not available"));
     }
 
     #[tokio::test]

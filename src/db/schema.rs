@@ -258,6 +258,81 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_hash ON oauth_refresh_tokens(token_hash);
             CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client ON oauth_refresh_tokens(client_id);
             CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_user ON oauth_refresh_tokens(user_id);
+
+            CREATE TABLE IF NOT EXISTS wc_projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS wc_workspaces (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                executor_ref TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES wc_projects(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_workspaces_project
+                ON wc_workspaces(project_id);
+
+            CREATE TABLE IF NOT EXISTS wc_connector_grants (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                capabilities_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                UNIQUE(project_id, subject_id),
+                FOREIGN KEY(project_id) REFERENCES wc_projects(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_connector_grants_subject
+                ON wc_connector_grants(subject_id, revoked_at);
+
+            CREATE TABLE IF NOT EXISTS wc_tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                owner_subject_id TEXT NOT NULL,
+                goal TEXT NOT NULL,
+                mode TEXT NOT NULL CHECK(mode IN ('normal', 'read_only')),
+                status TEXT NOT NULL CHECK(status IN ('active', 'ready_for_review')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES wc_projects(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_tasks_owner_project
+                ON wc_tasks(owner_subject_id, project_id, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS wc_runs (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'interrupted')),
+                started_at INTEGER NOT NULL,
+                finished_at INTEGER,
+                FOREIGN KEY(task_id) REFERENCES wc_tasks(id),
+                FOREIGN KEY(workspace_id) REFERENCES wc_workspaces(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_runs_task_started
+                ON wc_runs(task_id, started_at DESC);
+
+            CREATE TABLE IF NOT EXISTS wc_task_events (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL CHECK(sequence > 0),
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(task_id, sequence),
+                FOREIGN KEY(task_id) REFERENCES wc_tasks(id),
+                FOREIGN KEY(run_id) REFERENCES wc_runs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_task_events_task_sequence
+                ON wc_task_events(task_id, sequence);
             ",
         )?;
 

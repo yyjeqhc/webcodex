@@ -1,8 +1,9 @@
-use crate::{admin_cli, build_info};
+use crate::{admin_cli, build_info, hosted_connect};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ServerCliAction {
     Run,
+    Connect(hosted_connect::HostedConnectOptions),
     Admin(admin_cli::AdminCliCommand),
     Exit {
         code: i32,
@@ -13,7 +14,10 @@ pub(crate) enum ServerCliAction {
 
 fn server_usage() -> String {
     format!(
-        "Usage: webcodex [OPTIONS]\n       webcodex <ADMIN-COMMAND>\n\n\
+        "Usage: webcodex [OPTIONS]\n       webcodex connect <TARGET> --via <INGRESS> [OPTIONS]\n       webcodex <ADMIN-COMMAND>\n\n\
+Commands:\n\
+  connect            Open the current project and connect a hosted client\n\
+  serve              Run the HTTP runtime (internal/advanced mode)\n\n\
 Options:\n\
   -h, --help       Print help and exit\n\
   -V, --version    Print version and exit\n\n\
@@ -45,6 +49,26 @@ where
         .map(|arg| arg.as_ref().to_string())
         .collect();
     if args.is_empty() {
+        return ServerCliAction::Run;
+    }
+    if args[0] == "connect" {
+        if args.len() == 2 && matches!(args[1].as_str(), "--help" | "-h") {
+            return ServerCliAction::Exit {
+                code: 0,
+                stdout: hosted_connect::usage().to_string(),
+                stderr: String::new(),
+            };
+        }
+        return match hosted_connect::parse(&args[1..]) {
+            Ok(opts) => ServerCliAction::Connect(opts),
+            Err(e) => ServerCliAction::Exit {
+                code: 2,
+                stdout: String::new(),
+                stderr: format!("{}\n\n{}", e, hosted_connect::usage()),
+            },
+        };
+    }
+    if args.len() == 1 && args[0] == "serve" {
         return ServerCliAction::Run;
     }
     if admin_cli::is_admin_group(&args[0]) {
@@ -98,6 +122,7 @@ mod tests {
     {
         match server_cli_action(args) {
             ServerCliAction::Run => Ok(None),
+            ServerCliAction::Connect(_) => Ok(None),
             ServerCliAction::Admin(_) => Ok(None),
             ServerCliAction::Exit {
                 code: 0, stdout, ..
@@ -140,6 +165,10 @@ mod tests {
             assert!(output.starts_with(&format!("webcodex {} (commit ", env!("CARGO_PKG_VERSION"))));
             assert_ne!(output, format!("webcodex {}\n", env!("CARGO_PKG_VERSION")));
         }
+        assert!(server_cli_output(["connect", "--help"])
+            .unwrap()
+            .unwrap()
+            .contains("connect <TARGET>"));
     }
 
     #[test]
@@ -204,5 +233,6 @@ mod tests {
             server_cli_action(std::iter::empty::<&str>()),
             ServerCliAction::Run
         );
+        assert_eq!(server_cli_action(["serve"]), ServerCliAction::Run);
     }
 }

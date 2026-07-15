@@ -22,6 +22,7 @@ mod build_info;
 mod config;
 mod console_web;
 mod db;
+mod hosted_connect;
 mod mcp;
 mod models;
 mod oauth_http;
@@ -74,6 +75,13 @@ const REQUEST_HARD_TIMEOUT_SECS: u64 = 300;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match server_cli_action(std::env::args().skip(1)) {
         ServerCliAction::Run => {}
+        ServerCliAction::Connect(opts) => {
+            if let Err(stderr) = hosted_connect::run(opts).await {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
         ServerCliAction::Admin(cmd) => match admin_cli::run_admin_command(cmd).await {
             Ok(stdout) => {
                 println!("{}", stdout);

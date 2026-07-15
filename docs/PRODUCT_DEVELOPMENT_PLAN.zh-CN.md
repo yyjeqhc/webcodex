@@ -2,7 +2,7 @@
 
 > 评审日期：2026-07-15
 >
-> 状态：v3 执行基线；第一轮 hosted connect 与第二轮 project-bound Task Kernel/canonical surface 已落地，隔离 workspace/Task Result/人工审批待后续迭代
+> 状态：v3 执行基线；前三轮个人本地主路径已落地：hosted connect、project-bound canonical surface、隔离 Run、Task Result 与本机人工决策；shared control plane/browser review 待后续迭代
 >
 > 目标：一个命令把本地项目安全接入线上聊天窗口，稳定执行工具调用、审查结果，并为多设备和多用户保留正确边界
 >

@@ -36,15 +36,20 @@ async fn dispatch_records_edit_tool_usage_without_sensitive_args() {
         .dispatch_with_auth(
             ToolCall::ApplyTextEdits {
                 project: "agent:oe:missing".to_string(),
-                path: "src/secret.rs".to_string(),
-                edits: vec![ApplyTextEditInput {
-                    kind: ApplyTextEditKind::ReplaceExact,
-                    old_text: Some("a".to_string()),
-                    new_text: Some("b".to_string()),
-                    anchor_text: None,
+                changes: vec![ApplyFileChangeInput {
+                    kind: ApplyFileChangeKind::Edit,
+                    path: "src/secret.rs".to_string(),
+                    to_path: None,
+                    content: None,
+                    edits: vec![ApplyTextEditInput {
+                        kind: ApplyTextEditKind::ReplaceExact,
+                        old_text: Some("a".to_string()),
+                        new_text: Some("b".to_string()),
+                        anchor_text: None,
+                    }],
+                    expected_sha256: Some("a".repeat(64)),
                 }],
                 dry_run: Some(true),
-                expected_file_sha256: None,
                 session_id: None,
             },
             None,

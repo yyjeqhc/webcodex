@@ -289,6 +289,15 @@ pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<
                     push_path(&mut paths, path);
                 }
             }
+            if let Some(changes) = obj.get("changes").and_then(Value::as_array) {
+                for change in changes.iter().filter_map(Value::as_object) {
+                    for key in ["path", "to_path"] {
+                        if let Some(path) = change.get(key).and_then(Value::as_str) {
+                            push_path(&mut paths, path);
+                        }
+                    }
+                }
+            }
         }
         ToolPathHint::Artifact => {
             for key in ["path", "output_path", "target_path"] {

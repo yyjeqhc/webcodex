@@ -1005,9 +1005,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     let joined_flows = flows.join("\n").to_lowercase();
     for phrase in [
         "inspect: use read_file, search_project_text, and show_changes before editing",
-        "edit: prefer apply_text_edits for precise local edits",
-        "apply_patch_checked for multi-file patches",
-        "write_project_file only for create/intentional full rewrite",
+        "edit: prefer apply_text_edits for transactional guarded file changes",
+        "apply_patch_checked for complex unified diffs",
+        "write_project_file only for intentional full rewrites",
         "line/pattern tools are compatibility paths",
         "validate: use cargo_check / cargo_test / validate_patch",
         "raw run_shell is a bounded escape hatch",

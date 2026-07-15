@@ -10,7 +10,7 @@ use super::sessions::{
 };
 use super::tool_definition::{lookup_tool_definition, model_visible_tool_names_csv};
 use super::tool_inputs::{
-    default_true, ApplyTextEditInput, CheckpointValidationInput, SessionMode,
+    default_true, ApplyFileChangeInput, CheckpointValidationInput, SessionMode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -814,23 +814,17 @@ pub enum ToolCall {
         expected_old_prefix: Option<String>,
     },
 
-    /// Apply a bounded batch of atomic text edits to a single UTF-8 file via
-    /// the owning agent. Intended for large-block refactors (whole function
-    /// clusters) where line-number edits cause drift and structural pollution.
-    /// Every edit is validated against the original file before any write: each
-    /// `old_text`/`anchor_text` must match exactly once, edits must not overlap
-    /// ambiguously, and an optional `expected_file_sha256` guards the whole
-    /// file. Only when all edits validate is the file replaced atomically.
-    /// `dry_run` computes the plan without writing. Exposed only through
-    /// runtime tools / MCP / `callRuntimeTool` (no dedicated OpenAPI op).
+    /// Apply a bounded transactional batch of edit/create/delete/rename file
+    /// changes via the owning agent. Every existing input file requires a
+    /// sha256 precondition and every change is preflighted before the first
+    /// mutation. `dry_run` computes the full plan without writing. Exposed only
+    /// through runtime tools / MCP / `callRuntimeTool` (no dedicated OpenAPI
+    /// operation).
     ApplyTextEdits {
         project: String,
-        path: String,
-        edits: Vec<ApplyTextEditInput>,
+        changes: Vec<ApplyFileChangeInput>,
         #[serde(default)]
         dry_run: Option<bool>,
-        #[serde(default)]
-        expected_file_sha256: Option<String>,
         #[serde(default)]
         session_id: Option<String>,
     },

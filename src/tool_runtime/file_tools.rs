@@ -265,15 +265,10 @@ impl ToolRuntime {
             }
             ToolCall::ApplyTextEdits {
                 project,
-                path,
-                edits,
+                changes,
                 dry_run,
-                expected_file_sha256,
                 session_id: _,
-            } => {
-                self.apply_text_edits(project, path, edits, dry_run, expected_file_sha256)
-                    .await
-            }
+            } => self.apply_text_edits(project, changes, dry_run).await,
             _ => unreachable!("non-file tool routed to file dispatcher"),
         }
     }

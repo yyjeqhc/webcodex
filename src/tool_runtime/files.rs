@@ -1,8 +1,8 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
-#[cfg(test)]
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -12,7 +12,9 @@ use super::helpers::{
     looks_like_command_timeout, run_command_sync_bounded, shell_escape_simple, shell_join_paths,
     validate_limited_cleanup_paths, validate_project_relative_path, LocalRunFailure,
 };
-use super::tool_inputs::{ApplyTextEditInput, ApplyTextEditKind};
+use super::tool_inputs::{
+    ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
+};
 use super::tool_result::ToolResult;
 use super::{SearchResultMode, ToolRuntime};
 use crate::artifact_policy::{
@@ -40,6 +42,7 @@ pub(crate) fn read_file_content_result_with_options(
     limit: Option<usize>,
     with_line_numbers: bool,
 ) -> ToolResult {
+    let sha256 = sha256_hex_bytes(content.as_bytes());
     let all_lines: Vec<&str> = content.lines().collect();
     let total_lines = all_lines.len();
     let eff_start = start_line.unwrap_or(1).max(1);
@@ -47,6 +50,7 @@ pub(crate) fn read_file_content_result_with_options(
     if eff_start > total_lines {
         let mut output = json!({
             "content": "",
+            "sha256": sha256,
             "total_lines": total_lines,
             "start_line": eff_start,
             "limit": eff_limit,
@@ -62,6 +66,7 @@ pub(crate) fn read_file_content_result_with_options(
     let slice = selected_lines.join("\n");
     let mut output = json!({
         "content": slice,
+        "sha256": sha256,
         "total_lines": total_lines,
         "start_line": eff_start,
         "limit": eff_limit,
@@ -1375,6 +1380,12 @@ pub(crate) const MAX_EXPECTED_PREFIX_BYTES: usize = 64 * 1024; // 64 KiB
 /// Maximum number of edits accepted by a single `apply_text_edits` call.
 pub(crate) const MAX_APPLY_TEXT_EDITS: usize = 20;
 
+/// Maximum files changed by one transactional `apply_text_edits` request.
+pub(crate) const MAX_APPLY_FILE_CHANGES: usize = 16;
+
+/// Maximum serialized batch payload sent to the owning agent.
+pub(crate) const MAX_APPLY_FILE_CHANGES_BYTES: usize = 1024 * 1024;
+
 /// Maximum byte size of a single `old_text`/`new_text`/`anchor_text` field in
 /// an `apply_text_edits` edit.
 pub(crate) const MAX_APPLY_TEXT_EDIT_FIELD_BYTES: usize = 512 * 1024; // 512 KiB
@@ -1575,7 +1586,203 @@ pub(crate) fn is_hex_sha256(s: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-#[cfg(test)]
+fn validate_apply_text_edit(
+    change_index: usize,
+    edit_index: usize,
+    edit: &ApplyTextEditInput,
+) -> Result<(), String> {
+    let validate_field = |label: &str, value: &Option<String>| -> Result<(), String> {
+        if let Some(value) = value {
+            if value.contains('\0') {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} ({}): {label} cannot contain NUL bytes",
+                    edit.kind.as_str()
+                ));
+            }
+            if value.len() > MAX_APPLY_TEXT_EDIT_FIELD_BYTES {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} ({}): {label} exceeds {} bytes",
+                    edit.kind.as_str(),
+                    MAX_APPLY_TEXT_EDIT_FIELD_BYTES
+                ));
+            }
+        }
+        Ok(())
+    };
+    validate_field("old_text", &edit.old_text)?;
+    validate_field("new_text", &edit.new_text)?;
+    validate_field("anchor_text", &edit.anchor_text)?;
+    match edit.kind {
+        ApplyTextEditKind::ReplaceExact => {
+            if edit
+                .old_text
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (replace_exact): old_text must be non-empty"
+                ));
+            }
+            if edit.anchor_text.is_some() {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (replace_exact): anchor_text is not allowed"
+                ));
+            }
+        }
+        ApplyTextEditKind::DeleteExact => {
+            if edit
+                .old_text
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (delete_exact): old_text must be non-empty"
+                ));
+            }
+            if edit.new_text.is_some() || edit.anchor_text.is_some() {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (delete_exact): new_text and anchor_text are not allowed"
+                ));
+            }
+        }
+        ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter => {
+            if edit
+                .anchor_text
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} ({}): anchor_text must be non-empty",
+                    edit.kind.as_str()
+                ));
+            }
+            if edit
+                .new_text
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} ({}): new_text must be non-empty",
+                    edit.kind.as_str()
+                ));
+            }
+            if edit.old_text.is_some() {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} ({}): old_text is not allowed",
+                    edit.kind.as_str()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_apply_file_change(index: usize, change: &ApplyFileChangeInput) -> Result<(), String> {
+    let expected_hash = || -> Result<(), String> {
+        match change.expected_sha256.as_deref() {
+            Some(hash) if is_hex_sha256(hash) => Ok(()),
+            _ => Err(format!(
+                "change {index} ({}): expected_sha256 is required and must be 64 lowercase hexadecimal characters",
+                change.kind.as_str()
+            )),
+        }
+    };
+    match change.kind {
+        ApplyFileChangeKind::Edit => {
+            expected_hash()?;
+            if change.to_path.is_some() || change.content.is_some() {
+                return Err(format!(
+                    "change {index} (edit): to_path and content are not allowed"
+                ));
+            }
+            if change.edits.is_empty() || change.edits.len() > MAX_APPLY_TEXT_EDITS {
+                return Err(format!(
+                    "change {index} (edit): edits must contain 1..={MAX_APPLY_TEXT_EDITS} entries"
+                ));
+            }
+            for (edit_index, edit) in change.edits.iter().enumerate() {
+                validate_apply_text_edit(index, edit_index, edit)?;
+            }
+        }
+        ApplyFileChangeKind::Create => {
+            if change.to_path.is_some()
+                || change.expected_sha256.is_some()
+                || !change.edits.is_empty()
+            {
+                return Err(format!(
+                    "change {index} (create): to_path, expected_sha256, and edits are not allowed"
+                ));
+            }
+            let content = change
+                .content
+                .as_deref()
+                .ok_or_else(|| format!("change {index} (create): content is required"))?;
+            if content.contains('\0') {
+                return Err(format!(
+                    "change {index} (create): content cannot contain NUL bytes"
+                ));
+            }
+        }
+        ApplyFileChangeKind::Delete => {
+            expected_hash()?;
+            if change.to_path.is_some() || change.content.is_some() || !change.edits.is_empty() {
+                return Err(format!(
+                    "change {index} (delete): to_path, content, and edits are not allowed"
+                ));
+            }
+        }
+        ApplyFileChangeKind::Rename => {
+            expected_hash()?;
+            let to_path = change
+                .to_path
+                .as_deref()
+                .ok_or_else(|| format!("change {index} (rename): to_path is required"))?;
+            if to_path == change.path {
+                return Err(format!(
+                    "change {index} (rename): path and to_path must differ"
+                ));
+            }
+            if change.content.is_some() || !change.edits.is_empty() {
+                return Err(format!(
+                    "change {index} (rename): content and edits are not allowed"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_text_edits_agent_stdout_result(stdout: &str) -> ToolResult {
+    let stdout = stdout.trim();
+    let obj: Value = match serde_json::from_str(stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            return ToolResult::err(format!(
+                "agent apply_text_edits returned invalid JSON: {} (got: {})",
+                error,
+                &stdout[..stdout.len().min(200)]
+            ))
+        }
+    };
+    if let Some(error) = obj.get("error").and_then(Value::as_str) {
+        let uncertain = obj.get("rollback_complete").and_then(Value::as_bool) == Some(false)
+            || obj.get("changed").and_then(Value::as_bool) == Some(true);
+        let message = if uncertain {
+            format!(
+                "Edit outcome is uncertain: {error}. Inspect the affected files before issuing another write."
+            )
+        } else {
+            recoverable_write_rejection(error)
+        };
+        return ToolResult::err_with_output(message, obj);
+    }
+    ToolResult::ok(obj)
+}
+
 pub(crate) fn sha256_hex_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -3040,123 +3247,71 @@ impl ToolRuntime {
         .await
     }
 
-    /// Apply a bounded batch of atomic text edits to a single UTF-8 file via
-    /// the owning agent. All input validation (path safety, edit count, field
-    /// sizes, sha format, field presence per kind) happens server-side before
-    /// any agent request is enqueued. The edits, dry_run flag, and optional
-    /// whole-file sha guard travel to the agent as a JSON payload in the file
-    /// op `content` field; the agent reads the file, enforces unique-match /
-    /// no-overlap semantics, and writes atomically (temp + rename) only when
-    /// every edit validates.
+    /// Apply a bounded transactional batch of edit/create/delete/rename file
+    /// changes via the owning agent. Server-side validation rejects malformed,
+    /// overlapping, sensitive, or unguarded changes before enqueue. The agent
+    /// then preflights every file against the live worktree before the first
+    /// mutation and rolls back already-applied changes if a later filesystem
+    /// operation fails.
     pub(crate) async fn apply_text_edits(
         &self,
         project: String,
-        path: String,
-        edits: Vec<ApplyTextEditInput>,
+        changes: Vec<ApplyFileChangeInput>,
         dry_run: Option<bool>,
-        expected_file_sha256: Option<String>,
     ) -> ToolResult {
-        if let Err(e) = validate_edit_file_path(&path) {
-            return super::permissions::edit_path_policy_rejected_result(&path, e);
+        if changes.is_empty() {
+            return ToolResult::err("changes must contain at least one file change");
         }
-        if edits.is_empty() {
-            return ToolResult::err("edits must contain at least one edit");
-        }
-        if edits.len() > MAX_APPLY_TEXT_EDITS {
+        if changes.len() > MAX_APPLY_FILE_CHANGES {
             return ToolResult::err(format!(
-                "too many edits; maximum is {}",
-                MAX_APPLY_TEXT_EDITS
+                "too many file changes; maximum is {}",
+                MAX_APPLY_FILE_CHANGES
             ));
         }
-        for (index, edit) in edits.iter().enumerate() {
-            let kind = edit.kind;
-            let index_str = index;
-            // Bound + NUL check for a single optional field; returns an error
-            // message on failure.
-            let validate_field = |label: &str, value: &Option<String>| -> Option<String> {
-                if let Some(v) = value {
-                    if v.contains('\0') {
-                        return Some(format!(
-                            "edit {} ({}): {} cannot contain NUL bytes",
-                            index_str,
-                            kind.as_str(),
-                            label
-                        ));
-                    }
-                    if v.len() > MAX_APPLY_TEXT_EDIT_FIELD_BYTES {
-                        return Some(format!(
-                            "edit {} ({}): {} too large; maximum is {} bytes",
-                            index_str,
-                            kind.as_str(),
-                            label,
-                            MAX_APPLY_TEXT_EDIT_FIELD_BYTES
-                        ));
-                    }
+        let mut touched_paths = HashSet::new();
+        for (change_index, change) in changes.iter().enumerate() {
+            if let Err(error) = validate_edit_file_path(&change.path) {
+                return super::permissions::edit_path_policy_rejected_result(&change.path, error);
+            }
+            if !touched_paths.insert(change.path.as_str()) {
+                return ToolResult::err(format!(
+                    "change {change_index} reuses path '{}'; each source/destination path may appear only once",
+                    change.path
+                ));
+            }
+            if let Some(to_path) = change.to_path.as_deref() {
+                if let Err(error) = validate_edit_file_path(to_path) {
+                    return super::permissions::edit_path_policy_rejected_result(to_path, error);
                 }
-                None
-            };
-            match kind {
-                ApplyTextEditKind::ReplaceExact => {
-                    if let Some(msg) = validate_field("old_text", &edit.old_text) {
-                        return ToolResult::err(msg);
-                    }
-                    if let Some(msg) = validate_field("new_text", &edit.new_text) {
-                        return ToolResult::err(msg);
-                    }
-                    if edit.old_text.as_deref().filter(|v| !v.is_empty()).is_none() {
-                        return ToolResult::err(format!(
-                            "edit {} (replace_exact): old_text must be non-empty",
-                            index
-                        ));
-                    }
-                }
-                ApplyTextEditKind::DeleteExact => {
-                    if let Some(msg) = validate_field("old_text", &edit.old_text) {
-                        return ToolResult::err(msg);
-                    }
-                    if edit.old_text.as_deref().filter(|v| !v.is_empty()).is_none() {
-                        return ToolResult::err(format!(
-                            "edit {} (delete_exact): old_text must be non-empty",
-                            index
-                        ));
-                    }
-                }
-                ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter => {
-                    if let Some(msg) = validate_field("anchor_text", &edit.anchor_text) {
-                        return ToolResult::err(msg);
-                    }
-                    if let Some(msg) = validate_field("new_text", &edit.new_text) {
-                        return ToolResult::err(msg);
-                    }
-                    if edit
-                        .anchor_text
-                        .as_deref()
-                        .filter(|v| !v.is_empty())
-                        .is_none()
-                    {
-                        return ToolResult::err(format!(
-                            "edit {} ({}): anchor_text must be non-empty",
-                            index,
-                            kind.as_str()
-                        ));
-                    }
-                    if edit.new_text.as_deref().filter(|v| !v.is_empty()).is_none() {
-                        return ToolResult::err(format!(
-                            "edit {} ({}): new_text must be non-empty",
-                            index,
-                            kind.as_str()
-                        ));
-                    }
+                if !touched_paths.insert(to_path) {
+                    return ToolResult::err(format!(
+                        "change {change_index} reuses destination path '{to_path}'; each source/destination path may appear only once"
+                    ));
                 }
             }
-        }
-        if let Some(hash) = expected_file_sha256.as_deref() {
-            if !is_hex_sha256(hash) {
-                return ToolResult::err(
-                    "expected_file_sha256 must be a lowercase 64-char hex sha256 digest",
-                );
+            if let Err(message) = validate_apply_file_change(change_index, change) {
+                return ToolResult::err(message);
             }
         }
+
+        let payload = json!({
+            "changes": changes,
+            "dry_run": dry_run.unwrap_or(false),
+        });
+        let serialized = match serde_json::to_string(&payload) {
+            Ok(serialized) if serialized.len() <= MAX_APPLY_FILE_CHANGES_BYTES => serialized,
+            Ok(_) => {
+                return ToolResult::err(format!(
+                    "serialized file changes exceed {} bytes",
+                    MAX_APPLY_FILE_CHANGES_BYTES
+                ))
+            }
+            Err(error) => {
+                return ToolResult::err(format!(
+                    "failed to serialize file changes payload: {error}"
+                ))
+            }
+        };
 
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
@@ -3173,27 +3328,18 @@ impl ToolRuntime {
             Err(e) => return ToolResult::err(e),
         };
 
-        // Serialize the full edit payload into the file-op `content` field so
-        // no shell-protocol field additions are needed. The agent handler for
-        // `file_apply_text_edits` deserializes this one field.
-        let payload = json!({
-            "edits": edits,
-            "dry_run": dry_run.unwrap_or(false),
-            "expected_file_sha256": expected_file_sha256,
-        });
-        let serialized = match serde_json::to_string(&payload) {
-            Ok(s) => s,
-            Err(e) => return ToolResult::err(format!("failed to serialize edits payload: {}", e)),
-        };
-
         let wait_timeout = 60_u64;
+        let routing_path = changes
+            .first()
+            .map(|change| change.path.clone())
+            .expect("non-empty changes validated above");
         let (request_id, rx) = match self
             .shell_clients
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: "apply_text_edits".to_string(),
                     client_id,
-                    path: path.clone(),
+                    path: routing_path,
                     cwd: Some(proj.path.clone()),
                     content: Some(serialized),
                     max_bytes: None,
@@ -3238,34 +3384,7 @@ impl ToolRuntime {
                 },
             )));
         }
-        let stdout = resp.stdout.unwrap_or_default();
-        let stdout = stdout.trim();
-        let obj: Value = match serde_json::from_str(stdout) {
-            Ok(v) => v,
-            Err(e) => {
-                return ToolResult::err(format!(
-                    "agent apply_text_edits returned invalid JSON: {} (got: {})",
-                    e,
-                    &stdout[..stdout.len().min(200)]
-                ))
-            }
-        };
-        if let Some(err) = obj
-            .get("error")
-            .and_then(|e| e.as_str())
-            .map(str::to_string)
-        {
-            return ToolResult {
-                success: false,
-                output: obj,
-                error: Some(recoverable_write_rejection(err)),
-            };
-        }
-        let mut obj = obj;
-        if obj.get("path").is_none() {
-            obj["path"] = json!(path);
-        }
-        ToolResult::ok(obj)
+        apply_text_edits_agent_stdout_result(&resp.stdout.unwrap_or_default())
     }
 
     pub(crate) async fn read_file(
@@ -3317,12 +3436,16 @@ impl ToolRuntime {
             };
             return match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
                 Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                    read_file_agent_stdout_result_with_options(
+                    let mut result = read_file_agent_stdout_result_with_options(
                         resp.stdout.unwrap_or_default(),
                         start_line,
                         limit,
                         with_line_numbers,
-                    )
+                    );
+                    if result.success {
+                        result.output["path"] = json!(path);
+                    }
+                    result
                 }
                 Ok(Ok(resp)) => ToolResult::err(
                     resp.error
@@ -3358,7 +3481,12 @@ impl ToolRuntime {
             Ok(c) => c,
             Err(e) => return ToolResult::err(format!("Failed to read file: {}", e)),
         };
-        read_file_content_result_with_options(content, start_line, limit, with_line_numbers)
+        let mut result =
+            read_file_content_result_with_options(content, start_line, limit, with_line_numbers);
+        if result.success {
+            result.output["path"] = json!(path);
+        }
+        result
     }
 
     // -------------------------------------------------------------------------
@@ -3849,8 +3977,25 @@ mod tests {
         assert_eq!(result.output["total_lines"], 3);
         assert_eq!(result.output["start_line"], 2);
         assert_eq!(result.output["limit"], 1);
+        assert_eq!(
+            result.output["sha256"],
+            sha256_hex_bytes(b"one\ntwo\nthree")
+        );
         assert!(result.output.get("numbered_text").is_none());
         assert!(result.output.get("lines").is_none());
+    }
+
+    #[test]
+    fn incomplete_apply_text_edits_rollback_is_not_reported_as_no_write() {
+        let result = apply_text_edits_agent_stdout_result(
+            r#"{"changed":true,"rollback_complete":false,"error":"rollback failed"}"#,
+        );
+
+        assert!(!result.success);
+        assert_eq!(result.output["rollback_complete"], false);
+        let error = result.error.unwrap();
+        assert!(error.contains("uncertain"));
+        assert!(!error.contains("No files were modified"));
     }
 
     #[test]
@@ -3859,6 +4004,7 @@ mod tests {
             serde_json::json!({
                 "format": "webcodex.file_read_range.v1",
                 "content": "line-560\nline-561",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "total_lines": 7348,
                 "start_line": 560,
                 "limit": 2,
@@ -3869,6 +4015,10 @@ mod tests {
         );
 
         assert!(result.success);
+        assert_eq!(
+            result.output["sha256"],
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
         assert_eq!(result.output["content"], "line-560\nline-561");
         assert_eq!(result.output["total_lines"], 7348);
         assert_eq!(result.output["start_line"], 560);

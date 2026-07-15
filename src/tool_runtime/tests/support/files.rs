@@ -4,7 +4,9 @@ use crate::tool_runtime::git::{
     parse_show_changes_output, show_changes_command, split_show_changes_stdout,
 };
 use crate::tool_runtime::helpers::{run_command_sync, shell_escape_simple};
-use crate::tool_runtime::{ApplyTextEditInput, ApplyTextEditKind, ToolRuntime};
+use crate::tool_runtime::{
+    ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, ToolRuntime,
+};
 use crate::tool_runtime::{LocalJobKiller, TerminateOutcome};
 use serde_json::{json, Value};
 use std::fs;
@@ -220,5 +222,20 @@ pub(in crate::tool_runtime::tests) fn text_edit(
         old_text: old_text.map(str::to_string),
         new_text: new_text.map(str::to_string),
         anchor_text: anchor_text.map(str::to_string),
+    }
+}
+
+pub(in crate::tool_runtime::tests) fn edit_change(
+    path: &str,
+    expected_sha256: &str,
+    edits: Vec<ApplyTextEditInput>,
+) -> ApplyFileChangeInput {
+    ApplyFileChangeInput {
+        kind: ApplyFileChangeKind::Edit,
+        path: path.to_string(),
+        to_path: None,
+        content: None,
+        edits,
+        expected_sha256: Some(expected_sha256.to_string()),
     }
 }

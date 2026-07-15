@@ -133,6 +133,14 @@ pub(crate) enum ConnectorApprovalGate {
     Authorized(ConnectorApproval),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ConnectorEditOperationGate {
+    Started,
+    Replay(Value),
+    Pending,
+    Conflict,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub(crate) struct ConnectorTaskEvent {
     pub event_id: String,
@@ -376,6 +384,132 @@ impl Database {
         )?;
         tx.commit()?;
         Ok(sequence)
+    }
+
+    pub(crate) fn begin_connector_edit_operation(
+        &self,
+        task_id: &str,
+        project_id: &str,
+        subject_id: &str,
+        operation_id: &str,
+        request_sha256: &str,
+        now: i64,
+    ) -> Result<ConnectorEditOperationGate, ConnectorTaskStoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let task = load_task(&tx, task_id, project_id, subject_id)?
+            .ok_or(ConnectorTaskStoreError::NotFound)?;
+        require_running(&task)?;
+        let existing = tx
+            .query_row(
+                "SELECT request_sha256, state, result_json
+                 FROM wc_edit_operations
+                 WHERE task_id = ?1 AND operation_id = ?2",
+                params![task_id, operation_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        if let Some((stored_hash, state, result_json)) = existing {
+            tx.commit()?;
+            if stored_hash != request_sha256 {
+                return Ok(ConnectorEditOperationGate::Conflict);
+            }
+            return match (state.as_str(), result_json) {
+                ("pending", None) => Ok(ConnectorEditOperationGate::Pending),
+                ("completed", Some(result_json)) => Ok(ConnectorEditOperationGate::Replay(
+                    serde_json::from_str(&result_json)?,
+                )),
+                ("failed", None) => {
+                    let updated = conn.execute(
+                        "UPDATE wc_edit_operations SET state = 'pending', updated_at = ?1
+                         WHERE task_id = ?2 AND operation_id = ?3 AND request_sha256 = ?4
+                           AND state = 'failed'",
+                        params![now, task_id, operation_id, request_sha256],
+                    )?;
+                    if updated == 1 {
+                        Ok(ConnectorEditOperationGate::Started)
+                    } else {
+                        Ok(ConnectorEditOperationGate::Pending)
+                    }
+                }
+                _ => Err(ConnectorTaskStoreError::InvalidState(
+                    "edit operation state is inconsistent".to_string(),
+                )),
+            };
+        }
+        tx.execute(
+            "INSERT INTO wc_edit_operations
+                (task_id, operation_id, request_sha256, state, result_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'pending', NULL, ?4, ?4)",
+            params![task_id, operation_id, request_sha256, now],
+        )?;
+        tx.commit()?;
+        Ok(ConnectorEditOperationGate::Started)
+    }
+
+    pub(crate) fn complete_connector_edit_operation(
+        &self,
+        task_id: &str,
+        project_id: &str,
+        subject_id: &str,
+        operation_id: &str,
+        request_sha256: &str,
+        result: &Value,
+        now: i64,
+    ) -> Result<(), ConnectorTaskStoreError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let task = load_task(&tx, task_id, project_id, subject_id)?
+            .ok_or(ConnectorTaskStoreError::NotFound)?;
+        require_running(&task)?;
+        let updated = tx.execute(
+            "UPDATE wc_edit_operations
+             SET state = 'completed', result_json = ?1, updated_at = ?2
+             WHERE task_id = ?3 AND operation_id = ?4 AND request_sha256 = ?5
+               AND state = 'pending'",
+            params![
+                serde_json::to_string(result)?,
+                now,
+                task_id,
+                operation_id,
+                request_sha256
+            ],
+        )?;
+        if updated != 1 {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "edit operation could not be completed".to_string(),
+            ));
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn fail_connector_edit_operation(
+        &self,
+        task_id: &str,
+        operation_id: &str,
+        request_sha256: &str,
+        now: i64,
+    ) -> Result<(), ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE wc_edit_operations SET state = 'failed', updated_at = ?1
+             WHERE task_id = ?2 AND operation_id = ?3 AND request_sha256 = ?4
+               AND state = 'pending'",
+            params![now, task_id, operation_id, request_sha256],
+        )?;
+        if updated != 1 {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "edit operation could not be marked failed".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn finish_connector_task(
@@ -1473,6 +1607,67 @@ mod tests {
         assert_eq!(
             events.iter().map(|e| e.sequence).collect::<Vec<_>>(),
             vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn edit_operation_is_durable_idempotency_authority() {
+        let (_temp, db) = database();
+        bind(&db, "user:one");
+        let task = start(&db, "user:one", "edit atomically");
+        let begin = |operation_id: &str, request_sha256: &str| {
+            db.begin_connector_edit_operation(
+                &task.task_id,
+                "wc_proj_demo",
+                "user:one",
+                operation_id,
+                request_sha256,
+                102,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            begin("edit-1", &"a".repeat(64)),
+            ConnectorEditOperationGate::Started
+        );
+        assert_eq!(
+            begin("edit-1", &"a".repeat(64)),
+            ConnectorEditOperationGate::Pending
+        );
+        let result = serde_json::json!({"changed": true, "changed_paths": ["src/lib.rs"]});
+        db.complete_connector_edit_operation(
+            &task.task_id,
+            "wc_proj_demo",
+            "user:one",
+            "edit-1",
+            &"a".repeat(64),
+            &result,
+            103,
+        )
+        .unwrap();
+        assert_eq!(
+            begin("edit-1", &"a".repeat(64)),
+            ConnectorEditOperationGate::Replay(result)
+        );
+        assert_eq!(
+            begin("edit-1", &"b".repeat(64)),
+            ConnectorEditOperationGate::Conflict
+        );
+
+        assert_eq!(
+            begin("edit-2", &"c".repeat(64)),
+            ConnectorEditOperationGate::Started
+        );
+        db.fail_connector_edit_operation(&task.task_id, "edit-2", &"c".repeat(64), 103)
+            .unwrap();
+        assert_eq!(
+            begin("edit-2", &"d".repeat(64)),
+            ConnectorEditOperationGate::Conflict
+        );
+        assert_eq!(
+            begin("edit-2", &"c".repeat(64)),
+            ConnectorEditOperationGate::Started
         );
     }
 

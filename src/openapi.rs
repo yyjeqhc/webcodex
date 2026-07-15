@@ -66,9 +66,9 @@ pub(crate) fn public_url() -> String {
 ///
 /// Compatibility edit tools (line/pattern helpers, raw `apply_patch`, and
 /// whole-file write) remain runtime tools reachable through `callRuntimeTool`.
-/// Prefer `apply_text_edits` for precise local edits and `apply_patch_checked`
-/// for multi-file patches; use `write_project_file` only for create or
-/// intentional full rewrite.
+/// Prefer `apply_text_edits` for guarded transactional file changes and
+/// `apply_patch_checked` for complex unified diffs; use `write_project_file`
+/// only for an intentional full rewrite.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
@@ -762,16 +762,19 @@ pub(crate) fn build_openapi_spec() -> Value {
                             }
                         },
                         "applyTextEdits": {
-                            "summary": "Atomic multi-block edit via flattened GPT Action fields",
+                            "summary": "Transactional file edit via flattened GPT Action fields",
                             "value": {
                                 "tool": "apply_text_edits",
                                 "project": "webcodex",
-                                "path": "src/lib.rs",
                                 "dry_run": true,
-                                "edits": [
-                                    {"kind": "replace_exact", "old_text": "alpha", "new_text": "beta"}
-                                ],
-                                "expected_file_sha256": "sha256-of-original-file"
+                                "changes": [{
+                                    "kind": "edit",
+                                    "path": "src/lib.rs",
+                                    "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                    "edits": [
+                                        {"kind": "replace_exact", "old_text": "alpha", "new_text": "beta"}
+                                    ]
+                                }]
                             }
                         },
                         "argumentsAlias": {
@@ -1067,32 +1070,53 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` and `arguments` are absent."
                 },
-                "edits": {
+                "changes": {
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 20,
-                    "description": "Flattened apply_text_edits ordered batch of 1..20 atomic edits. Used only when `params` and `arguments` are absent.",
+                    "maxItems": 16,
+                    "description": "Flattened apply_text_edits transactional file changes. Existing files require expected_sha256. Used only when `params` and `arguments` are absent.",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": ["kind"],
+                        "required": ["kind", "path"],
                         "properties": {
                             "kind": {
                                 "type": "string",
-                                "enum": ["replace_exact", "insert_after", "insert_before", "delete_exact"],
-                                "description": "Atomic edit kind."
+                                "enum": ["edit", "create", "delete", "rename"],
+                                "description": "File change kind."
                             },
-                            "old_text": {
+                            "path": {
                                 "type": "string",
-                                "description": "Exact text to replace or delete, required by replace_exact/delete_exact."
+                                "description": "Project-relative source or target path."
                             },
-                            "new_text": {
+                            "to_path": {
                                 "type": "string",
-                                "description": "Replacement or inserted text, required by replace_exact/insert_before/insert_after."
+                                "description": "Project-relative rename destination."
                             },
-                            "anchor_text": {
+                            "content": {
                                 "type": "string",
-                                "description": "Unique anchor text required by insert_before/insert_after."
+                                "description": "Complete UTF-8 content for create."
+                            },
+                            "expected_sha256": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$",
+                                "description": "Required live hash for edit, delete, and rename."
+                            },
+                            "edits": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": ["kind"],
+                                    "properties": {
+                                        "kind": {"type": "string", "enum": ["replace_exact", "insert_after", "insert_before", "delete_exact"]},
+                                        "old_text": {"type": "string"},
+                                        "new_text": {"type": "string"},
+                                        "anchor_text": {"type": "string"}
+                                    }
+                                }
                             }
                         }
                     }
@@ -1100,10 +1124,6 @@ fn schemas() -> Value {
                 "dry_run": {
                     "type": "boolean",
                     "description": "Flattened apply_text_edits / validate_patch flag to compute the plan without writing. Used only when `params` and `arguments` are absent."
-                },
-                "expected_file_sha256": {
-                    "type": "string",
-                    "description": "Flattened apply_text_edits optional sha256 guard for the whole original file. Used only when `params` and `arguments` are absent."
                 },
                 "message": {
                     "type": "string",
@@ -3120,43 +3140,37 @@ mod tests {
 
     #[test]
     fn openapi_call_runtime_tool_declares_apply_text_edits_flattened_fields() {
-        // Regression: GPT Action wrapper rejected apply_text_edits edits,
-        // dry_run, and expected_file_sha256 because ToolCallRequest.properties
-        // did not declare them. `edits` must mirror the runtime input schema
+        // Regression: GPT Action wrapper rejected apply_text_edits changes and
+        // dry_run because ToolCallRequest.properties did not declare them.
+        // `changes` must mirror the runtime input schema
         // (bounded array of typed items), not a bare free-form object.
         let spec = build_openapi_spec();
         let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
         let properties = tool_call["properties"].as_object().unwrap();
-        for field in ["edits", "dry_run", "expected_file_sha256"] {
+        for field in ["changes", "dry_run"] {
             assert!(
                 properties.contains_key(field),
                 "ToolCallRequest.properties.{field} must exist for flattened apply_text_edits GPT Action calls"
             );
         }
         assert_eq!(properties["dry_run"]["type"], "boolean");
-        assert_eq!(properties["expected_file_sha256"]["type"], "string");
-        let edits = &properties["edits"];
+        let changes = &properties["changes"];
         assert_eq!(
-            edits["type"], "array",
-            "edits must be an array, not a bare object"
+            changes["type"], "array",
+            "changes must be an array, not a bare object"
         );
-        assert_eq!(edits["minItems"], 1);
-        assert_eq!(edits["maxItems"], 20);
-        let items = &edits["items"];
+        assert_eq!(changes["minItems"], 1);
+        assert_eq!(changes["maxItems"], 16);
+        let items = &changes["items"];
         assert_eq!(items["type"], "object");
         assert_eq!(items["additionalProperties"], false);
         let kind_enum = &items["properties"]["kind"]["enum"]
             .as_array()
-            .expect("edits.items.kind must be an enum");
-        for variant in [
-            "replace_exact",
-            "insert_after",
-            "insert_before",
-            "delete_exact",
-        ] {
+            .expect("changes.items.kind must be an enum");
+        for variant in ["edit", "create", "delete", "rename"] {
             assert!(
                 kind_enum.iter().any(|v| v == variant),
-                "edits.items.kind enum must include {variant}"
+                "changes.items.kind enum must include {variant}"
             );
         }
         assert_eq!(

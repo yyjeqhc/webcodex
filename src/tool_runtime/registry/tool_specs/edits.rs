@@ -67,7 +67,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "apply_text_edits",
-            "Canonical precise edit tool for one file. Preferred for ordinary local changes: ordered exact replace/insert/delete against current worktree content (not HEAD). Use hash/prefix/anchor guards when available. Prefer over whole-file write and compatibility edit tools. Supports dry_run.",
+            "Canonical transactional file-change tool; preferred for ordinary local edits. Applies edit/create/delete/rename changes to current worktree, not HEAD. SHA-256 guards preflight the whole batch before mutation. Prefer over whole-file and compatibility edit tools. Supports dry_run and per-file hashes.",
             apply_text_edits_input_schema(),
         ),
     ]

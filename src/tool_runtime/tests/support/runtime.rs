@@ -69,6 +69,12 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "start_line" | "end_line" | "line" | "column" | "offset" => json!(1),
         "upload_id" => json!("wc_upload_test_1"),
         "edits" => json!([{"kind": "replace_exact", "old_text": "a", "new_text": "b"}]),
+        "changes" => json!([{
+            "kind": "edit",
+            "path": "src/lib.rs",
+            "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "edits": [{"kind": "replace_exact", "old_text": "a", "new_text": "b"}]
+        }]),
         "prompt" => json!("summarize"),
         "query" => json!("ToolRuntime"),
         "job_id" => json!("job_123"),

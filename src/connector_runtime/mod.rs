@@ -14,14 +14,14 @@ use crate::auth::{
     SCOPE_RUNTIME_READ,
 };
 use crate::db::{
-    ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorTaskEvent,
-    ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskStoreError, NewConnectorResult,
-    NewConnectorTask,
+    ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
+    ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskStoreError,
+    NewConnectorResult, NewConnectorTask,
 };
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
-use crate::tool_runtime::{ApplyTextEditInput, SearchResultMode, ToolResult, ToolRuntime};
+use crate::tool_runtime::{ApplyFileChangeInput, SearchResultMode, ToolResult, ToolRuntime};
 use crate::Database;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -35,6 +35,7 @@ const CONNECTOR_SURFACE_TASK_V1: &str = "task-v1";
 const MAX_EVENT_COUNT: usize = 50;
 const COMMAND_APPROVAL_TTL_SECS: i64 = 60 * 60;
 const CONNECTOR_PATCH_PREVIEW_BYTES: usize = 128 * 1024;
+const CONNECTOR_SEARCH_WINDOW: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectorContext {
@@ -421,7 +422,7 @@ impl ConnectorRuntime {
                 );
             }
         }
-        match self.db.start_connector_task(NewConnectorTask {
+        let task = match self.db.start_connector_task(NewConnectorTask {
             task_id: &task_id,
             run_id: &run_id,
             project_id: &self.context.project_id,
@@ -438,24 +439,7 @@ impl ConnectorRuntime {
             isolated: prepared.isolated,
             now,
         }) {
-            Ok(task) => ConnectorCallOutcome::success(
-                &task,
-                json!({
-                    "project": {
-                        "id": self.context.project_id,
-                        "name": self.context.project_name
-                    },
-                    "goal": goal,
-                    "mode": mode,
-                    "status": task.task_status,
-                    "workspace": {
-                        "isolated": task.isolated,
-                        "strategy": if task.isolated { "reusable_slot" } else { "target_checkout" },
-                        "baseline_commit": task.baseline_commit.as_deref().map(short_oid)
-                    },
-                    "next": "Inspect only the files needed for this goal; then edit, validate, review, and finish."
-                }),
-            ),
+            Ok(task) => task,
             Err(error) => {
                 if let Some(cleanup) = self
                     .workspace
@@ -463,9 +447,29 @@ impl ConnectorRuntime {
                 {
                     tracing::warn!(cleanup = %cleanup, "failed to fully clean unpersisted workspace");
                 }
-                store_error_outcome(error, None)
+                return store_error_outcome(error, None);
             }
-        }
+        };
+        let brief = project_brief(
+            &task,
+            prepared.project_overview.as_ref(),
+            prepared.git_dirty,
+            prepared.git_conflict_count,
+        );
+        ConnectorCallOutcome::success(
+            &task,
+            json!({
+                "project": {
+                    "id": self.context.project_id,
+                    "name": self.context.project_name
+                },
+                "goal": goal,
+                "mode": mode,
+                "status": task.task_status,
+                "brief": brief,
+                "next": "Use the brief to choose the first targeted read; edit with returned sha256 guards, validate, review, and finish."
+            }),
+        )
     }
 
     async fn files_read(
@@ -507,7 +511,10 @@ impl ConnectorRuntime {
                 .invoke_kernel("read_file", args, &task, auth, transport)
                 .await
             {
-                Ok(output) => results.push(output),
+                Ok(mut output) => {
+                    output["path"] = json!(file.path);
+                    results.push(output);
+                }
                 Err(error) => {
                     let cursor = self.record_event(
                         &task,
@@ -572,11 +579,28 @@ impl ConnectorRuntime {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
+        let page_limit = input.limit.unwrap_or(50);
+        let signature = search_cursor_signature(&input, page_limit);
+        let offset = match input.cursor.as_deref() {
+            Some(cursor) => match parse_search_cursor(cursor, &signature) {
+                Ok(offset) if offset < CONNECTOR_SEARCH_WINDOW => offset,
+                _ => {
+                    return invalid_input(
+                        "files_search",
+                        "cursor is invalid, belongs to a different query, or exceeds the bounded search window",
+                    )
+                }
+            },
+            None => 0,
+        };
+        let fetch_limit = offset
+            .saturating_add(page_limit)
+            .min(CONNECTOR_SEARCH_WINDOW);
         let args = json!({
             "project": task.execution_executor_ref,
             "pattern": input.pattern,
             "path": input.path,
-            "limit": input.limit.unwrap_or(50),
+            "limit": fetch_limit,
             "context_before": input.context_before.unwrap_or(0),
             "context_after": input.context_after.unwrap_or(0),
             "include_globs": input.include_globs,
@@ -589,11 +613,22 @@ impl ConnectorRuntime {
             .await
         {
             Ok(output) => {
-                let cursor =
-                    match self.record_event(&task, "files_search", json!({ "ok": true }), now) {
-                        Ok(cursor) => cursor,
-                        Err(outcome) => return outcome,
-                    };
+                let output = paginate_search_output(
+                    output,
+                    input.result_mode.unwrap_or(SearchResultMode::Matches),
+                    offset,
+                    page_limit,
+                    &signature,
+                );
+                let cursor = match self.record_event(
+                    &task,
+                    "files_search",
+                    json!({ "ok": true, "offset": offset, "limit": page_limit }),
+                    now,
+                ) {
+                    Ok(cursor) => cursor,
+                    Err(outcome) => return outcome,
+                };
                 ConnectorCallOutcome::success_at(&task, cursor, output)
             }
             Err(error) => {
@@ -615,49 +650,122 @@ impl ConnectorRuntime {
             Ok(input) => input,
             Err(outcome) => return outcome,
         };
-        if let Err(message) = validate_path(&input.path) {
+        if let Err(message) = validate_operation_id(&input.operation_id) {
             return invalid_input("edits_apply", message);
         }
-        if input.edits.is_empty() || input.edits.len() > 32 {
-            return invalid_input("edits_apply", "edits must contain 1..=32 entries");
+        if input.changes.is_empty() || input.changes.len() > 16 {
+            return invalid_input("edits_apply", "changes must contain 1..=16 entries");
         }
-        let edit_bytes = serde_json::to_vec(&input.edits)
+        for change in &input.changes {
+            if let Err(message) = validate_path(&change.path) {
+                return invalid_input("edits_apply", message);
+            }
+            if let Some(to_path) = change.to_path.as_deref() {
+                if let Err(message) = validate_path(to_path) {
+                    return invalid_input("edits_apply", message);
+                }
+            }
+        }
+        let change_bytes = serde_json::to_vec(&input.changes)
             .map(|bytes| bytes.len())
             .unwrap_or(usize::MAX);
-        if edit_bytes > 512 * 1024 {
-            return invalid_input("edits_apply", "serialized edits exceed 512 KiB");
-        }
-        if input.expected_file_sha256.as_deref().is_some_and(|hash| {
-            hash.len() != 64
-                || !hash
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        }) {
-            return invalid_input(
-                "edits_apply",
-                "expected_file_sha256 must be 64 lowercase hexadecimal characters",
-            );
+        if change_bytes > 1024 * 1024 {
+            return invalid_input("edits_apply", "serialized changes exceed 1 MiB");
         }
         let task = match self.active_writable_task(&input.task_id, subject_id, "edits_apply", now) {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
+        let request_sha256 =
+            edit_operation_hash(&task, &input.changes, input.dry_run.unwrap_or(false));
+        match self.db.begin_connector_edit_operation(
+            &task.task_id,
+            &self.context.project_id,
+            &task.owner_subject_id,
+            &input.operation_id,
+            &request_sha256,
+            now,
+        ) {
+            Ok(ConnectorEditOperationGate::Started) => {}
+            Ok(ConnectorEditOperationGate::Replay(mut output)) => {
+                output["operation_id"] = json!(input.operation_id);
+                output["idempotent_replay"] = json!(true);
+                let cursor = match self.record_event(
+                    &task,
+                    "edits_apply",
+                    json!({ "ok": true, "replay": true, "operation_id": input.operation_id }),
+                    now,
+                ) {
+                    Ok(cursor) => cursor,
+                    Err(outcome) => return outcome,
+                };
+                return ConnectorCallOutcome::success_at(&task, cursor, output);
+            }
+            Ok(ConnectorEditOperationGate::Pending) => {
+                let cursor = self.record_event(
+                    &task,
+                    "edits_apply",
+                    json!({ "ok": false, "operation_pending": true, "operation_id": input.operation_id }),
+                    now,
+                );
+                return ConnectorCallOutcome::error_for_task_at(
+                    409,
+                    "edit_operation_uncertain",
+                    "this operation did not reach a durable result; it will not be replayed automatically",
+                    false,
+                    true,
+                    Some("Inspect task_review and the affected files, then use a new operation_id with fresh hashes only if another edit is needed."),
+                    &task,
+                    match cursor { Ok(cursor) => cursor, Err(outcome) => return outcome },
+                    json!({ "operation_id": input.operation_id }),
+                );
+            }
+            Ok(ConnectorEditOperationGate::Conflict) => {
+                return ConnectorCallOutcome::error_for_task(
+                    409,
+                    "operation_id_conflict",
+                    "operation_id was already used with different changes or preconditions",
+                    false,
+                    false,
+                    Some("Use a new operation_id for a logically different edit batch."),
+                    &task,
+                    json!({ "operation_id": input.operation_id }),
+                )
+            }
+            Err(error) => return store_error_outcome(error, Some(&task)),
+        }
         let args = json!({
             "project": task.execution_executor_ref,
-            "path": input.path,
-            "edits": input.edits,
-            "dry_run": input.dry_run.unwrap_or(false),
-            "expected_file_sha256": input.expected_file_sha256
+            "changes": input.changes,
+            "dry_run": input.dry_run.unwrap_or(false)
         });
         match self
             .invoke_kernel("apply_text_edits", args, &task, auth, transport)
             .await
         {
-            Ok(output) => {
+            Ok(mut output) => {
+                output["operation_id"] = json!(input.operation_id);
+                output["idempotent_replay"] = json!(false);
+                if let Err(error) = self.db.complete_connector_edit_operation(
+                    &task.task_id,
+                    &self.context.project_id,
+                    &task.owner_subject_id,
+                    &input.operation_id,
+                    &request_sha256,
+                    &output,
+                    now,
+                ) {
+                    return store_error_outcome(error, Some(&task));
+                }
                 let cursor = match self.record_event(
                     &task,
                     "edits_apply",
-                    json!({ "ok": true, "dry_run": input.dry_run.unwrap_or(false) }),
+                    json!({
+                        "ok": true,
+                        "dry_run": input.dry_run.unwrap_or(false),
+                        "operation_id": input.operation_id,
+                        "change_count": input.changes.len()
+                    }),
                     now,
                 ) {
                     Ok(cursor) => cursor,
@@ -666,12 +774,41 @@ impl ConnectorRuntime {
                 ConnectorCallOutcome::success_at(&task, cursor, output)
             }
             Err(error) => {
+                let uncertain = kernel_failure_may_have_applied(&error);
+                if !uncertain {
+                    if let Err(store_error) = self.db.fail_connector_edit_operation(
+                        &task.task_id,
+                        &input.operation_id,
+                        &request_sha256,
+                        now,
+                    ) {
+                        return store_error_outcome(store_error, Some(&task));
+                    }
+                }
                 let cursor = self.record_event(
                     &task,
                     "edits_apply",
-                    json!({ "ok": false, "dry_run": input.dry_run.unwrap_or(false) }),
+                    json!({
+                        "ok": false,
+                        "dry_run": input.dry_run.unwrap_or(false),
+                        "operation_id": input.operation_id,
+                        "operation_uncertain": uncertain
+                    }),
                     now,
                 );
+                if uncertain {
+                    return ConnectorCallOutcome::error_for_task_at(
+                        409,
+                        "edit_operation_uncertain",
+                        "the edit did not reach a confirmed completed or fully rolled-back state; automatic replay is disabled",
+                        false,
+                        true,
+                        Some("Inspect task_review and affected files before issuing any new edit operation."),
+                        &task,
+                        match cursor { Ok(cursor) => cursor, Err(outcome) => return outcome },
+                        json!({ "operation_id": input.operation_id }),
+                    );
+                }
                 self.kernel_error_outcome(error, &task, cursor, Value::Null)
             }
         }
@@ -1778,6 +1915,147 @@ fn command_action_hash(
     format!("{:x}", hasher.finalize())
 }
 
+fn edit_operation_hash(
+    task: &ConnectorTaskSnapshot,
+    changes: &[ApplyFileChangeInput],
+    dry_run: bool,
+) -> String {
+    let serialized = serde_json::to_vec(changes).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    for field in [
+        b"webcodex.edits_apply.v2".as_slice(),
+        task.task_id.as_bytes(),
+        task.run_id.as_bytes(),
+        &[u8::from(dry_run)],
+        serialized.as_slice(),
+    ] {
+        hasher.update((field.len() as u64).to_be_bytes());
+        hasher.update(field);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn search_cursor_signature(input: &FilesSearchInput, page_limit: usize) -> String {
+    let canonical = json!({
+        "version": 1,
+        "task_id": input.task_id,
+        "pattern": input.pattern,
+        "path": input.path,
+        "page_limit": page_limit,
+        "context_before": input.context_before.unwrap_or(0),
+        "context_after": input.context_after.unwrap_or(0),
+        "include_globs": input.include_globs,
+        "exclude_globs": input.exclude_globs,
+        "result_mode": input.result_mode.unwrap_or(SearchResultMode::Matches),
+    });
+    let bytes = serde_json::to_vec(&canonical).unwrap_or_default();
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn parse_search_cursor(cursor: &str, expected_signature: &str) -> Result<usize, ()> {
+    let payload = cursor.strip_prefix("wc_search_").ok_or(())?;
+    let (offset, signature) = payload.split_once('_').ok_or(())?;
+    if signature != expected_signature {
+        return Err(());
+    }
+    offset.parse::<usize>().map_err(|_| ())
+}
+
+fn paginate_search_output(
+    mut output: Value,
+    result_mode: SearchResultMode,
+    offset: usize,
+    page_limit: usize,
+    signature: &str,
+) -> Value {
+    let key = if result_mode == SearchResultMode::Matches {
+        "matches"
+    } else {
+        "files"
+    };
+    let records = output[key].as_array().cloned().unwrap_or_default();
+    let page = records
+        .iter()
+        .skip(offset)
+        .take(page_limit)
+        .cloned()
+        .collect::<Vec<_>>();
+    let executor_truncated = output["truncated"].as_bool().unwrap_or(false);
+    let more_in_records = records.len() > offset.saturating_add(page.len());
+    let has_more = !page.is_empty() && (more_in_records || executor_truncated);
+    let next_offset = offset.saturating_add(page.len());
+    let next_cursor = (has_more && next_offset < CONNECTOR_SEARCH_WINDOW)
+        .then(|| format!("wc_search_{next_offset}_{signature}"));
+    let window_exhausted = has_more && next_cursor.is_none();
+    output[key] = json!(page);
+    output["truncated"] = json!(has_more);
+    output["truncation_reason"] = if window_exhausted {
+        json!("window_limit")
+    } else if has_more {
+        json!("page")
+    } else {
+        Value::Null
+    };
+    let returned = output[key].as_array().map(Vec::len).unwrap_or(0);
+    if result_mode == SearchResultMode::Matches {
+        output["count"] = json!(returned);
+    } else {
+        output["returned_file_count"] = json!(returned);
+    }
+    if result_mode == SearchResultMode::Count {
+        let returned_match_count = output[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["match_count"].as_u64())
+            .sum::<u64>();
+        let complete = offset == 0 && !has_more;
+        output["returned_match_count"] = json!(returned_match_count);
+        output["count_complete"] = json!(complete);
+        output["total_matches"] = if complete {
+            json!(returned_match_count)
+        } else {
+            Value::Null
+        };
+    }
+    output["page"] = json!({
+        "offset": offset,
+        "limit": page_limit,
+        "returned": returned,
+        "next_cursor": next_cursor,
+        "window_limit": CONNECTOR_SEARCH_WINDOW,
+        "window_exhausted": window_exhausted,
+        "view": "live_sorted"
+    });
+    output
+}
+
+fn kernel_failure_may_have_applied(error: &KernelFailure) -> bool {
+    let KernelFailure::Tool(result) = error else {
+        return false;
+    };
+    if result
+        .output
+        .get("rollback_complete")
+        .and_then(Value::as_bool)
+        == Some(false)
+        || result.output.get("changed").and_then(Value::as_bool) == Some(true)
+    {
+        return true;
+    }
+    result.error.as_deref().is_some_and(|message| {
+        let message = message.to_ascii_lowercase();
+        [
+            "timed out",
+            "request was dropped",
+            "waiter was dropped",
+            "disconnect",
+        ]
+        .iter()
+        .any(|needle| message.contains(needle))
+    })
+}
+
 fn result_projection(result: &ConnectorTaskResult) -> Value {
     json!({
         "result_id": result.result_id,
@@ -1790,6 +2068,85 @@ fn result_projection(result: &ConnectorTaskResult) -> Value {
         "decision_status": result.decision_status,
         "decided_at": result.decided_at,
         "cleanup_warning": result.cleanup_warning
+    })
+}
+
+fn project_brief(
+    task: &ConnectorTaskSnapshot,
+    overview: Option<&Value>,
+    git_dirty: Option<bool>,
+    git_conflict_count: Option<usize>,
+) -> Value {
+    let languages = overview
+        .and_then(|value| value["project_types"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["kind"].as_str())
+        .take(8)
+        .collect::<Vec<_>>();
+    let manifests = overview
+        .and_then(|value| value["manifests"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["path"].as_str())
+        .take(12)
+        .collect::<Vec<_>>();
+    let instructions = overview
+        .and_then(|value| value["key_files"].as_array())
+        .into_iter()
+        .flatten()
+        .filter(|item| item["kind"] == "agent_instructions")
+        .filter_map(|item| item["path"].as_str())
+        .take(5)
+        .collect::<Vec<_>>();
+    let mut recommended_checks = Vec::new();
+    for language in &languages {
+        let checks: &[&str] = match *language {
+            "rust" => &[
+                "cargo fmt --check",
+                "cargo check --all-targets",
+                "cargo test",
+            ],
+            "node" => &["npm test"],
+            "python" => &["python -m pytest"],
+            "go" => &["go test ./..."],
+            "jvm" => &["project test task"],
+            "dotnet" => &["dotnet test"],
+            "ruby" => &["bundle exec rake test"],
+            "php" => &["composer test"],
+            "cpp" => &["project build and test"],
+            _ => &[],
+        };
+        for check in checks {
+            if !recommended_checks.contains(check) {
+                recommended_checks.push(*check);
+            }
+        }
+    }
+    recommended_checks.truncate(5);
+    let mut warnings = Vec::new();
+    if overview.is_none() {
+        warnings.push("project_overview_unavailable");
+    }
+    if git_dirty.is_none() {
+        warnings.push("git_status_unavailable");
+    }
+    json!({
+        "git": {
+            "baseline_commit": task.baseline_commit.as_deref().map(short_oid),
+            "baseline_tree": task.baseline_tree.as_deref().map(short_oid),
+            "dirty": git_dirty,
+            "conflict_count": git_conflict_count
+        },
+        "workspace": {
+            "isolated": task.isolated,
+            "strategy": if task.isolated { "reusable_slot" } else { "target_checkout" }
+        },
+        "languages": languages,
+        "manifests": manifests,
+        "instructions": instructions,
+        "recommended_checks": recommended_checks,
+        "warnings": warnings
     })
 }
 
@@ -1853,6 +2210,18 @@ fn validate_task_id(task_id: &str) -> Result<(), &'static str> {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     {
         return Err("task_id must be the opaque wc_task_* id returned by task_start");
+    }
+    Ok(())
+}
+
+fn validate_operation_id(operation_id: &str) -> Result<(), &'static str> {
+    if operation_id.is_empty()
+        || operation_id.len() > 100
+        || !operation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    {
+        return Err("operation_id must be 1..=100 ASCII letters, digits, '-', '_', '.', or ':'");
     }
     Ok(())
 }
@@ -1993,18 +2362,18 @@ struct FilesSearchInput {
     exclude_globs: Vec<String>,
     #[serde(default)]
     result_mode: Option<SearchResultMode>,
+    #[serde(default)]
+    cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EditsApplyInput {
     task_id: String,
-    path: String,
-    edits: Vec<ApplyTextEditInput>,
+    operation_id: String,
+    changes: Vec<ApplyFileChangeInput>,
     #[serde(default)]
     dry_run: Option<bool>,
-    #[serde(default)]
-    expected_file_sha256: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2057,6 +2426,21 @@ struct TaskFinishInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_edit_rollback_is_treated_as_uncertain() {
+        let incomplete = KernelFailure::Tool(ToolResult::err_with_output(
+            "transaction failed",
+            json!({ "changed": true, "rollback_complete": false }),
+        ));
+        assert!(kernel_failure_may_have_applied(&incomplete));
+
+        let rolled_back = KernelFailure::Tool(ToolResult::err_with_output(
+            "transaction failed",
+            json!({ "changed": false, "rollback_complete": true }),
+        ));
+        assert!(!kernel_failure_may_have_applied(&rolled_back));
+    }
 
     fn init_repo(project: &Path) {
         std::fs::create_dir(project).unwrap();
@@ -2155,6 +2539,11 @@ mod tests {
             .unwrap()
             .starts_with("wc_task_"));
         assert_eq!(outcome.body["data"]["project"]["id"], "wc_proj_1234567890");
+        assert_eq!(outcome.body["data"]["brief"]["git"]["dirty"], false);
+        assert_eq!(
+            outcome.body["data"]["brief"]["workspace"]["strategy"],
+            "target_checkout"
+        );
         let serialized = serde_json::to_string(&outcome.body).unwrap();
         assert!(!serialized.contains("agent:hosted:demo"));
         assert!(!serialized.contains("session"));
@@ -2194,11 +2583,16 @@ mod tests {
                 "edits_apply",
                 json!({
                     "task_id": task_id,
-                    "path": "src/lib.rs",
-                    "edits": [{
-                        "kind": "replace_exact",
-                        "old_text": "old",
-                        "new_text": "new"
+                    "operation_id": "read-only-probe",
+                    "changes": [{
+                        "kind": "edit",
+                        "path": "src/lib.rs",
+                        "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "edits": [{
+                            "kind": "replace_exact",
+                            "old_text": "old",
+                            "new_text": "new"
+                        }]
                     }]
                 }),
                 Some(&owner),
@@ -2301,6 +2695,108 @@ mod tests {
             )
             .await;
         assert_eq!(replay.body["error"]["code"], "approval_consumed");
+        assert_eq!(
+            connector
+                .workspace
+                .discard_prepared(&connector.context.executor_root, &prepared),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn edits_apply_replays_durable_result_without_executor_dispatch() {
+        let (_temp, connector) = connector();
+        let owner = auth("u1");
+        let now = chrono::Utc::now().timestamp();
+        connector
+            .db
+            .ensure_connector_binding(ConnectorBinding {
+                project_id: &connector.context.project_id,
+                project_name: &connector.context.project_name,
+                workspace_id: &connector.context.workspace_id,
+                executor_ref: &connector.context.executor_project,
+                subject_id: "user:u1",
+                profile: &connector.context.profile,
+                now,
+            })
+            .unwrap();
+        let task_id = "wc_task_abcdef0123456789abcdef0123456789";
+        let run_id = "wc_run_abcdef0123456789abcdef0123456789";
+        let prepared = connector
+            .workspace
+            .prepare(&connector.context, task_id, run_id, false)
+            .unwrap();
+        let task = connector
+            .db
+            .start_connector_task(NewConnectorTask {
+                task_id,
+                run_id,
+                project_id: &connector.context.project_id,
+                workspace_id: &connector.context.workspace_id,
+                subject_id: "user:u1",
+                goal: "replay one edit",
+                mode: "normal",
+                target_executor_ref: &connector.context.executor_project,
+                execution_executor_ref: &prepared.execution_executor_ref,
+                target_root: &connector.context.executor_root,
+                execution_root: &prepared.execution_root,
+                baseline_commit: prepared.baseline_commit.as_deref(),
+                baseline_tree: prepared.baseline_tree.as_deref(),
+                isolated: true,
+                now,
+            })
+            .unwrap();
+        let changes_json = json!([{
+            "kind": "edit",
+            "path": "README.md",
+            "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "edits": [{"kind": "replace_exact", "old_text": "fixture", "new_text": "updated"}]
+        }]);
+        let changes: Vec<ApplyFileChangeInput> =
+            serde_json::from_value(changes_json.clone()).unwrap();
+        let request_sha256 = edit_operation_hash(&task, &changes, false);
+        assert_eq!(
+            connector
+                .db
+                .begin_connector_edit_operation(
+                    task_id,
+                    &connector.context.project_id,
+                    "user:u1",
+                    "device-retry-1",
+                    &request_sha256,
+                    now,
+                )
+                .unwrap(),
+            ConnectorEditOperationGate::Started
+        );
+        connector
+            .db
+            .complete_connector_edit_operation(
+                task_id,
+                &connector.context.project_id,
+                "user:u1",
+                "device-retry-1",
+                &request_sha256,
+                &json!({"changed": true, "changed_paths": ["README.md"]}),
+                now,
+            )
+            .unwrap();
+
+        let outcome = connector
+            .call(
+                "edits_apply",
+                json!({
+                    "task_id": task_id,
+                    "operation_id": "device-retry-1",
+                    "changes": changes_json
+                }),
+                Some(&owner),
+                ConnectorTransport::Mcp,
+            )
+            .await;
+        assert!(outcome.ok, "{}", outcome.body);
+        assert_eq!(outcome.body["data"]["idempotent_replay"], true);
+        assert_eq!(outcome.body["data"]["changed_paths"], json!(["README.md"]));
         assert_eq!(
             connector
                 .workspace
@@ -2428,22 +2924,21 @@ mod tests {
                         serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
                     assert_eq!(payload["id"], "wc-slot-write-01");
                     assert!(Path::new(payload["path"].as_str().unwrap()).is_dir());
+                    let stdout = json!({
+                        "agent_project_id": payload["id"],
+                        "client_id": "hosted",
+                        "name": payload["name"],
+                        "path": payload["path"],
+                        "allow_patch": true
+                    })
+                    .to_string();
                     agent_registry
                         .complete(ShellAgentResultRequest {
                             client_id: "hosted".to_string(),
                             agent_instance_id: "instance".to_string(),
                             request_id: request.request_id,
                             exit_code: Some(0),
-                            stdout: Some(
-                                json!({
-                                    "agent_project_id": payload["id"],
-                                    "client_id": "hosted",
-                                    "name": payload["name"],
-                                    "path": payload["path"],
-                                    "allow_patch": true
-                                })
-                                .to_string(),
-                            ),
+                            stdout: Some(stdout),
                             stderr: Some(String::new()),
                             duration_ms: Some(1),
                             error: None,
@@ -2467,7 +2962,9 @@ mod tests {
             .await;
         responder.await.unwrap();
         assert!(outcome.ok, "{}", outcome.body);
-        assert_eq!(outcome.body["data"]["workspace"]["isolated"], true);
+        assert_eq!(outcome.body["data"]["brief"]["workspace"]["isolated"], true);
+        assert_eq!(outcome.body["data"]["brief"]["languages"], json!([]));
+        assert_eq!(outcome.body["data"]["brief"]["git"]["dirty"], false);
         let task_id = outcome.body["task_id"].as_str().unwrap();
         let task = connector
             .db
@@ -2733,5 +3230,60 @@ mod tests {
         for capability in ["checks_run", "commands_run"] {
             assert_eq!(required_scope(capability), SCOPE_JOB_RUN);
         }
+    }
+
+    #[test]
+    fn search_cursor_is_query_bound_and_pages_a_sorted_window() {
+        let mut input = FilesSearchInput {
+            task_id: "wc_task_0123456789abcdef0123456789abcdef".to_string(),
+            pattern: "needle".to_string(),
+            path: Some("src".to_string()),
+            limit: Some(2),
+            context_before: Some(0),
+            context_after: Some(0),
+            include_globs: Vec::new(),
+            exclude_globs: Vec::new(),
+            result_mode: Some(SearchResultMode::Matches),
+            cursor: None,
+        };
+        let signature = search_cursor_signature(&input, 2);
+        let first = paginate_search_output(
+            json!({
+                "matches": [
+                    {"path": "src/a.rs", "line": 1},
+                    {"path": "src/b.rs", "line": 2}
+                ],
+                "truncated": true
+            }),
+            SearchResultMode::Matches,
+            0,
+            2,
+            &signature,
+        );
+        let cursor = first["page"]["next_cursor"].as_str().unwrap();
+        assert_eq!(parse_search_cursor(cursor, &signature), Ok(2));
+        assert_eq!(first["page"]["returned"], 2);
+        let second = paginate_search_output(
+            json!({
+                "matches": [
+                    {"path": "src/a.rs", "line": 1},
+                    {"path": "src/b.rs", "line": 2},
+                    {"path": "src/c.rs", "line": 3},
+                    {"path": "src/d.rs", "line": 4}
+                ],
+                "truncated": false
+            }),
+            SearchResultMode::Matches,
+            2,
+            2,
+            &signature,
+        );
+        assert_eq!(second["matches"][0]["path"], "src/c.rs");
+        assert_eq!(second["matches"][1]["path"], "src/d.rs");
+        assert!(second["page"]["next_cursor"].is_null());
+
+        input.pattern = "different".to_string();
+        let other_signature = search_cursor_signature(&input, 2);
+        assert_eq!(parse_search_cursor(cursor, &other_signature), Err(()));
     }
 }

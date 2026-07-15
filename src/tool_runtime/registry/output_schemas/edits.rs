@@ -150,36 +150,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
         ])),
         "apply_text_edits" => Some(wrapped_output_schema(vec![
-            ("path", schema_type("string", "Project-relative path.")),
             (
                 "dry_run",
                 schema_type("boolean", "Whether this was a dry-run (no write)."),
             ),
             (
                 "applied_count",
-                schema_type("integer", "Number of edits applied in the batch."),
-            ),
-            (
-                "old_sha256",
-                schema_type("string", "sha256 of the original file content."),
-            ),
-            (
-                "new_sha256",
-                schema_type("string", "sha256 of the file after all edits."),
+                schema_type("integer", "Number of file changes applied in the batch."),
             ),
             (
                 "changed",
-                schema_type("boolean", "Whether file contents changed."),
+                schema_type("boolean", "Whether the worktree was changed."),
             ),
             (
                 "would_change",
-                schema_type("boolean", "Whether the batch would change the file."),
+                schema_type("boolean", "Whether the batch plan changes the worktree."),
             ),
             (
-                "edits",
+                "files",
                 schema_type(
                     "array",
-                    "Per-edit summary objects (index, kind, line counts).",
+                    "Per-file summaries with kind, paths, changed state, and old/new sha256 values.",
                 ),
             ),
             (

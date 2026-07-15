@@ -1276,28 +1276,29 @@ mod tests {
 
     #[test]
     fn extract_tool_call_collects_flattened_apply_text_edits_fields() {
-        // GPT Action flattened call for apply_text_edits: nested `edits`
+        // GPT Action flattened call for apply_text_edits: nested `changes`
         // array and scalar flattened fields must be collected into params.
         let (tool, params) = extract_tool_call(&json!({
             "tool": "apply_text_edits",
             "project": "agent:special:test",
-            "path": "a.txt",
             "dry_run": true,
-            "edits": [
-                {"kind": "replace_exact", "old_text": "a", "new_text": "b"}
-            ]
+            "changes": [{
+                "kind": "edit",
+                "path": "a.txt",
+                "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "edits": [{"kind": "replace_exact", "old_text": "a", "new_text": "b"}]
+            }]
         }))
         .unwrap();
 
         assert_eq!(tool, "apply_text_edits");
         assert_eq!(params["project"], "agent:special:test");
-        assert_eq!(params["path"], "a.txt");
         assert_eq!(params["dry_run"], true);
-        let edits = params["edits"].as_array().unwrap();
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0]["kind"], "replace_exact");
-        assert_eq!(edits[0]["old_text"], "a");
-        assert_eq!(edits[0]["new_text"], "b");
+        let changes = params["changes"].as_array().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["kind"], "edit");
+        assert_eq!(changes[0]["path"], "a.txt");
+        assert_eq!(changes[0]["edits"][0]["kind"], "replace_exact");
     }
 
     #[test]

@@ -2,7 +2,9 @@ use super::AgentCapability::FileWrite;
 use super::ToolVisibility::ModelVisible;
 use super::{def, ToolDefinition, TOOL_CATEGORY_EDIT};
 use crate::tool_runtime::metadata::{
-    ToolPathHint::SinglePath, ToolRisk::ProjectWrite, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
+    ToolPathHint::{PathList, SinglePath},
+    ToolRisk::ProjectWrite,
+    PROJECT_WRITE, TOOL_PROVIDER_AGENT,
 };
 
 pub(super) const COMPATIBILITY_DEFINITIONS: &[ToolDefinition] = &[
@@ -122,7 +124,7 @@ pub(super) const LINE_DEFINITIONS: &[ToolDefinition] = &[
         ProjectWrite,
         Some(PROJECT_WRITE),
         true,
-        SinglePath,
+        PathList,
         false,
         false,
     ),

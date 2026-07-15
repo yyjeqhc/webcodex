@@ -47,6 +47,23 @@ fn changed_paths_single_path_and_path_list_from_metadata() {
     );
     assert_eq!(
         changed_paths_for_tool(
+            "apply_text_edits",
+            &json!({
+                "project": "demo",
+                "changes": [
+                    {"kind": "edit", "path": "src/lib.rs"},
+                    {"kind": "rename", "path": "old.rs", "to_path": "new.rs"}
+                ]
+            }),
+        ),
+        vec![
+            "src/lib.rs".to_string(),
+            "old.rs".to_string(),
+            "new.rs".to_string()
+        ]
+    );
+    assert_eq!(
+        changed_paths_for_tool(
             "save_project_artifact",
             &json!({"project": "demo", "path": "out/image.png"}),
         ),

@@ -6,48 +6,44 @@ use std::collections::BTreeSet;
 fn apply_text_edits_input_schema_matches_runtime_edit_objects() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "apply_text_edits");
-    let edits = &spec.input_schema["properties"]["edits"];
+    let changes = &spec.input_schema["properties"]["changes"];
 
-    assert_eq!(edits["type"], "array");
-    assert_eq!(edits["items"]["type"], "object");
-    assert_eq!(edits["items"]["required"], json!(["kind"]));
+    assert_eq!(changes["type"], "array");
+    assert_eq!(changes["items"]["type"], "object");
+    assert_eq!(changes["items"]["required"], json!(["kind", "path"]));
 
-    let kind_enum = edits["items"]["properties"]["kind"]["enum"]
+    let kind_enum = changes["items"]["properties"]["kind"]["enum"]
         .as_array()
-        .expect("apply_text_edits kind enum should be listed")
+        .expect("apply_text_edits file change kind enum should be listed")
         .iter()
         .map(|value| value.as_str().expect("kind enum value should be a string"))
         .collect::<BTreeSet<_>>();
     assert_eq!(
         kind_enum,
-        BTreeSet::from([
-            "replace_exact",
-            "insert_after",
-            "insert_before",
-            "delete_exact"
-        ])
+        BTreeSet::from(["edit", "create", "delete", "rename"])
     );
+    let edits = &changes["items"]["properties"]["edits"];
+    assert_eq!(edits["items"]["required"], json!(["kind"]));
 
     let object_args = json!({
         "project": "agent:oe:private-drop",
-        "path": "src/lib.rs",
-        "edits": [
-            {
-                "kind": "insert_after",
-                "anchor_text": "fn main() {}",
-                "new_text": "\n"
-            }
-        ]
+        "changes": [{
+            "kind": "edit",
+            "path": "src/lib.rs",
+            "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "edits": [{
+                    "kind": "insert_after",
+                    "anchor_text": "fn main() {}",
+                    "new_text": "\n"
+            }]
+        }]
     });
     ToolCall::from_tool_name("apply_text_edits", object_args)
         .expect("apply_text_edits should deserialize object edit inputs");
 
     let string_args = json!({
         "project": "agent:oe:private-drop",
-        "path": "src/lib.rs",
-        "edits": [
-            "{\"kind\":\"insert_after\",\"anchor_text\":\"fn main() {}\",\"new_text\":\"\\n\"}"
-        ]
+        "changes": ["{\"kind\":\"edit\",\"path\":\"src/lib.rs\"}"]
     });
     assert!(
         ToolCall::from_tool_name("apply_text_edits", string_args).is_err(),

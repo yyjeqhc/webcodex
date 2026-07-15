@@ -383,6 +383,22 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_wc_approvals_task_state
                 ON wc_approvals(task_id, state, requested_at DESC);
 
+            CREATE TABLE IF NOT EXISTS wc_edit_operations (
+                task_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                request_sha256 TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('pending', 'completed', 'failed')),
+                result_json TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY(task_id, operation_id),
+                CHECK(
+                    (state IN ('pending', 'failed') AND result_json IS NULL)
+                    OR (state = 'completed' AND result_json IS NOT NULL)
+                ),
+                FOREIGN KEY(task_id) REFERENCES wc_tasks(id)
+            );
+
             CREATE TABLE IF NOT EXISTS wc_task_events (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,

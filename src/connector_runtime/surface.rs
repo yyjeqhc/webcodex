@@ -22,7 +22,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
     vec![
         spec(
             "task_start",
-            "Start one bounded coding task in the project already connected to this chat. Normal tasks use an isolated Git worktree; read_only tasks use the target checkout without write access. Returns the task_id required by later capabilities; never ask for or discover a project id.",
+            "Start one bounded coding task and return a compact Project Brief with Git state, language/manifests, instruction paths, and recommended checks. Normal tasks use the reusable writable workspace; read_only never permits mutation.",
             json!({
                 "type": "object",
                 "properties": {
@@ -37,7 +37,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "files_read",
-            "Read one small, coherent batch of project files for an active task. Paths are project-relative; the connected project is injected automatically.",
+            "Read one small, coherent batch of project files for an active task. Every result includes the complete-file sha256 required by edits_apply, even for a line range.",
             json!({
                 "type": "object",
                 "properties": {
@@ -65,7 +65,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "files_search",
-            "Search text in the connected project for an active task. Results are bounded and sensitive/build directories remain excluded by the executor policy.",
+            "Search project text in deterministic path order with a query-bound cursor inside a 200-record live window. Sensitive/build directories remain excluded; restart after edits.",
             json!({
                 "type": "object",
                 "properties": {
@@ -77,7 +77,11 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
                     "context_after": { "type": "integer", "minimum": 0, "maximum": 5, "default": 0 },
                     "include_globs": string_array_schema(20),
                     "exclude_globs": string_array_schema(20),
-                    "result_mode": { "type": "string", "enum": ["matches", "files_with_matches", "count"], "default": "matches" }
+                    "result_mode": { "type": "string", "enum": ["matches", "files_with_matches", "count"], "default": "matches" },
+                    "cursor": {
+                        "type": "string",
+                        "description": "Opaque query-bound cursor returned by the previous page. Restart the search after editing the workspace."
+                    }
                 },
                 "required": ["task_id", "pattern"],
                 "additionalProperties": false
@@ -87,34 +91,54 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "edits_apply",
-            "Atomically apply structured text edits to one project file. All anchors are validated against the original file before any write; use expected_file_sha256 when available.",
+            "Transactionally apply up to 16 edit/create/delete/rename file changes. Existing files require sha256 values returned by files_read; the full batch is preflighted before mutation. Reuse operation_id only for an exact retry.",
             json!({
                 "type": "object",
                 "properties": {
                     "task_id": task_id_schema(),
-                    "path": path_schema(),
-                    "edits": {
-                        "type": "array", "minItems": 1, "maxItems": 32,
+                    "operation_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+                        "description": "Caller-generated idempotency key. Reuse only with byte-identical changes and preconditions."
+                    },
+                    "changes": {
+                        "type": "array", "minItems": 1, "maxItems": 16,
                         "items": {
                             "type": "object",
                             "properties": {
-                                "kind": { "type": "string", "enum": ["replace_exact", "insert_after", "insert_before", "delete_exact"] },
-                                "old_text": { "type": "string" },
-                                "new_text": { "type": "string" },
-                                "anchor_text": { "type": "string" }
+                                "kind": { "type": "string", "enum": ["edit", "create", "delete", "rename"] },
+                                "path": path_schema(),
+                                "to_path": path_schema(),
+                                "content": { "type": "string" },
+                                "expected_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                                "edits": {
+                                    "type": "array", "minItems": 1, "maxItems": 20,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "kind": { "type": "string", "enum": ["replace_exact", "insert_after", "insert_before", "delete_exact"] },
+                                            "old_text": { "type": "string" },
+                                            "new_text": { "type": "string" },
+                                            "anchor_text": { "type": "string" }
+                                        },
+                                        "required": ["kind"],
+                                        "additionalProperties": false
+                                    }
+                                }
                             },
-                            "required": ["kind"],
+                            "required": ["kind", "path"],
                             "additionalProperties": false
                         }
                     },
-                    "dry_run": { "type": "boolean", "default": false },
-                    "expected_file_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+                    "dry_run": { "type": "boolean", "default": false }
                 },
-                "required": ["task_id", "path", "edits"],
+                "required": ["task_id", "operation_id", "changes"],
                 "additionalProperties": false
             }),
             false,
-            false,
+            true,
         ),
         spec(
             "checks_run",

@@ -84,6 +84,45 @@ pub struct ApplyTextEditInput {
     pub anchor_text: Option<String>,
 }
 
+/// Kind of project-file change performed by one transactional
+/// `apply_text_edits` batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplyFileChangeKind {
+    Edit,
+    Create,
+    Delete,
+    Rename,
+}
+
+impl ApplyFileChangeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Edit => "edit",
+            Self::Create => "create",
+            Self::Delete => "delete",
+            Self::Rename => "rename",
+        }
+    }
+}
+
+/// One file change in a transactional edit batch. Runtime validation enforces
+/// the fields allowed and required for each `kind` before the owning agent is
+/// contacted.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApplyFileChangeInput {
+    pub kind: ApplyFileChangeKind,
+    pub path: String,
+    #[serde(default)]
+    pub to_path: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub edits: Vec<ApplyTextEditInput>,
+    #[serde(default)]
+    pub expected_sha256: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CheckpointValidationInput {
     #[serde(default)]

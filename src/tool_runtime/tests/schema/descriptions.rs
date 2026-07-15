@@ -47,16 +47,19 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    // Canonical precise edit path.
+    // Canonical transactional edit path.
     let apply_text_edits_desc = desc("apply_text_edits");
     for phrase in [
-        "canonical precise edit",
+        "canonical transactional file-change",
         "preferred for ordinary local",
-        "worktree",
+        "current worktree",
         "not head",
+        "edit/create/delete/rename",
+        "whole batch",
         "prefer over whole-file",
         "compatibility edit",
         "dry_run",
+        "per-file hashes",
     ] {
         assert!(
             apply_text_edits_desc.contains(phrase),
@@ -228,13 +231,7 @@ fn edit_tool_surface_keeps_compat_tools_visible_and_schemas_stable() {
 
     // Parameter surface smoke checks (names only; not full-schema snapshots).
     let text_edits = &spec_named(&specs, "apply_text_edits").input_schema["properties"];
-    for field in [
-        "project",
-        "path",
-        "edits",
-        "dry_run",
-        "expected_file_sha256",
-    ] {
+    for field in ["project", "changes", "dry_run"] {
         assert!(
             text_edits.get(field).is_some(),
             "apply_text_edits must keep field {field}"

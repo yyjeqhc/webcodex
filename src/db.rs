@@ -16,9 +16,9 @@ mod task_kernel;
 pub use self::oauth::RotateResult;
 #[allow(unused_imports)]
 pub(crate) use self::task_kernel::{
-    ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorPreservedWorkspace,
-    ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskStoreError,
-    NewConnectorResult, NewConnectorTask,
+    ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
+    ConnectorPreservedWorkspace, ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot,
+    ConnectorTaskStoreError, NewConnectorResult, NewConnectorTask,
 };
 
 pub struct Database {
@@ -96,6 +96,7 @@ mod tests {
             "wc_run_contexts",
             "wc_task_results",
             "wc_approvals",
+            "wc_edit_operations",
         ] {
             let exists: i64 = conn
                 .query_row(

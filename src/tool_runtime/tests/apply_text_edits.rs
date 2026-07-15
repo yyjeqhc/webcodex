@@ -214,15 +214,17 @@ async fn apply_text_edits_dry_run_does_not_write() {
         runtime_for_task
             .apply_text_edits(
                 project_for_task,
-                "EDIT_PROBE.txt".to_string(),
-                vec![text_edit(
-                    ApplyTextEditKind::ReplaceExact,
-                    Some("old"),
-                    Some("new"),
-                    None,
+                vec![edit_change(
+                    "EDIT_PROBE.txt",
+                    &"a".repeat(64),
+                    vec![text_edit(
+                        ApplyTextEditKind::ReplaceExact,
+                        Some("old"),
+                        Some("new"),
+                        None,
+                    )],
                 )],
                 Some(true),
-                None,
             )
             .await
     });
@@ -248,7 +250,8 @@ async fn apply_text_edits_dry_run_does_not_write() {
     // The payload carries dry_run and the edits.
     let payload: Value = serde_json::from_str(req.content.as_deref().unwrap()).unwrap();
     assert_eq!(payload["dry_run"], true);
-    assert_eq!(payload["edits"][0]["kind"], "replace_exact");
+    assert_eq!(payload["changes"][0]["kind"], "edit");
+    assert_eq!(payload["changes"][0]["edits"][0]["kind"], "replace_exact");
 
     runtime
         .shell_clients
@@ -258,9 +261,8 @@ async fn apply_text_edits_dry_run_does_not_write() {
             request_id: req.request_id,
             exit_code: Some(0),
             stdout: Some(
-                "{\"path\":\"EDIT_PROBE.txt\",\"dry_run\":true,\"applied_count\":1,\
-                     \"old_sha256\":\"b\",\"new_sha256\":\"a\",\"changed\":false,\
-                     \"would_change\":true,\"edits\":[],\"changed_paths\":[\"EDIT_PROBE.txt\"]}"
+                "{\"dry_run\":true,\"applied_count\":1,\"changed\":false,\
+                     \"would_change\":true,\"files\":[],\"changed_paths\":[\"EDIT_PROBE.txt\"]}"
                     .to_string(),
             ),
             stderr: Some(String::new()),
@@ -291,15 +293,17 @@ async fn apply_text_edits_read_only_session_rejected() {
     let result = runtime
         .dispatch(ToolCall::ApplyTextEdits {
             project: "demo".to_string(),
-            path: "should-not-exist.txt".to_string(),
-            edits: vec![text_edit(
-                ApplyTextEditKind::ReplaceExact,
-                Some("old"),
-                Some("new"),
-                None,
+            changes: vec![edit_change(
+                "should-not-exist.txt",
+                &"a".repeat(64),
+                vec![text_edit(
+                    ApplyTextEditKind::ReplaceExact,
+                    Some("old"),
+                    Some("new"),
+                    None,
+                )],
             )],
             dry_run: None,
-            expected_file_sha256: None,
             session_id: Some(session.session_id.clone()),
         })
         .await;
@@ -350,15 +354,17 @@ async fn apply_text_edits_session_event_summary() {
             .dispatch_with_auth(
                 ToolCall::ApplyTextEdits {
                     project: project_for_task,
-                    path: "src/lib.rs".to_string(),
-                    edits: vec![text_edit(
-                        ApplyTextEditKind::ReplaceExact,
-                        Some("SECRET_OLD_BLOCK"),
-                        Some("SECRET_NEW_BLOCK"),
-                        None,
+                    changes: vec![edit_change(
+                        "src/lib.rs",
+                        &"a".repeat(64),
+                        vec![text_edit(
+                            ApplyTextEditKind::ReplaceExact,
+                            Some("SECRET_OLD_BLOCK"),
+                            Some("SECRET_NEW_BLOCK"),
+                            None,
+                        )],
                     )],
                     dry_run: None,
-                    expected_file_sha256: None,
                     session_id: Some(session_id),
                 },
                 Some(&bootstrap),
@@ -392,10 +398,8 @@ async fn apply_text_edits_session_event_summary() {
             request_id: req.request_id,
             exit_code: Some(0),
             stdout: Some(
-                "{\"path\":\"src/lib.rs\",\"dry_run\":false,\"applied_count\":1,\
-                     \"old_sha256\":\"b\",\"new_sha256\":\"a\",\"changed\":true,\
-                     \"would_change\":true,\"edits\":[{\"index\":0,\"kind\":\"replace_exact\",\
-                     \"old_start_line\":1,\"old_end_line\":1,\"new_line_count\":1}],\
+                "{\"dry_run\":false,\"applied_count\":1,\"changed\":true,\
+                     \"would_change\":true,\"files\":[{\"index\":0,\"kind\":\"edit\",\"path\":\"src/lib.rs\"}],\
                      \"changed_paths\":[\"src/lib.rs\"]}"
                     .to_string(),
             ),
@@ -434,7 +438,7 @@ async fn apply_text_edits_session_event_summary() {
         .as_ref()
         .expect("input_summary present on started event");
     let summary_str = serde_json::to_string(input_summary).unwrap();
-    assert!(summary_str.contains("edit_count"));
+    assert!(summary_str.contains("change_count"));
     assert!(summary_str.contains("src/lib.rs"));
     assert!(
         !summary_str.contains("SECRET_OLD_BLOCK"),
@@ -446,6 +450,5 @@ async fn apply_text_edits_session_event_summary() {
         "input_summary must not leak new_text content: {}",
         summary_str
     );
-    assert_eq!(input_summary["old_text_present"], true);
-    assert_eq!(input_summary["new_text_present"], true);
+    assert_eq!(input_summary["expected_sha256_count"], 1);
 }

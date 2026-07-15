@@ -660,23 +660,20 @@ impl ToolCall {
             }),
             Self::ApplyTextEdits {
                 project,
-                path,
-                edits,
+                changes,
                 dry_run,
-                expected_file_sha256,
                 ..
             } => {
-                let kind_list: Vec<&str> = edits.iter().map(|e| e.kind.as_str()).collect();
+                let kind_list: Vec<&str> =
+                    changes.iter().map(|change| change.kind.as_str()).collect();
                 serde_json::json!({
                     "project": project,
-                    "path": path,
-                    "edit_count": edits.len(),
+                    "change_count": changes.len(),
                     "kinds": kind_list,
-                    "old_text_present": edits.iter().any(|e| e.old_text.as_ref().is_some_and(|v| !v.is_empty())),
-                    "new_text_present": edits.iter().any(|e| e.new_text.as_ref().is_some_and(|v| !v.is_empty())),
-                    "anchor_text_present": edits.iter().any(|e| e.anchor_text.as_ref().is_some_and(|v| !v.is_empty())),
+                    "paths": changes.iter().map(|change| change.path.as_str()).collect::<Vec<_>>(),
+                    "destination_paths": changes.iter().filter_map(|change| change.to_path.as_deref()).collect::<Vec<_>>(),
+                    "expected_sha256_count": changes.iter().filter(|change| change.expected_sha256.is_some()).count(),
                     "dry_run": dry_run,
-                    "expected_file_sha256_present": expected_file_sha256.as_ref().is_some_and(|v| !v.is_empty()),
                 })
             }
             Self::WorkspaceCheckpointCreate {

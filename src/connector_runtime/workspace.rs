@@ -7,6 +7,7 @@
 use super::ConnectorContext;
 use crate::db::{ConnectorPreservedWorkspace, ConnectorTaskResult, ConnectorTaskSnapshot};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -32,6 +33,9 @@ pub(crate) struct PreparedWorkspace {
     pub baseline_commit: Option<String>,
     pub baseline_tree: Option<String>,
     pub isolated: bool,
+    pub project_overview: Option<Value>,
+    pub git_dirty: Option<bool>,
+    pub git_conflict_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -143,6 +147,8 @@ impl WorkspaceManager {
             .ok()
         });
         if read_only {
+            let (project_overview, git_dirty, git_conflict_count) =
+                project_brief_evidence(Path::new(&context.executor_root));
             return Ok(PreparedWorkspace {
                 run_id: run_id.to_string(),
                 agent_client_id: client_id,
@@ -152,6 +158,9 @@ impl WorkspaceManager {
                 baseline_commit,
                 baseline_tree,
                 isolated: false,
+                project_overview,
+                git_dirty,
+                git_conflict_count,
             });
         }
         let baseline_commit = baseline_commit.ok_or_else(|| {
@@ -199,6 +208,8 @@ impl WorkspaceManager {
             let _ = fs::remove_file(&lease_path);
             return Err(error);
         }
+        let (project_overview, git_dirty, git_conflict_count) =
+            project_brief_evidence(&execution_root);
         Ok(PreparedWorkspace {
             run_id: run_id.to_string(),
             agent_client_id: client_id.clone(),
@@ -208,6 +219,9 @@ impl WorkspaceManager {
             baseline_commit: Some(baseline_commit),
             baseline_tree: Some(baseline_tree),
             isolated: true,
+            project_overview,
+            git_dirty,
+            git_conflict_count,
         })
     }
 
@@ -1041,6 +1055,27 @@ fn sensitive_result_path(path: &str) -> bool {
             || name.ends_with(".p12")
             || name.ends_with(".pfx")
     })
+}
+
+fn project_brief_evidence(root: &Path) -> (Option<Value>, Option<bool>, Option<usize>) {
+    let overview =
+        crate::project_overview::build_project_overview(root, ".", Some(2), Some(200)).ok();
+    let status = git_output(root, ["status", "--porcelain"])
+        .ok()
+        .and_then(|output| output.status.success().then_some(output.stdout))
+        .and_then(|stdout| String::from_utf8(stdout).ok());
+    let dirty = status.as_deref().map(|value| !value.trim().is_empty());
+    let conflict_count = status.as_deref().map(|value| {
+        value
+            .lines()
+            .filter(|line| {
+                line.get(..2).is_some_and(|code| {
+                    matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU")
+                })
+            })
+            .count()
+    });
+    (overview, dirty, conflict_count)
 }
 
 fn git_text<const N: usize>(root: &Path, args: [&str; N]) -> Result<String, String> {

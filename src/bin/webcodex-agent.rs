@@ -861,7 +861,7 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         | "file_insert_after_pattern" => handle_line_edit_file_request(request, &resolved, start),
         "file_replace_in_file" => handle_replace_in_file_request(request, &resolved, start),
         "file_write_project_file" => handle_write_project_file_request(request, &resolved, start),
-        "file_apply_text_edits" => handle_apply_text_edits_file_request(request, &resolved, start),
+        "file_apply_text_edits" => handle_apply_text_edits_file_request(policy, request, start),
         "file_save_project_artifact"
         | "file_read_project_artifact_metadata"
         | "file_read_project_artifact"
@@ -2774,6 +2774,7 @@ shell_profile = "../rust"
         for n in 1..=500 {
             content.push_str(&format!("line-{n:04}\n"));
         }
+        let expected_sha256 = sha256_hex_bytes(content.as_bytes());
         std::fs::write(tmp.path().join("large.txt"), content).unwrap();
 
         let out = file_read_json(handle_file_request(
@@ -2786,6 +2787,7 @@ shell_profile = "../rust"
         assert_eq!(out["total_lines"], 500);
         assert_eq!(out["start_line"], 250);
         assert_eq!(out["limit"], 3);
+        assert_eq!(out["sha256"], expected_sha256);
     }
 
     #[test]
@@ -3177,8 +3179,26 @@ shell_profile = "../rust"
     fn apply_text_edits_request(
         cwd: &Path,
         path: &str,
-        payload: serde_json::Value,
+        mut payload: serde_json::Value,
     ) -> ShellAgentShellRequest {
+        if payload.get("changes").is_none() {
+            let expected_sha256 = payload
+                .get("expected_file_sha256")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    sha256_hex_bytes(&std::fs::read(cwd.join(path)).unwrap_or_default())
+                });
+            payload = serde_json::json!({
+                "dry_run": payload.get("dry_run").cloned().unwrap_or(serde_json::Value::Bool(false)),
+                "changes": [{
+                    "kind": "edit",
+                    "path": path,
+                    "expected_sha256": expected_sha256,
+                    "edits": payload.get("edits").cloned().unwrap_or_else(|| serde_json::json!([]))
+                }]
+            });
+        }
         ShellAgentShellRequest {
             request_id: "req-apply-text-edits".to_string(),
             client_id: "agent-1".to_string(),
@@ -4658,6 +4678,136 @@ shell_profile = "../rust"
     }
 
     #[test]
+    fn file_apply_text_edits_applies_multi_file_transaction() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("a.txt"), "alpha\n").unwrap();
+        std::fs::write(tmp.path().join("b.txt"), "beta\n").unwrap();
+        std::fs::write(tmp.path().join("c.txt"), "gamma\n").unwrap();
+        let hash = |path: &str| sha256_hex_bytes(&std::fs::read(tmp.path().join(path)).unwrap());
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "a.txt",
+                serde_json::json!({
+                    "changes": [
+                        {
+                            "kind": "edit",
+                            "path": "a.txt",
+                            "expected_sha256": hash("a.txt"),
+                            "edits": [{"kind": "replace_exact", "old_text": "alpha", "new_text": "ALPHA"}]
+                        },
+                        {"kind": "create", "path": "nested/new.txt", "content": "new\n"},
+                        {"kind": "delete", "path": "b.txt", "expected_sha256": hash("b.txt")},
+                        {"kind": "rename", "path": "c.txt", "to_path": "moved/c.txt", "expected_sha256": hash("c.txt")}
+                    ]
+                }),
+            ),
+        ));
+
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["applied_count"], 4);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
+            "ALPHA\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("nested/new.txt")).unwrap(),
+            "new\n"
+        );
+        assert!(!tmp.path().join("b.txt").exists());
+        assert!(!tmp.path().join("c.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("moved/c.txt")).unwrap(),
+            "gamma\n"
+        );
+        assert_eq!(out["files"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn file_apply_text_edits_hash_conflict_keeps_every_file_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("a.txt"), "alpha\n").unwrap();
+        std::fs::write(tmp.path().join("b.txt"), "beta\n").unwrap();
+        let a_hash = sha256_hex_bytes(&std::fs::read(tmp.path().join("a.txt")).unwrap());
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "a.txt",
+                serde_json::json!({
+                    "changes": [
+                        {
+                            "kind": "edit",
+                            "path": "a.txt",
+                            "expected_sha256": a_hash,
+                            "edits": [{"kind": "replace_exact", "old_text": "alpha", "new_text": "ALPHA"}]
+                        },
+                        {
+                            "kind": "delete",
+                            "path": "b.txt",
+                            "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        }
+                    ]
+                }),
+            ),
+        ));
+
+        assert_eq!(out["error_kind"], "sha256_conflict");
+        assert_eq!(out["change_index"], 1);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
+            "alpha\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("b.txt")).unwrap(),
+            "beta\n"
+        );
+    }
+
+    #[test]
+    fn file_apply_text_edits_rejects_resolved_path_aliases() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::create_dir(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/a.txt"), "alpha\n").unwrap();
+        let hash = sha256_hex_bytes(&std::fs::read(tmp.path().join("src/a.txt")).unwrap());
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "src/a.txt",
+                serde_json::json!({
+                    "changes": [
+                        {
+                            "kind": "edit",
+                            "path": "src/a.txt",
+                            "expected_sha256": hash,
+                            "edits": [{"kind": "replace_exact", "old_text": "alpha", "new_text": "ALPHA"}]
+                        },
+                        {
+                            "kind": "delete",
+                            "path": "src//a.txt",
+                            "expected_sha256": hash
+                        }
+                    ]
+                }),
+            ),
+        ));
+
+        assert_eq!(out["error_kind"], "path_overlap");
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("src/a.txt")).unwrap(),
+            "alpha\n"
+        );
+    }
+
+    #[test]
     fn file_apply_text_edits_replace_exact_writes_atomically() {
         let tmp = tempfile::tempdir().unwrap();
         let policy = project_policy(tmp.path());
@@ -4728,7 +4878,7 @@ shell_profile = "../rust"
                 }),
             ),
         ));
-        let msg = out["message"].as_str().unwrap();
+        let msg = out["error"].as_str().unwrap();
         assert!(msg.contains("match text was not found"));
         assert!(msg.contains("No files were modified"));
         assert_eq!(out["changed"], false);
@@ -4754,8 +4904,8 @@ shell_profile = "../rust"
                 }),
             ),
         ));
-        let msg = out["message"].as_str().unwrap();
-        assert!(msg.contains("refusing ambiguous edit"));
+        let msg = out["error"].as_str().unwrap();
+        assert!(msg.contains("matched 2 times"));
         assert!(msg.contains("No files were modified"));
         assert_eq!(out["changed"], false);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "dup-dup\n");
@@ -4782,7 +4932,7 @@ shell_profile = "../rust"
             ),
         ));
         let err = out["error"].as_str().unwrap();
-        assert!(err.contains("expected_file_sha256 mismatch"));
+        assert!(err.contains("expected_sha256 does not match"));
         assert!(err.contains("No files were modified"));
         assert_eq!(out["changed"], false);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "alpha\n");
@@ -4810,7 +4960,8 @@ shell_profile = "../rust"
             ),
         ));
         assert_eq!(out["changed"], true);
-        assert_eq!(out["applied_count"], 3);
+        assert_eq!(out["applied_count"], 1);
+        assert_eq!(out["files"][0]["edits"].as_array().unwrap().len(), 3);
         assert_eq!(out["changed_paths"][0], "target.txt");
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),

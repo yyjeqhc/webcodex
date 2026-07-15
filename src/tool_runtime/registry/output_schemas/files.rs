@@ -46,6 +46,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("content", schema_type("string", "File content.")),
             ("path", schema_type("string", "Project-relative path.")),
             (
+                "sha256",
+                schema_type("string", "sha256 of the complete file, independent of the returned line range."),
+            ),
+            (
                 "start_line",
                 schema_type("integer", "1-based starting line."),
             ),

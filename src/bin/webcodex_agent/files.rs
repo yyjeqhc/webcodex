@@ -221,6 +221,7 @@ fn handle_file_read_range_request(
     let mut content = String::new();
     let mut total_lines = 0usize;
     let mut wrote_any_line = false;
+    let mut hasher = Sha256::new();
 
     loop {
         line.clear();
@@ -243,6 +244,7 @@ fn handle_file_read_range_request(
         if bytes_read == 0 {
             break;
         }
+        hasher.update(line.as_bytes());
         total_lines = total_lines.saturating_add(1);
         if total_lines >= start_line && total_lines <= end_line {
             let line_content = line.strip_suffix('\n').unwrap_or(&line);
@@ -270,9 +272,11 @@ fn handle_file_read_range_request(
     }
 
     let limit = end_line.saturating_sub(start_line).saturating_add(1);
+    let sha256 = format!("{:x}", hasher.finalize());
     let out = serde_json::json!({
         "format": "webcodex.file_read_range.v1",
         "content": content,
+        "sha256": sha256,
         "total_lines": total_lines,
         "start_line": start_line,
         "limit": limit,

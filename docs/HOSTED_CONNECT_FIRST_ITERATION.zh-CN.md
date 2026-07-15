@@ -122,7 +122,7 @@ MCP target 必须通过公开 hostname 的真实 `initialize` 探测；GPT Actio
 
 ## 8. 明确没有在这一轮假装解决的事
 
-- 现有 MCP/OpenAPI 仍暴露旧的宽工具面；这一轮没有再加一层 facade 或 aggregate。下一轮应先建立 Task Kernel/canonical capability contract，再硬切默认 hosted surface。
+- 本文提交时，MCP/OpenAPI 仍暴露旧的宽工具面；该边界已由[第二轮 Task Kernel 实现](HOSTED_TASK_KERNEL_SECOND_ITERATION.zh-CN.md)替换。Hosted profile 现在硬切为 8 项 canonical capability，普通 `serve` 的运维 surface 不受影响。
 - 本地个人模式仍复用了现有 server + agent 内部实现，只是在一个产品入口下监督；尚未改成同进程 LocalExecutor。
 - 没有实现多设备同步或多用户 shared control plane 新模型；本轮只保证凭据角色没有继续混用，为后续 User/Device/ConnectorGrant 分离留下边界。
 - 没有内置 LLM、prompt loop、模型选择或推理能力；模型始终来自支持 Connector/MCP/GPT Actions 的线上平台。

@@ -15,6 +15,7 @@
 ## Client Integration
 
 - [HOSTED_CONNECT_FIRST_ITERATION.zh-CN.md](HOSTED_CONNECT_FIRST_ITERATION.zh-CN.md) - `webcodex connect` 的 OpenAI/Cloudflare 实际用法、安全边界与第一轮验收矩阵。
+- [HOSTED_TASK_KERNEL_SECOND_ITERATION.zh-CN.md](HOSTED_TASK_KERNEL_SECOND_ITERATION.zh-CN.md) - project-bound Task/Run authority、8 项 canonical hosted 能力、多用户/多设备 subject 边界与第二轮验收结果。
 6. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、默认 coding loop、read-only LSP 与 validation intelligence，以及常见 MCP 错误。
 7. [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) / [GPT_ACTIONS.md](GPT_ACTIONS.md) - Custom GPT 设置、OpenAPI 导入、认证、generic validation-summary access 和 workflow guidance。
 8. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) - MCP 和 GPT Actions 指南使用的截图。

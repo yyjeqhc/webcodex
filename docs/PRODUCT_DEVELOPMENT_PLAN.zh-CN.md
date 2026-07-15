@@ -422,10 +422,10 @@ Git 项目的 writable Task 默认：
 
 | Tool | 职责 | 关键约束 |
 |---|---|---|
-| task_start | 创建 Task/Run，返回精简 context | 只接受 goal、mode、可选 project/workspace |
+| task_start | 创建 Task/Run，返回精简 Project Brief | 只接受 goal、mode；project/workspace 由连接上下文注入 |
 | files_read | 读取一个或多个已知文件/range | 只读、bounded、路径相对 Run root |
 | files_search | text/glob/symbol discovery | 明确 query kind、分页、结果上限 |
-| edits_apply | 原子 structured edits | 必须带 file version/hash precondition |
+| edits_apply | 事务式 structured file changes | 必须带 file version/hash precondition |
 | checks_run | 运行项目声明或安全推断的 checks | 默认不接收任意 shell 字符串 |
 | commands_run | 高级 escape hatch | 受 policy/approval；只能在 Run root |
 | task_review | 读取 events、diff、validation 和 warnings | 增量 cursor；不返回 giant aggregate |
@@ -1094,10 +1094,10 @@ Golden scenarios：
 
 接入和 Task 主路径完成后，近期开发不再围绕某个线上窗口增加状态聚合，也不立刻扩展 shared control plane。按用户体验收益排序：
 
-1. **Round 5：编辑与读取可靠性。** 在现有 `edits_apply` 内实现原子 multi-file edit/create/delete/rename、逐文件 expected hash、批量 preflight、幂等 operation id 和结构化冲突；`files_read` 返回 hash，`files_search` 使用稳定 cursor；`task_start` 只给小型 Project Brief。
-2. **Round 6：project-aware validation。** 用明确 marker/Project recipe 支持 Rust、Node、Python 等 validation profile，统一 bounded diagnostics、changed-path check selection、progress/result，以及 passed/failed/not_run/stale 终态。
-3. **真实 hosted acceptance 作为并行验收 lane，而不是架构前置。** 在具备账号权限的机器上记录 OpenAI Tunnel、Cloudflare Named/Quick、MCP/GPT Actions 的 handshake、重连、SSE、身份和 credential redaction 证据；失败不驱动临时 façade。
-4. **之后才进入共享模式。** 实现 User/Device/ProjectMembership/Workspace routing、device revoke 和跨 Workspace Result apply precondition；个人本地模式仍保持一条命令接入与默认单写槽位。
+1. **Round 5 已完成：编辑与读取可靠性。** 现有 `edits_apply` 已原位升级为事务式 multi-file edit/create/delete/rename，具备逐文件 SHA-256、全批 preflight、operation id durable replay 和结构化冲突；`files_read` 返回完整文件 hash，`files_search` 使用 query-bound cursor，`task_start` 返回小型 Project Brief。实现与边界见 [`HOSTED_EDIT_RELIABILITY_FIFTH_ITERATION.zh-CN.md`](HOSTED_EDIT_RELIABILITY_FIFTH_ITERATION.zh-CN.md)。
+2. **Round 6：project-aware validation。** 用明确 marker/Project recipe 支持 Rust、Node、Python、Go 等 validation profile，统一 bounded diagnostics、changed-path check selection、progress/result，以及 passed/failed/not_run/stale 终态。这是下一主开发轮次。
+3. **真实 hosted acceptance 继续作为并行验收 lane，而不是架构前置。** 在具备账号权限的机器上记录 OpenAI Tunnel、Cloudflare Named/Quick、MCP/GPT Actions 的 handshake、重连、SSE、身份和 credential redaction 证据；失败不驱动临时 façade。
+4. **Round 6 稳定后才进入共享模式。** 实现 User/Device/ProjectMembership/Workspace routing、device revoke 和跨 Workspace Result apply precondition；个人本地模式仍保持一条命令接入与默认单写槽位。
 5. Browser review/approval UI 可与共享模式一起做，但不能替代工具成功率改进，也不能重新暴露 agent/session/runtime 内部概念。
 
 Round 5/6 使用 golden tasks 记录首次编辑成功率、schema retry、平均工具调用数、重复读取、warm validation 时间、诊断可操作率和磁盘峰值。只有指标或真实 hosted acceptance 证明有必要时才拆分/新增模型能力；否则继续保持当前 8 项 project-bound surface。

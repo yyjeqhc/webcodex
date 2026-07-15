@@ -26,7 +26,7 @@ changes without a diff, run workspace hygiene, and finish. Do not edit files.
 
 1. `start_coding_task`
 2. `list_project_files`, `search_project_text`, or `read_file`
-3. `apply_text_edits` (precise local), `apply_patch_checked` (multi-file), or `write_project_file` (create/full rewrite)
+3. `apply_text_edits` (guarded transactional changes), `apply_patch_checked` (complex unified diff), or `write_project_file` (intentional full rewrite)
 4. `validate_patch`, `cargo_fmt`, `cargo_check`, or `cargo_test`
 5. `show_changes`
 6. `git_diff_hunks` when targeted diff inspection is needed

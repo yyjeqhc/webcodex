@@ -483,8 +483,10 @@ require `capabilities.git_available=true`; a project such as
 1. Read and inspect the **current worktree** (`read_file`, `show_changes`). Dirty
    worktrees are a valid baseline; protect existing user edits. Do not rebuild
    file content from HEAD and overwrite the current file.
-2. **Precise local edits:** `apply_text_edits` (canonical). Ordered exact
-   replace/insert/delete with optional hash/prefix/anchor guards.
+2. **Transactional file changes:** `apply_text_edits` (canonical). A bounded
+   batch can edit, create, delete, and rename files. Existing source files must
+   carry their current SHA-256 so the whole batch can be rejected before the
+   first mutation when any input is stale.
 3. **Multi-file / complex unified diffs:** `apply_patch_checked` (canonical).
    Preflight first; apply only when validation passes. Prefer over raw
    `apply_patch`.
@@ -496,7 +498,7 @@ require `capabilities.git_available=true`; a project such as
    cases; prefer `apply_text_edits` for new workflows.
 
 ```json
-{"tool": "apply_text_edits", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "edits": [{"kind": "replace_exact", "old_text": "old", "new_text": "new"}]}}
+{"tool": "apply_text_edits", "params": {"project": "agent:workstation:my-repo", "changes": [{"kind": "edit", "path": "src/auth.rs", "expected_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "edits": [{"kind": "replace_exact", "old_text": "old", "new_text": "new"}]}]}}
 {"tool": "apply_patch_checked", "params": {"project": "agent:workstation:my-repo", "patch": "diff --git ..."}}
 {"tool": "write_project_file", "params": {"project": "agent:workstation:my-repo", "path": "src/new.rs", "content": "fn main() {}\n"}}
 ```

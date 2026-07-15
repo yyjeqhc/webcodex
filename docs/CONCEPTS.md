@@ -63,7 +63,7 @@ Common tool groups:
 
 - Discovery: `runtime_status`, `list_projects`, `list_agents`, `tool_manifest`.
 - Inspect: `list_project_files`, `search_project_text`, `read_file`, `git_status`, `git_diff_hunks`.
-- Edit: `apply_text_edits` (precise local), `apply_patch_checked` (multi-file checked patch), `write_project_file` (create/full rewrite). Line/pattern tools remain compatibility paths.
+- Edit: `apply_text_edits` (guarded transactional file changes), `apply_patch_checked` (complex checked unified diff), `write_project_file` (intentional full rewrite). Line/pattern tools remain compatibility paths.
 - Validate: `validate_patch`, `cargo_fmt`, `cargo_check`, `cargo_test`.
 - Review: `show_changes`, `workspace_hygiene_check`.
 - Finish: `finish_coding_task`, `session_handoff_summary`.

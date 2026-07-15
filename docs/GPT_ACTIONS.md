@@ -92,9 +92,9 @@ inspect:
   read_file
 
 edit:
-  apply_text_edits          # canonical precise single-file edits
-  apply_patch_checked       # canonical multi-file checked patches
-  write_project_file        # create or intentional full rewrite only
+  apply_text_edits          # guarded transactional edit/create/delete/rename
+  apply_patch_checked       # complex checked unified diffs
+  write_project_file        # intentional full rewrite only
   # compatibility (still supported): replace_line_range, insert_at_line,
   # delete_line_range, replace_in_file, replace_exact_block,
   # insert_before_pattern, insert_after_pattern, raw apply_patch

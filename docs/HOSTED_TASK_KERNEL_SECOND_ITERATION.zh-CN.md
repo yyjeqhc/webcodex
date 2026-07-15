@@ -1,5 +1,7 @@
 # Hosted Task Kernel：第二轮实现与验收边界
 
+> 历史说明：本文件记录第二轮当时的单文件编辑面；第五轮已将同名 `edits_apply` 原位升级为事务式多文件 edit/create/delete/rename，当前语义见 `HOSTED_EDIT_RELIABILITY_FIFTH_ITERATION.zh-CN.md`。
+
 > 状态：第二轮核心纵向切片，2026-07-15。本文记录已经进入代码的行为，不把后续隔离 workspace、人工审批或真实公网平台验收写成已完成。
 
 ## 1. 本轮的体验变化

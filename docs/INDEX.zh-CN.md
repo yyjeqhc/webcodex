@@ -43,7 +43,7 @@
 
 ## Release And Roadmap
 
-- [PRODUCT_DEVELOPMENT_PLAN.zh-CN.md](PRODUCT_DEVELOPMENT_PLAN.zh-CN.md) - 基于实际代码审计的 Project-first 重构方案：单入口、Task Kernel、隔离执行、7-tool 模型面，以及多设备/多用户身份模型。
+- [PRODUCT_DEVELOPMENT_PLAN.zh-CN.md](PRODUCT_DEVELOPMENT_PLAN.zh-CN.md) - 基于实际代码审计的 Hosted Chat-first / Project-first 重构方案：单进程个人模式、OpenAI/Cloudflare Tunnel、canonical 工具面、Task Kernel，以及可选的多设备/多用户共享 control plane。
 23. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - 面向外部用户的 0.2.0 release notes。
 24. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness 和 acceptance procedure。
 25. [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) / [ROADMAP.md](ROADMAP.md) - 短 roadmap。

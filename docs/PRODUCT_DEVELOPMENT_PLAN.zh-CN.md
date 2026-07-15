@@ -2,7 +2,7 @@
 
 > 评审日期：2026-07-15
 >
-> 状态：v3 执行基线；前三轮个人本地主路径已落地：hosted connect、project-bound canonical surface、隔离 Run、Task Result 与本机人工决策；shared control plane/browser review 待后续迭代
+> 状态：v4 执行基线；前四轮个人本地主路径已落地：hosted connect、project-bound canonical surface、稳定 Task Result/本机人工决策、可复用写槽位与 Project 级 Cargo cache；下一阶段先增强编辑/读取/validation 工具，shared control plane/browser review 后置
 >
 > 目标：一个命令把本地项目安全接入线上聊天窗口，稳定执行工具调用、审查结果，并为多设备和多用户保留正确边界
 >
@@ -800,6 +800,8 @@ runtime transport 和 protocol details 移入 Diagnostics，不占首页。
 
 这是跨 CLI、认证、数据库、executor、runtime、MCP/OpenAPI、ingress 和 console 的重构，不能在一个巨型修改中同时完成。先验证最不确定、最接近用户价值的 hosted-client ingress，再重建内部模型；每个阶段必须形成可运行的 vertical slice，并在进入下一阶段前删除对应旧路径。
 
+> 执行校准（2026-07-15）：下面的 Slice 仍保留最初的架构拆分依据，不再作为“从 Slice 1 重新开始”的待办清单。当前代码已经完成个人 hosted connect、8 项 canonical surface、SQLite Task/Run/Result/Approval、隔离执行与可复用槽位的纵向主路径。真实 provider 账号验收仍未完成；近期主线已调整为工具效果 Round 5/6，详见第四轮文档。
+
 ### Slice 0：冻结旧表面积并建立验收集（2～3 天）
 
 交付：
@@ -919,8 +921,8 @@ Golden scenarios：
 交付：
 
 - StartTask / FinishTask / AcceptTask / RejectTask；
-- Git execution worktree；
-- workspace lease；
+- reusable Git execution slot（最初为 per-run worktree，第四轮已收敛为固定槽位）；
+- run-bound workspace lease；
 - baseline.capture 与 result.diff；
 - patch artifact；
 - checks/validation result；
@@ -942,7 +944,7 @@ Golden scenarios：
 - clean/dirty repo 的默认写任务都不直接改当前 checkout；
 - client 中断后 Task 可查；
 - finish 产生稳定 Result；
-- accept 有 precondition，reject 不留下执行 worktree；
+- accept 有 precondition，reject 不留下任务修改现场；受管 idle slot 可保留供下一 Task 复用；
 - 本地 restart 后能够查看同一个 Result；共享模式的跨设备查看留到 Slice 7。
 
 ### Slice 5：canonical MCP/GPT capability surface 硬切（约 1～2 周）
@@ -1090,12 +1092,14 @@ Golden scenarios：
 
 ## 20. 下一步
 
-下一次代码改动应从 Slice 1 开始，而不是先改工具名：
+接入和 Task 主路径完成后，近期开发不再围绕某个线上窗口增加状态聚合，也不立刻扩展 shared control plane。按用户体验收益排序：
 
-1. 建立 `docs/evals/hosted-connector-matrix` 或等价 acceptance ledger，先写清每条真实调用的证据字段。
-2. 用当前 MCP 的最小只读能力分别验证 OpenAI Tunnel 的 stdio/HTTP target；确认 app auth、workspace identity、SSE 和 reconnect，而不是先实现框架。
-3. 验证 Cloudflare Named Tunnel 下的 MCP 与 GPT Actions；Quick Tunnel 专门验证非 SSE 路径和明确失败。
-4. 比较三条路径的前置账号步骤、首次调用耗时、公开面、credential handling 和稳定性，定下每类 target 的默认 ingress。
-5. 提交 spike 结论与 protocol/ingress ADR 后，再进入 Slice 2 的 typed model/store；未经真实验证的 tunnel 路径不进入正式 CLI。
+1. **Round 5：编辑与读取可靠性。** 在现有 `edits_apply` 内实现原子 multi-file edit/create/delete/rename、逐文件 expected hash、批量 preflight、幂等 operation id 和结构化冲突；`files_read` 返回 hash，`files_search` 使用稳定 cursor；`task_start` 只给小型 Project Brief。
+2. **Round 6：project-aware validation。** 用明确 marker/Project recipe 支持 Rust、Node、Python 等 validation profile，统一 bounded diagnostics、changed-path check selection、progress/result，以及 passed/failed/not_run/stale 终态。
+3. **真实 hosted acceptance 作为并行验收 lane，而不是架构前置。** 在具备账号权限的机器上记录 OpenAI Tunnel、Cloudflare Named/Quick、MCP/GPT Actions 的 handshake、重连、SSE、身份和 credential redaction 证据；失败不驱动临时 façade。
+4. **之后才进入共享模式。** 实现 User/Device/ProjectMembership/Workspace routing、device revoke 和跨 Workspace Result apply precondition；个人本地模式仍保持一条命令接入与默认单写槽位。
+5. Browser review/approval UI 可与共享模式一起做，但不能替代工具成功率改进，也不能重新暴露 agent/session/runtime 内部概念。
 
-这个顺序把 WebCodex 放回原本的位置：线上聊天窗口负责智能，WebCodex 负责把私有项目以轻量、安全、可审查的方式接进去。先证明用户真的能连上，再重建稳定的 Project/Task 内核；这比围绕某个窗口的下一条反馈继续打补丁，更有机会同时解决 CLI 心智、盲盒感和未来多设备/多用户问题。
+Round 5/6 使用 golden tasks 记录首次编辑成功率、schema retry、平均工具调用数、重复读取、warm validation 时间、诊断可操作率和磁盘峰值。只有指标或真实 hosted acceptance 证明有必要时才拆分/新增模型能力；否则继续保持当前 8 项 project-bound surface。
+
+这个顺序把 WebCodex 放回原本的位置：线上聊天窗口负责智能，WebCodex 负责把私有项目以轻量、安全、可预测、可审查的方式接进去。先让读、改、检查的单次效果稳定，再把同一套事实模型扩展到多设备和多用户，比同步更多模糊状态更有价值。

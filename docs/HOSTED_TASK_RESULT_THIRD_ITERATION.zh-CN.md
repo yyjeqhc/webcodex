@@ -1,6 +1,8 @@
 # Hosted Task Result：第三轮实现与验收边界
 
 > 状态：第三轮核心纵向切片，2026-07-15。本文记录已经进入代码的个人本地主路径；不把 browser console、跨机器同步或真实 provider 账号验收写成已完成。
+>
+> 资源策略更新：第四轮已将这里的 per-run worktree 与 accept/reject 后清理，替换为带 Run 租约的固定可复用槽位、`task_finish` 后立即释放和 Project 级 Cargo cache。稳定 Result 与人工决策语义保持不变，详见 [HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md](HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md)。
 
 ## 1. 本轮真正改变的体验
 
@@ -96,7 +98,7 @@ Connector runtime 启动时会在 transaction 中把同 Project 上遗留的 `ru
 
     webcodex task resume wc_task_...
 
-这会追加 `run_resumed` 并恢复同一个 task/run；线上窗口可继续使用原 `task_id`。应先让本地 connector runtime 保持运行，再从另一个本机终端 resume。若不希望继续，当前应先检查/恢复后完成 Result 再 reject；专门的 abandoned-run cleanup 仍是后续工作。
+这会追加 `run_resumed` 并恢复同一个 task/run；线上窗口可继续使用原 `task_id`。应先让本地 connector runtime 保持运行，再从另一个本机终端 resume。第四轮起，若明确不希望继续，也可在本机直接 `webcodex task reject TASK_ID`，放弃未捕获的 interrupted workspace 改动并释放匹配槽位。
 
 ## 7. 多用户与多设备边界
 

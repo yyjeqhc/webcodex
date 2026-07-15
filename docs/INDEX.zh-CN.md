@@ -43,6 +43,7 @@
 
 ## Release And Roadmap
 
+- [PRODUCT_DEVELOPMENT_PLAN.zh-CN.md](PRODUCT_DEVELOPMENT_PLAN.zh-CN.md) - 基于实际 CLI、runtime、任务链路与测试面的产品评审，以及以轻量接入、窄工具面和可归因结果为核心的后续开发计划。
 23. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - 面向外部用户的 0.2.0 release notes。
 24. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness 和 acceptance procedure。
 25. [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) / [ROADMAP.md](ROADMAP.md) - 短 roadmap。

@@ -312,6 +312,32 @@ fn resume_task(location: &TaskLocationOptions, task_id: &str) -> Result<String, 
     ))
 }
 
+/// Release a task's reusable workspace and record the release, returning the
+/// sanitized cleanup warning (if any). Shared by the interrupted-reject and
+/// rejected-retry-cleanup paths, which otherwise repeat the same three steps.
+fn release_and_record(
+    db: &crate::db::Database,
+    state: &LocalTaskState,
+    task: &crate::db::ConnectorTaskSnapshot,
+    task_id: &str,
+) -> Result<Option<String>, String> {
+    let outcome = WorkspaceManager::release_owned_task_workspace(task);
+    let cleanup_warning = outcome
+        .cleanup_warning
+        .as_deref()
+        .map(|warning| sanitize_cleanup_warning(task, warning));
+    db.record_connector_workspace_release(
+        task_id,
+        &state.logical_project_id,
+        &task.owner_subject_id,
+        cleanup_warning.is_none(),
+        cleanup_warning.as_deref(),
+        chrono::Utc::now().timestamp(),
+    )
+    .map_err(store_error)?;
+    Ok(cleanup_warning)
+}
+
 fn decide_result(
     location: &TaskLocationOptions,
     task_id: &str,
@@ -334,20 +360,7 @@ fn decide_result(
             chrono::Utc::now().timestamp(),
         )
         .map_err(store_error)?;
-        let outcome = WorkspaceManager::release_owned_task_workspace(&task);
-        let cleanup_warning = outcome
-            .cleanup_warning
-            .as_deref()
-            .map(|warning| sanitize_cleanup_warning(&task, warning));
-        db.record_connector_workspace_release(
-            task_id,
-            &state.logical_project_id,
-            &task.owner_subject_id,
-            cleanup_warning.is_none(),
-            cleanup_warning.as_deref(),
-            chrono::Utc::now().timestamp(),
-        )
-        .map_err(store_error)?;
+        let cleanup_warning = release_and_record(&db, &state, &task, task_id)?;
         let mut output = format!(
             "Rejected interrupted {}; its uncaptured workspace changes were discarded.",
             task_id
@@ -359,20 +372,7 @@ fn decide_result(
     }
     let result = result.ok_or_else(|| "task has no stable result to decide".to_string())?;
     if !accept && result.decision_status == "rejected" && result.cleanup_warning.is_some() {
-        let outcome = WorkspaceManager::release_owned_task_workspace(&task);
-        let cleanup_warning = outcome
-            .cleanup_warning
-            .as_deref()
-            .map(|warning| sanitize_cleanup_warning(&task, warning));
-        db.record_connector_workspace_release(
-            task_id,
-            &state.logical_project_id,
-            &task.owner_subject_id,
-            cleanup_warning.is_none(),
-            cleanup_warning.as_deref(),
-            chrono::Utc::now().timestamp(),
-        )
-        .map_err(store_error)?;
+        let cleanup_warning = release_and_record(&db, &state, &task, task_id)?;
         return Ok(match cleanup_warning {
             Some(warning) => {
                 format!("Retried cleanup for rejected {task_id}.\nCleanup warning: {warning}")

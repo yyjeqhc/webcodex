@@ -5,12 +5,11 @@
 //! one executor attempt; events are its bounded, ordered audit trail.
 
 use super::Database;
+use rusqlite::types::Type;
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
-
-const CONNECTOR_CAPABILITIES_JSON: &str = r#"["task_start","files_read","files_search","edits_apply","checks_run","commands_run","task_review","task_finish"]"#;
 
 pub(crate) struct ConnectorBinding<'a> {
     pub project_id: &'a str,
@@ -210,11 +209,10 @@ impl Database {
         )?;
         tx.execute(
             "INSERT INTO wc_connector_grants
-                (id, project_id, subject_id, profile, capabilities_json, created_at, updated_at, revoked_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, NULL)
+                (id, project_id, subject_id, profile, created_at, updated_at, revoked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5, NULL)
              ON CONFLICT(project_id, subject_id) DO UPDATE SET
                  profile = excluded.profile,
-                 capabilities_json = excluded.capabilities_json,
                  updated_at = excluded.updated_at,
                  revoked_at = NULL",
             params![
@@ -222,7 +220,6 @@ impl Database {
                 binding.project_id,
                 binding.subject_id,
                 binding.profile,
-                CONNECTOR_CAPABILITIES_JSON,
                 binding.now
             ],
         )?;
@@ -378,10 +375,7 @@ impl Database {
             payload,
             now,
         )?;
-        tx.execute(
-            "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-            params![now, task_id],
-        )?;
+        touch_task(&tx, task_id, now)?;
         tx.commit()?;
         Ok(sequence)
     }
@@ -580,11 +574,7 @@ impl Database {
             "UPDATE wc_tasks SET status = 'ready_for_review', updated_at = ?1 WHERE id = ?2",
             params![now, task.task_id],
         )?;
-        tx.execute(
-            "UPDATE wc_approvals SET state = 'expired'
-             WHERE task_id = ?1 AND state IN ('pending', 'approved')",
-            params![task.task_id],
-        )?;
+        expire_task_approvals(&tx, &task.task_id)?;
         tx.commit()?;
         Ok(sequence)
     }
@@ -645,10 +635,7 @@ impl Database {
             }),
             now,
         )?;
-        tx.execute(
-            "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-            params![now, task_id],
-        )?;
+        touch_task(&tx, task_id, now)?;
         tx.commit()?;
         Ok(sequence)
     }
@@ -750,15 +737,8 @@ impl Database {
                 }),
                 now,
             )?;
-            tx.execute(
-                "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-                params![now, task_id],
-            )?;
-            tx.execute(
-                "UPDATE wc_approvals SET state = 'expired'
-                 WHERE task_id = ?1 AND state IN ('pending', 'approved')",
-                params![task_id],
-            )?;
+            touch_task(&tx, task_id, now)?;
+            expire_task_approvals(&tx, task_id)?;
         }
         tx.commit()?;
         Ok(runs.len())
@@ -839,10 +819,7 @@ impl Database {
                 }),
                 now,
             )?;
-            tx.execute(
-                "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-                params![now, task_id],
-            )?;
+            touch_task(&tx, task_id, now)?;
             approval = load_approval_by_hash(&tx, task_id, &task.run_id, action_hash)?;
         }
         let mut approval = approval.expect("approval inserted or loaded");
@@ -889,10 +866,7 @@ impl Database {
                     }),
                     now,
                 )?;
-                tx.execute(
-                    "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-                    params![now, task_id],
-                )?;
+                touch_task(&tx, task_id, now)?;
                 ConnectorApprovalGate::Authorized(approval)
             }
             "denied" => ConnectorApprovalGate::Denied(approval),
@@ -919,10 +893,7 @@ impl Database {
                     }),
                     now,
                 )?;
-                tx.execute(
-                    "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-                    params![now, task_id],
-                )?;
+                touch_task(&tx, task_id, now)?;
                 approval.state = "pending".to_string();
                 approval.requested_at = now;
                 approval.expires_at = expires_at;
@@ -1031,11 +1002,10 @@ impl Database {
         if !exists {
             return Err(ConnectorTaskStoreError::NotFound);
         }
-        let mut statement = conn.prepare(
-            "SELECT id, task_id, run_id, action_kind, action_hash, action_summary, state,
-                    requested_at, expires_at, decided_by, decided_at, consumed_at
-             FROM wc_approvals WHERE task_id = ?1 ORDER BY requested_at DESC",
-        )?;
+        let mut statement = conn.prepare(&format!(
+            "SELECT {APPROVAL_COLUMNS} FROM wc_approvals
+             WHERE task_id = ?1 ORDER BY requested_at DESC"
+        ))?;
         let rows = statement.query_map(params![task_id], map_approval)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
@@ -1082,10 +1052,7 @@ impl Database {
             &serde_json::json!({ "actor": actor }),
             now,
         )?;
-        tx.execute(
-            "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-            params![now, task_id],
-        )?;
+        touch_task(&tx, task_id, now)?;
         tx.commit()?;
         load_task(&conn, task_id, project_id, &subject_id)?.ok_or(ConnectorTaskStoreError::NotFound)
     }
@@ -1159,11 +1126,7 @@ impl Database {
             "UPDATE wc_tasks SET status = 'ready_for_review', updated_at = ?1 WHERE id = ?2",
             params![now, task_id],
         )?;
-        tx.execute(
-            "UPDATE wc_approvals SET state = 'expired'
-             WHERE task_id = ?1 AND state IN ('pending', 'approved')",
-            params![task_id],
-        )?;
+        expire_task_approvals(&tx, task_id)?;
         tx.commit()?;
         load_result(&conn, task_id)?
             .ok_or_else(|| ConnectorTaskStoreError::Storage(anyhow::anyhow!("result disappeared")))
@@ -1232,10 +1195,7 @@ impl Database {
             }),
             now,
         )?;
-        tx.execute(
-            "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-            params![now, task_id],
-        )?;
+        touch_task(&tx, task_id, now)?;
         tx.commit()?;
         load_result(&conn, task_id)?
             .ok_or_else(|| ConnectorTaskStoreError::Storage(anyhow::anyhow!("result disappeared")))
@@ -1310,10 +1270,7 @@ impl Database {
             }),
             now,
         )?;
-        tx.execute(
-            "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
-            params![now, task_id],
-        )?;
+        touch_task(&tx, task_id, now)?;
         tx.commit()?;
         load_approval(&conn, approval_id, task_id)?.ok_or(ConnectorTaskStoreError::NotFound)
     }
@@ -1376,75 +1333,47 @@ fn load_result(
     conn: &rusqlite::Connection,
     task_id: &str,
 ) -> Result<Option<ConnectorTaskResult>, ConnectorTaskStoreError> {
-    let row = conn
-        .query_row(
-            "SELECT id, task_id, run_id, summary, patch_artifact, patch_sha256, patch_bytes,
-                    changed_paths_json, validation_json, warnings_json, decision_status,
-                    decided_by, decided_at, cleanup_warning, created_at
-             FROM wc_task_results WHERE task_id = ?1",
-            params![task_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, i64>(6)?,
-                    row.get::<_, String>(7)?,
-                    row.get::<_, String>(8)?,
-                    row.get::<_, String>(9)?,
-                    row.get::<_, String>(10)?,
-                    row.get::<_, Option<String>>(11)?,
-                    row.get::<_, Option<i64>>(12)?,
-                    row.get::<_, Option<String>>(13)?,
-                    row.get::<_, i64>(14)?,
-                ))
-            },
-        )
-        .optional()?;
-    let Some((
-        result_id,
-        task_id,
-        run_id,
-        summary,
-        patch_artifact,
-        patch_sha256,
+    conn.query_row(
+        "SELECT id, task_id, run_id, summary, patch_artifact, patch_sha256, patch_bytes,
+                changed_paths_json, validation_json, warnings_json, decision_status,
+                decided_by, decided_at, cleanup_warning, created_at
+         FROM wc_task_results WHERE task_id = ?1",
+        params![task_id],
+        map_result,
+    )
+    .optional()
+    .map_err(ConnectorTaskStoreError::from)
+}
+
+fn map_result(row: &rusqlite::Row<'_>) -> Result<ConnectorTaskResult, rusqlite::Error> {
+    fn json_col<T: serde::de::DeserializeOwned>(
+        row: &rusqlite::Row<'_>,
+        idx: usize,
+    ) -> Result<T, rusqlite::Error> {
+        let raw: String = row.get(idx)?;
+        serde_json::from_str(&raw)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(idx, Type::Text, Box::new(e)))
+    }
+    let patch_bytes_raw: i64 = row.get(6)?;
+    let patch_bytes = usize::try_from(patch_bytes_raw)
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, Type::Integer, Box::new(e)))?;
+    Ok(ConnectorTaskResult {
+        result_id: row.get(0)?,
+        task_id: row.get(1)?,
+        run_id: row.get(2)?,
+        summary: row.get(3)?,
+        patch_artifact: row.get(4)?,
+        patch_sha256: row.get(5)?,
         patch_bytes,
-        changed_paths_json,
-        validation_json,
-        warnings_json,
-        decision_status,
-        decided_by,
-        decided_at,
-        cleanup_warning,
-        created_at,
-    )) = row
-    else {
-        return Ok(None);
-    };
-    Ok(Some(ConnectorTaskResult {
-        result_id,
-        task_id,
-        run_id,
-        summary,
-        patch_artifact,
-        patch_sha256,
-        patch_bytes: usize::try_from(patch_bytes).map_err(|_| {
-            ConnectorTaskStoreError::Storage(anyhow::anyhow!(
-                "task result contains an invalid negative patch size"
-            ))
-        })?,
-        changed_paths: serde_json::from_str(&changed_paths_json)?,
-        validation: serde_json::from_str(&validation_json)?,
-        warnings: serde_json::from_str(&warnings_json)?,
-        decision_status,
-        decided_by,
-        decided_at,
-        cleanup_warning,
-        created_at,
-    }))
+        changed_paths: json_col(row, 7)?,
+        validation: json_col(row, 8)?,
+        warnings: json_col(row, 9)?,
+        decision_status: row.get(10)?,
+        decided_by: row.get(11)?,
+        decided_at: row.get(12)?,
+        cleanup_warning: row.get(13)?,
+        created_at: row.get(14)?,
+    })
 }
 
 fn load_approval_by_hash(
@@ -1454,9 +1383,10 @@ fn load_approval_by_hash(
     action_hash: &str,
 ) -> Result<Option<ConnectorApproval>, rusqlite::Error> {
     conn.query_row(
-        "SELECT id, task_id, run_id, action_kind, action_hash, action_summary, state,
-                requested_at, expires_at, decided_by, decided_at, consumed_at
-         FROM wc_approvals WHERE task_id = ?1 AND run_id = ?2 AND action_hash = ?3",
+        &format!(
+            "SELECT {APPROVAL_COLUMNS} FROM wc_approvals
+             WHERE task_id = ?1 AND run_id = ?2 AND action_hash = ?3"
+        ),
         params![task_id, run_id, action_hash],
         map_approval,
     )
@@ -1469,14 +1399,17 @@ fn load_approval(
     task_id: &str,
 ) -> Result<Option<ConnectorApproval>, rusqlite::Error> {
     conn.query_row(
-        "SELECT id, task_id, run_id, action_kind, action_hash, action_summary, state,
-                requested_at, expires_at, decided_by, decided_at, consumed_at
-         FROM wc_approvals WHERE id = ?1 AND task_id = ?2",
+        &format!("SELECT {APPROVAL_COLUMNS} FROM wc_approvals WHERE id = ?1 AND task_id = ?2"),
         params![approval_id, task_id],
         map_approval,
     )
     .optional()
 }
+
+/// Column list backing every `wc_approvals` read that feeds `map_approval`.
+/// Order must match `map_approval`'s positional `row.get` indices.
+const APPROVAL_COLUMNS: &str = "id, task_id, run_id, action_kind, action_hash, action_summary, \
+     state, requested_at, expires_at, decided_by, decided_at, consumed_at";
 
 fn map_approval(row: &rusqlite::Row<'_>) -> Result<ConnectorApproval, rusqlite::Error> {
     Ok(ConnectorApproval {
@@ -1493,6 +1426,25 @@ fn map_approval(row: &rusqlite::Row<'_>) -> Result<ConnectorApproval, rusqlite::
         decided_at: row.get(10)?,
         consumed_at: row.get(11)?,
     })
+}
+
+/// Bump `wc_tasks.updated_at`. Accepts anything that derefs to a `Connection`
+/// (both `&Transaction` and `&Connection` work).
+fn touch_task(conn: &rusqlite::Connection, task_id: &str, now: i64) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
+        params![now, task_id],
+    )
+}
+
+/// Expire every still-open approval for a task (pending or already approved but
+/// not yet consumed). Used on finish / interrupt / abandon.
+fn expire_task_approvals(conn: &rusqlite::Connection, task_id: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE wc_approvals SET state = 'expired'
+         WHERE task_id = ?1 AND state IN ('pending', 'approved')",
+        params![task_id],
+    )
 }
 
 fn require_running(task: &ConnectorTaskSnapshot) -> Result<(), ConnectorTaskStoreError> {

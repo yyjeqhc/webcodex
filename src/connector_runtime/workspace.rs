@@ -355,22 +355,13 @@ impl WorkspaceManager {
             Err(error) => return Some(error),
         };
         let execution_root = Path::new(&task.execution_root);
-        if execution_root.file_name() == Some(OsStr::new(WRITE_SLOT_NAME)) {
-            return release_workspace_slot(
-                Path::new(&task.target_root),
-                execution_root,
-                &self.runs_root,
-                &self.projects_dir,
-                &project_id,
-                &task.run_id,
-            );
-        }
-        cleanup_workspace(
+        release_workspace_slot(
             Path::new(&task.target_root),
             execution_root,
             &self.runs_root,
             &self.projects_dir,
             &project_id,
+            &task.run_id,
         )
     }
 
@@ -497,41 +488,13 @@ impl WorkspaceManager {
             }
         }
 
-        if let Ok(entries) = fs::read_dir(&self.runs_root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                    continue;
-                };
-                if !name.starts_with("wc_run_")
-                    || preserved_roots.contains(&lexical_normalize(&path))
-                {
-                    continue;
-                }
-                let suffix = name.strip_prefix("wc_run_").unwrap_or(name);
-                let short = suffix.chars().take(24).collect::<String>();
-                let project_id = format!("wc-run-{short}");
-                if let Some(warning) = cleanup_workspace(
-                    target_root,
-                    &path,
-                    &self.runs_root,
-                    &self.projects_dir,
-                    &project_id,
-                ) {
-                    warnings.push(warning);
-                }
-            }
-        }
-
         if let Ok(entries) = fs::read_dir(&self.projects_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
                     continue;
                 };
-                if !(stem.starts_with("wc-run-") || stem.starts_with("wc-slot-"))
-                    || preserved_projects.contains(stem)
-                {
+                if !stem.starts_with("wc-slot-") || preserved_projects.contains(stem) {
                     continue;
                 }
                 if let Err(error) = remove_file_if_exists(&path) {
@@ -646,8 +609,8 @@ impl WorkspaceManager {
         if current_head != baseline {
             return Err(format!(
                 "target HEAD changed since task start (expected {}, found {}); result was not applied",
-                short_oid(baseline),
-                short_oid(&current_head)
+                super::short_oid(baseline),
+                super::short_oid(&current_head)
             ));
         }
         if !result.changed_paths.is_empty() {
@@ -807,22 +770,13 @@ fn cleanup_task_workspace(task: &ConnectorTaskSnapshot) -> Option<String> {
     let execution_root = Path::new(&task.execution_root);
     let runs_root = execution_root.parent()?;
     let projects_dir = runs_root.parent()?.join("agent/projects.d");
-    if execution_root.file_name() == Some(OsStr::new(WRITE_SLOT_NAME)) {
-        return release_workspace_slot(
-            Path::new(&task.target_root),
-            execution_root,
-            runs_root,
-            &projects_dir,
-            &project_id,
-            &task.run_id,
-        );
-    }
-    cleanup_workspace(
+    release_workspace_slot(
         Path::new(&task.target_root),
         execution_root,
         runs_root,
         &projects_dir,
         &project_id,
+        &task.run_id,
     )
 }
 
@@ -973,48 +927,6 @@ fn remove_file_if_exists(path: &Path) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("could not remove managed state file: {error}")),
-    }
-}
-
-fn cleanup_workspace(
-    target_root: &Path,
-    execution_root: &Path,
-    runs_root: &Path,
-    projects_dir: &Path,
-    agent_project_id: &str,
-) -> Option<String> {
-    let mut warnings = Vec::new();
-    if ensure_direct_child(runs_root, execution_root).is_ok() && execution_root.exists() {
-        match git_output(
-            target_root,
-            [
-                OsStr::new("worktree"),
-                OsStr::new("remove"),
-                OsStr::new("--force"),
-                execution_root.as_os_str(),
-            ],
-        )
-        .and_then(|output| require_success(output, "remove execution worktree"))
-        {
-            Ok(_) => {}
-            Err(error) => warnings.push(error),
-        }
-    }
-    if safe_agent_project_id(agent_project_id) {
-        let config = projects_dir.join(format!("{agent_project_id}.toml"));
-        if config.exists() {
-            if let Err(error) = fs::remove_file(&config) {
-                warnings.push(format!(
-                    "could not remove execution project registration: {error}"
-                ));
-            }
-        }
-    }
-    let _ = git_output(target_root, [OsStr::new("worktree"), OsStr::new("prune")]);
-    if warnings.is_empty() {
-        None
-    } else {
-        Some(warnings.join("; "))
     }
 }
 
@@ -1241,10 +1153,6 @@ fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = fs::remove_file(&temp);
         format!("cannot publish result artifact: {error}")
     })
-}
-
-fn short_oid(value: &str) -> &str {
-    value.get(..12).unwrap_or(value)
 }
 
 #[cfg(test)]

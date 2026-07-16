@@ -282,7 +282,6 @@ impl Database {
                 project_id TEXT NOT NULL,
                 subject_id TEXT NOT NULL,
                 profile TEXT NOT NULL,
-                capabilities_json TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 revoked_at INTEGER,

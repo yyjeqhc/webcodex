@@ -95,42 +95,26 @@ fn render(res: &mut Response, outcome: ConnectorCallOutcome) {
     res.render(Json(outcome.body));
 }
 
-#[handler]
-async fn task_start(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    dispatch("task_start", req, depot, res).await;
+/// Each connector capability gets an identical `#[handler]` that forwards its
+/// own name to `dispatch`. The macro keeps the 8 handlers from being 8 copies.
+macro_rules! connector_handlers {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            #[handler]
+            async fn $name(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+                dispatch(stringify!($name), req, depot, res).await;
+            }
+        )+
+    };
 }
 
-#[handler]
-async fn files_read(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    dispatch("files_read", req, depot, res).await;
-}
-
-#[handler]
-async fn files_search(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    dispatch("files_search", req, depot, res).await;
-}
-
-#[handler]
-async fn edits_apply(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    dispatch("edits_apply", req, depot, res).await;
-}
-
-#[handler]
-async fn checks_run(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    dispatch("checks_run", req, depot, res).await;
-}
-
-#[handler]
-async fn commands_run(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    dispatch("commands_run", req, depot, res).await;
-}
-
-#[handler]
-async fn task_review(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    dispatch("task_review", req, depot, res).await;
-}
-
-#[handler]
-async fn task_finish(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    dispatch("task_finish", req, depot, res).await;
+connector_handlers! {
+    task_start,
+    files_read,
+    files_search,
+    edits_apply,
+    checks_run,
+    commands_run,
+    task_review,
+    task_finish,
 }

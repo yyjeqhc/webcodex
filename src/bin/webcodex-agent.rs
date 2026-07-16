@@ -21,6 +21,9 @@ mod validation_bridge;
 #[path = "../shell_protocol.rs"]
 mod shell_protocol;
 
+#[path = "../apply_edits_shared.rs"]
+mod apply_edits_shared;
+
 #[allow(dead_code)]
 #[path = "../agent_init.rs"]
 mod agent_init;

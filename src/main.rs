@@ -15,6 +15,7 @@ mod admin_cli;
 mod agent_quic;
 mod agent_tokens_http;
 mod agent_ws;
+mod apply_edits_shared;
 mod artifact_policy;
 mod audit_http;
 mod auth;

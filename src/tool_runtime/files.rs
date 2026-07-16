@@ -1377,18 +1377,15 @@ pub(crate) const MAX_WRITE_CONTENT_BYTES: usize = 256 * 1024; // 256 KiB
 /// fail locally before any agent request is enqueued.
 pub(crate) const MAX_EXPECTED_PREFIX_BYTES: usize = 64 * 1024; // 64 KiB
 
-/// Maximum number of edits accepted by a single `apply_text_edits` call.
-pub(crate) const MAX_APPLY_TEXT_EDITS: usize = 20;
+// Edit limits and the sensitive-path guard are shared with the agent binary.
+pub(crate) use crate::apply_edits_shared::{
+    is_sensitive_edit_path, MAX_APPLY_FILE_CHANGES, MAX_APPLY_TEXT_EDITS,
+    MAX_APPLY_TEXT_EDIT_FIELD_BYTES,
+};
 
-/// Maximum files changed by one transactional `apply_text_edits` request.
-pub(crate) const MAX_APPLY_FILE_CHANGES: usize = 16;
-
-/// Maximum serialized batch payload sent to the owning agent.
+/// Maximum serialized batch payload sent to the owning agent. Host-only (the
+/// agent enforces a per-file cap instead), so it stays local.
 pub(crate) const MAX_APPLY_FILE_CHANGES_BYTES: usize = 1024 * 1024;
-
-/// Maximum byte size of a single `old_text`/`new_text`/`anchor_text` field in
-/// an `apply_text_edits` edit.
-pub(crate) const MAX_APPLY_TEXT_EDIT_FIELD_BYTES: usize = 512 * 1024; // 512 KiB
 
 fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
     format!(
@@ -1549,35 +1546,6 @@ fn validate_artifact_upload_id(upload_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// True if `path` contains a sensitive component for the structured edit
-/// tools. Matching is component-wise (split on `/`) so legitimate filenames
-/// that merely contain a sensitive substring (e.g. `targeting.md`) are NOT
-/// rejected. A component is sensitive if it equals one of the guarded names or
-/// starts with `.env` / `agent.toml` / `webcodex.env` (catching backups
-/// like `.env.local` or `agent.toml.bak`).
-pub(crate) fn is_sensitive_edit_path(path: &str) -> bool {
-    for comp in path.to_lowercase().split('/') {
-        if matches!(
-            comp,
-            ".git"
-                | "target"
-                | "node_modules"
-                | "projects.d"
-                | "agent.toml"
-                | "webcodex.env"
-                | ".env"
-        ) {
-            return true;
-        }
-        if comp.starts_with(".env")
-            || comp.starts_with("agent.toml")
-            || comp.starts_with("webcodex.env")
-        {
-            return true;
-        }
-    }
-    false
-}
 
 /// True if `s` is a lowercase 64-character hex string (a sha256 digest).
 pub(crate) fn is_hex_sha256(s: &str) -> bool {

@@ -23,19 +23,6 @@ pub(crate) fn is_line_edit_request_kind(kind: &str) -> bool {
     )
 }
 
-fn is_sensitive_line_edit_path(path: &str) -> bool {
-    let mut components = path.split('/');
-    components.any(|component| {
-        matches!(
-            component,
-            ".git" | ".env" | "agent.toml" | "projects.d" | "secrets" | "target" | "node_modules"
-        ) || component.starts_with(".env.")
-            || component.ends_with(".env")
-            || component.ends_with(".toml.bak")
-            || component == "webcodex.env"
-    })
-}
-
 pub(crate) fn validate_line_edit_agent_path(path: &str) -> Result<(), String> {
     if path.trim().is_empty() {
         return Err("path cannot be empty".to_string());
@@ -911,78 +898,19 @@ pub(crate) fn handle_write_project_file_request(
 }
 
 /// Maximum file size accepted by `file_apply_text_edits` on the agent side.
+/// Host-only limit has no twin here; this per-file cap stays agent-local.
 const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
-/// Maximum number of edits in one `file_apply_text_edits` batch.
-const APPLY_TEXT_EDITS_MAX_EDITS: usize = 20;
-/// Maximum byte size of a single edit field on the agent side.
-const APPLY_TEXT_EDITS_MAX_FIELD_BYTES: usize = 512 * 1024; // 512 KiB
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum AgentTextEditKind {
-    ReplaceExact,
-    InsertAfter,
-    InsertBefore,
-    DeleteExact,
-}
-
-impl AgentTextEditKind {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::ReplaceExact => "replace_exact",
-            Self::InsertAfter => "insert_after",
-            Self::InsertBefore => "insert_before",
-            Self::DeleteExact => "delete_exact",
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct AgentTextEdit {
-    kind: AgentTextEditKind,
-    #[serde(default)]
-    old_text: Option<String>,
-    #[serde(default)]
-    new_text: Option<String>,
-    #[serde(default)]
-    anchor_text: Option<String>,
-}
-
-const APPLY_TEXT_EDITS_MAX_CHANGES: usize = 16;
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum AgentFileChangeKind {
-    Edit,
-    Create,
-    Delete,
-    Rename,
-}
-
-impl AgentFileChangeKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Edit => "edit",
-            Self::Create => "create",
-            Self::Delete => "delete",
-            Self::Rename => "rename",
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct AgentFileChange {
-    kind: AgentFileChangeKind,
-    path: String,
-    #[serde(default)]
-    to_path: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    edits: Vec<AgentTextEdit>,
-    #[serde(default)]
-    expected_sha256: Option<String>,
-}
+// The edit wire types, batch/edit limits, and the sensitive-path guard are
+// shared verbatim with the host write path via `apply_edits_shared`. Aliases
+// keep this module's existing `Agent*` / `APPLY_TEXT_EDITS_MAX_*` names.
+use crate::apply_edits_shared::{
+    is_sensitive_edit_path as is_sensitive_line_edit_path, ApplyFileChangeInput as AgentFileChange,
+    ApplyFileChangeKind as AgentFileChangeKind, ApplyTextEditInput as AgentTextEdit,
+    ApplyTextEditKind as AgentTextEditKind, MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
+    MAX_APPLY_TEXT_EDITS as APPLY_TEXT_EDITS_MAX_EDITS,
+    MAX_APPLY_TEXT_EDIT_FIELD_BYTES as APPLY_TEXT_EDITS_MAX_FIELD_BYTES,
+};
 
 #[derive(Debug, Deserialize)]
 struct AgentApplyTextEditsPayload {

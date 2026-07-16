@@ -50,78 +50,12 @@ impl SessionMode {
     }
 }
 
-/// Kind of atomic text edit performed by `apply_text_edits`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplyTextEditKind {
-    ReplaceExact,
-    InsertAfter,
-    InsertBefore,
-    DeleteExact,
-}
-
-impl ApplyTextEditKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ReplaceExact => "replace_exact",
-            Self::InsertAfter => "insert_after",
-            Self::InsertBefore => "insert_before",
-            Self::DeleteExact => "delete_exact",
-        }
-    }
-}
-
-/// A single atomic text edit against one file. Only the fields relevant to the
-/// `kind` are required; the runtime validates presence before dispatch.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ApplyTextEditInput {
-    pub kind: ApplyTextEditKind,
-    #[serde(default)]
-    pub old_text: Option<String>,
-    #[serde(default)]
-    pub new_text: Option<String>,
-    #[serde(default)]
-    pub anchor_text: Option<String>,
-}
-
-/// Kind of project-file change performed by one transactional
-/// `apply_text_edits` batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplyFileChangeKind {
-    Edit,
-    Create,
-    Delete,
-    Rename,
-}
-
-impl ApplyFileChangeKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Edit => "edit",
-            Self::Create => "create",
-            Self::Delete => "delete",
-            Self::Rename => "rename",
-        }
-    }
-}
-
-/// One file change in a transactional edit batch. Runtime validation enforces
-/// the fields allowed and required for each `kind` before the owning agent is
-/// contacted.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ApplyFileChangeInput {
-    pub kind: ApplyFileChangeKind,
-    pub path: String,
-    #[serde(default)]
-    pub to_path: Option<String>,
-    #[serde(default)]
-    pub content: Option<String>,
-    #[serde(default)]
-    pub edits: Vec<ApplyTextEditInput>,
-    #[serde(default)]
-    pub expected_sha256: Option<String>,
-}
+// The `apply_text_edits` wire types are shared verbatim with the agent binary,
+// so they live in `crate::apply_edits_shared` and are re-exported here to keep
+// existing `tool_inputs::Apply*` import paths working.
+pub use crate::apply_edits_shared::{
+    ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CheckpointValidationInput {

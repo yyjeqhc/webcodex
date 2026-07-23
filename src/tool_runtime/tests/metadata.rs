@@ -106,6 +106,7 @@ async fn register_agent_projects_for_auth(
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
+                    structured_validation_jobs: true,
                     lsp_read_only_navigation: false,
                 }),
                 projects: Some(vec![registered_project(

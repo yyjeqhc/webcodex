@@ -76,6 +76,7 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         error: job.error.clone(),
         codex: job.codex.clone(),
         result,
+        validation_progress: job.validation_progress.clone(),
     }
 }
 

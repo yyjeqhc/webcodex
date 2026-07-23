@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use super::principal::AuthContext;
+use super::context::AuthContext;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 
 // ---------------------------------------------------------------------------
@@ -118,26 +118,6 @@ pub(crate) fn scopes_to_string(scopes: &[String]) -> String {
 // Scope authorization helpers (used by handlers and middleware)
 // ---------------------------------------------------------------------------
 
-/// Check whether a set of granted scopes includes the required scope, treating
-/// `admin` as a wildcard that satisfies any requirement. Bootstrap callers
-/// should pass an `admin`-containing scope set.
-#[allow(dead_code)] // Utility kept for handler migration to Principal
-pub(crate) fn scopes_include(granted: &[String], required: &str) -> bool {
-    granted.iter().any(|s| s == required || s == SCOPE_ADMIN)
-}
-
-/// Require that `granted` scopes include `required`. Returns `Ok(())` on
-/// success, `Err(message)` when the scope is missing. `admin` satisfies any
-/// requirement.
-#[allow(dead_code)] // Utility kept for handler migration to Principal
-pub(crate) fn require_scope(granted: &[String], required: &str) -> Result<(), String> {
-    if scopes_include(granted, required) {
-        Ok(())
-    } else {
-        Err(format!("missing required scope: {}", required))
-    }
-}
-
 // ---------------------------------------------------------------------------
 // OAuth delegated scope policy
 // ---------------------------------------------------------------------------
@@ -245,8 +225,6 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         | ("POST", "/api/projects/delete_files")
         | ("POST", "/api/projects/git_restore_paths")
         | ("POST", "/api/projects/discard_untracked")
-        | ("POST", "/api/projects/replace_in_file")
-        | ("POST", "/api/projects/write_file")
         | ("POST", "/api/shell/file") => OAuthRouteScopePolicy::Require(SCOPE_PROJECT_WRITE),
         ("POST", "/api/projects/run_shell")
         | ("POST", "/api/projects/run_job")
@@ -351,32 +329,6 @@ mod tests {
     use super::*;
     use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::{is_known_tool_name, known_tool_names};
-
-    #[test]
-    fn scopes_include_with_admin_wildcard() {
-        let admin_scopes = vec![SCOPE_ADMIN.to_string()];
-        assert!(scopes_include(&admin_scopes, SCOPE_RUNTIME_READ));
-        assert!(scopes_include(&admin_scopes, SCOPE_PROJECT_WRITE));
-        assert!(scopes_include(&admin_scopes, "anything"));
-    }
-
-    #[test]
-    fn scopes_include_exact_match() {
-        let scopes = vec![
-            SCOPE_RUNTIME_READ.to_string(),
-            SCOPE_PROJECT_READ.to_string(),
-        ];
-        assert!(scopes_include(&scopes, SCOPE_RUNTIME_READ));
-        assert!(scopes_include(&scopes, SCOPE_PROJECT_READ));
-        assert!(!scopes_include(&scopes, SCOPE_PROJECT_WRITE));
-    }
-
-    #[test]
-    fn require_scope_ok_and_err() {
-        let scopes = vec![SCOPE_JOB_RUN.to_string()];
-        assert!(require_scope(&scopes, SCOPE_JOB_RUN).is_ok());
-        assert!(require_scope(&scopes, SCOPE_ADMIN).is_err());
-    }
 
     #[test]
     fn validate_scopes_rejects_unknown() {
@@ -486,7 +438,6 @@ mod tests {
             ("POST", "/api/connector/task/cancel", SCOPE_JOB_RUN),
             ("POST", "/api/connector/task/finish", SCOPE_PROJECT_WRITE),
             ("POST", "/api/projects/read_file", SCOPE_PROJECT_READ),
-            ("POST", "/api/projects/write_file", SCOPE_PROJECT_WRITE),
             ("POST", "/api/projects/run_job", SCOPE_JOB_RUN),
             ("POST", "/api/users/me", SCOPE_ACCOUNT_MANAGE),
             ("POST", "/api/tokens/list", SCOPE_ACCOUNT_MANAGE),
@@ -587,8 +538,6 @@ mod tests {
             ("POST", "/api/projects/delete_files"),
             ("POST", "/api/projects/git_restore_paths"),
             ("POST", "/api/projects/discard_untracked"),
-            ("POST", "/api/projects/replace_in_file"),
-            ("POST", "/api/projects/write_file"),
             ("POST", "/api/projects/run_job"),
             ("POST", "/api/runtime/status"),
             ("POST", "/api/users/create"),

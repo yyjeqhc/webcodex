@@ -17,7 +17,7 @@ impl ToolRuntime {
                 timeout_secs,
                 cwd,
             } => {
-                self.run_job(project, command, session_id, timeout_secs, cwd)
+                self.run_job(project, command, session_id, timeout_secs, cwd, Vec::new())
                     .await
             }
             ToolCall::StopJob {

@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 
 #[cfg(target_os = "linux")]
 #[test]
@@ -85,6 +86,87 @@ fn process_group_signal_errors_distinguish_gone_permission_and_other_failures() 
     )
     .unwrap_err();
     assert!(other.contains("Invalid argument"));
+}
+
+#[test]
+fn validation_job_progress_is_executor_owned_and_fail_fast() {
+    let temp = tempfile::tempdir().unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    let sink = AgentSink::WebSocket {
+        tx,
+        client_id: "validation-agent".into(),
+        agent_instance_id: "validation-instance".into(),
+    };
+    let steps = vec![
+        ShellJobValidationStep {
+            name: "format".into(),
+            command: "printf 'format passed\n'".into(),
+        },
+        ShellJobValidationStep {
+            name: "check".into(),
+            command: "printf '__WEBCODEX_CHECK_STEP__:passed:test\n'; exit 7".into(),
+        },
+        ShellJobValidationStep {
+            name: "test".into(),
+            command: "touch should-not-run".into(),
+        },
+    ];
+    let manager = JobManager::new(1);
+    manager.enqueue(
+        sink,
+        AgentPolicy::default(),
+        ShellConfig::default(),
+        temp.path().join("projects.d"),
+        serde_json::from_value(json!({
+            "request_id": "validation-request",
+            "client_id": "validation-agent",
+            "kind": "start_validation_job",
+            "job_id": "validation-job",
+            "cwd": temp.path(),
+            "command": serde_json::to_string(&steps).unwrap(),
+            "timeout_secs": 10,
+            "requested_by": "test",
+            "created_at": 1
+        }))
+        .unwrap(),
+    );
+    let mut updates = Vec::new();
+    for _ in 0..500 {
+        while let Ok(envelope) = rx.try_recv() {
+            if let AgentEnvelope::JobUpdate { payload } = envelope {
+                let finished = payload.finished;
+                updates.push(payload);
+                if finished {
+                    break;
+                }
+            }
+        }
+        if updates.last().is_some_and(|update| update.finished) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let final_update = updates.last().expect("validation job emitted updates");
+    assert!(final_update.finished);
+    assert_eq!(final_update.status, "failed");
+    assert_eq!(final_update.exit_code, Some(7));
+    assert_eq!(
+        final_update.validation_progress,
+        Some(ShellJobValidationProgress {
+            completed: 1,
+            current_step: None,
+            failed_step: Some("check".into()),
+        })
+    );
+    assert!(updates.iter().any(|update| {
+        update.validation_progress
+            == Some(ShellJobValidationProgress {
+                completed: 1,
+                current_step: Some("check".into()),
+                failed_step: None,
+            })
+    }));
+    assert!(!temp.path().join("should-not-run").exists());
 }
 
 #[cfg(target_os = "linux")]

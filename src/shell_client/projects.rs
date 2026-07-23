@@ -5,6 +5,7 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS, SHELL_CLIENT_CAPABILITY_FILE_READ,
     SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_SHELL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS,
 };
 
 fn capability_enabled(caps: &ShellClientCapabilities, capability: &str) -> bool {
@@ -16,6 +17,7 @@ fn capability_enabled(caps: &ShellClientCapabilities, capability: &str) -> bool 
         SHELL_CLIENT_CAPABILITY_JOBS => caps.jobs,
         SHELL_CLIENT_CAPABILITY_ASYNC_JOBS => caps.async_jobs,
         SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS => caps.async_shell_jobs,
+        SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS => caps.structured_validation_jobs,
         SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION => caps.lsp_read_only_navigation,
         _ => false,
     }
@@ -53,6 +55,7 @@ impl ShellClientRegistry {
     /// Check whether a registered agent client supports a named capability.
     /// Recognized capability names: `shell`, `file_read`, `file_write`,
     /// `git`, `jobs`, `async_jobs`, `async_shell_jobs`,
+    /// `structured_validation_jobs`,
     /// `lsp_read_only_navigation`. Unknown capability names return `false`.
     pub async fn client_supports(&self, client_id: &str, capability: &str) -> Result<bool, String> {
         let caps = self.get_client_capabilities(client_id).await?;

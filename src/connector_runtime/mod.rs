@@ -18,9 +18,10 @@ use crate::auth::{
 };
 use crate::db::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
-    ConnectorExecutionReservation, ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot,
+    ConnectorExecutionReservation, ConnectorTaskResult, ConnectorTaskSnapshot,
     ConnectorTaskStoreError, NewConnectorResult, NewConnectorTask,
 };
+use crate::shell_protocol::SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS;
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
@@ -39,6 +40,8 @@ const MAX_EVENT_COUNT: usize = 50;
 const COMMAND_APPROVAL_TTL_SECS: i64 = 60 * 60;
 const CONNECTOR_PATCH_PREVIEW_BYTES: usize = 128 * 1024;
 const CONNECTOR_SEARCH_WINDOW: usize = 200;
+#[cfg(test)]
+type FinishTestHook = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectorContext {
@@ -112,6 +115,10 @@ pub(crate) struct ConnectorRuntime {
     executions: execution::ExecutionService,
     workspace_ops: tokio::sync::Mutex<()>,
     task_locks: StdMutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
+    #[cfg(test)]
+    finish_after_fingerprint: StdMutex<Option<FinishTestHook>>,
+    #[cfg(test)]
+    mutation_before_task_lock: StdMutex<Option<Arc<tokio::sync::Semaphore>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -175,6 +182,10 @@ impl ConnectorRuntime {
             executions,
             workspace_ops: tokio::sync::Mutex::new(()),
             task_locks: StdMutex::new(HashMap::new()),
+            #[cfg(test)]
+            finish_after_fingerprint: StdMutex::new(None),
+            #[cfg(test)]
+            mutation_before_task_lock: StdMutex::new(None),
         })
     }
 
@@ -262,17 +273,16 @@ impl ConnectorRuntime {
             return store_error_outcome(error, None);
         }
 
-        // Requests for one task are serialized across devices so finish cannot
-        // race an in-flight edit or command. Read-only tasks remain concurrent;
-        // writable task start/finish also coordinate the reusable write slot.
-        let task_lock = (!matches!(capability, "commands_run" | "task_review" | "task_cancel"))
-            .then(|| {
-                arguments
-                    .get("task_id")
-                    .and_then(Value::as_str)
-                    .map(|task_id| self.task_lock(task_id))
-            })
-            .flatten();
+        // Read operations coordinate with lifecycle transitions, while every
+        // mutation/reservation method owns its narrower task-lock boundary.
+        let task_lock = if matches!(capability, "files_read" | "files_search") {
+            arguments
+                .get("task_id")
+                .and_then(Value::as_str)
+                .map(|task_id| self.task_lock(task_id))
+        } else {
+            None
+        };
         let _task_guard = match task_lock.as_ref() {
             Some(lock) => Some(lock.lock().await),
             None => None,
@@ -324,6 +334,45 @@ impl ConnectorRuntime {
         let lock = Arc::new(tokio::sync::Mutex::new(()));
         locks.insert(task_id.to_string(), Arc::downgrade(&lock));
         lock
+    }
+
+    async fn workspace_fingerprint(
+        &self,
+        task: &ConnectorTaskSnapshot,
+        capability: &'static str,
+    ) -> Result<String, ConnectorCallOutcome> {
+        let manager = self.workspace.clone();
+        let task_for_fingerprint = task.clone();
+        match tokio::task::spawn_blocking(move || {
+            manager.action_precondition(&task_for_fingerprint)
+        })
+        .await
+        {
+            Ok(Ok(fingerprint)) => Ok(fingerprint),
+            Ok(Err(message)) => Err(ConnectorCallOutcome::error_for_task(
+                409,
+                "workspace_fingerprint_failed",
+                self.sanitize_task_string(task, &message),
+                false,
+                true,
+                Some("Resolve the Git workspace issue, then retry the operation."),
+                task,
+                Value::Null,
+            )),
+            Err(error) => {
+                tracing::error!(error = %error, capability, "connector workspace fingerprint task failed");
+                Err(ConnectorCallOutcome::error_for_task(
+                    500,
+                    "workspace_fingerprint_failed",
+                    "connector could not fingerprint the current workspace",
+                    false,
+                    true,
+                    Some("Inspect server logs before retrying the operation."),
+                    task,
+                    Value::Null,
+                ))
+            }
+        }
     }
 
     async fn task_start(
@@ -685,6 +734,12 @@ impl ConnectorRuntime {
         if change_bytes > 1024 * 1024 {
             return invalid_input("edits_apply", "serialized changes exceed 1 MiB");
         }
+        #[cfg(test)]
+        if let Some(entered) = self.mutation_before_task_lock.lock().unwrap().clone() {
+            entered.add_permits(1);
+        }
+        let task_lock = self.task_lock(&input.task_id);
+        let _task_guard = task_lock.lock().await;
         let task = match self.active_writable_task(&input.task_id, subject_id, "edits_apply", now) {
             Ok(task) => task,
             Err(outcome) => return outcome,
@@ -832,13 +887,16 @@ impl ConnectorRuntime {
         arguments: Value,
         subject_id: &str,
         auth: &AuthContext,
-        transport: ConnectorTransport,
+        _transport: ConnectorTransport,
         now: i64,
     ) -> ConnectorCallOutcome {
         let input: ChecksRunInput = match parse_input("checks_run", arguments) {
             Ok(input) => input,
             Err(outcome) => return outcome,
         };
+        if let Err(message) = validate_operation_id(&input.operation_id) {
+            return invalid_input("checks_run", message);
+        }
         if input.checks.is_empty() || input.checks.len() > 3 {
             return invalid_input("checks_run", "checks must contain 1..=3 entries");
         }
@@ -857,72 +915,132 @@ impl ConnectorRuntime {
                 return invalid_input("checks_run", message);
             }
         }
+        if input
+            .test_filter
+            .as_deref()
+            .is_some_and(|filter| filter.len() > 500)
+        {
+            return invalid_input("checks_run", "test_filter must be at most 500 bytes");
+        }
+        let validation_steps = match build_check_steps(&input.checks, input.test_filter.clone()) {
+            Ok(steps) => steps,
+            Err(message) => return invalid_input("checks_run", message),
+        };
+        let command = validation_steps
+            .iter()
+            .map(|step| step.command.as_str())
+            .collect::<Vec<_>>()
+            .join(" && ");
+        #[cfg(test)]
+        if let Some(entered) = self.mutation_before_task_lock.lock().unwrap().clone() {
+            entered.add_permits(1);
+        }
+        let task_lock = self.task_lock(&input.task_id);
+        let task_guard = task_lock.lock().await;
         let task = match self.active_writable_task(&input.task_id, subject_id, "checks_run", now) {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
-        let mut results = Vec::new();
-        for check in input.checks.iter().copied() {
-            let (tool_name, args) = match check {
-                StandardCheck::Format => (
-                    "cargo_fmt",
-                    json!({
-                        "project": task.execution_executor_ref,
-                        "cwd": input.cwd,
-                        "check": true,
-                        "timeout_secs": input.timeout_secs.unwrap_or(120)
-                    }),
-                ),
-                StandardCheck::Check => (
-                    "cargo_check",
-                    json!({
-                        "project": task.execution_executor_ref,
-                        "cwd": input.cwd,
-                        "all_targets": true,
-                        "timeout_secs": input.timeout_secs.unwrap_or(120)
-                    }),
-                ),
-                StandardCheck::Test => (
-                    "cargo_test",
-                    json!({
-                        "project": task.execution_executor_ref,
-                        "cwd": input.cwd,
-                        "filter": input.test_filter,
-                        "timeout_secs": input.timeout_secs.unwrap_or(120)
-                    }),
-                ),
-            };
-            match self
-                .invoke_kernel(tool_name, args, &task, auth, transport)
-                .await
-            {
-                Ok(output) => results.push(json!({ "check": check, "output": output })),
-                Err(error) => {
-                    let cursor = self.record_event(
+        let timeout_secs = input.timeout_secs.unwrap_or(120);
+        let request_sha256 = check_request_hash(
+            &task,
+            &input.checks,
+            input.cwd.as_deref(),
+            input.test_filter.as_deref(),
+            timeout_secs,
+        );
+        let existing = match self.db.latest_connector_execution(
+            &task.task_id,
+            &self.context.project_id,
+            subject_id,
+            Some(&input.operation_id),
+        ) {
+            Ok(Some(execution)) if execution.request_sha256 != request_sha256 => {
+                return store_error_outcome(
+                    ConnectorTaskStoreError::OperationIdConflict(input.operation_id),
+                    Some(&task),
+                )
+            }
+            Ok(execution) => execution.map(ConnectorExecutionReservation::Existing),
+            Err(error) => return store_error_outcome(error, Some(&task)),
+        };
+        let plan = input
+            .checks
+            .iter()
+            .map(|check| check.as_str().to_string())
+            .collect::<Vec<_>>();
+        let reservation = match existing {
+            Some(existing) => existing,
+            None => {
+                let client_id = task
+                    .execution_executor_ref
+                    .strip_prefix("agent:")
+                    .and_then(|rest| rest.split_once(':'))
+                    .map(|(client_id, _)| client_id);
+                let supported = match client_id {
+                    Some(client_id) => self
+                        .tools
+                        .shell_clients
+                        .client_supports(
+                            client_id,
+                            SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS,
+                        )
+                        .await
+                        .unwrap_or(false),
+                    None => false,
+                };
+                if !supported {
+                    return ConnectorCallOutcome::error_for_task(
+                        409,
+                        "structured_validation_unavailable",
+                        "the selected local Agent does not support structured validation jobs",
+                        false,
+                        true,
+                        Some("Upgrade and reconnect the WebCodex Agent, then retry checks_run."),
                         &task,
-                        "checks_run",
-                        json!({ "ok": false, "completed": results.len(), "failed_check": check }),
-                        now,
-                    );
-                    return self.kernel_error_outcome(
-                        error,
-                        &task,
-                        cursor,
-                        json!({ "checks": results }),
+                        json!({
+                            "required_capability":
+                                SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS
+                        }),
                     );
                 }
+                let check_workspace_sha256 =
+                    match self.workspace_fingerprint(&task, "checks_run").await {
+                        Ok(fingerprint) => fingerprint,
+                        Err(outcome) => return outcome,
+                    };
+                match self.executions.reserve(
+                    &task,
+                    "check",
+                    &input.operation_id,
+                    &request_sha256,
+                    &plan,
+                    Some(&check_workspace_sha256),
+                    timeout_secs,
+                    now,
+                ) {
+                    Ok(reservation) => reservation,
+                    Err(error) => return store_error_outcome(error, Some(&task)),
+                }
             }
-        }
-        let cursor = match self.record_event(
-            &task,
-            "checks_run",
-            json!({ "ok": true, "checks": input.checks }),
-            now,
-        ) {
-            Ok(cursor) => cursor,
-            Err(outcome) => return outcome,
         };
-        ConnectorCallOutcome::success_at(&task, cursor, json!({ "checks": results }))
+        drop(task_guard);
+        self.execution_outcome(
+            self.executions
+                .execute(
+                    reservation,
+                    task.clone(),
+                    command,
+                    input.cwd,
+                    timeout_secs,
+                    auth.clone(),
+                    validation_steps,
+                )
+                .await,
+            &task,
+            auth,
+        )
+        .await
     }
 
     async fn commands_run(
@@ -953,6 +1071,10 @@ impl ConnectorRuntime {
             if let Err(message) = validate_path(cwd) {
                 return invalid_input("commands_run", message);
             }
+        }
+        #[cfg(test)]
+        if let Some(entered) = self.mutation_before_task_lock.lock().unwrap().clone() {
+            entered.add_permits(1);
         }
         let task_lock = self.task_lock(&input.task_id);
         let task_guard = task_lock.lock().await;
@@ -1052,10 +1174,13 @@ impl ConnectorRuntime {
                     let current = self.task(&task.task_id, subject_id).unwrap_or(task);
                     return approval_gate_outcome(gate, &current);
                 }
-                match self.executions.reserve_command(
+                match self.executions.reserve(
                     &task,
+                    "command",
                     &input.operation_id,
                     &request_sha256,
+                    &[],
+                    None,
                     timeout_secs,
                     chrono::Utc::now().timestamp(),
                 ) {
@@ -1065,15 +1190,16 @@ impl ConnectorRuntime {
             }
         };
         drop(task_guard);
-        self.command_execution_outcome(
+        self.execution_outcome(
             self.executions
-                .execute_command(
+                .execute(
                     reservation,
                     task.clone(),
                     input.command,
                     input.cwd,
                     timeout_secs,
                     auth.clone(),
+                    Vec::new(),
                 )
                 .await,
             &task,
@@ -1082,7 +1208,7 @@ impl ConnectorRuntime {
         .await
     }
 
-    async fn command_execution_outcome(
+    async fn execution_outcome(
         &self,
         result: Result<crate::db::ConnectorExecution, ConnectorTaskStoreError>,
         task: &ConnectorTaskSnapshot,
@@ -1365,6 +1491,8 @@ impl ConnectorRuntime {
         if input.summary.trim().is_empty() || input.summary.len() > 4000 {
             return invalid_input("task_finish", "summary must be 1..=4000 bytes");
         }
+        let task_lock = self.task_lock(&input.task_id);
+        let task_guard = task_lock.lock().await;
         let visible_task = match self.task(&input.task_id, subject_id) {
             Ok(task) => task,
             Err(outcome) => return outcome,
@@ -1399,15 +1527,45 @@ impl ConnectorRuntime {
         } else {
             None
         };
-        let events = match self.db.connector_task_events(
+        let check_execution = match self.db.latest_connector_execution_by_kind(
             &task.task_id,
             &self.context.project_id,
             subject_id,
-            MAX_EVENT_COUNT,
+            "check",
         ) {
-            Ok(events) => events,
+            Ok(execution) => execution,
             Err(error) => return store_error_outcome(error, Some(&task)),
         };
+        if let Some(check) = check_execution
+            .as_ref()
+            .filter(|check| check.state == "succeeded")
+        {
+            let Some(validated) = check.validated_workspace_sha256.as_deref() else {
+                return checks_stale_outcome(
+                    &task,
+                    check,
+                    "the latest successful check has no trusted workspace provenance",
+                );
+            };
+            let current = match self.workspace_fingerprint(&task, "task_finish").await {
+                Ok(current) => current,
+                Err(outcome) => return outcome,
+            };
+            if current != validated {
+                return checks_stale_outcome(
+                    &task,
+                    check,
+                    "the workspace changed after the latest successful check",
+                );
+            }
+            #[cfg(test)]
+            let finish_hook = { self.finish_after_fingerprint.lock().unwrap().clone() };
+            #[cfg(test)]
+            if let Some((reached, resume)) = finish_hook {
+                reached.notify_one();
+                resume.notified().await;
+            }
+        }
         let manager = self.workspace.clone();
         let task_for_capture = task.clone();
         let captured =
@@ -1449,7 +1607,7 @@ impl ConnectorRuntime {
                     );
                 }
             };
-        let validation = validation_projection(&events);
+        let validation = validation_projection(check_execution.as_ref());
         let result_id = format!("wc_result_{}", uuid::Uuid::new_v4().simple());
         let mut cursor = match self.db.finish_connector_task(
             &task.task_id,
@@ -1470,6 +1628,7 @@ impl ConnectorRuntime {
             Ok(cursor) => cursor,
             Err(error) => return store_error_outcome(error, Some(&task)),
         };
+        drop(task_guard);
         let cleanup_warning = if task.isolated {
             let manager = self.workspace.clone();
             let task_for_release = task.clone();
@@ -2012,20 +2171,20 @@ fn store_error_outcome(
             Some(task) => ConnectorCallOutcome::error_for_task(
                 409,
                 "operation_id_conflict",
-                "operation_id was already used with a different command, cwd, or timeout",
+                "operation_id was already used with a different execution request",
                 false,
                 false,
-                Some("Reuse operation_id only for an exact retry; use a new value to run another command."),
+                Some("Reuse operation_id only for an exact retry; use a new value for an intentional rerun or different request."),
                 task,
                 json!({ "operation_id": operation_id }),
             ),
             None => ConnectorCallOutcome::error(
                 409,
                 "operation_id_conflict",
-                "operation_id was already used with a different command, cwd, or timeout",
+                "operation_id was already used with a different execution request",
                 false,
                 false,
-                Some("Reuse operation_id only for an exact retry; use a new value to run another command."),
+                Some("Reuse operation_id only for an exact retry; use a new value for an intentional rerun or different request."),
                 None,
                 false,
             ),
@@ -2163,6 +2322,58 @@ fn command_request_hash(
         hasher.update(field);
     }
     format!("{:x}", hasher.finalize())
+}
+
+fn check_request_hash(
+    task: &ConnectorTaskSnapshot,
+    checks: &[StandardCheck],
+    cwd: Option<&str>,
+    test_filter: Option<&str>,
+    timeout_secs: u64,
+) -> String {
+    let checks = serde_json::to_vec(checks).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    for field in [
+        b"webcodex.checks_run.v2".as_slice(),
+        task.task_id.as_bytes(),
+        task.run_id.as_bytes(),
+        checks.as_slice(),
+        cwd.unwrap_or("").as_bytes(),
+        test_filter.unwrap_or("").as_bytes(),
+        &timeout_secs.to_be_bytes(),
+    ] {
+        hasher.update((field.len() as u64).to_be_bytes());
+        hasher.update(field);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn build_check_steps(
+    checks: &[StandardCheck],
+    test_filter: Option<String>,
+) -> Result<Vec<crate::shell_protocol::ShellJobValidationStep>, String> {
+    use crate::tool_runtime::validation_profile::{
+        validation_adapter_for_tool, ValidationCommandOptions,
+    };
+
+    let mut steps = Vec::with_capacity(checks.len());
+    for check in checks {
+        let adapter = validation_adapter_for_tool(check.tool_name())
+            .ok_or_else(|| format!("{} validation adapter is unavailable", check.as_str()))?;
+        let command = adapter.build_command(ValidationCommandOptions {
+            check: *check == StandardCheck::Format,
+            filter: (*check == StandardCheck::Test)
+                .then(|| test_filter.clone())
+                .flatten(),
+            all_targets: (*check == StandardCheck::Check).then_some(true),
+            ..ValidationCommandOptions::default()
+        })?;
+        steps.push(crate::shell_protocol::ShellJobValidationStep {
+            name: check.as_str().to_string(),
+            command,
+        });
+    }
+    Ok(steps)
 }
 
 fn command_action_hash(request_sha256: &str, precondition: &str) -> String {
@@ -2409,22 +2620,37 @@ fn project_brief(
     })
 }
 
-fn validation_projection(events: &[ConnectorTaskEvent]) -> Value {
-    let runs = events
-        .iter()
-        .filter(|event| event.kind == "checks_run")
-        .map(|event| {
-            json!({
-                "sequence": event.sequence,
-                "created_at": event.created_at,
-                "outcome": event.payload
-            })
-        })
-        .collect::<Vec<_>>();
+fn validation_projection(execution: Option<&crate::db::ConnectorExecution>) -> Value {
+    let Some(execution) = execution else {
+        return json!({ "status": "not_run", "execution_id": null, "checks": [] });
+    };
+    let projection =
+        execution::execution_projection(execution, chrono::Utc::now().timestamp(), None);
     json!({
-        "status": if runs.is_empty() { "not_run" } else { "recorded" },
-        "runs": runs
+        "status": projection["assertion_status"],
+        "execution_id": execution.execution_id,
+        "checks": projection["checks"],
+        "assertion_evidence": projection["assertion_evidence"]
     })
+}
+
+fn checks_stale_outcome(
+    task: &ConnectorTaskSnapshot,
+    execution: &crate::db::ConnectorExecution,
+    message: &str,
+) -> ConnectorCallOutcome {
+    ConnectorCallOutcome::error_for_task(
+        409,
+        "checks_stale",
+        message,
+        false,
+        true,
+        Some(
+            "Call checks_run with a new operation_id to validate the current workspace, then retry task_finish.",
+        ),
+        task,
+        json!({ "execution_id": execution.execution_id }),
+    )
 }
 
 fn short_oid(value: &str) -> &str {
@@ -2641,6 +2867,7 @@ struct EditsApplyInput {
 #[serde(deny_unknown_fields)]
 struct ChecksRunInput {
     task_id: String,
+    operation_id: String,
     checks: Vec<StandardCheck>,
     #[serde(default)]
     cwd: Option<String>,
@@ -2656,6 +2883,24 @@ enum StandardCheck {
     Format,
     Check,
     Test,
+}
+
+impl StandardCheck {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Format => "format",
+            Self::Check => "check",
+            Self::Test => "test",
+        }
+    }
+
+    fn tool_name(self) -> &'static str {
+        match self {
+            Self::Format => "cargo_fmt",
+            Self::Check => "cargo_check",
+            Self::Test => "cargo_test",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2812,6 +3057,7 @@ mod tests {
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
+                    structured_validation_jobs: true,
                     lsp_read_only_navigation: false,
                 }),
                 projects: Some(vec![ShellAgentProjectSummary {
@@ -3027,6 +3273,7 @@ mod tests {
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
+                    structured_validation_jobs: true,
                     lsp_read_only_navigation: false,
                 }),
                 projects: Some(vec![ShellAgentProjectSummary {

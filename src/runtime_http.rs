@@ -10,7 +10,6 @@ use crate::tool_runtime::{
     TOOL_CALL_TOOL_FIELD, TOOL_CALL_WRAPPER_FIELDS,
 };
 use salvo::prelude::*;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -28,28 +27,9 @@ pub use project_files::{
     projects_apply_patch, projects_apply_patch_checked, projects_delete_files,
     projects_discard_untracked, projects_git_diff, projects_git_diff_summary,
     projects_git_restore_paths, projects_git_status, projects_list_files, projects_read_file,
-    projects_replace_in_file, projects_search_text, projects_validate_patch, projects_write_file,
+    projects_search_text, projects_validate_patch,
 };
 pub use projects::{projects_create, projects_list, projects_register};
-
-/// Generic runtime tool call body. `tool` is required; `params` carries the
-/// tool-specific arguments. `arguments` is accepted as a compatibility alias
-/// for `params` — when both are non-null, `params` wins. Null wrapper values
-/// are treated as absent so GPT Actions may still pass tool-specific arguments
-/// as flattened top-level fields. Top-level
-/// `recording_session_id` is recorder metadata; top-level `session_id` remains
-/// an ordinary flattened tool argument so tools like `session_summary` can use
-/// it as business input.
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ToolCallRequest {
-    pub tool: String,
-    #[serde(default)]
-    pub params: Value,
-    /// Compatibility alias for `params`. Ignored when `params` is present.
-    #[serde(default)]
-    pub arguments: Value,
-}
 
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
     depot.obtain::<Arc<ToolRuntime>>().ok().cloned()
@@ -608,11 +588,6 @@ mod tests {
                         Router::with_path("projects/discard_untracked")
                             .post(projects_discard_untracked),
                     )
-                    .push(
-                        Router::with_path("projects/replace_in_file")
-                            .post(projects_replace_in_file),
-                    )
-                    .push(Router::with_path("projects/write_file").post(projects_write_file))
                     .push(Router::with_path("projects/run_job").post(projects_run_job))
                     .push(Router::with_path("projects/list_files").post(projects_list_files))
                     .push(Router::with_path("projects/search_text").post(projects_search_text))

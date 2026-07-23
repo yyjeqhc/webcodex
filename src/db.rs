@@ -17,7 +17,7 @@ mod task_kernel;
 
 pub(crate) use self::execution_model::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
-    ConnectorExecutionReservation,
+    ConnectorExecutionReservation, MAX_ASSERTION_EVIDENCE_BYTES,
 };
 pub use self::oauth::RotateResult;
 #[allow(unused_imports)]
@@ -133,6 +133,53 @@ mod tests {
             .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
             .unwrap();
         assert_eq!(busy_timeout, 5000);
+    }
+
+    #[test]
+    fn execution_provenance_columns_are_fresh_additive_and_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let upgrade = tmp.path().join("iteration-7.db");
+        {
+            let conn = rusqlite::Connection::open(&upgrade).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE wc_executions AS SELECT
+                    'old-command' id, 'command' kind, 'task' task_id, 'run' run_id,
+                    'succeeded' state, 1 submitted_at, NULL queued_at, 2 queue_deadline,
+                    NULL started_at, NULL last_output_at, 3 finished_at,
+                    1 stdout_cursor, 1 stderr_cursor, 0 exit_code,
+                    NULL failure_source, NULL failure_code, NULL cancel_requested_at,
+                    'exit_zero' terminal_reason, 'op' operation_id, 'hash' request_sha256,
+                    NULL executor_reference, NULL first_status_failure_at,
+                    NULL last_successful_observation_at, NULL status_failure_code,
+                    NULL check_plan, 0 check_completed;
+                ",
+            )
+            .unwrap();
+        }
+        let fresh = tmp.path().join("fresh.db");
+        for path in [&upgrade, &fresh] {
+            for _ in 0..2 {
+                let db = Database::open(path).unwrap();
+                let columns: i64 = db
+                    .conn_for_tests()
+                    .query_row(
+                        "SELECT COUNT(*) FROM pragma_table_info('wc_executions')
+                         WHERE name IN ('check_workspace_sha256', 'validated_workspace_sha256',
+                                        'failed_check', 'assertion_evidence_json')",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(columns, 4);
+                if path == &upgrade {
+                    let command = db.connector_execution("old-command").unwrap();
+                    assert_eq!(command.kind, "command");
+                    assert!(command.validated_workspace_sha256.is_none());
+                    assert!(command.assertion_evidence.is_none());
+                }
+            }
+        }
     }
 
     #[test]

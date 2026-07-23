@@ -1,10 +1,10 @@
-//! Durable command lifecycle facts; the existing job manager remains the
+//! Durable execution lifecycle facts; the existing job manager remains the
 //! process and output authority.
 
 use super::execution_model::{
-    execution_event_kind, latest_execution, load_execution, load_execution_by_operation,
-    observed_state, ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
-    ConnectorExecutionReservation,
+    execution_event_kind, latest_execution, latest_execution_by_kind, load_execution,
+    load_execution_by_operation, observed_state, ConnectorExecution, ConnectorExecutionFailure,
+    ConnectorExecutionObservation, ConnectorExecutionReservation,
 };
 use super::task_kernel::{
     expire_task_approvals, insert_event, load_task, require_running, touch_task,
@@ -17,8 +17,11 @@ impl Database {
     pub(crate) fn reserve_connector_execution(
         &self,
         task: &ConnectorTaskSnapshot,
+        kind: &str,
         operation_id: &str,
         request_sha256: &str,
+        check_plan: &[String],
+        check_workspace_sha256: Option<&str>,
         queue_deadline: i64,
         now: i64,
     ) -> Result<ConnectorExecutionReservation, ConnectorTaskStoreError> {
@@ -42,24 +45,39 @@ impl Database {
             latest_execution(&tx, &task.task_id)?.filter(ConnectorExecution::blocks_finish)
         {
             return Err(ConnectorTaskStoreError::InvalidState(format!(
-                "execution {} is {}; review or cancel it before starting another command",
+                "execution {} is {}; review or cancel it before starting another execution",
                 active.execution_id, active.state
             )));
         }
+        if !matches!(kind, "command" | "check")
+            || (kind == "command" && !check_plan.is_empty())
+            || (kind == "check" && check_plan.is_empty())
+            || (kind == "command" && check_workspace_sha256.is_some())
+            || (kind == "check" && check_workspace_sha256.is_none())
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "execution kind and check plan do not match".to_string(),
+            ));
+        }
         let execution_id = format!("wc_exec_{}", uuid::Uuid::new_v4().simple());
+        let check_plan = (kind == "check").then(|| check_plan.join(","));
         tx.execute(
             "INSERT INTO wc_executions
                 (id, kind, task_id, run_id, state, submitted_at, queue_deadline,
-                 stdout_cursor, stderr_cursor, operation_id, request_sha256)
-             VALUES (?1, 'command', ?2, ?3, 'accepted', ?4, ?5, 1, 1, ?6, ?7)",
+                 stdout_cursor, stderr_cursor, operation_id, request_sha256, check_plan,
+                 check_workspace_sha256)
+             VALUES (?1, ?2, ?3, ?4, 'accepted', ?5, ?6, 1, 1, ?7, ?8, ?9, ?10)",
             params![
                 execution_id,
+                kind,
                 task.task_id,
                 task.run_id,
                 now,
                 queue_deadline,
                 operation_id,
-                request_sha256
+                request_sha256,
+                check_plan,
+                check_workspace_sha256
             ],
         )?;
         let execution =
@@ -117,6 +135,19 @@ impl Database {
             None => latest_execution(&conn, task_id),
         }
         .map_err(ConnectorTaskStoreError::from)
+    }
+
+    pub(crate) fn latest_connector_execution_by_kind(
+        &self,
+        task_id: &str,
+        project_id: &str,
+        subject_id: &str,
+        kind: &str,
+    ) -> Result<Option<ConnectorExecution>, ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        load_task(&conn, task_id, project_id, subject_id)?
+            .ok_or(ConnectorTaskStoreError::NotFound)?;
+        latest_execution_by_kind(&conn, task_id, kind).map_err(ConnectorTaskStoreError::from)
     }
 
     pub(crate) fn attach_connector_executor(
@@ -232,6 +263,87 @@ impl Database {
         let output_advanced =
             stdout_cursor > execution.stdout_cursor || stderr_cursor > execution.stderr_cursor;
         let (state, source, code, reason) = observed_state(&execution, &observation);
+        if observation
+            .check_completed
+            .is_some_and(|completed| completed > execution.check_plan.len())
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "validation progress exceeds its durable check plan".to_string(),
+            ));
+        }
+        if observation
+            .check_completed
+            .is_some_and(|completed| completed < execution.check_completed)
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "validation progress cannot move backwards".to_string(),
+            ));
+        }
+        if execution.kind == "command"
+            && (observation.check_completed.is_some()
+                || observation.failed_check.is_some()
+                || observation.validated_workspace_sha256.is_some())
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "ordinary execution cannot record validation progress".to_string(),
+            ));
+        }
+        if observation.failed_check.is_some_and(|failed| {
+            execution
+                .check_plan
+                .get(
+                    observation
+                        .check_completed
+                        .unwrap_or(execution.check_completed),
+                )
+                .map(String::as_str)
+                != Some(failed)
+        }) {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "failed check does not match durable validation progress".to_string(),
+            ));
+        }
+        let evidence_json = observation
+            .assertion_evidence
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| ConnectorTaskStoreError::InvalidState(error.to_string()))?;
+        if evidence_json
+            .as_ref()
+            .is_some_and(|evidence| evidence.len() > super::MAX_ASSERTION_EVIDENCE_BYTES)
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "assertion evidence exceeds its durable size limit".to_string(),
+            ));
+        }
+        if observation.assertion_evidence.is_some()
+            && (observation.failed_check.is_none() || state != "failed" || source != Some("check"))
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "assertion evidence requires trusted failed-check progress".to_string(),
+            ));
+        }
+        if state == "succeeded"
+            && execution.kind == "check"
+            && (observation.check_completed != Some(execution.check_plan.len())
+                || observation.failed_check.is_some()
+                || observation.validated_workspace_sha256.is_none()
+                || execution.check_workspace_sha256.as_deref()
+                    != observation.validated_workspace_sha256)
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "successful check requires complete progress and matching workspace provenance"
+                    .to_string(),
+            ));
+        }
+        if observation.validated_workspace_sha256.is_some()
+            && !(state == "succeeded" && execution.kind == "check")
+        {
+            return Err(ConnectorTaskStoreError::InvalidState(
+                "validated workspace provenance requires a successful check".to_string(),
+            ));
+        }
+        let validated_workspace = observation.validated_workspace_sha256;
         let state_changed = state != execution.state;
         let terminal = !ConnectorExecution::state_is_active(state);
         tx.execute(
@@ -245,7 +357,18 @@ impl Database {
                     terminal_reason = COALESCE(?12, terminal_reason),
                     first_status_failure_at = NULL,
                     last_successful_observation_at = ?5,
-                    status_failure_code = NULL
+                    status_failure_code = NULL,
+                    check_completed = CASE
+                        WHEN ?14 IS NOT NULL THEN ?14
+                        ELSE check_completed
+                    END,
+                    failed_check = CASE WHEN ?1 = 'failed' AND kind = 'check' AND ?10 = 'check'
+                        THEN ?15 ELSE failed_check END,
+                    assertion_evidence_json = CASE WHEN ?1 = 'failed' AND kind = 'check'
+                        AND ?10 = 'check'
+                        THEN ?16 ELSE assertion_evidence_json END,
+                    validated_workspace_sha256 = CASE WHEN ?1 = 'succeeded' AND kind = 'check'
+                        THEN ?17 ELSE NULL END
                     WHERE id = ?13",
             params![
                 state,
@@ -260,7 +383,11 @@ impl Database {
                 source,
                 code,
                 reason,
-                execution_id
+                execution_id,
+                observation.check_completed.map(|count| count as i64),
+                observation.failed_check,
+                evidence_json,
+                validated_workspace
             ],
         )?;
         if state_changed {
@@ -571,7 +698,11 @@ fn append_execution_event(
         &execution.run_id,
         next_event_sequence(tx, &execution.task_id)?,
         execution_event_kind(state),
-        &json!({ "execution_id": execution.execution_id, "state": state }),
+        &json!({
+            "execution_id": execution.execution_id,
+            "kind": execution.kind,
+            "state": state
+        }),
         now,
     )
 }

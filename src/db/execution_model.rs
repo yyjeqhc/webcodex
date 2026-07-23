@@ -1,8 +1,12 @@
 use rusqlite::{params, OptionalExtension};
+use serde_json::Value;
+
+pub(crate) const MAX_ASSERTION_EVIDENCE_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectorExecution {
     pub execution_id: String,
+    pub kind: String,
     pub task_id: String,
     pub run_id: String,
     pub state: String,
@@ -24,6 +28,12 @@ pub(crate) struct ConnectorExecution {
     pub first_status_failure_at: Option<i64>,
     pub last_successful_observation_at: Option<i64>,
     pub status_failure_code: Option<String>,
+    pub check_plan: Vec<String>,
+    pub check_completed: usize,
+    pub check_workspace_sha256: Option<String>,
+    pub validated_workspace_sha256: Option<String>,
+    pub failed_check: Option<String>,
+    pub assertion_evidence: Option<Value>,
 }
 
 impl ConnectorExecution {
@@ -82,6 +92,11 @@ pub(crate) struct ConnectorExecutionObservation<'a> {
     pub exit_code: Option<i32>,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
+    pub check_completed: Option<usize>,
+    pub failed_check: Option<&'a str>,
+    pub assertion_evidence: Option<&'a Value>,
+    pub validated_workspace_sha256: Option<&'a str>,
+    pub executor_failure_code: Option<&'static str>,
     pub now: i64,
 }
 
@@ -109,10 +124,30 @@ pub(super) fn observed_state(
     execution: &ConnectorExecution,
     observation: &ConnectorExecutionObservation<'_>,
 ) -> StateOutcome {
+    if let Some(code) = observation.executor_failure_code {
+        return failed("executor", code, "executor_protocol_violation");
+    }
     match observation.executor_status {
         "queued" | "agent_queued" => active_state(execution, "queued"),
         "running" | "started" => active_state(execution, "running"),
         "stop_requested" => active_state(execution, "running"),
+        "completed"
+            if execution.kind == "check"
+                && observation.exit_code == Some(0)
+                && observation.check_completed == Some(execution.check_plan.len())
+                && observation.failed_check.is_none() =>
+        {
+            ("succeeded", None, None, Some("exit_zero"))
+        }
+        "completed" if execution.kind == "check" => failed(
+            "executor",
+            if observation.check_completed.is_none() {
+                "validation_progress_missing"
+            } else {
+                "validation_progress_incomplete"
+            },
+            "executor_protocol_violation",
+        ),
         "completed" if observation.exit_code == Some(0) => {
             ("succeeded", None, None, Some("exit_zero"))
         }
@@ -128,6 +163,24 @@ pub(super) fn observed_state(
         }
         "timeout" | "timed_out" => failed("executor", "command_timeout", "timeout"),
         "lost" => unknown("executor_lost"),
+        "failed"
+            if execution.kind == "check"
+                && observation.failed_check.is_some()
+                && observation
+                    .check_completed
+                    .is_some_and(|completed| completed < execution.check_plan.len()) =>
+        {
+            failed("check", "assertion_failed", "nonzero_exit")
+        }
+        "failed" if execution.kind == "check" => failed(
+            "executor",
+            if observation.check_completed.is_none() {
+                "validation_progress_missing"
+            } else {
+                "validation_progress_invalid"
+            },
+            "executor_protocol_violation",
+        ),
         "failed" | "completed" => failed("command", "nonzero_exit", "nonzero_exit"),
         _ => active_state(execution, "running"),
     }
@@ -152,6 +205,22 @@ pub(super) fn latest_execution(
              WHERE task_id = ?1 ORDER BY submitted_at DESC, rowid DESC LIMIT 1"
         ),
         params![task_id],
+    )
+}
+
+pub(super) fn latest_execution_by_kind(
+    conn: &rusqlite::Connection,
+    task_id: &str,
+    kind: &str,
+) -> rusqlite::Result<Option<ConnectorExecution>> {
+    query_execution(
+        conn,
+        &format!(
+            "SELECT {EXECUTION_COLUMNS} FROM wc_executions
+             WHERE task_id = ?1 AND kind = ?2
+             ORDER BY submitted_at DESC, rowid DESC LIMIT 1"
+        ),
+        params![task_id, kind],
     )
 }
 
@@ -182,11 +251,13 @@ pub(super) fn load_execution(
     )
 }
 
-pub(super) const EXECUTION_COLUMNS: &str = "id, task_id, run_id, state, submitted_at, queued_at, \
+pub(super) const EXECUTION_COLUMNS: &str =
+    "id, kind, task_id, run_id, state, submitted_at, queued_at, \
     queue_deadline, started_at, last_output_at, finished_at, stdout_cursor, stderr_cursor, \
     exit_code, failure_source, failure_code, terminal_reason, operation_id, request_sha256, \
     executor_reference, first_status_failure_at, last_successful_observation_at, \
-    status_failure_code";
+    status_failure_code, check_plan, check_completed, check_workspace_sha256, \
+    validated_workspace_sha256, failed_check, assertion_evidence_json";
 
 pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectorExecution> {
     let cursor = |index| {
@@ -195,27 +266,48 @@ pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect
     };
     Ok(ConnectorExecution {
         execution_id: row.get(0)?,
-        task_id: row.get(1)?,
-        run_id: row.get(2)?,
-        state: row.get(3)?,
-        submitted_at: row.get(4)?,
-        queued_at: row.get(5)?,
-        queue_deadline: row.get(6)?,
-        started_at: row.get(7)?,
-        last_output_at: row.get(8)?,
-        finished_at: row.get(9)?,
-        stdout_cursor: cursor(10)?,
-        stderr_cursor: cursor(11)?,
-        exit_code: row.get(12)?,
-        failure_source: row.get(13)?,
-        failure_code: row.get(14)?,
-        terminal_reason: row.get(15)?,
-        operation_id: row.get(16)?,
-        request_sha256: row.get(17)?,
-        executor_reference: row.get(18)?,
-        first_status_failure_at: row.get(19)?,
-        last_successful_observation_at: row.get(20)?,
-        status_failure_code: row.get(21)?,
+        kind: row.get(1)?,
+        task_id: row.get(2)?,
+        run_id: row.get(3)?,
+        state: row.get(4)?,
+        submitted_at: row.get(5)?,
+        queued_at: row.get(6)?,
+        queue_deadline: row.get(7)?,
+        started_at: row.get(8)?,
+        last_output_at: row.get(9)?,
+        finished_at: row.get(10)?,
+        stdout_cursor: cursor(11)?,
+        stderr_cursor: cursor(12)?,
+        exit_code: row.get(13)?,
+        failure_source: row.get(14)?,
+        failure_code: row.get(15)?,
+        terminal_reason: row.get(16)?,
+        operation_id: row.get(17)?,
+        request_sha256: row.get(18)?,
+        executor_reference: row.get(19)?,
+        first_status_failure_at: row.get(20)?,
+        last_successful_observation_at: row.get(21)?,
+        status_failure_code: row.get(22)?,
+        check_plan: row
+            .get::<_, Option<String>>(23)?
+            .map(|plan| plan.split(',').map(str::to_string).collect())
+            .unwrap_or_default(),
+        check_completed: cursor(24)?,
+        check_workspace_sha256: row.get(25)?,
+        validated_workspace_sha256: row.get(26)?,
+        failed_check: row.get(27)?,
+        assertion_evidence: row
+            .get::<_, Option<String>>(28)?
+            .map(|evidence| {
+                serde_json::from_str(&evidence).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        28,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()?,
     })
 }
 

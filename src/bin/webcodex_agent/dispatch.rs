@@ -19,7 +19,7 @@ pub(crate) fn dispatch_request(
     request: ShellAgentShellRequest,
 ) -> Result<bool, String> {
     match request.kind.as_str() {
-        "start_job" => {
+        "start_job" | "start_validation_job" => {
             jobs.enqueue(
                 sink.clone(),
                 policy.clone(),

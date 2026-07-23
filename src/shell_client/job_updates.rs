@@ -12,14 +12,89 @@ use super::validation::{validate_agent_instance_id, validate_id, validate_run_re
 use super::{now_ts, ShellClientRegistry};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentShellRequest, ShellJobInfo, ShellJobOpRequest,
-    ShellRunRequest,
+    ShellJobValidationStep, ShellRunRequest,
 };
+use std::collections::HashSet;
 use uuid::Uuid;
+
+#[derive(Clone, Copy)]
+struct ValidationProtocolError(&'static str);
+
+fn invalid_progress(code: &'static str) -> Result<(), ValidationProtocolError> {
+    Err(ValidationProtocolError(code))
+}
+
+fn validate_validation_progress(
+    job: &ShellJobRecord,
+    update: &ShellAgentJobUpdateRequest,
+) -> Result<(), ValidationProtocolError> {
+    if job.validation_steps.is_empty() {
+        return if update.validation_progress.is_none() {
+            Ok(())
+        } else {
+            invalid_progress("validation_progress_unexpected")
+        };
+    }
+    if job.validation_steps.iter().collect::<HashSet<_>>().len() != job.validation_steps.len() {
+        return invalid_progress("validation_plan_invalid");
+    }
+    let status = update.status.trim();
+    if update.finished && !is_final_job_status(status) {
+        return invalid_progress("validation_progress_invalid");
+    }
+    let cancelling = matches!(
+        status,
+        "stopped" | "cancelled" | "timeout" | "timed_out" | "lost"
+    );
+    let Some(progress) = update.validation_progress.as_ref() else {
+        if matches!(status, "queued" | "agent_queued") || cancelling {
+            return Ok(());
+        }
+        return invalid_progress("validation_progress_missing");
+    };
+    if matches!(status, "queued" | "agent_queued")
+        || progress.completed > job.validation_steps.len()
+    {
+        return invalid_progress("validation_progress_invalid");
+    }
+    let previous = job
+        .validation_progress
+        .as_ref()
+        .map(|progress| progress.completed)
+        .unwrap_or(0);
+    if progress.completed < previous || progress.completed > previous.saturating_add(1) {
+        return invalid_progress("validation_progress_invalid");
+    }
+    let no_active_step = progress.current_step.is_none() && progress.failed_step.is_none();
+    let valid = if cancelling {
+        no_active_step
+    } else if !is_final_job_status(status) {
+        let expected = job.validation_steps.get(progress.completed);
+        expected.map(String::as_str) == progress.current_step.as_deref()
+            && progress.failed_step.is_none()
+    } else if status == "completed" && update.exit_code == Some(0) {
+        progress.completed == job.validation_steps.len() && no_active_step
+    } else if status == "failed" {
+        let expected = job.validation_steps.get(progress.completed);
+        expected.map(String::as_str) == progress.failed_step.as_deref()
+            && progress.current_step.is_none()
+    } else {
+        false
+    };
+    if valid {
+        Ok(())
+    } else if status == "completed" && update.exit_code == Some(0) {
+        invalid_progress("validation_progress_incomplete")
+    } else {
+        invalid_progress("validation_progress_invalid")
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ShellJobStartMetadata {
     pub(crate) project_id: Option<String>,
     pub(crate) session_id: Option<String>,
+    pub(crate) validation_steps: Vec<ShellJobValidationStep>,
 }
 
 impl ShellClientRegistry {
@@ -58,10 +133,33 @@ impl ShellClientRegistry {
         let request_id = next_request_id();
         let job_id = Uuid::new_v4().to_string();
         let created_at = now_ts();
+        let validation_steps = metadata.validation_steps;
+        if validation_steps.len() > 3
+            || validation_steps.iter().any(|step| step.name.is_empty())
+            || validation_steps
+                .iter()
+                .map(|step| step.name.as_str())
+                .collect::<HashSet<_>>()
+                .len()
+                != validation_steps.len()
+        {
+            return Err("invalid structured validation plan".to_string());
+        }
+        let request_kind = if validation_steps.is_empty() {
+            "start_job"
+        } else {
+            "start_validation_job"
+        };
+        let request_command = if validation_steps.is_empty() {
+            command.clone()
+        } else {
+            serde_json::to_string(&validation_steps)
+                .map_err(|error| format!("could not serialize validation plan: {error}"))?
+        };
         let request = ShellAgentShellRequest {
             request_id: request_id.clone(),
             client_id: client_id.clone(),
-            kind: "start_job".to_string(),
+            kind: request_kind.to_string(),
             job_id: Some(job_id.clone()),
             cwd: run.cwd.clone().map(|cwd| cwd.trim().to_string()),
             path: None,
@@ -75,7 +173,7 @@ impl ShellClientRegistry {
             end_line: None,
             line: None,
             create_dirs: false,
-            command,
+            command: request_command,
             stdin: None,
             timeout_secs: run.timeout_secs,
             requested_by,
@@ -90,6 +188,12 @@ impl ShellClientRegistry {
         if !(client.capabilities.async_jobs || client.capabilities.async_shell_jobs) {
             return Err(format!(
                 "agent client {} does not support async shell jobs",
+                client_id
+            ));
+        }
+        if !validation_steps.is_empty() && !client.capabilities.structured_validation_jobs {
+            return Err(format!(
+                "structured_validation_unavailable: agent client {} does not support structured validation jobs",
                 client_id
             ));
         }
@@ -109,7 +213,18 @@ impl ShellClientRegistry {
             project_id: metadata.project_id,
             session_id: metadata.session_id,
             cwd: run.cwd.clone(),
-            command_preview: command_preview(&run.command),
+            command_preview: if validation_steps.is_empty() {
+                command_preview(&run.command)
+            } else {
+                format!(
+                    "validation: {}",
+                    validation_steps
+                        .iter()
+                        .map(|step| step.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
             status: "queued".to_string(),
             created_at,
             started_at: None,
@@ -120,6 +235,8 @@ impl ShellClientRegistry {
             stderr: None,
             error: None,
             codex: body.codex.clone(),
+            validation_steps: validation_steps.into_iter().map(|step| step.name).collect(),
+            validation_progress: None,
         };
         inner.request_to_job.insert(request_id, job_id.clone());
         inner.jobs_by_id.insert(job_id.clone(), job);
@@ -348,44 +465,56 @@ impl ShellClientRegistry {
             if is_final_job_status(&job.status) {
                 return Ok(job_view(job));
             }
-            replace_limited(&mut job.stdout, body.stdout_tail);
-            replace_limited(&mut job.stderr, body.stderr_tail);
-            append_limited(&mut job.stdout, body.stdout_chunk);
-            append_limited(&mut job.stderr, body.stderr_chunk);
-            if job.started_at.is_none()
-                && matches!(
-                    body.status.as_str(),
-                    "running" | "completed" | "failed" | "stopped" | "timeout"
-                )
-            {
-                job.started_at = Some(now_ts());
-            }
-            if !body.status.trim().is_empty() && !is_final_job_status(&job.status) {
-                let incoming_status = body.status.trim();
-                job.status = if incoming_status == "queued" && job.started_at.is_some() {
-                    "agent_queued".to_string()
-                } else {
-                    incoming_status.to_string()
-                };
-            }
-            if is_final_job_status(&body.status) {
-                job.status = body.status;
+            if let Err(error) = validate_validation_progress(job, &body) {
+                job.status = "failed".to_string();
                 job.ended_at = Some(now_ts());
                 job.exit_code = body.exit_code;
                 job.duration_ms = body.duration_ms;
-                job.error = body.error;
+                job.error = Some(format!("executor protocol violation: {}", error.0));
                 request_id_to_remove = job.request_id.clone();
-            } else if body.error.is_some() {
-                job.error = body.error;
-            }
-            if body.finished && !is_final_job_status(&job.status) {
-                job.status = if job.error.is_none() && job.exit_code == Some(0) {
-                    "completed".to_string()
-                } else {
-                    "failed".to_string()
-                };
-                job.ended_at = Some(now_ts());
-                request_id_to_remove = job.request_id.clone();
+            } else {
+                replace_limited(&mut job.stdout, body.stdout_tail);
+                replace_limited(&mut job.stderr, body.stderr_tail);
+                append_limited(&mut job.stdout, body.stdout_chunk);
+                append_limited(&mut job.stderr, body.stderr_chunk);
+                if body.validation_progress.is_some() {
+                    job.validation_progress = body.validation_progress.clone();
+                }
+                if job.started_at.is_none()
+                    && matches!(
+                        body.status.as_str(),
+                        "running" | "completed" | "failed" | "stopped" | "timeout"
+                    )
+                {
+                    job.started_at = Some(now_ts());
+                }
+                if !body.status.trim().is_empty() && !is_final_job_status(&job.status) {
+                    let incoming_status = body.status.trim();
+                    job.status = if incoming_status == "queued" && job.started_at.is_some() {
+                        "agent_queued".to_string()
+                    } else {
+                        incoming_status.to_string()
+                    };
+                }
+                if is_final_job_status(&body.status) {
+                    job.status = body.status;
+                    job.ended_at = Some(now_ts());
+                    job.exit_code = body.exit_code;
+                    job.duration_ms = body.duration_ms;
+                    job.error = body.error;
+                    request_id_to_remove = job.request_id.clone();
+                } else if body.error.is_some() {
+                    job.error = body.error;
+                }
+                if body.finished && !is_final_job_status(&job.status) {
+                    job.status = if job.error.is_none() && job.exit_code == Some(0) {
+                        "completed".to_string()
+                    } else {
+                        "failed".to_string()
+                    };
+                    job.ended_at = Some(now_ts());
+                    request_id_to_remove = job.request_id.clone();
+                }
             }
             job_view(job)
         };

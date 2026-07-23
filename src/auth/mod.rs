@@ -7,8 +7,7 @@
 //!
 //! ## Submodules
 //!
-//! - [`principal`] — [`AuthContext`], [`AuthKind`], [`Principal`], and
-//!   [`AuthMethod`] / [`AuthError`] types.
+//! - [`context`] — [`AuthContext`], [`AuthKind`], and [`AuthError`].
 //! - [`scopes`] — scope constants, validation, and authorization helpers.
 //! - [`pat`] — PAT / agent token / account credential generation, hashing, and
 //!   validation utilities.
@@ -23,12 +22,6 @@
 //! authentication. It extracts a bearer token, validates it, and injects an
 //! [`AuthContext`] into the depot. Handlers extract `AuthContext` and pass it
 //! to the tool runtime for scope-based authorization.
-//!
-//! [`Principal`] is a higher-level abstraction derived from [`AuthContext`] that
-//! unifies the identity representation regardless of auth method. During this
-//! current migration phase both types coexist — `AuthContext` remains the
-//! depot-injected type so existing handlers are unaffected. See
-//! [`principal::Principal::from_auth_context`].
 //!
 //! ## Token Verifier Chain
 //!
@@ -46,7 +39,7 @@ use salvo::prelude::*;
 // Submodules
 // ---------------------------------------------------------------------------
 
-pub mod principal;
+mod context;
 pub mod scopes;
 
 // `pat` is `pub(crate)` — its functions are internal utilities.
@@ -62,7 +55,7 @@ pub(crate) mod tokens;
 // so that existing `use crate::auth::*` imports continue to work.
 
 #[allow(unused_imports)]
-pub use principal::{AuthContext, AuthError, AuthKind, AuthMethod, Principal};
+pub use context::{AuthContext, AuthError, AuthKind};
 
 #[allow(unused_imports)]
 pub use scopes::{
@@ -283,7 +276,6 @@ fn bootstrap_context() -> AuthContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use principal::AuthMethod;
 
     fn bootstrap_ctx() -> AuthContext {
         AuthContext {
@@ -344,7 +336,7 @@ mod tests {
             ],
         );
         assert!(ctx.is_agent_token());
-        assert!(!ctx.is_user_token());
+        assert_ne!(ctx.kind, AuthKind::ApiToken);
         assert!(!ctx.is_bootstrap());
         assert_eq!(ctx.token_kind.as_deref(), Some("agent"));
         assert_eq!(ctx.allowed_client_id.as_deref(), Some("alice-laptop"));
@@ -354,47 +346,10 @@ mod tests {
     #[test]
     fn user_token_auth_context_does_not_get_agent_kind() {
         let ctx = user_ctx("alice");
-        assert!(ctx.is_user_token());
+        assert_eq!(ctx.kind, AuthKind::ApiToken);
         assert!(!ctx.is_agent_token());
         assert_eq!(ctx.token_kind.as_deref(), Some("user"));
         assert!(ctx.allowed_client_id.is_none());
-    }
-
-    #[test]
-    fn bootstrap_can_use_any_agent_endpoint() {
-        let ctx = bootstrap_ctx();
-        assert!(ctx.can_use_agent_endpoint("any-client"));
-    }
-
-    #[test]
-    fn agent_token_can_use_matching_client_id_only() {
-        let ctx = agent_ctx(
-            "alice",
-            "alice-laptop",
-            vec![SCOPE_AGENT_REGISTER.to_string()],
-        );
-        assert!(ctx.can_use_agent_endpoint("alice-laptop"));
-        assert!(!ctx.can_use_agent_endpoint("other-laptop"));
-    }
-
-    #[test]
-    fn user_token_cannot_use_agent_endpoint() {
-        let ctx = user_ctx("alice");
-        assert!(!ctx.can_use_agent_endpoint("alice-laptop"));
-    }
-
-    #[test]
-    fn require_scope_works_for_agent_tokens() {
-        let ctx = agent_ctx("alice", "alice-laptop", vec![SCOPE_AGENT_POLL.to_string()]);
-        assert!(ctx.require_scope(SCOPE_AGENT_POLL).is_ok());
-        assert!(ctx.require_scope(SCOPE_AGENT_REGISTER).is_err());
-    }
-
-    #[test]
-    fn bootstrap_require_scope_always_ok() {
-        let ctx = bootstrap_ctx();
-        assert!(ctx.require_scope(SCOPE_AGENT_REGISTER).is_ok());
-        assert!(ctx.require_scope(SCOPE_RUNTIME_READ).is_ok());
     }
 
     #[test]
@@ -700,7 +655,6 @@ mod tests {
                     .push(Router::with_path("future/authenticated-route").post(echo_ok))
                     .push(Router::with_path("projects/list").post(echo_ok))
                     .push(Router::with_path("projects/read_file").post(echo_ok))
-                    .push(Router::with_path("projects/write_file").post(echo_ok))
                     .push(Router::with_path("projects/run_job").post(echo_ok))
                     .push(Router::with_path("jobs/list").post(echo_ok))
                     .push(Router::with_path("audit/sessions").post(echo_ok))
@@ -1014,44 +968,6 @@ mod tests {
             "unauthorized response must be JSON, got: {:?}",
             ct
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // Principal integration tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn auth_context_to_principal_preserves_identity() {
-        let ctx = user_ctx("alice");
-        let p = ctx.to_principal();
-        assert_eq!(p.username.as_deref(), Some("alice"));
-        assert_eq!(p.method, AuthMethod::Pat);
-        assert!(p.has_scope(SCOPE_RUNTIME_READ));
-    }
-
-    #[test]
-    fn auth_context_to_principal_bootstrap() {
-        let ctx = bootstrap_ctx();
-        let p = ctx.to_principal();
-        assert!(p.is_bootstrap());
-        assert!(p.is_admin());
-    }
-
-    #[test]
-    fn auth_context_to_principal_agent() {
-        let ctx = agent_ctx(
-            "bob",
-            "bob-phone",
-            vec![
-                SCOPE_AGENT_REGISTER.to_string(),
-                SCOPE_AGENT_POLL.to_string(),
-            ],
-        );
-        let p = ctx.to_principal();
-        assert!(p.is_agent_token());
-        assert_eq!(p.method, AuthMethod::AgentToken);
-        assert!(p.can_use_agent_endpoint("bob-phone"));
-        assert!(!p.can_use_agent_endpoint("other"));
     }
 
     // -----------------------------------------------------------------------
@@ -1730,14 +1646,6 @@ mod tests {
     }
 
     #[test]
-    fn lightweight_can_use_agent_endpoint() {
-        let sk = shared_key_context("k");
-        assert!(sk.can_use_agent_endpoint("any-client-id"));
-        let open = open_anonymous_context();
-        assert!(open.can_use_agent_endpoint("any-client-id"));
-    }
-
-    #[test]
     fn managed_token_prefix_detected() {
         assert!(is_managed_token_prefix("wc_boot_abc"));
         assert!(is_managed_token_prefix("wc_pat_xyz"));
@@ -2319,20 +2227,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth2_token_with_project_write_can_write_project_file() {
-        let (_tmp, service, token) = gate_oauth2_token_with_scopes("project:write").await;
-        let (status, body) = gate_send(&service, "/api/projects/write_file", Some(&token)).await;
-        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
-    }
-
-    #[tokio::test]
-    async fn oauth2_token_with_project_read_cannot_write_project_file() {
-        let (_tmp, service, token) = gate_oauth2_token_with_scopes("project:read").await;
-        let (status, body) = gate_send(&service, "/api/projects/write_file", Some(&token)).await;
-        assert_insufficient_scope(status, &body, Some(SCOPE_PROJECT_WRITE));
-    }
-
-    #[tokio::test]
     async fn oauth2_token_with_job_run_can_run_job_or_shell() {
         let (_tmp, service, token) = gate_oauth2_token_with_scopes("job:run").await;
         let (status, body) = gate_send(&service, "/api/projects/run_job", Some(&token)).await;
@@ -2412,7 +2306,6 @@ mod tests {
         for path in [
             "/api/runtime/status",
             "/api/projects/read_file",
-            "/api/projects/write_file",
             "/api/projects/run_job",
             "/api/users/me",
             "/api/future/authenticated-route",

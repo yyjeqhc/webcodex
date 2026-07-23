@@ -2,7 +2,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::principal::{AuthContext, AuthKind};
+use super::context::{AuthContext, AuthKind};
 use super::scopes::{
     SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT,
     SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,

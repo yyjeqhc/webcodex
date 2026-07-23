@@ -69,7 +69,7 @@ impl ExecutionService {
             if current.state == "cancel_requested" {
                 let _ = self.dispatch_cancel(&task, &current, &auth).await;
             }
-            match self.refresh_once(&execution_id, &auth).await {
+            match self.refresh_once(&task, &execution_id, &auth).await {
                 Ok(updated) => {
                     status_failures = 0;
                     first_status_failure = None;
@@ -150,6 +150,7 @@ impl ExecutionService {
 
     async fn refresh_once(
         &self,
+        task: &ConnectorTaskSnapshot,
         execution_id: &str,
         auth: &AuthContext,
     ) -> Result<ConnectorExecution, (&'static str, String)> {
@@ -188,6 +189,51 @@ impl ExecutionService {
                 format!("executor returned unrecognized status '{}'", job.status),
             ));
         }
+        let progress = job.validation_progress.as_ref();
+        let check_completed = progress.map(|progress| progress.completed);
+        let failed_check = progress.and_then(|progress| progress.failed_step.as_deref());
+        let executor_failure_code = job
+            .error
+            .as_deref()
+            .and_then(validation_protocol_failure_code);
+        let assertion_evidence = if execution.kind == "check" && failed_check.is_some() {
+            let (_, full_stdout, full_stderr, _, _) = self
+                .tools
+                .shell_clients
+                .job_log_for_auth(Some(auth), job_id, None, None, None)
+                .await
+                .unwrap_or_else(|_| (job.clone(), None, None, 1, 1));
+            failed_check.map(|check| {
+                durable_assertion_evidence(
+                    check,
+                    job.exit_code,
+                    full_stdout.as_deref().unwrap_or_default(),
+                    full_stderr.as_deref().unwrap_or_default(),
+                )
+            })
+        } else {
+            None
+        };
+        let validated_workspace_sha256 = if execution.kind == "check"
+            && job.status == "completed"
+            && job.exit_code == Some(0)
+            && progress.is_some_and(|progress| {
+                progress.completed == execution.check_plan.len()
+                    && progress.current_step.is_none()
+                    && progress.failed_step.is_none()
+            }) {
+            let manager = self.workspace.clone();
+            let task = task.clone();
+            tokio::task::spawn_blocking(move || manager.action_precondition(&task))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .filter(|current| {
+                    execution.check_workspace_sha256.as_deref() == Some(current.as_str())
+                })
+        } else {
+            None
+        };
         self.db
             .observe_connector_execution(
                 execution_id,
@@ -198,6 +244,11 @@ impl ExecutionService {
                     exit_code: job.exit_code,
                     started_at: job.started_at,
                     finished_at: job.ended_at,
+                    check_completed,
+                    failed_check,
+                    assertion_evidence: assertion_evidence.as_ref(),
+                    validated_workspace_sha256: validated_workspace_sha256.as_deref(),
+                    executor_failure_code,
                     now: chrono::Utc::now().timestamp(),
                 },
             )
@@ -229,5 +280,20 @@ impl ExecutionService {
         } else {
             CancelDispatch::Failed
         }
+    }
+}
+
+fn validation_protocol_failure_code(error: &str) -> Option<&'static str> {
+    let code = error
+        .strip_prefix("executor protocol violation: ")?
+        .split(':')
+        .next()?;
+    match code {
+        "validation_progress_missing" => Some("validation_progress_missing"),
+        "validation_progress_unexpected" => Some("validation_progress_unexpected"),
+        "validation_progress_incomplete" => Some("validation_progress_incomplete"),
+        "validation_progress_invalid" => Some("validation_progress_invalid"),
+        "validation_plan_invalid" => Some("validation_plan_invalid"),
+        _ => Some("validation_progress_invalid"),
     }
 }

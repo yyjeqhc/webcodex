@@ -1636,6 +1636,9 @@ mod tests {
             .get("/api/connector/task/start")
             .is_some());
         assert!(schema_body["paths"].get("/api/tools/call").is_none());
+        let action_checks_schema = schema_body["paths"]["/api/connector/checks/run"]["post"]
+            ["requestBody"]["content"]["application/json"]["schema"]
+            .clone();
 
         let mut listed = TestClient::post("http://localhost/mcp")
             .bearer_auth(&user_token)
@@ -1656,6 +1659,14 @@ mod tests {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(names, crate::connector_runtime::surface::CAPABILITY_NAMES);
+        let mcp_checks_schema = listed_body["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "checks_run")
+            .unwrap()["inputSchema"]
+            .clone();
+        assert_eq!(mcp_checks_schema, action_checks_schema);
 
         let mut action_started = TestClient::post("http://localhost/api/connector/task/start")
             .bearer_auth(&user_token)

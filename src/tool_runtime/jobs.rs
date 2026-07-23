@@ -12,7 +12,7 @@ use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::auth::AuthContext;
 use crate::shell_client::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
-use crate::shell_protocol::{ShellJobInfo, ShellJobOpRequest};
+use crate::shell_protocol::{ShellJobInfo, ShellJobOpRequest, ShellJobValidationStep};
 
 pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
     matches!(status, "queued" | "running" | "started" | "agent_queued")
@@ -593,6 +593,7 @@ impl ToolRuntime {
         session_id: Option<String>,
         timeout_secs: Option<i64>,
         cwd: Option<String>,
+        validation_steps: Vec<ShellJobValidationStep>,
     ) -> ToolResult {
         let resolved = match self.resolve_project_input(&project).await {
             Ok(resolved) => resolved,
@@ -634,6 +635,7 @@ impl ToolRuntime {
                     ShellJobStartMetadata {
                         project_id: Some(project_id.clone()),
                         session_id: session_id.clone(),
+                        validation_steps,
                     },
                 )
                 .await
@@ -650,6 +652,11 @@ impl ToolRuntime {
                 )),
             }
         } else {
+            if !validation_steps.is_empty() {
+                return ToolResult::err(
+                    "structured validation jobs require an agent-backed project".to_string(),
+                );
+            }
             let root = proj.root();
             let job_id = uuid::Uuid::new_v4().to_string();
             let dir = root.join(format!(".codex/jobs/{}", job_id));

@@ -253,6 +253,23 @@ async fn http_console_routes_require_bearer_auth() {
 }
 
 #[tokio::test]
+async fn retired_edit_compatibility_routes_are_unreachable() {
+    let (_tmp, service) = super::phase2_service();
+    for path in ["/api/projects/replace_in_file", "/api/projects/write_file"] {
+        let resp = TestClient::post(&format!("http://localhost{path}"))
+            .bearer_auth("secret")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(
+            super::effective_status(&resp),
+            StatusCode::NOT_FOUND,
+            "{path} must not bypass canonical /api/tools/call dispatch"
+        );
+    }
+}
+
+#[tokio::test]
 async fn http_console_routes_accept_correct_bearer_and_route_to_runtime() {
     // With a correct bearer token the routes reach the runtime. The
     // project id below is not agent-registered, so the runtime returns a
@@ -421,163 +438,4 @@ async fn http_phase3_mutation_actions_dispatch_to_runtime() {
             path
         );
     }
-}
-
-// =========================================================================
-// Phase 4/5: structured-edit endpoints — auth gate + dispatch wiring.
-// replace_in_file is now also a dedicated GPT Action; write_file remains
-// runtime-only. Both are still reachable via callRuntimeTool / MCP.
-// =========================================================================
-
-#[tokio::test]
-async fn http_phase4_edit_endpoints_require_bearer_auth() {
-    let _env = crate::auth::AuthEnvGuard::auth_required();
-    let (_tmp, service) = super::phase2_service();
-    for (path, body) in [
-        (
-            "/api/projects/replace_in_file",
-            json!({"project": "demo", "path": "x.txt", "old": "a", "new": "b"}),
-        ),
-        (
-            "/api/projects/write_file",
-            json!({"project": "demo", "path": "x.txt", "content": "a"}),
-        ),
-    ] {
-        let resp = TestClient::post(&format!("http://localhost{}", path))
-            .json(&body)
-            .send(&service)
-            .await;
-        assert_eq!(
-            super::effective_status(&resp),
-            StatusCode::UNAUTHORIZED,
-            "{} should require auth",
-            path
-        );
-    }
-}
-
-#[tokio::test]
-async fn http_phase4_edit_endpoints_dispatch_to_runtime() {
-    // With a correct bearer token the edit routes reach the runtime. The
-    // project id is not agent-registered, so the runtime returns a
-    // structured error (not a 401/404) — proving the request was
-    // authenticated, deserialized, and dispatched to ToolRuntime.
-    let (_tmp, service) = super::phase2_service();
-    for (path, body, tool) in [
-        (
-            "/api/projects/replace_in_file",
-            json!({"project": "agent:nope:nope", "path": "x.txt", "old": "a", "new": "b"}),
-            "replace_in_file",
-        ),
-        (
-            "/api/projects/write_file",
-            json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}),
-            "write_project_file",
-        ),
-    ] {
-        let mut resp = TestClient::post(&format!("http://localhost{}", path))
-            .bearer_auth("secret")
-            .json(&body)
-            .send(&service)
-            .await;
-        assert_eq!(
-            super::effective_status(&resp),
-            StatusCode::BAD_REQUEST,
-            "{} should reach runtime and return structured error",
-            path
-        );
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false);
-        assert!(
-            body["error"].as_str().is_some_and(|e| !e.is_empty()),
-            "{} should return a structured runtime error",
-            tool
-        );
-    }
-}
-
-// =========================================================================
-// Compatibility write_project_file REST wrapper - auth gate + dispatch wiring.
-// write_file remains reachable directly for non-GPT clients and through
-// callRuntimeTool / MCP.
-// =========================================================================
-
-#[tokio::test]
-async fn http_compat_write_file_requires_bearer_auth() {
-    let _env = crate::auth::AuthEnvGuard::auth_required();
-    let (_tmp, service) = super::phase2_service();
-    let resp = TestClient::post("http://localhost/api/projects/write_file")
-        .json(&json!({"project": "demo", "path": "x.txt", "content": "a"}))
-        .send(&service)
-        .await;
-
-    assert_eq!(super::effective_status(&resp), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn http_compat_write_file_dispatches_to_runtime() {
-    // With a correct bearer token the dedicated route reaches the runtime.
-    // The project id is not agent-registered, so the runtime returns a
-    // structured error (not a 401/404) — proving the request was
-    // authenticated, deserialized, and dispatched to ToolRuntime.
-    let (_tmp, service) = super::phase2_service();
-    let mut resp = TestClient::post("http://localhost/api/projects/write_file")
-        .bearer_auth("secret")
-        .json(&json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}))
-        .send(&service)
-        .await;
-    assert_eq!(
-        super::effective_status(&resp),
-        StatusCode::BAD_REQUEST,
-        "write_file should reach runtime and return structured error",
-    );
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
-    assert!(
-        body["error"].as_str().is_some_and(|e| !e.is_empty()),
-        "write_file should return a structured runtime error"
-    );
-}
-
-#[tokio::test]
-async fn compat_write_project_file_unknown_session_fails_before_mutation() {
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let caps = crate::shell_protocol::ShellClientCapabilities::default();
-    let (runtime, registry) =
-        super::register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/projects/write_file")
-        .bearer_auth("secret")
-        .json(&json!({
-            "project": "agent:importer:demo",
-            "path": "should-not-exist.txt",
-            "content": "nope",
-            "session_id": "wc_sess_missing"
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
-    assert_eq!(body["output"]["error_kind"], "unknown_session_id");
-    assert_eq!(body["output"]["session_id"], "wc_sess_missing");
-    assert!(
-        !tmp_proj.path().join("should-not-exist.txt").exists(),
-        "write_file must fail before mutating for unknown session_id"
-    );
-    let polled = registry
-        .poll(crate::shell_protocol::ShellAgentPollRequest {
-            client_id: "importer".to_string(),
-            agent_instance_id: "inst-import".to_string(),
-            projects: None,
-        })
-        .await
-        .unwrap();
-    assert!(
-        polled.is_none(),
-        "unknown session_id should fail before enqueueing an agent write"
-    );
 }

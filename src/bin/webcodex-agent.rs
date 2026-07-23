@@ -48,8 +48,9 @@ mod webcodex_agent;
 use shell_protocol::{
     AgentPolicySummary, ShellAgentJobUpdateRequest, ShellAgentPollRequest, ShellAgentPollResponse,
     ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellClientRegisterResponse, ShellProfileSummaryEntry,
-    ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1,
+    ShellClientRegisterRequest, ShellClientRegisterResponse, ShellJobValidationProgress,
+    ShellJobValidationStep, ShellProfileSummaryEntry, ShellProfilesSummary,
+    AGENT_PROTOCOL_VERSION_POLLING_V1,
 };
 
 // Shared agent-config initialization (types, validation, TOML generation,
@@ -708,6 +709,7 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.file_write = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
+    capabilities.structured_validation_jobs = true;
     // New agents always advertise read-only LSP navigation. Older agents omit
     // the field and deserialize as false on the server.
     capabilities.lsp_read_only_navigation = true;
@@ -976,6 +978,7 @@ fn send_start_failure(sink: &AgentSink, request: ShellAgentShellRequest, error: 
             exit_code: None,
             duration_ms: Some(0),
             error: Some(error),
+            validation_progress: None,
             finished: true,
         });
     }
@@ -1104,6 +1107,7 @@ impl JobManager {
                 exit_code: None,
                 duration_ms: None,
                 error: None,
+                validation_progress: None,
                 finished: false,
             });
             self.queued
@@ -1180,67 +1184,95 @@ impl JobManager {
             send_start_failure(&sink, request, e);
             return;
         }
-        let start = Instant::now();
-        let mut prepared_profile_name = None;
-        let mut cmd = match resolve_prepared_shell_profile(
+        let validation = request.kind == "start_validation_job";
+        let steps = if validation {
+            match serde_json::from_str::<Vec<ShellJobValidationStep>>(&request.command) {
+                Ok(steps)
+                    if (1..=3).contains(&steps.len())
+                        && steps.iter().all(|step| {
+                            matches!(step.name.as_str(), "format" | "check" | "test")
+                                && !step.command.trim().is_empty()
+                                && step.command.len() <= 32_768
+                        })
+                        && steps.iter().enumerate().all(|(index, step)| {
+                            !steps[..index]
+                                .iter()
+                                .any(|earlier| earlier.name == step.name)
+                        }) =>
+                {
+                    steps
+                }
+                _ => {
+                    send_start_failure(
+                        &sink,
+                        request,
+                        "invalid structured validation plan".to_string(),
+                    );
+                    return;
+                }
+            }
+        } else {
+            vec![ShellJobValidationStep {
+                name: String::new(),
+                command: request.command.clone(),
+            }]
+        };
+        let prepared_profile = match resolve_prepared_shell_profile(
             &shell,
             &projects_dir,
             &cwd_path,
             request.cwd.is_some(),
             &self.prepared_profiles,
         ) {
-            Ok(Some(profile)) => {
-                match configured_prepared_shell_job_command(&profile, &request.command) {
-                    Ok(cmd) => {
-                        prepared_profile_name = Some(profile.profile_name.clone());
-                        cmd
-                    }
-                    Err(e) => {
-                        send_start_failure(
-                            &sink,
-                            request,
-                            format!(
-                                "failed to configure shell profile '{}': {}",
-                                profile.profile_name, e
-                            ),
-                        );
-                        return;
-                    }
-                }
-            }
-            Ok(None) => match configured_shell_job_command(&shell, &request.command) {
-                Ok(cmd) => cmd,
-                Err(e) => {
-                    send_start_failure(&sink, request, e);
-                    return;
-                }
-            },
+            Ok(profile) => profile,
             Err(e) => {
                 send_start_failure(&sink, request, e);
                 return;
             }
         };
-        let spawn = cmd
-            .current_dir(&cwd_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+        let mut commands = VecDeque::with_capacity(steps.len());
+        for step in &steps {
+            let configured = match prepared_profile.as_deref() {
+                Some(profile) => configured_prepared_shell_job_command(profile, &step.command),
+                None => configured_shell_job_command(&shell, &step.command),
+            };
+            let mut command = match configured {
+                Ok(command) => command,
+                Err(error) => {
+                    send_start_failure(&sink, request, error);
+                    return;
+                }
+            };
+            command
+                .current_dir(&cwd_path)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            commands.push_back(command);
+        }
+        let start = Instant::now();
+        let spawn = commands
+            .pop_front()
+            .expect("validated non-empty plan")
             .spawn();
         let mut child = match spawn {
             Ok(c) => c,
             Err(e) => {
-                let error = prepared_profile_name
-                    .as_deref()
+                let error = prepared_profile
+                    .as_ref()
                     .map(|profile_name| {
-                        format!("failed to spawn shell profile '{}': {}", profile_name, e)
+                        format!(
+                            "failed to spawn shell profile '{}': {}",
+                            profile_name.profile_name, e
+                        )
                     })
                     .unwrap_or_else(|| format!("failed to spawn command: {}", e));
                 send_start_failure(&sink, request, error);
                 return;
             }
         };
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let child = Arc::new(Mutex::new(child));
+        let mut stdout = child.stdout.take();
+        let mut stderr = child.stderr.take();
+        let mut child = Arc::new(Mutex::new(child));
         let stop_requested = Arc::new(AtomicBool::new(false));
         let client_id = sink.client_id().to_string();
         self.jobs.lock().unwrap().insert(
@@ -1264,6 +1296,11 @@ impl JobManager {
             exit_code: None,
             duration_ms: None,
             error: None,
+            validation_progress: validation.then(|| ShellJobValidationProgress {
+                completed: 0,
+                current_step: Some(steps[0].name.clone()),
+                failed_step: None,
+            }),
             finished: false,
         });
         let jobs = self.jobs.clone();
@@ -1271,27 +1308,148 @@ impl JobManager {
         let prepared_profiles = self.prepared_profiles.clone();
         let max_concurrent = self.max_concurrent;
         std::thread::spawn(move || {
-            let (tx, rx) = mpsc::channel::<OutputChunk>();
-            let mut readers = Vec::new();
-            if let Some(stdout) = stdout {
-                readers.push(spawn_reader(stdout, tx.clone(), true));
-            }
-            if let Some(stderr) = stderr {
-                readers.push(spawn_reader(stderr, tx.clone(), false));
-            }
-            drop(tx);
             let timeout_secs = request.timeout_secs.min(policy.max_timeout_secs).max(1);
-            let final_status;
-            loop {
+            let mut step_index = 0;
+            let (final_status, out, err, final_progress) = loop {
+                let (tx, rx) = mpsc::channel::<OutputChunk>();
+                let mut readers = Vec::new();
+                if let Some(stdout) = stdout {
+                    readers.push(spawn_reader(stdout, tx.clone(), true));
+                }
+                if let Some(stderr) = stderr {
+                    readers.push(spawn_reader(stderr, tx.clone(), false));
+                }
+                drop(tx);
+                let step_status = loop {
+                    let mut out = String::new();
+                    let mut err = String::new();
+                    while let Ok(chunk) = rx.try_recv() {
+                        match chunk {
+                            OutputChunk::Stdout(text) => out.push_str(&text),
+                            OutputChunk::Stderr(text) => err.push_str(&text),
+                        }
+                    }
+                    if !out.is_empty() || !err.is_empty() {
+                        let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+                            client_id: sink.client_id().to_string(),
+                            agent_instance_id: sink.agent_instance_id().to_string(),
+                            job_id: job_id.clone(),
+                            request_id: Some(request.request_id.clone()),
+                            status: "running".to_string(),
+                            stdout_chunk: (!out.is_empty()).then_some(out),
+                            stderr_chunk: (!err.is_empty()).then_some(err),
+                            stdout_tail: None,
+                            stderr_tail: None,
+                            exit_code: None,
+                            duration_ms: None,
+                            error: None,
+                            validation_progress: validation.then(|| ShellJobValidationProgress {
+                                completed: step_index,
+                                current_step: Some(steps[step_index].name.clone()),
+                                failed_step: None,
+                            }),
+                            finished: false,
+                        });
+                    }
+                    match child.lock().unwrap().try_wait() {
+                        Ok(Some(status)) => {
+                            let stopped = stop_requested.load(Ordering::SeqCst);
+                            break (
+                                if stopped {
+                                    "stopped"
+                                } else if status.success() {
+                                    "completed"
+                                } else {
+                                    "failed"
+                                }
+                                .to_string(),
+                                Some(status.code().unwrap_or(-1)),
+                                if stopped {
+                                    Some("job stopped by request".to_string())
+                                } else {
+                                    None
+                                },
+                            );
+                        }
+                        Ok(None) => {
+                            if start.elapsed() >= Duration::from_secs(timeout_secs) {
+                                stop_requested.store(true, Ordering::SeqCst);
+                                let _ = kill_child_group(&child);
+                                break (
+                                    "timeout".to_string(),
+                                    Some(-1),
+                                    Some(format!("job timed out after {} seconds", timeout_secs)),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            break (
+                                "failed".to_string(),
+                                None,
+                                Some(format!("failed to wait job: {}", e)),
+                            );
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(JOB_UPDATE_INTERVAL_MS));
+                };
+                for reader in readers {
+                    let _ = reader.join();
+                }
                 let mut out = String::new();
                 let mut err = String::new();
                 while let Ok(chunk) = rx.try_recv() {
                     match chunk {
-                        OutputChunk::Stdout(t) => out.push_str(&t),
-                        OutputChunk::Stderr(t) => err.push_str(&t),
+                        OutputChunk::Stdout(text) => out.push_str(&text),
+                        OutputChunk::Stderr(text) => err.push_str(&text),
                     }
                 }
-                if !out.is_empty() || !err.is_empty() {
+                if step_status.0 == "completed" && step_index + 1 < steps.len() {
+                    step_index += 1;
+                    if stop_requested.load(Ordering::SeqCst) {
+                        break (
+                            (
+                                "stopped".to_string(),
+                                Some(-1),
+                                Some("job stopped by request".to_string()),
+                            ),
+                            out,
+                            err,
+                            validation.then(|| ShellJobValidationProgress {
+                                completed: step_index,
+                                current_step: None,
+                                failed_step: None,
+                            }),
+                        );
+                    }
+                    let spawn = commands
+                        .pop_front()
+                        .expect("one command per validation step")
+                        .spawn();
+                    let mut next = match spawn {
+                        Ok(child) => child,
+                        Err(error) => {
+                            break (
+                                (
+                                    "failed".to_string(),
+                                    None,
+                                    Some(format!("failed to spawn validation step: {error}")),
+                                ),
+                                out,
+                                err,
+                                validation.then(|| ShellJobValidationProgress {
+                                    completed: step_index,
+                                    current_step: None,
+                                    failed_step: Some(steps[step_index].name.clone()),
+                                }),
+                            )
+                        }
+                    };
+                    let next_stdout = next.stdout.take();
+                    let next_stderr = next.stderr.take();
+                    child = Arc::new(Mutex::new(next));
+                    if let Some(job) = jobs.lock().unwrap().get_mut(&job_id) {
+                        job.child = Some(child.clone());
+                    }
                     let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                         client_id: sink.client_id().to_string(),
                         agent_instance_id: sink.agent_instance_id().to_string(),
@@ -1305,64 +1463,29 @@ impl JobManager {
                         exit_code: None,
                         duration_ms: None,
                         error: None,
+                        validation_progress: validation.then(|| ShellJobValidationProgress {
+                            completed: step_index,
+                            current_step: Some(steps[step_index].name.clone()),
+                            failed_step: None,
+                        }),
                         finished: false,
                     });
+                    stdout = next_stdout;
+                    stderr = next_stderr;
+                    continue;
                 }
-                match child.lock().unwrap().try_wait() {
-                    Ok(Some(status)) => {
-                        let stopped = stop_requested.load(Ordering::SeqCst);
-                        final_status = (
-                            if stopped {
-                                "stopped"
-                            } else if status.success() {
-                                "completed"
-                            } else {
-                                "failed"
-                            }
-                            .to_string(),
-                            Some(status.code().unwrap_or(-1)),
-                            if stopped {
-                                Some("job stopped by request".to_string())
-                            } else {
-                                None
-                            },
-                        );
-                        break;
-                    }
-                    Ok(None) => {
-                        if start.elapsed() >= Duration::from_secs(timeout_secs) {
-                            stop_requested.store(true, Ordering::SeqCst);
-                            let _ = kill_child_group(&child);
-                            final_status = (
-                                "timeout".to_string(),
-                                Some(-1),
-                                Some(format!("job timed out after {} seconds", timeout_secs)),
-                            );
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        final_status = (
-                            "failed".to_string(),
-                            None,
-                            Some(format!("failed to wait job: {}", e)),
-                        );
-                        break;
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(JOB_UPDATE_INTERVAL_MS));
-            }
-            for reader in readers {
-                let _ = reader.join();
-            }
-            let mut out = String::new();
-            let mut err = String::new();
-            while let Ok(chunk) = rx.try_recv() {
-                match chunk {
-                    OutputChunk::Stdout(t) => out.push_str(&t),
-                    OutputChunk::Stderr(t) => err.push_str(&t),
-                }
-            }
+                let progress = validation.then(|| ShellJobValidationProgress {
+                    completed: if step_status.0 == "completed" {
+                        steps.len()
+                    } else {
+                        step_index
+                    },
+                    current_step: None,
+                    failed_step: (step_status.0 == "failed")
+                        .then(|| steps[step_index].name.clone()),
+                });
+                break (step_status, out, err, progress);
+            };
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
                 agent_instance_id: sink.agent_instance_id().to_string(),
@@ -1376,6 +1499,7 @@ impl JobManager {
                 exit_code: final_status.1,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
                 error: final_status.2,
+                validation_progress: final_progress,
                 finished: true,
             });
             jobs.lock().unwrap().remove(&job_id);
@@ -1417,6 +1541,7 @@ impl JobManager {
                 exit_code: Some(-1),
                 duration_ms: Some(0),
                 error: Some("job stopped before start".to_string()),
+                validation_progress: None,
                 finished: true,
             });
             return Ok(());
@@ -1892,6 +2017,7 @@ transport = "auto"
         assert!(caps.jobs);
         assert!(caps.async_jobs);
         assert!(caps.async_shell_jobs);
+        assert!(caps.structured_validation_jobs);
     }
 
     #[test]
@@ -5706,6 +5832,7 @@ shell_profile = "../rust"
         assert!(caps.file_write);
         assert!(caps.async_jobs);
         assert!(caps.async_shell_jobs);
+        assert!(caps.structured_validation_jobs);
     }
 
     #[test]
@@ -5878,6 +6005,7 @@ shell_profile = "../rust"
                 exit_code: None,
                 duration_ms: None,
                 error: None,
+                validation_progress: None,
                 finished: false,
             };
             sink.send_job_update(&body).unwrap();

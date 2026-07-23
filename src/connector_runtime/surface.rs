@@ -143,11 +143,18 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "checks_run",
-            "Run a bounded set of standard Rust checks for an active task. This is the normal validation path; arbitrary commands belong in commands_run.",
+            "Submit an ordered, fail-fast Rust validation plan to the durable Execution Engine. Reuse operation_id only for an exact retry; use a new key to intentionally rerun the same checks. Short plans return a terminal result, while long plans quick-yield for task_review/task_cancel.",
             json!({
                 "type": "object",
                 "properties": {
                     "task_id": task_id_schema(),
+                    "operation_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+                        "description": "Caller-generated idempotency key. Reuse only for an exact retry of the same ordered checks, cwd, filter, and timeout."
+                    },
                     "checks": {
                         "type": "array", "minItems": 1, "maxItems": 3,
                         "items": { "type": "string", "enum": ["format", "check", "test"] }
@@ -156,11 +163,11 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
                     "test_filter": { "type": "string", "maxLength": 500 },
                     "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 120, "default": 120 }
                 },
-                "required": ["task_id", "checks"],
+                "required": ["task_id", "operation_id", "checks"],
                 "additionalProperties": false
             }),
             false,
-            false,
+            true,
         ),
         spec(
             "commands_run",
@@ -460,6 +467,16 @@ mod tests {
             .contains(&json!("operation_id")));
         assert_eq!(
             commands["properties"]["operation_id"]["pattern"],
+            "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$"
+        );
+        let checks = &spec["paths"]["/api/connector/checks/run"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"];
+        assert!(checks["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("operation_id")));
+        assert_eq!(
+            checks["properties"]["operation_id"]["pattern"],
             "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$"
         );
     }

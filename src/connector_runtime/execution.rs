@@ -8,6 +8,7 @@ use crate::db::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
     ConnectorExecutionReservation, ConnectorTaskSnapshot, ConnectorTaskStoreError,
 };
+use crate::shell_protocol::ShellJobValidationStep;
 use crate::tool_runtime::ToolRuntime;
 use crate::Database;
 use serde_json::{json, Value};
@@ -157,24 +158,30 @@ impl ExecutionService {
         self.db.reconcile_connector_executions(project_id, now)
     }
 
-    pub(crate) fn reserve_command(
+    pub(crate) fn reserve(
         &self,
         task: &ConnectorTaskSnapshot,
+        kind: &str,
         operation_id: &str,
         request_sha256: &str,
+        check_plan: &[String],
+        check_workspace_sha256: Option<&str>,
         timeout_secs: u64,
         now: i64,
     ) -> Result<ConnectorExecutionReservation, ConnectorTaskStoreError> {
         self.db.reserve_connector_execution(
             task,
+            kind,
             operation_id,
             request_sha256,
+            check_plan,
+            check_workspace_sha256,
             now.saturating_add(timeout_secs as i64),
             now,
         )
     }
 
-    pub(crate) async fn execute_command(
+    pub(crate) async fn execute(
         &self,
         reservation: ConnectorExecutionReservation,
         task: ConnectorTaskSnapshot,
@@ -182,6 +189,7 @@ impl ExecutionService {
         cwd: Option<String>,
         timeout_secs: u64,
         auth: AuthContext,
+        validation_steps: Vec<ShellJobValidationStep>,
     ) -> Result<ConnectorExecution, ConnectorTaskStoreError> {
         let execution = match reservation {
             ConnectorExecutionReservation::Existing(execution) => {
@@ -210,6 +218,7 @@ impl ExecutionService {
                 None,
                 Some(timeout_secs as i64),
                 cwd,
+                validation_steps,
             )
             .await;
         if !result.success {
@@ -462,7 +471,7 @@ pub(crate) fn execution_projection(
     json!({
         "execution_id": execution.execution_id,
         "operation_id": execution.operation_id,
-        "kind": "command",
+        "kind": execution.kind,
         "submission_status": if execution.failure_source.as_deref() == Some("submission") {
             "rejected"
         } else {
@@ -481,7 +490,9 @@ pub(crate) fn execution_projection(
         "first_status_failure_at": execution.first_status_failure_at,
         "last_successful_observation_at": execution.last_successful_observation_at,
         "status_failure_code": execution.status_failure_code,
-        "assertion_status": "not_run",
+        "assertion_status": assertion_status(execution),
+        "assertion_evidence": execution.assertion_evidence,
+        "checks": check_results(execution),
         "capability_outcome": capability_outcome,
         "queued_at": execution.queued_at,
         "queue_age_ms": execution.queued_at.map(|queued| now.saturating_sub(queued) * 1000),
@@ -499,7 +510,120 @@ pub(crate) fn execution_projection(
     })
 }
 
+pub(super) fn durable_assertion_evidence(
+    check: &str,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Value {
+    use crate::tool_runtime::validation_parser::{PARSER_KIND, PARSER_VERSION};
+    use crate::tool_runtime::validation_profile::{
+        validation_adapter_for_tool, ValidationFailureEvidence,
+    };
+
+    let tool = match check {
+        "format" => "cargo_fmt",
+        "check" => "cargo_check",
+        "test" => "cargo_test",
+        _ => "",
+    };
+    let (failure_kind, diagnostics) = validation_adapter_for_tool(tool)
+        .map(|adapter| {
+            let diagnostics = adapter.parse(stdout, stderr, true);
+            let failure_kind = adapter.map_failure_kind(ValidationFailureEvidence {
+                success: false,
+                reported_failure_kind: Some("command_exit_nonzero"),
+                exit_code: exit_code.map(i64::from),
+                diagnostics: Some(&diagnostics),
+                stdout_excerpt: stdout,
+                stderr_excerpt: stderr,
+            });
+            (failure_kind, Some(diagnostics))
+        })
+        .unwrap_or(("unknown_failure", None));
+    let mut evidence = json!({
+        "failed_check": check,
+        "failure_kind": failure_kind,
+        "exit_code": exit_code,
+        "parser": PARSER_KIND,
+        "parser_version": PARSER_VERSION,
+        "diagnostics": diagnostics
+    });
+    sanitize_evidence(&mut evidence);
+    if serde_json::to_vec(&evidence)
+        .is_ok_and(|bytes| bytes.len() <= crate::db::MAX_ASSERTION_EVIDENCE_BYTES)
+    {
+        evidence
+    } else {
+        json!({
+            "failed_check": check,
+            "failure_kind": failure_kind,
+            "exit_code": exit_code,
+            "parser": PARSER_KIND,
+            "parser_version": PARSER_VERSION,
+            "diagnostics": null
+        })
+    }
+}
+
+fn sanitize_evidence(value: &mut Value) {
+    match value {
+        Value::String(text) => *text = crate::validation_bridge::sanitize_bridge_text(text),
+        Value::Array(items) => items.iter_mut().for_each(sanitize_evidence),
+        Value::Object(fields) => fields.values_mut().for_each(sanitize_evidence),
+        _ => {}
+    }
+}
+
+fn assertion_status(execution: &ConnectorExecution) -> &'static str {
+    if execution.kind != "check" {
+        return "not_run";
+    }
+    match execution.state.as_str() {
+        "succeeded" => "passed",
+        "failed" if execution.failure_source.as_deref() == Some("check") => "failed",
+        "accepted" | "queued" | "starting" | "running" | "cancel_requested" => "in_progress",
+        _ => "not_run",
+    }
+}
+
+fn check_results(execution: &ConnectorExecution) -> Value {
+    if execution.kind != "check" {
+        return Value::Null;
+    }
+    let assertion = assertion_status(execution);
+    Value::Array(
+        execution
+            .check_plan
+            .iter()
+            .enumerate()
+            .map(|(index, check)| {
+                let status = if index < execution.check_completed {
+                    "passed"
+                } else if assertion == "failed"
+                    && execution.failed_check.as_deref() == Some(check.as_str())
+                {
+                    "failed"
+                } else if index == execution.check_completed && assertion == "in_progress" {
+                    "in_progress"
+                } else {
+                    "not_run"
+                };
+                json!({ "check": check, "status": status })
+            })
+            .collect(),
+    )
+}
+
 fn execution_next_action(execution: &ConnectorExecution) -> &'static str {
+    if execution.failure_source.as_deref() == Some("executor")
+        && execution
+            .failure_code
+            .as_deref()
+            .is_some_and(|code| code.starts_with("validation_"))
+    {
+        return "upgrade_agent_and_rerun_checks";
+    }
     match execution.state.as_str() {
         "accepted" | "queued" | "starting" | "running" => "review_or_cancel",
         "cancel_requested" => "wait_for_cancellation",

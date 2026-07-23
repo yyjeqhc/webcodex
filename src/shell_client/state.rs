@@ -1,7 +1,7 @@
 use super::auth::ShellClientAuthGroup;
 use crate::shell_protocol::{
     AgentPolicySummary, ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellJobCodexMetadata, ShellRunResponse,
+    ShellJobCodexMetadata, ShellJobValidationProgress, ShellRunResponse,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -60,6 +60,8 @@ pub(super) struct ShellJobRecord {
     pub(super) stderr: Option<String>,
     pub(super) error: Option<String>,
     pub(super) codex: Option<ShellJobCodexMetadata>,
+    pub(super) validation_steps: Vec<String>,
+    pub(super) validation_progress: Option<ShellJobValidationProgress>,
 }
 
 #[derive(Debug, Default)]

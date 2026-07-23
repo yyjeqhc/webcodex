@@ -202,6 +202,7 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             jobs: true,
             async_jobs: true,
             async_shell_jobs: true,
+            structured_validation_jobs: true,
             lsp_read_only_navigation: true,
         },
         policy: GeneratedAgentPolicy {

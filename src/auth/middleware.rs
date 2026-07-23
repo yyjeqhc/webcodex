@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::{Config, Database};
 use salvo::prelude::*;
 
-use super::principal::{AuthContext, AuthError};
+use super::context::{AuthContext, AuthError};
 use super::shared_key::{
     allow_anonymous_enabled, is_managed_token_prefix, open_anonymous_context, shared_key_context,
     shared_key_enabled,
@@ -379,9 +379,7 @@ impl Handler for AuthMiddleware {
                 // etc.). Map to the appropriate HTTP status without leaking
                 // internal details.
                 let status = match e {
-                    AuthError::ForbiddenTokenKind => StatusCode::FORBIDDEN,
-                    AuthError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-                    _ => StatusCode::UNAUTHORIZED,
+                    AuthError::InvalidToken => StatusCode::UNAUTHORIZED,
                 };
                 res.status_code(status);
                 if status == StatusCode::UNAUTHORIZED {

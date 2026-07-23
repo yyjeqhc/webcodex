@@ -156,8 +156,9 @@ Iteration 6.1 通过的门禁：
 
 ## 7. Iteration 7 精确交接
 
-下一轮只迁移 `checks_run` 到同一 Execution lifecycle，并完成 hard-cut/deletion：删除 checks 的同步等待与重复 projection，继续清理无调用者 Hosted/session adapter，保持最多 9 项 capability，并争取相对 Iteration 6 起点 production LOC 净减少至少 10%。
+本节是第六轮完成时的历史交接。Iteration 7 已按该边界把 `checks_run` 迁入同一 Execution lifecycle，并完成首轮 hard cut；实际语义、删除证据、LOC 结果和未删除边界见
+[`HOSTED_EXECUTION_ENGINE_SEVENTH_ITERATION.zh-CN.md`](HOSTED_EXECUTION_ENGINE_SEVENTH_ITERATION.zh-CN.md)。
 
-Iteration 7 只能在本轮 focused lanes、agent JobManager lane 和完整 `cargo test --bin webcodex` 均通过后开始；不得用迁移 checks 掩盖 command retry、取消竞态、monitor 生命周期或故障恢复回归。
+第六轮要求的 command retry、取消竞态、monitor 生命周期和故障恢复合同仍由统一 Execution 测试保护；第七轮没有另建 check-specific service、scheduler、process manager 或 output store。
 
 仍需外部 acceptance 的风险是：真实 ChatGPT MCP/OpenAPI client 的 long-poll/取消重连行为、CI 对 branch head 的独立成功记录，以及 runtime restart 后任意 OS child 的跨进程重新附着；最后一项仍是明确非目标。

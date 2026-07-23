@@ -19,6 +19,7 @@
 - [HOSTED_TASK_RESULT_THIRD_ITERATION.zh-CN.md](HOSTED_TASK_RESULT_THIRD_ITERATION.zh-CN.md) - 隔离 execution worktree、稳定 Task Result、本机 accept/reject、一次性 raw-command approval 与异常恢复边界。
 - [HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md](HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md) - 可复用写槽位、Run 租约、Result 后立即释放、Project 级 Cargo cache，以及后续编辑/validation 工具增强计划。
 - [HOSTED_EXECUTION_ENGINE_SIXTH_ITERATION.zh-CN.md](HOSTED_EXECUTION_ENGINE_SIXTH_ITERATION.zh-CN.md) - durable command Execution、8 秒 quick-yield、bounded review、process-group cancel、restart reconciliation 与第六轮验收记录。
+- [HOSTED_EXECUTION_ENGINE_SEVENTH_ITERATION.zh-CN.md](HOSTED_EXECUTION_ENGINE_SEVENTH_ITERATION.zh-CN.md) - checks 的统一 durable Execution、调用幂等、assertion 分层、review/cancel/restart、legacy hard cut 与第七轮验收记录。
 6. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、默认 coding loop、read-only LSP 与 validation intelligence，以及常见 MCP 错误。
 7. [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) / [GPT_ACTIONS.md](GPT_ACTIONS.md) - Custom GPT 设置、OpenAPI 导入、认证、generic validation-summary access 和 workflow guidance。
 8. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) - MCP 和 GPT Actions 指南使用的截图。

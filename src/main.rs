@@ -288,11 +288,6 @@ only for local/trusted-network demos."
             Router::with_path("projects/discard_untracked")
                 .post(runtime_http::projects_discard_untracked),
         )
-        .push(
-            Router::with_path("projects/replace_in_file")
-                .post(runtime_http::projects_replace_in_file),
-        )
-        .push(Router::with_path("projects/write_file").post(runtime_http::projects_write_file))
         .push(Router::with_path("projects/run_job").post(runtime_http::projects_run_job))
         .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
         // Phase 2e-3: first-party OAuth client management API. Behind

@@ -426,7 +426,17 @@ impl Database {
                 first_status_failure_at INTEGER,
                 last_successful_observation_at INTEGER,
                 status_failure_code TEXT,
+                check_plan TEXT,
+                check_completed INTEGER NOT NULL DEFAULT 0 CHECK(check_completed >= 0),
+                check_workspace_sha256 TEXT,
+                validated_workspace_sha256 TEXT,
+                failed_check TEXT,
+                assertion_evidence_json TEXT,
                 UNIQUE(task_id, run_id, operation_id),
+                CHECK(
+                    (kind = 'command' AND check_plan IS NULL)
+                    OR (kind = 'check' AND check_plan IS NOT NULL)
+                ),
                 FOREIGN KEY(task_id) REFERENCES wc_tasks(id),
                 FOREIGN KEY(run_id) REFERENCES wc_runs(id)
             );
@@ -457,6 +467,7 @@ impl Database {
         // tables are always created with the current schema, and pre-subject
         // layouts are unsupported (recreate the OAuth tables if needed).
         Self::ensure_users_and_api_key_columns(&conn)?;
+        Self::ensure_connector_execution_columns(&conn)?;
         Ok(())
     }
 
@@ -506,6 +517,26 @@ impl Database {
             if !key_cols.iter().any(|c| c == col) {
                 conn.execute(
                     &format!("ALTER TABLE api_keys ADD COLUMN {} {}", col, decl),
+                    [],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_connector_execution_columns(conn: &Connection) -> anyhow::Result<()> {
+        let columns = table_columns(conn, "wc_executions")?;
+        for (column, declaration) in [
+            ("check_plan", "TEXT"),
+            ("check_completed", "INTEGER NOT NULL DEFAULT 0"),
+            ("check_workspace_sha256", "TEXT"),
+            ("validated_workspace_sha256", "TEXT"),
+            ("failed_check", "TEXT"),
+            ("assertion_evidence_json", "TEXT"),
+        ] {
+            if !columns.iter().any(|existing| existing == column) {
+                conn.execute(
+                    &format!("ALTER TABLE wc_executions ADD COLUMN {column} {declaration}"),
                     [],
                 )?;
             }

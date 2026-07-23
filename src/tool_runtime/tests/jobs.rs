@@ -649,7 +649,14 @@ async fn run_job_rejects_server_configured_project_without_local_spawn() {
     let root = tmp.path();
     let runtime = runtime_with_project(root, "demo");
     let result = runtime
-        .run_job("demo".to_string(), "true".to_string(), None, Some(10), None)
+        .run_job(
+            "demo".to_string(),
+            "true".to_string(),
+            None,
+            Some(10),
+            None,
+            Vec::new(),
+        )
         .await;
     assert!(!result.success);
     assert!(result.error.unwrap().contains("unknown_project"));

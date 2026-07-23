@@ -66,6 +66,7 @@ pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
+pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS: &str = "structured_validation_jobs";
 /// Explicit capability for agent-side read-only LSP navigation. Missing on
 /// older agents and defaults to `false` so the server never dispatches typed
 /// LSP requests to agents that cannot handle them.
@@ -79,6 +80,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
 ];
 
@@ -98,6 +100,10 @@ pub struct ShellClientCapabilities {
     pub async_jobs: bool,
     #[serde(default)]
     pub async_shell_jobs: bool,
+    /// Structured validation plans and authenticated progress updates. Older
+    /// agents omit this field and must never receive validation jobs.
+    #[serde(default)]
+    pub structured_validation_jobs: bool,
     /// Read-only semantic navigation via agent-side rust-analyzer. Defaults to
     /// false for wire compatibility with older agents.
     #[serde(default)]
@@ -114,6 +120,7 @@ impl Default for ShellClientCapabilities {
             jobs: false,
             async_jobs: false,
             async_shell_jobs: false,
+            structured_validation_jobs: false,
             lsp_read_only_navigation: false,
         }
     }
@@ -496,6 +503,10 @@ pub struct ShellAgentJobUpdateRequest {
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
+    /// Executor-owned bounded progress for an internally submitted validation
+    /// plan. Project stdout/stderr never populates this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_progress: Option<ShellJobValidationProgress>,
     #[serde(default)]
     pub finished: bool,
 }
@@ -610,6 +621,21 @@ pub struct ShellJobOpRequest {
     pub codex: Option<ShellJobCodexMetadata>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellJobValidationStep {
+    pub name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellJobValidationProgress {
+    pub completed: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_step: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_step: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentShellJobResult {
     #[serde(default)]
@@ -662,6 +688,8 @@ pub struct ShellJobInfo {
     pub codex: Option<ShellJobCodexMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<ShellAgentJobResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_progress: Option<ShellJobValidationProgress>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1000,6 +1028,7 @@ mod envelope_tests {
                 jobs: true,
                 async_jobs: true,
                 async_shell_jobs: true,
+                structured_validation_jobs: true,
                 lsp_read_only_navigation: false,
             }),
             projects: None,
@@ -1115,6 +1144,7 @@ mod envelope_tests {
                 exit_code: None,
                 duration_ms: None,
                 error: None,
+                validation_progress: None,
                 finished: false,
             },
         };
@@ -1263,6 +1293,7 @@ mod envelope_tests {
             exit_code: None,
             duration_ms: None,
             error: None,
+            validation_progress: None,
             finished: false,
         };
         let json = serde_json::to_string(&job).unwrap();

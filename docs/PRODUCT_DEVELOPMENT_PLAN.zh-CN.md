@@ -1092,14 +1092,16 @@ Golden scenarios：
 
 ## 20. 下一步
 
-接入和 Task 主路径完成后，近期开发不再围绕某个线上窗口增加状态聚合，也不立刻扩展 shared control plane。按用户体验收益排序：
+本文件保留 Project-first 的产品模型、接入拓扑和前五轮实现依据。2026-07-23 之后的具体开发顺序、代码/测试预算、时间估算和合并门禁统一由 [`PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md`](PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md) 管理，避免多份迭代文档同时声称自己是“下一步”。
 
-1. **Round 5 已完成：编辑与读取可靠性。** 现有 `edits_apply` 已原位升级为事务式 multi-file edit/create/delete/rename，具备逐文件 SHA-256、全批 preflight、operation id durable replay 和结构化冲突；`files_read` 返回完整文件 hash，`files_search` 使用 query-bound cursor，`task_start` 返回小型 Project Brief。实现与边界见 [`HOSTED_EDIT_RELIABILITY_FIFTH_ITERATION.zh-CN.md`](HOSTED_EDIT_RELIABILITY_FIFTH_ITERATION.zh-CN.md)。
-2. **Round 6：project-aware validation。** 用明确 marker/Project recipe 支持 Rust、Node、Python、Go 等 validation profile，统一 bounded diagnostics、changed-path check selection、progress/result，以及 passed/failed/not_run/stale 终态。这是下一主开发轮次。
-3. **真实 hosted acceptance 继续作为并行验收 lane，而不是架构前置。** 在具备账号权限的机器上记录 OpenAI Tunnel、Cloudflare Named/Quick、MCP/GPT Actions 的 handshake、重连、SSE、身份和 credential redaction 证据；失败不驱动临时 façade。
-4. **Round 6 稳定后才进入共享模式。** 实现 User/Device/ProjectMembership/Workspace routing、device revoke 和跨 Workspace Result apply precondition；个人本地模式仍保持一条命令接入与默认单写槽位。
-5. Browser review/approval UI 可与共享模式一起做，但不能替代工具成功率改进，也不能重新暴露 agent/session/runtime 内部概念。
+当前顺序：
 
-Round 5/6 使用 golden tasks 记录首次编辑成功率、schema retry、平均工具调用数、重复读取、warm validation 时间、诊断可操作率和磁盘峰值。只有指标或真实 hosted acceptance 证明有必要时才拆分/新增模型能力；否则继续保持当前 8 项 project-bound surface。
+1. **Round 5 已完成：编辑与读取可靠性。** `edits_apply` 已具备事务式 multi-file edit/create/delete/rename、逐文件 SHA-256、全批 preflight、durable idempotency 和结构化冲突。
+2. **Iteration 6：Execution Engine。** 先解决 quick-yield、durable execution、review/watch、端到端取消、queue 可观测性、restart reconciliation 和结果语义分离；`commands_run` 不再同步等待旧 `run_shell`。
+3. **Iteration 7：Checks、hard cut 与删除。** `checks_run` 复用同一 Execution Engine，关闭 legacy Hosted surface，并删除旧 Session/Tool/Connector 路径。
+4. **Iteration 8：产品精修和受控 project-aware validation。** 在执行生命周期稳定后，再增加最小 Rust/Node/Python/Go recipes、onboarding、review UI 和真实 hosted acceptance。
+5. **共享 control plane 和 Operations Profile 后置。** SSH、多设备、多用户、Facts 和 workflow 不得回灌当前 Coding Profile 的默认复杂度。
 
-这个顺序把 WebCodex 放回原本的位置：线上聊天窗口负责智能，WebCodex 负责把私有项目以轻量、安全、可预测、可审查的方式接进去。先让读、改、检查的单次效果稳定，再把同一套事实模型扩展到多设备和多用户，比同步更多模糊状态更有价值。
+可直接启动 Iteration 6 的执行目标见 [`CODEX_EXECUTION_ENGINE_REFACTOR_PROMPT.zh-CN.md`](CODEX_EXECUTION_ENGINE_REFACTOR_PROMPT.zh-CN.md)。
+
+后续仍保持当前 project-bound surface 小而明确；只有真实 replay 指标证明必要时才新增模型能力。每轮必须同时给出删除清单、production/test LOC before/after 和真实失败场景覆盖。

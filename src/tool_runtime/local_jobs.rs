@@ -75,6 +75,7 @@ impl SystemJobKiller {
     fn signal_group(pgid: i64, signal: &str) {
         match std::process::Command::new("kill")
             .arg(signal)
+            .arg("--")
             .arg(format!("-{}", pgid))
             .status()
         {

@@ -82,6 +82,23 @@ and [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
 Test layout guidance (soft limits, domain folders):
 [`docs/agent/architecture-decisions.md`](docs/agent/architecture-decisions.md).
 
+### Project-first refinement work
+
+For broad work on `refactor/project-first-experience`, read
+[`docs/PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md`](docs/PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md)
+before editing.
+
+- Record production/test LOC and largest files before and after the iteration.
+- A new abstraction must replace an existing responsibility; report the old
+  path deleted in the same iteration or explicitly reduce scope.
+- Do not expand the Hosted model surface beyond nine single-intent capabilities
+  without replay or acceptance evidence and an explicit design change.
+- New tests must protect a real contract, state transition, recovery invariant,
+  or observed failure class. Prefer table-driven/state-machine coverage and
+  delete tests that only served removed compatibility paths.
+- A large refactor is not complete without a deletion list, before/after
+  metrics, focused validation, and a precise remaining-risk handoff.
+
 ---
 
 ## 4. Git and Commit Rules
@@ -252,6 +269,8 @@ fields are not required when no tree changes were made.
 | Doc | Contents |
 |---|---|
 | [`docs/agent/architecture-decisions.md`](docs/agent/architecture-decisions.md) | Session dual model, API evolution, test layout, validation evidence |
+| [`docs/PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md`](docs/PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md) | Current Project-first execution, simplification, LOC/test budgets, and merge gates |
+| [`docs/CODEX_EXECUTION_ENGINE_REFACTOR_PROMPT.zh-CN.md`](docs/CODEX_EXECUTION_ENGINE_REFACTOR_PROMPT.zh-CN.md) | Ready-to-run Codex goal for the next Execution Engine vertical slice |
 | [`docs/agent/oauth-bridge-plan.md`](docs/agent/oauth-bridge-plan.md) | Shared-key OAuth bridge decisions and phase order |
 | [`docs/agent/openapi-guidelines.md`](docs/agent/openapi-guidelines.md) | GPT Action / OpenAPI product rules |
 | [`docs/agent/release-process.md`](docs/agent/release-process.md) | Expanded release exception procedure |

@@ -398,6 +398,43 @@ impl Database {
                 FOREIGN KEY(task_id) REFERENCES wc_tasks(id)
             );
 
+            CREATE TABLE IF NOT EXISTS wc_executions (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK(kind IN ('command', 'check')),
+                task_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN (
+                    'accepted', 'queued', 'starting', 'running', 'cancel_requested',
+                    'succeeded', 'failed', 'cancelled', 'interrupted', 'unknown'
+                )),
+                submitted_at INTEGER NOT NULL,
+                queued_at INTEGER,
+                queue_deadline INTEGER NOT NULL,
+                started_at INTEGER,
+                last_output_at INTEGER,
+                finished_at INTEGER,
+                stdout_cursor INTEGER NOT NULL DEFAULT 1 CHECK(stdout_cursor >= 1),
+                stderr_cursor INTEGER NOT NULL DEFAULT 1 CHECK(stderr_cursor >= 1),
+                exit_code INTEGER,
+                failure_source TEXT,
+                failure_code TEXT,
+                cancel_requested_at INTEGER,
+                terminal_reason TEXT,
+                operation_id TEXT NOT NULL,
+                request_sha256 TEXT NOT NULL,
+                executor_reference TEXT,
+                first_status_failure_at INTEGER,
+                last_successful_observation_at INTEGER,
+                status_failure_code TEXT,
+                UNIQUE(task_id, run_id, operation_id),
+                FOREIGN KEY(task_id) REFERENCES wc_tasks(id),
+                FOREIGN KEY(run_id) REFERENCES wc_runs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_executions_task_submitted
+                ON wc_executions(task_id, submitted_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_wc_executions_run_state
+                ON wc_executions(run_id, state, submitted_at DESC);
+
             CREATE TABLE IF NOT EXISTS wc_task_events (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,

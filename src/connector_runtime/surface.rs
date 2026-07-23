@@ -15,6 +15,7 @@ pub(crate) const CAPABILITY_NAMES: &[&str] = &[
     "checks_run",
     "commands_run",
     "task_review",
+    "task_cancel",
     "task_finish",
 ];
 
@@ -163,34 +164,75 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "commands_run",
-            "Explicit escape hatch for one bounded project command. The exact action must receive one-time approval through the host-local WebCodex CLI before it is dispatched; approval cannot be granted or replayed by this connector.",
+            "Submit one bounded project command to the durable Execution Engine. Reuse operation_id only to retry the identical command/cwd/timeout request; use a new operation_id to intentionally run the same command again. The exact action needs one-time host-local approval, and the call quick-yields after about 8 seconds when work remains active.",
             json!({
                 "type": "object",
                 "properties": {
                     "task_id": task_id_schema(),
+                    "operation_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+                        "description": "Caller-generated idempotency key. Reuse only for an exact retry of the same normalized command, cwd, and timeout."
+                    },
                     "command": { "type": "string", "minLength": 1, "maxLength": 32768 },
                     "cwd": path_schema(),
                     "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 120, "default": 120 }
                 },
-                "required": ["task_id", "command"],
+                "required": ["task_id", "operation_id", "command"],
                 "additionalProperties": false
             }),
             false,
-            false,
+            true,
         ),
         spec(
             "task_review",
-            "Return the current bounded change summary or stable result preview plus its validation/action timeline. Use this instead of separately aggregating git, job, agent, and session status.",
+            "Return the current bounded change summary, durable execution state/output cursors, and recent task events. Optionally wait up to 15 seconds for progress; timeout returns a heartbeat instead of holding the request indefinitely.",
             json!({
                 "type": "object",
                 "properties": {
                     "task_id": task_id_schema(),
-                    "include_diff": { "type": "boolean", "default": true }
+                    "include_diff": { "type": "boolean", "default": true },
+                    "after_cursor": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Return task events after this durable event cursor."
+                    },
+                    "wait_ms": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 15000,
+                        "default": 0,
+                        "description": "Bounded wait for a newer event, execution progress, or terminal state."
+                    },
+                    "max_events": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 50
+                    },
+                    "include_output_tail": { "type": "boolean", "default": true }
                 },
                 "required": ["task_id"],
                 "additionalProperties": false
             }),
             true,
+            true,
+        ),
+        spec(
+            "task_cancel",
+            "Request cancellation of the active task execution through the existing job/process owner. Cancellation is durable, idempotent, process-group aware, and may quick-yield while terminal confirmation is pending.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "task_id": task_id_schema(),
+                    "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+                },
+                "required": ["task_id"],
+                "additionalProperties": false
+            }),
+            false,
             true,
         ),
         spec(
@@ -226,6 +268,7 @@ pub(crate) fn route_for(name: &str) -> Option<&'static str> {
         "checks_run" => Some("/api/connector/checks/run"),
         "commands_run" => Some("/api/connector/commands/run"),
         "task_review" => Some("/api/connector/task/review"),
+        "task_cancel" => Some("/api/connector/task/cancel"),
         "task_finish" => Some("/api/connector/task/finish"),
         _ => None,
     }
@@ -395,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn hosted_openapi_is_generated_from_same_eight_capabilities() {
+    fn hosted_openapi_is_generated_from_same_nine_capabilities() {
         let spec = build_openapi_spec("https://connector.example".to_string());
         let operations = spec["paths"]
             .as_object()
@@ -408,6 +451,16 @@ mod tests {
             .map(|name| name.to_string())
             .collect::<BTreeSet<_>>();
         assert_eq!(operations, expected);
-        assert_eq!(spec["paths"].as_object().unwrap().len(), 8);
+        assert_eq!(spec["paths"].as_object().unwrap().len(), 9);
+        let commands = &spec["paths"]["/api/connector/commands/run"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"];
+        assert!(commands["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("operation_id")));
+        assert_eq!(
+            commands["properties"]["operation_id"]["pattern"],
+            "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$"
+        );
     }
 }

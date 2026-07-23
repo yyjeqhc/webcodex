@@ -5,6 +5,9 @@
 //! It owns project/task context, so model-visible calls never carry the legacy
 //! executor project id or workflow-session state.
 
+mod execution;
+#[cfg(test)]
+mod execution_tests;
 pub(crate) mod http;
 pub(crate) mod surface;
 pub(crate) mod workspace;
@@ -15,8 +18,8 @@ use crate::auth::{
 };
 use crate::db::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
-    ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskStoreError,
-    NewConnectorResult, NewConnectorTask,
+    ConnectorExecutionReservation, ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot,
+    ConnectorTaskStoreError, NewConnectorResult, NewConnectorTask,
 };
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
@@ -106,6 +109,7 @@ pub(crate) struct ConnectorRuntime {
     db: Arc<Database>,
     context: ConnectorContext,
     workspace: workspace::WorkspaceManager,
+    executions: execution::ExecutionService,
     workspace_ops: tokio::sync::Mutex<()>,
     task_locks: StdMutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
 }
@@ -144,14 +148,17 @@ impl ConnectorRuntime {
     ) -> Result<Self, String> {
         context.validate()?;
         let workspace = workspace::WorkspaceManager::new(&context)?;
-        let interrupted = db
-            .interrupt_connector_runs(&context.project_id, chrono::Utc::now().timestamp())
+        let executions =
+            execution::ExecutionService::new(tools.clone(), db.clone(), workspace.clone());
+        let (runs_recovered, executions_recovered) = executions
+            .reconcile_startup(&context.project_id, chrono::Utc::now().timestamp())
             .map_err(|error| format!("failed to recover connector runs: {error}"))?;
-        if interrupted > 0 {
+        if runs_recovered > 0 || executions_recovered > 0 {
             tracing::warn!(
                 project_id = %context.project_id,
-                interrupted,
-                "Recovered unfinished connector runs as interrupted"
+                runs = runs_recovered,
+                executions = executions_recovered,
+                "Recovered unfinished connector executions as interrupted"
             );
         }
         let preserved = db
@@ -165,6 +172,7 @@ impl ConnectorRuntime {
             db,
             context,
             workspace,
+            executions,
             workspace_ops: tokio::sync::Mutex::new(()),
             task_locks: StdMutex::new(HashMap::new()),
         })
@@ -257,10 +265,14 @@ impl ConnectorRuntime {
         // Requests for one task are serialized across devices so finish cannot
         // race an in-flight edit or command. Read-only tasks remain concurrent;
         // writable task start/finish also coordinate the reusable write slot.
-        let task_lock = arguments
-            .get("task_id")
-            .and_then(Value::as_str)
-            .map(|task_id| self.task_lock(task_id));
+        let task_lock = (!matches!(capability, "commands_run" | "task_review" | "task_cancel"))
+            .then(|| {
+                arguments
+                    .get("task_id")
+                    .and_then(Value::as_str)
+                    .map(|task_id| self.task_lock(task_id))
+            })
+            .flatten();
         let _task_guard = match task_lock.as_ref() {
             Some(lock) => Some(lock.lock().await),
             None => None,
@@ -294,6 +306,7 @@ impl ConnectorRuntime {
                 self.task_review(arguments, &subject_id, auth, transport)
                     .await
             }
+            "task_cancel" => self.task_cancel(arguments, &subject_id, auth).await,
             "task_finish" => {
                 self.task_finish(arguments, &subject_id, auth, transport, now)
                     .await
@@ -917,13 +930,16 @@ impl ConnectorRuntime {
         arguments: Value,
         subject_id: &str,
         auth: &AuthContext,
-        transport: ConnectorTransport,
+        _transport: ConnectorTransport,
         now: i64,
     ) -> ConnectorCallOutcome {
         let input: CommandsRunInput = match parse_input("commands_run", arguments) {
             Ok(input) => input,
             Err(outcome) => return outcome,
         };
+        if let Err(message) = validate_operation_id(&input.operation_id) {
+            return invalid_input("commands_run", message);
+        }
         if input.command.trim().is_empty() || input.command.len() > 32768 {
             return invalid_input("commands_run", "command must be 1..=32768 bytes");
         }
@@ -938,110 +954,154 @@ impl ConnectorRuntime {
                 return invalid_input("commands_run", message);
             }
         }
+        let task_lock = self.task_lock(&input.task_id);
+        let task_guard = task_lock.lock().await;
         let task = match self.active_writable_task(&input.task_id, subject_id, "commands_run", now)
         {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
         let timeout_secs = input.timeout_secs.unwrap_or(120);
-        let manager = self.workspace.clone();
-        let task_for_precondition = task.clone();
-        let precondition = match tokio::task::spawn_blocking(move || {
-            manager.action_precondition(&task_for_precondition)
-        })
-        .await
-        {
-            Ok(Ok(precondition)) => precondition,
-            Ok(Err(message)) => {
-                let cursor = self.record_event(
-                    &task,
-                    "commands_run",
-                    json!({ "ok": false, "stage": "approval_precondition" }),
-                    now,
-                );
-                let cursor = cursor.unwrap_or(task.event_cursor);
-                return ConnectorCallOutcome::error_for_task_at(
-                    409,
-                    "approval_precondition_failed",
-                    self.sanitize_task_string(&task, &message),
-                    false,
-                    true,
-                    Some("Resolve the Git workspace issue before requesting command approval."),
-                    &task,
-                    cursor,
-                    Value::Null,
-                );
-            }
-            Err(error) => {
-                tracing::error!(error = %error, "connector approval precondition task failed");
-                return ConnectorCallOutcome::error_for_task(
-                    500,
-                    "approval_precondition_failed",
-                    "connector could not capture the command precondition",
-                    false,
-                    true,
-                    Some("Inspect server logs before retrying the command request."),
-                    &task,
-                    Value::Null,
-                );
-            }
-        };
-        let action_hash = command_action_hash(
-            &task,
-            &input.command,
-            input.cwd.as_deref(),
-            timeout_secs,
-            &precondition,
-        );
-        let action_summary = format!(
-            "raw project command ({} bytes{}, workspace {})",
-            input.command.len(),
-            input
-                .cwd
-                .as_deref()
-                .map(|cwd| format!(", cwd {cwd}"))
-                .unwrap_or_default(),
-            short_oid(&precondition)
-        );
-        let gate = match self.db.request_or_consume_connector_approval(
+        let request_sha256 =
+            command_request_hash(&task, &input.command, input.cwd.as_deref(), timeout_secs);
+        let existing = match self.db.latest_connector_execution(
             &task.task_id,
             &self.context.project_id,
             subject_id,
-            "commands_run",
-            &action_hash,
-            &action_summary,
-            now,
-            now + COMMAND_APPROVAL_TTL_SECS,
+            Some(&input.operation_id),
         ) {
-            Ok(gate) => gate,
+            Ok(Some(execution)) if execution.request_sha256 != request_sha256 => {
+                return store_error_outcome(
+                    ConnectorTaskStoreError::OperationIdConflict(input.operation_id),
+                    Some(&task),
+                )
+            }
+            Ok(execution) => execution.map(ConnectorExecutionReservation::Existing),
             Err(error) => return store_error_outcome(error, Some(&task)),
         };
-        if !matches!(&gate, ConnectorApprovalGate::Authorized(_)) {
-            let current = self.task(&task.task_id, subject_id).unwrap_or(task);
-            return approval_gate_outcome(gate, &current);
-        }
-        let args = json!({
-            "project": task.execution_executor_ref,
-            "command": input.command,
-            "cwd": input.cwd,
-            "timeout_secs": timeout_secs as i64
-        });
-        match self
-            .invoke_kernel("run_shell", args, &task, auth, transport)
-            .await
-        {
-            Ok(output) => {
-                let cursor =
-                    match self.record_event(&task, "commands_run", json!({ "ok": true }), now) {
-                        Ok(cursor) => cursor,
-                        Err(outcome) => return outcome,
-                    };
-                ConnectorCallOutcome::success_at(&task, cursor, output)
+        let reservation = match existing {
+            Some(existing) => existing,
+            None => {
+                let manager = self.workspace.clone();
+                let task_for_precondition = task.clone();
+                let precondition = match tokio::task::spawn_blocking(move || {
+                    manager.action_precondition(&task_for_precondition)
+                })
+                .await
+                {
+                    Ok(Ok(precondition)) => precondition,
+                    Ok(Err(message)) => {
+                        let cursor = self.record_event(
+                            &task,
+                            "commands_run",
+                            json!({ "ok": false, "stage": "approval_precondition" }),
+                            now,
+                        );
+                        let cursor = cursor.unwrap_or(task.event_cursor);
+                        return ConnectorCallOutcome::error_for_task_at(
+                            409,
+                            "approval_precondition_failed",
+                            self.sanitize_task_string(&task, &message),
+                            false,
+                            true,
+                            Some("Resolve the Git workspace issue, then retry."),
+                            &task,
+                            cursor,
+                            Value::Null,
+                        );
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "connector approval precondition task failed");
+                        return ConnectorCallOutcome::error_for_task(
+                            500,
+                            "approval_precondition_failed",
+                            "connector could not capture the command precondition",
+                            false,
+                            true,
+                            Some("Inspect server logs before retrying the command request."),
+                            &task,
+                            Value::Null,
+                        );
+                    }
+                };
+                let action_hash = command_action_hash(&request_sha256, &precondition);
+                let action_summary = format!(
+                    "raw project command ({} bytes{}, workspace {})",
+                    input.command.len(),
+                    input
+                        .cwd
+                        .as_deref()
+                        .map(|cwd| format!(", cwd {cwd}"))
+                        .unwrap_or_default(),
+                    short_oid(&precondition)
+                );
+                let gate = match self.db.request_or_consume_connector_approval(
+                    &task.task_id,
+                    &self.context.project_id,
+                    subject_id,
+                    "commands_run",
+                    &action_hash,
+                    &action_summary,
+                    now,
+                    now + COMMAND_APPROVAL_TTL_SECS,
+                ) {
+                    Ok(gate) => gate,
+                    Err(error) => return store_error_outcome(error, Some(&task)),
+                };
+                if !matches!(&gate, ConnectorApprovalGate::Authorized(_)) {
+                    let current = self.task(&task.task_id, subject_id).unwrap_or(task);
+                    return approval_gate_outcome(gate, &current);
+                }
+                match self.executions.reserve_command(
+                    &task,
+                    &input.operation_id,
+                    &request_sha256,
+                    timeout_secs,
+                    chrono::Utc::now().timestamp(),
+                ) {
+                    Ok(reservation) => reservation,
+                    Err(error) => return store_error_outcome(error, Some(&task)),
+                }
             }
-            Err(error) => {
-                let cursor = self.record_event(&task, "commands_run", json!({ "ok": false }), now);
-                self.kernel_error_outcome(error, &task, cursor, Value::Null)
+        };
+        drop(task_guard);
+        self.command_execution_outcome(
+            self.executions
+                .execute_command(
+                    reservation,
+                    task.clone(),
+                    input.command,
+                    input.cwd,
+                    timeout_secs,
+                    auth.clone(),
+                )
+                .await,
+            &task,
+            auth,
+        )
+        .await
+    }
+
+    async fn command_execution_outcome(
+        &self,
+        result: Result<crate::db::ConnectorExecution, ConnectorTaskStoreError>,
+        task: &ConnectorTaskSnapshot,
+        auth: &AuthContext,
+    ) -> ConnectorCallOutcome {
+        let current = self
+            .task(&task.task_id, &task.owner_subject_id)
+            .unwrap_or_else(|_| task.clone());
+        match result {
+            Ok(execution) => {
+                let projection = self.executions.projection(&execution, auth, true).await;
+                ConnectorCallOutcome::success_blocking_at(
+                    &current,
+                    current.event_cursor,
+                    json!({ "execution": projection }),
+                    execution.blocks_finish(),
+                )
             }
+            Err(error) => store_error_outcome(error, Some(&current)),
         }
     }
 
@@ -1056,10 +1116,31 @@ impl ConnectorRuntime {
             Ok(input) => input,
             Err(outcome) => return outcome,
         };
-        let task = match self.task(&input.task_id, subject_id) {
+        if input.after_cursor.is_some_and(|cursor| cursor < 0) {
+            return invalid_input("task_review", "after_cursor must be non-negative");
+        }
+        if input.wait_ms.is_some_and(|wait| wait > 15_000) {
+            return invalid_input("task_review", "wait_ms must be 0..=15000");
+        }
+        if input
+            .max_events
+            .is_some_and(|count| count == 0 || count > MAX_EVENT_COUNT)
+        {
+            return invalid_input("task_review", "max_events must be 1..=50");
+        }
+        let initial_task = match self.task(&input.task_id, subject_id) {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
+        let review = match self
+            .executions
+            .wait_for_review(initial_task, input.after_cursor, input.wait_ms.unwrap_or(0))
+            .await
+        {
+            Ok(review) => review,
+            Err(error) => return store_error_outcome(error, None),
+        };
+        let task = review.task;
         let result =
             match self
                 .db
@@ -1102,6 +1183,23 @@ impl ConnectorRuntime {
                     "diff_preview": diff_preview
                 }),
             )
+        } else if task.task_status == "cancelled" {
+            json!({
+                "source": "cancelled_task",
+                "changed_paths": [],
+                "diff_preview": null
+            })
+        } else if review
+            .execution
+            .as_ref()
+            .is_some_and(crate::db::ConnectorExecution::is_active)
+        {
+            json!({
+                "source": "live_workspace_deferred",
+                "reason": "execution_active",
+                "changed_paths": [],
+                "diff_preview": null
+            })
         } else {
             match self
                 .invoke_kernel(
@@ -1132,14 +1230,46 @@ impl ConnectorRuntime {
         };
         let events = match self.db.connector_task_events(
             &task.task_id,
-            &self.context.project_id,
-            subject_id,
+            &task.project_id,
+            &task.owner_subject_id,
             MAX_EVENT_COUNT,
         ) {
             Ok(events) => events,
             Err(error) => return store_error_outcome(error, Some(&task)),
         };
-        ConnectorCallOutcome::success_at(
+        let max_events = input.max_events.unwrap_or(MAX_EVENT_COUNT);
+        let mut events = events
+            .into_iter()
+            .filter(|event| {
+                input
+                    .after_cursor
+                    .is_none_or(|cursor| event.sequence > cursor)
+            })
+            .collect::<Vec<_>>();
+        events.drain(..events.len().saturating_sub(max_events));
+        let execution = match review.execution.as_ref() {
+            Some(execution) => Some(
+                self.executions
+                    .projection(execution, auth, input.include_output_tail.unwrap_or(true))
+                    .await,
+            ),
+            None => None,
+        };
+        let blocking = review
+            .execution
+            .as_ref()
+            .is_some_and(|execution| execution.blocks_finish());
+        let next_action = execution
+            .as_ref()
+            .and_then(|value| value["next_action"].as_str())
+            .unwrap_or(if task.task_status == "cancelled" {
+                "start_a_new_task"
+            } else if task.run_status == "interrupted" {
+                "resume_or_reject_on_the_host"
+            } else {
+                "continue_or_finish"
+            });
+        ConnectorCallOutcome::success_blocking_at(
             &task,
             task.event_cursor,
             json!({
@@ -1149,8 +1279,74 @@ impl ConnectorRuntime {
                 "run_status": task.run_status,
                 "changes": changes,
                 "result": result.as_ref().map(result_projection),
-                "timeline": events
+                "active_execution": execution.as_ref().filter(|_| {
+                    review.execution.as_ref().is_some_and(
+                        crate::db::ConnectorExecution::is_active
+                    )
+                }),
+                "recent_execution": execution,
+                "recent_events": events,
+                "heartbeat": review.heartbeat,
+                "next_action": next_action
             }),
+            blocking,
+        )
+    }
+
+    async fn task_cancel(
+        &self,
+        arguments: Value,
+        subject_id: &str,
+        auth: &AuthContext,
+    ) -> ConnectorCallOutcome {
+        let input: TaskCancelInput = match parse_input("task_cancel", arguments) {
+            Ok(input) => input,
+            Err(outcome) => return outcome,
+        };
+        if input
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.trim().is_empty() || reason.len() > 500)
+        {
+            return invalid_input("task_cancel", "reason must be 1..=500 bytes when provided");
+        }
+        let task_lock = self.task_lock(&input.task_id);
+        let _task_guard = task_lock.lock().await;
+        let task = match self.task(&input.task_id, subject_id) {
+            Ok(task) => task,
+            Err(outcome) => return outcome,
+        };
+        let execution = match self
+            .executions
+            .cancel_task(task.clone(), input.reason.as_deref(), auth.clone())
+            .await
+        {
+            Ok(execution) => execution,
+            Err(error) => return store_error_outcome(error, Some(&task)),
+        };
+        let current = self.task(&task.task_id, subject_id).unwrap_or(task);
+        let projection = match execution.as_ref() {
+            Some(execution) => Some(self.executions.projection(execution, auth, true).await),
+            None => None,
+        };
+        let blocking = execution
+            .as_ref()
+            .is_some_and(|execution| execution.blocks_finish());
+        ConnectorCallOutcome::success_blocking_at(
+            &current,
+            current.event_cursor,
+            json!({
+                "status": current.task_status,
+                "run_status": current.run_status,
+                "execution": projection,
+                "cancellation": if blocking { "requested" } else { "terminal" },
+                "next_action": if blocking {
+                    "wait_with_task_review"
+                } else {
+                    "start_a_new_task_if_more_work_is_needed"
+                }
+            }),
+            blocking,
         )
     }
 
@@ -1158,7 +1354,7 @@ impl ConnectorRuntime {
         &self,
         arguments: Value,
         subject_id: &str,
-        _auth: &AuthContext,
+        auth: &AuthContext,
         _transport: ConnectorTransport,
         now: i64,
     ) -> ConnectorCallOutcome {
@@ -1168,6 +1364,31 @@ impl ConnectorRuntime {
         };
         if input.summary.trim().is_empty() || input.summary.len() > 4000 {
             return invalid_input("task_finish", "summary must be 1..=4000 bytes");
+        }
+        let visible_task = match self.task(&input.task_id, subject_id) {
+            Ok(task) => task,
+            Err(outcome) => return outcome,
+        };
+        let blocker = match self.db.connector_finish_blocker(&input.task_id) {
+            Ok(blocker) => blocker,
+            Err(error) => return store_error_outcome(error, Some(&visible_task)),
+        };
+        if let Some(execution) = blocker {
+            let projection = self.executions.projection(&execution, auth, true).await;
+            return ConnectorCallOutcome::error_for_task(
+                409,
+                "execution_not_terminal",
+                "task_finish is blocked until the active execution reaches a known terminal state",
+                true,
+                execution.state == "unknown",
+                Some(if execution.state == "unknown" {
+                    "Inspect the executor state on the host before finishing this task."
+                } else {
+                    "Use task_review to wait for completion or task_cancel to stop the execution."
+                }),
+                &visible_task,
+                json!({ "execution": projection }),
+            );
         }
         let task = match self.active_task(&input.task_id, subject_id) {
             Ok(task) => task,
@@ -1569,6 +1790,15 @@ impl ConnectorCallOutcome {
     }
 
     fn success_at(task: &ConnectorTaskSnapshot, cursor: i64, data: Value) -> Self {
+        Self::success_blocking_at(task, cursor, data, false)
+    }
+
+    fn success_blocking_at(
+        task: &ConnectorTaskSnapshot,
+        cursor: i64,
+        data: Value,
+        blocking: bool,
+    ) -> Self {
         Self {
             ok: true,
             body: json!({
@@ -1578,7 +1808,7 @@ impl ConnectorCallOutcome {
                 "event_cursor": cursor,
                 "data": data,
                 "warnings": [],
-                "blocking": false
+                "blocking": blocking
             }),
             http_status: 200,
             required_scope: None,
@@ -1778,6 +2008,28 @@ fn store_error_outcome(
             None,
             false,
         ),
+        ConnectorTaskStoreError::OperationIdConflict(operation_id) => match task {
+            Some(task) => ConnectorCallOutcome::error_for_task(
+                409,
+                "operation_id_conflict",
+                "operation_id was already used with a different command, cwd, or timeout",
+                false,
+                false,
+                Some("Reuse operation_id only for an exact retry; use a new value to run another command."),
+                task,
+                json!({ "operation_id": operation_id }),
+            ),
+            None => ConnectorCallOutcome::error(
+                409,
+                "operation_id_conflict",
+                "operation_id was already used with a different command, cwd, or timeout",
+                false,
+                false,
+                Some("Reuse operation_id only for an exact retry; use a new value to run another command."),
+                None,
+                false,
+            ),
+        },
         ConnectorTaskStoreError::InvalidState(message) => match task {
             Some(task) => ConnectorCallOutcome::error_for_task(
                 409,
@@ -1892,26 +2144,33 @@ fn approval_projection(approval: &ConnectorApproval) -> Value {
     })
 }
 
-fn command_action_hash(
+fn command_request_hash(
     task: &ConnectorTaskSnapshot,
     command: &str,
     cwd: Option<&str>,
     timeout_secs: u64,
-    precondition: &str,
 ) -> String {
     let mut hasher = Sha256::new();
     for field in [
-        b"webcodex.commands_run.v1".as_slice(),
+        b"webcodex.commands_run.v2".as_slice(),
         task.task_id.as_bytes(),
         task.run_id.as_bytes(),
         command.as_bytes(),
         cwd.unwrap_or("").as_bytes(),
         &timeout_secs.to_be_bytes(),
-        precondition.as_bytes(),
     ] {
         hasher.update((field.len() as u64).to_be_bytes());
         hasher.update(field);
     }
+    format!("{:x}", hasher.finalize())
+}
+
+fn command_action_hash(request_sha256: &str, precondition: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"approval\0");
+    hasher.update(request_sha256);
+    hasher.update(b"\0");
+    hasher.update(precondition);
     format!("{:x}", hasher.finalize())
 }
 
@@ -2177,7 +2436,7 @@ fn required_scope(capability: &str) -> &'static str {
         "task_start" => SCOPE_RUNTIME_READ,
         "files_read" | "files_search" | "task_review" => SCOPE_PROJECT_READ,
         "edits_apply" | "task_finish" => SCOPE_PROJECT_WRITE,
-        "checks_run" | "commands_run" => SCOPE_JOB_RUN,
+        "checks_run" | "commands_run" | "task_cancel" => SCOPE_JOB_RUN,
         _ => SCOPE_RUNTIME_READ,
     }
 }
@@ -2215,10 +2474,12 @@ fn validate_task_id(task_id: &str) -> Result<(), &'static str> {
 }
 
 fn validate_operation_id(operation_id: &str) -> Result<(), &'static str> {
-    if operation_id.is_empty()
-        || operation_id.len() > 100
-        || !operation_id
-            .bytes()
+    let mut bytes = operation_id.bytes();
+    if operation_id.len() > 100
+        || !bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        || !bytes
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
     {
         return Err("operation_id must be 1..=100 ASCII letters, digits, '-', '_', '.', or ':'");
@@ -2401,6 +2662,7 @@ enum StandardCheck {
 #[serde(deny_unknown_fields)]
 struct CommandsRunInput {
     task_id: String,
+    operation_id: String,
     command: String,
     #[serde(default)]
     cwd: Option<String>,
@@ -2414,6 +2676,22 @@ struct TaskReviewInput {
     task_id: String,
     #[serde(default)]
     include_diff: Option<bool>,
+    #[serde(default)]
+    after_cursor: Option<i64>,
+    #[serde(default)]
+    wait_ms: Option<u64>,
+    #[serde(default)]
+    max_events: Option<usize>,
+    #[serde(default)]
+    include_output_tail: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TaskCancelInput {
+    task_id: String,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2427,22 +2705,7 @@ struct TaskFinishInput {
 mod tests {
     use super::*;
 
-    #[test]
-    fn incomplete_edit_rollback_is_treated_as_uncertain() {
-        let incomplete = KernelFailure::Tool(ToolResult::err_with_output(
-            "transaction failed",
-            json!({ "changed": true, "rollback_complete": false }),
-        ));
-        assert!(kernel_failure_may_have_applied(&incomplete));
-
-        let rolled_back = KernelFailure::Tool(ToolResult::err_with_output(
-            "transaction failed",
-            json!({ "changed": false, "rollback_complete": true }),
-        ));
-        assert!(!kernel_failure_may_have_applied(&rolled_back));
-    }
-
-    fn init_repo(project: &Path) {
+    pub(super) fn init_repo(project: &Path) {
         std::fs::create_dir(project).unwrap();
         let run = |args: &[&str]| {
             let output = std::process::Command::new("git")
@@ -2472,7 +2735,7 @@ mod tests {
         ]);
     }
 
-    fn auth(user_id: &str) -> AuthContext {
+    pub(super) fn auth(user_id: &str) -> AuthContext {
         AuthContext {
             kind: AuthKind::ApiToken,
             user_id: Some(user_id.to_string()),
@@ -2493,7 +2756,7 @@ mod tests {
         }
     }
 
-    fn connector() -> (tempfile::TempDir, ConnectorRuntime) {
+    pub(super) fn connector() -> (tempfile::TempDir, ConnectorRuntime) {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
         init_repo(&project);
@@ -2520,315 +2783,6 @@ mod tests {
         )
         .unwrap();
         (temp, connector)
-    }
-
-    #[tokio::test]
-    async fn start_returns_small_project_bound_envelope() {
-        let (_temp, connector) = connector();
-        let outcome = connector
-            .call(
-                "task_start",
-                json!({ "goal": "understand the parser", "mode": "read_only" }),
-                Some(&auth("u1")),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        assert!(outcome.ok);
-        assert!(outcome.body["task_id"]
-            .as_str()
-            .unwrap()
-            .starts_with("wc_task_"));
-        assert_eq!(outcome.body["data"]["project"]["id"], "wc_proj_1234567890");
-        assert_eq!(outcome.body["data"]["brief"]["git"]["dirty"], false);
-        assert_eq!(
-            outcome.body["data"]["brief"]["workspace"]["strategy"],
-            "target_checkout"
-        );
-        let serialized = serde_json::to_string(&outcome.body).unwrap();
-        assert!(!serialized.contains("agent:hosted:demo"));
-        assert!(!serialized.contains("session"));
-    }
-
-    #[tokio::test]
-    async fn hidden_legacy_tool_is_rejected_without_falling_through() {
-        let (_temp, connector) = connector();
-        let outcome = connector
-            .call(
-                "runtime_status",
-                json!({}),
-                Some(&auth("u1")),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        assert!(!outcome.ok);
-        assert!(outcome.protocol_error);
-        assert_eq!(outcome.body["error"]["code"], "unknown_capability");
-    }
-
-    #[tokio::test]
-    async fn read_only_task_denies_consequential_capability_before_executor_dispatch() {
-        let (_temp, connector) = connector();
-        let owner = auth("u1");
-        let started = connector
-            .call(
-                "task_start",
-                json!({ "goal": "inspect only", "mode": "read_only" }),
-                Some(&owner),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        let task_id = started.body["task_id"].as_str().unwrap();
-        let outcome = connector
-            .call(
-                "edits_apply",
-                json!({
-                    "task_id": task_id,
-                    "operation_id": "read-only-probe",
-                    "changes": [{
-                        "kind": "edit",
-                        "path": "src/lib.rs",
-                        "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "edits": [{
-                            "kind": "replace_exact",
-                            "old_text": "old",
-                            "new_text": "new"
-                        }]
-                    }]
-                }),
-                Some(&owner),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        assert!(!outcome.ok);
-        assert_eq!(outcome.http_status, 403);
-        assert_eq!(outcome.body["error"]["code"], "read_only_task");
-        assert_eq!(outcome.body["event_cursor"], 2);
-    }
-
-    #[tokio::test]
-    async fn raw_command_waits_for_local_one_time_approval() {
-        let (_temp, connector) = connector();
-        let owner = auth("u1");
-        let now = chrono::Utc::now().timestamp();
-        connector
-            .db
-            .ensure_connector_binding(ConnectorBinding {
-                project_id: &connector.context.project_id,
-                project_name: &connector.context.project_name,
-                workspace_id: &connector.context.workspace_id,
-                executor_ref: &connector.context.executor_project,
-                subject_id: "user:u1",
-                profile: &connector.context.profile,
-                now,
-            })
-            .unwrap();
-        let task_id = "wc_task_0123456789abcdef0123456789abcdef";
-        let run_id = "wc_run_0123456789abcdef0123456789abcdef";
-        let prepared = connector
-            .workspace
-            .prepare(&connector.context, task_id, run_id, false)
-            .unwrap();
-        connector
-            .db
-            .start_connector_task(NewConnectorTask {
-                task_id,
-                run_id,
-                project_id: &connector.context.project_id,
-                workspace_id: &connector.context.workspace_id,
-                subject_id: "user:u1",
-                goal: "run a special generator",
-                mode: "normal",
-                target_executor_ref: &connector.context.executor_project,
-                execution_executor_ref: &prepared.execution_executor_ref,
-                target_root: &connector.context.executor_root,
-                execution_root: &prepared.execution_root,
-                baseline_commit: prepared.baseline_commit.as_deref(),
-                baseline_tree: prepared.baseline_tree.as_deref(),
-                isolated: true,
-                now,
-            })
-            .unwrap();
-        let arguments = json!({
-            "task_id": task_id,
-            "command": "special-generator --write",
-            "timeout_secs": 30
-        });
-        let waiting = connector
-            .call(
-                "commands_run",
-                arguments.clone(),
-                Some(&owner),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        assert_eq!(waiting.body["error"]["code"], "approval_required");
-        let approval_id = waiting.body["data"]["approval"]["approval_id"]
-            .as_str()
-            .unwrap();
-        connector
-            .db
-            .decide_connector_approval(
-                task_id,
-                &connector.context.project_id,
-                approval_id,
-                true,
-                "local_cli",
-                now + 1,
-            )
-            .unwrap();
-
-        let dispatched = connector
-            .call(
-                "commands_run",
-                arguments.clone(),
-                Some(&owner),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        assert_ne!(dispatched.body["error"]["code"], "approval_required");
-        let replay = connector
-            .call(
-                "commands_run",
-                arguments,
-                Some(&owner),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        assert_eq!(replay.body["error"]["code"], "approval_consumed");
-        assert_eq!(
-            connector
-                .workspace
-                .discard_prepared(&connector.context.executor_root, &prepared),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn edits_apply_replays_durable_result_without_executor_dispatch() {
-        let (_temp, connector) = connector();
-        let owner = auth("u1");
-        let now = chrono::Utc::now().timestamp();
-        connector
-            .db
-            .ensure_connector_binding(ConnectorBinding {
-                project_id: &connector.context.project_id,
-                project_name: &connector.context.project_name,
-                workspace_id: &connector.context.workspace_id,
-                executor_ref: &connector.context.executor_project,
-                subject_id: "user:u1",
-                profile: &connector.context.profile,
-                now,
-            })
-            .unwrap();
-        let task_id = "wc_task_abcdef0123456789abcdef0123456789";
-        let run_id = "wc_run_abcdef0123456789abcdef0123456789";
-        let prepared = connector
-            .workspace
-            .prepare(&connector.context, task_id, run_id, false)
-            .unwrap();
-        let task = connector
-            .db
-            .start_connector_task(NewConnectorTask {
-                task_id,
-                run_id,
-                project_id: &connector.context.project_id,
-                workspace_id: &connector.context.workspace_id,
-                subject_id: "user:u1",
-                goal: "replay one edit",
-                mode: "normal",
-                target_executor_ref: &connector.context.executor_project,
-                execution_executor_ref: &prepared.execution_executor_ref,
-                target_root: &connector.context.executor_root,
-                execution_root: &prepared.execution_root,
-                baseline_commit: prepared.baseline_commit.as_deref(),
-                baseline_tree: prepared.baseline_tree.as_deref(),
-                isolated: true,
-                now,
-            })
-            .unwrap();
-        let changes_json = json!([{
-            "kind": "edit",
-            "path": "README.md",
-            "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "edits": [{"kind": "replace_exact", "old_text": "fixture", "new_text": "updated"}]
-        }]);
-        let changes: Vec<ApplyFileChangeInput> =
-            serde_json::from_value(changes_json.clone()).unwrap();
-        let request_sha256 = edit_operation_hash(&task, &changes, false);
-        assert_eq!(
-            connector
-                .db
-                .begin_connector_edit_operation(
-                    task_id,
-                    &connector.context.project_id,
-                    "user:u1",
-                    "device-retry-1",
-                    &request_sha256,
-                    now,
-                )
-                .unwrap(),
-            ConnectorEditOperationGate::Started
-        );
-        connector
-            .db
-            .complete_connector_edit_operation(
-                task_id,
-                &connector.context.project_id,
-                "user:u1",
-                "device-retry-1",
-                &request_sha256,
-                &json!({"changed": true, "changed_paths": ["README.md"]}),
-                now,
-            )
-            .unwrap();
-
-        let outcome = connector
-            .call(
-                "edits_apply",
-                json!({
-                    "task_id": task_id,
-                    "operation_id": "device-retry-1",
-                    "changes": changes_json
-                }),
-                Some(&owner),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        assert!(outcome.ok, "{}", outcome.body);
-        assert_eq!(outcome.body["data"]["idempotent_replay"], true);
-        assert_eq!(outcome.body["data"]["changed_paths"], json!(["README.md"]));
-        assert_eq!(
-            connector
-                .workspace
-                .discard_prepared(&connector.context.executor_root, &prepared),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn another_user_cannot_observe_or_use_a_task_id() {
-        let (_temp, connector) = connector();
-        let started = connector
-            .call(
-                "task_start",
-                json!({ "goal": "private work", "mode": "read_only" }),
-                Some(&auth("u1")),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        let task_id = started.body["task_id"].as_str().unwrap();
-        let outcome = connector
-            .call(
-                "files_read",
-                json!({ "task_id": task_id, "files": [{ "path": "src/lib.rs" }] }),
-                Some(&auth("u2")),
-                ConnectorTransport::Mcp,
-            )
-            .await;
-        assert!(!outcome.ok);
-        assert_eq!(outcome.http_status, 404);
-        assert_eq!(outcome.body["error"]["code"], "task_not_found");
-        assert!(outcome.body["task_id"].is_null());
     }
 
     #[tokio::test]
@@ -3193,43 +3147,6 @@ mod tests {
         assert!(!serde_json::to_string(&outcome.body)
             .unwrap()
             .contains("agent:hosted:demo"));
-    }
-
-    #[test]
-    fn executor_ids_are_recursively_replaced() {
-        let mut value = json!({
-            "project": "agent:hosted:demo",
-            "client_id": "hosted-secret-routing-id",
-            "request_id": "transport-request-id",
-            "message": "failed in agent:hosted:demo at /workspace/demo/src/lib.rs",
-            "nested": ["agent:hosted:demo"]
-        });
-        sanitize_value(
-            &mut value,
-            "agent:hosted:demo",
-            "wc_proj_demo123456",
-            "/workspace/demo",
-        );
-        let serialized = serde_json::to_string(&value).unwrap();
-        assert!(!serialized.contains("agent:hosted:demo"));
-        assert!(!serialized.contains("/workspace/demo"));
-        assert!(!serialized.contains("hosted-secret-routing-id"));
-        assert!(!serialized.contains("transport-request-id"));
-        assert!(serialized.contains("wc_proj_demo123456"));
-    }
-
-    #[test]
-    fn connector_scope_map_matches_capability_risk() {
-        assert_eq!(required_scope("task_start"), SCOPE_RUNTIME_READ);
-        for capability in ["files_read", "files_search", "task_review"] {
-            assert_eq!(required_scope(capability), SCOPE_PROJECT_READ);
-        }
-        for capability in ["edits_apply", "task_finish"] {
-            assert_eq!(required_scope(capability), SCOPE_PROJECT_WRITE);
-        }
-        for capability in ["checks_run", "commands_run"] {
-            assert_eq!(required_scope(capability), SCOPE_JOB_RUN);
-        }
     }
 
     #[test]

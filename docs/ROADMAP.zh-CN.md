@@ -1,65 +1,53 @@
 # Roadmap
 
-这份 roadmap 故意保持很短。WebCodex 0.2.x 的重点是让线上 AI 编程更容易试用、更容易 review，而不是承诺完整 IDE 或 autonomous operations platform。
+这份 roadmap 故意保持很短。长期边界、LOC/test 预算、验收门禁和时间估算见 [PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md](PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md)。
 
-## 0.2.x：产品化 Online Coding Loop
+## 当前：Iteration 6 — Execution Engine
 
-- 更简单的 first-run setup。
-- ChatGPT MCP 和 GPT Actions acceptance tasks。
-- 更多 fixture dogfood tasks。
-- 更清晰的 review 和 rollback workflow。
+- 建立持久化 `wc_exec_*` Execution 生命周期。
+- `commands_run` 采用约 8 秒 quick-yield：短命令直接完成，长命令返回 durable running。
+- `task_review` 提供状态、queue/silent metadata、output cursor 和有界 wait。
+- 增加单意图 `task_cancel`，完成 executor/process-group 取消闭环。
+- runtime restart 后将未完成 execution 标为 interrupted/unknown。
+- active/unknown execution 存在时，`task_finish` fail closed。
+- 复用现有 job/process 资产，删除 Connector direct synchronous command path。
 
-## LSP Phase 1：已完成
+## 下一步：Iteration 7 — Checks、Hard Cut、Deletion
 
-- agent-side supervisor。
-- constrained rust-analyzer profile。
-- read-only symbol navigation。
-- startup capability awareness。
+- `checks_run` 迁移到同一 Execution Engine。
+- Hosted credential 停止访问 legacy 76-tool/session/admin surface。
+- 删除 JSON SessionStore、current-session 和旧 Hosted orchestration 中已无调用者的路径。
+- 收敛 MCP、OpenAPI、OAuth scope、CLI 和重复 projection。
+- production Rust LOC 相对 Iteration 6 起点净减少至少 10%。
 
-## LSP Phase 2 Read-Only MVP：已完成
+## 然后：Iteration 8 — 产品精修
 
-- disk-backed full-text document refresh（`didOpen` / `didChange`），不支持 editor-style incremental sync。
-- bounded `document_diagnostics`，明确提供 freshness 和 timeout 语义。
-- normalized、bounded hover。
-- workspace-only symbol search，结果只含 project-relative path。
-- ToolRuntime、MCP、generic GPT Action、OAuth、schema 和 startup capability 同步。
+- 一条命令 onboarding、doctor、status。
+- Rust/Node/Python/Go 的最小 project-aware check recipes。
+- 最小 review/cancel/accept CLI 与 Browser UI。
+- replay baseline、真实 ChatGPT MCP/OpenAPI acceptance、第二轮删除。
+- production Rust LOC 相对 2026-07-23 基线净减少 20% 以上。
 
-## LSP Phase 3 多语言：已完成
+## 时间判断
 
-- 语言注册表（`lsp/language.rs`）：每个 `LanguageProfile` 描述一个 server 的扩展名/`languageId`、项目 marker、可执行文件解析、`default_args` 以及受约束的只读 `initialize` profile；supervisor 与 navigation handler 不含任何按语言的分支。
-- 在 Rust 之外新增 Python（`pyright`）与 TypeScript/JavaScript（`typescript-language-server`），并用真实 pyright 做了端到端验证。
+- 三轮合计约 7–11 个专注开发周。
+- 单人非全职推进更现实为 3–5 个月。
+- SSH/跨设备 Operations Profile 在 Coding Profile 收敛后另行规划，不阻塞当前主线。
 
-## 后续 LSP 工作
+## 已完成基础
 
-- 让 `workspace_symbols` 在多语言项目里对每个被检测到的语言 fan-out（当前由首个被检测到的语言应答）。
-- 让 `start_coding_task.semantic_navigation` 启动摘要支持多语言（当前是 Rust 专用的就绪提示；运行时工具本身已多语言）。
-- 受约束只读 profile 之外更完整的 diagnostics fidelity。
-- 经过明确设计的 rename、code action 等写能力（不属于 read-only MVP）。
-- 更多 languages（每种语言就是一条注册表 profile 加上它的只读安全 profile 与测试）。
-
-## Validation Intelligence MVP：已完成
-
-- 从 bounded safe validation metadata 做确定性的结构化提取。
-- bounded cargo-check diagnostics 和 cargo-test failed-test evidence。
-- 不做 root-cause inference 的保守 validation failure-kind 分类。
-- finish/handoff 共享增强证据，并提供只读 session query `validation_summary`。
-- ToolRuntime、MCP、generic GPT Action、OAuth 和 schema 同步（75 个 runtime tools，25 个 GPT Action operations）。
-
-## 后续 Coding Intelligence
-
-- 更丰富的 multi-language validation adapters。
-- 可选的 machine-readable Cargo JSON integration。
-- review 和 rollback UX。
-
-## Later
-
-- dashboard。
-- ops packs。
-- browser/computer-use evidence。
+- Hosted connect 与 project-bound 8 项 capability。
+- SQLite Task/Run/Event/Result/Approval。
+- 隔离执行工作区与本机 accept/reject。
+- 事务式多文件 edit/create/delete/rename。
+- LSP Phase 1–3 read-only 能力。
+- Validation Intelligence MVP。
 
 ## Non-Goals
 
+- 内置模型或 agent loop。
 - 完整 IDE replacement。
 - 默认 autonomous DevOps。
-- arbitrary computer use 作为核心承诺。
-- 保证兼容所有 AI client。
+- 在 Execution Engine 稳定前扩展 SSH、Android、Kubernetes 或 workflow DSL。
+- 为假想消费者保留 aliases、dual shapes 或旧 Hosted tool surface。
+- 以测试数量、工具数量或 LOC 增长作为完成度。

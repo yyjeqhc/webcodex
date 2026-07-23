@@ -682,7 +682,7 @@ mod tests {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(names, crate::connector_runtime::surface::CAPABILITY_NAMES);
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 9);
         assert!(tools.iter().all(|tool| tool["inputSchema"].is_object()));
         assert!(tools.iter().all(|tool| tool["outputSchema"].is_object()));
         assert!(!names.contains(&"runtime_status"));
@@ -1631,7 +1631,7 @@ mod tests {
             .await;
         assert_eq!(effective_status(&schema), StatusCode::OK);
         let schema_body: Value = schema.take_json().await.unwrap();
-        assert_eq!(schema_body["paths"].as_object().unwrap().len(), 8);
+        assert_eq!(schema_body["paths"].as_object().unwrap().len(), 9);
         assert!(schema_body["paths"]
             .get("/api/connector/task/start")
             .is_some());

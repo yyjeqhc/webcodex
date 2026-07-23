@@ -15,6 +15,7 @@ pub(crate) fn routes() -> Router {
         .push(Router::with_path("checks/run").post(checks_run))
         .push(Router::with_path("commands/run").post(commands_run))
         .push(Router::with_path("task/review").post(task_review))
+        .push(Router::with_path("task/cancel").post(task_cancel))
         .push(Router::with_path("task/finish").post(task_finish))
 }
 
@@ -96,7 +97,7 @@ fn render(res: &mut Response, outcome: ConnectorCallOutcome) {
 }
 
 /// Each connector capability gets an identical `#[handler]` that forwards its
-/// own name to `dispatch`. The macro keeps the 8 handlers from being 8 copies.
+/// own name to `dispatch`. The macro keeps the 9 handlers from being 9 copies.
 macro_rules! connector_handlers {
     ($($name:ident),+ $(,)?) => {
         $(
@@ -116,5 +117,6 @@ connector_handlers! {
     checks_run,
     commands_run,
     task_review,
+    task_cancel,
     task_finish,
 }

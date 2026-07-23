@@ -780,7 +780,8 @@ mod tests {
             "temporary\n",
         )
         .unwrap();
-        db.interrupt_connector_runs(&context.project_id, 5).unwrap();
+        db.reconcile_connector_executions(&context.project_id, 5)
+            .unwrap();
         drop(db);
 
         let output = run(TaskCliCommand::Reject {

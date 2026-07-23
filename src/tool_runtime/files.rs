@@ -1546,7 +1546,6 @@ fn validate_artifact_upload_id(upload_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-
 /// True if `s` is a lowercase 64-character hex string (a sha256 digest).
 pub(crate) fn is_hex_sha256(s: &str) -> bool {
     s.len() == 64

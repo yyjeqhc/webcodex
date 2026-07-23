@@ -18,6 +18,7 @@
 - [HOSTED_TASK_KERNEL_SECOND_ITERATION.zh-CN.md](HOSTED_TASK_KERNEL_SECOND_ITERATION.zh-CN.md) - project-bound Task/Run authority、8 项 canonical hosted 能力、多用户/多设备 subject 边界与第二轮验收结果。
 - [HOSTED_TASK_RESULT_THIRD_ITERATION.zh-CN.md](HOSTED_TASK_RESULT_THIRD_ITERATION.zh-CN.md) - 隔离 execution worktree、稳定 Task Result、本机 accept/reject、一次性 raw-command approval 与异常恢复边界。
 - [HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md](HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md) - 可复用写槽位、Run 租约、Result 后立即释放、Project 级 Cargo cache，以及后续编辑/validation 工具增强计划。
+- [HOSTED_EXECUTION_ENGINE_SIXTH_ITERATION.zh-CN.md](HOSTED_EXECUTION_ENGINE_SIXTH_ITERATION.zh-CN.md) - durable command Execution、8 秒 quick-yield、bounded review、process-group cancel、restart reconciliation 与第六轮验收记录。
 6. [MCP.zh-CN.md](MCP.zh-CN.md) / [MCP.md](MCP.md) - remote MCP endpoint、认证、默认 coding loop、read-only LSP 与 validation intelligence，以及常见 MCP 错误。
 7. [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) / [GPT_ACTIONS.md](GPT_ACTIONS.md) - Custom GPT 设置、OpenAPI 导入、认证、generic validation-summary access 和 workflow guidance。
 8. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) - MCP 和 GPT Actions 指南使用的截图。
@@ -48,6 +49,8 @@
 ## Release And Roadmap
 
 - [PRODUCT_DEVELOPMENT_PLAN.zh-CN.md](PRODUCT_DEVELOPMENT_PLAN.zh-CN.md) - 基于实际代码审计的 Hosted Chat-first / Project-first 重构方案：单进程个人模式、OpenAI/Cloudflare Tunnel、canonical 工具面、Task Kernel，以及可选的多设备/多用户共享 control plane。
+- [PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md](PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md) - 当前长期开发基线：Execution Engine、三轮收敛计划、代码/测试预算、时间估算与合并门禁。
+- [CODEX_EXECUTION_ENGINE_REFACTOR_PROMPT.zh-CN.md](CODEX_EXECUTION_ENGINE_REFACTOR_PROMPT.zh-CN.md) - 可直接交给 Codex 的 Iteration 6 大重构执行 prompt。
 23. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) - 面向外部用户的 0.2.0 release notes。
 24. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) - release readiness 和 acceptance procedure。
 25. [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) / [ROADMAP.md](ROADMAP.md) - 短 roadmap。

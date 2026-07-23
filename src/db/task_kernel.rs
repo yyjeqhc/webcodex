@@ -152,6 +152,7 @@ pub(crate) struct ConnectorTaskEvent {
 #[derive(Debug)]
 pub(crate) enum ConnectorTaskStoreError {
     NotFound,
+    OperationIdConflict(String),
     InvalidState(String),
     Storage(anyhow::Error),
 }
@@ -160,6 +161,12 @@ impl std::fmt::Display for ConnectorTaskStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound => write!(f, "task not found"),
+            Self::OperationIdConflict(operation_id) => {
+                write!(
+                    f,
+                    "operation_id '{operation_id}' was reused with a different request"
+                )
+            }
             Self::InvalidState(message) => write!(f, "{message}"),
             Self::Storage(error) => write!(f, "{error}"),
         }
@@ -695,55 +702,6 @@ impl Database {
         load_result(&conn, task_id)
     }
 
-    pub(crate) fn interrupt_connector_runs(
-        &self,
-        project_id: &str,
-        now: i64,
-    ) -> Result<usize, ConnectorTaskStoreError> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        let runs = {
-            let mut statement = tx.prepare(
-                "SELECT t.id, r.id, COALESCE(MAX(e.sequence), 0)
-                 FROM wc_tasks t
-                 JOIN wc_runs r ON r.task_id = t.id
-                 LEFT JOIN wc_task_events e ON e.task_id = t.id
-                 WHERE t.project_id = ?1 AND r.status = 'running'
-                 GROUP BY t.id, r.id",
-            )?;
-            let rows = statement.query_map(params![project_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
-        for (task_id, run_id, cursor) in &runs {
-            tx.execute(
-                "UPDATE wc_runs SET status = 'interrupted', finished_at = ?1 WHERE id = ?2",
-                params![now, run_id],
-            )?;
-            insert_event(
-                &tx,
-                task_id,
-                run_id,
-                cursor + 1,
-                "run_interrupted",
-                &serde_json::json!({
-                    "reason": "runtime_restarted",
-                    "recoverable": true
-                }),
-                now,
-            )?;
-            touch_task(&tx, task_id, now)?;
-            expire_task_approvals(&tx, task_id)?;
-        }
-        tx.commit()?;
-        Ok(runs.len())
-    }
-
     pub(crate) fn connector_preserved_workspaces(
         &self,
         project_id: &str,
@@ -756,6 +714,10 @@ impl Database {
              JOIN wc_runs r ON r.task_id = t.id
              JOIN wc_run_contexts ctx ON ctx.run_id = r.id
              WHERE t.project_id = ?1 AND r.status = 'interrupted' AND ctx.isolated = 1
+               AND NOT EXISTS (
+                   SELECT 1 FROM wc_task_events cancelled
+                   WHERE cancelled.task_id = t.id AND cancelled.kind = 'task_cancelled'
+               )
              ORDER BY r.started_at ASC",
         )?;
         let rows = statement.query_map(params![project_id], |row| {
@@ -1276,7 +1238,7 @@ impl Database {
     }
 }
 
-fn load_task(
+pub(super) fn load_task(
     conn: &rusqlite::Connection,
     task_id: &str,
     project_id: &str,
@@ -1285,12 +1247,23 @@ fn load_task(
     conn.query_row(
         "SELECT t.id, r.id, t.project_id, r.workspace_id, t.owner_subject_id, t.goal, t.mode,
                 CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM wc_task_events cancelled
+                        WHERE cancelled.task_id = t.id AND cancelled.kind = 'task_cancelled'
+                    ) THEN 'cancelled'
                     WHEN result.decision_status = 'accepted' THEN 'accepted'
                     WHEN result.decision_status = 'rejected' THEN 'rejected'
                     WHEN r.status = 'interrupted' THEN 'needs_attention'
                     ELSE t.status
                 END,
-                r.status, COALESCE(MAX(e.sequence), 0),
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM wc_task_events cancelled
+                        WHERE cancelled.task_id = t.id AND cancelled.kind = 'task_cancelled'
+                    ) THEN 'cancelled'
+                    ELSE r.status
+                END,
+                COALESCE(MAX(e.sequence), 0),
                 ctx.target_executor_ref, ctx.execution_executor_ref,
                 ctx.target_root, ctx.execution_root,
                 ctx.baseline_commit, ctx.baseline_tree, ctx.isolated
@@ -1430,7 +1403,11 @@ fn map_approval(row: &rusqlite::Row<'_>) -> Result<ConnectorApproval, rusqlite::
 
 /// Bump `wc_tasks.updated_at`. Accepts anything that derefs to a `Connection`
 /// (both `&Transaction` and `&Connection` work).
-fn touch_task(conn: &rusqlite::Connection, task_id: &str, now: i64) -> rusqlite::Result<usize> {
+pub(super) fn touch_task(
+    conn: &rusqlite::Connection,
+    task_id: &str,
+    now: i64,
+) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE wc_tasks SET updated_at = ?1 WHERE id = ?2",
         params![now, task_id],
@@ -1439,7 +1416,10 @@ fn touch_task(conn: &rusqlite::Connection, task_id: &str, now: i64) -> rusqlite:
 
 /// Expire every still-open approval for a task (pending or already approved but
 /// not yet consumed). Used on finish / interrupt / abandon.
-fn expire_task_approvals(conn: &rusqlite::Connection, task_id: &str) -> rusqlite::Result<usize> {
+pub(super) fn expire_task_approvals(
+    conn: &rusqlite::Connection,
+    task_id: &str,
+) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE wc_approvals SET state = 'expired'
          WHERE task_id = ?1 AND state IN ('pending', 'approved')",
@@ -1447,7 +1427,7 @@ fn expire_task_approvals(conn: &rusqlite::Connection, task_id: &str) -> rusqlite
     )
 }
 
-fn require_running(task: &ConnectorTaskSnapshot) -> Result<(), ConnectorTaskStoreError> {
+pub(super) fn require_running(task: &ConnectorTaskSnapshot) -> Result<(), ConnectorTaskStoreError> {
     if task.task_status != "active" || task.run_status != "running" {
         return Err(ConnectorTaskStoreError::InvalidState(format!(
             "task {} is {}, run is {}; start a new task for more work",
@@ -1457,7 +1437,7 @@ fn require_running(task: &ConnectorTaskSnapshot) -> Result<(), ConnectorTaskStor
     Ok(())
 }
 
-fn insert_event(
+pub(super) fn insert_event(
     tx: &Transaction<'_>,
     task_id: &str,
     run_id: &str,
@@ -1823,7 +1803,10 @@ mod tests {
         let (_temp, db) = database();
         bind(&db, "user:one");
         let task = start(&db, "user:one", "survive a restart");
-        assert_eq!(db.interrupt_connector_runs("wc_proj_demo", 102).unwrap(), 1);
+        let recovery = db
+            .reconcile_connector_executions("wc_proj_demo", 102)
+            .unwrap();
+        assert_eq!(recovery, (1, 0));
         let recovered = db
             .connector_task(&task.task_id, "wc_proj_demo", "user:one")
             .unwrap();
@@ -1853,7 +1836,8 @@ mod tests {
         let (_temp, db) = database();
         bind(&db, "user:one");
         let task = start(&db, "user:one", "abandon after restart");
-        db.interrupt_connector_runs("wc_proj_demo", 102).unwrap();
+        db.reconcile_connector_executions("wc_proj_demo", 102)
+            .unwrap();
 
         let result = db
             .abandon_interrupted_connector_task(&task.task_id, "wc_proj_demo", "local_cli", 103)

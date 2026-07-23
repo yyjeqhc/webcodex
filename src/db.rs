@@ -9,10 +9,16 @@ use std::sync::Mutex;
 
 mod accounts;
 mod audit;
+mod execution_model;
+mod executions;
 mod oauth;
 mod schema;
 mod task_kernel;
 
+pub(crate) use self::execution_model::{
+    ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
+    ConnectorExecutionReservation,
+};
 pub use self::oauth::RotateResult;
 #[allow(unused_imports)]
 pub(crate) use self::task_kernel::{
@@ -97,6 +103,7 @@ mod tests {
             "wc_task_results",
             "wc_approvals",
             "wc_edit_operations",
+            "wc_executions",
         ] {
             let exists: i64 = conn
                 .query_row(

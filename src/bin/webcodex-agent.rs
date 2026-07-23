@@ -40,6 +40,9 @@ mod project_overview;
 #[path = "../workspace_checkpoint.rs"]
 mod workspace_checkpoint;
 
+#[cfg(test)]
+#[path = "webcodex_agent/job_manager_tests.rs"]
+mod job_manager_tests;
 mod webcodex_agent;
 
 use shell_protocol::{
@@ -978,20 +981,61 @@ fn send_start_failure(sink: &AgentSink, request: ShellAgentShellRequest, error: 
     }
 }
 
+#[cfg(unix)]
+fn classify_process_group_signal_error(
+    pgid: u32,
+    signal: i32,
+    error: std::io::Error,
+) -> Result<bool, String> {
+    match error.raw_os_error() {
+        Some(libc::ESRCH) => Ok(false),
+        Some(libc::EPERM) => Err(format!(
+            "permission denied signaling process group {pgid} with signal {signal}"
+        )),
+        _ => Err(format!(
+            "failed to signal process group {pgid} with signal {signal}: {error}"
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn signal_process_group(pgid: u32, signal: i32) -> Result<bool, String> {
+    let target = i32::try_from(pgid).map_err(|_| format!("process-group id {pgid} exceeds i32"))?;
+    // SAFETY: callers only pass the private process-group id of a child that
+    // this JobManager launched through `setsid`.
+    if unsafe { libc::kill(-target, signal) } == 0 {
+        Ok(true)
+    } else {
+        classify_process_group_signal_error(pgid, signal, std::io::Error::last_os_error())
+    }
+}
+
 fn kill_child_group(child: &Arc<Mutex<Child>>) -> Result<(), String> {
     let pid = child
         .lock()
         .map_err(|_| "job child lock poisoned".to_string())?
         .id();
-    let _ = std::process::Command::new("kill")
-        .arg("-TERM")
-        .arg(format!("-{}", pid))
-        .status();
-    std::thread::sleep(Duration::from_millis(50));
-    let _ = child
+    #[cfg(unix)]
+    {
+        if pid == 0 {
+            return Err("job child has invalid process-group id 0".to_string());
+        }
+        if !signal_process_group(pid, libc::SIGTERM)? {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        // Escalate the whole group, not only the leader; a descendant may
+        // ignore SIGTERM or outlive the wrapper shell.
+        if signal_process_group(pid, 0)? {
+            let _ = signal_process_group(pid, libc::SIGKILL)?;
+        }
+    }
+    #[cfg(not(unix))]
+    child
         .lock()
         .map_err(|_| "job child lock poisoned".to_string())?
-        .kill();
+        .kill()
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 

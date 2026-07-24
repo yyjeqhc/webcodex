@@ -3,12 +3,16 @@ use super::state::{ShellClientRecord, ShellClientRegistryInner};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ShellClientAuthGroup {
     SharedKey(String),
+    ProjectGrant(String),
     OpenAnonymous,
 }
 
 impl ShellClientAuthGroup {
     pub(crate) fn from_auth(auth: &crate::auth::AuthContext) -> Option<Self> {
         match auth.kind {
+            crate::auth::AuthKind::ProjectCredential => {
+                auth.project_grant_id.clone().map(Self::ProjectGrant)
+            }
             crate::auth::AuthKind::SharedKey => auth.shared_key_hash.clone().map(Self::SharedKey),
             crate::auth::AuthKind::OAuth2Token if auth.is_oauth_shared_key_subject() => {
                 auth.shared_key_hash.clone().map(Self::SharedKey)

@@ -61,7 +61,7 @@ impl ToolRuntime {
         for capability in required.registry_capabilities() {
             if self
                 .shell_clients
-                .client_supports(&client_id, capability)
+                .client_supports_for_auth(&client_id, capability, auth)
                 .await
                 .map_err(ToolResult::err)?
             {

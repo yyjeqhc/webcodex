@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 pub(crate) fn routes() -> Router {
     Router::with_path("connector")
+        .push(Router::with_path("readiness").post(readiness))
         .push(Router::with_path("task/start").post(task_start))
         .push(Router::with_path("files/read").post(files_read))
         .push(Router::with_path("files/search").post(files_search))
@@ -17,6 +18,29 @@ pub(crate) fn routes() -> Router {
         .push(Router::with_path("task/review").post(task_review))
         .push(Router::with_path("task/cancel").post(task_cancel))
         .push(Router::with_path("task/finish").post(task_finish))
+}
+
+#[handler]
+async fn readiness(depot: &mut Depot, res: &mut Response) {
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::NOT_FOUND);
+        res.render(Json(crate::project_entry::runtime_readiness(
+            None,
+            crate::project_entry::RemoteProbe::ProjectMissing,
+        )));
+        return;
+    };
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(Json(json!({"error": "Unauthorized"})));
+        return;
+    };
+    let Some(project_readiness) = runtime.readiness(auth).await else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(Json(json!({"error": "Unauthorized"})));
+        return;
+    };
+    res.render(Json(project_readiness));
 }
 
 pub(crate) fn runtime(depot: &Depot) -> Option<Arc<ConnectorRuntime>> {
@@ -44,10 +68,10 @@ async fn dispatch(
             "blocking": true,
             "error": {
                 "code": "connector_surface_disabled",
-                "message": "this server was not started by a project-bound connect profile",
+                "message": "this project has not been configured",
                 "retryable": false,
                 "user_action_required": true,
-                "suggested_action": "Start the project with webcodex connect."
+                "suggested_action": "Run webcodex setup, then webcodex agent start."
             }
         })));
         return;

@@ -1092,17 +1092,10 @@ mod tests {
             .sessions
             .record_tool_call_finished(start, true, &json!({}), None, None);
         let auth = AuthContext {
-            kind: crate::auth::AuthKind::Bootstrap,
-            user_id: None,
-            username: None,
-            api_key_id: None,
-            api_key_name: None,
             role: Some("admin".to_string()),
             scopes: vec!["admin".to_string()],
             is_bootstrap: true,
-            token_kind: None,
-            allowed_client_id: None,
-            shared_key_hash: None,
+            ..AuthContext::new(crate::auth::AuthKind::Bootstrap)
         };
 
         let outcome = handle_mcp_request(
@@ -1393,31 +1386,6 @@ mod tests {
         user
     }
 
-    fn seed_api_token(
-        db: &crate::Database,
-        user: &crate::models::UserRecord,
-        scopes: &str,
-    ) -> String {
-        let plaintext = crate::auth::generate_api_token();
-        let now = chrono::Utc::now().timestamp();
-        let record = crate::models::ApiKeyRecord {
-            id: uuid::Uuid::new_v4().to_string(),
-            user_id: user.id.clone(),
-            name: "connector".to_string(),
-            key_prefix: crate::auth::token_prefix(&plaintext),
-            created_at: now,
-            last_used_at: None,
-            revoked_at: None,
-            scopes: scopes.to_string(),
-            expires_at: None,
-            kind: crate::models::TOKEN_KIND_USER.to_string(),
-            allowed_client_id: None,
-        };
-        db.insert_api_key(&record, &crate::auth::hash_token(&plaintext))
-            .unwrap();
-        plaintext
-    }
-
     fn seed_oauth_client(
         db: &crate::Database,
         user: &crate::models::UserRecord,
@@ -1503,6 +1471,9 @@ mod tests {
         db: Arc<crate::Database>,
         runtime: Arc<ToolRuntime>,
     ) -> Router {
+        const PROJECT_GRANT_ID: &str = "wc_pgrant_3333333333333333";
+        const PROJECT_CREDENTIAL: &str =
+            "webcodex_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let connector = crate::connector_runtime::ConnectorRuntime::new(
             runtime.clone(),
             db.clone(),
@@ -1516,7 +1487,13 @@ mod tests {
                 results_root: "/tmp/webcodex-mcp-connector-tests/results".to_string(),
                 projects_dir: "/tmp/webcodex-mcp-connector-tests/agent/projects.d".to_string(),
                 profile: "personal".to_string(),
+                project_grant_id: PROJECT_GRANT_ID.to_string(),
             },
+            crate::auth::ProjectCredentialVerifier::new(
+                PROJECT_GRANT_ID.to_string(),
+                PROJECT_CREDENTIAL,
+            )
+            .unwrap(),
         )
         .unwrap();
         Router::new()
@@ -1617,12 +1594,8 @@ mod tests {
     async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
-        let user = seed_user(&db, "connector-owner");
-        let user_token = seed_api_token(
-            &db,
-            &user,
-            "runtime:read project:read project:write job:run",
-        );
+        let user_token =
+            "webcodex_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let runtime = Arc::new(test_runtime());
         let service = Service::new(build_connector_test_router(config, db, runtime));
 
@@ -1641,7 +1614,7 @@ mod tests {
             .clone();
 
         let mut listed = TestClient::post("http://localhost/mcp")
-            .bearer_auth(&user_token)
+            .bearer_auth(user_token)
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": 20,
@@ -1669,7 +1642,7 @@ mod tests {
         assert_eq!(mcp_checks_schema, action_checks_schema);
 
         let mut action_started = TestClient::post("http://localhost/api/connector/task/start")
-            .bearer_auth(&user_token)
+            .bearer_auth(user_token)
             .json(&json!({
                 "goal": "exercise the Actions adapter",
                 "mode": "read_only"
@@ -1686,7 +1659,7 @@ mod tests {
         assert!(action_body.get("success").is_none());
 
         let mut legacy = TestClient::post("http://localhost/api/tools/call")
-            .bearer_auth(&user_token)
+            .bearer_auth(user_token)
             .json(&json!({ "name": "runtime_status", "arguments": {} }))
             .send(&service)
             .await;
@@ -1698,7 +1671,7 @@ mod tests {
             .contains("canonical connector capabilities"));
 
         let mut started = TestClient::post("http://localhost/mcp")
-            .bearer_auth(&user_token)
+            .bearer_auth(user_token)
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": 21,
@@ -1722,7 +1695,7 @@ mod tests {
             .is_none());
 
         let mut hidden = TestClient::post("http://localhost/mcp")
-            .bearer_auth(&user_token)
+            .bearer_auth(user_token)
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": 22,

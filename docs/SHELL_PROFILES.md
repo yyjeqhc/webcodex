@@ -154,37 +154,27 @@ the next command.
 
 ## 10. Troubleshooting
 
-Run the local agent-config doctor to validate shell profiles and project
-binding without contacting the server:
+For a canonical project, run the shared read-only readiness checks:
 
 ```bash
-webcodex-cli doctor --agent-config /etc/webcodex/clients/workstation/agent.toml
+webcodex doctor
 ```
 
-Add `--strict` to exit non-zero on any failure, and `--project <id>` to also
-run a remote shell roundtrip (`printf webcodex-doctor-ok`) against a specific
-project:
+For an advanced enrolled profile, combine Agent status with operator status:
 
 ```bash
-webcodex-cli doctor --agent-config /etc/webcodex/clients/workstation/agent.toml --strict
-webcodex-cli doctor --server-url https://example.test \
-  --user-token-file ~/.config/webcodex/user.token \
-  --agent-config /etc/webcodex/clients/workstation/agent.toml \
-  --project agent:workstation:my-repo --strict
+webcodex-cli agent status \
+  --profile workstation \
+  --server-url https://example.test
+webcodex-cli ops status \
+  --server-url https://example.test \
+  --token-file ~/.config/webcodex/user.token \
+  --strict
 ```
 
-The doctor checks, locally:
-
-- `agent.toml` parses.
-- `shell.default_profile` references an existing `shell.profiles` entry.
-- `projects_dir` exists and each project TOML parses.
-- each project `path` exists.
-- each project `shell_profile` (or the resolved default) is present in
-  `shell.profiles`.
-
-Remotely (when `--server-url`, a token, and `--project` are given), it runs a
-minimal `printf webcodex-doctor-ok` roundtrip through `run_shell` and verifies
-the marker.
+Profile preparation failures remain sanitized in Agent status/logs: neither
+`init_script` bodies nor environment values are exposed. Fleet/project
+roundtrips belong to explicit operator smoke checks, not ordinary onboarding.
 
 See also:
 

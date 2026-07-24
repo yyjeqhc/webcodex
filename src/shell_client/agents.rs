@@ -54,6 +54,13 @@ impl ShellClientRegistry {
         };
         let mut inner = self.inner.lock().await;
 
+        if inner
+            .clients
+            .get(&client_id)
+            .is_some_and(|existing| existing.auth_group != record.auth_group)
+        {
+            return Err("agent client identity is unavailable".to_string());
+        }
         // Enforce the agent instance lease. `client_id` is the unique active
         // agent identity: at most one agent process may be online for it at a
         // time.

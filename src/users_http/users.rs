@@ -42,6 +42,7 @@ fn auth_kind_name(kind: AuthKind) -> &'static str {
         AuthKind::AccountCredential => "account",
         AuthKind::OAuth2Token => "oauth2",
         AuthKind::SharedKey => "shared-key",
+        AuthKind::ProjectCredential => "project",
         AuthKind::OpenAnonymous => "open",
     }
 }

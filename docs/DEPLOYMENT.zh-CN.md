@@ -153,7 +153,7 @@ Client：
 11. 运行 `sudo systemctl daemon-reload`。
 12. 运行 `sudo systemctl enable --now webcodex-agent`。
 13. 运行 `webcodex-cli agent status`。
-14. 运行 `webcodex-cli doctor --strict`。
+14. 运行 `webcodex-cli ops status --strict`。
 
 `/etc/webcodex/webcodex.env` 只属于 server 侧。多用户或多个 client 共享一台机器时，client 侧文件应放在 profile 目录下，例如 `/etc/webcodex/clients/workstation/agent.toml`、`/etc/webcodex/clients/workstation/webcodex-user-token`、`/etc/webcodex/clients/workstation/webcodex-agent-token` 和 `/etc/webcodex/clients/workstation/projects.d`。
 
@@ -206,9 +206,9 @@ webcodex-cli agent install-service \
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent-workstation
 
-webcodex-cli doctor \
-  --profile workstation \
+webcodex-cli ops status \
   --server-url https://your-domain.example \
+  --token-file /etc/webcodex/clients/workstation/webcodex-user-token \
   --strict
 ```
 
@@ -222,7 +222,10 @@ WebCodex 在这里提供一个只读浏览器 console：
 https://your-domain.example/console
 ```
 
-静态 console bundle 不包含 secrets。Runtime data 由浏览器使用用户凭据、session 或 token 从受保护 API 获取。console 不属于 GPT Actions OpenAPI，也不是完整 admin UI。
+静态 console bundle 不包含 secrets。它从受保护 Connector API 获取共享 project
+readiness projection，只显示 Project、Connection、Agent/coding readiness、
+findings 和下一条 CLI action，不暴露 Agent registry 或 transport 细节。console
+不属于 GPT Actions OpenAPI，也不是完整 admin UI。
 
 ### Runtime job API 信任模型
 
@@ -303,7 +306,8 @@ webcodex-cli agent status \
 webcodex-agent --profile workstation
 ```
 
-`webcodex-agent init` 仍保留为兼容入口。
+高级手工初始化使用 `webcodex-cli agent init`；重复的
+`webcodex-agent init` alias 已删除。
 
 重要 agent 设置：
 
@@ -375,7 +379,7 @@ WebCodex 不再暴露 `run_codex` 或 legacy `/api/codex/*` routes。GPT Actions
 
 推荐的生产 smoke sequence：
 
-1. `webcodex-cli doctor --server-url https://your-domain.example --user-token-file PATH` 通过非破坏性检查。
+1. `webcodex-cli ops status --server-url https://your-domain.example --token-file PATH --strict` 通过只读检查。
 2. `POST /api/runtime/status` 返回 `service=webcodex` 和预期 public URL。
 3. `listAgents` 显示至少一个 online agent。
 4. `listProjects` 显示 `agent:<client_id>:<project_id>` ids。

@@ -1,5 +1,7 @@
 # Hosted Execution Engine：第六轮与 6.1 稳定化记录
 
+> Archive：历史实现记录，不是当前使用指南。当前入口见 `../QUICK_START.zh-CN.md`。
+>
 > 状态：Iteration 6 durable command vertical slice 与 Iteration 6.1 behavioral stabilization 已完成，2026-07-23。未 push、tag、deploy，也未创建 commit。
 
 ## 1. 结果

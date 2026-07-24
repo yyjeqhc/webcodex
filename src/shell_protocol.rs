@@ -41,6 +41,7 @@ fn default_transport_polling() -> String {
 /// main server binary does not reference it directly.
 #[allow(dead_code)]
 pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
+pub const VALIDATION_STEP_SPAWN_FAILED_CODE: &str = "validation_step_spawn_failed";
 
 /// Protocol version announced by `webcodex-agent` builds that connect over
 /// WebSocket. Kept in the shared protocol module so both the server and the

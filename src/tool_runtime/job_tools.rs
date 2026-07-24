@@ -17,8 +17,16 @@ impl ToolRuntime {
                 timeout_secs,
                 cwd,
             } => {
-                self.run_job(project, command, session_id, timeout_secs, cwd, Vec::new())
-                    .await
+                self.run_job_for_auth(
+                    project,
+                    command,
+                    session_id,
+                    timeout_secs,
+                    cwd,
+                    Vec::new(),
+                    auth,
+                )
+                .await
             }
             ToolCall::StopJob {
                 project,

@@ -13,8 +13,8 @@ pub(crate) mod surface;
 pub(crate) mod workspace;
 
 use crate::auth::{
-    AuthContext, AuthKind, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
-    SCOPE_RUNTIME_READ,
+    AuthContext, AuthKind, ProjectCredentialVerifier, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
+    SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
 };
 use crate::db::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
@@ -54,6 +54,7 @@ pub(crate) struct ConnectorContext {
     pub results_root: String,
     pub projects_dir: String,
     pub profile: String,
+    pub project_grant_id: String,
 }
 
 impl ConnectorContext {
@@ -76,6 +77,7 @@ impl ConnectorContext {
             results_root: required_env("WEBCODEX_CONNECTOR_RESULTS_ROOT")?,
             projects_dir: required_env("WEBCODEX_CONNECTOR_PROJECTS_DIR")?,
             profile: required_env("WEBCODEX_CONNECTOR_PROFILE")?,
+            project_grant_id: required_env("WEBCODEX_CONNECTOR_PROJECT_GRANT_ID")?,
         };
         context.validate()?;
         Ok(Some(context))
@@ -100,6 +102,11 @@ impl ConnectorContext {
         if self.profile.trim().is_empty() || self.profile.len() > 100 {
             return Err("WEBCODEX_CONNECTOR_PROFILE must be 1..=100 bytes".into());
         }
+        validate_opaque_id(
+            &self.project_grant_id,
+            "wc_pgrant_",
+            "connector project grant id",
+        )?;
         Ok(())
     }
 }
@@ -113,6 +120,7 @@ pub(crate) struct ConnectorRuntime {
     context: ConnectorContext,
     workspace: workspace::WorkspaceManager,
     executions: execution::ExecutionService,
+    credential: ProjectCredentialVerifier,
     workspace_ops: tokio::sync::Mutex<()>,
     task_locks: StdMutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
     #[cfg(test)]
@@ -152,8 +160,12 @@ impl ConnectorRuntime {
         tools: Arc<ToolRuntime>,
         db: Arc<Database>,
         context: ConnectorContext,
+        credential: ProjectCredentialVerifier,
     ) -> Result<Self, String> {
         context.validate()?;
+        if credential.grant_id() != context.project_grant_id {
+            return Err("project credential does not match connector grant identity".to_string());
+        }
         let workspace = workspace::WorkspaceManager::new(&context)?;
         let executions =
             execution::ExecutionService::new(tools.clone(), db.clone(), workspace.clone());
@@ -180,6 +192,7 @@ impl ConnectorRuntime {
             context,
             workspace,
             executions,
+            credential,
             workspace_ops: tokio::sync::Mutex::new(()),
             task_locks: StdMutex::new(HashMap::new()),
             #[cfg(test)]
@@ -196,13 +209,99 @@ impl ConnectorRuntime {
         let Some(context) = ConnectorContext::from_env()? else {
             return Ok(ConnectorRuntimeSlot::default());
         };
+        let credential_path = required_env("WEBCODEX_PROJECT_CREDENTIAL_FILE")?;
+        let credential = ProjectCredentialVerifier::from_file(
+            context.project_grant_id.clone(),
+            Path::new(&credential_path),
+        )?;
         Ok(ConnectorRuntimeSlot(Some(Arc::new(Self::new(
-            tools, db, context,
+            tools, db, context, credential,
         )?))))
     }
 
     pub(crate) fn context(&self) -> &ConnectorContext {
         &self.context
+    }
+
+    pub(crate) fn authenticate_project_credential(&self, token: &str) -> Option<AuthContext> {
+        self.credential.authenticate(token)
+    }
+
+    fn project_access_allowed(&self, auth: &AuthContext) -> bool {
+        auth.is_bootstrap()
+            || auth.project_grant_id.as_deref() == Some(self.context.project_grant_id.as_str())
+    }
+
+    pub(crate) async fn readiness(
+        &self,
+        auth: &AuthContext,
+    ) -> Option<crate::project_entry::ProjectReadiness> {
+        use crate::project_entry::{runtime_readiness, RemoteProbe};
+
+        if !self.project_access_allowed(auth) {
+            return None;
+        }
+        let Some((client_id, project_id)) = self
+            .context
+            .executor_project
+            .strip_prefix("agent:")
+            .and_then(|value| value.split_once(':'))
+        else {
+            return Some(runtime_readiness(
+                Some(self.context.project_name.clone()),
+                RemoteProbe::ProjectMissing,
+            ));
+        };
+        let Some(agent) = self
+            .tools
+            .shell_clients
+            .get_client_view_for_auth(client_id, Some(auth))
+            .await
+        else {
+            return Some(runtime_readiness(
+                Some(self.context.project_name.clone()),
+                RemoteProbe::AgentOffline,
+            ));
+        };
+        if agent.status != "online" || !agent.connected {
+            return Some(runtime_readiness(
+                Some(self.context.project_name.clone()),
+                RemoteProbe::AgentOffline,
+            ));
+        }
+        if !agent
+            .projects
+            .iter()
+            .any(|project| project.id == project_id && !project.disabled)
+        {
+            return Some(runtime_readiness(
+                Some(self.context.project_name.clone()),
+                RemoteProbe::ProjectMissing,
+            ));
+        }
+        let capabilities = &agent.capabilities;
+        if !(capabilities.shell
+            && capabilities.file_read
+            && capabilities.file_write
+            && capabilities.jobs
+            && capabilities.async_jobs
+            && capabilities.async_shell_jobs)
+        {
+            return Some(runtime_readiness(
+                Some(self.context.project_name.clone()),
+                RemoteProbe::RequiredCapabilityMissing,
+            ));
+        }
+        if !capabilities.structured_validation_jobs {
+            return Some(runtime_readiness(
+                Some(self.context.project_name.clone()),
+                RemoteProbe::StructuredValidationMissing,
+            ));
+        }
+        Some(runtime_readiness(
+            Some(self.context.project_name.clone()),
+            RemoteProbe::Ready,
+        ))
     }
 
     pub(crate) async fn call(
@@ -240,6 +339,18 @@ impl ConnectorRuntime {
                 false,
             );
         };
+        if !self.project_access_allowed(auth) {
+            return ConnectorCallOutcome::error(
+                403,
+                "project_credential_rejected",
+                "the authenticated credential is not authorized for this project",
+                false,
+                true,
+                Some("Use the credential generated by setup for this project."),
+                None,
+                false,
+            );
+        }
         let required_scope = required_scope(capability);
         if !auth.has_scope(required_scope) {
             return ConnectorCallOutcome::scope_denied(required_scope);
@@ -981,9 +1092,10 @@ impl ConnectorRuntime {
                     Some(client_id) => self
                         .tools
                         .shell_clients
-                        .client_supports(
+                        .client_supports_for_auth(
                             client_id,
                             SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS,
+                            Some(auth),
                         )
                         .await
                         .unwrap_or(false),
@@ -1536,6 +1648,18 @@ impl ConnectorRuntime {
             Ok(execution) => execution,
             Err(error) => return store_error_outcome(error, Some(&task)),
         };
+        if task.mode == "normal" && check_execution.is_none() {
+            return ConnectorCallOutcome::error_for_task(
+                409,
+                "checks_required",
+                "a normal coding result must run structured checks before task_finish",
+                false,
+                true,
+                Some("Call checks_run with a new operation_id, then retry task_finish."),
+                &task,
+                json!({}),
+            );
+        }
         if let Some(check) = check_execution
             .as_ref()
             .filter(|check| check.state == "succeeded")
@@ -2674,12 +2798,16 @@ fn stable_subject_id(auth: &AuthContext) -> Result<String, String> {
     if let Some(hash) = auth.shared_key_hash.as_deref() {
         return Ok(format!("shared:{hash}"));
     }
+    if let Some(grant_id) = auth.project_grant_id.as_deref() {
+        return Ok(format!("project:{grant_id}"));
+    }
     match auth.kind {
         AuthKind::Bootstrap => Ok("bootstrap".to_string()),
         AuthKind::OpenAnonymous => Ok("open:anonymous".to_string()),
         AuthKind::ApiToken
         | AuthKind::OAuth2Token
         | AuthKind::SharedKey
+        | AuthKind::ProjectCredential
         | AuthKind::AgentToken
         | AuthKind::AccountCredential => {
             Err("authenticated identity has no stable connector subject".to_string())
@@ -2949,6 +3077,63 @@ struct TaskFinishInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shell_client::ShellClientRegistry;
+    use crate::shell_protocol::{
+        ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
+    };
+
+    pub(super) const PROJECT_GRANT_ID: &str = "wc_pgrant_1111111111111111";
+    pub(super) const PROJECT_SUBJECT_ID: &str = "project:wc_pgrant_1111111111111111";
+    const PROJECT_CREDENTIAL: &str =
+        "webcodex_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    pub(super) fn credential() -> ProjectCredentialVerifier {
+        ProjectCredentialVerifier::new(PROJECT_GRANT_ID.to_string(), PROJECT_CREDENTIAL).unwrap()
+    }
+
+    async fn register_agent(registry: &ShellClientRegistry, project_id: &str, path: &str) {
+        registry
+            .register_with_auth(
+                ShellClientRegisterRequest {
+                    client_id: "hosted".to_string(),
+                    agent_instance_id: "instance".to_string(),
+                    display_name: None,
+                    owner: Some("owner".to_string()),
+                    hostname: None,
+                    capabilities: Some(ShellClientCapabilities {
+                        shell: true,
+                        file_read: true,
+                        file_write: true,
+                        git: true,
+                        jobs: true,
+                        async_jobs: true,
+                        async_shell_jobs: true,
+                        structured_validation_jobs: true,
+                        lsp_read_only_navigation: false,
+                    }),
+                    projects: Some(vec![ShellAgentProjectSummary {
+                        id: project_id.to_string(),
+                        name: Some(project_id.to_string()),
+                        path: path.to_string(),
+                        allow_patch: true,
+                        kind: Some("auto".to_string()),
+                        description: None,
+                        hooks: Vec::new(),
+                        disabled: false,
+                        git_branch: Some("main".to_string()),
+                        git_head: None,
+                        git_dirty: Some(false),
+                        updated_at: 1,
+                        shell_profile: None,
+                    }]),
+                    agent_protocol_version: Some("test".to_string()),
+                    policy: None,
+                },
+                Some(&auth("u1")),
+            )
+            .await
+            .unwrap();
+    }
 
     pub(super) fn init_repo(project: &Path) {
         std::fs::create_dir(project).unwrap();
@@ -2981,23 +3166,22 @@ mod tests {
     }
 
     pub(super) fn auth(user_id: &str) -> AuthContext {
+        let project_grant_id = if user_id == "u1" {
+            PROJECT_GRANT_ID.to_string()
+        } else {
+            "wc_pgrant_2222222222222222".to_string()
+        };
         AuthContext {
-            kind: AuthKind::ApiToken,
-            user_id: Some(user_id.to_string()),
-            username: Some("owner".to_string()),
-            api_key_id: Some("key".to_string()),
-            api_key_name: Some("connector".to_string()),
-            role: Some("user".to_string()),
+            role: Some("project".to_string()),
             scopes: vec![
                 SCOPE_RUNTIME_READ.to_string(),
                 SCOPE_PROJECT_READ.to_string(),
                 SCOPE_PROJECT_WRITE.to_string(),
                 SCOPE_JOB_RUN.to_string(),
             ],
-            is_bootstrap: false,
-            token_kind: Some("user".to_string()),
-            allowed_client_id: None,
-            shared_key_hash: None,
+            token_kind: Some("project".to_string()),
+            project_grant_id: Some(project_grant_id),
+            ..AuthContext::new(AuthKind::ProjectCredential)
         }
     }
 
@@ -3024,7 +3208,9 @@ mod tests {
                     .to_string_lossy()
                     .to_string(),
                 profile: "personal".to_string(),
+                project_grant_id: PROJECT_GRANT_ID.to_string(),
             },
+            credential(),
         )
         .unwrap();
         (temp, connector)
@@ -3032,54 +3218,13 @@ mod tests {
 
     #[tokio::test]
     async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
-        use crate::shell_client::ShellClientRegistry;
-        use crate::shell_protocol::{
-            ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-            ShellClientCapabilities, ShellClientRegisterRequest,
-        };
+        use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
 
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
         init_repo(&project);
         let registry = Arc::new(ShellClientRegistry::default());
-        registry
-            .register(ShellClientRegisterRequest {
-                client_id: "hosted".to_string(),
-                agent_instance_id: "instance".to_string(),
-                display_name: None,
-                owner: Some("owner".to_string()),
-                hostname: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    git: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_jobs: true,
-                    lsp_read_only_navigation: false,
-                }),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "project".to_string(),
-                    name: Some("project".to_string()),
-                    path: project.to_string_lossy().to_string(),
-                    allow_patch: true,
-                    kind: Some("auto".to_string()),
-                    description: None,
-                    hooks: Vec::new(),
-                    disabled: false,
-                    git_branch: Some("main".to_string()),
-                    git_head: None,
-                    git_dirty: Some(false),
-                    updated_at: 1,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("test".to_string()),
-                policy: None,
-            })
-            .await
-            .unwrap();
+        register_agent(&registry, "project", &project.to_string_lossy()).await;
         let db = Arc::new(Database::open(&temp.path().join("connector.db")).unwrap());
         let connector = ConnectorRuntime::new(
             Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
@@ -3104,7 +3249,9 @@ mod tests {
                     .to_string_lossy()
                     .to_string(),
                 profile: "personal".to_string(),
+                project_grant_id: PROJECT_GRANT_ID.to_string(),
             },
+            credential(),
         )
         .unwrap();
         let agent_registry = registry.clone();
@@ -3168,7 +3315,7 @@ mod tests {
         let task_id = outcome.body["task_id"].as_str().unwrap();
         let task = connector
             .db
-            .connector_task(task_id, &connector.context.project_id, "user:u1")
+            .connector_task(task_id, &connector.context.project_id, PROJECT_SUBJECT_ID)
             .unwrap();
         assert_ne!(task.execution_root, task.target_root);
         assert!(Path::new(&task.execution_root).is_dir());
@@ -3182,6 +3329,64 @@ mod tests {
             std::fs::read_to_string(project.join("README.md")).unwrap(),
             "fixture\n"
         );
+        let check_registry = registry.clone();
+        let check_responder = tokio::spawn(async move {
+            for _ in 0..1_000 {
+                if let Some(request) = check_registry
+                    .poll(ShellAgentPollRequest {
+                        client_id: "hosted".to_string(),
+                        agent_instance_id: "instance".to_string(),
+                        projects: None,
+                    })
+                    .await
+                    .unwrap()
+                {
+                    assert_eq!(request.kind, "start_validation_job");
+                    check_registry
+                        .update_job(crate::shell_protocol::ShellAgentJobUpdateRequest {
+                            client_id: "hosted".to_string(),
+                            agent_instance_id: "instance".to_string(),
+                            job_id: request.job_id.unwrap(),
+                            request_id: Some(request.request_id),
+                            status: "completed".to_string(),
+                            stdout_chunk: None,
+                            stderr_chunk: None,
+                            stdout_tail: None,
+                            stderr_tail: None,
+                            exit_code: Some(0),
+                            duration_ms: Some(1),
+                            error: None,
+                            validation_progress: Some(
+                                crate::shell_protocol::ShellJobValidationProgress {
+                                    completed: 1,
+                                    current_step: None,
+                                    failed_step: None,
+                                },
+                            ),
+                            finished: true,
+                        })
+                        .await
+                        .unwrap();
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            panic!("connector did not dispatch structured validation");
+        });
+        let checked = connector
+            .call(
+                "checks_run",
+                json!({
+                    "task_id": task_id,
+                    "operation_id": "worktree-check-1",
+                    "checks": ["check"]
+                }),
+                Some(&owner),
+                ConnectorTransport::Mcp,
+            )
+            .await;
+        check_responder.await.unwrap();
+        assert!(checked.ok, "{}", checked.body);
         let finished = connector
             .call(
                 "task_finish",
@@ -3220,11 +3425,11 @@ mod tests {
             .contains("isolated result"));
         let decided_task = connector
             .db
-            .connector_task(task_id, &connector.context.project_id, "user:u1")
+            .connector_task(task_id, &connector.context.project_id, PROJECT_SUBJECT_ID)
             .unwrap();
         let result = connector
             .db
-            .connector_task_result(task_id, &connector.context.project_id, "user:u1")
+            .connector_task_result(task_id, &connector.context.project_id, PROJECT_SUBJECT_ID)
             .unwrap()
             .unwrap();
         let cleanup = workspace::WorkspaceManager::reject(&decided_task, &result).unwrap();
@@ -3249,53 +3454,12 @@ mod tests {
 
     #[tokio::test]
     async fn canonical_read_reaches_bound_executor_and_advances_event_cursor() {
-        use crate::shell_client::ShellClientRegistry;
-        use crate::shell_protocol::{
-            ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-            ShellClientCapabilities, ShellClientRegisterRequest,
-        };
+        use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
 
         let temp = tempfile::tempdir().unwrap();
         let db = Arc::new(Database::open(&temp.path().join("connector.db")).unwrap());
         let registry = Arc::new(ShellClientRegistry::default());
-        registry
-            .register(ShellClientRegisterRequest {
-                client_id: "hosted".to_string(),
-                agent_instance_id: "instance".to_string(),
-                display_name: None,
-                owner: Some("owner".to_string()),
-                hostname: None,
-                capabilities: Some(ShellClientCapabilities {
-                    shell: true,
-                    file_read: true,
-                    file_write: true,
-                    git: true,
-                    jobs: true,
-                    async_jobs: true,
-                    async_shell_jobs: true,
-                    structured_validation_jobs: true,
-                    lsp_read_only_navigation: false,
-                }),
-                projects: Some(vec![ShellAgentProjectSummary {
-                    id: "demo".to_string(),
-                    name: Some("demo".to_string()),
-                    path: "/workspace/demo".to_string(),
-                    allow_patch: true,
-                    kind: Some("auto".to_string()),
-                    description: None,
-                    hooks: Vec::new(),
-                    disabled: false,
-                    git_branch: Some("main".to_string()),
-                    git_head: None,
-                    git_dirty: Some(false),
-                    updated_at: 1,
-                    shell_profile: None,
-                }]),
-                agent_protocol_version: Some("test".to_string()),
-                policy: None,
-            })
-            .await
-            .unwrap();
+        register_agent(&registry, "demo", "/workspace/demo").await;
         let tool_runtime = Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
             registry.clone(),
         ));
@@ -3316,7 +3480,9 @@ mod tests {
                     .to_string_lossy()
                     .to_string(),
                 profile: "personal".to_string(),
+                project_grant_id: PROJECT_GRANT_ID.to_string(),
             },
+            credential(),
         )
         .unwrap();
         let owner = auth("u1");

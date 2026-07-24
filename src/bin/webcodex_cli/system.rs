@@ -132,24 +132,6 @@ pub(crate) fn write_secret_file(path: &Path, content: &str) -> Result<(), String
     Ok(())
 }
 
-pub(crate) fn discover_binary(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        #[cfg(windows)]
-        {
-            let candidate = dir.join(format!("{}.exe", name));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
 pub(crate) fn read_optional_token(
     path: &Option<PathBuf>,
     label: &str,

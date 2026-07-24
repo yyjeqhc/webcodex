@@ -44,13 +44,24 @@ fn cli_version_output_includes_build_metadata() {
 }
 
 #[test]
-fn webcodex_cli_help_mentions_pairing_client_and_doctor() {
+fn removed_onboarding_and_doctor_commands_do_not_dispatch() {
+    for command in ["connect", "doctor"] {
+        match cli_action([command]) {
+            CliAction::Exit {
+                code: 2, stderr, ..
+            } => assert!(stderr.contains("unknown command"), "{stderr}"),
+            other => panic!("{command} unexpectedly dispatched: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn webcodex_cli_help_mentions_management_commands() {
     match cli_action(["--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);
             assert!(stdout.contains("pairing create"));
             assert!(stdout.contains("client enroll"));
-            assert!(stdout.contains("doctor"));
             assert!(stdout.contains("token generate"));
             assert!(stdout.contains("token create-local"));
             assert!(stdout.contains("token register-hash"));
@@ -70,9 +81,7 @@ fn common_help_entrypoints_smoke() {
             &[
                 "Usage: webcodex-cli <COMMAND>",
                 "Commands:",
-                "connect <URL>",
                 "server up",
-                "doctor",
                 "setup single-user",
             ],
         ),
@@ -85,27 +94,6 @@ fn common_help_entrypoints_smoke() {
                 "init",
                 "install-service",
                 "status",
-            ],
-        ),
-        (
-            &["connect", "--help"],
-            &[
-                "Usage: webcodex-cli connect",
-                "Options:",
-                "--key",
-                "--open",
-                "mutually exclusive",
-            ],
-        ),
-        (
-            &["doctor", "--help"],
-            &[
-                "Usage: webcodex-cli doctor",
-                "Options:",
-                "--server-url",
-                "--quic",
-                "--strict",
-                "non-destructive",
             ],
         ),
         (

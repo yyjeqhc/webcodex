@@ -1,5 +1,7 @@
 # Hosted Task Result：第三轮实现与验收边界
 
+> Archive：历史实现记录，不是当前使用指南。当前入口见 `../QUICK_START.zh-CN.md`。
+>
 > 状态：第三轮核心纵向切片，2026-07-15。本文记录已经进入代码的个人本地主路径；不把 browser console、跨机器同步或真实 provider 账号验收写成已完成。
 >
 > 资源策略更新：第四轮已将这里的 per-run worktree 与 accept/reject 后清理，替换为带 Run 租约的固定可复用槽位、`task_finish` 后立即释放和 Project 级 Cargo cache。稳定 Result 与人工决策语义保持不变，详见 [HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md](HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md)。

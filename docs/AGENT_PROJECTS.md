@@ -96,6 +96,6 @@ If `createProject` or `registerProject` returns a policy error, check whether th
 
 If a new project does not appear in `listProjects`, verify the agent is online and that its project registry refresh succeeded.
 
-For shell-profile diagnostics (missing profile, prepare failure, project
-binding), run `webcodex-cli doctor --agent-config /etc/webcodex/clients/workstation/agent.toml
---strict` and see [SHELL_PROFILES.md](SHELL_PROFILES.md).
+For a canonical project, run `webcodex doctor`. For an advanced enrolled
+profile, use `webcodex-cli agent status --profile workstation` and see
+[SHELL_PROFILES.md](SHELL_PROFILES.md).

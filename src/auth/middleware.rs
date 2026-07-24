@@ -171,8 +171,8 @@ pub(crate) fn enforce_token_surface(
     Ok(())
 }
 
-/// A `webcodex connect` process is a capability grant for one project, not a
-/// general runtime admin endpoint. Non-bootstrap user-facing credentials may
+/// A project-bound runtime is a capability grant for one configured project,
+/// not a general runtime admin endpoint. Non-bootstrap user-facing credentials may
 /// therefore reach only the canonical connector API and MCP. Bootstrap stays
 /// available for local setup; agent tokens stay available for their already
 /// exact transport routes.
@@ -184,7 +184,9 @@ pub(crate) fn enforce_project_connector_surface(
     if !enabled || ctx.is_bootstrap() || ctx.is_agent_token() {
         return Ok(());
     }
-    if path == "/mcp" || path.starts_with("/api/connector/") {
+    if ctx.is_project_credential()
+        && (path == "/mcp" || is_project_connector_path(path) || is_agent_transport_path(path))
+    {
         return Ok(());
     }
     Err((
@@ -193,11 +195,39 @@ pub(crate) fn enforce_project_connector_surface(
     ))
 }
 
-fn project_connector_enabled(depot: &Depot) -> bool {
+fn is_project_connector_path(path: &str) -> bool {
+    path == "/api/connector/readiness"
+        || crate::connector_runtime::surface::CAPABILITY_NAMES
+            .iter()
+            .any(|name| crate::connector_runtime::surface::route_for(name) == Some(path))
+}
+
+fn project_connector_runtime(
+    depot: &Depot,
+) -> Option<Arc<crate::connector_runtime::ConnectorRuntime>> {
     depot
         .obtain::<crate::connector_runtime::ConnectorRuntimeSlot>()
         .ok()
-        .is_some_and(|slot| slot.0.is_some())
+        .and_then(|slot| slot.0.clone())
+}
+
+fn project_connector_enabled(depot: &Depot) -> bool {
+    project_connector_runtime(depot).is_some()
+}
+
+fn enforce_request_surface(
+    project_mode: bool,
+    ctx: &AuthContext,
+    path: &str,
+) -> Result<(), (StatusCode, &'static str)> {
+    enforce_token_surface(ctx, path)?;
+    enforce_project_connector_surface(project_mode, ctx, path)
+}
+
+fn reject(res: &mut Response, ctrl: &mut FlowCtrl, status: StatusCode, message: &str) {
+    res.status_code(status);
+    res.render(Json(serde_json::json!({"error": message})));
+    ctrl.skip_rest();
 }
 
 // ---------------------------------------------------------------------------
@@ -245,20 +275,12 @@ impl Handler for AuthMiddleware {
                     // Explicit --open: anonymous callers get a non-admin open
                     // context. Surface restrictions still apply.
                     let ctx = open_anonymous_context();
-                    if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
-                        res.status_code(status);
-                        res.render(Json(serde_json::json!({"error": msg})));
-                        ctrl.skip_rest();
-                        return;
-                    }
-                    if let Err((status, msg)) = enforce_project_connector_surface(
+                    if let Err((status, msg)) = enforce_request_surface(
                         project_connector_enabled(depot),
                         &ctx,
                         req.uri().path(),
                     ) {
-                        res.status_code(status);
-                        res.render(Json(serde_json::json!({"error": msg})));
-                        ctrl.skip_rest();
+                        reject(res, ctrl, status, msg);
                         return;
                     }
                     depot.inject(ctx);
@@ -276,6 +298,21 @@ impl Handler for AuthMiddleware {
                 return;
             }
         };
+
+        // Project mode has one exact credential verifier loaded from its
+        // protected setup state. This path is separate from the ordinary
+        // shared-key quick-start fallback below.
+        if let Some(runtime) = project_connector_runtime(depot) {
+            if let Some(ctx) = runtime.authenticate_project_credential(&token) {
+                if let Err((status, msg)) = enforce_request_surface(true, &ctx, req.uri().path()) {
+                    reject(res, ctrl, status, msg);
+                    return;
+                }
+                depot.inject(ctx);
+                ctrl.call_next(req, depot, res).await;
+                return;
+            }
+        }
 
         // Pre-reject OAuth2 access tokens on agent transport paths before
         // running the verifier chain. OAuth2Verifier updates last_used_at on
@@ -296,20 +333,12 @@ impl Handler for AuthMiddleware {
             Ok(Some(ctx)) => {
                 // Enforce token-kind surface restrictions (agent tokens,
                 // account credentials) before the handler runs.
-                if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
-                    res.status_code(status);
-                    res.render(Json(serde_json::json!({"error": msg})));
-                    ctrl.skip_rest();
-                    return;
-                }
-                if let Err((status, msg)) = enforce_project_connector_surface(
+                if let Err((status, msg)) = enforce_request_surface(
                     project_connector_enabled(depot),
                     &ctx,
                     req.uri().path(),
                 ) {
-                    res.status_code(status);
-                    res.render(Json(serde_json::json!({"error": msg})));
-                    ctrl.skip_rest();
+                    reject(res, ctrl, status, msg);
                     return;
                 }
                 if let Err((scope, description)) =
@@ -331,24 +360,17 @@ impl Handler for AuthMiddleware {
                 let trimmed = token.trim();
                 if config.is_auth_enabled()
                     && shared_key_enabled()
+                    && !project_connector_enabled(depot)
                     && !trimmed.is_empty()
                     && !is_managed_token_prefix(trimmed)
                 {
                     let ctx = shared_key_context(trimmed);
-                    if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
-                        res.status_code(status);
-                        res.render(Json(serde_json::json!({"error": msg})));
-                        ctrl.skip_rest();
-                        return;
-                    }
-                    if let Err((status, msg)) = enforce_project_connector_surface(
+                    if let Err((status, msg)) = enforce_request_surface(
                         project_connector_enabled(depot),
                         &ctx,
                         req.uri().path(),
                     ) {
-                        res.status_code(status);
-                        res.render(Json(serde_json::json!({"error": msg})));
-                        ctrl.skip_rest();
+                        reject(res, ctrl, status, msg);
                         return;
                     }
                     if let Err((scope, description)) = scopes::enforce_oauth_route_scope(
@@ -412,29 +434,27 @@ mod connector_surface_tests {
     use super::*;
     use crate::auth::{AuthKind, SCOPE_PROJECT_READ};
 
-    fn user_context() -> AuthContext {
+    fn project_context() -> AuthContext {
         AuthContext {
-            kind: AuthKind::ApiToken,
-            user_id: Some("u1".to_string()),
-            username: Some("owner".to_string()),
-            api_key_id: Some("key".to_string()),
-            api_key_name: Some("connector".to_string()),
-            role: Some("user".to_string()),
+            role: Some("project".to_string()),
             scopes: vec![SCOPE_PROJECT_READ.to_string()],
-            is_bootstrap: false,
-            token_kind: Some("user".to_string()),
-            allowed_client_id: None,
-            shared_key_hash: None,
+            token_kind: Some("project".to_string()),
+            project_grant_id: Some("wc_pgrant_1111111111111111".to_string()),
+            ..AuthContext::new(AuthKind::ProjectCredential)
         }
     }
 
     #[test]
     fn project_connector_hard_gates_legacy_user_routes() {
-        let user = user_context();
+        let user = project_context();
         assert!(
             enforce_project_connector_surface(true, &user, "/api/connector/files/read").is_ok()
         );
         assert!(enforce_project_connector_surface(true, &user, "/mcp").is_ok());
+        assert!(
+            enforce_project_connector_surface(true, &user, "/api/connector/not-a-capability")
+                .is_err()
+        );
         assert!(enforce_project_connector_surface(true, &user, "/api/tools/call").is_err());
         assert!(enforce_project_connector_surface(true, &user, "/api/projects/list").is_err());
         assert!(enforce_project_connector_surface(false, &user, "/api/tools/call").is_ok());

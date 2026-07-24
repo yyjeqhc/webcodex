@@ -12,7 +12,7 @@
 - active/unknown execution 存在时，`task_finish` fail closed。
 - 复用现有 job/process 资产，删除 Connector direct synchronous command path。
 
-## Iteration 7 merge gate：7.2 待人工评审
+## 已完成：Iteration 7 — Durable Validation Provenance
 
 - `checks_run` 已迁移到同一 Execution Engine，一个 ordered fail-fast plan 对应一个 `kind=check` Execution。
 - check 复用 quick-yield、review、cancel、monitor、restart reconciliation 和 finish blocker。
@@ -36,18 +36,43 @@
   completed steps。
 - Agent 通过 `structured_validation_jobs` 明确协商；旧 Agent 收到
   `structured_validation_unavailable`，没有 marker、普通 shell 或 stdout fallback。
-- Iteration 7.2 当前是 dirty worktree，等待 final squash/amend 和人工 merge review；
-  本文不自行宣布 Iteration 7 已完成。
+- Iteration 7 已完成人工 review、完整测试与最终 squash，正式基线为
+  `a1547bba3b93669e8bdf6d0fec2388e0ae2b138e`。
 
-## 准入后下一步：Iteration 8 — 产品精修
+## 当前：Iteration 8.0/8.0.1 — Product Entry, Credential Boundary and Golden Path
 
-Iteration 8 尚未开始。先完成 Iteration 7.2 focused/full suite、fresh/Iteration 7
-数据库升级验证、LOC/删除清单登记和 dirty worktree 人工 merge review；评审前不扩
-capability 或 validation recipe。
+Iteration 8.0 只交付第一条垂直切片，不扩展 Hosted 九项 capability：
 
-- 一条命令 onboarding、doctor、status。
+- 唯一普通用户入口 `webcodex setup`，后续显式
+  `webcodex doctor` → `webcodex agent start` → `webcodex status`。
+- setup 生成一个由 Connector 与 Agent 共用的精确 Project Credential；两者映射到
+  同一非秘密 project grant，普通 arbitrary shared-key fallback 在 project mode
+  关闭，loopback 不免除认证。
+- readiness、file read/search/edit、command/check、monitor/log 与 cancel 都按请求
+  principal 验证 Agent grant；跨 grant 调用在 Task/Execution/pending request 等
+  副作用前 fail closed。
+- 新 setup client ID 包含非秘密 grant suffix；旧同名 lease 的跨组注册不能覆盖原
+  group。
+- application-level Project readiness facts 同时投影给 CLI、Connector API 和
+  Browser；不再读取 runtime registry 自行拼三套状态。
+- malformed/conflicting registration、invalid credential、workspace unavailable、
+  server unreachable、credential rejected 与 agent offline 使用不同 stable code；
+  doctor/status 保持只读。
+- project-bound Connector happy path 从 `task_start` 直接开始，不要求
+  `list_projects`、`runtime_status`、`tool_manifest` 或 workflow session。
+- golden path 由真实 Auth middleware、Connector HTTP adapter、Agent registry、
+  durable Task/Execution/event store 与本机 accept 覆盖；真实 recorder 证明没有
+  discovery/ops/session call，手工 calls vector 已删除。
+- normal task 在 `task_finish` 前必须运行 structured checks；check spawn failure
+  属于 executor infrastructure failure，不生成 assertion evidence/provenance。
+- 删除旧 `webcodex connect` process/tunnel orchestration、`webcodex-cli connect`
+  与重复 doctor projection；运维 registry/discovery 工具继续保留。
+- Browser 只提供 readiness surface；完整 Browser IDE 明确 deferred。
+
+Iteration 8.0 完成 focused/full suite、LOC 门禁和人工 review 后，才继续后续产品精修：
+
 - Rust/Node/Python/Go 的最小 project-aware check recipes。
-- 最小 review/cancel/accept CLI 与 Browser UI。
+- Browser 中的最小 review/cancel/accept UI（本机 CLI 已存在）。
 - replay baseline、真实 ChatGPT MCP/OpenAPI acceptance、第二轮删除。
 - production Rust LOC 相对 2026-07-23 基线净减少 20% 以上。
 
@@ -59,7 +84,7 @@ capability 或 validation recipe。
 
 ## 已完成基础
 
-- Hosted connect 与 project-bound 8 项 capability。
+- project-bound Connector 与当前 9 项 capability。
 - SQLite Task/Run/Event/Result/Approval。
 - 隔离执行工作区与本机 accept/reject。
 - 事务式多文件 edit/create/delete/rename。

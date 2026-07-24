@@ -22,6 +22,8 @@ The examples in this guide were checked against the current binary help output f
 
 | Task | Preferred command shape |
 | --- | --- |
+| Ordinary project onboarding | `webcodex setup` |
+| Project diagnostics/readiness | `webcodex doctor` / `webcodex status` |
 | Server env bootstrap | `webcodex-cli server init --listen ... --data-dir ... --env-file ...` |
 | Server systemd unit | `webcodex-cli server install-service --env-file ... --bin ...` |
 | Server status | `webcodex-cli server status --env-file ...` |
@@ -32,7 +34,6 @@ The examples in this guide were checked against the current binary help output f
 | Client enrollment | `webcodex-cli client enroll --server-url ... --pairing-code ... --client-id ...` |
 | Agent foreground run | `webcodex-agent --profile ...` |
 | Agent service | `webcodex-cli agent install-service --profile ... --bin ...` |
-| Doctor | `webcodex-cli doctor --server-url ... --user-token-file ... --strict` |
 
 The account-management command uses `users create` and `--server-url`; local token creation commands use `--server`. That difference comes from the current CLI surface and is intentionally reflected in the examples.
 
@@ -139,9 +140,9 @@ sudo systemctl enable --now webcodex-agent-workstation
 webcodex-cli agent status \
   --profile workstation \
   --server-url https://your-domain.example
-webcodex-cli doctor --strict \
-  --profile workstation \
-  --server-url https://your-domain.example
+webcodex-cli ops status \
+  --server-url https://your-domain.example \
+  --token-file /etc/webcodex/clients/workstation/webcodex-user-token
 ```
 
 GPT Actions should use the generated client-side user-token file. GPT Actions require a public HTTPS URL; WebCodex CLI does not automate reverse proxies or tunnels.
@@ -163,35 +164,39 @@ Client enroll writes `agent.toml`. For a systemd service, use `webcodex-cli agen
 webcodex-agent --profile workstation
 ```
 
-`webcodex-agent init` remains available as a compatibility entry point.
+For advanced manual generation, use the single low-level entry
+`webcodex-cli agent init`. The `webcodex-agent init` alias was removed.
 
-## Doctor
+## Project readiness
 
-Run non-destructive diagnostics:
-
-```bash
-webcodex-cli doctor --strict \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/workstation/webcodex-agent-token
-```
-
-Add `--agent-config /etc/webcodex/clients/workstation/agent.toml` to run local shell-profile / project
-diagnostics (parses `agent.toml`, checks `projects_dir`, project paths, and
-`shell_profile` resolution) without contacting the server. Add `--project <id>`
-to also run a remote `printf webcodex-doctor-ok` shell roundtrip against a
-specific project:
+For an ordinary Git project, use the canonical read-only diagnostics:
 
 ```bash
-webcodex-cli doctor --strict \
-  --agent-config /etc/webcodex/clients/workstation/agent.toml \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
-  --project agent:workstation:my-repo
+webcodex setup
+webcodex doctor
+webcodex agent start
+webcodex status
 ```
 
-Doctor never prints `init_script` bodies, env values, or tokens. See
-[SHELL_PROFILES.md](SHELL_PROFILES.md) for profile config and troubleshooting.
+`doctor` checks the current project configuration, registration, Git
+workspace, Agent runtime, connection, Agent registration, required coding
+capabilities, and structured validation without modifying state.
+
+For an advanced multi-client deployment, keep project readiness separate from
+operator fleet diagnostics:
+
+```bash
+webcodex-cli agent status \
+  --profile workstation \
+  --server-url https://your-domain.example
+webcodex-cli ops status \
+  --server-url https://your-domain.example \
+  --token-file /etc/webcodex/clients/workstation/webcodex-user-token
+```
+
+These commands never make transport/fleet discovery a prerequisite for the
+ordinary Connector coding path. See [SHELL_PROFILES.md](SHELL_PROFILES.md) for
+advanced profile config and troubleshooting.
 
 Agent policy defaults:
 

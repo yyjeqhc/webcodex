@@ -9,6 +9,7 @@ WebCodex 把 bootstrap administration、account onboarding、runtime API access 
 | Credential | 使用方 | 用途 | 不要用于 |
 | --- | --- | --- | --- |
 | `WEBCODEX_TOKEN` | server admin | bootstrap/root admin | GPT/MCP/agent 日常使用 |
+| Project Credential | setup 生成的 Connector + Agent | 精确访问一个 private project grant | 其他项目/admin/普通 quick start |
 | shared key | agent + GPT/MCP quick start | shared-key group onboarding | production IAM/admin |
 | `wc_acct_xxx` | user CLI | 创建本地 PAT/agent token | GPT/MCP/agent |
 | `wc_pat_xxx` | GPT Action/MCP/API | runtime tools | agent connection |
@@ -20,6 +21,29 @@ WebCodex 把 bootstrap administration、account onboarding、runtime API access 
 
 不要把 `WEBCODEX_TOKEN` 放进 GPT Actions、MCP clients 或日常 agent configs。
 
+## Project Credential
+
+`webcodex setup` 会为选定 Git root、profile 和 private state directory 创建一个
+Project Credential。Iteration 8.0 中，Connector credential file 与生成的 Agent
+config 携带同一个 secret；精确 verifier 会把两类 caller 映射到同一个稳定、非秘密
+的 `project_grant_id`。Agent registry access、readiness、file operation、job、log
+与 cancel 都要求该 grant。
+
+secret 只存在于 owner-protected private file；不会写入数据库，也不会出现在
+readiness、Browser JSON、日志或错误中。runtime 只保留 SHA-256 verifier value，
+candidate hash 使用 constant-time comparison。Agent client ID 还包含非秘密 grant
+suffix；跨 grant registration 不能替换已有 lease。
+
+Project mode 不是 shared-key quick start。它显式关闭 direct unknown-token fallback，
+请求只有通过精确 credential verifier 才能进入 Connector runtime state。因此任意
+非空 Bearer token 会得到 `401`，不能创建 Task、Execution、binding 或 Agent
+request。Loopback 同样不免除认证，本机进程仍是不同 trust subject。
+
+Setup 不会静默轮换仍存在的 Project Credential。可恢复的丢失应恢复 Connector 与
+Agent 两份匹配 private file。若 secret 无法恢复，停止 runtime，并明确退役整个
+private project-state profile 后重新 setup；这会生成新 secret，也会退役该 profile
+中的本地 Task/Execution history。Iteration 8.0 没有 in-place rotate command。
+
 ## Shared key quick start
 
 shared key 是 quick-start secret：agent 通过 `connect --key <KEY>` 使用它；GPT Actions 或 MCP 只有在 Host 支持静态 Bearer/API-key 认证时才使用它。请求形态是：
@@ -29,6 +53,10 @@ Authorization: Bearer <KEY>
 ```
 
 当 `WEBCODEX_SHARED_KEY_ENABLED=true` 时，未知且非 `wc_` 开头的 Bearer 值会被接受为 shared-key principal。该明文值不会作为 server-side allowlist entry 预先登记；WebCodex 按 `shared_key_hash` 对调用者分组。不同值会形成不同的轻量 group。
+
+这个 fallback 只属于显式配置的普通 server quick-start。project-bound setup 会把
+它设为 false，并使用上面的精确 Project Credential verifier；两条路径不会互相
+fallback。
 
 shared key 不是 admin credential，不是 managed user identity，也不是 production IAM。
 

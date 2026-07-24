@@ -2,184 +2,103 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-Use MCP if your client supports remote MCP.
-Use GPT Actions if you are building a Custom GPT.
-Both surfaces call the same WebCodex ToolRuntime.
+Use GPT Actions when a Custom GPT should call the project-bound WebCodex
+Connector. Use MCP when the client supports MCP directly.
 
-GPT Actions gives a Custom GPT a focused OpenAPI surface for WebCodex runtime tools. It is the right path when you want a ChatGPT Custom GPT rather than a generic remote MCP connector.
+## Schema
 
-## Schema URL
+Import:
 
 ```text
 https://your-domain.example/openapi.json
 ```
 
-For local inspection:
+ChatGPT requires public HTTPS. `webcodex setup` intentionally creates only a
+loopback project runtime; ingress and production authentication are operator
+responsibilities described in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+Configure Bearer/API-key authentication with a scoped runtime credential. Do
+not paste bootstrap/admin, account, or Agent credentials into a GPT.
+
+## Canonical Hosted Operations
+
+For a project-bound Connector, OpenAPI is generated from the same nine
+capabilities as MCP:
 
 ```text
-http://127.0.0.1:8080/openapi.json
+task_start
+files_read
+files_search
+edits_apply
+checks_run
+commands_run
+task_review
+task_cancel
+task_finish
 ```
 
-ChatGPT Actions require a public HTTPS URL for actual use.
+The operation count is generated and tested; setup, pairing, token management,
+Agent management, audit endpoints, and legacy `/api/codex` routes are not in
+the Action schema.
 
-## Create A GPT Action In ChatGPT
+The Connector already owns a deterministic project binding. A Custom GPT must
+not call `listProjects`, `runtime_status`, `tool_manifest`, `start_session`, or
+Agent listing before normal coding, and the prompt must not contain an Agent
+client ID or runtime project ID.
 
-The screenshots in `docs/assets/gpt-action-*.png` are UI landmarks. ChatGPT may move buttons over time, but the flow is the same.
-
-1. **Open or create a GPT.**
-
-   ![Open GPT editor](assets/gpt-action-1.png)
-
-2. **Enter the GPT configuration screen.**
-
-   ![Configure GPT](assets/gpt-action-2.png)
-
-3. **Open Actions and add an Action.**
-
-   ![Add an Action](assets/gpt-action-3.png)
-
-4. **Configure Action authentication.**
-
-   ![Set Action authentication](assets/gpt-action-4.png)
-
-   Choose API-key or HTTP authentication, set the auth type to Bearer, and paste the first-evaluation shared key. In shared-key quick-start mode, this value identifies the same lightweight group as the agent key by hash. Do not use bootstrap/admin, account, or agent tokens.
-
-5. **Import the OpenAPI schema.**
-
-   ![Import OpenAPI schema](assets/gpt-action-5.png)
-
-   Import the schema URL from your WebCodex server. If ChatGPT asks for a privacy policy URL, use your own product or deployment policy URL and do not put secrets in it.
-
-6. Save the Action.
-7. Test `getRuntimeStatus`, then `listProjects`, then a read-only project call.
-8. Use mutation tools only after a read-only task has finished cleanly.
-
-## Authentication
-
-Configure GPT Actions with Bearer/API-key authentication.
-
-For the first evaluation, use the same long random Bearer value that you used with `webcodex-cli connect --key`. In shared-key quick-start mode, this value is not pre-enrolled; it identifies a lightweight shared-key group by hash. Use the same value for the agent and the client. For production, use scoped user tokens or OAuth. See [AUTH_MODEL.md](AUTH_MODEL.md) for the full credential model.
-
-Do not paste bootstrap/admin, account, or agent tokens into GPT Actions.
-
-Pairing, token creation, agent enrollment, server setup, and other management tasks belong in `webcodex-cli`, not GPT Actions.
-
-## Tool Surface
-
-GPT Actions exposes a focused public operation surface and a generic `callRuntimeTool` operation for runtime tools. It intentionally does not expose admin, setup, pairing, token-management, agent-token, server-management, or audit endpoints.
-
-When using `callRuntimeTool`, pass the runtime tool name and flattened top-level fields expected by the OpenAPI schema. Use focused discovery rather than sending the full tool catalog into a model prompt.
-
-MCP and GPT Actions share the same runtime, project ids, session recording, agent bridge, and safety boundaries.
-
-For an unfamiliar project, call `project_overview` through `callRuntimeTool`
-after `listProjects`. It returns bounded structure and project-relative path
-metadata only; it does not read contents or perform semantic/LSP analysis. Use
-`read_file` afterward for the specific README, rules, manifest, or source path.
-
-## Default Coding Loop
-
-Use this loop for Custom GPT coding tasks:
+## Suggested GPT Instructions
 
 ```text
-startup:
-  start_coding_task
-
-inspect:
-  project_overview
-  list_project_files
-  search_project_text
-  read_file
-
-edit:
-  apply_text_edits          # guarded transactional edit/create/delete/rename
-  apply_patch_checked       # complex checked unified diffs
-  write_project_file        # intentional full rewrite only
-  # compatibility (still supported): replace_line_range, insert_at_line,
-  # delete_line_range, replace_in_file, replace_exact_block,
-  # insert_before_pattern, insert_after_pattern, raw apply_patch
-
-validate:
-  validate_patch
-  cargo_check
-  cargo_test
-  cargo_fmt
-  validation_summary
-
-review:
-  show_changes
-  git_diff_hunks
-  workspace_hygiene_check
-
-finish:
-  finish_coding_task
-  session_handoff_summary
+Use the configured WebCodex project.
+Start each bounded request with task_start.
+Use files_read/files_search before edits_apply.
+Use a stable operation_id for exact retry.
+Run checks_run before task_finish.
+Use task_review for execution progress and result review.
+Use commands_run only when structured capabilities are insufficient and
+approval is available.
+Never ask the user for internal routing, Agent, transport, queue, or workflow
+session identifiers.
 ```
 
-The intended closeout order is:
+## Human Decision
 
-```text
-start_coding_task -> inspect -> edit -> validate -> show_changes -> workspace_hygiene_check -> finish_coding_task
+`task_finish` creates a stable result; it does not silently apply changes to the
+target checkout. The host user reviews and decides:
+
+```bash
+webcodex task show <task-id>
+webcodex task accept <task-id>
+# or: webcodex task reject <task-id>
 ```
 
-Use `session_handoff_summary` when another operator or client needs to continue the task.
-
-Call read-only `validation_summary` through generic `callRuntimeTool` with flattened `project`, `session_id`, and optional `limit`; it has no dedicated GPT Action operation, so the focused surface remains 25 operations while the runtime catalog has 75 tools. It queries bounded parser-v3 evidence already in the session ledger and does not rerun Cargo, shell, agent work, or file reads. Diagnostics and failed-test details are bounded and sanitized, complete stdout/stderr is never returned, and no root-cause inference is performed. Use it between validation runs for targeted fixes, then use `finish_coding_task` for the canonical closeout outcomes.
-
-## Advanced And Escape-Hatch Tools
-
-```text
-run_shell:
-  bounded escape hatch, not default editing or validation path
-
-run_job:
-  for explicit async jobs, not default coding loop
-
-artifact / checkpoint / cleanup:
-  advanced workflow tools
-```
-
-Shell and job tools can execute project commands through the agent. Use them only when a structured validation helper is not enough, and review the resulting workspace state before finishing.
-
-Artifact, checkpoint, and cleanup tools support advanced workflows. They are not replacements for structured source edits or normal code review.
-
-## First Safe Prompt
-
-```text
-Use WebCodex on project agent:<client_id>:<project_id>.
-Start a coding task, inspect README.md, summarize the project, show changes
-without a diff, run workspace hygiene, and finish. Do not edit files.
-```
-
-After that succeeds, try one small, reversible edit on a disposable branch.
+This keeps the acceptance authority local even when the model is hosted.
 
 ## Common Errors
 
-### Schema Import Fails
+- `project_not_configured`: run `webcodex setup`.
+- `project_registration_invalid` / `project_credential_invalid`: resolve the
+  reported private-state problem; setup will not overwrite or silently rotate
+  it.
+- `project_credential_rejected`: restore the credential matching the reachable
+  server; this is not `agent_offline`.
+- `server_unreachable` / `agent_offline`: run `webcodex doctor`, then the
+  reported next action.
+- `required_capability_unavailable` /
+  `structured_validation_unavailable`: upgrade all WebCodex binaries.
+- `task_not_active`: start a new task.
+- `execution_not_terminal`: review, wait, or cancel the execution.
+- `checks_required`: call `checks_run`.
+- `checks_stale`: run a fresh check with a new operation ID.
 
-Confirm the server is reachable over public HTTPS and `/openapi.json` returns the WebCodex schema.
+Every error carries a stable code, human message, retryability,
+`user_action_required`, and a suggested next action. Control flow must use the
+code, never arbitrary English message matching.
 
-### Auth Fails
+## Related Documentation
 
-Confirm the Action uses Bearer/API-key auth and the token is intended for GPT Actions or runtime access.
-
-### GPT Chose The Wrong Project
-
-Put the full `agent:<client_id>:<project_id>` in the prompt. Ask the GPT to call `listProjects` or `list_projects` before reading or editing.
-
-### Response Too Large
-
-Use compact runtime status, focused tool manifest discovery, bounded file reads, `show_changes(include_diff=false)`, and summary-only finish or handoff outputs.
-
-### Shell Is Suggested Too Early
-
-Redirect the GPT to the default loop: inspect, structured edit, structured validation, review, and finish. Use shell/job only as an explicit escape hatch.
-
-## Related Docs
-
-- Quick Start: [QUICK_START.md](QUICK_START.md)
-- Demo workflow: [DEMO.md](DEMO.md)
-- MCP: [MCP.md](MCP.md)
-- Concepts: [CONCEPTS.md](CONCEPTS.md)
-- Auth model: [AUTH_MODEL.md](AUTH_MODEL.md)
-- Security: [../SECURITY.md](../SECURITY.md)
+- [QUICK_START.md](QUICK_START.md)
+- [MCP.md](MCP.md)
+- [AUTH_MODEL.md](AUTH_MODEL.md)
+- [DEPLOYMENT.md](DEPLOYMENT.md)
+- [../SECURITY.md](../SECURITY.md)

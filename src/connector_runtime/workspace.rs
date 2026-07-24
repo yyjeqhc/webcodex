@@ -1204,6 +1204,7 @@ mod tests {
             results_root: state.join("results").to_string_lossy().to_string(),
             projects_dir: state.join("agent/projects.d").to_string_lossy().to_string(),
             profile: "personal".to_string(),
+            project_grant_id: "wc_pgrant_1111111111111111".to_string(),
         };
         let manager = WorkspaceManager::new(&context).unwrap();
         (temp, context, manager)

@@ -154,7 +154,7 @@ Client:
 11. Run `sudo systemctl daemon-reload`.
 12. Run `sudo systemctl enable --now webcodex-agent`.
 13. Run `webcodex-cli agent status`.
-14. Run `webcodex-cli doctor --strict`.
+14. Run `webcodex-cli ops status --strict`.
 
 `/etc/webcodex/webcodex.env` is server-side only. Client-side files live under a profile directory such as `/etc/webcodex/clients/workstation/agent.toml`, `/etc/webcodex/clients/workstation/webcodex-user-token`, `/etc/webcodex/clients/workstation/webcodex-agent-token`, and `/etc/webcodex/clients/workstation/projects.d` when multiple users or clients share one machine.
 
@@ -207,9 +207,9 @@ webcodex-cli agent install-service \
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent-workstation
 
-webcodex-cli doctor \
-  --profile workstation \
+webcodex-cli ops status \
   --server-url https://your-domain.example \
+  --token-file /etc/webcodex/clients/workstation/webcodex-user-token \
   --strict
 ```
 
@@ -223,7 +223,11 @@ WebCodex serves a read-only browser console at:
 https://your-domain.example/console
 ```
 
-The static console bundle contains no secrets. Runtime data is fetched by the browser from protected APIs using the user's credentials, session, or token as applicable. The console is not part of the GPT Actions OpenAPI and is not a full admin UI.
+The static console bundle contains no secrets. It fetches the shared
+project-readiness projection from the protected Connector API and shows only
+Project, Connection, Agent/coding readiness, findings, and the next CLI action.
+It does not expose the Agent registry or transport details. The console is not
+part of the GPT Actions OpenAPI and is not a full admin UI.
 
 ### Runtime job API trust model
 
@@ -305,7 +309,8 @@ For a foreground test, start the agent with:
 webcodex-agent --profile workstation
 ```
 
-`webcodex-agent init` remains available as a compatibility entry point.
+Advanced manual initialization uses `webcodex-cli agent init`; the duplicate
+`webcodex-agent init` alias was removed.
 
 Important agent settings:
 
@@ -377,7 +382,7 @@ WebCodex no longer exposes `run_codex` or legacy `/api/codex/*` routes. GPT Acti
 
 Recommended production smoke sequence:
 
-1. `webcodex-cli doctor --server-url https://your-domain.example --user-token-file PATH` passes its non-destructive checks.
+1. `webcodex-cli ops status --server-url https://your-domain.example --token-file PATH --strict` passes its read-only checks.
 2. `POST /api/runtime/status` returns `service=webcodex` and the expected public URL.
 3. `listAgents` shows at least one online agent.
 4. `listProjects` shows `agent:<client_id>:<project_id>` ids.

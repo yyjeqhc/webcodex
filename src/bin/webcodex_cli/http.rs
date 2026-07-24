@@ -148,43 +148,6 @@ pub(crate) async fn http_post_json_status(
     Ok((status, content_type, json))
 }
 
-pub(crate) async fn http_get_json_status(
-    server_url: &str,
-    path: &str,
-) -> Result<(u16, String, Option<Value>), String> {
-    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {}", e))?;
-    let status = resp.status().as_u16();
-    let content_type = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("failed to read response: {}", e))?;
-    let json = if content_type
-        .split(';')
-        .next()
-        .is_some_and(|ct| ct.trim().eq_ignore_ascii_case("application/json"))
-    {
-        serde_json::from_str::<Value>(&text).ok()
-    } else {
-        None
-    };
-    Ok((status, content_type, json))
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct HttpStatusSummary {
     pub(crate) reachable: bool,

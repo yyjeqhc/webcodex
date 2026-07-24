@@ -67,7 +67,7 @@ webcodex-cli pairing create --server-url URL --username alice --client-id alice-
 webcodex-cli client enroll --server-url URL --pairing-code CODE --client-id alice-laptop
 webcodex-cli agent install-service --profile workstation --bin /opt/webcodex/bin/webcodex-agent
 webcodex-cli agent status --profile workstation --server-url URL
-webcodex-cli doctor --strict --profile workstation --server-url URL
+webcodex-cli ops status --strict --server-url URL --token-file PATH
 ```
 
 `pairing create` 是 server/admin-side。`client enroll`、`agent install-service` 和 `agent status` 是运行 `webcodex-agent` 的 client-side 操作。不要把 server tokens 复制到 client；只复制短期 pairing code。
@@ -84,7 +84,8 @@ webcodex-cli pairing create -h
 webcodex-cli client enroll -h
 webcodex-cli agent install-service -h
 webcodex-cli agent status -h
-webcodex-cli doctor -h
+webcodex doctor -h
+webcodex-cli ops status -h
 webcodex-agent -h
 webcodex -h
 ```

@@ -212,13 +212,14 @@ impl ExecutionService {
         }
         let result = self
             .tools
-            .run_job(
+            .run_job_for_auth(
                 task.execution_executor_ref.clone(),
                 command,
                 None,
                 Some(timeout_secs as i64),
                 cwd,
                 validation_steps,
+                Some(&auth),
             )
             .await;
         if !result.success {

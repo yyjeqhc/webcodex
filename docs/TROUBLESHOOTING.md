@@ -17,7 +17,9 @@ Client:
 
 - `webcodex-agent --version` prints a version.
 - `webcodex-cli agent status --profile workstation` can read the local agent config.
-- `webcodex-cli doctor --strict --profile workstation --server-url https://your-domain.example` passes.
+- `webcodex doctor` passes for a canonical project, or advanced
+  `webcodex-cli ops status --strict --server-url https://your-domain.example`
+  passes for a managed deployment.
 - `listAgents` / `runtime_status` shows the agent online.
 
 ## Common issues

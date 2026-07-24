@@ -1278,6 +1278,7 @@ mod tests {
             },
             allowed_client_id: None,
             shared_key_hash: None,
+            project_grant_id: None,
         }
     }
 
@@ -1300,49 +1301,12 @@ mod tests {
             token_kind: Some("agent".to_string()),
             allowed_client_id: Some(allowed_client_id.to_string()),
             shared_key_hash: None,
-        }
-    }
-
-    fn shared_key_auth_context(hash: &str) -> crate::auth::AuthContext {
-        crate::auth::AuthContext {
-            kind: crate::auth::AuthKind::SharedKey,
-            user_id: None,
-            username: None,
-            api_key_id: None,
-            api_key_name: None,
-            role: Some("shared-key".to_string()),
-            scopes: vec![
-                crate::auth::SCOPE_AGENT_REGISTER.to_string(),
-                crate::auth::SCOPE_AGENT_POLL.to_string(),
-                crate::auth::SCOPE_AGENT_RESULT.to_string(),
-                crate::auth::SCOPE_AGENT_JOB_UPDATE.to_string(),
-            ],
-            is_bootstrap: false,
-            token_kind: Some("shared-key".to_string()),
-            allowed_client_id: None,
-            shared_key_hash: Some(hash.to_string()),
+            project_grant_id: None,
         }
     }
 
     fn open_auth_context() -> crate::auth::AuthContext {
-        crate::auth::AuthContext {
-            kind: crate::auth::AuthKind::OpenAnonymous,
-            user_id: None,
-            username: None,
-            api_key_id: None,
-            api_key_name: None,
-            role: Some("open".to_string()),
-            scopes: vec![
-                crate::auth::SCOPE_AGENT_REGISTER.to_string(),
-                crate::auth::SCOPE_AGENT_POLL.to_string(),
-                crate::auth::SCOPE_AGENT_RESULT.to_string(),
-                crate::auth::SCOPE_AGENT_JOB_UPDATE.to_string(),
-            ],
-            is_bootstrap: false,
-            token_kind: Some("open".to_string()),
-            allowed_client_id: None,
-            shared_key_hash: None,
-        }
+        crate::auth::shared_key::open_anonymous_context()
     }
 
     fn oauth_bridge_auth_context(hash: &str, scopes: Vec<&str>) -> crate::auth::AuthContext {
@@ -1358,6 +1322,7 @@ mod tests {
             token_kind: Some("oauth2_shared_key".to_string()),
             allowed_client_id: Some("oauth-client".to_string()),
             shared_key_hash: Some(hash.to_string()),
+            project_grant_id: None,
         }
     }
 
@@ -1377,6 +1342,7 @@ mod tests {
             token_kind: Some("oauth2".to_string()),
             allowed_client_id: Some("oauth-client".to_string()),
             shared_key_hash: shared_key_hash.map(str::to_string),
+            project_grant_id: None,
         }
     }
 
@@ -1498,9 +1464,10 @@ mod tests {
     #[tokio::test]
     async fn registry_filters_lightweight_clients_by_auth_group() {
         let registry = ShellClientRegistry::default();
-        let shared_a = shared_key_auth_context("hash-a");
-        let shared_b = shared_key_auth_context("hash-b");
-        let bridge_a = oauth_bridge_auth_context("hash-a", vec![]);
+        let shared_a = crate::auth::shared_key::shared_key_context("token-a");
+        let shared_b = crate::auth::shared_key::shared_key_context("token-b");
+        let shared_hash = crate::auth::shared_key::shared_key_hash_of("token-a");
+        let bridge_a = oauth_bridge_auth_context(&shared_hash, vec![]);
         let managed_oauth = managed_oauth_auth_context("alice", Some("hash-a"));
         let open = open_auth_context();
         let bootstrap = auth_context(None, true);
@@ -1599,7 +1566,7 @@ mod tests {
         );
         assert_eq!(
             ShellClientAuthGroup::from_auth(&bridge_a),
-            Some(ShellClientAuthGroup::SharedKey("hash-a".to_string()))
+            Some(ShellClientAuthGroup::SharedKey(shared_hash))
         );
         assert!(bridge_a.is_oauth_shared_key_subject());
         assert_eq!(ShellClientAuthGroup::from_auth(&managed_oauth), None);
@@ -1631,6 +1598,54 @@ mod tests {
             visible_to_bootstrap,
             vec!["managed", "open", "shared-a", "shared-b"]
         );
+    }
+
+    #[tokio::test]
+    async fn same_client_id_in_different_project_grants_is_isolated() {
+        // Expected pre-fix failure: reusing the same instance id currently
+        // lets a second auth group replace the first group's global lease.
+        let registry = ShellClientRegistry::default();
+        let grant_a =
+            crate::auth::shared_key::project_credential_context("wc_pgrant_aaaaaaaaaaaaaaaa");
+        let grant_b =
+            crate::auth::shared_key::project_credential_context("wc_pgrant_bbbbbbbbbbbbbbbb");
+        let registration = |hostname: &str, project: &str| ShellClientRegisterRequest {
+            client_id: "same-project-agent".to_string(),
+            agent_instance_id: "same-instance-id".to_string(),
+            display_name: None,
+            owner: None,
+            hostname: Some(hostname.to_string()),
+            capabilities: Some(async_job_capabilities()),
+            projects: Some(vec![project_summary(project, "/tmp/project")]),
+            agent_protocol_version: None,
+            policy: None,
+        };
+        registry
+            .register_with_auth(
+                registration("grant-a-host", "grant-a-project"),
+                Some(&grant_a),
+            )
+            .await
+            .unwrap();
+
+        let error = registry
+            .register_with_auth(
+                registration("grant-b-host", "grant-b-project"),
+                Some(&grant_b),
+            )
+            .await
+            .unwrap_err();
+        assert!(!error.contains("grant-a-host"));
+        assert!(!error.contains("grant-a-project"));
+        let original = registry
+            .get_client_view_for_auth("same-project-agent", Some(&grant_a))
+            .await
+            .expect("the original grant must retain its lease");
+        assert_eq!(original.hostname.as_deref(), Some("grant-a-host"));
+        assert!(registry
+            .get_client_view_for_auth("same-project-agent", Some(&grant_b))
+            .await
+            .is_none());
     }
 
     #[test]

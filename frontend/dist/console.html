@@ -4,14 +4,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>WebCodex — Runtime Console</title>
+  <title>WebCodex — Project Readiness</title>
   <link rel="stylesheet" href="/console/styles.css" />
 </head>
 <body>
   <main id="page">
     <header class="topbar">
-      <div class="topbar-title">
-        <h1>WebCodex <span class="muted">Runtime Console</span></h1>
+      <div>
+        <h1>WebCodex</h1>
+        <p class="muted">Project readiness</p>
       </div>
       <div class="topbar-controls" id="topbar-controls" hidden>
         <button id="refresh-btn" class="btn" type="button">Refresh</button>
@@ -25,10 +26,11 @@
 
     <section id="token-gate" class="gate">
       <form id="token-form" autocomplete="off">
-        <h2>Authenticate</h2>
+        <h2>Connect to WebCodex</h2>
+        <p class="muted">Enter the local access token. It is never displayed.</p>
         <div class="field-row">
           <input id="token-input" type="password" placeholder="Bearer token" autocomplete="current-password" spellcheck="false" />
-          <button id="token-save" class="btn btn-primary" type="submit">Connect</button>
+          <button class="btn btn-primary" type="submit">Connect</button>
         </div>
         <p id="token-error" class="error-text" role="alert"></p>
       </form>
@@ -36,50 +38,32 @@
 
     <section id="console" hidden>
       <section class="panel">
-        <h2 class="panel-title">Runtime</h2>
-        <div class="stat-grid" id="stat-grid">
-          <div class="stat"><div class="stat-label">Public URL</div><div class="stat-value" id="stat-public-url">—</div></div>
-          <div class="stat"><div class="stat-label">Auth</div><div class="stat-value" id="stat-auth">—</div></div>
-          <div class="stat"><div class="stat-label">Version</div><div class="stat-value" id="stat-version">—</div></div>
-          <div class="stat"><div class="stat-label">Server time</div><div class="stat-value" id="stat-server-time">—</div></div>
-          <div class="stat"><div class="stat-label">Projects</div><div class="stat-value" id="stat-projects">—</div></div>
-          <div class="stat"><div class="stat-label">Active jobs</div><div class="stat-value" id="stat-active-jobs">—</div></div>
-          <div class="stat"><div class="stat-label">Tools</div><div class="stat-value" id="stat-tools">—</div></div>
-          <div class="stat"><div class="stat-label">Agents</div><div class="stat-value" id="stat-agents">—</div></div>
+        <div class="readiness-grid">
+          <div class="fact fact-project"><span>Project</span><strong id="project">—</strong></div>
+          <div class="fact"><span>Connection</span><strong id="connection">—</strong></div>
+          <div class="fact"><span>Local agent</span><strong id="agent">—</strong></div>
+          <div class="fact"><span>Capabilities</span><strong id="capabilities">—</strong></div>
+          <div class="fact"><span>Coding access</span><strong id="coding">—</strong></div>
         </div>
+      </section>
+
+      <section class="panel next-panel">
+        <h2>Next</h2>
+        <code id="next-action">webcodex doctor</code>
       </section>
 
       <section class="panel">
-        <h2 class="panel-title">Agents</h2>
-        <div class="table-wrap">
-          <table class="agents-table">
-            <thead>
-              <tr>
-                <th>Client</th>
-                <th>Owner</th>
-                <th>Status</th>
-                <th>Transport</th>
-                <th>Connected</th>
-                <th>Protocol</th>
-                <th>Last seen</th>
-                <th class="num">Pending</th>
-                <th class="num">Projects</th>
-              </tr>
-            </thead>
-            <tbody id="agents-tbody"></tbody>
-          </table>
-        </div>
-        <p id="agents-empty" class="muted small" hidden>No agents registered.</p>
+        <h2>Readiness checks</h2>
+        <ul id="findings" class="findings"></ul>
       </section>
 
-      <p id="error-banner" class="error-text" role="alert" hidden></p>
+      <p id="error-banner" class="error-text panel" role="alert" hidden></p>
     </section>
 
     <footer class="footer muted small">
-      Read-only status console.
+      For full diagnostics, run <code>webcodex doctor</code> in the project.
     </footer>
   </main>
-
   <script src="/console/app.js"></script>
 </body>
 </html>

@@ -1,23 +1,11 @@
-// WebCodex — read-only Runtime / Agent status console (Phase B).
+// WebCodex project readiness console.
 //
-// This script drives a single screen: a runtime status panel + an agent table.
-// It fetches `POST /api/runtime/status` with a Bearer token and renders the
-// result. It never displays the token, Authorization header, API keys, full
-// env, or any secret — the token lives only in localStorage and is sent solely
-// as a request header. On 401 it clears the token and re-shows the token gate.
-//
-// There are no file-browse, diff, patch-approval, command-execution, or
-// job-log controls here; Phase B is strictly read-only observation.
-//
-// NOTE on the build: `frontend/scripts/build.mjs` strips TypeScript via targeted
-// regexes. To stay compatible, this file omits return-type annotations, avoids
-// `as X | Y` union casts, and uses only the param types the stripper recognizes
-// (string/number/unknown/boolean + DOM event types). `as <Identifier>` casts
-// are used only after a null check.
+// The page projects the application-level readiness facts returned by
+// `POST /api/connector/readiness`. It never reads the runtime registry and
+// never renders Agent client ids, transport details, queue ids, or secrets.
 
 declare global {
   interface Window {
-    // Reserved for future debugging hooks; intentionally holds no secrets.
     webcodexConsole?: unknown;
   }
 }
@@ -25,113 +13,48 @@ declare global {
 export {};
 
 const TOKEN_KEY = "webcodex_token";
-const LEGACY_TOKEN_KEY = "webcodex_token";
-const STATUS_URL = "/api/runtime/status";
-// Refresh cadence: 8s. Conservative — avoids aggressive polling while keeping
-// stale/online transitions visible in near-real time.
+const READINESS_URL = "/api/connector/readiness";
 const REFRESH_MS = 8000;
 
 let timer = 0;
 let autoEnabled = true;
 
-// ---------------------------------------------------------------------------
-// Token storage (localStorage only; never rendered into the DOM)
-// ---------------------------------------------------------------------------
-
-function getToken() {
-  const token = localStorage.getItem(TOKEN_KEY) || "";
-  if (token) {
-    return token;
-  }
-  const legacyToken = localStorage.getItem(LEGACY_TOKEN_KEY) || "";
-  if (legacyToken) {
-    localStorage.setItem(TOKEN_KEY, legacyToken);
-  }
-  return legacyToken;
-}
-
-function setToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.removeItem(LEGACY_TOKEN_KEY);
-}
-
-function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(LEGACY_TOKEN_KEY);
-}
-
-// ---------------------------------------------------------------------------
-// DOM helpers
-// ---------------------------------------------------------------------------
-
 function el(id: string) {
   return document.getElementById(id);
 }
 
-function text(value: unknown) {
-  if (value === null || value === undefined) {
-    return "";
-  }
-  return String(value);
+function value(input: unknown) {
+  return input === null || input === undefined || input === ""
+    ? "—"
+    : String(input);
 }
 
-function fmtTime(ts: unknown) {
-  const n = Number(ts);
-  if (!Number.isFinite(n) || n <= 0) {
-    return "—";
-  }
-  // server_time / last_seen are unix seconds.
-  const d = new Date(n * 1000);
-  return d.toLocaleString();
-}
-
-function ago(ts: unknown, now: unknown) {
-  const t = Number(ts);
-  const base = Number(now);
-  if (!Number.isFinite(t) || !Number.isFinite(base) || t <= 0) {
-    return "—";
-  }
-  const secs = Math.max(0, Math.floor(base - t));
-  if (secs < 60) {
-    return secs + "s ago";
-  }
-  if (secs < 3600) {
-    return Math.floor(secs / 60) + "m ago";
-  }
-  if (secs < 86400) {
-    return Math.floor(secs / 3600) + "h ago";
-  }
-  return Math.floor(secs / 86400) + "d ago";
-}
-
-function setText(id: string, value: string) {
+function setText(id: string, input: unknown) {
   const node = el(id);
   if (node) {
-    node.textContent = value;
+    node.textContent = value(input);
   }
+}
+
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
 }
 
 function showGate(message: string) {
   const gate = el("token-gate");
   const consoleRoot = el("console");
   const controls = el("topbar-controls");
-  if (gate) {
-    gate.hidden = false;
-  }
-  if (consoleRoot) {
-    consoleRoot.hidden = true;
-  }
-  if (controls) {
-    controls.hidden = true;
-  }
+  if (gate) gate.hidden = false;
+  if (consoleRoot) consoleRoot.hidden = true;
+  if (controls) controls.hidden = true;
   stopAuto();
-  const err = el("token-error");
-  if (err) {
-    err.textContent = message;
-  }
-  const inputEl = el("token-input");
-  if (inputEl) {
-    const input = inputEl as HTMLInputElement;
+  setText("token-error", message);
+  const input = el("token-input") as HTMLInputElement;
+  if (input) {
     input.value = "";
     input.focus();
   }
@@ -141,15 +64,9 @@ function showConsole() {
   const gate = el("token-gate");
   const consoleRoot = el("console");
   const controls = el("topbar-controls");
-  if (gate) {
-    gate.hidden = true;
-  }
-  if (consoleRoot) {
-    consoleRoot.hidden = false;
-  }
-  if (controls) {
-    controls.hidden = false;
-  }
+  if (gate) gate.hidden = true;
+  if (consoleRoot) consoleRoot.hidden = false;
+  if (controls) controls.hidden = false;
 }
 
 function showError(message: string) {
@@ -163,16 +80,12 @@ function showError(message: string) {
 function hideError() {
   const banner = el("error-banner");
   if (banner) {
-    banner.hidden = true;
     banner.textContent = "";
+    banner.hidden = true;
   }
 }
 
-// ---------------------------------------------------------------------------
-// Data fetch
-// ---------------------------------------------------------------------------
-
-async function fetchStatus() {
+async function fetchReadiness() {
   const token = getToken();
   if (!token) {
     showGate("Token required.");
@@ -181,220 +94,67 @@ async function fetchStatus() {
   const headers = new Headers();
   headers.set("Authorization", "Bearer " + token);
   headers.set("Content-Type", "application/json");
-  let res;
+  let response;
   try {
-    res = await fetch(STATUS_URL, {
+    response = await fetch(READINESS_URL, {
       method: "POST",
       headers: headers,
       body: "{}",
     });
   } catch {
-    showError("Network error reaching " + STATUS_URL + ".");
+    showError("WebCodex is not reachable. Run webcodex doctor.");
     return;
   }
-  if (res.status === 401) {
+  if (response.status === 401) {
     clearToken();
-    showGate("Token rejected (401). Re-enter the Bearer token.");
-    return;
-  }
-  if (!res.ok) {
-    showError("Runtime status request failed (HTTP " + res.status + ").");
+    showGate("Token rejected. Re-enter the Bearer token.");
     return;
   }
   let body;
   try {
-    body = await res.json();
+    body = await response.json();
   } catch {
-    showError("Runtime status returned invalid JSON.");
+    showError("Readiness returned invalid data.");
+    return;
+  }
+  if (!response.ok && response.status !== 404) {
+    showError("Readiness check failed (HTTP " + response.status + ").");
     return;
   }
   hideError();
   render(body);
-  const stamp = el("last-updated");
-  if (stamp) {
-    stamp.textContent = "Updated " + new Date().toLocaleTimeString();
-  }
+  setText("last-updated", "Updated " + new Date().toLocaleTimeString());
 }
-
-// ---------------------------------------------------------------------------
-// Rendering
-// ---------------------------------------------------------------------------
 
 function render(body: unknown) {
-  const data = body as any;
-  const out = data && data.output ? data.output : {};
-  const serverTime = out.server_time;
+  const readiness = body as any;
+  setText("project", readiness.project || "Not configured");
+  setText("connection", readiness.connection);
+  setText("agent", readiness.agent);
+  setText("capabilities", readiness.capabilities);
+  setText("coding", readiness.ready ? "Ready" : "Needs action");
+  setText("next-action", readiness.next_action || "No action needed");
 
-  // --- Runtime stat grid ---
-  setText(
-    "stat-public-url",
-    out.configured_public_url ? text(out.configured_public_url) : "(not set)",
-  );
-  setText("stat-auth", out.auth_enabled ? "enabled" : "disabled");
-  setText("stat-version", text(out.version));
-  setText("stat-server-time", fmtTime(serverTime));
-  setText("stat-projects", text(out.projects && out.projects.count));
-  setText("stat-active-jobs", text(out.jobs && out.jobs.active_count));
-  setText("stat-tools", text(out.tools && out.tools.count));
-
-  const agents = out.agents || {};
-  const online = Number(agents.online_count) || 0;
-  const stale = Number(agents.stale_count) || 0;
-  const total = Number(agents.count) || 0;
-  setText(
-    "stat-agents",
-    total + " (online " + online + " · stale " + stale + ")",
-  );
-
-  renderAgents(agents.clients || [], serverTime);
-}
-
-function renderAgents(clients: unknown, serverTime: unknown) {
-  const tbody = el("agents-tbody");
-  const empty = el("agents-empty");
-  if (!tbody) {
-    return;
+  const list = el("findings");
+  if (!list) return;
+  while (list.firstChild) list.removeChild(list.firstChild);
+  const findings = Array.isArray(readiness.findings)
+    ? readiness.findings
+    : [];
+  for (const finding of findings) {
+    const item = document.createElement("li");
+    const status = value(finding.status).toLowerCase();
+    item.className = "finding finding-" + status;
+    const title = document.createElement("div");
+    title.className = "finding-title";
+    title.textContent = value(finding.name) + " · " + status;
+    const summary = document.createElement("div");
+    summary.className = "finding-summary";
+    summary.textContent = value(finding.summary);
+    item.appendChild(title);
+    item.appendChild(summary);
+    list.appendChild(item);
   }
-  // Clear previous rows.
-  while (tbody.firstChild) {
-    tbody.removeChild(tbody.firstChild);
-  }
-  const list = Array.isArray(clients) ? clients : [];
-  if (empty) {
-    empty.hidden = list.length > 0;
-  }
-  for (const client of list) {
-    const c = client as any;
-    const tr = document.createElement("tr");
-    const status = text(c.status).toLowerCase();
-    const transport = text(c.transport).toLowerCase();
-    // A WebSocket agent that flipped online -> stale must be visually obvious.
-    const isStaleWs = status === "stale" && transport === "websocket";
-    if (status === "stale") {
-      tr.className = isStaleWs ? "row-stale-ws" : "row-stale";
-    } else if (status === "offline") {
-      tr.className = "row-offline";
-    }
-
-    tr.appendChild(tdClient(c));
-    tr.appendChild(tdText(text(c.owner) || "—"));
-    tr.appendChild(tdStatus(status, transport));
-    tr.appendChild(tdTransport(transport));
-    tr.appendChild(tdBool(c.connected));
-    tr.appendChild(tdText(text(c.agent_protocol_version) || "—"));
-    tr.appendChild(tdLastSeen(c.last_seen, serverTime));
-    tr.appendChild(tdNum(c.pending_requests));
-    tr.appendChild(tdNum(c.projects_count));
-    tbody.appendChild(tr);
-  }
-}
-
-function tdText(value: string) {
-  const td = document.createElement("td");
-  td.textContent = value;
-  return td;
-}
-
-function tdNum(value: unknown) {
-  const td = document.createElement("td");
-  td.className = "num";
-  td.textContent = text(value);
-  return td;
-}
-
-function tdBool(value: unknown) {
-  const td = document.createElement("td");
-  const ok = value === true;
-  const badge = document.createElement("span");
-  badge.className = "badge " + (ok ? "badge-ok" : "badge-no");
-  badge.textContent = ok ? "yes" : "no";
-  td.appendChild(badge);
-  return td;
-}
-
-function tdClient(c: unknown) {
-  const cl = c as any;
-  const td = document.createElement("td");
-  const id = document.createElement("div");
-  id.className = "cell-strong";
-  id.textContent = text(cl.client_id) || "—";
-  td.appendChild(id);
-  const name = text(cl.display_name);
-  if (name) {
-    const sub = document.createElement("div");
-    sub.className = "cell-sub";
-    sub.textContent = name;
-    td.appendChild(sub);
-  }
-  return td;
-}
-
-function tdStatus(status: string, transport: string) {
-  const td = document.createElement("td");
-  const badge = document.createElement("span");
-  const isStaleWs = status === "stale" && transport === "websocket";
-  let cls = "badge ";
-  let label = status || "unknown";
-  if (status === "online") {
-    cls += "badge-online";
-  } else if (isStaleWs) {
-    cls += "badge-stale-ws";
-    label = "STALE (ws)";
-  } else if (status === "stale") {
-    cls += "badge-stale";
-  } else if (status === "offline") {
-    cls += "badge-offline";
-  } else {
-    cls += "badge-no";
-  }
-  badge.className = cls;
-  badge.textContent = label;
-  td.appendChild(badge);
-  return td;
-}
-
-function tdTransport(transport: string) {
-  const td = document.createElement("td");
-  const badge = document.createElement("span");
-  let cls = "badge ";
-  if (transport === "websocket") {
-    cls += "badge-ws";
-  } else if (transport === "polling") {
-    cls += "badge-polling";
-  } else {
-    cls += "badge-no";
-  }
-  badge.className = cls;
-  badge.textContent = transport || "—";
-  td.appendChild(badge);
-  return td;
-}
-
-function tdLastSeen(seen: unknown, serverTime: unknown) {
-  const td = document.createElement("td");
-  const rel = document.createElement("div");
-  rel.className = "cell-strong";
-  rel.textContent = ago(seen, serverTime);
-  td.appendChild(rel);
-  const abs = document.createElement("div");
-  abs.className = "cell-sub";
-  abs.textContent = fmtTime(seen);
-  td.appendChild(abs);
-  return td;
-}
-
-// ---------------------------------------------------------------------------
-// Auto-refresh
-// ---------------------------------------------------------------------------
-
-function startAuto() {
-  stopAuto();
-  if (!autoEnabled) {
-    return;
-  }
-  timer = window.setInterval(() => {
-    void fetchStatus();
-  }, REFRESH_MS);
 }
 
 function stopAuto() {
@@ -404,70 +164,44 @@ function stopAuto() {
   }
 }
 
-function onAutoChange() {
-  const toggleEl = el("auto-toggle");
-  if (!toggleEl) {
-    return;
-  }
-  const toggle = toggleEl as HTMLInputElement;
-  autoEnabled = toggle.checked;
+function startAuto() {
+  stopAuto();
   if (autoEnabled) {
-    startAuto();
-  } else {
-    stopAuto();
+    timer = window.setInterval(() => {
+      void fetchReadiness();
+    }, REFRESH_MS);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Token gate form
-// ---------------------------------------------------------------------------
-
-function onTokenSubmit(e: SubmitEvent) {
-  e.preventDefault();
-  const inputEl = el("token-input");
-  const input = inputEl as HTMLInputElement;
+function onTokenSubmit(event: SubmitEvent) {
+  event.preventDefault();
+  const input = el("token-input") as HTMLInputElement;
   const token = input ? input.value.trim() : "";
-  const err = el("token-error");
   if (!token) {
-    if (err) {
-      err.textContent = "Token cannot be empty.";
-    }
+    setText("token-error", "Token cannot be empty.");
     return;
   }
-  setToken(token);
-  if (err) {
-    err.textContent = "";
-  }
-  if (input) {
-    input.value = "";
-  }
+  localStorage.setItem(TOKEN_KEY, token);
+  input.value = "";
   showConsole();
-  void fetchStatus();
+  void fetchReadiness();
   startAuto();
 }
 
-// ---------------------------------------------------------------------------
-// Init
-// ---------------------------------------------------------------------------
-
 function init() {
-  const form = el("token-form");
-  if (form) {
-    form.addEventListener("submit", onTokenSubmit);
-  }
-  const refreshBtn = el("refresh-btn");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", () => {
-      void fetchStatus();
-    });
-  }
-  const toggle = el("auto-toggle");
-  if (toggle) {
-    toggle.addEventListener("change", onAutoChange);
-  }
+  el("token-form")?.addEventListener("submit", onTokenSubmit);
+  el("refresh-btn")?.addEventListener("click", () => {
+    void fetchReadiness();
+  });
+  el("auto-toggle")?.addEventListener("change", () => {
+    const toggle = el("auto-toggle") as HTMLInputElement;
+    autoEnabled = toggle.checked;
+    if (autoEnabled) startAuto();
+    else stopAuto();
+  });
   if (getToken()) {
     showConsole();
-    void fetchStatus();
+    void fetchReadiness();
     startAuto();
   } else {
     showGate("");

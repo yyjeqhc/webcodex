@@ -1,7 +1,4 @@
 pub(crate) mod agent_service;
-pub(crate) mod connect;
-pub(crate) mod doctor;
-pub(crate) mod doctor_support;
 pub(crate) mod env;
 pub(crate) mod http;
 pub(crate) mod ops;
@@ -20,13 +17,6 @@ pub(crate) mod usage;
 #[cfg(test)]
 pub(crate) use agent_service::render_agent_systemd_unit;
 pub(crate) use agent_service::{run_agent_install_service, run_agent_status};
-pub(crate) use connect::run_connect;
-pub(crate) use doctor::run_doctor;
-#[cfg(test)]
-pub(crate) use doctor_support::{doctor_runtime_quic_checks, resolve_doctor_quic_options};
-pub(crate) use doctor_support::{
-    resolve_doctor_general_token, run_local_agent_doctor, run_quic_doctor_checks,
-};
 #[cfg(test)]
 pub(crate) use env::is_effective_root;
 #[cfg(test)]
@@ -38,15 +28,14 @@ pub(crate) use env::{
 #[cfg(test)]
 pub(crate) use http::format_error_body;
 pub(crate) use http::{
-    fetch_runtime_status, http_get_json_status, http_post_json_status, post_json_authed,
-    post_json_unauthed, ApiCall,
+    fetch_runtime_status, http_post_json_status, post_json_authed, post_json_unauthed, ApiCall,
 };
 pub(crate) use ops::{run_ops_command, OpsCommand, OpsCommonOptions, OpsSmokePreflightOptions};
 #[cfg(test)]
 pub(crate) use output::RevisionComparison;
 pub(crate) use output::{
-    compare_build_commits, doctor_revision_check, local_cli_build_metadata,
-    render_build_metadata_block, runtime_build_metadata, server_status_revision_check, DoctorCheck,
+    compare_build_commits, local_cli_build_metadata, render_build_metadata_block,
+    runtime_build_metadata, server_status_revision_check,
 };
 #[cfg(test)]
 pub(crate) use pairing::{ensure_enroll_outputs_available, resolve_pairing_create_token};
@@ -64,7 +53,7 @@ pub(crate) use server::{
 };
 pub(crate) use setup::run_setup_single_user;
 pub(crate) use system::{
-    discover_binary, discover_named_binary_absolute, discover_webcodex_binary, is_systemd_platform,
+    discover_named_binary_absolute, discover_webcodex_binary, is_systemd_platform,
     query_systemd_service_status, query_systemd_status, read_optional_token, write_secret_file,
     write_text_file,
 };
@@ -77,8 +66,8 @@ pub(crate) use tokens::{
 };
 pub(crate) use usage::{
     agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
-    client_enroll_usage, client_usage, connect_usage, doctor_usage, ops_agents_usage,
-    ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
-    pairing_create_usage, pairing_usage, server_init_usage, server_install_service_usage,
-    server_status_usage, server_up_usage, server_usage, usage,
+    client_enroll_usage, client_usage, ops_agents_usage, ops_projects_usage,
+    ops_smoke_preflight_usage, ops_status_usage, ops_usage, pairing_create_usage, pairing_usage,
+    server_init_usage, server_install_service_usage, server_status_usage, server_up_usage,
+    server_usage, usage,
 };

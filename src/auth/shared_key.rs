@@ -64,17 +64,21 @@ fn lightweight_scopes() -> Vec<String> {
 /// is non-admin and grouped by `shared_key_hash`.
 pub(crate) fn shared_key_context(token: &str) -> AuthContext {
     AuthContext {
-        kind: AuthKind::SharedKey,
-        user_id: None,
-        username: None,
-        api_key_id: None,
-        api_key_name: None,
         role: Some("shared-key".to_string()),
         scopes: lightweight_scopes(),
-        is_bootstrap: false,
         token_kind: Some("shared-key".to_string()),
-        allowed_client_id: None,
         shared_key_hash: Some(shared_key_hash_of(token)),
+        ..AuthContext::new(AuthKind::SharedKey)
+    }
+}
+
+pub(crate) fn project_credential_context(grant_id: &str) -> AuthContext {
+    AuthContext {
+        role: Some("project".to_string()),
+        scopes: lightweight_scopes(),
+        token_kind: Some("project".to_string()),
+        project_grant_id: Some(grant_id.to_string()),
+        ..AuthContext::new(AuthKind::ProjectCredential)
     }
 }
 
@@ -82,16 +86,9 @@ pub(crate) fn shared_key_context(token: &str) -> AuthContext {
 /// started with explicit `--open`. Non-admin, single open group.
 pub(crate) fn open_anonymous_context() -> AuthContext {
     AuthContext {
-        kind: AuthKind::OpenAnonymous,
-        user_id: None,
-        username: None,
-        api_key_id: None,
-        api_key_name: None,
         role: Some("open".to_string()),
         scopes: lightweight_scopes(),
-        is_bootstrap: false,
         token_kind: Some("open".to_string()),
-        allowed_client_id: None,
-        shared_key_hash: None,
+        ..AuthContext::new(AuthKind::OpenAnonymous)
     }
 }

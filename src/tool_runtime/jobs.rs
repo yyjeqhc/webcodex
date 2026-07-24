@@ -586,7 +586,7 @@ pub(crate) fn local_jobs_visible_to_auth(auth: Option<&AuthContext>) -> bool {
 }
 
 impl ToolRuntime {
-    pub(crate) async fn run_job(
+    pub(crate) async fn run_job_for_auth(
         &self,
         project: String,
         command: String,
@@ -594,8 +594,9 @@ impl ToolRuntime {
         timeout_secs: Option<i64>,
         cwd: Option<String>,
         validation_steps: Vec<ShellJobValidationStep>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let resolved = match self.resolve_project_input(&project).await {
+        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
             Err(e) => return ToolResult::err(command_rejected_message(
                 e.to_message(),
@@ -617,7 +618,7 @@ impl ToolRuntime {
             };
             match self
                 .shell_clients
-                .start_job_with_metadata(
+                .start_job_with_metadata_for_auth(
                     ShellJobOpRequest {
                         op: "start".to_string(),
                         client_id: Some(client_id),
@@ -637,6 +638,7 @@ impl ToolRuntime {
                         session_id: session_id.clone(),
                         validation_steps,
                     },
+                    auth,
                 )
                 .await
             {
@@ -1109,7 +1111,7 @@ impl ToolRuntime {
         }
         let stopped = match self
             .shell_clients
-            .stop_job(&job_id, "tool_runtime".to_string())
+            .stop_job_for_auth(auth, &job_id, "tool_runtime".to_string())
             .await
         {
             Ok(job) => job,

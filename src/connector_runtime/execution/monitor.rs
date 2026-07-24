@@ -192,10 +192,7 @@ impl ExecutionService {
         let progress = job.validation_progress.as_ref();
         let check_completed = progress.map(|progress| progress.completed);
         let failed_check = progress.and_then(|progress| progress.failed_step.as_deref());
-        let executor_failure_code = job
-            .error
-            .as_deref()
-            .and_then(validation_protocol_failure_code);
+        let executor_failure_code = job.error.as_deref().and_then(executor_failure_code);
         let assertion_evidence = if execution.kind == "check" && failed_check.is_some() {
             let (_, full_stdout, full_stderr, _, _) = self
                 .tools
@@ -295,5 +292,13 @@ fn validation_protocol_failure_code(error: &str) -> Option<&'static str> {
         "validation_progress_invalid" => Some("validation_progress_invalid"),
         "validation_plan_invalid" => Some("validation_plan_invalid"),
         _ => Some("validation_progress_invalid"),
+    }
+}
+
+fn executor_failure_code(error: &str) -> Option<&'static str> {
+    if error == crate::shell_protocol::VALIDATION_STEP_SPAWN_FAILED_CODE {
+        Some(crate::shell_protocol::VALIDATION_STEP_SPAWN_FAILED_CODE)
+    } else {
+        validation_protocol_failure_code(error)
     }
 }

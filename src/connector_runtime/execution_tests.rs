@@ -10,7 +10,7 @@ use crate::shell_protocol::{
 use std::time::{Duration, Instant};
 
 #[tokio::test]
-async fn another_user_cannot_observe_or_use_a_task_id() {
+async fn another_project_grant_cannot_observe_or_use_a_task_id() {
     let (_temp, connector) = tests::connector();
     let started = connector
         .call(
@@ -30,8 +30,8 @@ async fn another_user_cannot_observe_or_use_a_task_id() {
         )
         .await;
     assert!(!outcome.ok);
-    assert_eq!(outcome.http_status, 404);
-    assert_eq!(outcome.body["error"]["code"], "task_not_found");
+    assert_eq!(outcome.http_status, 403);
+    assert_eq!(outcome.body["error"]["code"], "project_credential_rejected");
     assert!(outcome.body["task_id"].is_null());
 }
 
@@ -89,26 +89,31 @@ async fn fixture_configured(
     let state = temp.path().join("state");
     tests::init_repo(&project);
     let registry = Arc::new(ShellClientRegistry::default());
+    let owner = tests::auth("u1");
     registry
-        .register(ShellClientRegisterRequest {
-            client_id: "hosted".into(),
-            agent_instance_id: "instance".into(),
-            display_name: None,
-            owner: Some("owner".into()),
-            hostname: None,
-            capabilities: Some(ShellClientCapabilities {
-                file_read: true,
-                file_write: true,
-                jobs: true,
-                async_jobs: true,
-                async_shell_jobs: true,
-                structured_validation_jobs: true,
-                ..Default::default()
-            }),
-            projects: Some(vec![project_summary("project", &project)]),
-            agent_protocol_version: Some("test".into()),
-            policy: None,
-        })
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                client_id: "hosted".into(),
+                agent_instance_id: "instance".into(),
+                display_name: None,
+                owner: Some("owner".into()),
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    file_read: true,
+                    file_write: true,
+                    jobs: true,
+                    async_jobs: true,
+                    async_shell_jobs: true,
+                    structured_validation_jobs: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![project_summary("project", &project)]),
+                agent_protocol_version: Some("test".into()),
+                policy: None,
+            },
+            Some(&owner),
+        )
         .await
         .unwrap();
     let db = Arc::new(Database::open(&temp.path().join("connector.db")).unwrap());
@@ -131,7 +136,9 @@ async fn fixture_configured(
                 .to_string_lossy()
                 .into_owned(),
             profile: "personal".into(),
+            project_grant_id: tests::PROJECT_GRANT_ID.into(),
         },
+        tests::credential(),
     )
     .unwrap();
     connector.executions = configure(connector.executions.clone().with_yield_ms(yield_ms));
@@ -163,7 +170,6 @@ async fn fixture_configured(
             .await
             .unwrap();
     });
-    let owner = tests::auth("u1");
     let started = connector
         .call(
             "task_start",
@@ -236,7 +242,7 @@ fn task(fixture: &Fixture) -> ConnectorTaskSnapshot {
         .connector_task(
             &fixture.task_id,
             &fixture.connector.context.project_id,
-            "user:u1",
+            tests::PROJECT_SUBJECT_ID,
         )
         .unwrap()
 }
@@ -454,6 +460,73 @@ async fn complete_create_edit(
 }
 
 #[tokio::test]
+async fn normal_task_finish_requires_structured_checks() {
+    let fixture = fixture(1_000).await;
+    let outcome = finish(&fixture, "unchecked result").await;
+    assert_eq!(outcome.body["error"]["code"], "checks_required");
+    assert_eq!(outcome.body["error"]["retryable"], false);
+    assert_eq!(outcome.body["error"]["user_action_required"], true);
+    assert_eq!(
+        outcome.body["error"]["suggested_action"],
+        "Call checks_run with a new operation_id, then retry task_finish."
+    );
+}
+
+#[tokio::test]
+async fn connector_readiness_uses_registered_agent_capabilities() {
+    let fixture = fixture(1_000).await;
+    let ready = fixture.connector.readiness(&fixture.owner).await.unwrap();
+    assert!(ready.ready);
+
+    fixture
+        .registry
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                client_id: "hosted".into(),
+                agent_instance_id: "instance".into(),
+                display_name: None,
+                owner: Some("owner".into()),
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    file_read: true,
+                    file_write: true,
+                    jobs: true,
+                    async_jobs: true,
+                    async_shell_jobs: true,
+                    structured_validation_jobs: false,
+                    ..Default::default()
+                }),
+                projects: Some(vec![project_summary(
+                    "project",
+                    Path::new(&fixture.connector.context.executor_root),
+                )]),
+                agent_protocol_version: Some("old-agent".into()),
+                policy: None,
+            },
+            Some(&fixture.owner),
+        )
+        .await
+        .unwrap();
+    let old_agent = fixture.connector.readiness(&fixture.owner).await.unwrap();
+    assert!(!old_agent.ready);
+    assert!(old_agent.findings.iter().any(|finding| {
+        finding.code == "structured_validation_unavailable"
+            && finding.status == crate::project_entry::ReadinessStatus::Fail
+    }));
+
+    fixture
+        .registry
+        .reconcile_disconnect("hosted", "instance")
+        .await;
+    let offline = fixture.connector.readiness(&fixture.owner).await.unwrap();
+    assert!(offline
+        .findings
+        .iter()
+        .any(|finding| finding.code == "agent_offline"));
+}
+
+#[tokio::test]
 async fn short_command_returns_terminal_and_precise_retry_does_not_spawn() {
     let fixture = fixture(1_000).await;
     let arguments = approve(&fixture, "short-command-1", "printf short").await;
@@ -666,6 +739,55 @@ async fn check_operation_conflict_and_new_key_fail_fast_with_assertion_result() 
         first.body["data"]["execution"]["execution_id"],
         second.body["data"]["execution"]["execution_id"]
     );
+}
+
+#[tokio::test]
+async fn validation_step_spawn_failure_is_executor_failure_without_assertion_evidence() {
+    let fixture = fixture(1_000).await;
+    let registry = fixture.registry.clone();
+    let responder = tokio::spawn(async move {
+        let request = next_request(&registry).await;
+        assert_eq!(request.kind, "start_validation_job");
+        let job_id = request.job_id.unwrap();
+        update_validation_job(
+            &registry,
+            &job_id,
+            "running",
+            Some("format completed\n"),
+            None,
+            check_progress(1, Some("check"), None),
+        )
+        .await;
+        let mut failed = validation_job_update(&job_id, "failed", check_progress(1, None, None));
+        failed.error = Some("validation_step_spawn_failed".to_string());
+        let updated = registry.update_job(failed).await.unwrap();
+        assert_eq!(updated.status, "failed");
+    });
+
+    let outcome = fixture
+        .call(
+            "checks_run",
+            checks(&fixture, "spawn-failure", &["format", "check"]),
+        )
+        .await;
+    responder.await.unwrap();
+    assert!(outcome.ok, "{}", outcome.body);
+    let execution = &outcome.body["data"]["execution"];
+    assert_eq!(execution["execution_status"], "failed");
+    assert_eq!(execution["failure_source"], "executor");
+    assert_eq!(execution["failure_code"], "validation_step_spawn_failed");
+    assert_ne!(execution["assertion_status"], "failed");
+    assert!(execution["assertion_evidence"].is_null());
+    assert_eq!(execution["checks"][1]["status"], "not_run");
+
+    let durable = fixture
+        .connector
+        .db
+        .connector_execution(execution["execution_id"].as_str().unwrap())
+        .unwrap();
+    assert!(durable.failed_check.is_none());
+    assert!(durable.assertion_evidence.is_none());
+    assert!(durable.validated_workspace_sha256.is_none());
 }
 
 #[tokio::test]
@@ -910,7 +1032,7 @@ async fn finish_fingerprint_and_result_capture_exclude_a_concurrent_edit() {
         connector
             .task_finish(
                 json!({"task_id": task_id, "summary": "atomic finish"}),
-                "user:u1",
+                tests::PROJECT_SUBJECT_ID,
                 &owner,
                 ConnectorTransport::Mcp,
                 chrono::Utc::now().timestamp(),
@@ -941,7 +1063,7 @@ async fn finish_fingerprint_and_result_capture_exclude_a_concurrent_edit() {
                         "content": "state B"
                     }]
                 }),
-                "user:u1",
+                tests::PROJECT_SUBJECT_ID,
                 &owner,
                 ConnectorTransport::Mcp,
                 chrono::Utc::now().timestamp(),
@@ -1446,23 +1568,26 @@ async fn old_agent_cannot_receive_a_structured_validation_job() {
     let fixture = fixture(1_000).await;
     fixture
         .registry
-        .register(ShellClientRegisterRequest {
-            client_id: "hosted".into(),
-            agent_instance_id: "instance".into(),
-            display_name: None,
-            owner: Some("owner".into()),
-            hostname: None,
-            capabilities: Some(ShellClientCapabilities {
-                jobs: true,
-                async_jobs: true,
-                async_shell_jobs: true,
-                structured_validation_jobs: false,
-                ..Default::default()
-            }),
-            projects: None,
-            agent_protocol_version: Some("old-test".into()),
-            policy: None,
-        })
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                client_id: "hosted".into(),
+                agent_instance_id: "instance".into(),
+                display_name: None,
+                owner: Some("owner".into()),
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    jobs: true,
+                    async_jobs: true,
+                    async_shell_jobs: true,
+                    structured_validation_jobs: false,
+                    ..Default::default()
+                }),
+                projects: None,
+                agent_protocol_version: Some("old-test".into()),
+                policy: None,
+            },
+            Some(&fixture.owner),
+        )
         .await
         .unwrap();
     let outcome = fixture
@@ -1481,7 +1606,7 @@ async fn old_agent_cannot_receive_a_structured_validation_job() {
         .latest_connector_execution(
             &fixture.task_id,
             &fixture.connector.context.project_id,
-            "user:u1",
+            tests::PROJECT_SUBJECT_ID,
             None,
         )
         .unwrap()
@@ -1510,7 +1635,7 @@ async fn invalid_check_plan_is_rejected_before_durable_reservation() {
         .latest_connector_execution(
             &fixture.task_id,
             &fixture.connector.context.project_id,
-            "user:u1",
+            tests::PROJECT_SUBJECT_ID,
             None,
         )
         .unwrap()
@@ -1644,7 +1769,7 @@ async fn starting_cancel_late_attach_binds_job_and_dispatches_compensating_stop(
             .latest_connector_execution(
                 &fixture.task_id,
                 &fixture.connector.context.project_id,
-                "user:u1",
+                tests::PROJECT_SUBJECT_ID,
                 None,
             )
             .unwrap()
@@ -1789,7 +1914,7 @@ async fn transient_check_status_recovers_within_grace() {
         .latest_connector_execution(
             &fixture.task_id,
             &fixture.connector.context.project_id,
-            "user:u1",
+            tests::PROJECT_SUBJECT_ID,
             None,
         )
         .unwrap()
@@ -2401,7 +2526,7 @@ async fn edits_apply_replays_durable_result_without_executor_dispatch() {
             project_name: &connector.context.project_name,
             workspace_id: &connector.context.workspace_id,
             executor_ref: &connector.context.executor_project,
-            subject_id: "user:u1",
+            subject_id: tests::PROJECT_SUBJECT_ID,
             profile: &connector.context.profile,
             now,
         })
@@ -2419,7 +2544,7 @@ async fn edits_apply_replays_durable_result_without_executor_dispatch() {
             run_id,
             project_id: &connector.context.project_id,
             workspace_id: &connector.context.workspace_id,
-            subject_id: "user:u1",
+            subject_id: tests::PROJECT_SUBJECT_ID,
             goal: "replay one edit",
             mode: "normal",
             target_executor_ref: &connector.context.executor_project,
@@ -2446,7 +2571,7 @@ async fn edits_apply_replays_durable_result_without_executor_dispatch() {
             .begin_connector_edit_operation(
                 task_id,
                 &connector.context.project_id,
-                "user:u1",
+                tests::PROJECT_SUBJECT_ID,
                 "device-retry-1",
                 &request_sha256,
                 now,
@@ -2459,7 +2584,7 @@ async fn edits_apply_replays_durable_result_without_executor_dispatch() {
         .complete_connector_edit_operation(
             task_id,
             &connector.context.project_id,
-            "user:u1",
+            tests::PROJECT_SUBJECT_ID,
             "device-retry-1",
             &request_sha256,
             &json!({"changed": true, "changed_paths": ["README.md"]}),
@@ -2488,7 +2613,7 @@ async fn edits_apply_replays_durable_result_without_executor_dispatch() {
             .begin_connector_edit_operation(
                 task_id,
                 &connector.context.project_id,
-                "user:u1",
+                tests::PROJECT_SUBJECT_ID,
                 "device-pending-1",
                 &request_sha256,
                 now,

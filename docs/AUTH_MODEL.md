@@ -9,6 +9,7 @@ WebCodex separates bootstrap administration, account onboarding, runtime API acc
 | Credential | Used by | Purpose | Do not use for |
 | --- | --- | --- | --- |
 | `WEBCODEX_TOKEN` | server admin | bootstrap/root admin | GPT/MCP/agent daily use |
+| Project Credential | setup-generated Connector + Agent | exact access to one private project grant | other projects/admin/general quick start |
 | shared key | agent + GPT/MCP quick start | shared-key group onboarding | production IAM/admin |
 | `wc_acct_xxx` | user CLI | create local PAT/agent token | GPT/MCP/agent |
 | `wc_pat_xxx` | GPT Action/MCP/API | runtime tools | agent connection |
@@ -20,6 +21,35 @@ WebCodex separates bootstrap administration, account onboarding, runtime API acc
 
 Do not put `WEBCODEX_TOKEN` in GPT Actions, MCP clients, or day-to-day agent configs.
 
+## Project Credential
+
+`webcodex setup` creates one Project Credential for the selected Git root,
+profile, and private state directory. The Connector credential file and
+generated Agent configuration carry the same secret in Iteration 8.0; exact
+verification maps both callers to one stable, non-secret `project_grant_id`.
+Agent registry access, readiness, file operations, jobs, logs, and cancellation
+all require that grant.
+
+The secret exists only in owner-protected private files. It is not written to
+the database, returned by readiness, or included in Browser JSON, logs, and
+errors. The runtime holds only its SHA-256 verifier value and compares candidate
+hashes in constant time. Agent client IDs also include a non-secret grant
+suffix; a cross-grant registration cannot replace an existing lease.
+
+Project mode is not shared-key quick start. It explicitly disables direct
+unknown-token fallback and accepts only the configured credential before a
+request reaches Connector runtime state. An arbitrary nonempty Bearer token
+therefore receives `401` and cannot create a Task, Execution, binding, or Agent
+request. The same rule applies on loopback; local processes are separate trust
+subjects.
+
+Setup does not silently rotate a surviving Project Credential. Restore the
+matching Connector and Agent private files after recoverable loss. If the
+secret is unrecoverable, stop the runtime and explicitly retire the entire
+private project-state profile before running setup again; this creates a new
+secret and also retires that profile's local task/execution history. There is no
+in-place rotate command in Iteration 8.0.
+
 ## Shared key quick start
 
 A shared key is a quick-start secret supplied to `connect --key <KEY>` and to GPT Actions or MCP only when the host supports static bearer/API-key authentication. It is sent as:
@@ -29,6 +59,10 @@ Authorization: Bearer <KEY>
 ```
 
 When `WEBCODEX_SHARED_KEY_ENABLED=true`, an unknown non-`wc_` Bearer value is accepted as a shared-key principal. The plaintext value is not enrolled as a server-side allowlist entry; WebCodex groups callers by `shared_key_hash`. Different values create different lightweight groups.
+
+This fallback belongs only to an explicitly configured ordinary server
+quick-start. A project-bound setup sets it to false and uses the exact Project
+Credential verifier above; the two paths do not fall back to each other.
 
 A shared key is not an admin credential, not a managed user identity, and not production IAM.
 

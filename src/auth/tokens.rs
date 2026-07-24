@@ -103,17 +103,15 @@ impl TokenVerifier for PatVerifier {
             };
 
             return Ok(Some(AuthContext {
-                kind: auth_kind,
                 user_id: Some(user.id.clone()),
                 username: Some(user.username.clone()),
                 api_key_id: Some(api_key.id.clone()),
                 api_key_name: Some(api_key.name.clone()),
                 role: Some(user.role.clone()),
                 scopes: api_key.scopes_vec(),
-                is_bootstrap: false,
                 token_kind: Some(api_key.kind().to_string()),
                 allowed_client_id: api_key.allowed_client_id.clone(),
-                shared_key_hash: None,
+                ..AuthContext::new(auth_kind)
             }));
         }
 
@@ -135,17 +133,12 @@ impl TokenVerifier for PatVerifier {
             }
 
             return Ok(Some(AuthContext {
-                kind: AuthKind::AccountCredential,
                 user_id: Some(user.id.clone()),
                 username: Some(user.username.clone()),
-                api_key_id: None,
-                api_key_name: None,
                 role: Some(user.role.clone()),
                 scopes: vec![SCOPE_ACCOUNT_MANAGE.to_string()],
-                is_bootstrap: false,
                 token_kind: Some("account".to_string()),
-                allowed_client_id: None,
-                shared_key_hash: None,
+                ..AuthContext::new(AuthKind::AccountCredential)
             }));
         }
 
@@ -269,19 +262,16 @@ impl TokenVerifier for OAuth2Verifier {
                 }
 
                 AuthContext {
-                    kind: AuthKind::OAuth2Token,
                     user_id: Some(user.id.clone()),
                     username: Some(user.username.clone()),
                     // OAuth2 tokens don't map to an api_keys row. Use the
                     // access token ID as the credential identifier.
                     api_key_id: Some(at_record.id.clone()),
-                    api_key_name: None,
                     role: Some(user.role.clone()),
                     scopes: at_record.scopes_vec(),
-                    is_bootstrap: false,
                     token_kind: Some("oauth2".to_string()),
                     allowed_client_id: Some(at_record.client_id.clone()),
-                    shared_key_hash: None,
+                    ..AuthContext::new(AuthKind::OAuth2Token)
                 }
             }
             "shared_key" => {
@@ -300,17 +290,13 @@ impl TokenVerifier for OAuth2Verifier {
                 }
 
                 AuthContext {
-                    kind: AuthKind::OAuth2Token,
-                    user_id: None,
-                    username: None,
                     api_key_id: Some(at_record.id.clone()),
-                    api_key_name: None,
                     role: Some("shared-key".to_string()),
                     scopes: at_record.scopes_vec(),
-                    is_bootstrap: false,
                     token_kind: Some("oauth2_shared_key".to_string()),
                     allowed_client_id: Some(at_record.client_id.clone()),
                     shared_key_hash: Some(shared_key_hash.to_string()),
+                    ..AuthContext::new(AuthKind::OAuth2Token)
                 }
             }
             _ => return Err("unsupported OAuth2 subject".to_string()),

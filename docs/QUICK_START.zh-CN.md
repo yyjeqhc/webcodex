@@ -2,273 +2,193 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-这是 WebCodex 推荐的 local-first 首次体验路径。
-
-术语见 [CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md)。想看一次真实工具流，见 [DEMO.zh-CN.md](DEMO.zh-CN.md)。
-
-## 最快路径
-
-先启动 server。然后在仓库/agent 终端生成一个 evaluation key，并把打印出来的值留好。连接 agent、用 `curl` 验证、配置 MCP 或 GPT Actions auth 时，都用这个值。scoped token、OAuth 和生产部署后面再看。
-
-## 你会运行什么
-
-- 一个 WebCodex server，可以是本地 URL 或 HTTPS URL。
-- 一个 WebCodex agent，运行在拥有代码的机器上。
-- 一个由 agent 注册的项目。
-- 一个线上 client：client 支持 remote MCP 时用 MCP；构建 Custom GPT 时用 GPT Actions。
-
-MCP 和 GPT Actions 调用同一个 WebCodex ToolRuntime。client 改变的是协议封装，不改变项目边界和工具行为。
+这是唯一 canonical project-first 路径。它配置一个本地 Git 项目，不要求用户提供
+Agent client ID、runtime project ID、transport、workflow session、executor
+reference 或内部 config path。
 
 ## 前置条件
 
-- 从本仓库运行时需要 Rust 和 Cargo。
-- 一台能同时运行 server 和 agent 的机器，用于第一次测试。
-- 一个愿意以受控方式检查和编辑的代码仓库。
-- 一个 client：
-  - ChatGPT MCP / remote MCP client，支持时优先使用。
-  - ChatGPT Custom GPT + GPT Actions，用于 Custom GPT 场景。
+- 已安装三个 WebCodex binaries：`webcodex`、`webcodex-cli`、
+  `webcodex-agent`；
+- `PATH` 中有 Git；
+- 一个可以安全查看和修改的 Git 项目。
 
-第一次运行不要使用真实 secrets、生产仓库或高权限 shell profile。
-
-## 1. 安装 Binaries
-
-当前 Linux x64 release 可以先用 npm wrapper 安装：
+安装 Linux x64 package：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
-webcodex -h
-webcodex-cli -h
-webcodex-agent -h
 ```
 
-当前 npm wrapper 提供 Linux x64 binaries。其他平台，或从本仓库做源码开发时，从源码构建：
+或从本仓库构建：
 
 ```bash
 cargo build --release --bins
 export PATH="$PWD/target/release:$PATH"
 ```
 
-## 2. 启动 server
+## 1. Setup 当前项目
 
-这一步在运行 WebCodex server 的机器上执行。localhost 示例里，server 和仓库可以在同一台机器上。
-
-`server up` 会创建 server env file，并启用 shared-key quick-start mode。它不需要 evaluation key。
-
-server 终端：
+进入 Git 项目并执行：
 
 ```bash
-export WEBCODEX_ENV="$HOME/.config/webcodex/webcodex.env"
-
-webcodex-cli server up \
-  --env-file "$WEBCODEX_ENV" \
-  --listen 127.0.0.1:8080 \
-  --public-url http://127.0.0.1:8080
-
-WEBCODEX_ENV_FILE="$WEBCODEX_ENV" webcodex
+webcodex setup
 ```
 
-运行这条命令前，env file 不需要存在。`server up` 会创建 `$WEBCODEX_ENV` 和它的父目录，并写入 server 设置和 server admin key。它没有 `--key` 参数，也会故意隐藏完整 server bootstrap key。
+第一次运行会：
 
-`--open` 不同：它允许 anonymous access，只应该用于明确的临时 localhost / trusted-network demo。
+- 解析 Git top-level directory；
+- 在 checkout 外创建 private state；
+- 创建最小 project registration 和 Agent config；
+- 创建一个供本项目 Connector 与 Agent 使用的精确 Project Credential，但不打印
+  其内容；
+- 保持 server 和 Agent 停止。
 
-保持 `webcodex` 进程运行。
+它不会修改项目文件或 Git，不会启动 service、修改 shell config、开放网络端口或
+上传源码。
 
-ChatGPT 托管的客户端，包括 GPT Actions 和 ChatGPT remote MCP，需要公网 HTTPS URL 和有效证书。WebCodex 不会自动配置 Nginx、Caddy 或 tunnel；相关说明见 [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)。本地或自建客户端如果能直接访问 server，可以使用 localhost 或内网 HTTP URL。
-
-## 3. 生成一个评估 key、连接 agent 并注册项目
-
-这一步在代码仓库所在机器上执行。localhost 示例里，可以使用同一台机器上的另一个终端。
-
-仓库/agent 终端，进入你希望 WebCodex 操作的仓库后运行：
+再次执行同一命令验证幂等：
 
 ```bash
-export WEBCODEX_KEY="$(openssl rand -base64 32)"
-printf 'Copy this key into MCP/GPT Actions auth: %s\n' "$WEBCODEX_KEY"
-
-webcodex-cli connect http://127.0.0.1:8080 \
-  --key "$WEBCODEX_KEY" \
-  --root "$PWD" \
-  --client-id local-dev \
-  --overwrite
-
-webcodex-agent --config "$HOME/.config/webcodex/clients/local-dev/agent.toml"
+webcodex setup
 ```
 
-先留好打印出来的 key。后面用 `curl` 验证、配置 MCP client 或 GPT Actions auth 时，都粘贴同一个值。不需要把这个 key 加到 server 配置里。
+第二次返回 `already configured`。若一个生成组件缺失，只修复该组件。若已有字段
+与当前 Git root/profile 冲突，setup 会指出字段并停止，不覆盖现有配置。
 
-认证细节（可跳过）：quick-start mode 会按 `shared_key_hash` 给非 managed Bearer 值分组。实际设置时只需要记住：connect、验证、MCP、GPT Actions 都用同一个打印出来的 key。不要把真实 key 值写入提交文件。
+Connector credential file 与 Agent config 保存同一个 secret，并映射到同一个稳定、
+非秘密的 project grant identity。两个文件都属于 owner-only private state；数据库
+不保存明文。runtime 会 hash candidate 并使用 constant-time comparison。这条路径
+独立于普通 shared-key quick start：project mode 会拒绝任意未知 Bearer value。
 
-`connect` 命令会生成 agent config，并为所选 root 生成项目注册条目。默认 client id 使用上面展示的 config path；如果你修改了 client id，请使用 `connect` 打印的 config 路径。
+Setup 不会静默轮换仍存在的 credential。credential 丢失时应恢复两份匹配的 private
+file；若无法恢复，先停止 runtime，明确退役整个 private project-state profile，再
+重新运行 setup。该显式重建也会退役其中的本地 Task/Execution history；Iteration
+8.0 没有 in-place rotate subcommand。
 
-项目在 agent 所在机器上。agent 只把被允许的目录注册给 server；server 不扫描你的文件系统。
-
-## 4. 验证 runtime health
-
-客户端终端，粘贴上面打印的同一个 key：
+## 2. 诊断下一步
 
 ```bash
-export WEBCODEX_KEY="<同一个评估 key>"
-
-curl -sS \
-  -H "Authorization: Bearer $WEBCODEX_KEY" \
-  -H 'Content-Type: application/json' \
-  http://127.0.0.1:8080/api/tools/call \
-  -d '{"tool":"runtime_status","summary_only":true}'
+webcodex doctor
 ```
 
-再验证项目：
+Doctor 完全只读。Agent 尚未启动时，预期 verdict 是 `Needs action`：
+
+```text
+Next:
+  webcodex agent start
+```
+
+每条 finding 都有稳定 `name`、`status`、`code`、`summary` 和 `next_action`。
+需要结构化 projection 时使用 `webcodex doctor --json`。
+
+## 3. 启动本地 runtime
 
 ```bash
-curl -sS \
-  -H "Authorization: Bearer $WEBCODEX_KEY" \
-  -H 'Content-Type: application/json' \
-  http://127.0.0.1:8080/api/tools/call \
-  -d '{"tool":"list_projects"}'
+webcodex agent start
 ```
 
-你应该能看到这种形状的 project id：
+这是显式 foreground action，会启动绑定当前项目的 loopback server 和本地 Agent；
+不会安装 system service。保持该终端运行，Ctrl-C 会停止两个进程。Loopback 不构成
+认证豁免；只有 setup 配置的精确 Project Credential 能访问该项目 Connector/Agent。
+
+在同一项目的另一个终端运行：
+
+```bash
+webcodex status
+```
+
+ready 时只显示 Project、Connection、Agent、coding readiness 和 next action。需要
+完整诊断时再次运行 `webcodex doctor`。
+
+## 4. 使用 project-bound Connector
+
+当前项目生成的 Connector profile 会把一个 logical project 确定性绑定到一个
+registered executor。使用这份 approved connection 及其精确 credential 的本地
+MCP/OpenAPI client 可以直接调用：
 
 ```text
-agent:local-dev:<project_id>
+task_start
 ```
 
-如果通过 `connect` 从仓库 root 生成配置，命令会打印生成的 project id。client prompt 和 tool call 中应使用完整 runtime project id。
+它不需要 `list_projects`、`runtime_status`、`tool_manifest`、`start_session` 或
+`current_session`，prompt 中也不需要 `agent:<client>:<project>`。
 
-## 5. 连接 ChatGPT MCP
+ChatGPT hosted client 无法访问 loopback address。operator 必须提供批准的 HTTPS
+endpoint 和认证，同时保持 project binding 不变。见
+[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)、[MCP.zh-CN.md](MCP.zh-CN.md) 或
+[GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md)。Setup 不创建 tunnel，也不暴露端口。
 
-client 支持 remote MCP 时，使用 MCP。
+## 5. 运行 golden coding path
 
-配置 client：
+让 client 完成一个小型、可逆修改。canonical 调用为：
 
 ```text
-URL:  http://127.0.0.1:8080/mcp
-Auth: Bearer <同一个评估 key>
+task_start
+→ files_read 或 files_search
+→ edits_apply
+→ checks_run
+→ task_finish
+→ task_review
 ```
 
-对 ChatGPT 或其他 hosted client，把 localhost 换成公网 HTTPS server URL：
+edit、command 和 check 使用 `operation_id` 提供 exact retry identity：同一 payload
+重试会复用 operation；同一 ID 搭配不同 payload 会 fail closed。
 
-```text
-https://your-domain.example/mcp
+普通可写 task 未运行 structured check 时不能 finish。check 真正运行后 non-zero
+才属于 project assertion failure；check 无法 spawn 属于 executor/infrastructure
+failure，不产生 assertion evidence 或 trusted workspace provenance。
+
+## 6. 本机 review 和 accept
+
+coding result 会与 target checkout 保持隔离，直到人类决定：
+
+```bash
+webcodex task list
+webcodex task show <task-id>
+webcodex task accept <task-id>
 ```
 
-第一次评估使用仓库/agent 终端打印出来、并传给 `webcodex-cli connect --key` 的同一个 evaluation key。生产认证后面再看。截图和常见 MCP 错误见 [MCP.zh-CN.md](MCP.zh-CN.md)。
+使用 `webcodex task reject <task-id>` 丢弃结果。Accept 前会验证 target Git state
+仍匹配 task baseline。
 
-## 6. 或连接 GPT Actions
+## Browser readiness
 
-构建 Custom GPT 时，使用 GPT Actions。
+本地 runtime 运行时，`/console` 只显示：
 
-导入 schema：
+- 当前 Project；
+- Connection；
+- Agent readiness；
+- coding capability readiness；
+- structured findings 和下一条 CLI action。
 
-```text
-http://127.0.0.1:8080/openapi.json
+它消费 doctor/status 同一组 application readiness facts，不显示 Agent registry、
+client ID、transport implementation、queue ID、token，也不提供 browser editor 或
+terminal。
+
+## Troubleshooting
+
+始终先运行：
+
+```bash
+webcodex status
+webcodex doctor
 ```
 
-对 ChatGPT，使用公网 HTTPS URL：
+常见 stable code：
 
-```text
-https://your-domain.example/openapi.json
-```
+| Code | 含义 | 下一步 |
+|---|---|---|
+| `project_not_configured` | 当前 Git 项目/profile 没有 setup | `webcodex setup` |
+| `project_registration_invalid` | 现有 state 冲突或不完整 | 解决指出的字段后重新 setup |
+| `project_credential_invalid` | private credential 缺失、不可读、权限不安全、格式错误或两份不匹配 | 恢复两份匹配的 private file，或显式重建 profile |
+| `project_credential_rejected` | server 拒绝本地配置的 credential | 恢复匹配 credential；不得折叠成 Agent offline |
+| `server_unreachable` | loopback runtime 不可达 | `webcodex agent start` 或查看 doctor |
+| `agent_offline` | server 可达但本地 Agent 不可用 | `webcodex agent start` |
+| `required_capability_unavailable` | Agent 太旧或不完整 | 升级全部 WebCodex binaries |
+| `structured_validation_unavailable` | Agent 缺少 structured validation | 升级全部 WebCodex binaries |
+| `workspace_unavailable` | Git 或配置的项目路径不可用 | 恢复 path/Git workspace |
+| `checks_required` | 普通 result 尚未运行 checks | 运行 `checks_run` 后 finish |
+| `checks_stale` | 上次可信 check 后 workspace 改变 | 运行新的 check operation |
 
-Action authentication 选择 Bearer/API-key auth，首次体验使用同一个 evaluation key。设置说明见 [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md)。
-
-## 7. 运行只读任务
-
-先要求 client 保持只读：
-
-```text
-Use WebCodex on project agent:local-dev:<project_id>.
-Start a coding task, inspect README.md, summarize what the project does,
-show changes without a diff, run workspace hygiene, and finish the task.
-Do not edit files.
-```
-
-预期流程：
-
-1. `start_coding_task`
-2. `read_file` 或 `search_project_text`
-3. `show_changes`
-4. `workspace_hygiene_check`
-5. `finish_coding_task`
-
-## 8. 运行一个小而可回滚的修改
-
-使用 disposable branch，或做一个很小的文档修改：
-
-```text
-Use WebCodex on project agent:local-dev:<project_id>.
-Make one small documentation edit, validate what is appropriate for a docs-only
-change, show changes, run workspace hygiene, and finish with a clear verdict.
-Prefer structured edit tools. Do not use run_shell unless needed.
-```
-
-接受结果前，先检查 changed files 和 diff。如果只是 smoke test，用你平时的 Git 流程回滚该修改。
-
-## 第一次成功标准
-
-完成设置的标准：
-
-- `runtime_status` 可用。
-- `list_projects` 显示 `agent:<client_id>:<project_id>` 项目。
-- client 能读取 `README.md`。
-- 一个只读 coding task 能干净结束。
-- 一个小修改可以被检查和回滚。
-
-## 生产认证后面再看
-
-不要把 shared-key quick-start 当成生产 IAM。它是第一次评估用的简单分组机制。生产环境请阅读 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)、[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) 和 [OPERATIONS.md](OPERATIONS.md)，再切到 scoped user tokens、OAuth、HTTPS、服务管理和 token rotation。
-
-## MCP vs GPT Actions
-
-- 如果 client 支持 remote MCP，使用 MCP。
-- 如果你在构建 Custom GPT，使用 GPT Actions。
-- 两者调用同一个 WebCodex ToolRuntime。
-
-第一次 prompt 应明确写出完整 project id，并要求只读任务。等 client 能完成 inspect 和 finish，再进入写入任务。
-
-## 安全默认值
-
-- 项目访问由 agent 注册。
-- server 不扫描文件系统。
-- 模型只能调用暴露出来的 tools。
-- 优先使用结构化编辑和验证工具。
-- `run_shell` 是受限 escape hatch，不是默认编辑或验证路径。
-- 不要把 bootstrap、account 或 agent credential 粘贴到 MCP 或 GPT Actions。
-
-完整边界模型见 [../SECURITY.md](../SECURITY.md)。
-
-## 排障
-
-### Agent Not Connected
-
-检查 agent 进程日志，确认它使用生成的 config 启动。让模型编辑前，先运行 `runtime_status` 并确认有 online agent。
-
-### Project Not Listed
-
-运行 `list_projects`。如果项目缺失，在目标仓库 root 重新运行 `webcodex-cli connect`，或检查生成的 agent project registry。不需要 server-side project registry。
-
-### Auth Failed
-
-agent connect、runtime checks、MCP 和 GPT Actions 都使用同一个 `WEBCODEX_KEY`。生产认证请切到 [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)，不要复用 bootstrap、account 或 agent credential。
-
-### Model Chose The Wrong Project Id
-
-把完整 `agent:<client_id>:<project_id>` 写进 prompt。让 client 先调用 `list_projects`，确认选中的 project，再读取或编辑文件。
-
-### Response Too Large
-
-使用 compact summaries：`runtime_status(summary_only=true)`、focused `tool_manifest` discovery、有界文件范围、`show_changes(include_diff=false)` 和 `finish_coding_task(summary_only=true)`。
-
-### Shell Or Job Feels Too Broad
-
-优先使用结构化工具：`read_file`、`search_project_text`、`apply_text_edits`、`apply_patch_checked`、`validate_patch`、`cargo_fmt`、`cargo_check`、`cargo_test`、`show_changes` 和 `workspace_hygiene_check`。
-
-## 下一步文档
-
-- Demo 工作流：[DEMO.zh-CN.md](DEMO.zh-CN.md)
-- 概念：[CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md)
-- MCP 设置：[MCP.zh-CN.md](MCP.zh-CN.md)
-- GPT Actions 设置：[GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md)
-- 认证模型：[AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)
-- 部署细节：[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)
-- 运维：[OPERATIONS.md](OPERATIONS.md)
-- 排障：[TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md)
+高级 server、enrollment、OAuth、transport 和 fleet diagnostics 继续放在
+`webcodex-cli` 与 operations 文档中，不是 onboarding 步骤。

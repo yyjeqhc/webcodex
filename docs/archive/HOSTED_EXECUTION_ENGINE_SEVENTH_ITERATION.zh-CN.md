@@ -1,5 +1,7 @@
 # Hosted Execution Engine：第七轮 Checks 统一与 Legacy Hard Cut
 
+> Archive：历史实现记录，不是当前使用指南。当前入口见 `../QUICK_START.zh-CN.md`。
+>
 > 状态：Iteration 7.2 Atomic Finish and Strict Validation Progress 已在
 > 2026-07-23 的 dirty worktree 实现，等待人工 merge review；尚未判定
 > Iteration 7 完成。未创建新 commit，也未 push、tag、release 或 deploy，

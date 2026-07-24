@@ -466,17 +466,12 @@ mod tests {
 
     fn oauth(scopes: &[&str]) -> AuthContext {
         AuthContext {
-            kind: AuthKind::OAuth2Token,
             user_id: Some("u".to_string()),
             username: Some("alice".to_string()),
-            api_key_id: None,
-            api_key_name: None,
             role: Some("user".to_string()),
             scopes: scopes.iter().map(|s| s.to_string()).collect(),
-            is_bootstrap: false,
             token_kind: Some("oauth2".to_string()),
-            allowed_client_id: None,
-            shared_key_hash: None,
+            ..AuthContext::new(AuthKind::OAuth2Token)
         }
     }
 

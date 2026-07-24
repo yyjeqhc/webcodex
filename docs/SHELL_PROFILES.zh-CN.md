@@ -108,10 +108,13 @@ shell_profile = "conda-ml"
 
 ## 10. Troubleshooting
 
-运行本地 agent-config doctor 验证 shell profiles 和 project binding：
+canonical project 使用共享只读 readiness：
 
 ```bash
-webcodex-cli doctor --agent-config /etc/webcodex/clients/workstation/agent.toml
+webcodex doctor
 ```
 
-如需 strict diagnostics 或对特定项目做远程 roundtrip，请参考 [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) 与 [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md)。
+高级 enrolled profile 使用 `webcodex-cli agent status --profile workstation`
+和 `webcodex-cli ops status --strict`。profile preparation failure 继续经过
+sanitization，不暴露 `init_script` body 或 env value。显式 project roundtrip 属于
+operator smoke，不是普通 onboarding。

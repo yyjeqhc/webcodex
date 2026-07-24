@@ -169,6 +169,77 @@ fn validation_job_progress_is_executor_owned_and_fail_fast() {
     assert!(!temp.path().join("should-not-run").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let runner = temp.path().join("setsid");
+    std::fs::write(&runner, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let mut shell = ShellConfig::default();
+    shell.env.insert(
+        "PATH".to_string(),
+        temp.path().to_string_lossy().into_owned(),
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let sink = AgentSink::WebSocket {
+        tx,
+        client_id: "validation-agent".into(),
+        agent_instance_id: "validation-instance".into(),
+    };
+    let manager = JobManager::new(1);
+    manager.enqueue(
+        sink,
+        AgentPolicy::default(),
+        shell,
+        temp.path().join("projects.d"),
+        serde_json::from_value(json!({
+            "request_id": "spawn-failure-request",
+            "client_id": "validation-agent",
+            "kind": "start_validation_job",
+            "job_id": "spawn-failure-job",
+            "cwd": temp.path(),
+            "command": serde_json::to_string(&[ShellJobValidationStep {
+                name: "check".into(),
+                command: "true".into(),
+            }]).unwrap(),
+            "timeout_secs": 10,
+            "requested_by": "test",
+            "created_at": 1
+        }))
+        .unwrap(),
+    );
+    let update = (0..100)
+        .find_map(|_| {
+            let update = rx.try_recv().ok().and_then(|envelope| match envelope {
+                AgentEnvelope::JobUpdate { payload } => Some(payload),
+                _ => None,
+            });
+            if update.is_none() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            update
+        })
+        .expect("validation spawn failure update");
+    assert!(update.finished);
+    assert_eq!(update.status, "failed");
+    assert_eq!(update.exit_code, None);
+    assert_eq!(
+        update.error.as_deref(),
+        Some(VALIDATION_STEP_SPAWN_FAILED_CODE)
+    );
+    assert_eq!(
+        update.validation_progress,
+        Some(ShellJobValidationProgress {
+            completed: 0,
+            current_step: None,
+            failed_step: None,
+        })
+    );
+}
+
 #[cfg(target_os = "linux")]
 fn process_running(pid: u32) -> bool {
     let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {

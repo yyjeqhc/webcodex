@@ -17,7 +17,8 @@ Client：
 
 - `webcodex-agent --version` 能打印版本。
 - `webcodex-cli agent status --profile workstation` 能读取本地 agent config。
-- `webcodex-cli doctor --strict --profile workstation --server-url https://your-domain.example` 通过。
+- canonical project 的 `webcodex doctor` 通过；managed deployment 则使用
+  `webcodex-cli ops status --strict --server-url https://your-domain.example`。
 - `listAgents` / `runtime_status` 显示 agent online。
 
 ## 常见问题

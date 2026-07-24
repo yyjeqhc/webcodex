@@ -5,7 +5,7 @@
 //! only through this host-local CLI and the private SQLite state it resolves.
 
 use crate::connector_runtime::workspace::WorkspaceManager;
-use crate::hosted_connect::{resolve_local_task_state, LocalTaskState};
+use crate::project_entry::{resolve_local_task_state, LocalTaskState};
 use crate::Database;
 use serde_json::json;
 use std::fs::{File, OpenOptions};
@@ -471,7 +471,7 @@ fn open_state(location: &TaskLocationOptions) -> Result<(LocalTaskState, Databas
     let db_path = state.data.join("webcodex.db");
     if !db_path.is_file() {
         return Err(format!(
-            "connector state was not found at {}; start this project with 'webcodex connect' first",
+            "project state was not found at {}; run 'webcodex setup' first",
             state.state.display()
         ));
     }
@@ -674,6 +674,7 @@ mod tests {
             results_root: state_dir.join("results").to_string_lossy().to_string(),
             projects_dir: state.projects.to_string_lossy().to_string(),
             profile: "personal".to_string(),
+            project_grant_id: "wc_pgrant_1111111111111111".to_string(),
         };
         let manager = WorkspaceManager::new(&context).unwrap();
         db.ensure_connector_binding(ConnectorBinding {

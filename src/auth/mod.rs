@@ -40,6 +40,7 @@ use salvo::prelude::*;
 // ---------------------------------------------------------------------------
 
 mod context;
+mod project_credential;
 pub mod scopes;
 
 // `pat` is `pub(crate)` — its functions are internal utilities.
@@ -56,6 +57,10 @@ pub(crate) mod tokens;
 
 #[allow(unused_imports)]
 pub use context::{AuthContext, AuthError, AuthKind};
+pub(crate) use project_credential::{
+    read_protected_secret, validate_credential as validate_project_credential,
+    ProjectCredentialVerifier,
+};
 
 #[allow(unused_imports)]
 pub use scopes::{
@@ -255,17 +260,10 @@ pub(crate) async fn authenticate_bearer(
 /// callers are `AuthMiddleware` (inline) and `authenticate_bearer`.
 fn bootstrap_context() -> AuthContext {
     AuthContext {
-        kind: AuthKind::Bootstrap,
-        user_id: None,
-        username: None,
-        api_key_id: None,
-        api_key_name: None,
         role: Some("admin".to_string()),
         scopes: vec![SCOPE_ADMIN.to_string()],
         is_bootstrap: true,
-        token_kind: None,
-        allowed_client_id: None,
-        shared_key_hash: None,
+        ..AuthContext::new(AuthKind::Bootstrap)
     }
 }
 
@@ -278,50 +276,33 @@ mod tests {
     use super::*;
 
     fn bootstrap_ctx() -> AuthContext {
-        AuthContext {
-            kind: AuthKind::Bootstrap,
-            user_id: None,
-            username: None,
-            api_key_id: None,
-            api_key_name: None,
-            role: Some("admin".to_string()),
-            scopes: vec![SCOPE_ADMIN.to_string()],
-            is_bootstrap: true,
-            token_kind: None,
-            allowed_client_id: None,
-            shared_key_hash: None,
-        }
+        bootstrap_context()
     }
 
     fn user_ctx(username: &str) -> AuthContext {
         AuthContext {
-            kind: AuthKind::ApiToken,
             user_id: Some(format!("user-{}", username)),
             username: Some(username.to_string()),
             api_key_id: Some("key-1".to_string()),
             api_key_name: Some("user key".to_string()),
             role: Some("user".to_string()),
             scopes: vec![SCOPE_RUNTIME_READ.to_string()],
-            is_bootstrap: false,
             token_kind: Some("user".to_string()),
-            allowed_client_id: None,
-            shared_key_hash: None,
+            ..AuthContext::new(AuthKind::ApiToken)
         }
     }
 
     fn agent_ctx(username: &str, client_id: &str, scopes: Vec<String>) -> AuthContext {
         AuthContext {
-            kind: AuthKind::AgentToken,
             user_id: Some(format!("user-{}", username)),
             username: Some(username.to_string()),
             api_key_id: Some("key-agent".to_string()),
             api_key_name: Some("agent key".to_string()),
             role: Some("user".to_string()),
             scopes,
-            is_bootstrap: false,
             token_kind: Some("agent".to_string()),
             allowed_client_id: Some(client_id.to_string()),
-            shared_key_hash: None,
+            ..AuthContext::new(AuthKind::AgentToken)
         }
     }
 

@@ -1,5 +1,9 @@
 # Codex Prompt：Project-first Execution Engine 大重构
 
+> Archive notice：这是 Iteration 6 的历史执行 prompt，不是当前开发入口。
+> 当前入口和状态以 `PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md` 与
+> `ROADMAP.zh-CN.md` 为准。
+
 下面的 prompt 用于在 `refactor/project-first-experience` 上立即启动下一轮大重构。它要求完成一个可运行的 vertical slice，而不是只输出分析或计划。
 
 ```text
@@ -12,10 +16,10 @@
 - AGENTS.md
 - docs/PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md
 - docs/PRODUCT_DEVELOPMENT_PLAN.zh-CN.md 的 Task/Run/Result、canonical surface 和下一步部分
-- docs/HOSTED_TASK_KERNEL_SECOND_ITERATION.zh-CN.md
-- docs/HOSTED_TASK_RESULT_THIRD_ITERATION.zh-CN.md
-- docs/HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md
-- docs/HOSTED_EDIT_RELIABILITY_FIFTH_ITERATION.zh-CN.md
+- docs/archive/HOSTED_TASK_KERNEL_SECOND_ITERATION.zh-CN.md
+- docs/archive/HOSTED_TASK_RESULT_THIRD_ITERATION.zh-CN.md
+- docs/archive/HOSTED_EXECUTION_EFFICIENCY_FOURTH_ITERATION.zh-CN.md
+- docs/archive/HOSTED_EDIT_RELIABILITY_FIFTH_ITERATION.zh-CN.md
 
 ## Goal
 

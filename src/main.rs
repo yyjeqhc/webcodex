@@ -12,6 +12,8 @@ use uuid::Uuid;
 mod action_audit;
 mod action_audit_sessions;
 mod admin_cli;
+#[allow(dead_code)]
+mod agent_init;
 mod agent_quic;
 mod agent_tokens_http;
 mod agent_ws;
@@ -24,7 +26,6 @@ mod config;
 mod connector_runtime;
 mod console_web;
 mod db;
-mod hosted_connect;
 mod mcp;
 mod models;
 mod oauth_http;
@@ -33,6 +34,7 @@ mod pairing_http;
 // The server uses only normalization/bounds helpers; the same module's
 // filesystem scanner is compiled for and invoked by webcodex-agent.
 mod lsp_bridge;
+mod project_entry;
 #[allow(dead_code)]
 mod project_overview;
 mod projects;
@@ -78,9 +80,65 @@ const REQUEST_HARD_TIMEOUT_SECS: u64 = 300;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match server_cli_action(std::env::args().skip(1)) {
         ServerCliAction::Run => {}
-        ServerCliAction::Connect(opts) => {
-            if let Err(stderr) = hosted_connect::run(opts).await {
-                eprintln!("{}", stderr);
+        ServerCliAction::Setup(options) => {
+            match project_entry::setup(&options) {
+                Ok(report) if options.json => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "command": "setup",
+                        "project": report.project,
+                        "connection_url": report.connection_url,
+                        "status": report.status,
+                        "changed": report.changed,
+                        "next_action": report.next_action
+                    }))?
+                ),
+                Ok(report) => print!("{}", project_entry::render_setup_text(&report)),
+                Err(error) => {
+                    eprintln!("{}", project_entry::render_error(&error, options.json));
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
+        ServerCliAction::Doctor(options) => {
+            let readiness = project_entry::collect_readiness(&options).await;
+            if options.json {
+                println!("{}", serde_json::to_string_pretty(&readiness)?);
+            } else {
+                print!("{}", project_entry::render_doctor_text(&readiness));
+            }
+            if !readiness.ready {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        ServerCliAction::Status(options) => {
+            let readiness = project_entry::collect_readiness(&options).await;
+            if options.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "project": readiness.project,
+                        "connection": readiness.connection,
+                        "agent": readiness.agent,
+                        "capabilities": readiness.capabilities,
+                        "ready": readiness.ready,
+                        "next_action": readiness.next_action
+                    }))?
+                );
+            } else {
+                print!("{}", project_entry::render_status_text(&readiness));
+            }
+            if !readiness.ready {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        ServerCliAction::AgentStart(options) => {
+            if let Err(error) = project_entry::start_agent(&options).await {
+                eprintln!("{}", project_entry::render_error(&error, false));
                 std::process::exit(1);
             }
             return Ok(());
@@ -345,9 +403,9 @@ only for local/trusted-network demos."
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
 
-    // Read-only MCP App console (Phase B). Public static entry — the HTML/JS/CSS
-    // bundle carries no secrets; all runtime data is fetched by the browser
-    // from the protected `POST /api/runtime/status` endpoint. Mirrors
+    // Read-only readiness console. Public static entry — the HTML/JS/CSS
+    // bundle carries no secrets; project facts come from the protected shared
+    // `POST /api/connector/readiness` application projection. Mirrors
     // `/openapi.json` being public. NOT part of the GPT Actions schema.
     let console_router = Router::with_path("console")
         .get(console_web::console_html)

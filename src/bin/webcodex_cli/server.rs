@@ -126,7 +126,7 @@ pub(crate) fn run_server_up(opts: ServerUpOptions) -> Result<String, String> {
         env_file.display()
     ));
     out.push_str("  2. Start server:  webcodex\n");
-    out.push_str("  3. Connect client: webcodex-cli connect <URL> --key <KEY> --root <PROJECT>\n");
+    out.push_str("  3. For local coding, run in the Git project: webcodex setup\n");
     out.push_str("  4. GPT/MCP:       use the same --key value as a Bearer token\n");
     Ok(out)
 }

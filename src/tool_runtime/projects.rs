@@ -194,7 +194,7 @@ impl ToolRuntime {
         // -- owner boundary + client existence --------------------------------
         if self
             .shell_clients
-            .get_client_view(&client_id)
+            .get_client_view_for_auth(&client_id, auth)
             .await
             .is_none()
         {

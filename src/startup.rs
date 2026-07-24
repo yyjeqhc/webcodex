@@ -1,9 +1,12 @@
-use crate::{admin_cli, build_info, hosted_connect, task_cli};
+use crate::{admin_cli, build_info, project_entry, task_cli};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ServerCliAction {
     Run,
-    Connect(hosted_connect::HostedConnectOptions),
+    Setup(project_entry::ProjectCommandOptions),
+    Doctor(project_entry::ProjectCommandOptions),
+    Status(project_entry::ProjectCommandOptions),
+    AgentStart(project_entry::ProjectCommandOptions),
     Task(task_cli::TaskCliCommand),
     Admin(admin_cli::AdminCliCommand),
     Exit {
@@ -15,14 +18,18 @@ pub(crate) enum ServerCliAction {
 
 fn server_usage() -> String {
     format!(
-        "Usage: webcodex [OPTIONS]\n       webcodex connect <TARGET> --via <INGRESS> [OPTIONS]\n       webcodex task <COMMAND> [ARGS] [OPTIONS]\n       webcodex <ADMIN-COMMAND>\n\n\
+        "Usage: webcodex [OPTIONS]\n       webcodex setup [OPTIONS]\n       webcodex doctor [OPTIONS]\n       webcodex agent start [OPTIONS]\n       webcodex status [OPTIONS]\n       webcodex task <COMMAND> [ARGS] [OPTIONS]\n       webcodex <ADMIN-COMMAND>\n\n\
 Commands:\n\
-  connect            Open the current project and connect a hosted client\n\
+  setup              Configure the current Git project\n\
+  doctor             Diagnose why the current project cannot work\n\
+  agent start        Start the project runtime and local Agent in foreground\n\
+  status             Show concise project coding readiness\n\
   task               Review tasks and make host-local decisions\n\
   serve              Run the HTTP runtime (internal/advanced mode)\n\n\
 Options:\n\
   -h, --help       Print help and exit\n\
   -V, --version    Print version and exit\n\n\
+{}\
 {}\
 Environment:\n\
   WEBCODEX_ENV_FILE      Load environment variables from this file\n\
@@ -37,6 +44,7 @@ Default off; only safe on localhost/trusted LAN/temporary demos.\n\
   WEBCODEX_QUIC_CERT     PEM cert path for the QUIC listener\n\
   WEBCODEX_QUIC_KEY      PEM key path for the QUIC listener\n\
   WEBCODEX_QUIC_ALPN     QUIC ALPN, default webcodex-agent/1\n",
+        project_entry::usage(),
         admin_cli::usage()
     )
 }
@@ -53,20 +61,53 @@ where
     if args.is_empty() {
         return ServerCliAction::Run;
     }
-    if args[0] == "connect" {
+    if matches!(args[0].as_str(), "setup" | "doctor" | "status") {
+        let command = args[0].as_str();
         if args.len() == 2 && matches!(args[1].as_str(), "--help" | "-h") {
             return ServerCliAction::Exit {
                 code: 0,
-                stdout: hosted_connect::usage().to_string(),
+                stdout: project_entry::usage().to_string(),
                 stderr: String::new(),
             };
         }
-        return match hosted_connect::parse(&args[1..]) {
-            Ok(opts) => ServerCliAction::Connect(opts),
-            Err(e) => ServerCliAction::Exit {
+        return match project_entry::parse_options(&args[1..], command) {
+            Ok(options) => match command {
+                "setup" => ServerCliAction::Setup(options),
+                "doctor" => ServerCliAction::Doctor(options),
+                "status" => ServerCliAction::Status(options),
+                _ => unreachable!(),
+            },
+            Err(error) => ServerCliAction::Exit {
                 code: 2,
                 stdout: String::new(),
-                stderr: format!("{}\n\n{}", e, hosted_connect::usage()),
+                stderr: format!("{error}\n\n{}", project_entry::usage()),
+            },
+        };
+    }
+    if args[0] == "agent" {
+        if args.len() == 2 && matches!(args[1].as_str(), "--help" | "-h") {
+            return ServerCliAction::Exit {
+                code: 0,
+                stdout: project_entry::usage().to_string(),
+                stderr: String::new(),
+            };
+        }
+        if args.get(1).map(String::as_str) != Some("start") {
+            return ServerCliAction::Exit {
+                code: 2,
+                stdout: String::new(),
+                stderr: format!(
+                    "expected `webcodex agent start`\n\n{}",
+                    project_entry::usage()
+                ),
+            };
+        }
+        return match project_entry::parse_options(&args[2..], "agent start") {
+            Ok(options) => ServerCliAction::AgentStart(options),
+            Err(error) => ServerCliAction::Exit {
+                code: 2,
+                stdout: String::new(),
+                stderr: format!("{error}\n\n{}", project_entry::usage()),
             },
         };
     }
@@ -146,7 +187,10 @@ mod tests {
     {
         match server_cli_action(args) {
             ServerCliAction::Run => Ok(None),
-            ServerCliAction::Connect(_) => Ok(None),
+            ServerCliAction::Setup(_)
+            | ServerCliAction::Doctor(_)
+            | ServerCliAction::Status(_)
+            | ServerCliAction::AgentStart(_) => Ok(None),
             ServerCliAction::Task(_) => Ok(None),
             ServerCliAction::Admin(_) => Ok(None),
             ServerCliAction::Exit {
@@ -190,10 +234,10 @@ mod tests {
             assert!(output.starts_with(&format!("webcodex {} (commit ", env!("CARGO_PKG_VERSION"))));
             assert_ne!(output, format!("webcodex {}\n", env!("CARGO_PKG_VERSION")));
         }
-        assert!(server_cli_output(["connect", "--help"])
+        assert!(server_cli_output(["setup", "--help"])
             .unwrap()
             .unwrap()
-            .contains("connect <TARGET>"));
+            .contains("webcodex setup"));
         assert!(server_cli_output(["task", "--help"])
             .unwrap()
             .unwrap()
@@ -205,6 +249,30 @@ mod tests {
         assert!(server_cli_output(["--bogus"])
             .unwrap_err()
             .contains("unknown argument"));
+    }
+
+    #[test]
+    fn project_commands_have_one_canonical_dispatch_and_no_connect_alias() {
+        assert!(matches!(
+            server_cli_action(["setup", "--root", "."]),
+            ServerCliAction::Setup(_)
+        ));
+        assert!(matches!(
+            server_cli_action(["doctor", "--root", "."]),
+            ServerCliAction::Doctor(_)
+        ));
+        assert!(matches!(
+            server_cli_action(["status", "--root", "."]),
+            ServerCliAction::Status(_)
+        ));
+        assert!(matches!(
+            server_cli_action(["agent", "start", "--root", "."]),
+            ServerCliAction::AgentStart(_)
+        ));
+        match server_cli_action(["connect", "chatgpt"]) {
+            ServerCliAction::Exit { code: 2, .. } => {}
+            other => panic!("legacy connect unexpectedly dispatched: {other:?}"),
+        }
     }
 
     #[test]

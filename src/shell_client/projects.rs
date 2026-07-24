@@ -1,3 +1,4 @@
+use super::auth::assert_shell_client_access;
 use super::validation::validate_id;
 use super::ShellClientRegistry;
 use crate::shell_protocol::{
@@ -60,6 +61,21 @@ impl ShellClientRegistry {
     pub async fn client_supports(&self, client_id: &str, capability: &str) -> Result<bool, String> {
         let caps = self.get_client_capabilities(client_id).await?;
         Ok(capability_enabled(&caps, capability))
+    }
+
+    pub(crate) async fn client_supports_for_auth(
+        &self,
+        client_id: &str,
+        capability: &str,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Result<bool, String> {
+        let inner = self.inner.lock().await;
+        let client = inner
+            .clients
+            .get(client_id)
+            .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
+        assert_shell_client_access(auth, client)?;
+        Ok(capability_enabled(&client.capabilities, capability))
     }
 
     /// List the projects registered for a given shell client. Currently only

@@ -2,14 +2,12 @@ pub(crate) fn usage() -> &'static str {
     "Usage: webcodex-cli <COMMAND>\n\n\
      Management/setup commands for WebCodex.\n\n\
      Commands:\n\
-       connect <URL> --key <KEY> | --open       Quick-start client connection (shared key or open)\n\
        server up                                      Bootstrap server env with auto-generated admin key\n\
        server init                                      Create server env bootstrap file\n\
        server install-service                           Generate/install a systemd unit\n\
        server status                                    Check service and runtime status\n\
        pairing create                                   Create a temporary client pairing code\n\
        client enroll                                    Enroll a client from a pairing code\n\
-       doctor                                           Run non-destructive diagnostics\n\
        ops status|agents|projects|smoke-preflight       Read-only operator workflow checks\n\
        user/users create/list                             Manage users\n\
        token generate                                   Generate a local wc_pat_* value and hash\n\
@@ -70,24 +68,6 @@ pub(crate) fn client_usage() -> &'static str {
        enroll       Enroll this client using a temporary pairing code\n"
 }
 
-pub(crate) fn connect_usage() -> &'static str {
-    "Usage: webcodex-cli connect <SERVER-URL> --key <KEY> | --open [OPTIONS]\n\n\
-     Quick-start client connection. Generates a client id, agent.toml, and a\n\
-     projects registry entry for the project root, then prints how to configure\n\
-     GPT Actions / MCP.\n\n\
-     Options:\n\
-       --key KEY            Shared-key pairing (mutually exclusive with --open)\n\
-       --open               Anonymous pairing; server must also be --open\n\
-       --root PATH          Project root [default: current working directory]\n\
-       --output-dir DIR     Output dir [default: ~/.config/webcodex/clients/<client-id>]\n\
-       --client-id ID       Client id [default: generated UUID]\n\
-       --overwrite          Replace existing config files\n\
-       --json               Print machine-readable output\n\
-       -h, --help           Print help and exit\n\n\
-     --key and --open are mutually exclusive. Client and GPT/MCP use the same\n\
-     key as a Bearer token and the server groups them together.\n"
-}
-
 pub(crate) fn server_up_usage() -> &'static str {
     "Usage: webcodex-cli server up [OPTIONS]\n\n\
      Quick-start server bootstrap. Generates a local bootstrap/admin key when no\n\
@@ -127,38 +107,6 @@ pub(crate) fn client_enroll_usage() -> &'static str {
      Enroll receives wc_pat_* and wc_agent_* tokens over HTTPS and writes them\n\
      locally with 0600 permissions. Explicit --output-dir overrides the\n\
      profile-derived default. It never sends an Authorization header.\n"
-}
-
-pub(crate) fn doctor_usage() -> &'static str {
-    "Usage: webcodex-cli doctor [OPTIONS]\n\n\
-     Options:\n\
-       --server-url URL          WebCodex server URL for HTTP checks\n\
-       --env-file PATH           Read WEBCODEX_TOKEN from env file\n\
-       --token-file PATH         Read bearer token from file\n\
-       --user-token-file PATH    Read user API token for runtime/project checks\n\
-       --agent-token-file PATH   Read agent token for boundary checks\n\
-       --agent-config PATH       Local agent.toml for shell-profile/project diagnostics\n\
-       --profile NAME            Client config profile for agent config/token defaults\n\
-       --project ID              Restrict the remote shell roundtrip to this project id\n\
-       --quic                    Run QUIC transport diagnostics\n\
-       --server-only             With --quic, only check API + QUIC UDP/TLS/ALPN handshake\n\
-       --agent-e2e               With --quic, require an online quic-v1 agent and run dispatch checks\n\
-       --quic-server-addr ADDR   QUIC UDP host:port; falls back to [quic].server_addr\n\
-       --quic-server-name NAME   QUIC TLS/SNI name; falls back to [quic].server_name\n\
-       --quic-alpn ALPN          QUIC ALPN [default: webcodex-agent/1]\n\
-       --quic-timeout-secs SECS  QUIC connect timeout [default: 10]\n\
-       --quic-client-id ID       Expected QUIC agent client id; falls back to agent.toml client_id\n\
-       --json                    Print machine-readable diagnostics\n\
-       --strict                  Exit non-zero if any check fails\n\
-       -h, --help                Print help and exit\n\n\
-     Doctor is non-destructive and never prints tokens or response bodies from\n\
-     non-JSON/HTML errors. With --profile, missing agent config and token paths\n\
-     are derived under /etc/webcodex/clients/<profile> for root or\n\
-     ~/.config/webcodex/clients/<profile> for non-root users. Explicit path\n\
-     flags override profile-derived defaults. With --agent-config it parses\n\
-     agent.toml locally and checks projects_dir, project paths, and\n\
-     shell_profile resolution without contacting the server. It never prints\n\
-     init_script bodies or env values.\n"
 }
 
 pub(crate) fn ops_usage() -> &'static str {

@@ -1,4 +1,4 @@
-use super::auth::shell_job_visible_to_auth;
+use super::auth::{assert_shell_client_access, shell_job_visible_to_auth};
 use super::jobs::{
     append_limited, assert_active_instance_locked, command_preview, is_final_job_status, job_view,
     refresh_job_status_locked, replace_limited, select_lines,
@@ -12,7 +12,7 @@ use super::validation::{validate_agent_instance_id, validate_id, validate_run_re
 use super::{now_ts, ShellClientRegistry};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentShellRequest, ShellJobInfo, ShellJobOpRequest,
-    ShellJobValidationStep, ShellRunRequest,
+    ShellJobValidationStep, ShellRunRequest, VALIDATION_STEP_SPAWN_FAILED_CODE,
 };
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -66,8 +66,14 @@ fn validate_validation_progress(
         return invalid_progress("validation_progress_invalid");
     }
     let no_active_step = progress.current_step.is_none() && progress.failed_step.is_none();
+    let infrastructure_failure = status == "failed"
+        && update.finished
+        && update.exit_code.is_none()
+        && update.error.as_deref() == Some(VALIDATION_STEP_SPAWN_FAILED_CODE);
     let valid = if cancelling {
         no_active_step
+    } else if infrastructure_failure {
+        progress.completed < job.validation_steps.len() && no_active_step
     } else if !is_final_job_status(status) {
         let expected = job.validation_steps.get(progress.completed);
         expected.map(String::as_str) == progress.current_step.as_deref()
@@ -112,6 +118,17 @@ impl ShellClientRegistry {
         body: ShellJobOpRequest,
         requested_by: String,
         metadata: ShellJobStartMetadata,
+    ) -> Result<ShellJobInfo, String> {
+        self.start_job_with_metadata_for_auth(body, requested_by, metadata, None)
+            .await
+    }
+
+    pub(crate) async fn start_job_with_metadata_for_auth(
+        &self,
+        body: ShellJobOpRequest,
+        requested_by: String,
+        metadata: ShellJobStartMetadata,
+        auth: Option<&crate::auth::AuthContext>,
     ) -> Result<ShellJobInfo, String> {
         let client_id = body
             .client_id
@@ -185,6 +202,9 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
+        if auth.is_some() {
+            assert_shell_client_access(auth, client)?;
+        }
         if !(client.capabilities.async_jobs || client.capabilities.async_shell_jobs) {
             return Err(format!(
                 "agent client {} does not support async shell jobs",
@@ -376,11 +396,23 @@ impl ShellClientRegistry {
         job_id: &str,
         requested_by: String,
     ) -> Result<ShellJobInfo, String> {
+        self.stop_job_for_auth(None, job_id, requested_by).await
+    }
+
+    pub(crate) async fn stop_job_for_auth(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+        job_id: &str,
+        requested_by: String,
+    ) -> Result<ShellJobInfo, String> {
         validate_id(job_id, "job_id")?;
         let mut inner = self.inner.lock().await;
         let Some(job) = inner.jobs_by_id.get(job_id).cloned() else {
             return Err(format!("unknown shell job: {}", job_id));
         };
+        if !shell_job_visible_to_auth(auth, &inner, &job.client_id) {
+            return Err(format!("unknown shell job: {}", job_id));
+        }
         match job.status.as_str() {
             "queued" => {
                 if let Some(request_id) = &job.request_id {

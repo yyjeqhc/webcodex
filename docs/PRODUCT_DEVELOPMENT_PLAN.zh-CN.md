@@ -1,5 +1,9 @@
 # WebCodex Hosted Chat-first / Project-first 重构设计与开发计划
 
+> Archive notice：这是 2026-07-15 的历史产品设计基线，不是当前使用指南。
+> canonical onboarding 见 `QUICK_START.zh-CN.md`，当前执行基线见
+> `PROJECT_FIRST_REFINEMENT_PLAN.zh-CN.md`。
+>
 > 评审日期：2026-07-15
 >
 > 状态：v4 执行基线；前四轮个人本地主路径已落地：hosted connect、project-bound canonical surface、稳定 Task Result/本机人工决策、可复用写槽位与 Project 级 Cargo cache；下一阶段先增强编辑/读取/validation 工具，shared control plane/browser review 后置

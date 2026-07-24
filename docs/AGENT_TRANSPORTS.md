@@ -129,30 +129,23 @@ With a `quic-v1` agent, QUIC supports the runtime request loop used by WebCodex 
 
 ## Validation
 
-Use built-in doctor diagnostics for repeatable QUIC checks.
-
-Server-side listener and handshake check:
+Use operator status projections for bounded QUIC checks:
 
 ```sh
-webcodex-cli doctor --quic --server-only \
+webcodex-cli ops status \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
-  --agent-config /etc/webcodex/clients/workstation/agent.toml \
+  --token-file /etc/webcodex/clients/workstation/webcodex-user-token \
+  --strict
+webcodex-cli ops agents \
+  --server-url https://your-domain.example \
+  --token-file /etc/webcodex/clients/workstation/webcodex-user-token \
   --strict
 ```
 
-Agent dispatch check:
-
-```sh
-webcodex-cli doctor --quic --agent-e2e \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
-  --agent-config /etc/webcodex/clients/workstation/agent.toml \
-  --project agent:CLIENT_ID:PROJECT_ID \
-  --strict
-```
-
-The server-only mode checks HTTPS reachability, `runtime_status.quic`, UDP resolution, ALPN, and certificate verification. The agent E2E mode confirms a `transport=quic` / `agent_protocol_version=quic-v1` agent, runs a marker command, starts an async job, polls `job_status`, and reads `job_log`.
+The projections confirm server reachability, listener state, and the negotiated
+agent transport/protocol without making transport discovery part of the
+ordinary coding path. Certificate/UDP handshake validation remains a deploy
+gate owned by the ingress/transport operator.
 
 ## Fallback behavior
 

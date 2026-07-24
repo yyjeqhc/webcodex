@@ -1,8 +1,8 @@
 //! `webcodex-cli` — standalone management/setup binary for WebCodex.
 //!
 //! Provides users / tokens / agent-tokens management (reusing the
-//! shared `admin_cli` module), `agent init` (reusing the shared `agent_init`
-//! module), and a first-pass `setup single-user` command that creates a user,
+//! shared `admin_cli` module), low-level `agent init` (reusing the shared
+//! `agent_init` module), and `setup single-user`, which creates a user,
 //! a personal API token, and an agent token, then writes the plaintext tokens
 //! to 0600 files.
 //!
@@ -52,18 +52,17 @@ use webcodex_cli::{
     agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
     client_enroll_usage, client_profile_agent_config, client_profile_agent_token_file,
     client_profile_projects_dir, client_profile_service_file, client_profile_user_token_file,
-    client_usage, connect_usage, default_client_output_dir_for_profile, default_server_paths,
-    discover_binary, discover_named_binary_absolute, discover_webcodex_binary, doctor_usage,
-    is_systemd_platform, ops_agents_usage, ops_projects_usage, ops_smoke_preflight_usage,
-    ops_status_usage, ops_usage, pairing_create_usage, pairing_usage, query_systemd_service_status,
-    read_optional_token, render_token_generate, resolve_doctor_general_token,
-    run_agent_install_service, run_agent_status, run_agent_token_create_local, run_client_enroll,
-    run_connect, run_doctor, run_local_agent_doctor, run_ops_command, run_pairing_create,
-    run_quic_doctor_checks, run_server_init, run_server_install_service, run_server_status,
-    run_server_up, run_setup_single_user, run_token_create_local, server_init_usage,
-    server_install_service_usage, server_status_usage, server_up_usage, server_usage, usage,
-    validate_client_profile, write_secret_file, write_text_file, OpsCommand, OpsCommonOptions,
-    OpsSmokePreflightOptions, ServerStatusOptions,
+    client_usage, default_client_output_dir_for_profile, default_server_paths,
+    discover_named_binary_absolute, discover_webcodex_binary, is_systemd_platform,
+    ops_agents_usage, ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
+    pairing_create_usage, pairing_usage, query_systemd_service_status, read_optional_token,
+    render_token_generate, run_agent_install_service, run_agent_status,
+    run_agent_token_create_local, run_client_enroll, run_ops_command, run_pairing_create,
+    run_server_init, run_server_install_service, run_server_status, run_server_up,
+    run_setup_single_user, run_token_create_local, server_init_usage, server_install_service_usage,
+    server_status_usage, server_up_usage, server_usage, usage, validate_client_profile,
+    write_secret_file, write_text_file, OpsCommand, OpsCommonOptions, OpsSmokePreflightOptions,
+    ServerStatusOptions,
 };
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
 const SETUP_AGENT_SCOPES: &[&str] = &[
@@ -83,7 +82,6 @@ enum CliAction {
     SetupSingleUser(SetupSingleUserOptions),
     PairingCreate(PairingCreateOptions),
     ClientEnroll(ClientEnrollOptions),
-    Doctor(DoctorOptions),
     Ops(OpsCommand),
     AgentInstallService(AgentInstallServiceOptions),
     AgentStatus(AgentStatusOptions),
@@ -91,7 +89,6 @@ enum CliAction {
     ServerInstallService(ServerInstallServiceOptions),
     ServerStatus(ServerStatusOptions),
     ServerUp(ServerUpOptions),
-    Connect(ConnectOptions),
     Exit {
         code: i32,
         stdout: String,
@@ -170,35 +167,6 @@ struct ClientEnrollOptions {
     json: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct DoctorOptions {
-    server_url: Option<String>,
-    env_file: Option<PathBuf>,
-    token_file: Option<PathBuf>,
-    user_token_file: Option<PathBuf>,
-    agent_token_file: Option<PathBuf>,
-    /// Local agent config path (`agent.toml`) for local shell-profile / project
-    /// diagnostics. When set, doctor parses it and checks projects_dir, project
-    /// paths, and shell_profile resolution without contacting the server.
-    agent_config: Option<PathBuf>,
-    /// Restrict the remote shell roundtrip check to a single project id (the
-    /// `agent:<client_id>:<project_id>` runtime id, or a bare project id).
-    project: Option<String>,
-    /// Run QUIC transport diagnostics. By default this performs server-only
-    /// QUIC DNS/TLS/ALPN handshake checks; combine with --agent-e2e for
-    /// runtime dispatch checks against an already-running QUIC agent.
-    quic: bool,
-    quic_server_addr: Option<String>,
-    quic_server_name: Option<String>,
-    quic_alpn: String,
-    quic_timeout_secs: u64,
-    quic_server_only: bool,
-    quic_agent_e2e: bool,
-    quic_client_id: Option<String>,
-    json: bool,
-    strict: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ServerInitOptions {
     listen: String,
@@ -235,27 +203,6 @@ struct AgentInstallServiceOptions {
     overwrite: bool,
     dry_run: bool,
     output_stdout: bool,
-    json: bool,
-}
-
-/// Quick-start connection mode selected by the caller. `--key` and `--open` are
-/// mutually exclusive at the CLI layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ConnectMode {
-    /// Shared-key pairing: client and GPT/MCP use the same arbitrary key.
-    SharedKey(String),
-    /// Anonymous pairing: requires the server to be started with `--open`.
-    Open,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ConnectOptions {
-    server_url: String,
-    mode: ConnectMode,
-    root: PathBuf,
-    output_dir: Option<PathBuf>,
-    client_id: Option<String>,
-    overwrite: bool,
     json: bool,
 }
 
@@ -303,11 +250,9 @@ where
             stdout: build_info::version_output("webcodex-cli"),
             stderr: String::new(),
         },
-        "connect" => parse_connect_command(&args[1..]),
         "server" => parse_server_subcommand(&args[1..]),
         "pairing" => parse_pairing_subcommand(&args[1..]),
         "client" => parse_client_subcommand(&args[1..]),
-        "doctor" => parse_doctor_command(&args[1..]),
         "ops" => parse_ops_subcommand(&args[1..]),
         "agent" => parse_agent_subcommand(&args[1..]),
         "agent-token" | "agent-tokens" => {
@@ -315,7 +260,7 @@ where
         }
         "setup" => parse_setup_subcommand(&args[1..]),
         "token" => parse_token_subcommand(&args[1..]),
-        _ => {
+        group if admin_cli::is_admin_group(group) => {
             // users / tokens / agent-tokens management: reuse admin_cli parser.
             match parse_admin_cli(&args) {
                 Ok(cmd) => CliAction::Admin(cmd),
@@ -326,6 +271,11 @@ where
                 },
             }
         }
+        command => CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("unknown command: {command}\n\n{}", usage()),
+        },
     }
 }
 
@@ -971,99 +921,6 @@ fn parse_server_init(args: &[String]) -> Result<ServerInitOptions, String> {
     Ok(opts)
 }
 
-fn parse_connect_command(args: &[String]) -> CliAction {
-    if args.is_empty() {
-        return CliAction::Exit {
-            code: 2,
-            stdout: String::new(),
-            stderr: format!("{}\n", connect_usage()),
-        };
-    }
-    match args[0].as_str() {
-        "--help" | "-h" => CliAction::Exit {
-            code: 0,
-            stdout: connect_usage().to_string(),
-            stderr: String::new(),
-        },
-        _ => match parse_connect(&args) {
-            Ok(opts) => CliAction::Connect(opts),
-            Err(e) => CliAction::Exit {
-                code: 2,
-                stdout: String::new(),
-                stderr: format!("{}\n", e),
-            },
-        },
-    }
-}
-
-fn parse_connect(args: &[String]) -> Result<ConnectOptions, String> {
-    let mut server_url: Option<String> = None;
-    let mut key: Option<String> = None;
-    let mut open = false;
-    let mut root: Option<PathBuf> = None;
-    let mut output_dir: Option<PathBuf> = None;
-    let mut client_id: Option<String> = None;
-    let mut overwrite = false;
-    let mut json = false;
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--key" => key = Some(next_value(&mut iter, arg)?),
-            "--open" => open = true,
-            "--root" => root = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--output-dir" => output_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--client-id" => client_id = Some(next_value(&mut iter, arg)?),
-            "--overwrite" => overwrite = true,
-            "--json" => json = true,
-            "-h" | "--help" => return Err(connect_usage().to_string()),
-            other if !other.starts_with("--") && server_url.is_none() => {
-                server_url = Some(other.to_string());
-            }
-            other => return Err(format!("unknown connect flag: {}", other)),
-        }
-    }
-    // Mutual exclusion: --key and --open cannot be combined.
-    if open && key.is_some() {
-        return Err("--key and --open are mutually exclusive.\n\
-             Use --key for shared-key pairing, or --open for anonymous pairing."
-            .to_string());
-    }
-    // At least one of --key / --open is required.
-    if !open && key.is_none() {
-        return Err("either --key or --open is required.\n\
-             Use --key <KEY> for shared-key pairing, or --open for anonymous pairing."
-            .to_string());
-    }
-    let server_url = server_url.ok_or_else(|| {
-        "server URL is required.\n\
-         Usage: webcodex-cli connect <SERVER-URL> --key <KEY> | --open"
-            .to_string()
-    })?;
-    if server_url.trim().is_empty() {
-        return Err("server URL cannot be empty".to_string());
-    }
-    let key_value = key.clone().unwrap_or_default();
-    if key.is_some() && key_value.trim().is_empty() {
-        return Err("--key cannot be empty".to_string());
-    }
-    let mode = if open {
-        ConnectMode::Open
-    } else {
-        ConnectMode::SharedKey(key_value)
-    };
-    let root =
-        root.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    Ok(ConnectOptions {
-        server_url,
-        mode,
-        root,
-        output_dir,
-        client_id,
-        overwrite,
-        json,
-    })
-}
-
 fn parse_server_up(args: &[String]) -> Result<ServerUpOptions, String> {
     let mut opts = ServerUpOptions {
         public_url: None,
@@ -1469,97 +1326,6 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     })
 }
 
-fn parse_doctor_command(args: &[String]) -> CliAction {
-    if args.first().is_some_and(|a| a == "--help" || a == "-h") {
-        return CliAction::Exit {
-            code: 0,
-            stdout: doctor_usage().to_string(),
-            stderr: String::new(),
-        };
-    }
-    match parse_doctor(args) {
-        Ok(opts) => CliAction::Doctor(opts),
-        Err(e) => CliAction::Exit {
-            code: 2,
-            stdout: String::new(),
-            stderr: format!("{}\n", e),
-        },
-    }
-}
-
-fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
-    let mut opts = DoctorOptions {
-        quic_timeout_secs: 10,
-        ..DoctorOptions::default()
-    };
-    let mut profile: Option<String> = None;
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--server-url" => opts.server_url = Some(next_value(&mut iter, arg)?),
-            "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--profile" => profile = Some(next_value(&mut iter, arg)?),
-            "--user-token-file" => {
-                opts.user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
-            }
-            "--agent-token-file" => {
-                opts.agent_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
-            }
-            "--agent-config" => {
-                opts.agent_config = Some(PathBuf::from(next_value(&mut iter, arg)?))
-            }
-            "--project" => opts.project = Some(next_value(&mut iter, arg)?),
-            "--quic" => opts.quic = true,
-            "--server-only" => opts.quic_server_only = true,
-            "--agent-e2e" => opts.quic_agent_e2e = true,
-            "--quic-server-addr" => opts.quic_server_addr = Some(next_value(&mut iter, arg)?),
-            "--quic-server-name" => opts.quic_server_name = Some(next_value(&mut iter, arg)?),
-            "--quic-alpn" => opts.quic_alpn = next_value(&mut iter, arg)?,
-            "--quic-timeout-secs" => {
-                let value = next_value(&mut iter, arg)?;
-                opts.quic_timeout_secs = value
-                    .parse::<u64>()
-                    .map_err(|_| "--quic-timeout-secs must be an integer".to_string())?;
-            }
-            "--quic-client-id" => opts.quic_client_id = Some(next_value(&mut iter, arg)?),
-            "--json" => opts.json = true,
-            "--strict" => opts.strict = true,
-            _ => return Err(format!("unknown doctor flag: {}", arg)),
-        }
-    }
-    if let Some(profile) = profile
-        .as_deref()
-        .map(validate_client_profile)
-        .transpose()?
-    {
-        opts.agent_config = opts
-            .agent_config
-            .or_else(|| Some(client_profile_agent_config(&profile)));
-        opts.user_token_file = opts
-            .user_token_file
-            .or_else(|| Some(client_profile_user_token_file(&profile)));
-        opts.agent_token_file = opts
-            .agent_token_file
-            .or_else(|| Some(client_profile_agent_token_file(&profile)));
-    }
-    if let Some(url) = &opts.server_url {
-        if url.trim().is_empty() {
-            return Err("--server-url cannot be empty".to_string());
-        }
-    }
-    if opts.quic_server_only || opts.quic_agent_e2e {
-        opts.quic = true;
-    }
-    if opts.quic_timeout_secs == 0 {
-        return Err("--quic-timeout-secs must be > 0".to_string());
-    }
-    if opts.quic_server_only && opts.quic_agent_e2e {
-        return Err("--server-only and --agent-e2e are mutually exclusive".to_string());
-    }
-    Ok(opts)
-}
-
 /// Small flag parser for `webcodex-cli agent init`. Produces an
 /// `AgentInitOptions` consumed by the shared `agent_init::run_agent_init`.
 fn parse_cli_agent_init(args: &[String]) -> Result<AgentInitOptions, String> {
@@ -1821,19 +1587,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        CliAction::Doctor(opts) => match run_doctor(opts.clone()).await {
-            Ok((stdout, has_fail)) => {
-                print!("{}", stdout);
-                if !stdout.ends_with('\n') {
-                    println!();
-                }
-                std::process::exit(if opts.strict && has_fail { 1 } else { 0 });
-            }
-            Err(stderr) => {
-                eprintln!("{}", stderr);
-                std::process::exit(1);
-            }
-        },
         CliAction::Ops(command) => {
             let strict = command.strict();
             match run_ops_command(command).await {
@@ -1890,19 +1643,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         CliAction::ServerUp(opts) => match run_server_up(opts) {
-            Ok(stdout) => {
-                print!("{}", stdout);
-                if !stdout.ends_with('\n') {
-                    println!();
-                }
-                std::process::exit(0);
-            }
-            Err(stderr) => {
-                eprintln!("{}", stderr);
-                std::process::exit(1);
-            }
-        },
-        CliAction::Connect(opts) => match run_connect(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
                 if !stdout.ends_with('\n') {

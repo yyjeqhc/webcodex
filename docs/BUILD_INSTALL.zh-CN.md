@@ -22,6 +22,8 @@ webcodex-cli
 
 | 任务 | 推荐命令形态 |
 | --- | --- |
+| 普通项目 onboarding | `webcodex setup` |
+| 项目诊断/readiness | `webcodex doctor` / `webcodex status` |
 | 初始化服务器 env | `webcodex-cli server init --listen ... --data-dir ... --env-file ...` |
 | 安装服务器 systemd unit | `webcodex-cli server install-service --env-file ... --bin ...` |
 | 检查服务器状态 | `webcodex-cli server status --env-file ...` |
@@ -32,7 +34,6 @@ webcodex-cli
 | 客户端 enrollment | `webcodex-cli client enroll --server-url ... --pairing-code ... --client-id ...` |
 | 前台运行 agent | `webcodex-agent --profile ...` |
 | 安装 agent service | `webcodex-cli agent install-service --profile ... --bin ...` |
-| Doctor 检查 | `webcodex-cli doctor --server-url ... --user-token-file ... --strict` |
 
 账户管理命令使用 `users create` 和 `--server-url`；本地 token 创建命令使用 `--server`。这是当前 CLI surface 的实际差异，示例中会按这个差异书写。
 
@@ -140,9 +141,9 @@ sudo systemctl enable --now webcodex-agent-workstation
 webcodex-cli agent status \
   --profile workstation \
   --server-url https://your-domain.example
-webcodex-cli doctor --strict \
-  --profile workstation \
-  --server-url https://your-domain.example
+webcodex-cli ops status \
+  --server-url https://your-domain.example \
+  --token-file /etc/webcodex/clients/workstation/webcodex-user-token
 ```
 
 GPT Actions 应使用生成的 client-side user-token file。GPT Actions 需要 public HTTPS URL；WebCodex CLI 不会自动配置 reverse proxies 或 tunnels。
@@ -155,22 +156,38 @@ GPT Actions 应使用生成的 client-side user-token file。GPT Actions 需要 
 webcodex-agent --profile workstation
 ```
 
-`webcodex-agent init` 仍保留为兼容入口。
+高级手工生成只保留低层入口 `webcodex-cli agent init`；
+`webcodex-agent init` alias 已删除。
 
-## Doctor
+## 项目 readiness
 
-运行非破坏性 diagnostics：
+普通 Git 项目使用 canonical 只读诊断：
 
 ```bash
-webcodex-cli doctor --strict \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/workstation/webcodex-agent-token
+webcodex setup
+webcodex doctor
+webcodex agent start
+webcodex status
 ```
 
-添加 `--agent-config /etc/webcodex/clients/workstation/agent.toml` 可运行本地 shell-profile / project diagnostics。添加 `--project <id>` 可对指定项目运行远程 shell roundtrip。
+`doctor` 检查当前项目 config、registration、Git workspace、Agent runtime、
+connection、Agent registration、必要 coding capability 和 structured validation，
+且不修改 state。
 
-Doctor 不会打印 `init_script` bodies、env values 或 tokens。Profile 配置和排障见 [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md)。
+高级 multi-client deployment 将项目 readiness 与 operator fleet diagnostics 分开：
+
+```bash
+webcodex-cli agent status \
+  --profile workstation \
+  --server-url https://your-domain.example
+webcodex-cli ops status \
+  --server-url https://your-domain.example \
+  --token-file /etc/webcodex/clients/workstation/webcodex-user-token
+```
+
+这些命令不会让 transport/fleet discovery 重新成为普通 Connector coding path 的
+前置步骤。高级 profile 配置和排障见
+[SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md)。
 
 ## Auth reminders
 

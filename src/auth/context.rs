@@ -25,6 +25,7 @@ pub enum AuthKind {
     AccountCredential,
     OAuth2Token,
     SharedKey,
+    ProjectCredential,
     OpenAnonymous,
 }
 
@@ -44,9 +45,28 @@ pub struct AuthContext {
     /// SHA-256 of a quick-start shared key or OAuth bridge subject key.
     /// Plaintext shared keys are never retained.
     pub shared_key_hash: Option<String>,
+    /// Stable, non-secret identity of the configured project credential.
+    pub project_grant_id: Option<String>,
 }
 
 impl AuthContext {
+    pub(crate) fn new(kind: AuthKind) -> Self {
+        Self {
+            kind,
+            user_id: None,
+            username: None,
+            api_key_id: None,
+            api_key_name: None,
+            role: None,
+            scopes: Vec::new(),
+            is_bootstrap: false,
+            token_kind: None,
+            allowed_client_id: None,
+            shared_key_hash: None,
+            project_grant_id: None,
+        }
+    }
+
     pub fn is_admin(&self) -> bool {
         self.is_bootstrap || self.scopes.iter().any(|scope| scope == SCOPE_ADMIN)
     }
@@ -83,11 +103,15 @@ impl AuthContext {
         matches!(self.kind, AuthKind::SharedKey)
     }
 
+    pub fn is_project_credential(&self) -> bool {
+        matches!(self.kind, AuthKind::ProjectCredential)
+    }
+
     pub fn is_open_anonymous(&self) -> bool {
         matches!(self.kind, AuthKind::OpenAnonymous)
     }
 
     pub fn is_lightweight(&self) -> bool {
-        self.is_shared_key() || self.is_open_anonymous()
+        self.is_shared_key() || self.is_project_credential() || self.is_open_anonymous()
     }
 }

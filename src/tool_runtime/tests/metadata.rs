@@ -35,6 +35,7 @@ fn shared_key_auth(hash: &str) -> crate::auth::AuthContext {
         token_kind: Some("shared-key".to_string()),
         allowed_client_id: None,
         shared_key_hash: Some(hash.to_string()),
+        project_grant_id: None,
     }
 }
 
@@ -57,6 +58,7 @@ fn open_auth() -> crate::auth::AuthContext {
         token_kind: Some("open".to_string()),
         allowed_client_id: None,
         shared_key_hash: None,
+        project_grant_id: None,
     }
 }
 
@@ -73,6 +75,7 @@ fn bootstrap_auth() -> crate::auth::AuthContext {
         token_kind: None,
         allowed_client_id: None,
         shared_key_hash: None,
+        project_grant_id: None,
     }
 }
 

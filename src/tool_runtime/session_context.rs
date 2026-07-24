@@ -300,6 +300,7 @@ pub(crate) fn current_session_principal(
             .or(auth.username.as_deref())
             .or(auth.allowed_client_id.as_deref())
             .or(auth.shared_key_hash.as_deref())
+            .or(auth.project_grant_id.as_deref())
             .map(str::to_string)
     };
     let Some(principal_id) = id else {
@@ -315,6 +316,7 @@ pub(crate) fn current_session_principal(
         crate::auth::AuthKind::OAuth2Token => "oauth2",
         crate::auth::AuthKind::Bootstrap => "bootstrap",
         crate::auth::AuthKind::SharedKey => "shared-key",
+        crate::auth::AuthKind::ProjectCredential => "project-credential",
         crate::auth::AuthKind::OpenAnonymous => "open",
     };
     Ok((principal_kind.to_string(), principal_id))

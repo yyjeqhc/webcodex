@@ -42,6 +42,9 @@ fn default_transport_polling() -> String {
 #[allow(dead_code)]
 pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
 pub const VALIDATION_STEP_SPAWN_FAILED_CODE: &str = "validation_step_spawn_failed";
+pub const VALIDATION_TOOL_UNAVAILABLE_CODE: &str = "validation_tool_unavailable";
+/// Maximum byte length of the single argv value that may follow `cargo test`.
+pub const RUST_TEST_FILTER_MAX_BYTES: usize = 200;
 
 /// Protocol version announced by `webcodex-agent` builds that connect over
 /// WebSocket. Kept in the shared protocol module so both the server and the
@@ -67,7 +70,7 @@ pub const SHELL_CLIENT_CAPABILITY_GIT: &str = "git";
 pub const SHELL_CLIENT_CAPABILITY_JOBS: &str = "jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
 pub const SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
-pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS: &str = "structured_validation_jobs";
+pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_validation_argv";
 /// Explicit capability for agent-side read-only LSP navigation. Missing on
 /// older agents and defaults to `false` so the server never dispatches typed
 /// LSP requests to agents that cannot handle them.
@@ -81,7 +84,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
 ];
 
@@ -101,10 +104,10 @@ pub struct ShellClientCapabilities {
     pub async_jobs: bool,
     #[serde(default)]
     pub async_shell_jobs: bool,
-    /// Structured validation plans and authenticated progress updates. Older
-    /// agents omit this field and must never receive validation jobs.
+    /// Validation plans use a fixed executable plus argv, never shell text.
+    /// Missing on older agents and therefore fail-closed.
     #[serde(default)]
-    pub structured_validation_jobs: bool,
+    pub structured_validation_argv: bool,
     /// Read-only semantic navigation via agent-side rust-analyzer. Defaults to
     /// false for wire compatibility with older agents.
     #[serde(default)]
@@ -121,7 +124,7 @@ impl Default for ShellClientCapabilities {
             jobs: false,
             async_jobs: false,
             async_shell_jobs: false,
-            structured_validation_jobs: false,
+            structured_validation_argv: false,
             lsp_read_only_navigation: false,
         }
     }
@@ -625,7 +628,67 @@ pub struct ShellJobOpRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellJobValidationStep {
     pub name: String,
-    pub command: String,
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+impl ShellJobValidationStep {
+    pub fn is_canonical(&self) -> bool {
+        if self
+            .args
+            .iter()
+            .any(|arg| arg.contains('\0') || arg.len() > 500)
+        {
+            return false;
+        }
+        let args = self.args.iter().map(String::as_str).collect::<Vec<_>>();
+        match (self.name.as_str(), self.program.as_str(), args.as_slice()) {
+            ("format", "cargo", ["fmt", "--", "--check"])
+            | ("check", "cargo", ["check", "--all-targets"])
+            | ("check", "go", ["vet", "./..."])
+            | ("test", "go", ["test", "./..."])
+            | ("test", "cargo", ["test"])
+            | ("format", "python", ["-m", "ruff", "format", "--check"])
+            | ("format", "python", ["-m", "black", "--check"])
+            | ("check", "python", ["-m", "ruff", "check"])
+            | ("check", "python", ["-m", "mypy"])
+            | ("test", "python", ["-m", "pytest"]) => true,
+            ("test", "cargo", ["test", filter]) => valid_rust_test_filter(filter),
+            (kind, manager, ["run", "--silent", script])
+                if matches!(manager, "npm" | "pnpm" | "yarn" | "bun") =>
+            {
+                node_script_allowed(kind, script)
+            }
+            _ => false,
+        }
+    }
+}
+
+fn node_script_allowed(kind: &str, script: &str) -> bool {
+    matches!(
+        (kind, script),
+        ("format", "format:check" | "format-check" | "check:format")
+            | ("check", "check" | "typecheck" | "lint")
+            | ("test", "test")
+    )
+}
+
+/// Shared contract for the single argv value that may follow `cargo test`: a
+/// libtest name substring, never a Cargo option. Enforced identically by the
+/// planner (`safe_rust_filter`) and the Agent-facing `is_canonical`, so a
+/// forged, replayed, or drifted request cannot smuggle an option such as
+/// `--manifest-path`. Rejects control bytes, over-long values, and anything
+/// that is empty or begins with `-` after trimming.
+pub fn valid_rust_test_filter(value: &str) -> bool {
+    if value.len() > RUST_TEST_FILTER_MAX_BYTES {
+        return false;
+    }
+    if value.chars().any(char::is_control) {
+        return false;
+    }
+    let trimmed = value.trim();
+    !trimmed.is_empty() && !trimmed.starts_with('-')
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1029,7 +1092,7 @@ mod envelope_tests {
                 jobs: true,
                 async_jobs: true,
                 async_shell_jobs: true,
-                structured_validation_jobs: true,
+                structured_validation_argv: true,
                 lsp_read_only_navigation: false,
             }),
             projects: None,
@@ -1423,6 +1486,82 @@ mod envelope_tests {
                 assert_eq!(auth_token.as_deref(), Some("wc_agent_secret"));
             }
             other => panic!("expected register, got {:?}", other.kind()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod filter_canonical_tests {
+    use super::*;
+
+    fn cargo_test(filter: &str) -> ShellJobValidationStep {
+        ShellJobValidationStep {
+            name: "test".to_string(),
+            program: "cargo".to_string(),
+            args: vec!["test".to_string(), filter.to_string()],
+        }
+    }
+
+    #[test]
+    fn cargo_test_filter_arm_is_the_fail_closed_boundary() {
+        // The reported failure and its variants: a Cargo option or control
+        // bytes smuggled in as a "filter". The Agent-facing canonical contract
+        // must reject them independently of the planner so an old server,
+        // forged request, or protocol drift cannot redirect the manifest.
+        let too_long = "a".repeat(RUST_TEST_FILTER_MAX_BYTES + 1);
+        let rejected = [
+            "--manifest-path=/tmp/outside/Cargo.toml",
+            "--manifest-path",
+            "--target-dir=/tmp/outside-target",
+            "--package=another-package",
+            "--workspace",
+            "--all",
+            "--doc",
+            "--test=another-target",
+            "--bench=another-target",
+            "--features=unexpected",
+            "--all-features",
+            "--no-default-features",
+            "-Zunstable-options",
+            "-h",
+            "--help",
+            "-",
+            "--",
+            " --",
+            " --help",
+            "line\nbreak",
+            "line\rbreak",
+            "col\tumn",
+            "nul\0byte",
+            "",
+            too_long.as_str(),
+        ];
+        for filter in rejected {
+            assert!(
+                !cargo_test(filter).is_canonical(),
+                "expected non-canonical for {filter:?}"
+            );
+        }
+
+        // No-filter and valid name substrings (including the max length) remain
+        // canonical.
+        let no_filter = ShellJobValidationStep {
+            name: "test".to_string(),
+            program: "cargo".to_string(),
+            args: vec!["test".to_string()],
+        };
+        assert!(no_filter.is_canonical());
+        let max_len = "a".repeat(RUST_TEST_FILTER_MAX_BYTES);
+        for filter in [
+            "module::nested::test_name",
+            "测试::筛选",
+            "name; $(sub)",
+            max_len.as_str(),
+        ] {
+            assert!(
+                cargo_test(filter).is_canonical(),
+                "expected canonical for {filter:?}"
+            );
         }
     }
 }

@@ -29,6 +29,7 @@ pub(crate) struct ConnectorExecution {
     pub last_successful_observation_at: Option<i64>,
     pub status_failure_code: Option<String>,
     pub check_plan: Vec<String>,
+    pub check_recipe: Option<Value>,
     pub check_completed: usize,
     pub check_workspace_sha256: Option<String>,
     pub validated_workspace_sha256: Option<String>,
@@ -256,7 +257,7 @@ pub(super) const EXECUTION_COLUMNS: &str =
     queue_deadline, started_at, last_output_at, finished_at, stdout_cursor, stderr_cursor, \
     exit_code, failure_source, failure_code, terminal_reason, operation_id, request_sha256, \
     executor_reference, first_status_failure_at, last_successful_observation_at, \
-    status_failure_code, check_plan, check_completed, check_workspace_sha256, \
+    status_failure_code, check_plan, check_recipe_json, check_completed, check_workspace_sha256, \
     validated_workspace_sha256, failed_check, assertion_evidence_json";
 
 pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectorExecution> {
@@ -292,16 +293,28 @@ pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect
             .get::<_, Option<String>>(23)?
             .map(|plan| plan.split(',').map(str::to_string).collect())
             .unwrap_or_default(),
-        check_completed: cursor(24)?,
-        check_workspace_sha256: row.get(25)?,
-        validated_workspace_sha256: row.get(26)?,
-        failed_check: row.get(27)?,
+        check_recipe: row
+            .get::<_, Option<String>>(24)?
+            .map(|recipe| {
+                serde_json::from_str(&recipe).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        24,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()?,
+        check_completed: cursor(25)?,
+        check_workspace_sha256: row.get(26)?,
+        validated_workspace_sha256: row.get(27)?,
+        failed_check: row.get(28)?,
         assertion_evidence: row
-            .get::<_, Option<String>>(28)?
+            .get::<_, Option<String>>(29)?
             .map(|evidence| {
                 serde_json::from_str(&evidence).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        28,
+                        29,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )

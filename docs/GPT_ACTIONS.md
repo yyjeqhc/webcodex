@@ -61,6 +61,24 @@ Never ask the user for internal routing, Agent, transport, queue, or workflow
 session identifiers.
 ```
 
+## Validation recipe contract
+
+`checks_run` remains the only structured validation Action. It accepts an
+optional `recipe` enum (`rust`, `node`, `python`, `go`); omit it for
+deterministic nearest-manifest resolution from the Task workspace and relative
+`cwd`. Supply it only when `validation_recipe_ambiguous` identifies multiple
+markers at the same nearest root. The model cannot provide a program, argv,
+script body, or shell command through this Action.
+
+Rust supports `format/check/test`; Node uses an evidenced package manager and
+fixed non-mutating script-name order; Python uses only configured Ruff/Black,
+Ruff/Mypy, and pytest; Go supports `check/test` and reports `format`
+unavailable. Recipes do not install dependencies, mutate lockfiles, or use the
+network. A missing tool is an executor failure, while a started validator's
+non-zero verdict is an assertion failure. Resolved recipe version, relative
+root, invocation, and manifest/lock evidence bind `operation_id`, so use a new
+ID after a recipe or workspace change.
+
 ## Human Decision
 
 `task_finish` creates a stable result; it does not silently apply changes to the
@@ -88,6 +106,14 @@ This keeps the acceptance authority local even when the model is hosted.
   `structured_validation_unavailable`: upgrade all WebCodex binaries.
 - `task_not_active`: start a new task.
 - `execution_not_terminal`: review, wait, or cancel the execution.
+- `validation_recipe_not_found` / `validation_recipe_ambiguous`: change `cwd`
+  or provide the matching explicit recipe.
+- `validation_recipe_mismatch` / `validation_manifest_invalid` /
+  `package_manager_ambiguous`: correct the reported public project evidence.
+- `validation_check_unavailable` / `test_filter_unsupported`: request only a
+  semantic input the resolved recipe supports.
+- `validation_tool_unavailable`: provide the project's existing tool on the
+  Agent host, then use a new operation ID.
 - `checks_required`: call `checks_run`.
 - `checks_stale`: run a fresh check with a new operation ID.
 

@@ -88,9 +88,21 @@ fn process_group_signal_errors_distinguish_gone_permission_and_other_failures() 
     assert!(other.contains("Invalid argument"));
 }
 
+#[cfg(unix)]
 #[test]
 fn validation_job_progress_is_executor_owned_and_fail_fast() {
+    use std::os::unix::fs::PermissionsExt;
+
     let temp = tempfile::tempdir().unwrap();
+    let bin = temp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let cargo = bin.join("cargo");
+    std::fs::write(
+        &cargo,
+        "#!/bin/sh\ncase \"$1\" in\nfmt) echo 'format passed';;\ncheck) exit 7;;\ntest) touch should-not-run;;\nesac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o700)).unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let sink = AgentSink::WebSocket {
         tx,
@@ -100,22 +112,27 @@ fn validation_job_progress_is_executor_owned_and_fail_fast() {
     let steps = vec![
         ShellJobValidationStep {
             name: "format".into(),
-            command: "printf 'format passed\n'".into(),
+            program: "cargo".into(),
+            args: vec!["fmt".into(), "--".into(), "--check".into()],
         },
         ShellJobValidationStep {
             name: "check".into(),
-            command: "printf '__WEBCODEX_CHECK_STEP__:passed:test\n'; exit 7".into(),
+            program: "cargo".into(),
+            args: vec!["check".into(), "--all-targets".into()],
         },
         ShellJobValidationStep {
             name: "test".into(),
-            command: "touch should-not-run".into(),
+            program: "cargo".into(),
+            args: vec!["test".into()],
         },
     ];
+    let mut shell = ShellConfig::default();
+    shell.path_prepend.push(bin);
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
         AgentPolicy::default(),
-        ShellConfig::default(),
+        shell,
         temp.path().join("projects.d"),
         serde_json::from_value(json!({
             "request_id": "validation-request",
@@ -172,12 +189,7 @@ fn validation_job_progress_is_executor_owned_and_fail_fast() {
 #[cfg(unix)]
 #[test]
 fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
-    use std::os::unix::fs::PermissionsExt;
-
     let temp = tempfile::tempdir().unwrap();
-    let runner = temp.path().join("setsid");
-    std::fs::write(&runner, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut shell = ShellConfig::default();
     shell.env.insert(
         "PATH".to_string(),
@@ -203,7 +215,8 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
             "cwd": temp.path(),
             "command": serde_json::to_string(&[ShellJobValidationStep {
                 name: "check".into(),
-                command: "true".into(),
+                program: "cargo".into(),
+                args: vec!["check".into(), "--all-targets".into()],
             }]).unwrap(),
             "timeout_secs": 10,
             "requested_by": "test",
@@ -238,6 +251,34 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
             failed_step: None,
         })
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn python_module_probe_reports_tool_unavailable_without_running_recipe() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let python = temp.path().join("python");
+    std::fs::write(&python, "#!/bin/sh\nexit 42\n").unwrap();
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut shell = ShellConfig::default();
+    shell.env.insert(
+        "PATH".to_string(),
+        temp.path().to_string_lossy().into_owned(),
+    );
+    let step = ShellJobValidationStep {
+        name: "check".into(),
+        program: "python".into(),
+        args: vec!["-m".into(), "ruff".into(), "check".into()],
+    };
+    assert!(!validation_module_available(
+        &shell,
+        None,
+        temp.path(),
+        &step
+    ));
+    assert!(!temp.path().join("recipe-ran").exists());
 }
 
 #[cfg(target_os = "linux")]

@@ -203,6 +203,7 @@ impl ExecutionService {
             failed_check.map(|check| {
                 durable_assertion_evidence(
                     check,
+                    execution.check_recipe.as_ref(),
                     job.exit_code,
                     full_stdout.as_deref().unwrap_or_default(),
                     full_stderr.as_deref().unwrap_or_default(),
@@ -296,9 +297,13 @@ fn validation_protocol_failure_code(error: &str) -> Option<&'static str> {
 }
 
 fn executor_failure_code(error: &str) -> Option<&'static str> {
-    if error == crate::shell_protocol::VALIDATION_STEP_SPAWN_FAILED_CODE {
-        Some(crate::shell_protocol::VALIDATION_STEP_SPAWN_FAILED_CODE)
-    } else {
-        validation_protocol_failure_code(error)
+    match error {
+        crate::shell_protocol::VALIDATION_STEP_SPAWN_FAILED_CODE => {
+            Some(crate::shell_protocol::VALIDATION_STEP_SPAWN_FAILED_CODE)
+        }
+        crate::shell_protocol::VALIDATION_TOOL_UNAVAILABLE_CODE => {
+            Some(crate::shell_protocol::VALIDATION_TOOL_UNAVAILABLE_CODE)
+        }
+        _ => validation_protocol_failure_code(error),
     }
 }

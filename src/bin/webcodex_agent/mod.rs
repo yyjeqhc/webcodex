@@ -46,8 +46,9 @@ pub(crate) use projects::{handle_project_op, AgentProjectCache};
 #[cfg(test)]
 pub(crate) use shell::run_shell;
 pub(crate) use shell::{
-    configured_prepared_shell_job_command, configured_shell_job_command, cwd_allowed,
-    resolve_prepared_shell_profile, run_shell_with_profiles, PreparedShellProfileCache,
+    configured_prepared_shell_job_command, configured_shell_job_command,
+    configured_validation_job_command, cwd_allowed, resolve_prepared_shell_profile,
+    run_shell_with_profiles, PreparedShellProfile, PreparedShellProfileCache,
 };
 #[cfg(test)]
 pub(crate) use transport::{

@@ -21,6 +21,7 @@ impl Database {
         operation_id: &str,
         request_sha256: &str,
         check_plan: &[String],
+        check_recipe: Option<&serde_json::Value>,
         check_workspace_sha256: Option<&str>,
         queue_deadline: i64,
         now: i64,
@@ -54,6 +55,8 @@ impl Database {
             || (kind == "check" && check_plan.is_empty())
             || (kind == "command" && check_workspace_sha256.is_some())
             || (kind == "check" && check_workspace_sha256.is_none())
+            || (kind == "command" && check_recipe.is_some())
+            || (kind == "check" && check_recipe.is_none())
         {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "execution kind and check plan do not match".to_string(),
@@ -61,12 +64,16 @@ impl Database {
         }
         let execution_id = format!("wc_exec_{}", uuid::Uuid::new_v4().simple());
         let check_plan = (kind == "check").then(|| check_plan.join(","));
+        let check_recipe_json = check_recipe
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| ConnectorTaskStoreError::InvalidState(error.to_string()))?;
         tx.execute(
             "INSERT INTO wc_executions
                 (id, kind, task_id, run_id, state, submitted_at, queue_deadline,
                  stdout_cursor, stderr_cursor, operation_id, request_sha256, check_plan,
-                 check_workspace_sha256)
-             VALUES (?1, ?2, ?3, ?4, 'accepted', ?5, ?6, 1, 1, ?7, ?8, ?9, ?10)",
+                 check_recipe_json, check_workspace_sha256)
+             VALUES (?1, ?2, ?3, ?4, 'accepted', ?5, ?6, 1, 1, ?7, ?8, ?9, ?10, ?11)",
             params![
                 execution_id,
                 kind,
@@ -77,6 +84,7 @@ impl Database {
                 operation_id,
                 request_sha256,
                 check_plan,
+                check_recipe_json,
                 check_workspace_sha256
             ],
         )?;

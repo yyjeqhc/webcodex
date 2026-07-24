@@ -91,6 +91,24 @@ Task, operation, execution, and result IDs remain visible because they provide
 exact retry, progress, review, and acceptance identity. Executor routing and
 queue IDs stay internal.
 
+### Project-aware validation
+
+`checks_run` remains one of the nine capabilities. Omit its optional `recipe`
+field to resolve the nearest supported manifest from the Task execution
+workspace and relative `cwd`; use `recipe: rust|node|python|go` only to resolve
+a same-directory ambiguity. Resolution never scans sibling projects, and
+absolute, parent-traversing, or symlink-escaping `cwd` values fail closed.
+
+Rust supports `format`, `check`, and `test`; Node selects only fixed
+non-mutating script names; Python selects configured Ruff/Black, Ruff/Mypy,
+and pytest tools; Go supports `check` and `test` while `format` is deliberately
+unavailable. Recipes never install dependencies, generate configuration,
+change lockfiles, or access the network. Missing tools are executor failures;
+a non-zero result after a tool starts is an assertion failure. The resolved
+recipe version, relative root, manifest/lock evidence, and structured
+invocation are part of `operation_id` exact-retry identity. See
+[docs/QUICK_START.md](docs/QUICK_START.md#project-aware-validation-recipes).
+
 ## Readiness
 
 Use `webcodex status` for a quick “can this project work now?” answer. Use

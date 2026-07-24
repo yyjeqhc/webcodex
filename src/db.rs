@@ -166,12 +166,13 @@ mod tests {
                     .query_row(
                         "SELECT COUNT(*) FROM pragma_table_info('wc_executions')
                          WHERE name IN ('check_workspace_sha256', 'validated_workspace_sha256',
-                                        'failed_check', 'assertion_evidence_json')",
+                                        'failed_check', 'assertion_evidence_json',
+                                        'check_recipe_json')",
                         [],
                         |row| row.get(0),
                     )
                     .unwrap();
-                assert_eq!(columns, 4);
+                assert_eq!(columns, 5);
                 if path == &upgrade {
                     let command = db.connector_execution("old-command").unwrap();
                     assert_eq!(command.kind, "command");

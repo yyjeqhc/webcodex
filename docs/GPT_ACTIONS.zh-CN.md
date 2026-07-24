@@ -58,6 +58,22 @@ Never ask the user for internal routing, Agent, transport, queue, or workflow
 session identifiers.
 ```
 
+## Validation recipe contract
+
+`checks_run` 仍是唯一 structured validation Action。它接受可选 enum `recipe`
+（`rust`、`node`、`python`、`go`）；省略时从 Task workspace 和相对 `cwd`
+确定性解析最近 manifest。仅当 `validation_recipe_ambiguous` 报告同一最近 root
+有多个 marker 时才提供显式 recipe。模型不能通过该 Action 提供 program、argv、
+script body 或 shell command。
+
+Rust 支持 `format/check/test`；Node 使用有证据的 package manager 和固定非修改型
+script-name 顺序；Python 只使用已配置的 Ruff/Black、Ruff/Mypy 和 pytest；Go
+支持 `check/test`，`format` unavailable。recipe 不安装依赖、不修改 lockfile、
+不联网。tool 缺失属于 executor failure，validator 启动后的 non-zero verdict 才是
+assertion failure。resolved recipe version、相对 root、invocation 和
+manifest/lock evidence 都绑定 `operation_id`；recipe 或 workspace 变化后使用新
+ID。
+
 ## 人类决定
 
 `task_finish` 创建 stable result，不会静默应用到 target checkout。host 用户执行：
@@ -83,6 +99,14 @@ webcodex task accept <task-id>
   `structured_validation_unavailable`：升级全部 WebCodex binaries。
 - `task_not_active`：开始新 task。
 - `execution_not_terminal`：review、wait 或 cancel execution。
+- `validation_recipe_not_found` / `validation_recipe_ambiguous`：修改 `cwd` 或
+  提供匹配的显式 recipe。
+- `validation_recipe_mismatch` / `validation_manifest_invalid` /
+  `package_manager_ambiguous`：修复报告的公开 project evidence。
+- `validation_check_unavailable` / `test_filter_unsupported`：只请求 resolved
+  recipe 支持的 semantic input。
+- `validation_tool_unavailable`：在 Agent host 提供项目已有工具，再使用新
+  operation ID。
 - `checks_required`：调用 `checks_run`。
 - `checks_stale`：使用新 operation ID 运行 fresh check。
 

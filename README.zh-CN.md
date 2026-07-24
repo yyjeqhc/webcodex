@@ -84,6 +84,21 @@ webcodex task accept <task-id>
 task、operation、execution 和 result ID 会保留，因为它们用于精确 retry、进度、
 review 和 accept；executor routing 和 queue ID 保持内部实现。
 
+### Project-aware validation
+
+`checks_run` 仍是九项 capability 之一。省略可选 `recipe` 时，从 Task execution
+workspace 的相对 `cwd` 开始解析最近的 supported manifest；仅在同目录歧义时显式
+提供 `recipe: rust|node|python|go`。解析不会扫描 sibling project，绝对路径、
+父目录穿越和 symlink escape 都 fail closed。
+
+Rust 支持 `format/check/test`；Node 只选择固定的非修改型 script name；Python
+选择已有配置证明的 Ruff/Black、Ruff/Mypy 和 pytest；Go 支持 `check/test`，
+`format` 有意返回 unavailable。recipe 不安装依赖、不生成配置、不修改 lockfile、
+不联网。工具缺失属于 executor failure；进程成功启动后的 non-zero 才属于
+assertion failure。resolved recipe version、相对 root、manifest/lock evidence 和
+structured invocation 都进入 `operation_id` 的 exact-retry identity。详见
+[docs/QUICK_START.zh-CN.md](docs/QUICK_START.zh-CN.md#project-aware-validation-recipes)。
+
 ## Readiness
 
 `webcodex status` 快速回答“当前项目现在能不能工作”；`webcodex doctor` 提供

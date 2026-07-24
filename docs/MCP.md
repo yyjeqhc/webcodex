@@ -78,6 +78,25 @@ check carries trusted workspace provenance; any subsequent mutation makes it
 stale and requires a new operation ID. A command that cannot spawn is an
 executor failure, not assertion evidence.
 
+### `checks_run` recipes
+
+The `checks_run` schema still exposes only `format`, `check`, and `test`, with
+an optional `recipe` enum (`rust`, `node`, `python`, `go`). Omit it to select
+the nearest `Cargo.toml`, `package.json`, `pyproject.toml`, or `go.mod` from
+the Task workspace and relative `cwd`. An explicit recipe is needed only for
+a same-root ambiguity and must have its marker there; resolution never scans
+sibling projects or permits path/symlink escape.
+
+Rust supports all three checks and is the only recipe with a one-argv
+`test_filter`. Node resolves an evidenced package manager and fixed script
+allowlist; Python selects only configured Ruff/Black, Ruff/Mypy, or pytest;
+Go supports `check` and `test`, with `format` unavailable. No recipe installs
+dependencies, changes lockfiles, or uses the network. Tool absence is an
+executor failure; a started validator returning non-zero is an assertion
+failure. Recipe version, relative root, and invocation/manifest evidence bind
+the operation exact-retry identity. This does not add a tenth MCP tool; MCP,
+OpenAPI, and the capability registry still share the same nine-item source.
+
 After review, the human accepts or rejects on the host:
 
 ```bash
@@ -110,6 +129,11 @@ No project discovery or runtime identifier belongs in this prompt.
 | `structured_validation_unavailable` | The Agent cannot run structured checks | Upgrade all binaries |
 | `task_not_active` | The task can no longer mutate or execute | Start a new task |
 | `execution_not_terminal` | Finish is blocked by active/unknown work | Review/wait/cancel |
+| `validation_recipe_not_found` / `validation_recipe_ambiguous` | Auto resolution found no recipe or multiple nearest recipes | Change `cwd` or provide a matching `recipe` |
+| `validation_recipe_mismatch` / `validation_manifest_invalid` | Explicit recipe, path, marker, or manifest evidence is invalid | Correct the reported public evidence |
+| `validation_check_unavailable` / `test_filter_unsupported` | No safe mapping exists for the requested semantic input | Change the check/filter |
+| `package_manager_ambiguous` | Node package-manager evidence is absent or conflicting | Correct `packageManager` or lockfiles |
+| `validation_tool_unavailable` | The selected executable/module is absent | Provide the existing project tool and use a new operation ID |
 | `checks_required` | A normal task has not run checks | Call `checks_run` |
 | `checks_stale` | The workspace changed after the last check | Run a new check |
 

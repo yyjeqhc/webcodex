@@ -21,13 +21,16 @@ use crate::db::{
     ConnectorExecutionReservation, ConnectorTaskResult, ConnectorTaskSnapshot,
     ConnectorTaskStoreError, NewConnectorResult, NewConnectorTask,
 };
-use crate::shell_protocol::SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS;
+use crate::shell_protocol::SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV;
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
+use crate::tool_runtime::validation_profile::{
+    resolve_validation_recipe, RecipeError, RecipeId, SemanticCheck,
+};
 use crate::tool_runtime::{ApplyFileChangeInput, SearchResultMode, ToolResult, ToolRuntime};
 use crate::Database;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -292,7 +295,7 @@ impl ConnectorRuntime {
                 RemoteProbe::RequiredCapabilityMissing,
             ));
         }
-        if !capabilities.structured_validation_jobs {
+        if !capabilities.structured_validation_argv {
             return Some(runtime_readiness(
                 Some(self.context.project_name.clone()),
                 RemoteProbe::StructuredValidationMissing,
@@ -1033,15 +1036,6 @@ impl ConnectorRuntime {
         {
             return invalid_input("checks_run", "test_filter must be at most 500 bytes");
         }
-        let validation_steps = match build_check_steps(&input.checks, input.test_filter.clone()) {
-            Ok(steps) => steps,
-            Err(message) => return invalid_input("checks_run", message),
-        };
-        let command = validation_steps
-            .iter()
-            .map(|step| step.command.as_str())
-            .collect::<Vec<_>>()
-            .join(" && ");
         #[cfg(test)]
         if let Some(entered) = self.mutation_before_task_lock.lock().unwrap().clone() {
             entered.add_permits(1);
@@ -1052,12 +1046,24 @@ impl ConnectorRuntime {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
+        let resolved = match resolve_validation_recipe(
+            Path::new(&task.execution_root),
+            input.cwd.as_deref(),
+            input.recipe,
+            &input.checks,
+            input.test_filter.as_deref(),
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => return validation_recipe_error(&task, error),
+        };
+        let validation_steps = resolved.steps.clone();
+        let recipe_identity = resolved.durable_identity();
         let timeout_secs = input.timeout_secs.unwrap_or(120);
         let request_sha256 = check_request_hash(
             &task,
-            &input.checks,
+            &recipe_identity,
             input.cwd.as_deref(),
-            input.test_filter.as_deref(),
+            resolved.test_filter.as_deref(),
             timeout_secs,
         );
         let existing = match self.db.latest_connector_execution(
@@ -1094,7 +1100,7 @@ impl ConnectorRuntime {
                         .shell_clients
                         .client_supports_for_auth(
                             client_id,
-                            SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS,
+                            SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
                             Some(auth),
                         )
                         .await
@@ -1112,7 +1118,7 @@ impl ConnectorRuntime {
                         &task,
                         json!({
                             "required_capability":
-                                SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_JOBS
+                                SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV
                         }),
                     );
                 }
@@ -1127,6 +1133,7 @@ impl ConnectorRuntime {
                     &input.operation_id,
                     &request_sha256,
                     &plan,
+                    Some(&recipe_identity),
                     Some(&check_workspace_sha256),
                     timeout_secs,
                     now,
@@ -1136,14 +1143,18 @@ impl ConnectorRuntime {
                 }
             }
         };
+        let execution_cwd = Path::new(&task.execution_root)
+            .join(&resolved.recipe_root_relative)
+            .to_string_lossy()
+            .into_owned();
         drop(task_guard);
         self.execution_outcome(
             self.executions
                 .execute(
                     reservation,
                     task.clone(),
-                    command,
-                    input.cwd,
+                    "structured validation".to_string(),
+                    Some(execution_cwd),
                     timeout_secs,
                     auth.clone(),
                     validation_steps,
@@ -1292,6 +1303,7 @@ impl ConnectorRuntime {
                     &input.operation_id,
                     &request_sha256,
                     &[],
+                    None,
                     None,
                     timeout_secs,
                     chrono::Utc::now().timestamp(),
@@ -2427,6 +2439,22 @@ fn approval_projection(approval: &ConnectorApproval) -> Value {
     })
 }
 
+fn validation_recipe_error(
+    task: &ConnectorTaskSnapshot,
+    error: RecipeError,
+) -> ConnectorCallOutcome {
+    ConnectorCallOutcome::error_for_task(
+        409,
+        error.code,
+        "validation recipe planning failed; inspect the stable code and safe details",
+        false,
+        true,
+        Some("Resolve the reported recipe, manifest, cwd, or package-manager evidence and retry."),
+        task,
+        error.details.unwrap_or(Value::Null),
+    )
+}
+
 fn command_request_hash(
     task: &ConnectorTaskSnapshot,
     command: &str,
@@ -2450,18 +2478,18 @@ fn command_request_hash(
 
 fn check_request_hash(
     task: &ConnectorTaskSnapshot,
-    checks: &[StandardCheck],
+    recipe_identity: &Value,
     cwd: Option<&str>,
     test_filter: Option<&str>,
     timeout_secs: u64,
 ) -> String {
-    let checks = serde_json::to_vec(checks).unwrap_or_default();
+    let recipe_identity = serde_json::to_vec(recipe_identity).unwrap_or_default();
     let mut hasher = Sha256::new();
     for field in [
-        b"webcodex.checks_run.v2".as_slice(),
+        b"webcodex.checks_run.v3".as_slice(),
         task.task_id.as_bytes(),
         task.run_id.as_bytes(),
-        checks.as_slice(),
+        recipe_identity.as_slice(),
         cwd.unwrap_or("").as_bytes(),
         test_filter.unwrap_or("").as_bytes(),
         &timeout_secs.to_be_bytes(),
@@ -2470,34 +2498,6 @@ fn check_request_hash(
         hasher.update(field);
     }
     format!("{:x}", hasher.finalize())
-}
-
-fn build_check_steps(
-    checks: &[StandardCheck],
-    test_filter: Option<String>,
-) -> Result<Vec<crate::shell_protocol::ShellJobValidationStep>, String> {
-    use crate::tool_runtime::validation_profile::{
-        validation_adapter_for_tool, ValidationCommandOptions,
-    };
-
-    let mut steps = Vec::with_capacity(checks.len());
-    for check in checks {
-        let adapter = validation_adapter_for_tool(check.tool_name())
-            .ok_or_else(|| format!("{} validation adapter is unavailable", check.as_str()))?;
-        let command = adapter.build_command(ValidationCommandOptions {
-            check: *check == StandardCheck::Format,
-            filter: (*check == StandardCheck::Test)
-                .then(|| test_filter.clone())
-                .flatten(),
-            all_targets: (*check == StandardCheck::Check).then_some(true),
-            ..ValidationCommandOptions::default()
-        })?;
-        steps.push(crate::shell_protocol::ShellJobValidationStep {
-            name: check.as_str().to_string(),
-            command,
-        });
-    }
-    Ok(steps)
 }
 
 fn command_action_hash(request_sha256: &str, precondition: &str) -> String {
@@ -2754,6 +2754,7 @@ fn validation_projection(execution: Option<&crate::db::ConnectorExecution>) -> V
         "status": projection["assertion_status"],
         "execution_id": execution.execution_id,
         "checks": projection["checks"],
+        "recipe": projection["recipe"],
         "assertion_evidence": projection["assertion_evidence"]
     })
 }
@@ -2996,39 +2997,15 @@ struct EditsApplyInput {
 struct ChecksRunInput {
     task_id: String,
     operation_id: String,
-    checks: Vec<StandardCheck>,
+    checks: Vec<SemanticCheck>,
+    #[serde(default)]
+    recipe: Option<RecipeId>,
     #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]
     test_filter: Option<String>,
     #[serde(default)]
     timeout_secs: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum StandardCheck {
-    Format,
-    Check,
-    Test,
-}
-
-impl StandardCheck {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Format => "format",
-            Self::Check => "check",
-            Self::Test => "test",
-        }
-    }
-
-    fn tool_name(self) -> &'static str {
-        match self {
-            Self::Format => "cargo_fmt",
-            Self::Check => "cargo_check",
-            Self::Test => "cargo_test",
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -3108,7 +3085,7 @@ mod tests {
                         jobs: true,
                         async_jobs: true,
                         async_shell_jobs: true,
-                        structured_validation_jobs: true,
+                        structured_validation_argv: true,
                         lsp_read_only_navigation: false,
                     }),
                     projects: Some(vec![ShellAgentProjectSummary {
@@ -3153,7 +3130,12 @@ mod tests {
         };
         run(&["init", "-q"]);
         std::fs::write(project.join("README.md"), "fixture\n").unwrap();
-        run(&["add", "README.md"]);
+        std::fs::write(
+            project.join("Cargo.toml"),
+            "[package]\nname = \"connector-fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        run(&["add", "README.md", "Cargo.toml"]);
         run(&[
             "-c",
             "user.name=WebCodex Test",
@@ -3310,7 +3292,7 @@ mod tests {
         responder.await.unwrap();
         assert!(outcome.ok, "{}", outcome.body);
         assert_eq!(outcome.body["data"]["brief"]["workspace"]["isolated"], true);
-        assert_eq!(outcome.body["data"]["brief"]["languages"], json!([]));
+        assert_eq!(outcome.body["data"]["brief"]["languages"], json!(["rust"]));
         assert_eq!(outcome.body["data"]["brief"]["git"]["dirty"], false);
         let task_id = outcome.body["task_id"].as_str().unwrap();
         let task = connector

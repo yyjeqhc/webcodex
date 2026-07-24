@@ -1,33 +1,8 @@
 use super::super::validation_parser::{
     parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, PARSER_KIND, PARSER_VERSION,
 };
-use super::super::validation_profile::{
-    registered_validation_profiles, validation_adapter_for_tool, ValidationCommandOptions,
-};
+use super::super::validation_profile::{validation_adapter_for_tool, ValidationCommandOptions};
 use super::super::{is_known_tool_name, registered_tool_specs};
-
-#[test]
-fn rust_validation_profile_is_registered_and_detects_cargo_manifest() {
-    let profiles = registered_validation_profiles();
-    assert_eq!(profiles.len(), 1);
-
-    let profile = profiles[0];
-    assert_eq!(profile.language(), "rust");
-    assert_eq!(profile.project_markers(), ["Cargo.toml"]);
-    assert_eq!(
-        profile.supported_validation_kinds(),
-        ["format", "check", "test"]
-    );
-
-    let project = tempfile::tempdir().unwrap();
-    assert!(!profile.detects_project(project.path()));
-    std::fs::write(
-        project.path().join("Cargo.toml"),
-        "[package]\nname = \"demo\"\n",
-    )
-    .unwrap();
-    assert!(profile.detects_project(project.path()));
-}
 
 #[test]
 fn rust_profile_selects_cargo_fmt_adapter_and_preserves_command() {

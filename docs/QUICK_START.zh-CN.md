@@ -138,6 +138,41 @@ edit、command 和 check 使用 `operation_id` 提供 exact retry identity：同
 才属于 project assertion failure；check 无法 spawn 属于 executor/infrastructure
 failure，不产生 assertion evidence 或 trusted workspace provenance。
 
+### Project-aware validation recipes
+
+`checks_run` 保留现有 `format`、`check`、`test` 语义名，并增加可选 enum
+`recipe: rust|node|python|go`。省略 `recipe` 即 auto resolution，不存在 `auto`
+alias。resolver 从 Task execution workspace 内的相对 `cwd` 开始，只向该 workspace
+root 逐级查找并选择最近的 manifest 目录。同一最近目录存在多个 supported marker
+时 ambiguous；显式提供实际存在的 recipe 可解除歧义。marker 不匹配、manifest
+缺失、绝对/父目录路径或 symlink escape 都在 reservation 前拒绝。
+
+| Recipe | Marker | `format` | `check` | `test` |
+|---|---|---|---|---|
+| Rust | `Cargo.toml` | `cargo fmt -- --check` | `cargo check --all-targets` | `cargo test` 加一个安全 argv filter |
+| Node | `package.json` | 依次选择 `format:check`、`format-check`、`check:format` | 依次选择 `check`、`typecheck`、`lint` | 精确 `test` |
+| Python | `pyproject.toml` | 已配置 Ruff，否则 Black | 已配置 Ruff，否则 Mypy | 已配置 pytest |
+| Go | `go.mod` | unavailable | `go vet ./...` | `go test ./...` |
+
+Node 从有效 `packageManager` 声明或唯一、无歧义的 supported lockfile
+（`pnpm-lock.yaml`、`yarn.lock`、`package-lock.json`、`npm-shrinkwrap.json`、
+`bun.lock`、`bun.lockb`）选择 package manager。证据冲突或缺失时 fail closed；
+script 只以 `<manager> run --silent <allowlisted-name>` 调用，script body 不进入
+plan 或 error。Python 仅启用 `pyproject.toml` 有配置证据的工具；format 时 Ruff
+优先于 Black，check 时 Ruff 优先于 Mypy。
+
+recipe 不安装依赖、不运行 install hook、不生成配置、不创建 environment、不修改
+lockfile、不联网。只有 Rust 支持 `test_filter`，且作为单独 argv；其他 recipe
+会拒绝 filter，绝不忽略后运行全量测试。executable 或 Python module 缺失属于
+executor failure，不生成 failed check 或 assertion evidence；真实进程以 non-zero
+返回 validation verdict 才属于 assertion failure。
+
+durable plan 记录 recipe ID/version、相对 root、semantic checks、tool identity 和
+invocation/manifest evidence digest，并全部进入 request hash。因此同一
+`operation_id` 只复用完全相同的 resolved plan；recipe binary 变化会与旧 ID
+conflict，使用新 ID 才按新 recipe 解析。manifest、lockfile 或 workspace 改变会使
+成功 provenance stale。
+
 ## 6. 本机 review 和 accept
 
 coding result 会与 target checkout 保持隔离，直到人类决定：
@@ -187,6 +222,12 @@ webcodex doctor
 | `required_capability_unavailable` | Agent 太旧或不完整 | 升级全部 WebCodex binaries |
 | `structured_validation_unavailable` | Agent 缺少 structured validation | 升级全部 WebCodex binaries |
 | `workspace_unavailable` | Git 或配置的项目路径不可用 | 恢复 path/Git workspace |
+| `validation_recipe_not_found` | 从 `cwd` 到 Task root 没有 supported marker | 选择包含 manifest 的 `cwd` |
+| `validation_recipe_ambiguous` | 最近 root 有多个 supported marker | 提供匹配的显式 `recipe` |
+| `validation_recipe_mismatch` / `validation_manifest_invalid` | recipe、marker、安全路径或 manifest evidence 无效 | 修复报告的公开 evidence |
+| `validation_check_unavailable` / `test_filter_unsupported` | recipe 无法安全映射 check/filter | 修改 checks/filter 或选择匹配 recipe |
+| `package_manager_ambiguous` | Node package-manager evidence 缺失或冲突 | 修正 `packageManager` 或 lockfile |
+| `validation_tool_unavailable` | Agent host 缺少所选 executable/module | 提供项目已有工具并使用新 operation ID |
 | `checks_required` | 普通 result 尚未运行 checks | 运行 `checks_run` 后 finish |
 | `checks_stale` | 上次可信 check 后 workspace 改变 | 运行新的 check operation |
 

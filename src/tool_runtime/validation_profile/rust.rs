@@ -1,14 +1,8 @@
-use super::{
-    ValidationAdapter, ValidationCommandOptions, ValidationFailureEvidence, ValidationProfile,
-};
+use super::{ValidationAdapter, ValidationCommandOptions, ValidationFailureEvidence};
 use crate::tool_runtime::helpers::shell_escape_simple;
 use crate::tool_runtime::validation_parser::{
     parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, ValidationDiagnostics,
 };
-
-const RUST_LANGUAGE: &str = "rust";
-const RUST_PROJECT_MARKERS: [&str; 1] = ["Cargo.toml"];
-const RUST_VALIDATION_KINDS: [&str; 3] = ["format", "check", "test"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RustAdapterKind {
@@ -40,24 +34,8 @@ static RUST_ADAPTERS: [&dyn ValidationAdapter; 3] = [
     &CARGO_TEST_ADAPTER,
 ];
 
-pub(crate) struct RustValidationProfile;
-
-impl ValidationProfile for RustValidationProfile {
-    fn language(&self) -> &'static str {
-        RUST_LANGUAGE
-    }
-
-    fn project_markers(&self) -> &'static [&'static str] {
-        &RUST_PROJECT_MARKERS
-    }
-
-    fn supported_validation_kinds(&self) -> &'static [&'static str] {
-        &RUST_VALIDATION_KINDS
-    }
-
-    fn adapters(&self) -> &'static [&'static dyn ValidationAdapter] {
-        &RUST_ADAPTERS
-    }
+pub(super) fn validation_adapters() -> &'static [&'static dyn ValidationAdapter] {
+    &RUST_ADAPTERS
 }
 
 impl ValidationAdapter for RustValidationAdapter {

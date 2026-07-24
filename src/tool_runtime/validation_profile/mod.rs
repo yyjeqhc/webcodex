@@ -1,17 +1,14 @@
-//! Internal validation profile and adapter registry.
-//!
-//! Profiles describe how a language is detected and which validation adapters
-//! it supports. Adapters own the language/tool-specific command, parser, and
-//! failure classification decisions. This registry is deliberately internal:
-//! it does not add runtime tools or alter their schemas.
+//! Internal project recipes plus the existing Cargo evidence adapters.
+//! This module never adds model-visible runtime tools.
 
+mod recipe;
+#[cfg(test)]
+mod recipe_tests;
 mod rust;
-
-use std::path::Path;
 
 use super::validation_parser::ValidationDiagnostics;
 
-pub(crate) use rust::RustValidationProfile;
+pub(crate) use recipe::{resolve_validation_recipe, RecipeError, RecipeId, SemanticCheck};
 
 #[derive(Debug, Default)]
 pub(crate) struct ValidationCommandOptions {
@@ -55,48 +52,11 @@ pub(crate) trait ValidationAdapter: Sync {
     }
 }
 
-pub(crate) trait ValidationProfile: Sync {
-    fn language(&self) -> &'static str;
-
-    fn project_markers(&self) -> &'static [&'static str];
-
-    fn supported_validation_kinds(&self) -> &'static [&'static str];
-
-    fn adapters(&self) -> &'static [&'static dyn ValidationAdapter];
-
-    #[allow(dead_code)]
-    fn detects_project(&self, project_root: &Path) -> bool {
-        self.project_markers()
-            .iter()
-            .any(|marker| project_root.join(marker).is_file())
-    }
-}
-
-static RUST_PROFILE: RustValidationProfile = RustValidationProfile;
-static REGISTERED_VALIDATION_PROFILES: [&dyn ValidationProfile; 1] = [&RUST_PROFILE];
-
-pub(crate) fn registered_validation_profiles() -> &'static [&'static dyn ValidationProfile] {
-    &REGISTERED_VALIDATION_PROFILES
-}
-
 pub(crate) fn validation_adapter_for_tool(
     tool_identity: &str,
 ) -> Option<&'static dyn ValidationAdapter> {
-    for profile in registered_validation_profiles() {
-        debug_assert!(!profile.language().is_empty());
-        debug_assert!(!profile.project_markers().is_empty());
-        debug_assert!(!profile.supported_validation_kinds().is_empty());
-        for adapter in profile.adapters() {
-            debug_assert!(
-                profile
-                    .supported_validation_kinds()
-                    .contains(&adapter.validation_kind()),
-                "validation profile adapter kind must be declared by its profile"
-            );
-            if adapter.tool_identity() == tool_identity {
-                return Some(*adapter);
-            }
-        }
-    }
-    None
+    rust::validation_adapters()
+        .iter()
+        .copied()
+        .find(|adapter| adapter.tool_identity() == tool_identity)
 }

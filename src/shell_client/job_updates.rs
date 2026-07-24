@@ -13,6 +13,7 @@ use super::{now_ts, ShellClientRegistry};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentShellRequest, ShellJobInfo, ShellJobOpRequest,
     ShellJobValidationStep, ShellRunRequest, VALIDATION_STEP_SPAWN_FAILED_CODE,
+    VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -69,7 +70,10 @@ fn validate_validation_progress(
     let infrastructure_failure = status == "failed"
         && update.finished
         && update.exit_code.is_none()
-        && update.error.as_deref() == Some(VALIDATION_STEP_SPAWN_FAILED_CODE);
+        && matches!(
+            update.error.as_deref(),
+            Some(VALIDATION_STEP_SPAWN_FAILED_CODE | VALIDATION_TOOL_UNAVAILABLE_CODE)
+        );
     let valid = if cancelling {
         no_active_step
     } else if infrastructure_failure {
@@ -152,7 +156,7 @@ impl ShellClientRegistry {
         let created_at = now_ts();
         let validation_steps = metadata.validation_steps;
         if validation_steps.len() > 3
-            || validation_steps.iter().any(|step| step.name.is_empty())
+            || validation_steps.iter().any(|step| !step.is_canonical())
             || validation_steps
                 .iter()
                 .map(|step| step.name.as_str())
@@ -211,9 +215,9 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
-        if !validation_steps.is_empty() && !client.capabilities.structured_validation_jobs {
+        if !validation_steps.is_empty() && !client.capabilities.structured_validation_argv {
             return Err(format!(
-                "structured_validation_unavailable: agent client {} does not support structured validation jobs",
+                "structured_validation_unavailable: agent client {} does not support structured argv validation jobs",
                 client_id
             ));
         }

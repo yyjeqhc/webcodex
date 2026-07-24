@@ -140,6 +140,43 @@ pub(crate) fn configured_prepared_shell_job_command(
     Ok(cmd)
 }
 
+pub(crate) fn configured_validation_job_command(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    program: &str,
+    args: &[String],
+) -> Result<Command, String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    configure_direct_process_group(&mut cmd);
+    match profile {
+        Some(profile) => apply_env_snapshot(&mut cmd, &profile.env_snapshot),
+        None => {
+            validate_shell_config(shell)?;
+            apply_shell_environment(&mut cmd, shell)?;
+        }
+    }
+    Ok(cmd)
+}
+
+fn configure_direct_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: `setsid` is async-signal-safe and touches no Rust-managed
+        // memory in the post-fork child.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+    }
+}
+
 fn base_shell_env(
     shell: &ShellConfig,
     profile: &ShellProfileConfig,

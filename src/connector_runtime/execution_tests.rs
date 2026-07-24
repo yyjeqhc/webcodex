@@ -105,7 +105,7 @@ async fn fixture_configured(
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
-                    structured_validation_jobs: true,
+                    structured_validation_argv: true,
                     ..Default::default()
                 }),
                 projects: Some(vec![project_summary("project", &project)]),
@@ -494,7 +494,7 @@ async fn connector_readiness_uses_registered_agent_capabilities() {
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
-                    structured_validation_jobs: false,
+                    structured_validation_argv: false,
                     ..Default::default()
                 }),
                 projects: Some(vec![project_summary(
@@ -581,8 +581,10 @@ async fn check_plan_returns_terminal_persists_kind_and_precise_retry_does_not_sp
                 .collect::<Vec<_>>(),
             ["format", "check"]
         );
-        assert!(steps[0].command.contains("cargo fmt -- --check"));
-        assert!(steps[1].command.contains("cargo check --all-targets"));
+        assert_eq!(steps[0].program, "cargo");
+        assert_eq!(steps[0].args, ["fmt", "--", "--check"]);
+        assert_eq!(steps[1].program, "cargo");
+        assert_eq!(steps[1].args, ["check", "--all-targets"]);
         let job_id = request.job_id.unwrap();
         update_validation_job(
             &registry,
@@ -628,6 +630,7 @@ async fn check_plan_returns_terminal_persists_kind_and_precise_retry_does_not_sp
     assert_eq!(durable.kind, "check");
     assert_eq!(durable.check_plan, vec!["format", "check"]);
     assert_eq!(durable.check_completed, 2);
+    assert_eq!(durable.check_recipe.as_ref().unwrap()["recipe_id"], "rust");
     assert_eq!(
         validation_projection(Some(&durable)),
         json!({
@@ -637,6 +640,12 @@ async fn check_plan_returns_terminal_persists_kind_and_precise_retry_does_not_sp
                 {"check": "format", "status": "passed"},
                 {"check": "check", "status": "passed"}
             ],
+            "recipe": {
+                "id": "rust",
+                "version": 1,
+                "root": ".",
+                "checks": ["format", "check"]
+            },
             "assertion_evidence": null
         })
     );
@@ -742,6 +751,87 @@ async fn check_operation_conflict_and_new_key_fail_fast_with_assertion_result() 
 }
 
 #[tokio::test]
+async fn checks_run_hash_binds_recipe_version_invocation_cwd_and_filter() {
+    let fixture = fixture(1_000).await;
+    let task = task(&fixture);
+    let base = resolve_validation_recipe(
+        Path::new(&task.execution_root),
+        None,
+        Some(RecipeId::Rust),
+        &[SemanticCheck::Test],
+        None,
+    )
+    .unwrap()
+    .durable_identity();
+    let base_hash = check_request_hash(&task, &base, None, None, 30);
+    for changed in [
+        {
+            let mut changed = base.clone();
+            changed["recipe_version"] = json!(2);
+            check_request_hash(&task, &changed, None, None, 30)
+        },
+        {
+            let mut changed = base.clone();
+            changed["recipe_id"] = json!("node");
+            check_request_hash(&task, &changed, None, None, 30)
+        },
+        {
+            let mut changed = base.clone();
+            changed["invocation_digest"] = json!("upgraded-invocation");
+            check_request_hash(&task, &changed, None, None, 30)
+        },
+        check_request_hash(&task, &base, Some("."), None, 30),
+        check_request_hash(&task, &base, None, Some("unicode-筛选"), 30),
+    ] {
+        assert_ne!(base_hash, changed);
+    }
+}
+
+#[tokio::test]
+async fn node_lockfile_change_makes_successful_checks_run_stale() {
+    let fixture = fixture(1_000).await;
+    let root = Path::new(&task(&fixture).execution_root).join("frontend");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        r#"{"packageManager":"npm@10","scripts":{"check":"eslint ."}}"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("package-lock.json"), "{}").unwrap();
+    let registry = fixture.registry.clone();
+    let responder = tokio::spawn(async move {
+        let request = next_request(&registry).await;
+        let steps: Vec<ShellJobValidationStep> = serde_json::from_str(&request.command).unwrap();
+        assert_eq!(steps[0].program, "npm");
+        update_validation_job(
+            &registry,
+            request.job_id.as_deref().unwrap(),
+            "completed",
+            None,
+            Some(0),
+            check_progress(1, None, None),
+        )
+        .await;
+    });
+    let checked = fixture
+        .call(
+            "checks_run",
+            json!({
+                "task_id": fixture.task_id,
+                "operation_id": "node-lock-check",
+                "checks": ["check"],
+                "cwd": "frontend"
+            }),
+        )
+        .await;
+    responder.await.unwrap();
+    assert_eq!(checked.body["data"]["execution"]["recipe"]["id"], "node");
+    std::fs::write(root.join("package-lock.json"), "{\"changed\":true}").unwrap();
+    let finish = finish(&fixture, "must revalidate changed package-manager evidence").await;
+    assert_eq!(finish.body["error"]["code"], "checks_stale");
+}
+
+#[tokio::test]
 async fn validation_step_spawn_failure_is_executor_failure_without_assertion_evidence() {
     let fixture = fixture(1_000).await;
     let registry = fixture.registry.clone();
@@ -788,6 +878,35 @@ async fn validation_step_spawn_failure_is_executor_failure_without_assertion_evi
     assert!(durable.failed_check.is_none());
     assert!(durable.assertion_evidence.is_none());
     assert!(durable.validated_workspace_sha256.is_none());
+}
+
+#[tokio::test]
+async fn validation_tool_unavailable_is_executor_failure_not_assertion_failure() {
+    let fixture = fixture(1_000).await;
+    let registry = fixture.registry.clone();
+    let responder = tokio::spawn(async move {
+        let request = next_request(&registry).await;
+        let mut failed = validation_job_update(
+            request.job_id.as_deref().unwrap(),
+            "failed",
+            check_progress(0, None, None),
+        );
+        failed.error = Some("validation_tool_unavailable".to_string());
+        registry.update_job(failed).await.unwrap();
+    });
+    let outcome = fixture
+        .call(
+            "checks_run",
+            checks(&fixture, "tool-unavailable", &["check"]),
+        )
+        .await;
+    responder.await.unwrap();
+    let execution = &outcome.body["data"]["execution"];
+    assert_eq!(execution["execution_status"], "failed");
+    assert_eq!(execution["failure_source"], "executor");
+    assert_eq!(execution["failure_code"], "validation_tool_unavailable");
+    assert!(execution["assertion_evidence"].is_null());
+    assert!(execution["checks"][0]["status"] != "failed");
 }
 
 #[tokio::test]
@@ -1250,6 +1369,7 @@ async fn terminal_validation_success_without_progress_fails_closed() {
             "missing-provenance-direct",
             "missing-provenance-hash",
             &["check".to_string()],
+            Some(&json!({"recipe_id":"rust"})),
             Some("expected-workspace"),
             30,
             2,
@@ -1357,13 +1477,12 @@ async fn failed_check_has_durable_bounded_sanitized_evidence_without_passed_prov
         without_tail["assertion_evidence"]
     );
     let reopened = Database::open(&fixture._temp.path().join("connector.db")).unwrap();
+    let reopened_execution = reopened.connector_execution(execution_id).unwrap();
     assert_eq!(
-        reopened
-            .connector_execution(execution_id)
-            .unwrap()
-            .assertion_evidence,
+        reopened_execution.assertion_evidence,
         durable.assertion_evidence
     );
+    assert_eq!(reopened_execution.check_recipe, durable.check_recipe);
 
     std::fs::write(
         Path::new(&task(&fixture).execution_root).join("changed-after-failure"),
@@ -1392,7 +1511,16 @@ async fn structured_progress_rejects_invalid_order_and_preserves_fail_fast_plan(
             .into_iter()
             .map(|name| ShellJobValidationStep {
                 name: name.into(),
-                command: "true".into(),
+                program: match name {
+                    "format" | "check" | "test" => "cargo".into(),
+                    _ => unreachable!(),
+                },
+                args: match name {
+                    "format" => vec!["fmt".into(), "--".into(), "--check".into()],
+                    "check" => vec!["check".into(), "--all-targets".into()],
+                    "test" => vec!["test".into()],
+                    _ => unreachable!(),
+                },
             })
             .collect(),
     };
@@ -1579,7 +1707,7 @@ async fn old_agent_cannot_receive_a_structured_validation_job() {
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
-                    structured_validation_jobs: false,
+                    structured_validation_argv: false,
                     ..Default::default()
                 }),
                 projects: None,
@@ -1628,7 +1756,7 @@ async fn invalid_check_plan_is_rejected_before_durable_reservation() {
             }),
         )
         .await;
-    assert_eq!(outcome.body["error"]["code"], "invalid_arguments");
+    assert_eq!(outcome.body["error"]["code"], "test_filter_unsupported");
     assert!(fixture
         .connector
         .db
@@ -1640,6 +1768,70 @@ async fn invalid_check_plan_is_rejected_before_durable_reservation() {
         )
         .unwrap()
         .is_none());
+    assert!(poll(&fixture.registry).await.is_none());
+}
+
+#[tokio::test]
+async fn same_normalized_test_filter_retries_and_different_filter_conflicts() {
+    let fixture = fixture(1_000).await;
+    let filtered = |operation_id: &str, filter: &str| {
+        json!({
+            "task_id": fixture.task_id,
+            "operation_id": operation_id,
+            "checks": ["test"],
+            "test_filter": filter,
+            "timeout_secs": 30
+        })
+    };
+
+    let registry = fixture.registry.clone();
+    let responder = tokio::spawn(async move {
+        let request = next_request(&registry).await;
+        update_validation_job(
+            &registry,
+            request.job_id.as_deref().unwrap(),
+            "completed",
+            None,
+            Some(0),
+            check_progress(1, None, None),
+        )
+        .await;
+    });
+    let first = fixture
+        .call(
+            "checks_run",
+            filtered("filter-identity-1", "module::inner_test"),
+        )
+        .await;
+    responder.await.unwrap();
+    assert!(first.ok, "{}", first.body);
+    let execution_id = first.body["data"]["execution"]["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Whitespace-only difference normalizes to the same executed value: same
+    // operation id is an exact retry with no new dispatch.
+    let retry = fixture
+        .call(
+            "checks_run",
+            filtered("filter-identity-1", "  module::inner_test  "),
+        )
+        .await;
+    assert_eq!(
+        retry.body["data"]["execution"]["execution_id"],
+        execution_id
+    );
+    assert!(poll(&fixture.registry).await.is_none());
+
+    // A genuinely different filter under the same operation id conflicts.
+    let conflict = fixture
+        .call(
+            "checks_run",
+            filtered("filter-identity-1", "module::other_test"),
+        )
+        .await;
+    assert_eq!(conflict.body["error"]["code"], "operation_id_conflict");
     assert!(poll(&fixture.registry).await.is_none());
 }
 
@@ -2195,6 +2387,7 @@ async fn queued_cancel_never_dispatches_and_restart_is_fail_closed() {
                 "restart-operation",
                 "restart-hash",
                 &["test".to_string()],
+                Some(&json!({"recipe_id":"rust"})),
                 Some("restart-workspace"),
                 30,
                 10,
@@ -2236,6 +2429,7 @@ async fn queued_cancel_never_dispatches_and_restart_is_fail_closed() {
                 "unknown-operation",
                 "unknown-hash",
                 &["check".to_string()],
+                Some(&json!({"recipe_id":"rust"})),
                 Some("unknown-workspace"),
                 30,
                 13,
@@ -2273,6 +2467,7 @@ async fn cancellation_transport_unknown_preserves_executor_reference_and_blocks_
                 "cancel-transport-1",
                 "cancel-transport-hash",
                 &[],
+                None,
                 None,
                 30,
                 2,
@@ -2350,6 +2545,7 @@ async fn wait_for_terminal_propagates_store_error_without_panicking() {
                 "store-error-hash",
                 &[],
                 None,
+                None,
                 30,
                 2,
             )
@@ -2381,6 +2577,7 @@ async fn nonzero_exit_keeps_submission_and_execution_outcomes_separate() {
             "nonzero-operation",
             "nonzero-hash",
             &[],
+            None,
             None,
             30,
             2,
@@ -2440,6 +2637,7 @@ async fn unrecognized_executor_status_is_degraded_instead_of_running() {
             "unrecognized-status",
             "unrecognized-hash",
             &[],
+            None,
             None,
             30,
             2,

@@ -51,6 +51,7 @@ use shell_protocol::{
     ShellClientRegisterRequest, ShellClientRegisterResponse, ShellJobValidationProgress,
     ShellJobValidationStep, ShellProfileSummaryEntry, ShellProfilesSummary,
     AGENT_PROTOCOL_VERSION_POLLING_V1, VALIDATION_STEP_SPAWN_FAILED_CODE,
+    VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
 
 #[cfg(test)]
@@ -78,15 +79,16 @@ use webcodex_agent::{
 };
 use webcodex_agent::{
     client_profile_agent_config, configured_prepared_shell_job_command,
-    configured_shell_job_command, cwd_allowed, default_config_path, dispatch_request, err_cmd,
-    handle_apply_text_edits_file_request, handle_artifact_file_request, handle_basic_file_request,
-    handle_checkpoint_file_request, handle_line_edit_file_request, handle_replace_in_file_request,
+    configured_shell_job_command, configured_validation_job_command, cwd_allowed,
+    default_config_path, dispatch_request, err_cmd, handle_apply_text_edits_file_request,
+    handle_artifact_file_request, handle_basic_file_request, handle_checkpoint_file_request,
+    handle_line_edit_file_request, handle_replace_in_file_request,
     handle_write_project_file_request, hostname, is_artifact_request_kind,
     is_basic_file_request_kind, is_checkpoint_request_kind, is_line_edit_request_kind,
     is_project_op, load_config, ok_cmd, projects_dir, resolve_prepared_shell_profile,
     resolve_requested_path, run_agent, validate_client_profile, validate_line_edit_agent_path,
     AgentConfig, AgentPolicy, AgentProjectCache, AgentSink, CommandResult, HttpSendConfig,
-    PreparedShellProfileCache, ShellConfig,
+    PreparedShellProfile, PreparedShellProfileCache, ShellConfig,
 };
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
@@ -624,7 +626,7 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.file_write = true;
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
-    capabilities.structured_validation_jobs = true;
+    capabilities.structured_validation_argv = true;
     // New agents always advertise read-only LSP navigation. Older agents omit
     // the field and deserialize as false on the server.
     capabilities.lsp_read_only_navigation = true;
@@ -879,30 +881,32 @@ fn spawn_reader<R: Read + Send + 'static>(
 /// `JobManager::start_shell_job` when spawn/cwd/policy checks fail before the
 /// job can run.
 fn send_start_failure(sink: &AgentSink, request: ShellAgentShellRequest, error: String) {
-    if let Some(job_id) = request.job_id {
-        let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
-            client_id: sink.client_id().to_string(),
-            agent_instance_id: sink.agent_instance_id().to_string(),
-            job_id,
-            request_id: Some(request.request_id),
-            status: "failed".to_string(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            stdout_tail: None,
-            stderr_tail: None,
-            exit_code: None,
-            duration_ms: Some(0),
-            error: Some(error),
-            validation_progress: None,
-            finished: true,
-        });
-    }
+    send_job_start_failure(sink, request, error, None);
 }
 
-fn send_validation_spawn_failure(
+fn send_validation_executor_failure(
     sink: &AgentSink,
     request: ShellAgentShellRequest,
     completed: usize,
+    code: &str,
+) {
+    send_job_start_failure(
+        sink,
+        request,
+        code.to_string(),
+        Some(ShellJobValidationProgress {
+            completed,
+            current_step: None,
+            failed_step: None,
+        }),
+    );
+}
+
+fn send_job_start_failure(
+    sink: &AgentSink,
+    request: ShellAgentShellRequest,
+    error: String,
+    validation_progress: Option<ShellJobValidationProgress>,
 ) {
     if let Some(job_id) = request.job_id {
         let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
@@ -917,15 +921,39 @@ fn send_validation_spawn_failure(
             stderr_tail: None,
             exit_code: None,
             duration_ms: Some(0),
-            error: Some(VALIDATION_STEP_SPAWN_FAILED_CODE.to_string()),
-            validation_progress: Some(ShellJobValidationProgress {
-                completed,
-                current_step: None,
-                failed_step: None,
-            }),
+            error: Some(error),
+            validation_progress,
             finished: true,
         });
     }
+}
+
+fn validation_module_available(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    cwd: &Path,
+    step: &ShellJobValidationStep,
+) -> bool {
+    if step.program != "python" {
+        return true;
+    }
+    let Some(module) = step.args.get(1) else {
+        return false;
+    };
+    const PROBE: &str =
+        "import importlib.util,sys;sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 42)";
+    let args = ["-I", "-c", PROBE, module].map(str::to_string);
+    configured_validation_job_command(shell, profile, &step.program, &args)
+        .and_then(|mut command| {
+            command
+                .current_dir(cwd)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map_err(|error| error.to_string())
+        })
+        .is_ok_and(|status| status.success())
 }
 
 #[cfg(unix)]
@@ -1133,11 +1161,7 @@ impl JobManager {
             match serde_json::from_str::<Vec<ShellJobValidationStep>>(&request.command) {
                 Ok(steps)
                     if (1..=3).contains(&steps.len())
-                        && steps.iter().all(|step| {
-                            matches!(step.name.as_str(), "format" | "check" | "test")
-                                && !step.command.trim().is_empty()
-                                && step.command.len() <= 32_768
-                        })
+                        && steps.iter().all(ShellJobValidationStep::is_canonical)
                         && steps.iter().enumerate().all(|(index, step)| {
                             !steps[..index]
                                 .iter()
@@ -1156,10 +1180,7 @@ impl JobManager {
                 }
             }
         } else {
-            vec![ShellJobValidationStep {
-                name: String::new(),
-                command: request.command.clone(),
-            }]
+            Vec::new()
         };
         let prepared_profile = match resolve_prepared_shell_profile(
             &shell,
@@ -1174,11 +1195,31 @@ impl JobManager {
                 return;
             }
         };
-        let mut commands = VecDeque::with_capacity(steps.len());
-        for step in &steps {
-            let configured = match prepared_profile.as_deref() {
-                Some(profile) => configured_prepared_shell_job_command(profile, &step.command),
-                None => configured_shell_job_command(&shell, &step.command),
+        if validation
+            && steps.iter().any(|step| {
+                !validation_module_available(&shell, prepared_profile.as_deref(), &cwd_path, step)
+            })
+        {
+            send_validation_executor_failure(&sink, request, 0, VALIDATION_TOOL_UNAVAILABLE_CODE);
+            return;
+        }
+        let step_count = if validation { steps.len() } else { 1 };
+        let mut commands = VecDeque::with_capacity(step_count);
+        for index in 0..step_count {
+            let configured = if validation {
+                configured_validation_job_command(
+                    &shell,
+                    prepared_profile.as_deref(),
+                    &steps[index].program,
+                    &steps[index].args,
+                )
+            } else {
+                match prepared_profile.as_deref() {
+                    Some(profile) => {
+                        configured_prepared_shell_job_command(profile, &request.command)
+                    }
+                    None => configured_shell_job_command(&shell, &request.command),
+                }
             };
             let mut command = match configured {
                 Ok(command) => command,
@@ -1202,7 +1243,12 @@ impl JobManager {
             Ok(c) => c,
             Err(e) => {
                 if validation {
-                    send_validation_spawn_failure(&sink, request, 0);
+                    send_validation_executor_failure(
+                        &sink,
+                        request,
+                        0,
+                        VALIDATION_STEP_SPAWN_FAILED_CODE,
+                    );
                 } else {
                     let error = prepared_profile
                         .as_ref()
@@ -1351,7 +1397,7 @@ impl JobManager {
                         OutputChunk::Stderr(text) => err.push_str(&text),
                     }
                 }
-                if step_status.0 == "completed" && step_index + 1 < steps.len() {
+                if step_status.0 == "completed" && step_index + 1 < step_count {
                     step_index += 1;
                     if stop_requested.load(Ordering::SeqCst) {
                         break (
@@ -5638,7 +5684,7 @@ shell_profile = "../rust"
         assert!(caps.file_write);
         assert!(caps.async_jobs);
         assert!(caps.async_shell_jobs);
-        assert!(caps.structured_validation_jobs);
+        assert!(caps.structured_validation_argv);
     }
 
     #[test]

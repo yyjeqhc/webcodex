@@ -76,6 +76,22 @@ task_start
 workspace provenance；之后任何 mutation 都使其 stale，并要求新的 operation ID。
 command 无法 spawn 属于 executor failure，不是 assertion evidence。
 
+### `checks_run` recipes
+
+`checks_run` schema 仍只暴露 `format`、`check`、`test`，以及可选 enum
+`recipe`（`rust`、`node`、`python`、`go`）。省略时，从 Task workspace 的相对
+`cwd` 选择最近的 `Cargo.toml`、`package.json`、`pyproject.toml` 或 `go.mod`。
+只有同 root 歧义需要显式 recipe，且对应 marker 必须存在；resolver 不扫描 sibling
+project，也不允许 path/symlink escape。
+
+Rust 支持三项 check，并且是唯一支持单 argv `test_filter` 的 recipe。Node 使用有
+证据的 package manager 和固定 script allowlist；Python 只选择已配置的
+Ruff/Black、Ruff/Mypy 或 pytest；Go 支持 `check/test`，`format` unavailable。
+所有 recipe 都不安装依赖、不修改 lockfile、不联网。tool 缺失属于 executor
+failure；validator 启动后 non-zero 才属于 assertion failure。recipe version、相对
+root 和 invocation/manifest evidence 绑定 operation exact-retry identity。这不会
+增加第十项 MCP tool；MCP、OpenAPI 与 capability registry 仍共享同一九项 source。
+
 review 后由人类在 host 上接受或拒绝：
 
 ```bash
@@ -108,6 +124,11 @@ prompt 中不需要 project discovery 或 runtime identifier。
 | `structured_validation_unavailable` | Agent 不能运行 structured checks | 升级全部 binaries |
 | `task_not_active` | task 已不能 mutation/execute | 新建 task |
 | `execution_not_terminal` | active/unknown work 阻止 finish | review/wait/cancel |
+| `validation_recipe_not_found` / `validation_recipe_ambiguous` | auto resolution 没有 recipe 或最近 root 多 recipe | 修改 `cwd` 或提供匹配 `recipe` |
+| `validation_recipe_mismatch` / `validation_manifest_invalid` | 显式 recipe、路径、marker 或 manifest evidence 无效 | 修复报告的公开 evidence |
+| `validation_check_unavailable` / `test_filter_unsupported` | 请求的 semantic input 没有安全映射 | 修改 check/filter |
+| `package_manager_ambiguous` | Node package-manager evidence 缺失或冲突 | 修正 `packageManager` 或 lockfile |
+| `validation_tool_unavailable` | 所选 executable/module 缺失 | 提供项目已有工具并使用新 operation ID |
 | `checks_required` | 普通 task 尚未运行 checks | 调用 `checks_run` |
 | `checks_stale` | 上次 check 后 workspace 改变 | 运行新的 check |
 

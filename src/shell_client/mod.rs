@@ -1836,7 +1836,7 @@ mod tests {
         let capabilities = ShellClientCapabilities::default();
         assert!(!capabilities.async_jobs);
         assert!(!capabilities.async_shell_jobs);
-        assert!(!capabilities.structured_validation_jobs);
+        assert!(!capabilities.structured_validation_argv);
 
         let request: ShellClientRegisterRequest = serde_json::from_str(
             r#"{
@@ -1849,7 +1849,7 @@ mod tests {
         let capabilities = request.capabilities.unwrap();
         assert!(!capabilities.async_jobs);
         assert!(!capabilities.async_shell_jobs);
-        assert!(!capabilities.structured_validation_jobs);
+        assert!(!capabilities.structured_validation_argv);
     }
 
     #[test]
@@ -2018,7 +2018,7 @@ mod tests {
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
-                    structured_validation_jobs: true,
+                    structured_validation_argv: true,
                     lsp_read_only_navigation: true,
                 }),
                 projects: None,

@@ -34,12 +34,12 @@
 - structured validation terminal success 必须有完整 plan-aligned progress；
   malformed progress 显式成为 executor protocol failure，DB 不再按 plan 文本推断
   completed steps。
-- Agent 通过 `structured_validation_jobs` 明确协商；旧 Agent 收到
+- Agent 通过 structured validation capability 明确协商；旧 Agent 收到
   `structured_validation_unavailable`，没有 marker、普通 shell 或 stdout fallback。
 - Iteration 7 已完成人工 review、完整测试与最终 squash，正式基线为
   `a1547bba3b93669e8bdf6d0fec2388e0ae2b138e`。
 
-## 当前：Iteration 8.0/8.0.1 — Product Entry, Credential Boundary and Golden Path
+## 已完成：Iteration 8.0/8.0.1 — Product Entry, Credential Boundary and Golden Path
 
 Iteration 8.0 只交付第一条垂直切片，不扩展 Hosted 九项 capability：
 
@@ -69,9 +69,32 @@ Iteration 8.0 只交付第一条垂直切片，不扩展 Hosted 九项 capabilit
   与重复 doctor projection；运维 registry/discovery 工具继续保留。
 - Browser 只提供 readiness surface；完整 Browser IDE 明确 deferred。
 
-Iteration 8.0 完成 focused/full suite、LOC 门禁和人工 review 后，才继续后续产品精修：
+## 当前：Iteration 8.1 — Project-Aware Validation Recipes
 
-- Rust/Node/Python/Go 的最小 project-aware check recipes。
+Iteration 8.1 的实现候选保持 Hosted 九项 capability，不新增 discovery call：
+
+- `checks_run` 增加可选 `recipe: rust|node|python|go`；省略即 deterministic auto，
+  不提供 `auto` alias。
+- resolver 在 Task execution workspace 内从相对 `cwd` 向 root 查找最近 marker，
+  不扫描 sibling；同 root 多 marker 自动模式 fail closed，显式 recipe 必须匹配。
+- Rust 保持 `format/check/test`；Node 只运行 allowlisted 非修改型 script，并从
+  `packageManager` 或单一 lockfile 确定 manager；Python 只使用
+  `pyproject.toml` 证明的 Ruff/Black、Ruff/Mypy、pytest；Go 支持
+  `check/test`，`format` 明确 unavailable。
+- 所有 invocation 都是 canonical `program + argv`；recipe 不安装依赖、不运行
+  install hook、不修改 lockfile、不联网。旧 command-string Agent 通过
+  `structured_validation_argv` capability fail closed。
+- recipe ID/version、相对 root、semantic checks、tool identity 和
+  invocation/manifest digest 持久化并进入 request hash；manifest、lockfile 或
+  workspace 变化使 provenance stale。
+- planner failure 不创建 Execution；tool unavailable/spawn failure 属于 executor
+  failure；只有已启动 validator 的 non-zero verdict 属于 assertion failure。
+- 四类项目由真实 Auth/HTTP/registry/store/structured progress/local accept
+  golden fixture 覆盖；task path 仍不需要 discovery/session call。
+
+本轮等待 focused/full suite、LOC 门禁与人工 review；不自行宣布 merge gate
+通过。通过后再继续：
+
 - Browser 中的最小 review/cancel/accept UI（本机 CLI 已存在）。
 - replay baseline、真实 ChatGPT MCP/OpenAPI acceptance、第二轮删除。
 - production Rust LOC 相对 2026-07-23 基线净减少 20% 以上。

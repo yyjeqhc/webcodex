@@ -165,6 +165,7 @@ impl ExecutionService {
         operation_id: &str,
         request_sha256: &str,
         check_plan: &[String],
+        check_recipe: Option<&Value>,
         check_workspace_sha256: Option<&str>,
         timeout_secs: u64,
         now: i64,
@@ -175,6 +176,7 @@ impl ExecutionService {
             operation_id,
             request_sha256,
             check_plan,
+            check_recipe,
             check_workspace_sha256,
             now.saturating_add(timeout_secs as i64),
             now,
@@ -494,6 +496,7 @@ pub(crate) fn execution_projection(
         "assertion_status": assertion_status(execution),
         "assertion_evidence": execution.assertion_evidence,
         "checks": check_results(execution),
+        "recipe": recipe_projection(execution),
         "capability_outcome": capability_outcome,
         "queued_at": execution.queued_at,
         "queue_age_ms": execution.queued_at.map(|queued| now.saturating_sub(queued) * 1000),
@@ -511,8 +514,21 @@ pub(crate) fn execution_projection(
     })
 }
 
+fn recipe_projection(execution: &ConnectorExecution) -> Value {
+    let Some(identity) = execution.check_recipe.as_ref() else {
+        return Value::Null;
+    };
+    json!({
+        "id": identity.get("recipe_id"),
+        "version": identity.get("recipe_version"),
+        "root": identity.get("recipe_root_relative"),
+        "checks": identity.get("semantic_checks")
+    })
+}
+
 pub(super) fn durable_assertion_evidence(
     check: &str,
+    recipe_identity: Option<&Value>,
     exit_code: Option<i32>,
     stdout: &str,
     stderr: &str,
@@ -522,13 +538,17 @@ pub(super) fn durable_assertion_evidence(
         validation_adapter_for_tool, ValidationFailureEvidence,
     };
 
-    let tool = match check {
-        "format" => "cargo_fmt",
-        "check" => "cargo_check",
-        "test" => "cargo_test",
-        _ => "",
-    };
-    let (failure_kind, diagnostics) = validation_adapter_for_tool(tool)
+    let tool = recipe_identity.and_then(|identity| {
+        let checks = identity.get("semantic_checks")?.as_array()?;
+        let index = checks.iter().position(|candidate| candidate == check)?;
+        identity
+            .get("tool_identities")?
+            .as_array()?
+            .get(index)?
+            .as_str()
+    });
+    let (failure_kind, diagnostics) = tool
+        .and_then(validation_adapter_for_tool)
         .map(|adapter| {
             let diagnostics = adapter.parse(stdout, stderr, true);
             let failure_kind = adapter.map_failure_kind(ValidationFailureEvidence {
@@ -541,13 +561,15 @@ pub(super) fn durable_assertion_evidence(
             });
             (failure_kind, Some(diagnostics))
         })
-        .unwrap_or(("unknown_failure", None));
+        .unwrap_or(("process_exit", None));
+    let parser = diagnostics.as_ref().map(|_| PARSER_KIND);
+    let parser_version = diagnostics.as_ref().map(|_| PARSER_VERSION);
     let mut evidence = json!({
         "failed_check": check,
         "failure_kind": failure_kind,
         "exit_code": exit_code,
-        "parser": PARSER_KIND,
-        "parser_version": PARSER_VERSION,
+        "parser": parser,
+        "parser_version": parser_version,
         "diagnostics": diagnostics
     });
     sanitize_evidence(&mut evidence);
@@ -560,8 +582,8 @@ pub(super) fn durable_assertion_evidence(
             "failed_check": check,
             "failure_kind": failure_kind,
             "exit_code": exit_code,
-            "parser": PARSER_KIND,
-            "parser_version": PARSER_VERSION,
+            "parser": parser,
+            "parser_version": parser_version,
             "diagnostics": null
         })
     }

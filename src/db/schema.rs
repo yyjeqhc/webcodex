@@ -427,6 +427,7 @@ impl Database {
                 last_successful_observation_at INTEGER,
                 status_failure_code TEXT,
                 check_plan TEXT,
+                check_recipe_json TEXT,
                 check_completed INTEGER NOT NULL DEFAULT 0 CHECK(check_completed >= 0),
                 check_workspace_sha256 TEXT,
                 validated_workspace_sha256 TEXT,
@@ -528,6 +529,7 @@ impl Database {
         let columns = table_columns(conn, "wc_executions")?;
         for (column, declaration) in [
             ("check_plan", "TEXT"),
+            ("check_recipe_json", "TEXT"),
             ("check_completed", "INTEGER NOT NULL DEFAULT 0"),
             ("check_workspace_sha256", "TEXT"),
             ("validated_workspace_sha256", "TEXT"),

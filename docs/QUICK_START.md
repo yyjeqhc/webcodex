@@ -149,6 +149,47 @@ runs and exits non-zero is a project assertion failure. A check that cannot
 spawn is an executor/infrastructure failure and does not create assertion
 evidence or trusted workspace provenance.
 
+### Project-aware validation recipes
+
+`checks_run` accepts the existing `format`, `check`, and `test` semantic names
+plus an optional `recipe` enum: `rust`, `node`, `python`, or `go`. Omit
+`recipe` for auto resolution—there is no `auto` alias. Resolution starts at
+the relative `cwd` inside the Task execution workspace, walks only toward that
+workspace root, and picks the nearest manifest directory. Multiple supported
+markers in that directory are ambiguous; an explicit matching recipe resolves
+the ambiguity. A mismatched marker, missing manifest, absolute/parent path, or
+symlink escape is rejected before an Execution is reserved.
+
+| Recipe | Marker | `format` | `check` | `test` |
+|---|---|---|---|---|
+| Rust | `Cargo.toml` | `cargo fmt -- --check` | `cargo check --all-targets` | `cargo test` plus one safe argv filter |
+| Node | `package.json` | first of `format:check`, `format-check`, `check:format` | first of `check`, `typecheck`, `lint` | exact `test` |
+| Python | `pyproject.toml` | configured Ruff, otherwise Black | configured Ruff, otherwise Mypy | configured pytest |
+| Go | `go.mod` | unavailable | `go vet ./...` | `go test ./...` |
+
+Node selects a package manager from a valid `packageManager` declaration or
+one unambiguous supported lockfile (`pnpm-lock.yaml`, `yarn.lock`,
+`package-lock.json`, `npm-shrinkwrap.json`, `bun.lock`, or `bun.lockb`).
+Conflicting or absent evidence fails closed; a selected script is invoked only
+as `<manager> run --silent <allowlisted-name>`. Script bodies are never copied
+into the plan or error. Python enables only tools evidenced by
+`pyproject.toml`; Ruff wins over Black for format and over Mypy for check.
+
+Recipes do not install dependencies, run install hooks, generate
+configuration, create environments, modify lockfiles, or use the network.
+Only Rust accepts `test_filter`, as one argv value; every other recipe rejects
+it instead of silently running all tests. Missing executables or Python
+modules produce an executor failure with no failed check or assertion
+evidence. A real process exit with a non-zero validation verdict is an
+assertion failure.
+
+The durable plan records recipe ID/version, relative root, semantic checks,
+tool identities, and invocation/manifest evidence digests. They participate in
+the request hash, so one `operation_id` reuses only the exact resolved plan.
+A recipe binary change conflicts with an old operation ID; use a new ID to
+resolve under the new recipe. Manifest, lockfile, or workspace changes make
+successful provenance stale.
+
 ## 6. Review and Accept Locally
 
 The coding result stays isolated from the target checkout until a human
@@ -200,6 +241,12 @@ Common stable codes:
 | `required_capability_unavailable` | The installed Agent is too old/incomplete | Upgrade all WebCodex binaries |
 | `structured_validation_unavailable` | The Agent lacks structured validation | Upgrade all WebCodex binaries |
 | `workspace_unavailable` | Git or the configured project path is unavailable | Restore the path/Git workspace |
+| `validation_recipe_not_found` | No supported marker exists from `cwd` to the Task root | Choose a manifest-bearing `cwd` |
+| `validation_recipe_ambiguous` | The nearest root has multiple supported markers | Provide the matching explicit `recipe` |
+| `validation_recipe_mismatch` / `validation_manifest_invalid` | Recipe, marker, safe path, or manifest evidence is invalid | Correct the reported public evidence |
+| `validation_check_unavailable` / `test_filter_unsupported` | The recipe cannot safely map the requested check/filter | Change checks/filter or choose the matching recipe |
+| `package_manager_ambiguous` | Node package-manager evidence is absent or conflicting | Correct `packageManager` or lockfiles |
+| `validation_tool_unavailable` | The selected executable/module is not available on the Agent host | Provide the project's existing tool, then use a new operation ID |
 | `checks_required` | A normal result has not run checks | Run `checks_run`, then finish |
 | `checks_stale` | The workspace changed after the last trusted check | Run a new check operation |
 

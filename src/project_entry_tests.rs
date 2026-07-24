@@ -97,7 +97,48 @@ async fn record_authenticated_connector_request(req: &mut Request, depot: &mut D
 }
 
 async fn authenticated_project_fixture() -> AuthenticatedProjectFixture {
+    authenticated_project_fixture_for("rust").await
+}
+
+async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProjectFixture {
     let (temp, root, state) = repo("authenticated");
+    match recipe {
+        "rust" => fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='golden-fixture'\nversion='0.1.0'\n",
+        )
+        .unwrap(),
+        "node" => {
+            fs::write(
+                root.join("package.json"),
+                r#"{"packageManager":"npm@10","scripts":{"check":"eslint ."}}"#,
+            )
+            .unwrap();
+            fs::write(root.join("package-lock.json"), "{}").unwrap();
+        }
+        "python" => {
+            fs::write(root.join("pyproject.toml"), "[tool.ruff]\nline-length=88\n").unwrap()
+        }
+        "go" => fs::write(
+            root.join("go.mod"),
+            "module example.test/golden\n\ngo 1.22\n",
+        )
+        .unwrap(),
+        _ => unreachable!(),
+    }
+    git(&["add", "."], &root);
+    git(
+        &[
+            "-c",
+            "user.name=WebCodex Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "add validation manifest",
+        ],
+        &root,
+    );
     let options = options(root.clone(), state.clone());
     setup(&options).unwrap();
     let (config, paths) = ProjectConfig::resolve(&options).unwrap();
@@ -123,7 +164,7 @@ async fn authenticated_project_fixture() -> AuthenticatedProjectFixture {
                     jobs: true,
                     async_jobs: true,
                     async_shell_jobs: true,
-                    structured_validation_jobs: true,
+                    structured_validation_argv: true,
                     ..Default::default()
                 }),
                 projects: Some(vec![ShellAgentProjectSummary {
@@ -344,10 +385,11 @@ struct GoldenPathEvidence {
     accepted_output: String,
     accepted_content: String,
     execution_count: i64,
+    recipe_id: String,
 }
 
-async fn run_authenticated_golden_path() -> GoldenPathEvidence {
-    let fixture = authenticated_project_fixture().await;
+async fn run_authenticated_golden_path(recipe: &str) -> GoldenPathEvidence {
+    let fixture = authenticated_project_fixture_for(recipe).await;
     let agent_requests = Arc::new(Mutex::new(Vec::new()));
 
     let (status, readiness) = post_connector(
@@ -549,10 +591,22 @@ async fn run_authenticated_golden_path() -> GoldenPathEvidence {
     let registry = fixture.registry.clone();
     let client_id = fixture.client_id.clone();
     let recorder = agent_requests.clone();
+    let expected_program = match recipe {
+        "rust" => "cargo",
+        "node" => "npm",
+        "python" => "python",
+        "go" => "go",
+        _ => unreachable!(),
+    }
+    .to_string();
     let checker = tokio::spawn(async move {
         let request = next_project_agent_request(&registry, &client_id).await;
         record_agent_request(&recorder, &request);
         assert_eq!(request.kind, "start_validation_job");
+        let steps: Vec<crate::shell_protocol::ShellJobValidationStep> =
+            serde_json::from_str(&request.command).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].program, expected_program);
         complete_project_job(&registry, &client_id, request, true).await;
     });
     let (status, checked) = post_connector(
@@ -563,6 +617,7 @@ async fn run_authenticated_golden_path() -> GoldenPathEvidence {
             "task_id": task_id,
             "operation_id": "golden-check-1",
             "checks": ["check"],
+            "recipe": recipe,
             "timeout_secs": 30
         }),
     )
@@ -636,12 +691,16 @@ async fn run_authenticated_golden_path() -> GoldenPathEvidence {
         accepted_output,
         accepted_content,
         execution_count,
+        recipe_id: checked["data"]["execution"]["recipe"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string(),
     }
 }
 
 #[tokio::test]
 async fn configured_project_credential_can_complete_connector_golden_path() {
-    let evidence = run_authenticated_golden_path().await;
+    let evidence = run_authenticated_golden_path("rust").await;
     assert!(evidence.accepted_output.contains("Accepted"));
     assert_eq!(evidence.accepted_content, "accepted\n");
     assert!(evidence.execution_count >= 2);
@@ -668,7 +727,7 @@ async fn configured_project_credential_can_complete_connector_golden_path() {
 
 #[tokio::test]
 async fn authenticated_golden_path_emits_no_discovery_or_session_calls() {
-    let evidence = run_authenticated_golden_path().await;
+    let evidence = run_authenticated_golden_path("rust").await;
     let canonical_paths = [
         "/api/connector/readiness",
         "/api/connector/task/start",
@@ -722,6 +781,20 @@ async fn authenticated_golden_path_emits_no_discovery_or_session_calls() {
             .chain(evidence.event_kinds.iter())
             .chain(evidence.agent_request_kinds.iter())
             .any(|record| record.contains(forbidden)));
+    }
+}
+
+#[tokio::test]
+async fn checks_run_project_aware_golden_paths_cover_rust_node_python_and_go() {
+    for recipe in ["rust", "node", "python", "go"] {
+        let evidence = run_authenticated_golden_path(recipe).await;
+        assert_eq!(evidence.recipe_id, recipe);
+        assert!(evidence.accepted_output.contains("Accepted"));
+        assert_eq!(evidence.accepted_content, "accepted\n");
+        assert!(evidence
+            .agent_request_kinds
+            .iter()
+            .any(|kind| kind == "start_validation_job"));
     }
 }
 

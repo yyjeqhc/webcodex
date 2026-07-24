@@ -26,6 +26,7 @@ mod config;
 mod connector_runtime;
 mod console_web;
 mod db;
+mod host_console_http;
 mod mcp;
 mod models;
 mod oauth_http;
@@ -304,6 +305,7 @@ only for local/trusted-network demos."
     let authed_api_router = Router::new()
         .hoop(AuthMiddleware)
         .push(connector_runtime::http::routes())
+        .push(host_console_http::routes())
         .push(Router::with_path("tools/list").post(runtime_http::tools_list))
         .push(Router::with_path("tools/call").post(runtime_http::tools_call))
         .push(

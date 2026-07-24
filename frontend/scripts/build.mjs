@@ -26,7 +26,7 @@ function stripTypeScript(source) {
   js = js.replace(/^declare\s+global\s*\{[\s\S]*?^\}\n\n/m, "");
   js = js.replace(/^export\s*\{\};\s*\n?/gm, "");
   js = js.replace(/: RequestOptions(?=\s*[=,)])/g, "");
-  js = js.replace(/: (string|number|unknown|boolean)(?=\s*[=,)])/g, "");
+  js = js.replace(/: (string|number|unknown|boolean|any)(?=\s*[=,)])/g, "");
   // DOM event-handler parameter types (single identifiers). Safe because the
   // only JS context where `: <Word>` appears before `=`, `,`, or `)` is a TS
   // type annotation; object-literal values like `{ key: Event, }` are avoided
@@ -38,7 +38,8 @@ function stripTypeScript(source) {
   js = js.replace(/\bas\s+[A-Za-z_]\w*/g, "");
   js = js.replace(/: Promise<Response \| null>(?=\s*\{)/g, "");
   js = js.replace(/: Promise<void>(?=\s*\{)/g, "");
-  js = js.replace(/: (boolean|string|void)(?=\s*\{)/g, "");
+  js = js.replace(/: Promise<any>(?=\s*\{)/g, "");
+  js = js.replace(/: (boolean|string|void|number|any)(?=\s*\{)/g, "");
   return js;
 }
 
@@ -59,8 +60,29 @@ function minifyCss(source) {
     .trim() + "\n";
 }
 
+// Turn an ESM module into classic-script statements for inlining: drop the
+// `export {}` module marker and the `export` keyword on top-level declarations.
+function stripModuleExports(js) {
+  return js
+    .replace(/^export\s*\{\};\s*\n?/gm, "")
+    .replace(/^export\s+(function|const|let|class)\b/gm, "$1");
+}
+
+// The pure review-identity state machine. Emitted as an ESM module so the Node
+// test runner can import it, and inlined into app.js for the no-bundler browser.
+const reviewStateModule = buildJs(stripTypeScript(read("src/review_state.ts")));
+
+// app.js is a single classic script: inline the state module and drop its ESM
+// import so the browser needs no bundler and no extra fetch.
+const appStripped = stripTypeScript(read("src/app.ts")).replace(
+  /^import\s*\{[\s\S]*?\}\s*from\s*["']\.\/review_state(?:\.js)?["'];\s*\n/m,
+  ""
+);
+const appInlined = buildJs(stripModuleExports(reviewStateModule) + "\n" + appStripped);
+
 const outputs = new Map([
-  ["dist/app.js", buildJs(stripTypeScript(read("src/app.ts")))],
+  ["dist/review_state.js", reviewStateModule],
+  ["dist/app.js", appInlined],
   ["dist/styles.css", minifyCss(read("src/styles.css"))],
   // The console HTML shell is copied verbatim (no transform needed).
   ["dist/console.html", normalizeNewline(read("src/console.html"))],

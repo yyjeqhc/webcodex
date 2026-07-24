@@ -185,7 +185,10 @@ pub(crate) fn enforce_project_connector_surface(
         return Ok(());
     }
     if ctx.is_project_credential()
-        && (path == "/mcp" || is_project_connector_path(path) || is_agent_transport_path(path))
+        && (path == "/mcp"
+            || is_project_connector_path(path)
+            || is_project_console_path(path)
+            || is_agent_transport_path(path))
     {
         return Ok(());
     }
@@ -193,6 +196,10 @@ pub(crate) fn enforce_project_connector_surface(
         StatusCode::FORBIDDEN,
         "project connector credentials may only access canonical connector capabilities",
     ))
+}
+
+fn is_project_console_path(path: &str) -> bool {
+    crate::host_console_http::CONSOLE_ROUTES.contains(&path)
 }
 
 fn is_project_connector_path(path: &str) -> bool {
@@ -427,6 +434,40 @@ pub(crate) fn json_error(status: StatusCode, msg: impl Into<String>) -> Json<ser
         "status": status.as_u16(),
         "error": msg.into(),
     }))
+}
+
+pub(crate) fn require_json_same_origin(
+    req: &Request,
+) -> Result<(), (u16, &'static str, &'static str)> {
+    if !req
+        .content_type()
+        .is_some_and(|content_type| content_type.essence_str() == "application/json")
+    {
+        return Err((
+            415,
+            "unsupported_media_type",
+            "Content-Type must be application/json",
+        ));
+    }
+    if let Some(origin) = req
+        .headers()
+        .get("origin")
+        .and_then(|value| value.to_str().ok())
+    {
+        let host = req
+            .headers()
+            .get("host")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        if origin.rsplit_once("://").map(|(_, value)| value) != Some(host) {
+            return Err((
+                403,
+                "cross_origin_denied",
+                "cross-origin requests are not allowed",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

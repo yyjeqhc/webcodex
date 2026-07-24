@@ -193,7 +193,8 @@ successful provenance stale.
 ## 6. Review and Accept Locally
 
 The coding result stays isolated from the target checkout until a human
-decision:
+decision. That decision is host-local and reachable two ways — the offline CLI
+and the in-browser console — which share one accept/reject authority:
 
 ```bash
 webcodex task list
@@ -205,19 +206,29 @@ Use `webcodex task reject <task-id>` to discard it. Acceptance verifies that
 the target Git state still matches the task baseline before applying the
 result.
 
-## Browser Readiness
+In the Browser, open `/console`, enter the project credential (kept in memory
+only, never persisted), and use the work queue to pick a task. The review
+detail shows the goal, states, validation, changed files, a bounded unified
+diff, and a bounded output tail, with **Accept / Reject / Cancel** behind an
+explicit in-page confirm. Accept and Reject call the same authority the CLI
+uses; Cancel stops an active execution. Hosted Chat can propose work but can
+never accept it, and the server re-verifies the checkout and the result before
+applying — a Browser click cannot bypass those preconditions.
 
-When the local runtime is running, `/console` shows only:
+## Browser Console
 
-- current Project;
-- Connection;
-- Agent readiness;
-- coding capability readiness;
-- structured findings and the next CLI action.
+When the local runtime is running, `/console` shows:
 
-It consumes the same application readiness facts as doctor/status. It does not
-show the Agent registry, client IDs, transport implementation, queue IDs,
-tokens, or a browser editor/terminal.
+- the Project header (current Project, Connection, Agent readiness, coding
+  capability readiness, next action);
+- the actionable work queue (up to the most recent tasks needing attention);
+- the review detail for a selected task, with the bounded diff and output tail.
+
+It consumes the same application readiness facts as doctor/status and drives
+the same host-local decision authority as the CLI. It does not show the Agent
+registry, client IDs, transport implementation, queue IDs, or tokens, and it is
+not a browser editor/terminal — it cannot edit code, run commands, or start
+tasks.
 
 ## Troubleshooting
 

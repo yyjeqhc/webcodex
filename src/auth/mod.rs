@@ -76,7 +76,8 @@ pub(crate) use middleware::{
     allow_query_token_for_path, bearer_or_allowed_query_token, bearer_token, enforce_token_surface,
     get_config, get_db, is_account_control_path, is_agent_transport_path, json_error,
     oauth_insufficient_scope_body, oauth_insufficient_scope_challenge,
-    render_oauth_insufficient_scope, AuthMiddleware, ACCOUNT_CONTROL_PATHS, AGENT_TRANSPORT_PATHS,
+    render_oauth_insufficient_scope, require_json_same_origin, AuthMiddleware,
+    ACCOUNT_CONTROL_PATHS, AGENT_TRANSPORT_PATHS,
 };
 
 #[allow(unused_imports)]

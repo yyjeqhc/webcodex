@@ -4,11 +4,10 @@
 //! approve an arbitrary command. Those decisions are intentionally available
 //! only through this host-local CLI and the private SQLite state it resolves.
 
-use crate::connector_runtime::workspace::WorkspaceManager;
+use crate::connector_runtime::workspace::{LocalResultDecision, WorkspaceManager};
 use crate::project_entry::{resolve_local_task_state, LocalTaskState};
 use crate::Database;
 use serde_json::json;
-use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_PROFILE: &str = "personal";
@@ -264,15 +263,15 @@ pub(crate) fn run(command: TaskCliCommand) -> Result<String, String> {
                     approval.approval_id
                 ));
             }
-            pretty_json(&json!({
-                "project": state.root,
-                "task": task,
-                "result": result,
-                "diff_preview": patch_preview,
-                "approvals": approvals,
-                "timeline": events,
-                "available_actions": available_actions
-            }))
+            let mut review =
+                crate::connector_runtime::durable_task_review_projection(&task, result.as_ref());
+            review["task_id"] = json!(task.task_id);
+            review["event_cursor"] = json!(task.event_cursor);
+            review["diff_preview"] = json!(patch_preview);
+            review["approvals"] = json!(approvals);
+            review["timeline"] = json!(events);
+            review["available_actions"] = json!(available_actions);
+            pretty_json(&json!({ "project": state.root, "review": review }))
         }
         TaskCliCommand::Accept { location, task_id } => decide_result(&location, &task_id, true),
         TaskCliCommand::Reject { location, task_id } => decide_result(&location, &task_id, false),
@@ -292,7 +291,6 @@ pub(crate) fn run(command: TaskCliCommand) -> Result<String, String> {
 
 fn resume_task(location: &TaskLocationOptions, task_id: &str) -> Result<String, String> {
     let (state, db) = open_state(location)?;
-    let _lock = DecisionLock::acquire(&state.state)?;
     let task = db
         .local_connector_task(task_id, &state.logical_project_id)
         .map_err(store_error)?;
@@ -312,111 +310,47 @@ fn resume_task(location: &TaskLocationOptions, task_id: &str) -> Result<String, 
     ))
 }
 
-/// Release a task's reusable workspace and record the release, returning the
-/// sanitized cleanup warning (if any). Shared by the interrupted-reject and
-/// rejected-retry-cleanup paths, which otherwise repeat the same three steps.
-fn release_and_record(
-    db: &crate::db::Database,
-    state: &LocalTaskState,
-    task: &crate::db::ConnectorTaskSnapshot,
-    task_id: &str,
-) -> Result<Option<String>, String> {
-    let outcome = WorkspaceManager::release_owned_task_workspace(task);
-    let cleanup_warning = outcome
-        .cleanup_warning
-        .as_deref()
-        .map(|warning| sanitize_cleanup_warning(task, warning));
-    db.record_connector_workspace_release(
-        task_id,
-        &state.logical_project_id,
-        &task.owner_subject_id,
-        cleanup_warning.is_none(),
-        cleanup_warning.as_deref(),
-        chrono::Utc::now().timestamp(),
-    )
-    .map_err(store_error)?;
-    Ok(cleanup_warning)
-}
-
 fn decide_result(
     location: &TaskLocationOptions,
     task_id: &str,
     accept: bool,
 ) -> Result<String, String> {
     let (state, db) = open_state(location)?;
-    let _lock = DecisionLock::acquire(&state.state)?;
-    let task = db
-        .local_connector_task(task_id, &state.logical_project_id)
+    let now = chrono::Utc::now().timestamp();
+    WorkspaceManager::recover_result_decisions(&db, &state.logical_project_id, &state.root, now)
         .map_err(store_error)?;
-    ensure_target(&state, &task.target_root)?;
-    let result = db
+    let expected_result_id = db
         .local_connector_task_result(task_id, &state.logical_project_id)
-        .map_err(store_error)?;
-    if result.is_none() && !accept && task.run_status == "interrupted" {
-        db.abandon_interrupted_connector_task(
-            task_id,
-            &state.logical_project_id,
-            LOCAL_ACTOR,
-            chrono::Utc::now().timestamp(),
-        )
-        .map_err(store_error)?;
-        let cleanup_warning = release_and_record(&db, &state, &task, task_id)?;
-        let mut output = format!(
-            "Rejected interrupted {}; its uncaptured workspace changes were discarded.",
-            task_id
-        );
-        if let Some(warning) = cleanup_warning {
-            output.push_str(&format!("\nCleanup warning: {warning}"));
-        }
-        return Ok(output);
-    }
-    let result = result.ok_or_else(|| "task has no stable result to decide".to_string())?;
-    if !accept && result.decision_status == "rejected" && result.cleanup_warning.is_some() {
-        let cleanup_warning = release_and_record(&db, &state, &task, task_id)?;
-        return Ok(match cleanup_warning {
-            Some(warning) => {
-                format!("Retried cleanup for rejected {task_id}.\nCleanup warning: {warning}")
-            }
-            None => format!("Rejected {task_id} is clean; its reusable workspace is available."),
-        });
-    }
-    let outcome = if accept {
-        WorkspaceManager::accept(&task, &result)?
+        .map_err(store_error)?
+        .map(|result| result.result_id);
+    let decision = if accept {
+        LocalResultDecision::Accept
     } else {
-        WorkspaceManager::reject(&task, &result)?
+        LocalResultDecision::Reject
     };
-    let current_cleanup_warning = outcome
-        .cleanup_warning
-        .as_deref()
-        .map(|warning| sanitize_cleanup_warning(&task, warning));
-    let cleanup_warning = match (
-        result.cleanup_warning.as_deref(),
-        current_cleanup_warning.as_deref(),
-    ) {
-        (Some(existing), Some(current)) if existing != current => {
-            Some(format!("{existing}; {current}"))
-        }
-        (Some(existing), _) => Some(existing.to_string()),
-        (_, Some(current)) => Some(current.to_string()),
-        (None, None) => None,
-    };
-    let decision = if accept { "accepted" } else { "rejected" };
-    let result = db
-        .decide_connector_result(
-            task_id,
-            &state.logical_project_id,
-            decision,
-            LOCAL_ACTOR,
-            cleanup_warning.as_deref(),
-            chrono::Utc::now().timestamp(),
-        )
-        .map_err(store_error)?;
+    let outcome = WorkspaceManager::decide_connector_result_local(
+        &db,
+        &state.logical_project_id,
+        task_id,
+        expected_result_id.as_deref(),
+        &state.root,
+        decision,
+        LOCAL_ACTOR,
+        now,
+    )
+    .map_err(store_error)?;
+
     let mut output = if accept {
         format!(
             "Accepted {}: applied {} changed path(s) to {}.",
             task_id,
-            result.changed_paths.len(),
+            outcome.changed_paths.len(),
             state.root.display()
+        )
+    } else if expected_result_id.is_none() {
+        format!(
+            "Rejected interrupted {}; its uncaptured workspace changes were discarded.",
+            task_id
         )
     } else {
         format!(
@@ -424,16 +358,10 @@ fn decide_result(
             task_id
         )
     };
-    if let Some(warning) = result.cleanup_warning {
+    if let Some(warning) = outcome.cleanup_warning {
         output.push_str(&format!("\nCleanup warning: {warning}"));
     }
     Ok(output)
-}
-
-fn sanitize_cleanup_warning(task: &crate::db::ConnectorTaskSnapshot, warning: &str) -> String {
-    warning
-        .replace(&task.execution_root, "<managed-workspace>")
-        .replace(&task.target_root, "<target-workspace>")
 }
 
 fn decide_approval(
@@ -541,47 +469,6 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KiB", bytes / KIB)
     } else {
         format!("{} B", bytes as u64)
-    }
-}
-
-struct DecisionLock {
-    file: File,
-}
-
-impl DecisionLock {
-    fn acquire(state_dir: &Path) -> Result<Self, String> {
-        let path = state_dir.join("task-decision.lock");
-        let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options
-            .open(&path)
-            .map_err(|error| format!("cannot open local task decision lock: {error}"))?;
-        #[cfg(unix)]
-        {
-            let result =
-                unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
-            if result != 0 {
-                return Err(format!(
-                    "cannot lock local task decisions: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
-        }
-        Ok(Self { file })
-    }
-}
-
-impl Drop for DecisionLock {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        unsafe {
-            libc::flock(std::os::fd::AsRawFd::as_raw_fd(&self.file), libc::LOCK_UN);
-        }
     }
 }
 

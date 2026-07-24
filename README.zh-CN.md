@@ -73,13 +73,19 @@ Connector context 确定性解析项目。普通 coding 不需要先调用 `list
 或 project registration tools。
 
 普通可写任务必须在 `task_finish` 前运行 structured checks。结果保持隔离，直到
-人类在本机 review 并接受：
+人类在本机 review 并接受。同一套本机人类授权有两条入口——离线 CLI 与浏览器
+console——两者共用同一条 accept/reject 决策路径：
 
 ```bash
 webcodex task list
 webcodex task show <task-id>
 webcodex task accept <task-id>
 ```
+
+在浏览器中，`/console` 展示可执行的工作队列与带 bounded diff 的 review 详情，
+其 Accept / Reject / Cancel 按钮驱动同一套授权。Hosted Chat 只能提议工作、永远
+无法接受；server 在应用前会重新校验 target checkout 与 result，因此浏览器上的一次
+点击无法绕过持久化的前置条件。
 
 task、operation、execution 和 result ID 会保留，因为它们用于精确 retry、进度、
 review 和 accept；executor routing 和 queue ID 保持内部实现。
@@ -106,8 +112,11 @@ structured invocation 都进入 `operation_id` 的 exact-retry identity。详见
 Agent runtime、server reachability、Agent registration、必要 capability 和
 structured validation。
 
-Browser `/console` 只是同一组 readiness facts 的最小只读投影，不是第二套 status
-逻辑，也不是 Browser IDE。
+Browser `/console` 投影同一组 readiness facts，并新增本机人类 review 界面：可执行
+工作队列、带 bounded diff 与 output tail 的 review 详情，以及 Accept / Reject /
+Cancel 操作。它不是第二套 status 逻辑，不是 model-facing capability，也不是 Browser
+IDE——无法编辑代码、运行命令或启动任务。在其中输入的 project credential 仅保存在
+内存中，绝不写入浏览器存储。
 
 ## Client 接入
 

@@ -360,6 +360,16 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_wc_task_results_decision
                 ON wc_task_results(decision_status, created_at DESC);
 
+            CREATE TABLE IF NOT EXISTS wc_result_decision_intents (
+                task_id TEXT PRIMARY KEY,
+                result_id TEXT NOT NULL,
+                decision TEXT NOT NULL CHECK(decision IN ('accepted', 'rejected')),
+                actor TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES wc_task_results(task_id),
+                FOREIGN KEY(result_id) REFERENCES wc_task_results(id)
+            );
+
             CREATE TABLE IF NOT EXISTS wc_approvals (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,

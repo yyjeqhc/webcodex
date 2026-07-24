@@ -175,7 +175,8 @@ conflict，使用新 ID 才按新 recipe 解析。manifest、lockfile 或 worksp
 
 ## 6. 本机 review 和 accept
 
-coding result 会与 target checkout 保持隔离，直到人类决定：
+coding result 会与 target checkout 保持隔离，直到人类决定。该决定是本机授权，有两条
+入口——离线 CLI 与浏览器 console——两者共用同一套 accept/reject 授权：
 
 ```bash
 webcodex task list
@@ -186,19 +187,25 @@ webcodex task accept <task-id>
 使用 `webcodex task reject <task-id>` 丢弃结果。Accept 前会验证 target Git state
 仍匹配 task baseline。
 
-## Browser readiness
+在浏览器中，打开 `/console`，输入 project credential（仅保存在内存中、绝不持久化），
+用工作队列选择任务。review 详情展示目标、状态、validation、changed files、bounded
+unified diff 与 bounded output tail，**Accept / Reject / Cancel** 均需页面内显式确认。
+Accept 与 Reject 调用与 CLI 相同的授权；Cancel 停止正在运行的 execution。Hosted Chat
+只能提议工作、永远无法接受；server 在应用前会重新校验 checkout 与 result——浏览器上
+的点击无法绕过这些前置条件。
 
-本地 runtime 运行时，`/console` 只显示：
+## Browser console
 
-- 当前 Project；
-- Connection；
-- Agent readiness；
-- coding capability readiness；
-- structured findings 和下一条 CLI action。
+本地 runtime 运行时，`/console` 显示：
 
-它消费 doctor/status 同一组 application readiness facts，不显示 Agent registry、
-client ID、transport implementation、queue ID、token，也不提供 browser editor 或
-terminal。
+- Project header（当前 Project、Connection、Agent readiness、coding capability
+  readiness、下一步 action）；
+- 可执行工作队列（最近需要关注的任务）；
+- 选中任务的 review 详情，含 bounded diff 与 output tail。
+
+它消费 doctor/status 同一组 application readiness facts，并驱动与 CLI 相同的本机
+决策授权。它不显示 Agent registry、client ID、transport implementation、queue ID
+或 token，也不是 browser editor / terminal——无法编辑代码、运行命令或启动任务。
 
 ## Troubleshooting
 

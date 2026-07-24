@@ -107,7 +107,7 @@ async fn dispatch(
     render(res, outcome);
 }
 
-fn render(res: &mut Response, outcome: ConnectorCallOutcome) {
+pub(crate) fn render(res: &mut Response, outcome: ConnectorCallOutcome) {
     let status =
         StatusCode::from_u16(outcome.http_status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     res.status_code(status);

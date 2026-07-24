@@ -79,13 +79,21 @@ Ordinary coding does not need `list_projects`, `runtime_status`,
 registration calls.
 
 Normal writable tasks must run structured checks before `task_finish`. The
-result remains isolated until a human reviews and accepts it locally:
+result remains isolated until a human reviews and accepts it locally. The same
+host-local human authority is reachable two ways — the offline CLI and the
+in-browser console — and both share one accept/reject decision path:
 
 ```bash
 webcodex task list
 webcodex task show <task-id>
 webcodex task accept <task-id>
 ```
+
+In the Browser, `/console` surfaces the actionable work queue and a review
+detail with the bounded diff, and its Accept / Reject / Cancel buttons drive
+that same authority. Hosted Chat can propose work but can never accept it; the
+server re-verifies the target checkout and the result before applying, so a
+Browser click cannot bypass the durable preconditions.
 
 Task, operation, execution, and result IDs remain visible because they provide
 exact retry, progress, review, and acceptance identity. Executor routing and
@@ -117,9 +125,13 @@ authentication presence, project registration, Git/workspace access, the Agent
 runtime, server reachability, Agent registration, required capabilities, and
 structured validation.
 
-The Browser console at `/console` is a minimal read-only projection of the same
-readiness facts. It is not a second status implementation and is not a browser
-IDE.
+The Browser console at `/console` projects the same readiness facts and adds
+the host-local human review surface: the actionable work queue, a review detail
+with the bounded diff and output tail, and Accept / Reject / Cancel actions. It
+is not a second status implementation, not a model-facing capability, and not a
+browser IDE — it cannot edit code, run commands, or start tasks. The project
+credential entered there is kept in memory only and is never persisted in the
+browser.
 
 ## Client Access
 

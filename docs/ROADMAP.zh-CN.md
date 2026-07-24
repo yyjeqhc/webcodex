@@ -95,7 +95,9 @@ Iteration 8.1 的实现候选保持 Hosted 九项 capability，不新增 discove
 本轮等待 focused/full suite、LOC 门禁与人工 review；不自行宣布 merge gate
 通过。通过后再继续：
 
-- Browser 中的最小 review/cancel/accept UI（本机 CLI 已存在）。
+- 已完成（Iteration 8.2）：Browser `/console` 的最小 review/cancel/accept UI —
+  工作队列 + review 详情（bounded diff/output tail）+ Accept/Reject/Cancel 复用与
+  CLI 相同的本机授权，不新增第十项 capability，credential 仅在内存中。
 - replay baseline、真实 ChatGPT MCP/OpenAPI acceptance、第二轮删除。
 - production Rust LOC 相对 2026-07-23 基线净减少 20% 以上。
 

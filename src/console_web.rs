@@ -12,13 +12,8 @@
 //! self-contained. `npm run check:dist` guards against drift between the
 //! TypeScript sources and the committed `frontend/dist/` outputs.
 //!
-//! This is a **read-only** readiness surface. There are no
-//! file-browse, diff, patch-approval, command-execution, or job-log UI
-//! controls here; those are deferred to later phases. The console never
-//! displays `WEBCODEX_TOKEN`, Authorization headers, API keys, full env, or
-//! `agent.toml` / `webcodex.env` contents — the token is only stored in
-//! `localStorage` and sent as a Bearer header; it is never rendered into the
-//! DOM, logs, or debug output.
+//! The host-local review surface uses authenticated `POST /api/console/*`
+//! operations. Its project credential remains in page memory only.
 
 use salvo::http::header::CONTENT_TYPE;
 use salvo::http::HeaderValue;
@@ -132,11 +127,14 @@ mod tests {
         assert!(!CONSOLE_HTML.is_empty());
         assert!(CONSOLE_HTML.contains("/console/app.js"));
         assert!(CONSOLE_HTML.contains("/console/styles.css"));
-        assert!(CONSOLE_APP_JS.contains("/api/connector/readiness"));
+        assert!(CONSOLE_APP_JS.contains("/api/console/"));
         assert!(!CONSOLE_APP_JS.contains("/api/runtime/status"));
-        assert!(!CONSOLE_HTML.contains("Client"));
+        assert!(!CONSOLE_APP_JS.contains("localStorage"));
+        assert!(!CONSOLE_APP_JS.contains("sessionStorage"));
+        assert!(!CONSOLE_APP_JS.contains(".innerHTML"));
+        assert!(CONSOLE_APP_JS.contains("performAction"));
+        assert!(CONSOLE_HTML.contains("type=\"password\""));
         assert!(!CONSOLE_HTML.contains("Transport"));
-        // The bundle must never embed or echo the token into the DOM.
     }
 
     #[tokio::test]

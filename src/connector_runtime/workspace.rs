@@ -5,7 +5,10 @@
 //! the target checkout still matches the captured base on every changed path.
 
 use super::ConnectorContext;
-use crate::db::{ConnectorPreservedWorkspace, ConnectorTaskResult, ConnectorTaskSnapshot};
+use crate::db::{
+    ConnectorPreservedWorkspace, ConnectorTaskResult, ConnectorTaskSnapshot,
+    ConnectorTaskStoreError, Database,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -64,9 +67,20 @@ pub(crate) struct PatchPreview {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DecisionOutcome {
-    pub cleanup_warning: Option<String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocalResultDecision {
+    Accept,
+    Reject,
+}
+
+impl LocalResultDecision {
+    fn as_str(self) -> &'static str {
+        if self == Self::Accept {
+            "accepted"
+        } else {
+            "rejected"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -585,20 +599,19 @@ impl WorkspaceManager {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    pub(crate) fn accept(
+    fn accept_recoverable(
         task: &ConnectorTaskSnapshot,
         result: &ConnectorTaskResult,
-    ) -> Result<DecisionOutcome, String> {
-        if result.decision_status != "pending" || task.task_status != "ready_for_review" {
-            return Err("task result is not pending human review".to_string());
-        }
+        recovering: bool,
+    ) -> Result<Option<String>, ConnectorTaskStoreError> {
         if !task.isolated {
             if read_verified_patch(result)?.is_some() || !result.changed_paths.is_empty() {
-                return Err("read-only task result unexpectedly contains changes".to_string());
+                return Err(ConnectorTaskStoreError::decision(
+                    "result_precondition_failed",
+                    "read-only task result unexpectedly contains changes",
+                ));
             }
-            return Ok(DecisionOutcome {
-                cleanup_warning: None,
-            });
+            return Ok(None);
         }
         let baseline = task
             .baseline_commit
@@ -607,12 +620,25 @@ impl WorkspaceManager {
         let target_root = Path::new(&task.target_root);
         let current_head = git_text(target_root, ["rev-parse", "--verify", "HEAD^{commit}"])?;
         if current_head != baseline {
-            return Err(format!(
+            return Err(ConnectorTaskStoreError::decision(
+                "target_checkout_changed",
+                format!(
                 "target HEAD changed since task start (expected {}, found {}); result was not applied",
                 super::short_oid(baseline),
                 super::short_oid(&current_head)
-            ));
+            )));
         }
+        let patch = read_verified_patch(result)?;
+        let already_applied = if recovering {
+            match patch.as_deref() {
+                Some(patch) => git_apply_output(target_root, patch, true, true)?
+                    .status
+                    .success(),
+                None => true,
+            }
+        } else {
+            false
+        };
         if !result.changed_paths.is_empty() {
             let mut args = vec![
                 OsStr::new("status"),
@@ -626,43 +652,18 @@ impl WorkspaceManager {
                 git_output(target_root, args)?,
                 "check target changed-path preconditions",
             )?;
-            if !status.stdout.is_empty() {
-                return Err(
-                    "target checkout has local changes on result paths; result was not applied"
-                        .to_string(),
-                );
+            if !status.stdout.is_empty() && !already_applied {
+                return Err(ConnectorTaskStoreError::decision(
+                    "target_checkout_changed",
+                    "target checkout has local changes on result paths; result was not applied",
+                ));
             }
         }
-        if let Some(patch) = read_verified_patch(result)? {
-            for mode in ["--check", "--apply"] {
-                let mut command = Command::new("git");
-                command
-                    .arg("-C")
-                    .arg(target_root)
-                    .arg("apply")
-                    .arg("--binary");
-                if mode == "--check" {
-                    command.arg("--check");
-                }
-                command.arg("-");
-                let mut child = command
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .map_err(|error| format!("cannot start git apply: {error}"))?;
-                child
-                    .stdin
-                    .as_mut()
-                    .ok_or_else(|| "git apply stdin was unavailable".to_string())?
-                    .write_all(&patch)
-                    .map_err(|error| format!("cannot send result patch to git apply: {error}"))?;
-                let output = child
-                    .wait_with_output()
-                    .map_err(|error| format!("cannot wait for git apply: {error}"))?;
+        if let Some(patch) = patch.filter(|_| !already_applied) {
+            for check in [true, false] {
                 require_success(
-                    output,
-                    if mode == "--check" {
+                    git_apply_output(target_root, &patch, false, check)?,
+                    if check {
                         "check result patch"
                     } else {
                         "apply result patch"
@@ -670,9 +671,7 @@ impl WorkspaceManager {
                 )?;
             }
         }
-        Ok(DecisionOutcome {
-            cleanup_warning: cleanup_task_workspace(task),
-        })
+        Ok(cleanup_task_workspace(task))
     }
 
     pub(crate) fn patch_preview(
@@ -692,24 +691,6 @@ impl WorkspaceManager {
             total_bytes: patch.len(),
             truncated: shown_bytes < patch.len(),
         }))
-    }
-
-    pub(crate) fn reject(
-        task: &ConnectorTaskSnapshot,
-        result: &ConnectorTaskResult,
-    ) -> Result<DecisionOutcome, String> {
-        if result.decision_status != "pending" || task.task_status != "ready_for_review" {
-            return Err("task result is not pending human review".to_string());
-        }
-        Ok(DecisionOutcome {
-            cleanup_warning: cleanup_task_workspace(task),
-        })
-    }
-
-    pub(crate) fn release_owned_task_workspace(task: &ConnectorTaskSnapshot) -> DecisionOutcome {
-        DecisionOutcome {
-            cleanup_warning: cleanup_task_workspace(task),
-        }
     }
 
     pub(crate) fn validate_resume(
@@ -741,6 +722,183 @@ impl WorkspaceManager {
         }
         Ok(())
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn decide_connector_result_local(
+        db: &Database,
+        project_id: &str,
+        task_id: &str,
+        expected_result_id: Option<&str>,
+        target_root: &Path,
+        decision: LocalResultDecision,
+        actor: &str,
+        now: i64,
+    ) -> Result<ConnectorTaskResult, ConnectorTaskStoreError> {
+        let task = local_decision_task(db, project_id, task_id, target_root)?;
+        let result = db.local_connector_task_result(task_id, project_id)?;
+        if result.is_none()
+            && decision == LocalResultDecision::Reject
+            && task.run_status == "interrupted"
+        {
+            if expected_result_id.is_some() {
+                return Err(result_changed());
+            }
+            db.abandon_interrupted_connector_task(task_id, project_id, actor, now)?;
+            Self::release_and_record(db, project_id, &task, now)?;
+            return db
+                .local_connector_task_result(task_id, project_id)?
+                .ok_or_else(|| {
+                    ConnectorTaskStoreError::decision(
+                        "result_not_ready",
+                        "abandoned task result disappeared",
+                    )
+                });
+        }
+        let result = result.ok_or_else(|| {
+            ConnectorTaskStoreError::decision(
+                "result_not_ready",
+                "task has no stable result to decide",
+            )
+        })?;
+        if expected_result_id != Some(result.result_id.as_str()) {
+            return Err(result_changed());
+        }
+        if decision == LocalResultDecision::Reject
+            && result.decision_status == "rejected"
+            && result.cleanup_warning.is_some()
+        {
+            Self::release_and_record(db, project_id, &task, now)?;
+            return db
+                .local_connector_task_result(task_id, project_id)?
+                .ok_or(ConnectorTaskStoreError::NotFound);
+        }
+        if result.decision_status != "pending" {
+            return Err(ConnectorTaskStoreError::decision(
+                "result_already_decided",
+                "task result was already decided",
+            ));
+        }
+        db.begin_connector_result_decision(
+            task_id,
+            project_id,
+            &result.result_id,
+            decision.as_str(),
+            actor,
+            now,
+        )?;
+        Self::complete_local_decision(db, project_id, task, result, decision, false, now)
+    }
+
+    fn complete_local_decision(
+        db: &Database,
+        project_id: &str,
+        task: ConnectorTaskSnapshot,
+        result: ConnectorTaskResult,
+        decision: LocalResultDecision,
+        recovering: bool,
+        now: i64,
+    ) -> Result<ConnectorTaskResult, ConnectorTaskStoreError> {
+        let effect = match decision {
+            LocalResultDecision::Accept => Self::accept_recoverable(&task, &result, recovering),
+            LocalResultDecision::Reject => Ok(cleanup_task_workspace(&task)),
+        };
+        let effect = match effect {
+            Ok(effect) => effect,
+            Err(error) => {
+                if !recovering {
+                    db.abort_connector_result_decision(&task.task_id, &result.result_id)?;
+                }
+                return Err(error);
+            }
+        };
+        let current_warning = effect.map(|warning| sanitize_warning(&task, &warning));
+        let warning = merge_warning(result.cleanup_warning.as_deref(), current_warning);
+        db.finalize_connector_result_decision(
+            &task.task_id,
+            project_id,
+            &result.result_id,
+            warning.as_deref(),
+            now,
+        )
+    }
+
+    pub(crate) fn recover_result_decisions(
+        db: &Database,
+        project_id: &str,
+        target_root: &Path,
+        now: i64,
+    ) -> Result<usize, ConnectorTaskStoreError> {
+        let intents = db.connector_result_decision_intents(project_id)?;
+        for (task_id, result_id, decision) in &intents {
+            let decision = if decision == "accepted" {
+                LocalResultDecision::Accept
+            } else {
+                LocalResultDecision::Reject
+            };
+            let task = local_decision_task(db, project_id, task_id, target_root)?;
+            let result = db
+                .local_connector_task_result(task_id, project_id)?
+                .filter(|result| result.result_id == *result_id)
+                .ok_or_else(result_changed)?;
+            Self::complete_local_decision(db, project_id, task, result, decision, true, now)?;
+        }
+        Ok(intents.len())
+    }
+
+    fn release_and_record(
+        db: &Database,
+        project_id: &str,
+        task: &ConnectorTaskSnapshot,
+        now: i64,
+    ) -> Result<(), ConnectorTaskStoreError> {
+        let warning = cleanup_task_workspace(task).map(|warning| sanitize_warning(task, &warning));
+        db.record_connector_workspace_release(
+            &task.task_id,
+            project_id,
+            &task.owner_subject_id,
+            warning.is_none(),
+            warning.as_deref(),
+            now,
+        )?;
+        Ok(())
+    }
+}
+
+fn result_changed() -> ConnectorTaskStoreError {
+    ConnectorTaskStoreError::decision(
+        "result_changed",
+        "the task result changed since it was reviewed; refresh and decide again",
+    )
+}
+
+fn local_decision_task(
+    db: &Database,
+    project_id: &str,
+    task_id: &str,
+    target_root: &Path,
+) -> Result<ConnectorTaskSnapshot, ConnectorTaskStoreError> {
+    let task = db.local_connector_task(task_id, project_id)?;
+    if Path::new(&task.target_root) != target_root {
+        return Err(ConnectorTaskStoreError::decision(
+            "result_precondition_failed",
+            "task target does not match the resolved project checkout; no result was applied",
+        ));
+    }
+    Ok(task)
+}
+
+fn merge_warning(existing: Option<&str>, current: Option<String>) -> Option<String> {
+    match (existing, current) {
+        (Some(a), Some(b)) if a != b => Some(format!("{a}; {b}")),
+        (Some(a), _) => Some(a.to_string()),
+        (_, warning) => warning,
+    }
+}
+
+fn sanitize_warning(task: &ConnectorTaskSnapshot, warning: &str) -> String {
+    warning
+        .replace(&task.execution_root, "<managed-workspace>")
+        .replace(&task.target_root, "<target-workspace>")
 }
 
 fn read_verified_patch(result: &ConnectorTaskResult) -> Result<Option<Vec<u8>>, String> {
@@ -760,6 +918,41 @@ fn read_verified_patch(result: &ConnectorTaskResult) -> Result<Option<Vec<u8>>, 
         return Err("result patch hash no longer matches its recorded value".to_string());
     }
     Ok(Some(patch))
+}
+
+fn git_apply_output(
+    target_root: &Path,
+    patch: &[u8],
+    reverse: bool,
+    check: bool,
+) -> Result<Output, String> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(target_root)
+        .args(["apply", "--binary"]);
+    if reverse {
+        command.arg("--reverse");
+    }
+    if check {
+        command.arg("--check");
+    }
+    let mut child = command
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot start git apply: {error}"))?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "git apply stdin was unavailable".to_string())?
+        .write_all(patch)
+        .map_err(|error| format!("cannot send result patch to git apply: {error}"))?;
+    child
+        .wait_with_output()
+        .map_err(|error| format!("cannot wait for git apply: {error}"))
 }
 
 fn cleanup_task_workspace(task: &ConnectorTaskSnapshot) -> Option<String> {
@@ -1229,6 +1422,8 @@ mod tests {
             baseline_commit: prepared.baseline_commit.clone(),
             baseline_tree: prepared.baseline_tree.clone(),
             isolated: prepared.isolated,
+            created_at: 1,
+            updated_at: 2,
         }
     }
 
@@ -1280,8 +1475,9 @@ mod tests {
         assert_eq!(manager.release_task_workspace(&task), None);
         assert!(Path::new(&prepared.execution_root).exists());
 
-        let outcome = WorkspaceManager::accept(&task, &result(&task, &captured)).unwrap();
-        assert_eq!(outcome.cleanup_warning, None);
+        let outcome =
+            WorkspaceManager::accept_recoverable(&task, &result(&task, &captured), false).unwrap();
+        assert_eq!(outcome, None);
         assert_eq!(
             fs::read_to_string(Path::new(&context.executor_root).join("README.md")).unwrap(),
             "after\n"
@@ -1313,13 +1509,13 @@ mod tests {
         )
         .unwrap();
 
-        let error = WorkspaceManager::accept(&task, &result(&task, &captured)).unwrap_err();
-        assert!(error.contains("local changes"));
+        let error = WorkspaceManager::accept_recoverable(&task, &result(&task, &captured), false)
+            .unwrap_err();
+        assert!(error.to_string().contains("local changes"));
         assert_eq!(
             fs::read_to_string(Path::new(&context.executor_root).join("README.md")).unwrap(),
             "human change\n"
         );
-        WorkspaceManager::reject(&task, &result(&task, &captured)).unwrap();
     }
 
     #[test]
@@ -1422,7 +1618,6 @@ mod tests {
         fs::write(result.patch_artifact.as_deref().unwrap(), "tampered\n").unwrap();
         let error = WorkspaceManager::patch_preview(&result, 1024).unwrap_err();
         assert!(error.contains("size") || error.contains("hash"));
-        WorkspaceManager::reject(&task, &result).unwrap();
     }
 
     #[test]

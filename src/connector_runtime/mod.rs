@@ -8,6 +8,8 @@
 mod execution;
 #[cfg(test)]
 mod execution_tests;
+#[cfg(test)]
+mod host_tests;
 pub(crate) mod http;
 pub(crate) mod surface;
 pub(crate) mod workspace;
@@ -16,6 +18,7 @@ use crate::auth::{
     AuthContext, AuthKind, ProjectCredentialVerifier, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
 };
+use crate::connector_runtime::workspace::{LocalResultDecision, WorkspaceManager};
 use crate::db::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
     ConnectorExecutionReservation, ConnectorTaskResult, ConnectorTaskSnapshot,
@@ -30,7 +33,7 @@ use crate::tool_runtime::validation_profile::{
 };
 use crate::tool_runtime::{ApplyFileChangeInput, SearchResultMode, ToolResult, ToolRuntime};
 use crate::Database;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -119,7 +122,7 @@ pub(crate) struct ConnectorRuntimeSlot(pub(crate) Option<Arc<ConnectorRuntime>>)
 
 pub(crate) struct ConnectorRuntime {
     tools: Arc<ToolRuntime>,
-    db: Arc<Database>,
+    pub(crate) db: Arc<Database>,
     context: ConnectorContext,
     workspace: workspace::WorkspaceManager,
     executions: execution::ExecutionService,
@@ -170,6 +173,13 @@ impl ConnectorRuntime {
             return Err("project credential does not match connector grant identity".to_string());
         }
         let workspace = workspace::WorkspaceManager::new(&context)?;
+        WorkspaceManager::recover_result_decisions(
+            &db,
+            &context.project_id,
+            Path::new(&context.executor_root),
+            chrono::Utc::now().timestamp(),
+        )
+        .map_err(|error| format!("failed to recover local result decision: {error}"))?;
         let executions =
             execution::ExecutionService::new(tools.clone(), db.clone(), workspace.clone());
         let (runs_recovered, executions_recovered) = executions
@@ -305,6 +315,67 @@ impl ConnectorRuntime {
             Some(self.context.project_name.clone()),
             RemoteProbe::Ready,
         ))
+    }
+
+    pub(crate) async fn host_review(
+        &self,
+        auth: &AuthContext,
+        input: TaskReviewInput,
+    ) -> ConnectorCallOutcome {
+        let task = match self
+            .db
+            .local_connector_task(&input.task_id, &self.context.project_id)
+        {
+            Ok(task) => task,
+            Err(error) => return store_error_outcome(error, None),
+        };
+        let mut outcome = self
+            .task_review(
+                json!(input),
+                &task.owner_subject_id,
+                auth,
+                ConnectorTransport::Api,
+            )
+            .await;
+        if outcome.ok {
+            outcome.body = host_review_projection(&outcome.body);
+        }
+        outcome
+    }
+
+    pub(crate) async fn host_cancel(
+        &self,
+        auth: &AuthContext,
+        input: TaskCancelInput,
+    ) -> ConnectorCallOutcome {
+        let task = match self
+            .db
+            .local_connector_task(&input.task_id, &self.context.project_id)
+        {
+            Ok(task) => task,
+            Err(error) => return store_error_outcome(error, None),
+        };
+        self.task_cancel(json!(input), &task.owner_subject_id, auth)
+            .await
+    }
+
+    pub(crate) fn host_decide(
+        &self,
+        task_id: &str,
+        result_id: Option<&str>,
+        decision: LocalResultDecision,
+        now: i64,
+    ) -> Result<ConnectorTaskResult, ConnectorTaskStoreError> {
+        WorkspaceManager::decide_connector_result_local(
+            &self.db,
+            &self.context.project_id,
+            task_id,
+            result_id,
+            Path::new(&self.context.executor_root),
+            decision,
+            "local_console",
+            now,
+        )
     }
 
     pub(crate) async fn call(
@@ -1512,35 +1583,34 @@ impl ConnectorRuntime {
         let next_action = execution
             .as_ref()
             .and_then(|value| value["next_action"].as_str())
-            .unwrap_or(if task.task_status == "cancelled" {
-                "start_a_new_task"
-            } else if task.run_status == "interrupted" {
-                "resume_or_reject_on_the_host"
-            } else {
-                "continue_or_finish"
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if task.task_status == "cancelled" {
+                    "start_a_new_task"
+                } else if task.run_status == "interrupted" {
+                    "resume_or_reject_on_the_host"
+                } else {
+                    "continue_or_finish"
+                }
+                .to_string()
             });
-        ConnectorCallOutcome::success_blocking_at(
-            &task,
-            task.event_cursor,
-            json!({
-                "goal": task.goal,
-                "mode": task.mode,
-                "status": task.task_status,
-                "run_status": task.run_status,
-                "changes": changes,
-                "result": result.as_ref().map(result_projection),
-                "active_execution": execution.as_ref().filter(|_| {
-                    review.execution.as_ref().is_some_and(
-                        crate::db::ConnectorExecution::is_active
-                    )
-                }),
-                "recent_execution": execution,
-                "recent_events": events,
-                "heartbeat": review.heartbeat,
-                "next_action": next_action
-            }),
-            blocking,
-        )
+        let mut data = durable_task_review_projection(&task, result.as_ref());
+        data["changes"] = changes;
+        data["active_execution"] = execution
+            .as_ref()
+            .filter(|_| {
+                review
+                    .execution
+                    .as_ref()
+                    .is_some_and(crate::db::ConnectorExecution::is_active)
+            })
+            .cloned()
+            .unwrap_or(Value::Null);
+        data["recent_execution"] = execution.unwrap_or(Value::Null);
+        data["recent_events"] = json!(events);
+        data["heartbeat"] = json!(review.heartbeat);
+        data["next_action"] = json!(next_action);
+        ConnectorCallOutcome::success_blocking_at(&task, task.event_cursor, data, blocking)
     }
 
     async fn task_cancel(
@@ -2112,7 +2182,7 @@ impl ConnectorCallOutcome {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn error(
+    pub(crate) fn error(
         http_status: u16,
         code: impl Into<String>,
         message: impl Into<String>,
@@ -2267,6 +2337,27 @@ fn error_envelope(
     })
 }
 
+fn host_review_projection(envelope: &Value) -> Value {
+    let mut review = envelope["data"].clone();
+    review["task_id"] = envelope["task_id"].clone();
+    review["run_id"] = envelope["run_id"].clone();
+    review["event_cursor"] = envelope["event_cursor"].clone();
+    let pending = review["result"]["decision_status"] == "pending";
+    review["can_accept"] = json!(pending && review["status"] == "ready_for_review");
+    review["can_reject"] = json!(pending || review["run_status"] == "interrupted");
+    review["can_cancel"] = json!(review["status"] == "active");
+    review["next_action"] = json!(if review["can_accept"] == true {
+        "review_and_accept"
+    } else if review["run_status"] == "interrupted" {
+        "resume_or_reject"
+    } else if review["can_cancel"] == true {
+        "monitor_or_cancel"
+    } else {
+        "review"
+    });
+    review
+}
+
 fn parse_input<T: DeserializeOwned>(
     capability: &str,
     arguments: Value,
@@ -2288,7 +2379,7 @@ fn invalid_input(capability: &str, message: impl Into<String>) -> ConnectorCallO
     )
 }
 
-fn store_error_outcome(
+pub(crate) fn store_error_outcome(
     error: ConnectorTaskStoreError,
     task: Option<&ConnectorTaskSnapshot>,
 ) -> ConnectorCallOutcome {
@@ -2325,6 +2416,16 @@ fn store_error_outcome(
                 false,
             ),
         },
+        ConnectorTaskStoreError::Decision(code, message) => ConnectorCallOutcome::error(
+            409,
+            code,
+            message,
+            false,
+            true,
+            Some("Refresh the task review and resolve the stated precondition."),
+            None,
+            false,
+        ),
         ConnectorTaskStoreError::InvalidState(message) => match task {
             Some(task) => ConnectorCallOutcome::error_for_task(
                 409,
@@ -2650,7 +2751,7 @@ fn kernel_failure_may_have_applied(error: &KernelFailure) -> bool {
     })
 }
 
-fn result_projection(result: &ConnectorTaskResult) -> Value {
+pub(crate) fn result_projection(result: &ConnectorTaskResult) -> Value {
     json!({
         "result_id": result.result_id,
         "summary": result.summary,
@@ -2662,6 +2763,21 @@ fn result_projection(result: &ConnectorTaskResult) -> Value {
         "decision_status": result.decision_status,
         "decided_at": result.decided_at,
         "cleanup_warning": result.cleanup_warning
+    })
+}
+
+pub(crate) fn durable_task_review_projection(
+    task: &ConnectorTaskSnapshot,
+    result: Option<&ConnectorTaskResult>,
+) -> Value {
+    json!({
+        "goal": task.goal,
+        "mode": task.mode,
+        "status": task.task_status,
+        "run_status": task.run_status,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "result": result.map(result_projection)
     })
 }
 
@@ -2852,7 +2968,7 @@ fn validate_path(path: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn validate_opaque_id(value: &str, prefix: &str, label: &str) -> Result<(), String> {
+pub(crate) fn validate_opaque_id(value: &str, prefix: &str, label: &str) -> Result<(), String> {
     let suffix = value.strip_prefix(prefix).unwrap_or_default();
     if suffix.len() < 10
         || !suffix
@@ -3020,28 +3136,28 @@ struct CommandsRunInput {
     timeout_secs: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct TaskReviewInput {
-    task_id: String,
+pub(crate) struct TaskReviewInput {
+    pub(crate) task_id: String,
     #[serde(default)]
-    include_diff: Option<bool>,
+    pub(crate) include_diff: Option<bool>,
     #[serde(default)]
-    after_cursor: Option<i64>,
+    pub(crate) after_cursor: Option<i64>,
     #[serde(default)]
-    wait_ms: Option<u64>,
+    pub(crate) wait_ms: Option<u64>,
     #[serde(default)]
-    max_events: Option<usize>,
+    pub(crate) max_events: Option<usize>,
     #[serde(default)]
-    include_output_tail: Option<bool>,
+    pub(crate) include_output_tail: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct TaskCancelInput {
-    task_id: String,
+pub(crate) struct TaskCancelInput {
+    pub(crate) task_id: String,
     #[serde(default)]
-    reason: Option<String>,
+    pub(crate) reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3405,24 +3521,17 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("isolated result"));
-        let decided_task = connector
-            .db
-            .connector_task(task_id, &connector.context.project_id, PROJECT_SUBJECT_ID)
-            .unwrap();
-        let result = connector
+        let result_id = connector
             .db
             .connector_task_result(task_id, &connector.context.project_id, PROJECT_SUBJECT_ID)
             .unwrap()
-            .unwrap();
-        let cleanup = workspace::WorkspaceManager::reject(&decided_task, &result).unwrap();
+            .unwrap()
+            .result_id;
         connector
-            .db
-            .decide_connector_result(
+            .host_decide(
                 task_id,
-                &connector.context.project_id,
-                "rejected",
-                "test",
-                cleanup.cleanup_warning.as_deref(),
+                Some(&result_id),
+                LocalResultDecision::Reject,
                 chrono::Utc::now().timestamp(),
             )
             .unwrap();

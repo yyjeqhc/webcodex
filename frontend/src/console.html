@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>WebCodex — Project Readiness</title>
+  <title>WebCodex — Local Review Console</title>
   <link rel="stylesheet" href="/console/styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
     <header class="topbar">
       <div>
         <h1>WebCodex</h1>
-        <p class="muted">Project readiness</p>
+        <p class="muted">Local review console</p>
       </div>
       <div class="topbar-controls" id="topbar-controls" hidden>
         <button id="refresh-btn" class="btn" type="button">Refresh</button>
@@ -21,15 +21,16 @@
           <span>Auto</span>
         </label>
         <span id="last-updated" class="muted small"></span>
+        <button id="lock-btn" class="btn" type="button">Lock</button>
       </div>
     </header>
 
     <section id="token-gate" class="gate">
       <form id="token-form" autocomplete="off">
         <h2>Connect to WebCodex</h2>
-        <p class="muted">Enter the local access token. It is never displayed.</p>
+        <p class="muted">Enter the local project credential. It stays in memory for this page only and is never stored.</p>
         <div class="field-row">
-          <input id="token-input" type="password" placeholder="Bearer token" autocomplete="current-password" spellcheck="false" />
+          <input id="token-input" type="password" placeholder="Project credential" autocomplete="off" spellcheck="false" />
           <button class="btn btn-primary" type="submit">Connect</button>
         </div>
         <p id="token-error" class="error-text" role="alert"></p>
@@ -45,23 +46,89 @@
           <div class="fact"><span>Capabilities</span><strong id="capabilities">—</strong></div>
           <div class="fact"><span>Coding access</span><strong id="coding">—</strong></div>
         </div>
+        <p class="next-line"><span class="muted small">Next</span> <code id="next-action">—</code></p>
       </section>
 
-      <section class="panel next-panel">
-        <h2>Next</h2>
-        <code id="next-action">webcodex doctor</code>
-      </section>
+      <div class="workbench">
+        <section class="panel queue-panel">
+          <div class="panel-head">
+            <h2>Work queue</h2>
+            <label class="auto-toggle">
+              <input id="show-completed" type="checkbox" />
+              <span class="small">Show completed</span>
+            </label>
+          </div>
+          <ul id="task-list" class="task-list"></ul>
+          <p id="queue-empty" class="muted small" hidden>No tasks need attention.</p>
+        </section>
 
-      <section class="panel">
-        <h2>Readiness checks</h2>
-        <ul id="findings" class="findings"></ul>
-      </section>
+        <section class="panel detail-panel">
+          <div id="detail-empty" class="muted">Select a task to review.</div>
+          <div id="detail" hidden>
+            <h2 id="detail-goal" class="detail-goal">—</h2>
+            <div class="detail-facts">
+              <span class="chip" id="detail-task-status">—</span>
+              <span class="chip" id="detail-run-status">—</span>
+              <span class="chip" id="detail-exec-status" hidden>—</span>
+              <span class="chip" id="detail-validation" hidden>—</span>
+            </div>
+            <p class="muted small" id="detail-meta">—</p>
+            <div class="review-facts small">
+              <span class="muted">Created</span><span id="detail-created">not available</span>
+              <span class="muted">Updated</span><span id="detail-updated">not available</span>
+              <span class="muted">Recipe / framework</span><span id="detail-recipe">not available</span>
+              <span class="muted">Evidence</span><span id="detail-evidence">not available</span>
+            </div>
+
+            <div class="detail-section" id="detail-checks-section" hidden>
+              <h3>Checks</h3>
+              <ul id="detail-checks" class="checks"></ul>
+            </div>
+
+            <div class="detail-section" id="detail-files-section" hidden>
+              <h3>Changed files <span class="muted small" id="detail-files-count"></span></h3>
+              <ul id="detail-files" class="files"></ul>
+            </div>
+
+            <div class="detail-section" id="detail-diff-section" hidden>
+              <h3>Diff <span class="muted small" id="detail-diff-trunc" hidden>(truncated)</span></h3>
+              <pre id="detail-diff" class="diff"></pre>
+            </div>
+
+            <div class="detail-section" id="detail-output-section" hidden>
+              <h3>Output tail <span class="muted small">(bounded)</span></h3>
+              <pre id="detail-output" class="output"></pre>
+            </div>
+
+            <div class="detail-actions">
+              <button id="cancel-btn" class="btn" type="button" hidden>Cancel</button>
+              <button id="reject-btn" class="btn" type="button" hidden>Reject</button>
+              <button id="accept-btn" class="btn btn-primary" type="button" hidden>Accept</button>
+            </div>
+            <p id="detail-next" class="muted small"></p>
+          </div>
+        </section>
+      </div>
 
       <p id="error-banner" class="error-text panel" role="alert" hidden></p>
+
+      <div id="confirm-overlay" class="overlay" hidden>
+        <div class="confirm-box panel">
+          <h3 id="confirm-title">Confirm</h3>
+          <div id="confirm-body" class="confirm-body"></div>
+          <div class="field-row" id="confirm-reason-row" hidden>
+            <input id="confirm-reason" type="text" placeholder="Optional reason" maxlength="500" />
+          </div>
+          <div class="detail-actions">
+            <button id="confirm-cancel" class="btn" type="button">Back</button>
+            <button id="confirm-ok" class="btn btn-primary" type="button">Confirm</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <footer class="footer muted small">
-      For full diagnostics, run <code>webcodex doctor</code> in the project.
+      Host-local human review. Hosted Chat cannot accept results. For diagnostics, run <code>webcodex doctor</code>.
     </footer>
   </main>
   <script src="/console/app.js"></script>

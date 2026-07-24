@@ -238,7 +238,8 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
             Router::with_path("api")
                 .hoop(crate::AuthMiddleware)
                 .hoop(record_authenticated_connector_request)
-                .push(crate::connector_runtime::http::routes()),
+                .push(crate::connector_runtime::http::routes())
+                .push(crate::host_console_http::routes()),
         );
     AuthenticatedProjectFixture {
         _temp: temp,
@@ -1412,4 +1413,304 @@ async fn doctor_reports_rejected_project_credential_without_agent_offline() {
         .findings
         .iter()
         .any(|finding| finding.code == "agent_offline"));
+}
+
+fn seed_ready_console(
+    fixture: &AuthenticatedProjectFixture,
+    task_id: &str,
+    run_id: &str,
+    now: i64,
+) -> String {
+    let context = fixture.connector.context().clone();
+    let manager = crate::connector_runtime::workspace::WorkspaceManager::new(&context).unwrap();
+    let subject = format!("project:{}", context.project_grant_id);
+    fixture
+        .db
+        .ensure_connector_binding(crate::db::ConnectorBinding {
+            project_id: &context.project_id,
+            project_name: &context.project_name,
+            workspace_id: &context.workspace_id,
+            executor_ref: &context.executor_project,
+            subject_id: &subject,
+            profile: "personal",
+            now,
+        })
+        .unwrap();
+    let prepared = manager.prepare(&context, task_id, run_id, false).unwrap();
+    let task = fixture
+        .db
+        .start_connector_task(crate::db::NewConnectorTask {
+            task_id,
+            run_id,
+            project_id: &context.project_id,
+            workspace_id: &context.workspace_id,
+            subject_id: &subject,
+            goal: "update readme from the browser console",
+            mode: "normal",
+            target_executor_ref: &context.executor_project,
+            execution_executor_ref: &prepared.execution_executor_ref,
+            target_root: &context.executor_root,
+            execution_root: &prepared.execution_root,
+            baseline_commit: prepared.baseline_commit.as_deref(),
+            baseline_tree: prepared.baseline_tree.as_deref(),
+            isolated: true,
+            now,
+        })
+        .unwrap();
+    fs::write(Path::new(&task.execution_root).join("README.md"), "after\n").unwrap();
+    let captured = manager.capture_result(&task).unwrap();
+    let result_id = format!(
+        "wc_result_{}",
+        &task_id["wc_task_".len().."wc_task_".len() + 16]
+    );
+    fixture
+        .db
+        .finish_connector_task(
+            task_id,
+            &context.project_id,
+            &subject,
+            crate::db::NewConnectorResult {
+                result_id: &result_id,
+                summary: "updated readme",
+                patch_artifact: captured.patch_artifact.as_deref(),
+                patch_sha256: captured.patch_sha256.as_deref(),
+                patch_bytes: captured.patch_bytes,
+                changed_paths: &captured.changed_paths,
+                validation: &serde_json::json!({"status": "not_run"}),
+                warnings: &captured.warnings,
+            },
+            now + 1,
+        )
+        .unwrap();
+    task_id.to_string()
+}
+
+#[tokio::test]
+async fn console_review_and_accept_golden_path() {
+    let fixture = authenticated_project_fixture().await;
+    let task_id = seed_ready_console(
+        &fixture,
+        "wc_task_aa11223344556677889900aabbccddee",
+        "wc_run_ca",
+        2,
+    );
+
+    let (list_status, list) = post_connector(
+        &fixture,
+        "/api/console/tasks",
+        &fixture.credential,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(list_status, StatusCode::OK);
+    let rows = list["tasks"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["task_id"], task_id);
+    assert_eq!(rows[0]["task_status"], "ready_for_review");
+    assert_eq!(rows[0]["next_action"], "review_and_accept");
+    let list_text = serde_json::to_string(&list).unwrap();
+    assert!(
+        !list_text.contains(fixture.root.to_string_lossy().as_ref())
+            && !list_text.contains(fixture.connector.context().executor_project.as_str()),
+        "work queue leaked a host path or executor reference"
+    );
+
+    let (review_status, review) = post_connector(
+        &fixture,
+        "/api/console/task/review",
+        &fixture.credential,
+        serde_json::json!({ "task_id": task_id, "include_diff": true }),
+    )
+    .await;
+    assert_eq!(review_status, StatusCode::OK);
+    assert_eq!(review["can_accept"], true);
+    assert_eq!(review["can_reject"], true);
+    assert_eq!(review["can_cancel"], false);
+    assert!(review["changes"]["diff_preview"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("after"));
+    assert_eq!(review["created_at"], 2);
+    assert_eq!(review["updated_at"], 3);
+    assert_eq!(review["result"]["validation"]["status"], "not_run");
+    assert_eq!(review["next_action"], "review_and_accept");
+    let result_id = review["result"]["result_id"].as_str().unwrap().to_string();
+
+    let (accept_status, accepted) = post_connector(
+        &fixture,
+        "/api/console/result/accept",
+        &fixture.credential,
+        serde_json::json!({ "task_id": task_id, "result_id": result_id }),
+    )
+    .await;
+    assert_eq!(accept_status, StatusCode::OK);
+    assert_eq!(accepted["decision"], "accepted");
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("README.md")).unwrap(),
+        "after\n"
+    );
+
+    let recorded = fixture.recorded_requests.lock().unwrap().clone();
+    assert!(!recorded.is_empty());
+    for path in &recorded {
+        assert!(
+            path.starts_with("/api/console/"),
+            "console call reached a non-console route: {path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn console_requires_a_credential() {
+    let fixture = authenticated_project_fixture().await;
+    let response = TestClient::post("http://localhost/api/console/tasks")
+        .json(&serde_json::json!({}))
+        .send(&fixture.service)
+        .await;
+    assert_eq!(response_status(&response), StatusCode::UNAUTHORIZED);
+    assert!(
+        fixture.recorded_requests.lock().unwrap().is_empty(),
+        "an unauthenticated console request must not pass AuthMiddleware"
+    );
+}
+
+#[tokio::test]
+async fn console_rejects_a_cross_project_credential() {
+    let fixture = authenticated_project_fixture().await;
+    let (_other_temp, other_root, other_state) = repo("console-other-project");
+    let other_options = options(other_root, other_state.clone());
+    setup(&other_options).unwrap();
+    let wrong_credential =
+        read_private_value(&other_state.join("credentials/connector-key")).unwrap();
+
+    let (status, _body) = post_connector(
+        &fixture,
+        "/api/console/tasks",
+        &wrong_credential,
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert!(
+        status.is_client_error(),
+        "a different project's credential must be refused, got {status}"
+    );
+    assert!(fixture.recorded_requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn console_enforces_json_and_same_origin_guard() {
+    let fixture = authenticated_project_fixture().await;
+
+    let mut wrong_media = TestClient::post("http://localhost/api/console/tasks")
+        .bearer_auth(&fixture.credential)
+        .text("{}")
+        .send(&fixture.service)
+        .await;
+    assert_eq!(
+        response_status(&wrong_media),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    assert_eq!(
+        wrong_media
+            .take_json::<serde_json::Value>()
+            .await
+            .unwrap_or_default()["error"]["code"],
+        "unsupported_media_type"
+    );
+
+    let mut cross_origin = TestClient::post("http://localhost/api/console/result/accept")
+        .bearer_auth(&fixture.credential)
+        .json(&serde_json::json!({ "task_id": "wc_task_aa11223344556677889900aabbccddee" }))
+        .add_header("origin", "http://attacker.example", true)
+        .send(&fixture.service)
+        .await;
+    assert_eq!(response_status(&cross_origin), StatusCode::FORBIDDEN);
+    assert_eq!(
+        cross_origin
+            .take_json::<serde_json::Value>()
+            .await
+            .unwrap_or_default()["error"]["code"],
+        "cross_origin_denied"
+    );
+    let mut response = TestClient::post("http://localhost/api/console/tasks")
+        .bearer_auth(&fixture.credential)
+        .raw_json("{ this is not valid json")
+        .send(&fixture.service)
+        .await;
+    assert_eq!(response_status(&response), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response
+            .take_json::<serde_json::Value>()
+            .await
+            .unwrap_or_default()["error"]["code"],
+        "invalid_arguments"
+    );
+    let (status, body) = post_connector(
+        &fixture,
+        "/api/console/tasks",
+        &fixture.credential,
+        serde_json::json!({ "include_completed": false, "smuggled": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_arguments");
+    let response = TestClient::post("http://localhost/api/console/not-allowlisted")
+        .bearer_auth(&fixture.credential)
+        .json(&serde_json::json!({}))
+        .send(&fixture.service)
+        .await;
+    assert_eq!(response_status(&response), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn console_accept_requires_result_id_and_stale_identity_has_no_effect() {
+    let fixture = authenticated_project_fixture().await;
+    let task_id = seed_ready_console(
+        &fixture,
+        "wc_task_dd11223344556677889900aabbccddee",
+        "wc_run_cd",
+        2,
+    );
+
+    let (missing_status, missing) = post_connector(
+        &fixture,
+        "/api/console/result/accept",
+        &fixture.credential,
+        serde_json::json!({ "task_id": task_id }),
+    )
+    .await;
+    assert_eq!(missing_status, StatusCode::BAD_REQUEST);
+    assert_eq!(missing["error"]["code"], "invalid_arguments");
+
+    let (stale_status, stale) = post_connector(
+        &fixture,
+        "/api/console/result/accept",
+        &fixture.credential,
+        serde_json::json!({ "task_id": task_id, "result_id": "wc_result_stale00000" }),
+    )
+    .await;
+    assert_eq!(stale_status, StatusCode::CONFLICT);
+    assert_eq!(stale["error"]["code"], "result_changed");
+    assert_eq!(stale["error"]["retryable"], false);
+    assert_eq!(stale["error"]["user_action_required"], true);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("README.md")).unwrap(),
+        "fixture\n"
+    );
+    let task = fixture
+        .db
+        .local_connector_task(&task_id, &fixture.connector.context().project_id)
+        .unwrap();
+    assert_eq!(task.task_status, "ready_for_review");
+}
+
+#[test]
+fn console_is_not_a_model_facing_capability() {
+    let names = crate::connector_runtime::surface::CAPABILITY_NAMES;
+    assert_eq!(names.len(), 9);
+    assert!(names
+        .iter()
+        .all(|name| !crate::connector_runtime::surface::route_for(name)
+            .is_some_and(|route| route.starts_with("/api/console/"))));
 }

@@ -85,6 +85,19 @@ pub(crate) struct ConnectorTaskSnapshot {
     #[serde(skip_serializing)]
     pub baseline_tree: Option<String>,
     pub isolated: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub(crate) struct LocalReviewableTask {
+    pub task_id: String,
+    pub goal: String,
+    pub task_status: String,
+    pub updated_at: i64,
+    pub execution_status: Option<String>,
+    pub validation_status: Option<String>,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -153,8 +166,21 @@ pub(crate) struct ConnectorTaskEvent {
 pub(crate) enum ConnectorTaskStoreError {
     NotFound,
     OperationIdConflict(String),
+    Decision(&'static str, String),
     InvalidState(String),
     Storage(anyhow::Error),
+}
+
+impl ConnectorTaskStoreError {
+    pub(crate) fn decision(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Decision(code, message.into())
+    }
+}
+
+impl From<String> for ConnectorTaskStoreError {
+    fn from(message: String) -> Self {
+        Self::decision("result_precondition_failed", message)
+    }
 }
 
 impl std::fmt::Display for ConnectorTaskStoreError {
@@ -167,6 +193,7 @@ impl std::fmt::Display for ConnectorTaskStoreError {
                     "operation_id '{operation_id}' was reused with a different request"
                 )
             }
+            Self::Decision(_, message) => write!(f, "{message}"),
             Self::InvalidState(message) => write!(f, "{message}"),
             Self::Storage(error) => write!(f, "{error}"),
         }
@@ -345,6 +372,8 @@ impl Database {
             baseline_commit: task.baseline_commit.map(str::to_string),
             baseline_tree: task.baseline_tree.map(str::to_string),
             isolated: task.isolated,
+            created_at: task.now,
+            updated_at: task.now,
         })
     }
 
@@ -900,6 +929,71 @@ impl Database {
         Ok(tasks)
     }
 
+    pub(crate) fn local_reviewable_tasks(
+        &self,
+        project_id: &str,
+        include_completed: bool,
+        limit: usize,
+    ) -> Result<Vec<LocalReviewableTask>, ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut statement = conn.prepare(
+            "SELECT q.task_id, q.goal, q.task_status, q.updated_at, q.execution_status,
+                    json_extract(q.validation_json, '$.status'),
+                    CASE
+                        WHEN q.task_status IN ('accepted', 'rejected', 'cancelled') THEN 'closed'
+                        WHEN q.run_status = 'interrupted' THEN 'resume_or_reject'
+                        WHEN q.task_status = 'ready_for_review' AND q.result_id IS NOT NULL THEN 'review_and_accept'
+                        WHEN q.task_status = 'active' THEN 'in_progress'
+                        ELSE 'review'
+                    END
+             FROM (
+                SELECT t.id AS task_id, t.goal, t.updated_at,
+                    CASE
+                        WHEN EXISTS (SELECT 1 FROM wc_task_events c
+                                     WHERE c.task_id = t.id AND c.kind = 'task_cancelled') THEN 'cancelled'
+                        WHEN res.decision_status = 'accepted' THEN 'accepted'
+                        WHEN res.decision_status = 'rejected' THEN 'rejected'
+                        WHEN r.status = 'interrupted' THEN 'needs_attention'
+                        ELSE t.status
+                    END AS task_status,
+                    r.status AS run_status, res.id AS result_id, res.validation_json,
+                    (SELECT ex.state FROM wc_executions ex WHERE ex.task_id = t.id
+                     ORDER BY ex.submitted_at DESC, ex.rowid DESC LIMIT 1) AS execution_status
+                FROM wc_tasks t
+                JOIN wc_runs r ON r.task_id = t.id
+                    AND r.started_at = (SELECT MAX(started_at) FROM wc_runs WHERE task_id = t.id)
+                LEFT JOIN wc_task_results res ON res.run_id = r.id
+                WHERE t.project_id = ?1
+             ) q
+             WHERE ?2 = 1 OR q.task_status IN ('active', 'needs_attention', 'ready_for_review')
+             ORDER BY
+                CASE q.task_status
+                    WHEN 'needs_attention' THEN 0
+                    WHEN 'active' THEN 1
+                    WHEN 'ready_for_review' THEN 2
+                    ELSE 3
+                END,
+                q.updated_at DESC,
+                q.task_id ASC
+             LIMIT ?3",
+        )?;
+        let rows = statement.query_map(
+            params![project_id, include_completed as i64, limit.max(1) as i64],
+            |row| {
+                Ok(LocalReviewableTask {
+                    task_id: row.get(0)?,
+                    goal: row.get(1)?,
+                    task_status: row.get(2)?,
+                    updated_at: row.get(3)?,
+                    execution_status: row.get(4)?,
+                    validation_status: row.get(5)?,
+                    next_action: row.get(6)?,
+                })
+            },
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     pub(crate) fn local_connector_task(
         &self,
         task_id: &str,
@@ -1094,50 +1188,115 @@ impl Database {
             .ok_or_else(|| ConnectorTaskStoreError::Storage(anyhow::anyhow!("result disappeared")))
     }
 
-    pub(crate) fn decide_connector_result(
+    pub(crate) fn begin_connector_result_decision(
         &self,
         task_id: &str,
         project_id: &str,
+        result_id: &str,
         decision: &str,
         actor: &str,
+        now: i64,
+    ) -> Result<(), ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let inserted = conn.execute(
+            "INSERT INTO wc_result_decision_intents
+                (task_id, result_id, decision, actor, started_at)
+             SELECT task.id, result.id, ?3, ?4, ?5
+             FROM wc_tasks task JOIN wc_task_results result ON result.task_id = task.id
+             WHERE task.id = ?1 AND task.project_id = ?2
+               AND result.id = ?6 AND result.decision_status = 'pending'
+             ON CONFLICT(task_id) DO NOTHING",
+            params![task_id, project_id, decision, actor, now, result_id],
+        )?;
+        if inserted == 1 {
+            return Ok(());
+        }
+        Err(ConnectorTaskStoreError::decision(
+            "result_decision_in_progress",
+            "another result decision won the durable intent race",
+        ))
+    }
+
+    pub(crate) fn abort_connector_result_decision(
+        &self,
+        task_id: &str,
+        result_id: &str,
+    ) -> Result<(), ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM wc_result_decision_intents WHERE task_id = ?1 AND result_id = ?2",
+            params![task_id, result_id],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn connector_result_decision_intents(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, String, String)>, ConnectorTaskStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut statement = conn.prepare(
+            "SELECT i.task_id, i.result_id, i.decision
+             FROM wc_result_decision_intents i
+             JOIN wc_tasks t ON t.id = i.task_id
+             WHERE t.project_id = ?1 ORDER BY i.started_at, i.task_id",
+        )?;
+        let rows = statement.query_map([project_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn finalize_connector_result_decision(
+        &self,
+        task_id: &str,
+        project_id: &str,
+        result_id: &str,
         cleanup_warning: Option<&str>,
         now: i64,
     ) -> Result<ConnectorTaskResult, ConnectorTaskStoreError> {
-        if !matches!(decision, "accepted" | "rejected") {
-            return Err(ConnectorTaskStoreError::InvalidState(
-                "result decision must be accepted or rejected".to_string(),
-            ));
-        }
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        let (run_id, cursor) = tx
+        let (decision, actor, run_id, cursor) = tx
             .query_row(
-                "SELECT r.id, COALESCE(MAX(e.sequence), 0)
-                 FROM wc_tasks t
+                "SELECT i.decision, i.actor, r.id, COALESCE(MAX(e.sequence), 0)
+                 FROM wc_result_decision_intents i
+                 JOIN wc_tasks t ON t.id = i.task_id
                  JOIN wc_runs r ON r.task_id = t.id
                  LEFT JOIN wc_task_events e ON e.task_id = t.id
                  JOIN wc_task_results result ON result.task_id = t.id
-                 WHERE t.id = ?1 AND t.project_id = ?2 AND result.decision_status = 'pending'
-                 GROUP BY r.id ORDER BY r.started_at DESC LIMIT 1",
-                params![task_id, project_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                 WHERE i.task_id = ?1 AND i.result_id = ?2 AND t.project_id = ?3
+                   AND result.decision_status = 'pending'
+                 GROUP BY i.decision, i.actor, r.id
+                 ORDER BY r.started_at DESC LIMIT 1",
+                params![task_id, result_id, project_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
             )
             .optional()?
             .ok_or_else(|| {
-                ConnectorTaskStoreError::InvalidState(
-                    "task result is not pending human review".to_string(),
+                ConnectorTaskStoreError::decision(
+                    "result_already_decided",
+                    "task result was already decided",
                 )
             })?;
         let updated = tx.execute(
             "UPDATE wc_task_results
              SET decision_status = ?1, decided_by = ?2, decided_at = ?3,
                  cleanup_warning = COALESCE(?4, cleanup_warning)
-             WHERE task_id = ?5 AND decision_status = 'pending'",
-            params![decision, actor, now, cleanup_warning, task_id],
+             WHERE task_id = ?5 AND id = ?6 AND decision_status = 'pending'",
+            params![decision, actor, now, cleanup_warning, task_id, result_id],
         )?;
         if updated != 1 {
-            return Err(ConnectorTaskStoreError::InvalidState(
-                "task result was already decided".to_string(),
+            return Err(ConnectorTaskStoreError::decision(
+                "result_already_decided",
+                "task result was already decided",
             ));
         }
         insert_event(
@@ -1156,6 +1315,10 @@ impl Database {
                 "cleanup_warning": cleanup_warning
             }),
             now,
+        )?;
+        tx.execute(
+            "DELETE FROM wc_result_decision_intents WHERE task_id = ?1",
+            [task_id],
         )?;
         touch_task(&tx, task_id, now)?;
         tx.commit()?;
@@ -1266,7 +1429,8 @@ pub(super) fn load_task(
                 COALESCE(MAX(e.sequence), 0),
                 ctx.target_executor_ref, ctx.execution_executor_ref,
                 ctx.target_root, ctx.execution_root,
-                ctx.baseline_commit, ctx.baseline_tree, ctx.isolated
+                ctx.baseline_commit, ctx.baseline_tree, ctx.isolated,
+                t.created_at, t.updated_at
          FROM wc_tasks t
          JOIN wc_runs r ON r.task_id = t.id
          JOIN wc_run_contexts ctx ON ctx.run_id = r.id
@@ -1296,6 +1460,8 @@ pub(super) fn load_task(
                 baseline_commit: row.get(14)?,
                 baseline_tree: row.get(15)?,
                 isolated: row.get::<_, i64>(16)? != 0,
+                created_at: row.get(17)?,
+                updated_at: row.get(18)?,
             })
         },
     )
@@ -1905,15 +2071,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(release_cursor, 3);
+        let result_id = "wc_result_1123456789abcdef";
+        db.begin_connector_result_decision(
+            &task.task_id,
+            "wc_proj_demo",
+            result_id,
+            "accepted",
+            "local_cli",
+            104,
+        )
+        .unwrap();
         let result = db
-            .decide_connector_result(
-                &task.task_id,
-                "wc_proj_demo",
-                "accepted",
-                "local_cli",
-                None,
-                104,
-            )
+            .finalize_connector_result_decision(&task.task_id, "wc_proj_demo", result_id, None, 104)
             .unwrap();
         assert_eq!(result.decision_status, "accepted");
         assert_eq!(

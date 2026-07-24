@@ -1,72 +1,99 @@
-// WebCodex project readiness console.
+// WebCodex host-local review console.
 //
-// The page projects the application-level readiness facts returned by
-// `POST /api/connector/readiness`. It never reads the runtime registry and
-// never renders Agent client ids, transport details, queue ids, or secrets.
+// The page lets the same-host human review, accept, reject, and cancel
+// connector task results. It talks only to the host-local `/api/console/*`
+// surface (never a model-facing capability), renders every project value as
+// text (never innerHTML), and keeps the project credential in memory only — it
+// is never persisted to browser storage, a URL, a DOM attribute, or the log.
+//
+// All review-identity and concurrency correctness lives in the pure
+// `review_state` module: which task is selected, which immutable snapshot an
+// action binds to, and which refreshes are in flight. This file owns only the
+// DOM and the network.
 
-declare global {
-  interface Window {
-    webcodexConsole?: unknown;
-  }
-}
+import {
+  initialState,
+  selectTask,
+  adoptReview,
+  actionsEnabled,
+  openConfirm,
+  closeConfirm,
+  actionRequest,
+  beginRefresh,
+  endRefresh,
+  reset,
+  createReviewController,
+} from "./review_state";
 
-export {};
-
-const TOKEN_KEY = "webcodex_token";
-const READINESS_URL = "/api/connector/readiness";
+const CONSOLE_BASE = "/api/console/";
 const REFRESH_MS = 8000;
+const WORK_QUEUE_HINT = "No tasks need attention.";
 
-let timer = 0;
+// Credential is held only in this in-memory variable for the lifetime of the
+// page. A refresh intentionally requires re-entering it.
+let token = "";
 let autoEnabled = true;
+let showCompleted = false;
+let timer = 0;
+let reviewLoop: any = null;
+let projectName = "";
+
+// The single review-identity/concurrency state object (pure logic in the
+// review_state module operates on it).
+const state = initialState();
 
 function el(id: string) {
   return document.getElementById(id);
 }
 
-function value(input: unknown) {
-  return input === null || input === undefined || input === ""
-    ? "—"
-    : String(input);
-}
-
 function setText(id: string, input: unknown) {
   const node = el(id);
   if (node) {
-    node.textContent = value(input);
+    node.textContent =
+      input === null || input === undefined || input === "" ? "—" : String(input);
   }
 }
 
-function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
+function show(id: string, visible: boolean) {
+  const node = el(id);
+  if (node) {
+    node.hidden = !visible;
+  }
 }
 
-function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
+function clearNode(node: any) {
+  while (node && node.firstChild) {
+    node.removeChild(node.firstChild);
+  }
+}
+
+function inputValue(id: string) {
+  const node = el(id);
+  return node ? (node as HTMLInputElement).value : "";
+}
+
+function inputChecked(id: string) {
+  const node = el(id);
+  return node ? (node as HTMLInputElement).checked : false;
 }
 
 function showGate(message: string) {
-  const gate = el("token-gate");
-  const consoleRoot = el("console");
-  const controls = el("topbar-controls");
-  if (gate) gate.hidden = false;
-  if (consoleRoot) consoleRoot.hidden = true;
-  if (controls) controls.hidden = true;
+  show("token-gate", true);
+  show("console", false);
+  show("topbar-controls", false);
   stopAuto();
   setText("token-error", message);
-  const input = el("token-input") as HTMLInputElement;
+  const input = el("token-input");
   if (input) {
-    input.value = "";
-    input.focus();
+    (input as HTMLInputElement).value = "";
+    (input as HTMLInputElement).focus();
   }
 }
 
 function showConsole() {
-  const gate = el("token-gate");
-  const consoleRoot = el("console");
-  const controls = el("topbar-controls");
-  if (gate) gate.hidden = true;
-  if (consoleRoot) consoleRoot.hidden = false;
-  if (controls) controls.hidden = false;
+  show("token-gate", false);
+  show("console", true);
+  show("topbar-controls", true);
 }
 
 function showError(message: string) {
@@ -85,127 +112,598 @@ function hideError() {
   }
 }
 
-async function fetchReadiness() {
-  const token = getToken();
+function lock(message: string) {
+  token = "";
+  reset(state);
+  if (reviewLoop) {
+    reviewLoop.stop();
+  }
+  closeConfirmUi();
+  showGate(message);
+}
+
+// Single host-local request helper. Always POSTs JSON with a Bearer header and
+// never echoes the token anywhere.
+async function api(path: string, body: any, signal: any = null): Promise<any> {
   if (!token) {
-    showGate("Token required.");
-    return;
+    lock("Credential required.");
+    return null;
   }
   const headers = new Headers();
   headers.set("Authorization", "Bearer " + token);
   headers.set("Content-Type", "application/json");
   let response;
   try {
-    response = await fetch(READINESS_URL, {
+    response = await fetch(CONSOLE_BASE + path, {
       method: "POST",
       headers: headers,
-      body: "{}",
+      body: JSON.stringify(body || {}),
+      signal: signal,
     });
   } catch {
-    showError("WebCodex is not reachable. Run webcodex doctor.");
-    return;
+    if (signal && signal.aborted) {
+      return null;
+    }
+    showError("WebCodex is not reachable. Run webcodex agent start.");
+    return null;
   }
-  if (response.status === 401) {
-    clearToken();
-    showGate("Token rejected. Re-enter the Bearer token.");
-    return;
-  }
-  let body;
+  let data: any = null;
   try {
-    body = await response.json();
+    data = await response.json();
   } catch {
-    showError("Readiness returned invalid data.");
-    return;
+    data = null;
   }
-  if (!response.ok && response.status !== 404) {
-    showError("Readiness check failed (HTTP " + response.status + ").");
-    return;
-  }
-  hideError();
-  render(body);
-  setText("last-updated", "Updated " + new Date().toLocaleTimeString());
+  return { status: response.status, ok: response.ok, data: data };
 }
 
-function render(body: unknown) {
-  const readiness = body as any;
+reviewLoop = createReviewController({
+  fetchReview: (body: any, signal: any) => api("task/review", body, signal),
+  abort: () => new AbortController(),
+  schedule: (next: any, delay: number) => window.setTimeout(next, delay),
+  cancelSchedule: (handle: number) => window.clearTimeout(handle),
+  unauthorized: () => lock("Credential rejected. Re-enter it."),
+  error: (data: any) => showError(errorMessage(data)),
+  render: (review: any) => {
+    const previousResult = state.snapshot ? state.snapshot.resultId : null;
+    if (!adoptReview(state, String(review.task_id), state.reviewSeq, review)) {
+      return;
+    }
+    if (previousResult !== state.snapshot.resultId) {
+      closeConfirmUi();
+      hideActionButtons();
+    }
+    hideError();
+    renderDetail(review);
+    renderSelection();
+  },
+});
+
+function errorMessage(data: any) {
+  if (data && data.error && data.error.message) {
+    return String(data.error.message);
+  }
+  return "Request failed.";
+}
+
+async function fetchReadiness() {
+  if (!beginRefresh(state, "readiness")) {
+    return;
+  }
+  try {
+    const res = await api("readiness", {});
+    if (!res) {
+      return;
+    }
+    if (res.status === 401) {
+      lock("Credential rejected. Re-enter it.");
+      return;
+    }
+    if (res.data) {
+      renderReadiness(res.data);
+      hideError();
+    } else if (!res.ok) {
+      showError("Readiness check failed.");
+    }
+    setText("last-updated", "Updated " + new Date().toLocaleTimeString());
+  } finally {
+    endRefresh(state, "readiness");
+  }
+}
+
+function renderReadiness(readiness: any) {
+  projectName = readiness.project || "";
   setText("project", readiness.project || "Not configured");
   setText("connection", readiness.connection);
   setText("agent", readiness.agent);
   setText("capabilities", readiness.capabilities);
   setText("coding", readiness.ready ? "Ready" : "Needs action");
   setText("next-action", readiness.next_action || "No action needed");
+}
 
-  const list = el("findings");
-  if (!list) return;
-  while (list.firstChild) list.removeChild(list.firstChild);
-  const findings = Array.isArray(readiness.findings)
-    ? readiness.findings
-    : [];
-  for (const finding of findings) {
+async function fetchTasks() {
+  if (!beginRefresh(state, "tasks")) {
+    return;
+  }
+  try {
+    const res = await api("tasks", { include_completed: showCompleted });
+    if (res && res.status === 401) {
+      lock("Credential rejected. Re-enter it.");
+      return;
+    }
+    if (!res || !res.ok || !res.data) {
+      return;
+    }
+    const tasks = Array.isArray(res.data.tasks) ? res.data.tasks : [];
+    renderTaskList(tasks);
+  } finally {
+    endRefresh(state, "tasks");
+  }
+}
+
+function renderTaskList(tasks: any) {
+  const list = el("task-list");
+  if (!list) {
+    return;
+  }
+  clearNode(list);
+  show("queue-empty", tasks.length === 0);
+  const empty = el("queue-empty");
+  if (empty) {
+    empty.textContent = WORK_QUEUE_HINT;
+  }
+  for (const task of tasks) {
+    const id = String(task.task_id);
     const item = document.createElement("li");
-    const status = value(finding.status).toLowerCase();
-    item.className = "finding finding-" + status;
-    const title = document.createElement("div");
-    title.className = "finding-title";
-    title.textContent = value(finding.name) + " · " + status;
-    const summary = document.createElement("div");
-    summary.className = "finding-summary";
-    summary.textContent = value(finding.summary);
-    item.appendChild(title);
-    item.appendChild(summary);
+    item.className = "task" + (id === state.selectedTaskId ? " task-selected" : "");
+    item.setAttribute("data-task-id", id);
+    const goal = document.createElement("div");
+    goal.className = "task-goal";
+    goal.textContent = task.goal || id;
+    const meta = document.createElement("div");
+    meta.className = "task-meta muted small";
+    const status = document.createElement("span");
+    status.className = "chip chip-" + String(task.task_status);
+    status.textContent = String(task.task_status);
+    meta.appendChild(status);
+    appendChip(meta, task.next_action ? String(task.next_action) : "not available");
+    appendChip(meta, "exec " + (task.execution_status || "not available"));
+    appendChip(meta, "checks " + (task.validation_status || "not available"));
+    appendChip(meta, updatedLabel(task.updated_at));
+    item.appendChild(goal);
+    item.appendChild(meta);
+    item.addEventListener("click", () => {
+      selectTaskUi(id);
+    });
     list.appendChild(item);
+  }
+}
+
+function appendChip(parent: any, text: string) {
+  if (!text) {
+    return;
+  }
+  const span = document.createElement("span");
+  span.textContent = text;
+  parent.appendChild(span);
+}
+
+// Server-supplied time, rendered as a fact — never inferred from list position.
+function updatedLabel(updatedAt: any): string {
+  if (typeof updatedAt !== "number" || updatedAt <= 0) {
+    return "updated not available";
+  }
+  return "updated " + new Date(updatedAt * 1000).toLocaleTimeString();
+}
+
+// Select a task: invalidate the previous snapshot, hide stale action buttons,
+// show a loading detail, then load the new review under a fresh sequence.
+function selectTaskUi(taskId: string) {
+  selectTask(state, taskId);
+  renderSelection();
+  showDetailLoading();
+  reviewLoop.select(taskId);
+}
+
+function renderSelection() {
+  const list = el("task-list");
+  if (!list) {
+    return;
+  }
+  for (const child of Array.from(list.children)) {
+    const item = child as HTMLElement;
+    const selected = item.getAttribute("data-task-id") === state.selectedTaskId;
+    item.classList.toggle("task-selected", selected);
+  }
+}
+
+function showDetailLoading() {
+  show("detail-empty", false);
+  show("detail", true);
+  setText("detail-goal", "Loading…");
+  setText("detail-task-status", "—");
+  setText("detail-run-status", "");
+  show("detail-exec-status", false);
+  show("detail-validation", false);
+  hideActionButtons();
+  setText("detail-next", "");
+}
+
+function hideActionButtons() {
+  show("accept-btn", false);
+  show("reject-btn", false);
+  show("cancel-btn", false);
+}
+
+function renderDetail(d: any) {
+  show("detail-empty", false);
+  show("detail", true);
+  setText("detail-goal", d.goal);
+  setText("detail-task-status", d.status);
+  setText("detail-run-status", "run: " + (d.run_status || "not available"));
+
+  const execution = d.recent_execution || null;
+  setText(
+    "detail-exec-status",
+    "exec: " + (execution && execution.execution_status ? execution.execution_status : "not available")
+  );
+  show("detail-exec-status", true);
+
+  const validation = d.result && d.result.validation ? d.result.validation : null;
+  const validationStatus = validation && validation.status ? validation.status : null;
+  const assertion = execution && execution.assertion_status ? execution.assertion_status : null;
+  setText("detail-validation", "checks: " + (validationStatus || assertion || "not available"));
+  show("detail-validation", true);
+
+  const parts = [];
+  parts.push("mode " + d.mode);
+  parts.push("cursor " + d.event_cursor);
+  setText("detail-meta", parts.join(" · "));
+  setText("detail-created", timeLabel(d.created_at));
+  setText("detail-updated", timeLabel(d.updated_at));
+  const recipe = (validation && validation.recipe) || (execution && execution.recipe);
+  setText(
+    "detail-recipe",
+    recipe
+      ? [recipe.id, recipe.version, recipe.root].filter((value) => !!value).join(" · ")
+      : "not available"
+  );
+  const evidence =
+    (validation && validation.assertion_evidence) ||
+    (execution && execution.assertion_evidence);
+  setText("detail-evidence", evidence ? JSON.stringify(evidence) : "not available");
+
+  renderChecks(validation, execution);
+  renderFiles(d);
+  renderDiff(d);
+  renderOutput(execution);
+  renderActions(d);
+  setText("detail-next", "Next: " + (d.next_action || "not available"));
+}
+
+function timeLabel(value: any): string {
+  return typeof value === "number" && value > 0
+    ? new Date(value * 1000).toLocaleString()
+    : "not available";
+}
+
+function checkList(validation: any, execution: any) {
+  if (validation && Array.isArray(validation.checks)) {
+    return validation.checks;
+  }
+  if (execution && Array.isArray(execution.checks)) {
+    return execution.checks;
+  }
+  return [];
+}
+
+function renderChecks(validation: any, execution: any) {
+  const checks = checkList(validation, execution);
+  const node = el("detail-checks");
+  clearNode(node);
+  show("detail-checks-section", true);
+  if (!node) {
+    return;
+  }
+  if (!checks.length) {
+    const item = document.createElement("li");
+    item.textContent = "not available";
+    node.appendChild(item);
+  }
+  for (const check of checks) {
+    const item = document.createElement("li");
+    const status = check && check.status ? String(check.status) : "unknown";
+    item.className = "check check-" + status;
+    const name = document.createElement("span");
+    name.textContent = check && check.name ? String(check.name) : "check";
+    const state = document.createElement("span");
+    state.className = "muted small";
+    state.textContent = status;
+    item.appendChild(name);
+    item.appendChild(state);
+    node.appendChild(item);
+  }
+}
+
+function renderFiles(d: any) {
+  const changes = d.changes || {};
+  const result = d.result || {};
+  const source = Array.isArray(changes.changed_paths)
+    ? changes.changed_paths
+    : Array.isArray(result.changed_paths)
+    ? result.changed_paths
+    : null;
+  const files = source || [];
+  const node = el("detail-files");
+  clearNode(node);
+  show("detail-files-section", true);
+  setText("detail-files-count", source ? "(" + files.length + ")" : "");
+  if (!node) {
+    return;
+  }
+  if (!files.length) {
+    const item = document.createElement("li");
+    item.textContent = source ? "none" : "not available";
+    node.appendChild(item);
+  }
+  for (const path of files) {
+    const item = document.createElement("li");
+    item.textContent = String(path);
+    node.appendChild(item);
+  }
+}
+
+function renderDiff(d: any) {
+  const diff = d.changes && d.changes.diff_preview ? d.changes.diff_preview : null;
+  const pre = el("detail-diff");
+  const hasText = diff && typeof diff.text === "string" && diff.text.length > 0;
+  show("detail-diff-section", true);
+  if (pre) {
+    // textContent, never innerHTML: project output is never trusted as markup.
+    pre.textContent = hasText ? diff.text : "not available";
+  }
+  show("detail-diff-trunc", !!(diff && diff.truncated));
+}
+
+function renderOutput(execution: any) {
+  const tail = execution && execution.output_tail ? execution.output_tail : null;
+  const pre = el("detail-output");
+  if (!tail) {
+    show("detail-output-section", true);
+    if (pre) {
+      pre.textContent = "not available";
+    }
+    return;
+  }
+  const stdout = tail.stdout ? String(tail.stdout) : "";
+  const stderr = tail.stderr ? String(tail.stderr) : "";
+  const combined = stderr ? stdout + "\n" + stderr : stdout;
+  show("detail-output-section", true);
+  if (pre) {
+    pre.textContent = combined || "not available";
+  }
+}
+
+// Buttons are offered only when the current snapshot is live (actionsEnabled)
+// AND the durable state permits the action.
+function renderActions(d: any) {
+  const enabled = actionsEnabled(state);
+  show("accept-btn", enabled && !!d.can_accept);
+  show("reject-btn", enabled && !!d.can_reject);
+  show("cancel-btn", enabled && !!d.can_cancel);
+}
+
+// Open a confirmation bound to the CURRENT snapshot. If the selection changed
+// and no fresh snapshot exists, the action is denied (no modal).
+function openConfirmUi(action: string) {
+  const pending = openConfirm(state, action);
+  if (!pending) {
+    return;
+  }
+  const snapshot = pending.snapshot;
+  const review = snapshot.review;
+  setText(
+    "confirm-title",
+    action === "accept" ? "Accept result" : action === "reject" ? "Reject result" : "Cancel task"
+  );
+  const body = el("confirm-body");
+  clearNode(body);
+  if (body) {
+    addLine(body, "Project", projectName || "—");
+    addLine(body, "Task", snapshot.taskId);
+    if (snapshot.resultId) {
+      addLine(body, "Result", snapshot.resultId);
+    }
+    const files =
+      review.result && Array.isArray(review.result.changed_paths)
+        ? review.result.changed_paths.length
+        : 0;
+    addLine(body, "Changed files", String(files));
+    const validation =
+      review.result && review.result.validation && review.result.validation.status
+        ? String(review.result.validation.status)
+        : review.recent_execution && review.recent_execution.assertion_status
+        ? String(review.recent_execution.assertion_status)
+        : "not_run";
+    addLine(body, "Validation", validation);
+    addLine(body, "Precondition", review.status + " / " + review.run_status);
+    if (action === "accept") {
+      addLine(body, "Effect", "The server re-verifies the checkout and result, then applies the patch.");
+    } else if (action === "reject") {
+      addLine(body, "Effect", "The result is discarded. The patch is not applied.");
+    } else {
+      addLine(body, "Effect", "The active execution is stopped.");
+    }
+  }
+  // Only cancel carries an optional reason; reject has no durable reason field.
+  show("confirm-reason-row", action === "cancel");
+  const reason = el("confirm-reason");
+  if (reason) {
+    (reason as HTMLInputElement).value = "";
+  }
+  show("confirm-overlay", true);
+}
+
+function addLine(parent: any, label: string, value: string) {
+  const row = document.createElement("div");
+  row.className = "confirm-line";
+  const key = document.createElement("span");
+  key.className = "muted small";
+  key.textContent = label;
+  const val = document.createElement("span");
+  val.textContent = value;
+  row.appendChild(key);
+  row.appendChild(val);
+  parent.appendChild(row);
+}
+
+function closeConfirmUi() {
+  show("confirm-overlay", false);
+}
+
+async function performAction() {
+  const pending = state.pending;
+  const req = actionRequest(pending);
+  // A cancel may carry an optional human reason; identity still comes only from
+  // the bound snapshot, never the live selection.
+  if (req && req.path === "task/cancel") {
+    const reason = inputValue("confirm-reason").trim();
+    if (reason) {
+      req.body.reason = reason;
+    }
+  }
+  closeConfirm(state);
+  closeConfirmUi();
+  if (!req) {
+    return;
+  }
+  const taskId = req.body.task_id;
+  const res = await api(req.path, req.body);
+  if (!res) {
+    return;
+  }
+  if (res.status === 401) {
+    lock("Credential rejected. Re-enter it.");
+    return;
+  }
+  if (!res.ok) {
+    showError(errorMessage(res.data));
+    if (res.data && res.data.error && res.data.error.code === "result_changed") {
+      reviewLoop.restart();
+    }
+    return;
+  }
+  hideError();
+  setText("detail-next", "Done: " + pending.action + ".");
+  await fetchTasks();
+  if (state.selectedTaskId === taskId) {
+    reviewLoop.restart();
   }
 }
 
 function stopAuto() {
   if (timer) {
-    window.clearInterval(timer);
+    window.clearTimeout(timer);
     timer = 0;
   }
 }
 
+// Self-scheduling refresh chain: the next tick is scheduled only after the
+// current one settles, so setInterval-style overlap is impossible.
 function startAuto() {
   stopAuto();
   if (autoEnabled) {
-    timer = window.setInterval(() => {
-      void fetchReadiness();
-    }, REFRESH_MS);
+    scheduleNext();
+  }
+}
+
+function scheduleNext() {
+  timer = window.setTimeout(() => {
+    void tick().then(() => {
+      if (autoEnabled && token) {
+        scheduleNext();
+      }
+    });
+  }, REFRESH_MS);
+}
+
+async function tick() {
+  // Single-flight: a manual Refresh during an auto tick (or vice versa) is
+  // skipped rather than overlapping.
+  if (!beginRefresh(state, "tick")) {
+    return;
+  }
+  try {
+    await fetchReadiness();
+    await fetchTasks();
+  } finally {
+    endRefresh(state, "tick");
   }
 }
 
 function onTokenSubmit(event: SubmitEvent) {
   event.preventDefault();
-  const input = el("token-input") as HTMLInputElement;
-  const token = input ? input.value.trim() : "";
-  if (!token) {
-    setText("token-error", "Token cannot be empty.");
+  const value = inputValue("token-input").trim();
+  if (!value) {
+    setText("token-error", "Credential cannot be empty.");
     return;
   }
-  localStorage.setItem(TOKEN_KEY, token);
-  input.value = "";
+  token = value;
+  const input = el("token-input");
+  if (input) {
+    (input as HTMLInputElement).value = "";
+  }
   showConsole();
-  void fetchReadiness();
+  void tick();
   startAuto();
 }
 
 function init() {
   el("token-form")?.addEventListener("submit", onTokenSubmit);
   el("refresh-btn")?.addEventListener("click", () => {
-    void fetchReadiness();
+    void tick();
+  });
+  el("lock-btn")?.addEventListener("click", () => {
+    lock("");
   });
   el("auto-toggle")?.addEventListener("change", () => {
-    const toggle = el("auto-toggle") as HTMLInputElement;
-    autoEnabled = toggle.checked;
-    if (autoEnabled) startAuto();
-    else stopAuto();
+    autoEnabled = inputChecked("auto-toggle");
+    if (autoEnabled) {
+      startAuto();
+    } else {
+      stopAuto();
+    }
   });
-  if (getToken()) {
-    showConsole();
-    void fetchReadiness();
-    startAuto();
-  } else {
-    showGate("");
-  }
+  el("show-completed")?.addEventListener("change", () => {
+    showCompleted = inputChecked("show-completed");
+    void fetchTasks();
+  });
+  el("accept-btn")?.addEventListener("click", () => {
+    openConfirmUi("accept");
+  });
+  el("reject-btn")?.addEventListener("click", () => {
+    openConfirmUi("reject");
+  });
+  el("cancel-btn")?.addEventListener("click", () => {
+    openConfirmUi("cancel");
+  });
+  el("confirm-ok")?.addEventListener("click", () => {
+    void performAction();
+  });
+  el("confirm-cancel")?.addEventListener("click", () => {
+    closeConfirm(state);
+    closeConfirmUi();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      reviewLoop.hide();
+      stopAuto();
+    } else if (token) {
+      reviewLoop.show();
+      startAuto();
+      void tick();
+    }
+  });
+  showGate("");
 }
 
 init();

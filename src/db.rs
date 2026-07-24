@@ -24,7 +24,7 @@ pub use self::oauth::RotateResult;
 pub(crate) use self::task_kernel::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
     ConnectorPreservedWorkspace, ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot,
-    ConnectorTaskStoreError, NewConnectorResult, NewConnectorTask,
+    ConnectorTaskStoreError, LocalReviewableTask, NewConnectorResult, NewConnectorTask,
 };
 
 pub struct Database {

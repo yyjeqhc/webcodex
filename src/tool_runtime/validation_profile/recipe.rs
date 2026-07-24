@@ -11,6 +11,8 @@ use std::path::{Component, Path, PathBuf};
 const RECIPE_VERSION: u32 = 1;
 const RECIPE_NAMES: [&str; 4] = ["rust", "node", "python", "go"];
 const RECIPE_MARKERS: [&str; 4] = ["Cargo.toml", "package.json", "pyproject.toml", "go.mod"];
+const PYTHON_MANIFESTLESS_DIGEST_SEED: &[u8] = b"webcodex.python.manifestless.recipe.v1";
+const PYTHON_UNITTEST_ARGS: [&str; 5] = ["-B", "-m", "unittest", "discover", "-v"];
 const NODE_LOCKFILES: [(&str, &str); 6] = [
     ("pnpm-lock.yaml", "pnpm"),
     ("yarn.lock", "yarn"),
@@ -125,22 +127,39 @@ pub(crate) fn resolve_validation_recipe(
     let root_relative = relative_root(&root, &recipe_root);
     let marker = recipe.marker();
     let marker_path = recipe_root.join(marker);
-    let manifest = read_manifest(&root, &marker_path)?;
-    let test_filter = normalize_test_filter(recipe, test_filter)?;
-    let (steps, extra_digest_files) = match recipe {
-        RecipeId::Rust => rust_steps(checks, test_filter.as_deref()),
-        RecipeId::Node => node_steps(&recipe_root, &manifest, checks)?,
-        RecipeId::Python => python_steps(&manifest, checks)?,
-        RecipeId::Go => go_steps(checks)?,
+    let manifestless_python = if recipe == RecipeId::Python {
+        match fs::symlink_metadata(&marker_path) {
+            Ok(_) => false,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(_) => return Err(manifest_invalid()),
+        }
+    } else {
+        false
     };
-    let manifest_digest = digest_files(
-        &root,
-        std::iter::once(marker_path).chain(
-            extra_digest_files
-                .into_iter()
-                .map(|file| recipe_root.join(file)),
-        ),
-    )?;
+    let test_filter = normalize_test_filter(recipe, test_filter)?;
+    let (steps, manifest_digest) = if manifestless_python {
+        (
+            python_manifestless_steps(checks)?,
+            format!("{:x}", Sha256::digest(PYTHON_MANIFESTLESS_DIGEST_SEED)),
+        )
+    } else {
+        let manifest = read_manifest(&root, &marker_path)?;
+        let (steps, extra_digest_files) = match recipe {
+            RecipeId::Rust => rust_steps(checks, test_filter.as_deref()),
+            RecipeId::Node => node_steps(&recipe_root, &manifest, checks)?,
+            RecipeId::Python => python_steps(&manifest, checks)?,
+            RecipeId::Go => go_steps(checks)?,
+        };
+        let manifest_digest = digest_files(
+            &root,
+            std::iter::once(marker_path).chain(
+                extra_digest_files
+                    .into_iter()
+                    .map(|file| recipe_root.join(file)),
+            ),
+        )?;
+        (steps, manifest_digest)
+    };
     let invocation_digest = format!(
         "{:x}",
         Sha256::digest(
@@ -201,6 +220,9 @@ fn nearest_recipe_root(
                 if candidates.contains(&explicit) {
                     return Ok((explicit, directory));
                 }
+                if explicit == RecipeId::Python {
+                    return Ok((RecipeId::Python, cwd.to_path_buf()));
+                }
                 return Err(
                     RecipeError::new("validation_recipe_mismatch").at(relative, &candidates)
                 );
@@ -219,6 +241,9 @@ fn nearest_recipe_root(
             break;
         };
         directory = parent.to_path_buf();
+    }
+    if explicit == Some(RecipeId::Python) {
+        return Ok((RecipeId::Python, cwd.to_path_buf()));
     }
     let code = if explicit.is_some() {
         "validation_recipe_mismatch"
@@ -347,7 +372,12 @@ fn python_steps(
             SemanticCheck::Test if has("pytest") => ("pytest", vec!["-m", "pytest"]),
             _ => return Err(check_unavailable()),
         };
-        debug_assert_eq!(args.get(1), Some(&module));
+        debug_assert_eq!(
+            args.windows(2)
+                .find(|pair| pair[0] == "-m")
+                .map(|pair| pair[1]),
+            Some(module)
+        );
         steps.push(step(
             *check,
             "python",
@@ -355,6 +385,25 @@ fn python_steps(
         ));
     }
     Ok((steps, Vec::new()))
+}
+
+fn python_manifestless_steps(
+    checks: &[SemanticCheck],
+) -> Result<Vec<ShellJobValidationStep>, RecipeError> {
+    checks
+        .iter()
+        .map(|check| match check {
+            SemanticCheck::Test => Ok(step(
+                *check,
+                "python",
+                PYTHON_UNITTEST_ARGS
+                    .iter()
+                    .map(|a| (*a).to_string())
+                    .collect(),
+            )),
+            SemanticCheck::Format | SemanticCheck::Check => Err(check_unavailable()),
+        })
+        .collect()
 }
 
 fn go_steps(
@@ -390,7 +439,7 @@ fn tool_identity(step: &ShellJobValidationStep) -> String {
         "cargo" => format!("cargo_{}", step.name),
         "python" => format!(
             "python:{}:{}",
-            step.args.get(1).map(String::as_str).unwrap_or("unknown"),
+            python_module_name(&step.args).unwrap_or("unknown"),
             step.name
         ),
         "go" => format!("go_{}", step.name),
@@ -399,6 +448,12 @@ fn tool_identity(step: &ShellJobValidationStep) -> String {
             step.args.last().map(String::as_str).unwrap_or("unknown")
         ),
     }
+}
+
+fn python_module_name(args: &[String]) -> Option<&str> {
+    args.windows(2)
+        .find(|pair| pair[0] == "-m")
+        .map(|pair| pair[1].as_str())
 }
 
 fn normalize_test_filter(

@@ -66,18 +66,21 @@ session identifiers.
 `checks_run` remains the only structured validation Action. It accepts an
 optional `recipe` enum (`rust`, `node`, `python`, `go`); omit it for
 deterministic nearest-manifest resolution from the Task workspace and relative
-`cwd`. Supply it only when `validation_recipe_ambiguous` identifies multiple
-markers at the same nearest root. The model cannot provide a program, argv,
-script body, or shell command through this Action.
+`cwd`. Supply a matching recipe when `validation_recipe_ambiguous` identifies
+multiple markers at the same nearest root. Explicit `recipe=python` with
+`checks=["test"]` is the only markerless exception and selects a fixed unittest
+discovery plan from `cwd`. The model cannot provide a program, argv, script
+body, or shell command through this Action.
 
 Rust supports `format/check/test`; Node uses an evidenced package manager and
-fixed non-mutating script-name order; Python uses only configured Ruff/Black,
-Ruff/Mypy, and pytest; Go supports `check/test` and reports `format`
-unavailable. Recipes do not install dependencies, mutate lockfiles, or use the
-network. A missing tool is an executor failure, while a started validator's
-non-zero verdict is an assertion failure. Resolved recipe version, relative
-root, invocation, and manifest/lock evidence bind `operation_id`, so use a new
-ID after a recipe or workspace change.
+fixed non-mutating script-name order; Python uses configured Ruff/Black,
+Ruff/Mypy, and pytest, or the fixed manifestless
+`python -B -m unittest discover -v` test plan; Go supports `check/test` and
+reports `format` unavailable. Recipes do not install dependencies, mutate
+lockfiles, or use the network. A missing tool is an executor failure, while a
+started validator's non-zero verdict is an assertion failure. Resolved recipe
+version, relative root, invocation, and manifest/lock evidence bind
+`operation_id`, so use a new ID after a recipe or workspace change.
 
 ## Human Decision
 

@@ -59,6 +59,12 @@ pub(crate) struct CapturedResult {
     pub warnings: Vec<String>,
 }
 
+struct ResultSnapshot {
+    ignored_generated_paths: Vec<String>,
+    changed_paths: Vec<String>,
+    patch: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct PatchPreview {
     pub text: String,
@@ -277,71 +283,33 @@ impl WorkspaceManager {
             .baseline_commit
             .as_deref()
             .ok_or_else(|| "isolated run is missing its baseline commit".to_string())?;
-
-        require_success(
-            git_output(
-                execution_root,
-                [OsStr::new("add"), OsStr::new("-A"), OsStr::new("--")],
-            )?,
-            "stage isolated result snapshot",
-        )?;
-        let names = require_success(
-            git_output(
-                execution_root,
-                [
-                    OsStr::new("diff"),
-                    OsStr::new("--cached"),
-                    OsStr::new("--name-only"),
-                    OsStr::new("-z"),
-                    OsStr::new(baseline),
-                    OsStr::new("--"),
-                ],
-            )?,
-            "enumerate isolated result paths",
-        )?;
-        let changed_paths = parse_nul_paths(&names.stdout)?;
-        if changed_paths.len() > MAX_RESULT_CHANGED_PATHS {
-            return Err(format!(
-                "result changes {} paths; maximum is {MAX_RESULT_CHANGED_PATHS}",
-                changed_paths.len()
-            ));
-        }
-        if let Some(path) = changed_paths
-            .iter()
-            .find(|path| sensitive_result_path(path))
-        {
-            return Err(format!(
-                "result contains protected path '{path}'; remove it before task_finish"
-            ));
-        }
-        let patch = require_success(
-            git_output(
-                execution_root,
-                [
-                    OsStr::new("diff"),
-                    OsStr::new("--cached"),
-                    OsStr::new("--binary"),
-                    OsStr::new("--full-index"),
-                    OsStr::new(baseline),
-                    OsStr::new("--"),
-                ],
-            )?,
-            "capture isolated result patch",
-        )?
-        .stdout;
+        let snapshot = capture_result_snapshot(execution_root, &self.results_root, baseline)?;
+        let changed_paths = snapshot.changed_paths;
+        let patch = snapshot.patch;
         if patch.len() > MAX_RESULT_PATCH_BYTES {
             return Err(format!(
                 "result patch is {} bytes; maximum is {MAX_RESULT_PATCH_BYTES}",
                 patch.len()
             ));
         }
+        let mut warnings = Vec::new();
+        if !snapshot.ignored_generated_paths.is_empty() {
+            let shown =
+                &snapshot.ignored_generated_paths[..snapshot.ignored_generated_paths.len().min(16)];
+            warnings.push(format!(
+                "ignored_generated_paths count={} paths=[{}]",
+                snapshot.ignored_generated_paths.len(),
+                shown.join(", ")
+            ));
+        }
         if patch.is_empty() {
+            warnings.push("task finished without code changes".to_string());
             return Ok(CapturedResult {
                 patch_artifact: None,
                 patch_sha256: None,
                 patch_bytes: 0,
                 changed_paths,
-                warnings: vec!["task finished without code changes".to_string()],
+                warnings,
             });
         }
         let patch_sha256 = format!("{:x}", Sha256::digest(&patch));
@@ -353,7 +321,7 @@ impl WorkspaceManager {
             patch_sha256: Some(patch_sha256),
             patch_bytes: patch.len(),
             changed_paths,
-            warnings: Vec::new(),
+            warnings,
         })
     }
 
@@ -1162,6 +1130,163 @@ fn sensitive_result_path(path: &str) -> bool {
     })
 }
 
+fn capture_result_snapshot(
+    execution_root: &Path,
+    results_root: &Path,
+    baseline: &str,
+) -> Result<ResultSnapshot, String> {
+    let index = results_root.join(format!("result-index-{}", uuid::Uuid::new_v4().simple()));
+    ensure_direct_child(results_root, &index)?;
+    let capture = (|| {
+        require_success(
+            git_output_with_index(
+                execution_root,
+                &index,
+                [OsStr::new("read-tree"), OsStr::new(baseline)],
+            )?,
+            "initialize isolated result snapshot",
+        )?;
+        let ignored_generated_paths = stage_result_paths(execution_root, &index)?;
+        let names = require_success(
+            git_output_with_index(
+                execution_root,
+                &index,
+                [
+                    OsStr::new("diff"),
+                    OsStr::new("--cached"),
+                    OsStr::new("--name-only"),
+                    OsStr::new("-z"),
+                    OsStr::new(baseline),
+                    OsStr::new("--"),
+                ],
+            )?,
+            "enumerate isolated result paths",
+        )?;
+        let changed_paths = parse_nul_paths(&names.stdout)?;
+        if changed_paths.len() > MAX_RESULT_CHANGED_PATHS {
+            return Err(format!(
+                "result changes {} paths; maximum is {MAX_RESULT_CHANGED_PATHS}",
+                changed_paths.len()
+            ));
+        }
+        if let Some(path) = changed_paths
+            .iter()
+            .find(|path| sensitive_result_path(path))
+        {
+            return Err(format!(
+                "result contains protected path '{path}'; remove it before task_finish"
+            ));
+        }
+        let patch = require_success(
+            git_output_with_index(
+                execution_root,
+                &index,
+                [
+                    OsStr::new("diff"),
+                    OsStr::new("--cached"),
+                    OsStr::new("--binary"),
+                    OsStr::new("--full-index"),
+                    OsStr::new(baseline),
+                    OsStr::new("--"),
+                ],
+            )?,
+            "capture isolated result patch",
+        )?
+        .stdout;
+        Ok(ResultSnapshot {
+            ignored_generated_paths,
+            changed_paths,
+            patch,
+        })
+    })();
+    let _ = fs::remove_file(index);
+    capture
+}
+
+fn stage_result_paths(execution_root: &Path, index: &Path) -> Result<Vec<String>, String> {
+    require_success(
+        git_output_with_index(
+            execution_root,
+            index,
+            [OsStr::new("add"), OsStr::new("-u"), OsStr::new("--")],
+        )?,
+        "stage tracked result changes",
+    )?;
+    let untracked = require_success(
+        git_output_with_index(
+            execution_root,
+            index,
+            [
+                OsStr::new("ls-files"),
+                OsStr::new("--others"),
+                OsStr::new("--exclude-standard"),
+                OsStr::new("-z"),
+            ],
+        )?,
+        "list untracked result candidates",
+    )?;
+    let mut ignored = Vec::new();
+    let mut safe = Vec::new();
+    for path in parse_nul_paths(&untracked.stdout)? {
+        if !is_safe_result_relative_path(&path) {
+            return Err(format!(
+                "result contains an unsafe untracked path '{path}'; remove it before task_finish"
+            ));
+        }
+        if sensitive_result_path(&path) {
+            return Err(format!(
+                "result contains protected path '{path}'; remove it before task_finish"
+            ));
+        }
+        if is_generated_untracked_path(&path) {
+            ignored.push(path);
+        } else {
+            safe.push(path);
+        }
+    }
+    for paths in safe.chunks(64) {
+        let mut args: Vec<&OsStr> = vec![OsStr::new("add"), OsStr::new("--")];
+        args.extend(paths.iter().map(|path| OsStr::new(path.as_str())));
+        require_success(
+            git_output_with_index(execution_root, index, args)?,
+            "stage untracked result paths",
+        )?;
+    }
+    Ok(ignored)
+}
+
+fn is_safe_result_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains('\0')
+        && !Path::new(path).is_absolute()
+        && Path::new(path).components().all(|c| {
+            matches!(c, Component::Normal(name) if !name.is_empty())
+                || matches!(c, Component::CurDir)
+        })
+}
+
+/// Untracked-only filter; tracked same-named paths stay via `git add -u`.
+fn is_generated_untracked_path(path: &str) -> bool {
+    path.replace('\\', "/")
+        .trim_end_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != ".")
+        .any(|part| {
+            let lower = part.to_ascii_lowercase();
+            matches!(
+                lower.as_str(),
+                "__pycache__"
+                    | ".pytest_cache"
+                    | ".mypy_cache"
+                    | ".ruff_cache"
+                    | "htmlcov"
+                    | "node_modules"
+                    | ".coverage"
+            ) || lower.ends_with(".pyc")
+                || lower.ends_with(".pyo")
+        })
+}
+
 fn project_brief_evidence(root: &Path) -> (Option<Value>, Option<bool>, Option<usize>) {
     let overview =
         crate::project_overview::build_project_overview(root, ".", Some(2), Some(200)).ok();
@@ -1743,5 +1868,109 @@ mod tests {
         assert!(!Path::new(&prepared.execution_root)
             .join("leftover.txt")
             .exists());
+    }
+
+    #[test]
+    fn capture_result_filters_generated_untracked_but_keeps_source_and_tracked() {
+        let (_temp, context, manager) = fixture();
+        let tracked = Path::new(&context.executor_root).join("__pycache__/tracked.pyc");
+        fs::create_dir_all(tracked.parent().unwrap()).unwrap();
+        fs::write(&tracked, b"old").unwrap();
+        git(
+            Path::new(&context.executor_root),
+            &["add", "__pycache__/tracked.pyc"],
+        );
+        git(
+            Path::new(&context.executor_root),
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@e.invalid",
+                "commit",
+                "-qm",
+                "pyc",
+            ],
+        );
+        let prepared = manager
+            .prepare(
+                &context,
+                "wc_task_a123456789abcdef0123456789abcdef",
+                "wc_run_a123456789abcdef0123456789abcdef",
+                false,
+            )
+            .unwrap();
+        let root = Path::new(&prepared.execution_root);
+        for (path, bytes) in [
+            ("calculator.py", b"fixed\n".as_slice()),
+            ("package/module.py", b"value = 1\n"),
+            ("package-lock.json", b"{}\n".as_slice()),
+            ("binary.bin", &[255u8][..]),
+            ("__pycache__/x.pyc", b"j"),
+            ("package/__pycache__/nested.pyc", b"k"),
+            (".pytest_cache/n", b"[]"),
+            ("__pycache__/tracked.pyc", b"new"),
+        ] {
+            let full = root.join(path);
+            if let Some(p) = full.parent() {
+                let _ = fs::create_dir_all(p);
+            }
+            fs::write(full, bytes).unwrap();
+        }
+        git(root, &["add", "__pycache__/x.pyc"]);
+        let task = task(&context, &prepared);
+        let captured = manager.capture_result(&task).unwrap();
+        let staged = require_success(
+            git_output(
+                root,
+                [
+                    OsStr::new("diff"),
+                    OsStr::new("--cached"),
+                    OsStr::new("--name-only"),
+                    OsStr::new("-z"),
+                ],
+            )
+            .unwrap(),
+            "inspect test index",
+        )
+        .unwrap();
+        assert_eq!(
+            parse_nul_paths(&staged.stdout).unwrap(),
+            ["__pycache__/x.pyc"]
+        );
+        for keep in [
+            "calculator.py",
+            "package/module.py",
+            "package-lock.json",
+            "binary.bin",
+            "__pycache__/tracked.pyc",
+        ] {
+            assert!(captured.changed_paths.iter().any(|p| p == keep), "{keep}");
+        }
+        assert!(captured
+            .changed_paths
+            .iter()
+            .all(|p| !p.ends_with(".pyc") || p == "__pycache__/tracked.pyc"));
+        assert!(captured
+            .changed_paths
+            .iter()
+            .all(|p| !p.contains(".pytest_cache")));
+        let bytes = fs::read(captured.patch_artifact.as_deref().unwrap()).unwrap();
+        let patch = String::from_utf8_lossy(&bytes);
+        assert!(!patch.contains("x.pyc") && !patch.contains("nested.pyc"));
+        assert!(captured
+            .warnings
+            .iter()
+            .any(|w| w.contains("ignored_generated_paths")));
+        fs::write(root.join(".env"), "S=1\n").unwrap();
+        assert!(manager
+            .capture_result(&task)
+            .unwrap_err()
+            .contains("protected path"));
+        assert_eq!(
+            WorkspaceManager::accept_recoverable(&task, &result(&task, &captured), false).unwrap(),
+            None
+        );
+        assert!(is_generated_untracked_path("a.pyc") && !is_safe_result_relative_path("../x"));
     }
 }

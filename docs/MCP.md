@@ -83,19 +83,24 @@ executor failure, not assertion evidence.
 The `checks_run` schema still exposes only `format`, `check`, and `test`, with
 an optional `recipe` enum (`rust`, `node`, `python`, `go`). Omit it to select
 the nearest `Cargo.toml`, `package.json`, `pyproject.toml`, or `go.mod` from
-the Task workspace and relative `cwd`. An explicit recipe is needed only for
-a same-root ambiguity and must have its marker there; resolution never scans
+the Task workspace and relative `cwd`. An explicit matching recipe resolves a
+same-root ambiguity. The only markerless exception is explicit
+`recipe=python` with `checks=["test"]`, which runs the fixed unittest discovery
+plan from `cwd` when no `pyproject.toml` is selected. Resolution never scans
 sibling projects or permits path/symlink escape.
 
 Rust supports all three checks and is the only recipe with a one-argv
 `test_filter`. Node resolves an evidenced package manager and fixed script
-allowlist; Python selects only configured Ruff/Black, Ruff/Mypy, or pytest;
-Go supports `check` and `test`, with `format` unavailable. No recipe installs
+allowlist; Python selects configured Ruff/Black, Ruff/Mypy, or pytest, while
+manifestless Python supports only `python -B -m unittest discover -v`; Go
+supports `check` and `test`, with `format` unavailable. No recipe installs
 dependencies, changes lockfiles, or uses the network. Tool absence is an
 executor failure; a started validator returning non-zero is an assertion
 failure. Recipe version, relative root, and invocation/manifest evidence bind
 the operation exact-retry identity. This does not add a tenth MCP tool; MCP,
 OpenAPI, and the capability registry still share the same nine-item source.
+At finish, untracked interpreter/test caches, coverage output, and
+`node_modules` are omitted with bounded warnings; tracked paths are retained.
 
 After review, the human accepts or rejects on the host:
 

@@ -140,7 +140,7 @@ fn recipe_resolution_fails_closed_for_ambiguity_mismatch_and_missing_marker() {
     let mismatch = resolve(
         temp.path(),
         None,
-        Some(RecipeId::Python),
+        Some(RecipeId::Rust),
         &[SemanticCheck::Check],
         None,
     )
@@ -511,4 +511,137 @@ fn cwd_symlink_escape_is_rejected() {
         .unwrap_err();
         assert_eq!(error.code, "validation_recipe_mismatch");
     }
+}
+
+#[test]
+fn manifestless_explicit_python_uses_stable_unittest_plan() {
+    use crate::shell_protocol::ShellJobValidationStep;
+    use sha2::{Digest, Sha256};
+
+    let temp = tempfile::tempdir().unwrap();
+    write(
+        temp.path(),
+        "calculator.py",
+        "def add(a, b): return a + b\n",
+    );
+    let plan = resolve(
+        temp.path(),
+        None,
+        Some(RecipeId::Python),
+        &[SemanticCheck::Test],
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        (plan.recipe_id, plan.recipe_root_relative.as_str()),
+        ("python", ".")
+    );
+    assert_eq!(
+        plan.steps[0].args,
+        ["-B", "-m", "unittest", "discover", "-v"]
+    );
+    assert!(plan.steps[0].is_canonical());
+    let seed = format!(
+        "{:x}",
+        Sha256::digest(b"webcodex.python.manifestless.recipe.v1")
+    );
+    assert_eq!(plan.manifest_digest, seed);
+    assert_eq!(
+        plan.durable_identity()["tool_identities"][0],
+        "python:unittest:test"
+    );
+    assert_eq!(
+        resolve(
+            temp.path(),
+            None,
+            Some(RecipeId::Python),
+            &[SemanticCheck::Test],
+            None
+        )
+        .unwrap()
+        .invocation_digest,
+        plan.invocation_digest
+    );
+    assert!(!temp.path().join("pyproject.toml").exists());
+    for check in [SemanticCheck::Format, SemanticCheck::Check] {
+        assert_eq!(
+            resolve(temp.path(), None, Some(RecipeId::Python), &[check], None)
+                .unwrap_err()
+                .code,
+            "validation_check_unavailable"
+        );
+    }
+    assert_eq!(
+        resolve(
+            temp.path(),
+            None,
+            Some(RecipeId::Python),
+            &[SemanticCheck::Test],
+            Some("T")
+        )
+        .unwrap_err()
+        .code,
+        "test_filter_unsupported"
+    );
+    assert_eq!(
+        resolve(temp.path(), None, None, &[SemanticCheck::Test], None)
+            .unwrap_err()
+            .code,
+        "validation_recipe_not_found"
+    );
+    assert!(!ShellJobValidationStep {
+        name: "test".into(),
+        program: "python".into(),
+        args: ["-B", "-m", "unittest", "discover", "-v", "extra"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+    }
+    .is_canonical());
+    write(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"polyglot\"\nversion = \"0.1.0\"\n",
+    );
+    let polyglot = resolve(
+        temp.path(),
+        None,
+        Some(RecipeId::Python),
+        &[SemanticCheck::Test],
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        polyglot.steps[0].args,
+        ["-B", "-m", "unittest", "discover", "-v"]
+    );
+    fs::create_dir(temp.path().join("pyproject.toml")).unwrap();
+    assert_eq!(
+        resolve(
+            temp.path(),
+            None,
+            Some(RecipeId::Python),
+            &[SemanticCheck::Test],
+            None
+        )
+        .unwrap_err()
+        .code,
+        "validation_manifest_invalid"
+    );
+    fs::remove_dir(temp.path().join("pyproject.toml")).unwrap();
+    write(
+        temp.path(),
+        "pyproject.toml",
+        "[tool.pytest.ini_options]\nminversion = \"6.0\"\n",
+    );
+    let pytest = resolve(
+        temp.path(),
+        None,
+        Some(RecipeId::Python),
+        &[SemanticCheck::Test],
+        None,
+    )
+    .unwrap();
+    assert_eq!(pytest.steps[0].args, ["-m", "pytest"]);
+    assert_ne!(pytest.manifest_digest, seed);
 }

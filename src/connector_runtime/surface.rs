@@ -143,7 +143,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
         ),
         spec(
             "checks_run",
-            "Resolve and submit an ordered, fail-fast Rust, Node, Python, or Go project validation plan to the durable Execution Engine. Omit recipe for deterministic nearest-manifest resolution; provide it only to resolve a same-root ambiguity. Reuse operation_id only for an exact resolved-plan retry.",
+            "Resolve and submit an ordered, fail-fast Rust, Node, Python, or Go project validation plan to the durable Execution Engine. Omit recipe for deterministic nearest-manifest resolution. Explicit recipe=python also permits a manifestless unittest test plan rooted at cwd. Reuse operation_id only for an exact resolved-plan retry.",
             json!({
                 "type": "object",
                 "properties": {
@@ -162,7 +162,7 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
                     "recipe": {
                         "type": "string",
                         "enum": ["rust", "node", "python", "go"],
-                        "description": "Optional explicit recipe. Omit for deterministic auto resolution; there is no auto alias."
+                        "description": "Optional explicit recipe. Omit for deterministic auto resolution. Explicit python permits manifestless unittest tests when no pyproject.toml is selected; there is no auto alias."
                     },
                     "cwd": path_schema(),
                     "test_filter": { "type": "string", "maxLength": 500 },

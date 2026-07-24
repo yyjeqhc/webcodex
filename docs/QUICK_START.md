@@ -157,14 +157,17 @@ plus an optional `recipe` enum: `rust`, `node`, `python`, or `go`. Omit
 the relative `cwd` inside the Task execution workspace, walks only toward that
 workspace root, and picks the nearest manifest directory. Multiple supported
 markers in that directory are ambiguous; an explicit matching recipe resolves
-the ambiguity. A mismatched marker, missing manifest, absolute/parent path, or
-symlink escape is rejected before an Execution is reserved.
+the ambiguity. As the only markerless exception, explicit `recipe=python`
+with `checks=["test"]` runs `python -B -m unittest discover -v` from `cwd`
+when no `pyproject.toml` is selected. A mismatched marker for any other recipe,
+missing manifest in auto mode, absolute/parent path, or symlink escape is
+rejected before an Execution is reserved.
 
 | Recipe | Marker | `format` | `check` | `test` |
 |---|---|---|---|---|
 | Rust | `Cargo.toml` | `cargo fmt -- --check` | `cargo check --all-targets` | `cargo test` plus one safe argv filter |
 | Node | `package.json` | first of `format:check`, `format-check`, `check:format` | first of `check`, `typecheck`, `lint` | exact `test` |
-| Python | `pyproject.toml` | configured Ruff, otherwise Black | configured Ruff, otherwise Mypy | configured pytest |
+| Python | `pyproject.toml`, or explicit markerless test | configured Ruff, otherwise Black | configured Ruff, otherwise Mypy | configured pytest; markerless `unittest discover` |
 | Go | `go.mod` | unavailable | `go vet ./...` | `go test ./...` |
 
 Node selects a package manager from a valid `packageManager` declaration or
@@ -172,8 +175,9 @@ one unambiguous supported lockfile (`pnpm-lock.yaml`, `yarn.lock`,
 `package-lock.json`, `npm-shrinkwrap.json`, `bun.lock`, or `bun.lockb`).
 Conflicting or absent evidence fails closed; a selected script is invoked only
 as `<manager> run --silent <allowlisted-name>`. Script bodies are never copied
-into the plan or error. Python enables only tools evidenced by
+into the plan or error. Python format/check and pytest require evidence in
 `pyproject.toml`; Ruff wins over Black for format and over Mypy for check.
+Manifestless Python supports only the fixed unittest test plan.
 
 Recipes do not install dependencies, run install hooks, generate
 configuration, create environments, modify lockfiles, or use the network.
@@ -182,6 +186,10 @@ it instead of silently running all tests. Missing executables or Python
 modules produce an executor failure with no failed check or assertion
 evidence. A real process exit with a non-zero validation verdict is an
 assertion failure.
+
+At `task_finish`, untracked interpreter/test caches, coverage output, and
+`node_modules` are omitted from the result patch and reported in bounded
+warnings. A same-named path already tracked by the project is never omitted.
 
 The durable plan records recipe ID/version, relative root, semantic checks,
 tool identities, and invocation/manifest evidence digests. They participate in
@@ -252,7 +260,7 @@ Common stable codes:
 | `required_capability_unavailable` | The installed Agent is too old/incomplete | Upgrade all WebCodex binaries |
 | `structured_validation_unavailable` | The Agent lacks structured validation | Upgrade all WebCodex binaries |
 | `workspace_unavailable` | Git or the configured project path is unavailable | Restore the path/Git workspace |
-| `validation_recipe_not_found` | No supported marker exists from `cwd` to the Task root | Choose a manifest-bearing `cwd` |
+| `validation_recipe_not_found` | Auto resolution found no supported marker from `cwd` to the Task root | Choose a manifest-bearing `cwd`, or explicitly use the markerless Python unittest test recipe |
 | `validation_recipe_ambiguous` | The nearest root has multiple supported markers | Provide the matching explicit `recipe` |
 | `validation_recipe_mismatch` / `validation_manifest_invalid` | Recipe, marker, safe path, or manifest evidence is invalid | Correct the reported public evidence |
 | `validation_check_unavailable` / `test_filter_unsupported` | The recipe cannot safely map the requested check/filter | Change checks/filter or choose the matching recipe |

@@ -2835,3 +2835,256 @@ async fn edits_apply_replays_durable_result_without_executor_dispatch() {
         None
     );
 }
+
+/// Closest in-process replay of the manifestless Python acceptance path.
+#[tokio::test]
+async fn manifestless_python_unittest_checks_finish_with_clean_result() {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    fs::create_dir(&project).unwrap();
+    let git = |args: &[&str]| {
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&project)
+            .args(args)
+            .status()
+            .unwrap()
+            .success());
+    };
+    git(&["init", "-q"]);
+    fs::write(
+        project.join("calculator.py"),
+        "def add(a, b):\n    return a - b\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("test_calculator.py"),
+        "import unittest\nfrom calculator import add\nclass T(unittest.TestCase):\n    def test_sum(self):\n        self.assertEqual(add(2, 3), 5)\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("Cargo.toml"),
+        "[package]\nname = \"polyglot-fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@e.invalid",
+        "commit",
+        "-qm",
+        "i",
+    ]);
+    let baseline = String::from_utf8(
+        Command::new("git")
+            .arg("-C")
+            .arg(&project)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+
+    let registry = Arc::new(ShellClientRegistry::default());
+    let owner = tests::auth("u1");
+    registry
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                client_id: "hosted".into(),
+                agent_instance_id: "instance".into(),
+                display_name: None,
+                owner: Some("owner".into()),
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    file_read: true,
+                    file_write: true,
+                    jobs: true,
+                    async_jobs: true,
+                    async_shell_jobs: true,
+                    structured_validation_argv: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![project_summary("project", &project)]),
+                agent_protocol_version: Some("test".into()),
+                policy: None,
+            },
+            Some(&owner),
+        )
+        .await
+        .unwrap();
+    let state = temp.path().join("state");
+    let connector = Arc::new(
+        ConnectorRuntime::new(
+            Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
+                registry.clone(),
+            )),
+            Arc::new(Database::open(&temp.path().join("connector.db")).unwrap()),
+            ConnectorContext {
+                project_id: "wc_proj_1234567890".into(),
+                project_name: "project".into(),
+                workspace_id: "wc_ws_1234567890".into(),
+                executor_project: "agent:hosted:project".into(),
+                executor_root: project.to_string_lossy().into_owned(),
+                runs_root: state.join("runs").to_string_lossy().into_owned(),
+                results_root: state.join("results").to_string_lossy().into_owned(),
+                projects_dir: state
+                    .join("agent/projects.d")
+                    .to_string_lossy()
+                    .into_owned(),
+                profile: "personal".into(),
+                project_grant_id: tests::PROJECT_GRANT_ID.into(),
+            },
+            tests::credential(),
+        )
+        .unwrap(),
+    );
+    let reg = registry.clone();
+    let registration = tokio::spawn(async move {
+        let request = next_request(&reg).await;
+        let payload: Value = serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
+        reg.complete(ShellAgentResultRequest {
+            client_id: "hosted".into(),
+            agent_instance_id: "instance".into(),
+            request_id: request.request_id,
+            exit_code: Some(0),
+            stdout: Some(
+                json!({
+                    "agent_project_id": payload["id"],
+                    "client_id": "hosted",
+                    "name": payload["name"],
+                    "path": payload["path"],
+                    "allow_patch": true
+                })
+                .to_string(),
+            ),
+            stderr: Some(String::new()),
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+    });
+    let started = call(
+        &connector,
+        &owner,
+        "task_start",
+        json!({"goal": "fix add", "mode": "normal"}),
+    )
+    .await;
+    registration.await.unwrap();
+    assert!(started.ok, "{}", started.body);
+    let task_id = started.body["task_id"].as_str().unwrap().to_string();
+    let task = connector
+        .db
+        .connector_task(
+            &task_id,
+            &connector.context.project_id,
+            tests::PROJECT_SUBJECT_ID,
+        )
+        .unwrap();
+    let root = PathBuf::from(&task.execution_root);
+    fs::write(
+        root.join("calculator.py"),
+        "def add(a, b):\n    return a + b\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("__pycache__")).unwrap();
+    fs::write(root.join("__pycache__/x.pyc"), b"junk").unwrap();
+
+    let check_reg = registry.clone();
+    let checker = tokio::spawn(async move {
+        let request = next_request(&check_reg).await;
+        let steps: Vec<ShellJobValidationStep> = serde_json::from_str(&request.command).unwrap();
+        assert_eq!(request.kind, "start_validation_job");
+        assert_eq!(steps[0].args, ["-B", "-m", "unittest", "discover", "-v"]);
+        update_validation_job(
+            &check_reg,
+            request.job_id.as_deref().unwrap(),
+            "completed",
+            Some("OK"),
+            Some(0),
+            check_progress(1, None, None),
+        )
+        .await;
+    });
+    let checked = call(
+        &connector,
+        &owner,
+        "checks_run",
+        json!({
+            "task_id": task_id,
+            "operation_id": "py-unittest-1",
+            "checks": ["test"],
+            "recipe": "python",
+            "timeout_secs": 30
+        }),
+    )
+    .await;
+    checker.await.unwrap();
+    assert!(checked.ok, "{}", checked.body);
+    assert_eq!(
+        checked.body["data"]["execution"]["assertion_status"],
+        "passed"
+    );
+    assert_eq!(checked.body["data"]["execution"]["recipe"]["id"], "python");
+
+    let finished = call(
+        &connector,
+        &owner,
+        "task_finish",
+        json!({"task_id": task_id, "summary": "fixed add"}),
+    )
+    .await;
+    assert!(finished.ok, "{}", finished.body);
+    let data = &finished.body["data"];
+    assert_eq!(data["status"], "ready_for_review");
+    assert_eq!(data["result"]["validation"]["status"], "passed");
+    assert_eq!(data["result"]["changed_paths"], json!(["calculator.py"]));
+    assert_eq!(data["result"]["decision_status"], "pending");
+    assert_eq!(data["workspace"]["released"], true);
+    assert!(data["result"]["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|w| w
+            .as_str()
+            .is_some_and(|s| s.contains("ignored_generated_paths"))));
+    assert_eq!(
+        fs::read_to_string(project.join("calculator.py")).unwrap(),
+        "def add(a, b):\n    return a - b\n"
+    );
+    let head = String::from_utf8(
+        Command::new("git")
+            .arg("-C")
+            .arg(&project)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    assert_eq!(head, baseline);
+    assert!(String::from_utf8_lossy(
+        &Command::new("git")
+            .arg("-C")
+            .arg(&project)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap()
+            .stdout
+    )
+    .trim()
+    .is_empty());
+}

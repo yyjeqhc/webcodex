@@ -76,11 +76,14 @@ Iteration 8.1 的实现候选保持 Hosted 九项 capability，不新增 discove
 - `checks_run` 增加可选 `recipe: rust|node|python|go`；省略即 deterministic auto，
   不提供 `auto` alias。
 - resolver 在 Task execution workspace 内从相对 `cwd` 向 root 查找最近 marker，
-  不扫描 sibling；同 root 多 marker 自动模式 fail closed，显式 recipe 必须匹配。
+  不扫描 sibling；同 root 多 marker 自动模式 fail closed，显式 recipe 必须匹配；
+  唯一例外是显式 Python test 在没有选中 `pyproject.toml` 时从 `cwd` 运行固定
+  unittest plan。
 - Rust 保持 `format/check/test`；Node 只运行 allowlisted 非修改型 script，并从
-  `packageManager` 或单一 lockfile 确定 manager；Python 只使用
-  `pyproject.toml` 证明的 Ruff/Black、Ruff/Mypy、pytest；Go 支持
-  `check/test`，`format` 明确 unavailable。
+  `packageManager` 或单一 lockfile 确定 manager；Python 的 Ruff/Black、
+  Ruff/Mypy、pytest 只由 `pyproject.toml` 证明，manifestless Python 只支持
+  `python -B -m unittest discover -v`；Go 支持 `check/test`，`format` 明确
+  unavailable。
 - 所有 invocation 都是 canonical `program + argv`；recipe 不安装依赖、不运行
   install hook、不修改 lockfile、不联网。旧 command-string Agent 通过
   `structured_validation_argv` capability fail closed。

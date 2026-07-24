@@ -937,7 +937,12 @@ fn validation_module_available(
     if step.program != "python" {
         return true;
     }
-    let Some(module) = step.args.get(1) else {
+    let Some(module) = step
+        .args
+        .windows(2)
+        .find(|p| p[0] == "-m")
+        .map(|p| p[1].as_str())
+    else {
         return false;
     };
     const PROBE: &str =

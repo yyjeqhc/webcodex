@@ -653,7 +653,8 @@ impl ShellJobValidationStep {
             | ("format", "python", ["-m", "black", "--check"])
             | ("check", "python", ["-m", "ruff", "check"])
             | ("check", "python", ["-m", "mypy"])
-            | ("test", "python", ["-m", "pytest"]) => true,
+            | ("test", "python", ["-m", "pytest"])
+            | ("test", "python", ["-B", "-m", "unittest", "discover", "-v"]) => true,
             ("test", "cargo", ["test", filter]) => valid_rust_test_filter(filter),
             (kind, manager, ["run", "--silent", script])
                 if matches!(manager, "npm" | "pnpm" | "yarn" | "bun") =>

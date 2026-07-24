@@ -260,17 +260,29 @@ fn python_module_probe_reports_tool_unavailable_without_running_recipe() {
 
     let temp = tempfile::tempdir().unwrap();
     let python = temp.path().join("python");
-    std::fs::write(&python, "#!/bin/sh\nexit 42\n").unwrap();
+    let probe_output = temp.path().join("module");
+    std::fs::write(
+        &python,
+        "#!/bin/sh\nprintf '%s' \"$4\" > \"$PROBE_OUTPUT\"\nexit 42\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut shell = ShellConfig::default();
     shell.env.insert(
         "PATH".to_string(),
         temp.path().to_string_lossy().into_owned(),
     );
+    shell.env.insert(
+        "PROBE_OUTPUT".to_string(),
+        probe_output.to_string_lossy().into_owned(),
+    );
     let step = ShellJobValidationStep {
-        name: "check".into(),
+        name: "test".into(),
         program: "python".into(),
-        args: vec!["-m".into(), "ruff".into(), "check".into()],
+        args: ["-B", "-m", "unittest", "discover", "-v"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
     };
     assert!(!validation_module_available(
         &shell,
@@ -278,6 +290,7 @@ fn python_module_probe_reports_tool_unavailable_without_running_recipe() {
         temp.path(),
         &step
     ));
+    assert_eq!(std::fs::read_to_string(probe_output).unwrap(), "unittest");
     assert!(!temp.path().join("recipe-ran").exists());
 }
 

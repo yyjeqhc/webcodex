@@ -81,16 +81,21 @@ command 无法 spawn 属于 executor failure，不是 assertion evidence。
 `checks_run` schema 仍只暴露 `format`、`check`、`test`，以及可选 enum
 `recipe`（`rust`、`node`、`python`、`go`）。省略时，从 Task workspace 的相对
 `cwd` 选择最近的 `Cargo.toml`、`package.json`、`pyproject.toml` 或 `go.mod`。
-只有同 root 歧义需要显式 recipe，且对应 marker 必须存在；resolver 不扫描 sibling
-project，也不允许 path/symlink escape。
+显式匹配 recipe 可解除同 root 歧义。唯一的 markerless 例外是：没有选中
+`pyproject.toml` 时，显式 `recipe=python` 加 `checks=["test"]` 会从 `cwd`
+运行固定 unittest discovery plan。resolver 不扫描 sibling project，也不允许
+path/symlink escape。
 
 Rust 支持三项 check，并且是唯一支持单 argv `test_filter` 的 recipe。Node 使用有
-证据的 package manager 和固定 script allowlist；Python 只选择已配置的
-Ruff/Black、Ruff/Mypy 或 pytest；Go 支持 `check/test`，`format` unavailable。
-所有 recipe 都不安装依赖、不修改 lockfile、不联网。tool 缺失属于 executor
-failure；validator 启动后 non-zero 才属于 assertion failure。recipe version、相对
-root 和 invocation/manifest evidence 绑定 operation exact-retry identity。这不会
-增加第十项 MCP tool；MCP、OpenAPI 与 capability registry 仍共享同一九项 source。
+证据的 package manager 和固定 script allowlist；Python 选择已配置的
+Ruff/Black、Ruff/Mypy 或 pytest，manifestless Python 则只支持
+`python -B -m unittest discover -v`；Go 支持 `check/test`，`format`
+unavailable。所有 recipe 都不安装依赖、不修改 lockfile、不联网。tool 缺失属于
+executor failure；validator 启动后 non-zero 才属于 assertion failure。recipe
+version、相对 root 和 invocation/manifest evidence 绑定 operation exact-retry
+identity。这不会增加第十项 MCP tool；MCP、OpenAPI 与 capability registry 仍共享
+同一九项 source。finish 时会排除 untracked interpreter/test cache、coverage
+output 和 `node_modules` 并返回 bounded warning；tracked 路径始终保留。
 
 review 后由人类在 host 上接受或拒绝：
 

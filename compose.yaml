@@ -1,0 +1,37 @@
+name: webcodex
+
+services:
+  webcodex:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: webcodex-server-local:${WEBCODEX_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      WEBCODEX_TOKEN: ${WEBCODEX_TOKEN:?set WEBCODEX_TOKEN in .env}
+      WEBCODEX_ADDR: 0.0.0.0:8080
+      WEBCODEX_DATA: /var/lib/webcodex
+      WEBCODEX_PUBLIC_URL: ${WEBCODEX_PUBLIC_URL:?set WEBCODEX_PUBLIC_URL in .env}
+      WEBCODEX_MCP_MODEL_SURFACE: ${WEBCODEX_MCP_MODEL_SURFACE:-local-coding-v1}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      # Only the existing reverse proxy on this host should reach WebCodex.
+      - "${WEBCODEX_HOST_IP:-127.0.0.1}:${WEBCODEX_HOST_PORT:-8080}:8080"
+    volumes:
+      - webcodex_data:/var/lib/webcodex
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/openapi.json"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+volumes:
+  webcodex_data:

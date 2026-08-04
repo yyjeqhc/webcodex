@@ -16,6 +16,7 @@ data*
 # Local sensitive deployment config — NEVER commit these.
 # They contain real server URLs, tokens, and host paths. If a token was ever
 # committed or exposed, rotate WEBCODEX_TOKEN immediately.
+/.env
 /agent.toml
 /projects.d/
 /*.local.toml

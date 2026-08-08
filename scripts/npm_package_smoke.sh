@@ -2,8 +2,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PACKAGE_DIR="$ROOT/npm/webcodex"
+PACKAGE_DIR="${WEBCODEX_NPM_PACKAGE_DIR:-$ROOT/npm/webcodex}"
 PROFILE="${WEBCODEX_NPM_SMOKE_PROFILE:-release}"
+
+if [[ ! -f "$PACKAGE_DIR/manifest.json" ]]; then
+    echo "[npm-smoke] publish-ready manifest missing from package staging: $PACKAGE_DIR/manifest.json" >&2
+    echo "[npm-smoke] run scripts/stage_npm_release.sh with OE-generated release metadata first" >&2
+    exit 2
+fi
 
 case "$PROFILE" in
     release)
@@ -58,13 +64,14 @@ const files = report.files.map((entry) => entry.path);
 for (const required of ['README.md', 'bin/webcodex.js', 'bin/wrapper.js', 'install.js', 'manifest.json', 'package.json']) {
   if (!files.includes(required)) throw new Error(`npm pack missing ${required}`);
 }
-for (const forbidden of ['bin/webcodex-cli.js', 'bin/webcodex-runner.js', 'vendor/bin/webcodex-cli']) {
+for (const forbidden of ['manifest.example.json', 'bin/webcodex-cli.js', 'bin/webcodex-runner.js', 'vendor/bin/webcodex-cli']) {
   if (files.includes(forbidden)) throw new Error(`npm pack contains legacy/private wrapper ${forbidden}`);
 }
 NODE
 
 echo "[npm-smoke] packing and inspecting local tarball"
-TARBALL_NAME="$(cd "$PACKAGE_DIR" && npm pack --pack-destination "$PACK_DIR")"
+(cd "$PACKAGE_DIR" && npm pack --pack-destination "$PACK_DIR" --json > "$TMP/pack.json")
+TARBALL_NAME="$(node -e 'const r=require(process.argv[1]); process.stdout.write(r[0].filename)' "$TMP/pack.json")"
 TARBALL="$PACK_DIR/$TARBALL_NAME"
 tar -xzf "$TARBALL" -C "$UNPACK"
 node - "$UNPACK/package/package.json" <<'NODE'

@@ -105,7 +105,7 @@ token、`userinfo_endpoint`、`client_credentials` grant、device code 流程，
 npm install -g @yyjeqhc/webcodex
 ```
 
-npm wrapper 当前支持 `linux-x64`、`linux-arm64` 和 `darwin-arm64`；目前不发布 `darwin-x64`、Windows 和其他目标平台。只有当前 npm 版本对应的三个 GitHub Release artifacts 都存在，并且 `npm/webcodex/manifest.json` 已写入每个实际上传 tarball 的 SHA-256 checksum 后，才能发布 npm package。先用 `bash scripts/npm_package_smoke.sh` 校验本地 package 路径。
+npm wrapper 当前支持 `linux-x64`、`linux-arm64`、`darwin-arm64` 和 `win32-x64`。Windows x64 支持 CLI + Runner 连接远端 Linux Server；长期运行的 Windows Server/service 路径仍不支持。release checksum 由 OE 动态生成并写入最终 npm package，不再提交到源码树。
 
 初始化 env 文件：
 

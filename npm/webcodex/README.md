@@ -97,9 +97,16 @@ WebCodex 能够在配置的项目边界内读取、修改文件并执行命令�
 
 ## Development verification / 开发验证
 
+Source-level npm tests do not require publish checksums:
+
 ```bash
 npm --prefix npm/webcodex test
-bash scripts/npm_package_smoke.sh
+```
+
+Release smoke runs against the OE-staged package that contains the generated publish-ready manifest:
+
+```bash
+WEBCODEX_NPM_PACKAGE_DIR=<STAGE_DIR>/npm-package bash scripts/npm_package_smoke.sh
 ```
 
 ## License

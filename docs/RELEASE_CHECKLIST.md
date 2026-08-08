@@ -93,28 +93,26 @@ Confirm:
 
 For every new binary and npm release, choose one candidate `<VERSION>` first and treat its tag and uploaded bytes as immutable once published:
 
-- `Cargo.toml` and every local WebCodex workspace entry in `Cargo.lock` must agree on `<VERSION>` before tagging.
-- `npm/webcodex/package.json`, `manifest.json`, `manifest.example.json`, and the npm self-tests must agree on the same `<VERSION>` before tagging.
-- The release-preparation/tag commit may keep `REPLACE_WITH_RELEASE_ARTIFACT_SHA256` for each planned platform in `manifest.json`. Never copy an earlier checksum or invent one to make prepublish checks pass.
-- Build every platform declared for the release on its native release host from the exact `v<VERSION>` tag. The existing published baseline is Linux x64, Linux arm64, and macOS arm64; do not retrofit new platform artifacts onto an already-published version.
-- Do not rebuild an artifact on an intermediate packaging machine or substitute a cross-compiled artifact for native-platform validation.
-- When Windows x64 is included, build `webcodex-v<VERSION>-win32-x64.tar.gz` on a Windows release host from the exact immutable tag using `scripts/package_release_artifact.ps1` (PowerShell + the built-in System32 `tar.exe`; no Git Bash, no WSL). The script is release-safe by default: it requires a concrete commit, `dirty=false`, a clean packaging worktree at the exact `v<VERSION>` tag, and binary commit identity matching that tag. `-AllowDevelopmentBuild` is for local/CI smoke only and its output must never be uploaded. Pin `WEBCODEX_BUILT_AT` once so all three binaries report one shared `built_at`. The archive contains `webcodex.exe`, `webcodex-server.exe`, and `webcodex-runner.exe`; the Server binary remains packaging-contract-only on Windows.
-- Windows enters the published-supported platform list only in a **new version** that has a real Windows-host-built artifact and checksum; before then, the published `manifest.json` must not contain `win32-x64` and user docs must not claim Windows is published.
-- After producing the exact tarballs, calculate each SHA-256, update the release manifest and platform-scope documentation in a clearly reported post-tag commit, and do not move the tag.
-- Every final artifact smoke must run `webcodex --version`, `webcodex-server --version`, and `webcodex-runner --version`; all three must report `<VERSION>`, the same concrete commit, and `dirty=false`. For a Windows-enabled release, also run `scripts/npm_install_windows_smoke.ps1` and `npm --prefix npm/webcodex test` on native Windows before approval, then package the upload candidate again **without** `-AllowDevelopmentBuild` from the exact tag.
-- Run `node npm/webcodex/test/release-manifest-check.js` only after all real checksums are present; it must reject placeholders, non-hex values, and all-zero values.
-- Run `bash scripts/npm_package_smoke.sh` before npm publication and verify the packed tarball identifies `@yyjeqhc/webcodex@<VERSION>` and includes its README.
-- If publishing a container image, manual local builds and CI builds are both acceptable. Build from the exact immutable tag, verify the image runs as the non-root WebCodex user, confirm the health check, ensure the image contains the Server and administrative CLI but not the Runner, and record the registry, tags, and immutable digest in the GitHub Release.
+- `Cargo.toml`, every local WebCodex workspace entry in `Cargo.lock`, `npm/webcodex/package.json`, `manifest.example.json`, and the npm self-tests must agree on `<VERSION>` before tagging.
+- `npm/webcodex/manifest.json` is generated release metadata and is intentionally not tracked. Do not commit real checksums or create a post-tag checksum-only PR.
+- Build the four published platforms (`linux-x64`, `linux-arm64`, `darwin-arm64`, `win32-x64`) on their native release hosts from the exact `v<VERSION>` tag. Do not rebuild an artifact on an intermediate packaging machine or substitute a cross-compiled artifact for native validation.
+- Pin one `WEBCODEX_BUILT_AT` value for the release. Every final `webcodex`, `webcodex-server`, and `webcodex-runner` binary must report `<VERSION>`, the same concrete tag commit, `dirty=false`, and the shared `built_at`.
+- Windows packaging must use `scripts/package_release_artifact.ps1` in its default provenance-checked mode. `-AllowDevelopmentBuild` is for local/CI smoke only and its output must never be uploaded.
+- OE is the release control plane. Collect all four final archives on OE, then run `scripts/prepare_release_metadata.py` to validate archive contents and generate `manifest.json` plus `SHA256SUMS` from the exact bytes.
+- Create the npm publication tree with `scripts/stage_npm_release.sh`. Its default mode requires a clean source worktree at exactly `v<VERSION>` and overlays the generated manifest without modifying Git. `--allow-development` is never valid for publication.
+- Run `WEBCODEX_NPM_PACKAGE_DIR=<STAGE_DIR>/npm-package bash scripts/npm_package_smoke.sh` before npm publication. The smoke must validate the generated manifest, package contents, temporary installation, wrapper, and all three binaries.
+- Upload `SHA256SUMS` with the native archives to the GitHub Release. Re-download uploaded assets to OE and verify their checksums before making the release public.
+- If publishing a container image, build it from the exact immutable tag, verify the non-root runtime and health check, keep the Runner out of the server image, and record the immutable digest in the GitHub Release.
 
 ## 9. Release Sequence
 
-1. Select a new `<VERSION>` that does not already exist as a Git tag, GitHub Release, or npm package version. Prepare and review one version/docs commit with placeholder checksums only where real artifact bytes do not yet exist.
-2. Run all source, focused, E2E, documentation, security, platform, and local npm package gates from that candidate commit.
-3. Only after explicit operator authorization, create the immutable annotated `v<VERSION>` tag.
-4. Build and smoke every artifact declared for the release from that exact tag on its native release host. Windows release packaging must use the default provenance-checked mode, never `-AllowDevelopmentBuild`.
-5. Upload the immutable artifacts, calculate checksums from the exact uploaded bytes, and create the reported post-tag manifest commit without moving `v<VERSION>`.
-6. Re-run the manifest check and npm package smoke, then publish npm only after explicit authorization.
-7. Create or finalize the GitHub Release from the release notes for `<VERSION>`, record artifact/checksum and optional container-digest results, and perform post-deployment acceptance.
+1. Select a new `<VERSION>` that does not already exist as a Git tag, GitHub Release, or npm package version. Put version bumps, release notes, platform docs, packaging changes, and release tests in **one release-prep PR** and squash-merge it into `main`.
+2. On OE, fast-forward to `origin/main`, require a clean worktree, run the source/release gates, and only after explicit operator authorization create the immutable annotated `v<VERSION>` tag. Never move that tag afterward.
+3. Build the four native artifacts from that exact tag on Special (`linux-x64`), Orb (`linux-arm64`), Mini (`darwin-arm64`), and MSI (`win32-x64`). Verify version/build identity on each host and transfer the final archives back to OE.
+4. On OE, run `scripts/prepare_release_metadata.py --version <VERSION> --artifact-dir <ARTIFACT_DIR> --output-dir <METADATA_DIR>`. Create a draft GitHub Release and upload the four archives plus `SHA256SUMS`; download them again and verify SHA-256 against the local exact bytes.
+5. From a clean detached worktree at the immutable tag, run `scripts/stage_npm_release.sh --manifest <METADATA_DIR>/manifest.json --output-dir <STAGE_DIR>`, then run the npm package smoke against `<STAGE_DIR>/npm-package`.
+6. Make the GitHub Release public and verify every generated manifest URL is reachable. From OE only, publish npm from the staged package (`npm publish --access public`) and verify the requested version/dist-tag in the registry.
+7. Run public npm install acceptance on OE/Linux x64 and MSI/Windows x64 when network routing permits, then fast-forward the four build-host source repositories to current `main` and clean temporary worktrees/bundles/pre-smoke artifacts.
 
 ## 10. Post-Deployment Acceptance Smoke
 

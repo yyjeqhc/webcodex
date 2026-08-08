@@ -118,7 +118,7 @@ The documented distribution path uses the npm thin installer/wrapper:
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
-The npm wrapper currently supports `linux-x64`, `linux-arm64`, and `darwin-arm64`; `darwin-x64`, Windows, and other targets are not currently published. Do not publish an npm package version until all three matching GitHub Release artifacts exist and `npm/webcodex/manifest.json` contains the SHA-256 checksum of each exact uploaded tarball. Validate the local package path first with `bash scripts/npm_package_smoke.sh`.
+The npm wrapper currently supports `linux-x64`, `linux-arm64`, `darwin-arm64`, and `win32-x64`. Windows x64 supports the CLI + Runner workflow against a remote Linux Server; the long-running Windows Server/service path remains unsupported. Release checksums are generated on OE and embedded in the published npm package rather than committed to the source tree.
 
 Initialize the env file:
 

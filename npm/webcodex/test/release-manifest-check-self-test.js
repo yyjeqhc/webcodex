@@ -32,8 +32,12 @@ function assertInvalid(manifest, pattern) {
 }
 
 function main() {
-  const current = loadManifest(path.join(__dirname, "..", "manifest.json"));
-  install.validateManifest(current);
+  const currentPath = path.join(__dirname, "..", "manifest.json");
+  if (fs.existsSync(currentPath)) {
+    const current = loadManifest(currentPath);
+    install.validateManifest(current);
+    assert.strictEqual(validateReleaseManifest(current), true);
+  }
 
   const linuxOnly = validFixture(["linux-x64"]);
   assert.strictEqual(validateReleaseManifest(linuxOnly), true);

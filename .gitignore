@@ -26,6 +26,10 @@ data*
 /*.local.toml
 /webcodex.env
 
+# Generated publish-ready npm manifest. Release checksums are created on OE
+# after all native artifacts exist; only manifest.example.json is source-controlled.
+/npm/webcodex/manifest.json
+
 # Generated documentation output (explicit rules, so docs/ stays tracked).
 /docs-generated/
 /docs-tmp/

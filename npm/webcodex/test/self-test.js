@@ -11,7 +11,10 @@ const zlib = require("zlib");
 const install = require("../install");
 const wrapper = require("../bin/wrapper");
 const packageJson = require("../package.json");
-const releaseManifest = require("../manifest.json");
+const releaseManifestPath = path.join(__dirname, "..", "manifest.json");
+const releaseManifest = fs.existsSync(releaseManifestPath)
+  ? JSON.parse(fs.readFileSync(releaseManifestPath, "utf8"))
+  : null;
 const exampleManifest = require("../manifest.example.json");
 
 // The whole suite runs against the native platform so `npm test` passes
@@ -219,7 +222,8 @@ async function main() {
   assert.strictEqual(install.resolveRedirectUrl("http://example.test/a", "/b").protocol, "http:");
   assert.throws(() => install.resolveRedirectUrl("https://example.test/a", "http://example.test/b?token=secret"), /HTTPS downgrade/);
   assert.throws(() => install.resolveRedirectUrl("http://example.test/a", "file:\/\/\/tmp\/secret?credential=hidden"), /unsupported protocol/);
-  for (const manifest of [releaseManifest, exampleManifest]) {
+  const manifests = releaseManifest ? [exampleManifest, releaseManifest] : [exampleManifest];
+  for (const manifest of manifests) {
     assert.strictEqual(manifest.version, packageJson.version);
     assert.deepStrictEqual(manifest.binaries, install.RUNTIME_BINARIES);
     install.validateManifest(manifest);

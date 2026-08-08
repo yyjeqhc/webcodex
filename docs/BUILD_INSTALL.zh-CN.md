@@ -70,7 +70,7 @@ binary、npm 命令、systemd unit 与 QUIC ALPN（`webcodex-runner/1`）统一�
 npm install -g @yyjeqhc/webcodex
 ```
 
-npm wrapper 当前支持 `linux-x64`、`linux-arm64` 和 `darwin-arm64`；目前不发布 `darwin-x64`、Windows 和其他 targets。只有当前 npm 版本对应的三个 GitHub Release artifacts 都存在，并且 `npm/webcodex/manifest.json` 已写入每个实际上传 tarball 的 SHA-256 checksum 后，才能发布 npm package。
+npm wrapper 当前支持 `linux-x64`、`linux-arm64`、`darwin-arm64` 和 `win32-x64`；目前不发布 `darwin-x64`、Windows ARM64 和其他 targets。release checksum 在 tag 创建后由 OE 根据四台 native host 生成的 exact artifacts 动态计算；publish-ready `manifest.json` 属于 release metadata，不再提交进 Git。
 
 ### Windows x64 支持范围
 
@@ -78,13 +78,17 @@ Windows x64 的支持目标是 **client + Runner**：包括 `webcodex` CLI、作
 
 Windows 暂不支持长期运行的本地 WebCodex Server（`webcodex server ...`、`webcodex share`）、`webcodex agent install`（systemd service 安装）、persistent shell、SSH resource、config hot reload、AppContainer sandbox、ARM64 和 UNC project root。Windows artifact 中仍包含 `webcodex-server.exe`，只是为了保持 npm 三 binary contract，并不表示 Windows Server runtime 已受支持。
 
-只有在新的 release version 中真正上传由 Windows host 构建的 `webcodex-v<VERSION>-win32-x64.tar.gz`，并把其真实 checksum 写入 `manifest.json` 后，`win32-x64` npm install 才正式进入 published-supported platform；不会给已经发布的旧 tag 追加 Windows artifact。`scripts/package_release_artifact.ps1` 默认会校验 clean commit、`dirty=false` 和 immutable `v<VERSION>` tag provenance；`-AllowDevelopmentBuild` 只用于本地/CI smoke，不能发布。Windows release gate 还包括 `test-windows` CI lane、native Windows 上的 `npm --prefix npm/webcodex test` 和 `scripts/npm_install_windows_smoke.ps1`。
+从 v0.3.3 起，Windows x64 已正式作为 client + Runner 平台发布。后续 Windows release artifact 仍必须在 native Windows host 上从 exact immutable tag 构建，并使用 `scripts/package_release_artifact.ps1` 默认的 provenance-safe 模式；它要求 concrete commit、`dirty=false`、clean tag worktree 和一致的 binary provenance。`-AllowDevelopmentBuild` 仍然只用于本地/CI smoke，不能上传。native Windows 验证包括 `npm --prefix npm/webcodex test` 和 `scripts/npm_install_windows_smoke.ps1`。
 
-npm package 是 native release artifacts 的 thin wrapper。安装时会下载匹配的 GitHub Release artifact，并使用 manifest 中的 SHA-256 checksum 验证。发布前先运行本地 package smoke；它不会发布：
+npm package 是 native release artifacts 的 thin wrapper。安装时会下载匹配的 GitHub Release artifact，并使用生成的 release manifest 中的 SHA-256 checksum 验证。正式发布时由 OE 在四个平台 artifacts 就绪后创建临时 staging：
 
 ```bash
-bash scripts/npm_package_smoke.sh
+python3 scripts/prepare_release_metadata.py --version <VERSION> --artifact-dir <ARTIFACT_DIR> --output-dir <METADATA_DIR>
+scripts/stage_npm_release.sh --manifest <METADATA_DIR>/manifest.json --output-dir <STAGE_DIR>
+WEBCODEX_NPM_PACKAGE_DIR=<STAGE_DIR>/npm-package bash scripts/npm_package_smoke.sh
 ```
+
+staging script 默认只接受 clean 且正好位于 `v<VERSION>` 的源码 worktree。最终 npm publish 使用 staging tree，而不是源码树。
 
 ## 示例文件
 

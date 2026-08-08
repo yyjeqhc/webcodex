@@ -42,9 +42,20 @@ function loadManifest(file) {
 }
 
 function main() {
-  const manifestPath = process.argv[2] ? path.resolve(process.argv[2]) : path.join(__dirname, "..", "manifest.json");
+  const args = process.argv.slice(2);
+  const quiet = args.includes("--quiet");
+  const requested = args.find((arg) => arg !== "--quiet") || process.env.WEBCODEX_RELEASE_MANIFEST;
+  const manifestPath = requested
+    ? path.resolve(requested)
+    : path.join(__dirname, "..", "manifest.json");
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(
+      `publish-ready release manifest not found at ${manifestPath}; ` +
+      "generate it on OE from the native release artifacts and stage the npm package before publishing"
+    );
+  }
   validateReleaseManifest(loadManifest(manifestPath));
-  console.log(`release manifest is publish-ready for ${packageJson.version}`);
+  if (!quiet) console.log(`release manifest is publish-ready for ${packageJson.version}`);
 }
 
 if (require.main === module) main();

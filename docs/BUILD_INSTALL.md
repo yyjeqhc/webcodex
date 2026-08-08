@@ -70,7 +70,7 @@ The documented distribution path uses the npm thin installer/wrapper:
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
-The npm wrapper currently supports `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not currently published. Do not publish an npm package version until all matching GitHub Release artifacts exist and `npm/webcodex/manifest.json` contains the SHA-256 checksum of each exact uploaded tarball.
+The npm wrapper currently supports `linux-x64`, `linux-arm64`, `darwin-arm64`, and `win32-x64`. `darwin-x64`, Windows ARM64, and other targets are not currently published. Release checksums are generated on OE from the exact native artifacts after tagging; the publish-ready `manifest.json` is release metadata and is no longer committed to Git.
 
 ### Windows x64 support scope
 
@@ -78,13 +78,17 @@ Windows x64 is the supported **client + Runner** target: the `webcodex` CLI, `we
 
 Not supported on Windows: a long-running local WebCodex Server (`webcodex server ...`, `webcodex share`), `webcodex agent install` (systemd service install), persistent shells, SSH resources, config hot reload, AppContainer sandboxing, ARM64, and UNC project roots. `webcodex-server.exe` is packaged in Windows artifacts only to keep the three-binary npm contract; it does not imply a Windows Server runtime.
 
-A `win32-x64` npm install becomes officially published only in a **new release version** that carries a real Windows-host-built artifact (`webcodex-v<VERSION>-win32-x64.tar.gz`) and its real checksum in `manifest.json`; Windows must not be retrofitted onto an already published tag. `scripts/package_release_artifact.ps1` is release-safe by default: it requires a concrete commit, `dirty=false`, and a binary commit matching the immutable `v<VERSION>` tag. `-AllowDevelopmentBuild` exists only for local/CI distribution smoke and its output must never be published. Until a Windows-enabled release is prepared, the published manifest keeps no `win32-x64` entry. The Windows development/release gate is the `test-windows` CI lane plus `npm --prefix npm/webcodex test` and `scripts/npm_install_windows_smoke.ps1` on native Windows.
+Windows x64 is a published client + Runner platform starting with v0.3.3. Each future Windows release artifact is still built natively from the exact immutable tag with `scripts/package_release_artifact.ps1`; the default mode requires a concrete commit, `dirty=false`, a clean tag worktree, and matching binary provenance. `-AllowDevelopmentBuild` remains local/CI smoke only and must never produce an uploaded artifact. Native Windows validation includes `npm --prefix npm/webcodex test` and `scripts/npm_install_windows_smoke.ps1`.
 
-The npm package is a thin wrapper around native release artifacts. During install it downloads the matching GitHub Release artifact and verifies the SHA-256 checksum from the manifest. Before publishing, run the local package smoke without publishing:
+The npm package is a thin wrapper around native release artifacts. During install it downloads the matching GitHub Release artifact and verifies the SHA-256 checksum from the generated release manifest. Release publication is staged on OE after all native archives exist:
 
 ```bash
-bash scripts/npm_package_smoke.sh
+python3 scripts/prepare_release_metadata.py --version <VERSION> --artifact-dir <ARTIFACT_DIR> --output-dir <METADATA_DIR>
+scripts/stage_npm_release.sh --manifest <METADATA_DIR>/manifest.json --output-dir <STAGE_DIR>
+WEBCODEX_NPM_PACKAGE_DIR=<STAGE_DIR>/npm-package bash scripts/npm_package_smoke.sh
 ```
+
+The staging script is release-safe by default and requires the source worktree to be clean at the exact `v<VERSION>` tag. The resulting staging tree, not the source tree, is the npm publication input.
 
 ## Example files
 

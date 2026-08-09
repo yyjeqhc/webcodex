@@ -12,16 +12,11 @@ use std::sync::Mutex;
 static VALIDATION_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct ValidationEnvRestore {
-    path: Option<std::ffi::OsString>,
     pyright: Option<std::ffi::OsString>,
 }
 
 impl Drop for ValidationEnvRestore {
     fn drop(&mut self) {
-        match self.path.take() {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
-        }
         match self.pyright.take() {
             Some(value) => std::env::set_var("WEBCODEX_PYRIGHT", value),
             None => std::env::remove_var("WEBCODEX_PYRIGHT"),
@@ -133,27 +128,36 @@ fn with_path<T>(bin_dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
     with_path_mode(bin_dir, true, f)
 }
 
-/// When `prepend` is false, PATH is *only* `bin_dir` so real tools cannot leak in.
-fn with_path_mode<T>(bin_dir: &std::path::Path, prepend: bool, f: impl FnOnce() -> T) -> T {
+/// Point validation at this test's explicit pyright fixture without mutating
+/// process-wide PATH. Other Runner tests execute shells and SSH clients in
+/// parallel, so replacing PATH here makes otherwise unrelated tests race with
+/// the validation fixture. `available = false` points at a guaranteed-missing
+/// path to exercise the tool-unavailable branch without exposing real tools.
+fn with_path_mode<T>(bin_dir: &std::path::Path, available: bool, f: impl FnOnce() -> T) -> T {
     let _lock = VALIDATION_ENV_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let old = std::env::var_os("PATH");
     let _restore = ValidationEnvRestore {
-        path: old.clone(),
         pyright: std::env::var_os("WEBCODEX_PYRIGHT"),
     };
-    let joined = if prepend {
-        let mut paths = vec![bin_dir.to_path_buf()];
-        if let Some(old) = old.as_ref() {
-            paths.extend(std::env::split_paths(old));
+    let program = if available {
+        #[cfg(unix)]
+        {
+            bin_dir.join("pyright")
         }
-        std::env::join_paths(paths).unwrap()
+        #[cfg(windows)]
+        {
+            let exe = bin_dir.join("pyright.exe");
+            if exe.is_file() {
+                exe
+            } else {
+                bin_dir.join("pyright.cmd")
+            }
+        }
     } else {
-        bin_dir.as_os_str().to_os_string()
+        bin_dir.join("webcodex-missing-pyright")
     };
-    std::env::set_var("PATH", &joined);
-    std::env::remove_var("WEBCODEX_PYRIGHT");
+    std::env::set_var("WEBCODEX_PYRIGHT", program);
     f()
 }
 

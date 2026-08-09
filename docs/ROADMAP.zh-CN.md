@@ -15,11 +15,9 @@ WebCodex 是面向 coding assistant 的远程、可审计、有界执行层。�
 
 下一轮以 **降低模型执行摩擦** 为中心，而不是继续扩张 fleet/运维能力。设计约束见 [MODEL_EXECUTION.md](MODEL_EXECUTION.md)。
 
-1. 先让 execution lifecycle 可信：structured state、retry safety 与人类可读 guidance 必须一致地区分“确定未启动、正在运行、已完成、结果未知”。
-2. 增加最小的 structured process/argv 与 script payload 路径，让普通 native command 不再依赖 shell quoting；`run_shell` 保留为 escape hatch。
-3. 泛化现有 validation 的同一次执行 handoff：短任务同步返回，长任务继续作为同一个 durable Job；同时用既有 observation token 增加有界 batch Job observation。
-4. 在提高并发前先修 transport execution reliability，尤其是 polling dispatch starvation；之后只增加调参真正需要的 running/queued/limit observability。
-5. 保持 Job state 与 OS 解耦并兼容未来 MCP App：统一 Windows 输出、维持 structured MCP result，并允许可选的 conversation-level Orchestrator，但不让 UI 或可选 MCP 2026 extension 成为 execution truth 的一部分。
+1. Execution Phase A–F 已完成实现和最终验收：可信 lifecycle、structured process/script、同一次执行 Job handoff、有界 batch observation、non-pinning polling、实用 Job concurrency/observability，以及 Windows 本地 process output normalization 均已通过 Linux 回归与真实 Windows/MSVC service-context 验证。
+2. 本轮后续 execution 工作只做 maintenance/stabilization：只修有证据的 regression，保留 Linux/Windows acceptance evidence；没有新的具体需求时不再增加 execution feature phase。
+3. 继续保持 structured MCP result，并允许可选的 conversation-level Orchestrator，但不让 UI 或可选 MCP 2026 extension 成为 execution truth 的一部分。
 
 ## 暂缓，直到出现当前需求
 

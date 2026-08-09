@@ -3541,7 +3541,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "anyhow",
  "base64",
@@ -3578,7 +3578,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-admin"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "reqwest 0.12.28",
  "serde_json",
@@ -3588,7 +3588,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-agent-config"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "serde",
  "toml",
@@ -3597,7 +3597,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-cli"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "chrono",
  "fs2",
@@ -3622,7 +3622,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-core"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-persistent-shell"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "libc",
  "tempfile",
@@ -3640,7 +3640,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-process"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "libc",
  "tempfile",
@@ -3649,7 +3649,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-runner"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "base64",
  "chrono",
@@ -3681,7 +3681,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-sandbox"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "landlock",
  "tempfile",
@@ -3691,7 +3691,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-workspace"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "serde",
  "serde_json",

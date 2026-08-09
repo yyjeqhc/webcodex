@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [下载最新版本](https://github.com/yyjeqhc/webcodex/releases/latest) ·
-[0.3.3 发布说明](docs/RELEASE_NOTES_v0.3.3.zh-CN.md) ·
+[0.3.4 发布说明](docs/RELEASE_NOTES_v0.3.4.zh-CN.md) ·
 [完整文档](docs/INDEX.zh-CN.md)
 
 **让在线 AI 窗口成为连接到你自己电脑和服务器的专属助手。**

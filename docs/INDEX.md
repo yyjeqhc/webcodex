@@ -54,6 +54,7 @@
 
 - [Release Checklist](RELEASE_CHECKLIST.md)
 - [Release Process](agent/release-process.md)
+- [v0.3.4 Release Notes](RELEASE_NOTES_v0.3.4.md) / [中文](RELEASE_NOTES_v0.3.4.zh-CN.md)
 - [v0.3.3 Release Notes](RELEASE_NOTES_v0.3.3.md) / [中文](RELEASE_NOTES_v0.3.3.zh-CN.md)
 - [v0.3.2 Release Notes](RELEASE_NOTES_v0.3.2.md) / [中文](RELEASE_NOTES_v0.3.2.zh-CN.md)
 - [v0.3.1 Release Notes](RELEASE_NOTES_v0.3.1.md) / [中文](RELEASE_NOTES_v0.3.1.zh-CN.md)

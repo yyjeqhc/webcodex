@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [Latest release](https://github.com/yyjeqhc/webcodex/releases/latest) ·
-[0.3.3 release notes](docs/RELEASE_NOTES_v0.3.3.md) ·
+[0.3.4 release notes](docs/RELEASE_NOTES_v0.3.4.md) ·
 [Documentation](docs/INDEX.md)
 
 **Turn your online AI chat into a personal assistant connected to your own machines.**

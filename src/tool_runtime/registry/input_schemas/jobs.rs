@@ -4,6 +4,8 @@ use super::common::{object_schema, with_optional_session_id};
 use crate::shell_protocol::{
     PROCESS_ARG_MAX_BYTES, PROCESS_ARG_MAX_COUNT, PROCESS_CWD_MAX_BYTES,
     PROCESS_EXECUTABLE_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
+    SCRIPT_ARGV_MAX_BYTES, SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT, SCRIPT_CWD_MAX_BYTES,
+    SCRIPT_MAX_BYTES, SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
 };
 
 pub(crate) fn run_process_input_schema() -> Value {
@@ -61,6 +63,85 @@ pub(crate) fn run_process_input_schema() -> Value {
     schema["properties"]["cwd"]["maxLength"] = json!(PROCESS_CWD_MAX_BYTES);
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
     schema["properties"]["timeout_secs"]["maximum"] = json!(PROCESS_TIMEOUT_MAX_SECS);
+    schema["properties"]["timeout_secs"]["default"] = json!(60);
+    schema["properties"]["purpose"]["enum"] = json!([
+        "validation",
+        "test",
+        "build",
+        "format",
+        "release",
+        "diagnostic",
+        "operation",
+        "other"
+    ]);
+    schema
+}
+
+pub(crate) fn run_script_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        ("project", "string", "Configured project id.", true),
+        (
+            "language",
+            "string",
+            "Required semantic script language. The Runner selects the concrete interpreter; Session default_shell never overrides this field.",
+            true,
+        ),
+        (
+            "script",
+            "string",
+            "Bounded UTF-8 script content transported as typed data. It is written to a Runner-owned temporary file and never placed in a shell command string.",
+            true,
+        ),
+        (
+            "args",
+            "array",
+            "Ordered script arguments passed as independent argv values. Defaults to an empty array; values are never interpolated into the script body.",
+            false,
+        ),
+        (
+            "stdin",
+            "string",
+            "Optional bounded UTF-8 stdin payload piped independently to the script process. Null and omission both mean no stdin payload.",
+            false,
+        ),
+        (
+            "cwd",
+            "string",
+            "Project-relative working directory. Omit, empty string, or '.' for the project root. Named Session SSH resources are unsupported for run_script.",
+            false,
+        ),
+        (
+            "timeout_secs",
+            "integer",
+            "Synchronous script timeout in seconds (minimum 1, maximum 120, default 60).",
+            false,
+        ),
+        (
+            "purpose",
+            "string",
+            "Declared execution intent: validation, test, build, format, release, diagnostic, operation, or other. This records evidence and never changes authorization.",
+            false,
+        ),
+    ]));
+    schema["properties"]["language"]["enum"] = json!(["sh", "bash", "powershell"]);
+    schema["properties"]["script"]["minLength"] = json!(1);
+    schema["properties"]["script"]["maxLength"] = json!(SCRIPT_MAX_BYTES);
+    schema["properties"]["args"]["maxItems"] = json!(SCRIPT_ARG_MAX_COUNT);
+    schema["properties"]["args"]["items"]["maxLength"] = json!(SCRIPT_ARG_MAX_BYTES);
+    schema["properties"]["args"]["default"] = json!([]);
+    schema["properties"]["args"]["description"] = json!(format!(
+        "Ordered script arguments passed as independent argv values. Defaults to an empty array. At most {SCRIPT_ARG_MAX_COUNT} entries, each at most {SCRIPT_ARG_MAX_BYTES} UTF-8 bytes, with at most {SCRIPT_ARGV_MAX_BYTES} bytes total including one boundary byte per value; values are never interpolated into the script body."
+    ));
+    schema["properties"]["stdin"] = json!({
+        "anyOf": [
+            {"type": "string", "maxLength": SCRIPT_STDIN_MAX_BYTES},
+            {"type": "null"}
+        ],
+        "description": "Optional bounded UTF-8 stdin payload piped independently to the script process; null and omission both mean no stdin payload."
+    });
+    schema["properties"]["cwd"]["maxLength"] = json!(SCRIPT_CWD_MAX_BYTES);
+    schema["properties"]["timeout_secs"]["minimum"] = json!(1);
+    schema["properties"]["timeout_secs"]["maximum"] = json!(SCRIPT_TIMEOUT_MAX_SECS);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
     schema["properties"]["purpose"]["enum"] = json!([
         "validation",

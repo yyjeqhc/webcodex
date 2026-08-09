@@ -317,6 +317,7 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         "list_projects" => Some(&["inspect", "projects", "runtime"]),
         "list_tools" => Some(&["inspect", "runtime"]),
         "run_job" => Some(&["jobs", "shell"]),
+        "run_process" | "run_script" => Some(&["inspect", "shell"]),
         "run_shell" => Some(&["inspect", "shell"]),
         "open_session_shell"
         | "session_shell_exec"
@@ -452,6 +453,8 @@ fn tool_discovery_groups_drive_tool_categories() {
         "list_projects",
         "list_tools",
         "run_job",
+        "run_process",
+        "run_script",
         "runtime_status",
         "show_changes",
         "start_coding_task",
@@ -996,7 +999,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "write_project_file only for intentional full rewrites",
         "validate: use cargo_check / cargo_test / validate_patch",
         "raw run_shell is a bounded escape hatch",
-        "not the primary editing or validation path",
+        "not the primary validation path",
         "review: use show_changes / git_diff_hunks / workspace_hygiene_check",
         "handoff: use session_summary / session_handoff_summary",
     ] {

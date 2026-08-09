@@ -378,6 +378,7 @@ mod tests {
                     ssh_persistent_shell: false,
                     structured_validation_argv: true,
                     structured_process_argv: true,
+                    structured_script_payload: false,
                     lsp_read_only_navigation: false,
                     sandbox_inspect_commands: false,
                     project_lifecycle: false,

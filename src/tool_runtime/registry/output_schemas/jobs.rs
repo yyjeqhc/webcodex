@@ -10,6 +10,88 @@ fn process_execution_state_schema() -> Value {
     })
 }
 
+fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
+    json!([
+        {
+            "if": {
+                "anyOf": [
+                    {"required": ["execution_state"]},
+                    {"required": ["command_started"]},
+                    {"required": ["command_completed"]},
+                    {"required": ["command_ok"]},
+                    {"required": ["failure_kind"]},
+                    {"required": ["tool_failure"]},
+                    {
+                        "properties": {
+                            "execution_source": {"const": execution_source}
+                        },
+                        "required": ["execution_source"]
+                    }
+                ]
+            },
+            "then": {
+                "required": [
+                    "execution_state",
+                    "command_started",
+                    "command_completed"
+                ]
+            }
+        },
+        {
+            "if": {
+                "properties": {"execution_state": {"const": "not_started"}},
+                "required": ["execution_state"]
+            },
+            "then": {
+                "properties": {
+                    "command_started": {"const": false},
+                    "command_completed": {"const": false}
+                },
+                "required": ["command_started", "command_completed"]
+            }
+        },
+        {
+            "if": {
+                "properties": {"execution_state": {"const": "outcome_unknown"}},
+                "required": ["execution_state"]
+            },
+            "then": {
+                "properties": {
+                    "command_started": {"const": true},
+                    "command_completed": {"const": false}
+                },
+                "required": ["command_started", "command_completed"]
+            }
+        },
+        {
+            "if": {
+                "properties": {"execution_state": {"const": "completed"}},
+                "required": ["execution_state"]
+            },
+            "then": {
+                "properties": {
+                    "command_started": {"const": true},
+                    "command_completed": {"const": true}
+                },
+                "required": ["command_started", "command_completed"]
+            }
+        },
+        {
+            "if": {
+                "properties": {"execution_state": {"const": "timed_out"}},
+                "required": ["execution_state"]
+            },
+            "then": {
+                "properties": {
+                    "command_started": {"const": true},
+                    "command_completed": {"const": false}
+                },
+                "required": ["command_started", "command_completed"]
+            }
+        }
+    ])
+}
+
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "run_process" => {
@@ -100,85 +182,113 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     process_execution_state_schema(),
                 ),
             ]);
-            schema["properties"]["output"]["allOf"] = json!([
-                {
-                    "if": {
-                        "anyOf": [
-                            {"required": ["execution_state"]},
-                            {"required": ["command_started"]},
-                            {"required": ["command_completed"]},
-                            {"required": ["command_ok"]},
-                            {"required": ["failure_kind"]},
-                            {"required": ["tool_failure"]},
-                            {
-                                "properties": {
-                                    "execution_source": {"const": "run_process"}
-                                },
-                                "required": ["execution_source"]
-                            }
-                        ]
-                    },
-                    "then": {
-                        "required": [
-                            "execution_state",
-                            "command_started",
-                            "command_completed"
-                        ]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": {"execution_state": {"const": "not_started"}},
-                        "required": ["execution_state"]
-                    },
-                    "then": {
-                        "properties": {
-                            "command_started": {"const": false},
-                            "command_completed": {"const": false}
-                        },
-                        "required": ["command_started", "command_completed"]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": {"execution_state": {"const": "outcome_unknown"}},
-                        "required": ["execution_state"]
-                    },
-                    "then": {
-                        "properties": {
-                            "command_started": {"const": true},
-                            "command_completed": {"const": false}
-                        },
-                        "required": ["command_started", "command_completed"]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": {"execution_state": {"const": "completed"}},
-                        "required": ["execution_state"]
-                    },
-                    "then": {
-                        "properties": {
-                            "command_started": {"const": true},
-                            "command_completed": {"const": true}
-                        },
-                        "required": ["command_started", "command_completed"]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": {"execution_state": {"const": "timed_out"}},
-                        "required": ["execution_state"]
-                    },
-                    "then": {
-                        "properties": {
-                            "command_started": {"const": true},
-                            "command_completed": {"const": false}
-                        },
-                        "required": ["command_started", "command_completed"]
-                    }
-                }
+            schema["properties"]["output"]["properties"]["execution_source"]["const"] =
+                json!("run_process");
+            schema["properties"]["output"]["allOf"] =
+                structured_execution_lifecycle_constraints("run_process");
+            Some(schema)
+        }
+        "run_script" => {
+            let mut schema = wrapped_output_schema(vec![
+                (
+                    "duration_ms",
+                    schema_type("integer", "Script duration in milliseconds."),
+                ),
+                (
+                    "exit_code",
+                    nullable_schema("integer", "Interpreter exit code, when available."),
+                ),
+                (
+                    "stdout_tail",
+                    schema_type("string", "Bounded stdout tail."),
+                ),
+                (
+                    "stderr_tail",
+                    schema_type("string", "Bounded stderr tail."),
+                ),
+                (
+                    "stdout_lines",
+                    schema_type("integer", "Captured stdout line count."),
+                ),
+                (
+                    "stderr_lines",
+                    schema_type("integer", "Captured stderr line count."),
+                ),
+                (
+                    "stdout_truncated",
+                    schema_type("boolean", "Whether stdout_tail was truncated."),
+                ),
+                (
+                    "stderr_truncated",
+                    schema_type("boolean", "Whether stderr_tail was truncated."),
+                ),
+                (
+                    "command_started",
+                    schema_type(
+                        "boolean",
+                        "Whether callers must conservatively treat the script as started; true includes outcome_unknown because side effects may have occurred.",
+                    ),
+                ),
+                (
+                    "command_completed",
+                    schema_type(
+                        "boolean",
+                        "Whether the interpreter reached a known terminal result before tool timeout.",
+                    ),
+                ),
+                (
+                    "command_ok",
+                    schema_type(
+                        "boolean",
+                        "Whether the interpreter completed with exit code 0.",
+                    ),
+                ),
+                (
+                    "failure_kind",
+                    nullable_schema(
+                        "string",
+                        "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, capability_unavailable, unsupported_resource, interpreter_unavailable, script_setup_failed, permission_denied, invalid_arguments, agent_offline, session_guard_denied, session_closed, or runtime_error.",
+                    ),
+                ),
+                (
+                    "tool_failure",
+                    schema_type(
+                        "boolean",
+                        "True for WebCodex tool/runtime failures; false for interpreter exit status failures.",
+                    ),
+                ),
+                ("purpose", schema_type("string", "Declared execution purpose.")),
+                (
+                    "script_summary",
+                    schema_type(
+                        "string",
+                        "Bounded body-free language/byte/argument summary; never execution input.",
+                    ),
+                ),
+                (
+                    "language",
+                    schema_type("string", "Explicit semantic script language."),
+                ),
+                (
+                    "cwd",
+                    schema_type("string", "Resolved project-relative cwd."),
+                ),
+                ("executor", schema_type("string", "Executor type: local or agent.")),
+                (
+                    "execution_source",
+                    schema_type("string", "Always run_script."),
+                ),
+                (
+                    "execution_state",
+                    process_execution_state_schema(),
+                ),
             ]);
+            schema["properties"]["output"]["properties"]["language"]["enum"] =
+                json!(["sh", "bash", "powershell"]);
+            schema["properties"]["output"]["properties"]["execution_source"]["const"] =
+                json!("run_script");
+            schema["properties"]["output"]["allOf"] =
+                structured_execution_lifecycle_constraints("run_script");
             Some(schema)
         }
         "run_shell" => Some(wrapped_output_schema(vec![

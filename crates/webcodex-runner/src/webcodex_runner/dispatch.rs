@@ -5,13 +5,14 @@ use super::validation::{handle_validation_request, is_validation_request_kind};
 use super::{
     handle_project_lifecycle_op, handle_project_op_with_temporary_projects_root,
     handle_resolve_or_register_project, run_process_with_profiles_in_sandbox_and_execution_state,
+    run_script_with_profiles_in_sandbox_and_execution_state,
     run_shell_with_profiles_in_sandbox_and_execution_state, run_ssh_shell_with_execution_state,
     AgentSink, CommandResult, HotAgentConfig, PersistentShellManager, ReloadableAgentConfig,
     ShellCommandResult, SubmitResultError,
 };
 use crate::shell_protocol::{
-    validate_process_argv, ShellAgentShellRequest, ShellProcessArgv, PROCESS_CWD_MAX_BYTES,
-    PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
+    validate_process_argv, validate_script_request, ShellAgentShellRequest, ShellProcessArgv,
+    ShellScriptPayload, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
 };
 use crate::{handle_file_request, is_file_request_kind, JobManager};
 use std::path::Path;
@@ -98,6 +99,49 @@ pub(crate) fn dispatch_request(
                     duration_ms: Some(0),
                     error: Some(format!(
                         "invalid_structured_process_request: {error}; command was not started"
+                    )),
+                }),
+            }
+        };
+        return sink
+            .submit_shell_result_with_metadata(request_id, result, config, runtime)
+            .map(|_| true);
+    }
+    if request.kind == "run_script" {
+        let request_id = request.request_id.clone();
+        let result = if ssh_resource.is_some() {
+            ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(
+                    "structured_script_ssh_unsupported: typed script payloads are unavailable for SSH resources; command was not started"
+                        .to_string(),
+                ),
+            })
+        } else {
+            match validate_run_script_request(&request) {
+                Ok(script) => run_script_with_profiles_in_sandbox_and_execution_state(
+                    config.generation,
+                    policy,
+                    shell,
+                    projects_dir,
+                    &jobs.prepared_profiles,
+                    request.cwd.as_deref(),
+                    script,
+                    request.stdin.as_deref(),
+                    request.timeout_secs,
+                    Some(runtime.shutdown_flag()),
+                    request.sandbox.as_deref(),
+                ),
+                Err(error) => ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(0),
+                    error: Some(format!(
+                        "invalid_structured_script_request: {error}; command was not started"
                     )),
                 }),
             }
@@ -331,6 +375,9 @@ fn validate_run_process_request(
     if !request.command.is_empty() {
         return Err("command must be empty when process is present".to_string());
     }
+    if request.script.is_some() {
+        return Err("script must be absent when process is present".to_string());
+    }
     let process = request
         .process
         .as_ref()
@@ -362,6 +409,31 @@ fn validate_run_process_request(
         ));
     }
     Ok(process)
+}
+
+fn validate_run_script_request(
+    request: &ShellAgentShellRequest,
+) -> Result<&ShellScriptPayload, String> {
+    if request.job_id.is_some() {
+        return Err("job_id is not supported by synchronous run_script".to_string());
+    }
+    if !request.command.is_empty() {
+        return Err("command must be empty when script is present".to_string());
+    }
+    if request.process.is_some() {
+        return Err("process must be absent when script is present".to_string());
+    }
+    let script = request
+        .script
+        .as_ref()
+        .ok_or_else(|| "script payload is required".to_string())?;
+    validate_script_request(
+        script,
+        request.stdin.as_deref(),
+        request.cwd.as_deref(),
+        request.timeout_secs,
+    )?;
+    Ok(script)
 }
 
 fn lifecycle_project_id(request: &ShellAgentShellRequest) -> Option<String> {

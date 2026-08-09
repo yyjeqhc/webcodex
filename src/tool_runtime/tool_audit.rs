@@ -38,6 +38,34 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 );
             }
         }
+        "run_script" => {
+            if let Some(language) = obj.get("language").cloned() {
+                out.insert("language".to_string(), language);
+            }
+            out.insert(
+                "script_bytes".to_string(),
+                Value::from(
+                    obj.get("script")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "stdin_present".to_string(),
+                Value::Bool(obj.get("stdin").is_some_and(|value| !value.is_null())),
+            );
+            out.insert(
+                "arg_count".to_string(),
+                Value::from(
+                    obj.get("args")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            copy_keys(obj, &mut out, &["timeout_secs", "cwd", "purpose"]);
+        }
         "run_shell" | "run_job" | "session_shell_exec" => {
             out.insert(
                 "command_present".to_string(),
@@ -303,6 +331,26 @@ impl ToolCall {
                     executable,
                     args.iter().map(String::as_str),
                 ),
+                "timeout_secs": timeout_secs,
+                "cwd": cwd,
+                "purpose": purpose,
+            }),
+            Self::RunScript {
+                project,
+                language,
+                script,
+                args,
+                stdin,
+                timeout_secs,
+                cwd,
+                purpose,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "language": language,
+                "script_bytes": script.len(),
+                "arg_count": args.len(),
+                "stdin_present": stdin.is_some(),
                 "timeout_secs": timeout_secs,
                 "cwd": cwd,
                 "purpose": purpose,

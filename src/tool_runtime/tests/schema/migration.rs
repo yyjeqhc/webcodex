@@ -118,6 +118,8 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             "checkpoint",
             "current_session_fallback",
         ),
+        ("run_process", "job", "current_session_fallback"),
+        ("run_script", "job", "current_session_fallback"),
         ("run_shell", "job", "current_session_fallback"),
         ("open_session_shell", "job", "explicit_business_session"),
         ("session_shell_exec", "job", "explicit_business_session"),

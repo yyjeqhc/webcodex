@@ -15,14 +15,15 @@ use crate::auth::AuthContext;
 use crate::tool_runtime::project_resolution::{ProjectResolverError, ResolvedProject};
 use serde_json::Value;
 
-/// Add the Phase A lifecycle tuple to a definite pre-execution `run_process`
-/// denial without changing generic denial helpers used by unrelated tools.
-pub(super) fn decorate_run_process_prestart_denial(
+/// Add the Phase A lifecycle tuple to a definite pre-execution structured
+/// execution denial without changing generic denial helpers used by unrelated
+/// tools.
+pub(super) fn decorate_structured_execution_prestart_denial(
     tool_name: &str,
     result: &mut ToolResult,
     fallback_failure_kind: &'static str,
 ) {
-    if tool_name != "run_process" {
+    if !matches!(tool_name, "run_process" | "run_script") {
         return;
     }
     let mut output = match std::mem::take(&mut result.output) {
@@ -200,6 +201,16 @@ impl ToolRuntime {
                     executable,
                     args.iter().map(String::as_str),
                 )),
+                ToolCall::RunScript {
+                    language,
+                    script,
+                    args,
+                    ..
+                } => Some(crate::shell_client::script_preview(
+                    language.as_str(),
+                    script.len(),
+                    args.len(),
+                )),
                 _ => call.command_text().map(str::to_string),
             },
             paths: super::activity::paths_from_sanitized_arguments(&sanitized, 16),
@@ -247,7 +258,7 @@ impl ToolRuntime {
                     }
                     Err(message) => {
                         let mut result = current_session_unavailable_result(message);
-                        decorate_run_process_prestart_denial(
+                        decorate_structured_execution_prestart_denial(
                             call.tool_name(),
                             &mut result,
                             "current_session_unavailable",
@@ -283,7 +294,7 @@ impl ToolRuntime {
                 && !sessions::is_valid_session_id(session_id);
             if !malformed_work_on_project_session && !self.sessions.contains_session(session_id) {
                 let mut result = unknown_session_result(session_id);
-                decorate_run_process_prestart_denial(
+                decorate_structured_execution_prestart_denial(
                     call.tool_name(),
                     &mut result,
                     "unknown_session_id",
@@ -330,7 +341,7 @@ impl ToolRuntime {
                 );
                 let mut result =
                     session_project_mismatch_result(session_id, call.tool_name(), mismatch);
-                decorate_run_process_prestart_denial(
+                decorate_structured_execution_prestart_denial(
                     call.tool_name(),
                     &mut result,
                     session_context::SESSION_PROJECT_MISMATCH_KIND,
@@ -361,6 +372,7 @@ impl ToolRuntime {
                     if matches!(
                         &call,
                         ToolCall::RunProcess { .. }
+                            | ToolCall::RunScript { .. }
                             | ToolCall::RunShell { .. }
                             | ToolCall::RunJob { .. }
                             | ToolCall::OpenSessionShell { .. }
@@ -375,7 +387,7 @@ impl ToolRuntime {
             }
         }
         if let Some(mut result) = tool_disabled_result_from_definition(call.tool_name()) {
-            decorate_run_process_prestart_denial(
+            decorate_structured_execution_prestart_denial(
                 call.tool_name(),
                 &mut result,
                 "capability_unavailable",
@@ -413,7 +425,7 @@ impl ToolRuntime {
                 );
                 let mut result =
                     session_lifecycle_denied_result(session_id, call.tool_name(), denial);
-                decorate_run_process_prestart_denial(
+                decorate_structured_execution_prestart_denial(
                     call.tool_name(),
                     &mut result,
                     "session_lifecycle_denied",
@@ -443,7 +455,7 @@ impl ToolRuntime {
                     recorder_metadata.clone(),
                 );
                 let mut result = session_guard_denied_result(session_id, call.tool_name(), denial);
-                decorate_run_process_prestart_denial(
+                decorate_structured_execution_prestart_denial(
                     call.tool_name(),
                     &mut result,
                     "session_guard_denied",
@@ -484,7 +496,7 @@ impl ToolRuntime {
             let mut err = err;
             let failure_kind =
                 super::process::classify_process_failure(err.error.as_deref().unwrap_or_default());
-            decorate_run_process_prestart_denial(call.tool_name(), &mut err, failure_kind);
+            decorate_structured_execution_prestart_denial(call.tool_name(), &mut err, failure_kind);
             if let Some(session_id) = session_id.as_deref() {
                 let event_id = self.sessions.record_tool_call_finished(
                     session_start,
@@ -507,7 +519,7 @@ impl ToolRuntime {
         if let Some(decision) = permission.as_ref() {
             if !decision.allows_execution() {
                 let mut result = permissions::permission_execution_denied_result(decision);
-                decorate_run_process_prestart_denial(
+                decorate_structured_execution_prestart_denial(
                     call.tool_name(),
                     &mut result,
                     "permission_denied",
@@ -669,7 +681,9 @@ impl ToolRuntime {
             | ToolCall::RegisterProject { .. }
             | ToolCall::CreateProject { .. }) => self.dispatch_project_tool(call, auth).await,
 
-            call @ (ToolCall::RunProcess { .. } | ToolCall::RunShell { .. }) => {
+            call @ (ToolCall::RunProcess { .. }
+            | ToolCall::RunScript { .. }
+            | ToolCall::RunShell { .. }) => {
                 self.dispatch_shell_tool(call, execution_sandbox, ssh_resource)
                     .await
             }

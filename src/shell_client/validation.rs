@@ -1,7 +1,8 @@
 use crate::shell_protocol::{
-    validate_process_argv, AgentConfigReloadStatus, ProviderCallSummary, ShellAgentProjectSummary,
-    ShellFileOpRequest, ShellProcessArgv, ShellRunRequest, ToolProvidersStatus,
-    PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
+    validate_process_argv, validate_script_request, AgentConfigReloadStatus, ProviderCallSummary,
+    ShellAgentProjectSummary, ShellFileOpRequest, ShellProcessArgv, ShellRunRequest,
+    ShellScriptPayload, ToolProvidersStatus, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    PROCESS_TIMEOUT_MAX_SECS,
 };
 use sha2::{Digest, Sha256};
 
@@ -529,6 +530,24 @@ pub(super) fn validate_process_request(
     if wait_timeout_secs > MAX_SYNC_WAIT_SECS {
         return Err(format!(
             "wait_timeout_secs must be <= {MAX_SYNC_WAIT_SECS} for synchronous run_process"
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_script_enqueue_request(
+    client_id: &str,
+    cwd: Option<&str>,
+    script: &ShellScriptPayload,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    wait_timeout_secs: u64,
+) -> Result<(), String> {
+    validate_id(client_id, "client_id")?;
+    validate_script_request(script, stdin, cwd, timeout_secs)?;
+    if wait_timeout_secs > MAX_SYNC_WAIT_SECS {
+        return Err(format!(
+            "wait_timeout_secs must be <= {MAX_SYNC_WAIT_SECS} for synchronous run_script"
         ));
     }
     Ok(())

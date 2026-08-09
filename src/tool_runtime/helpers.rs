@@ -1,3 +1,4 @@
+use crate::shell_protocol::{ShellScriptLanguage, ShellScriptPayload};
 use serde_json::json;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -263,6 +264,7 @@ pub(crate) async fn run_command_sync_bounded_with_shell_and_sandbox(
 /// noisy child cannot deadlock on a full pipe or turn `run_process` into an
 /// unbounded output channel.
 const LOCAL_PROCESS_OUTPUT_MAX_BYTES: usize = 256 * 1024;
+type LocalProcessResult = (i32, String, String, u64);
 
 pub(crate) async fn run_process_sync_bounded_with_sandbox(
     executable: String,
@@ -290,6 +292,30 @@ pub(crate) async fn run_process_sync_bounded_with_sandbox(
     }
 }
 
+pub(crate) async fn run_script_sync_bounded_with_sandbox(
+    payload: ShellScriptPayload,
+    stdin: Option<String>,
+    cwd: PathBuf,
+    timeout_secs: u64,
+    sandbox: Option<String>,
+) -> Result<LocalProcessResult, LocalRunFailure> {
+    let bound_secs = timeout_secs.saturating_add(LOCAL_RUN_HARD_GRACE_SECS);
+    let task = tokio::task::spawn_blocking(move || {
+        run_script_sync_with_sandbox(
+            &payload,
+            stdin.as_deref(),
+            &cwd,
+            timeout_secs,
+            sandbox.as_deref(),
+        )
+    });
+    match tokio::time::timeout(Duration::from_secs(bound_secs), task).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(error)) => Err(LocalRunFailure::Join(error.to_string())),
+        Err(_) => Err(LocalRunFailure::HardTimeout { bound_secs }),
+    }
+}
+
 fn run_process_sync_with_sandbox(
     executable: &str,
     args: &[String],
@@ -297,7 +323,7 @@ fn run_process_sync_with_sandbox(
     cwd: &Path,
     timeout_secs: u64,
     sandbox: Option<&str>,
-) -> (i32, String, String, u64) {
+) -> LocalProcessResult {
     let start = Instant::now();
     let mut command = Command::new(executable);
     command
@@ -315,41 +341,22 @@ fn run_process_sync_with_sandbox(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let _scratch = match sandbox {
-        None => None,
-        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
-            let scratch = match crate::command_sandbox::InspectScratch::create() {
-                Ok(scratch) => scratch,
-                Err(error) => {
-                    return (
-                        -1,
-                        String::new(),
-                        format!("Failed to configure inspect sandbox: {error}"),
-                        start.elapsed().as_millis() as u64,
-                    )
-                }
-            };
-            if let Err(error) =
-                crate::command_sandbox::sandbox_command_inspect(&mut command, &scratch)
-            {
-                return (
-                    -1,
-                    String::new(),
-                    format!("Failed to configure inspect sandbox: {error}"),
-                    start.elapsed().as_millis() as u64,
-                );
-            }
-            Some(scratch)
-        }
-        Some(other) => {
-            return (
-                -1,
-                String::new(),
-                format!("Failed to configure inspect sandbox: unknown sandbox mode '{other}'"),
-                start.elapsed().as_millis() as u64,
-            )
-        }
+    let _scratch = match create_local_inspect_scratch(sandbox, start) {
+        Ok(scratch) => scratch,
+        Err(result) => return result,
     };
+    if let Err(result) = sandbox_local_command(&mut command, _scratch.as_ref(), start) {
+        return result;
+    }
+    execute_local_process_command(command, stdin, timeout_secs, start)
+}
+
+fn execute_local_process_command(
+    mut command: Command,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    start: Instant,
+) -> LocalProcessResult {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -460,6 +467,265 @@ fn run_process_sync_with_sandbox(
             stderr,
             elapsed,
         ),
+    }
+}
+
+fn create_local_inspect_scratch(
+    sandbox: Option<&str>,
+    start: Instant,
+) -> Result<Option<crate::command_sandbox::InspectScratch>, LocalProcessResult> {
+    match sandbox {
+        None => Ok(None),
+        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
+            crate::command_sandbox::InspectScratch::create()
+                .map(Some)
+                .map_err(|error| {
+                    (
+                        -1,
+                        String::new(),
+                        format!("Failed to configure inspect sandbox: {error}"),
+                        start.elapsed().as_millis() as u64,
+                    )
+                })
+        }
+        Some(other) => Err((
+            -1,
+            String::new(),
+            format!("Failed to configure inspect sandbox: unknown sandbox mode '{other}'"),
+            start.elapsed().as_millis() as u64,
+        )),
+    }
+}
+
+fn sandbox_local_command(
+    command: &mut Command,
+    scratch: Option<&crate::command_sandbox::InspectScratch>,
+    start: Instant,
+) -> Result<(), LocalProcessResult> {
+    let Some(scratch) = scratch else {
+        return Ok(());
+    };
+    crate::command_sandbox::sandbox_command_inspect(command, scratch).map_err(|error| {
+        (
+            -1,
+            String::new(),
+            format!("Failed to configure inspect sandbox: {error}"),
+            start.elapsed().as_millis() as u64,
+        )
+    })
+}
+
+fn run_script_sync_with_sandbox(
+    payload: &ShellScriptPayload,
+    stdin: Option<&str>,
+    cwd: &Path,
+    timeout_secs: u64,
+    sandbox: Option<&str>,
+) -> LocalProcessResult {
+    let start = Instant::now();
+    let interpreter = match find_local_script_interpreter(payload.language) {
+        Some(interpreter) => interpreter,
+        None => {
+            return (
+                -1,
+                String::new(),
+                format!(
+                "interpreter_unavailable: {} interpreter is unavailable; command was not started",
+                payload.language.as_str()
+            ),
+                start.elapsed().as_millis() as u64,
+            )
+        }
+    };
+    let scratch = match create_local_inspect_scratch(sandbox, start) {
+        Ok(scratch) => scratch,
+        Err(result) => return result,
+    };
+    let mut builder = tempfile::Builder::new();
+    builder
+        .prefix("webcodex-script-")
+        .suffix(payload.language.file_extension());
+    let mut file = match match scratch.as_ref() {
+        Some(scratch) => builder.tempfile_in(scratch.path()),
+        None => builder.tempfile(),
+    } {
+        Ok(file) => file,
+        Err(error) => return local_script_setup_failure("create", &error, start),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) = file
+            .as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+        {
+            return local_script_setup_failure("secure", &error, start);
+        }
+    }
+    if payload.language == ShellScriptLanguage::Powershell {
+        if let Err(error) = file.write_all(&[0xEF, 0xBB, 0xBF]) {
+            return local_script_setup_failure("write", &error, start);
+        }
+    }
+    if let Err(error) = file
+        .write_all(payload.script.as_bytes())
+        .and_then(|_| file.flush())
+    {
+        return local_script_setup_failure("write", &error, start);
+    }
+    let original_path = file.path().to_path_buf();
+    // Windows PowerShell 5.1 can reject the extended `\\?\` path prefix that
+    // `canonicalize` commonly returns. Tempfile paths are normally absolute;
+    // make a relative platform temp setting absolute without canonicalizing.
+    let absolute_path = if file.path().is_absolute() {
+        file.path().to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(file.path()),
+            Err(error) => return local_script_setup_failure("resolve", &error, start),
+        }
+    };
+    let temporary_path = file.into_temp_path();
+    let mut command =
+        build_local_script_command(interpreter, payload.language, &absolute_path, &payload.args);
+    command
+        .current_dir(cwd)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    if let Err(result) = sandbox_local_command(&mut command, scratch.as_ref(), start) {
+        return result;
+    }
+    let mut result = execute_local_process_command(command, stdin, timeout_secs, start);
+    redact_local_script_paths(&mut result, &[original_path.as_path(), &absolute_path]);
+    if let Err(error) = temporary_path.close() {
+        tracing::warn!(
+            language = payload.language.as_str(),
+            error_kind = ?error.kind(),
+            "failed to remove Server-owned compatibility temporary script file"
+        );
+    }
+    result
+}
+
+fn local_script_setup_failure(
+    action: &str,
+    error: &std::io::Error,
+    start: Instant,
+) -> LocalProcessResult {
+    (
+        -1,
+        String::new(),
+        format!(
+            "script_setup_failed: failed to {action} Server-owned temporary script file ({:?}); command was not started",
+            error.kind()
+        ),
+        start.elapsed().as_millis() as u64,
+    )
+}
+
+fn build_local_script_command(
+    interpreter: PathBuf,
+    language: ShellScriptLanguage,
+    script_path: &Path,
+    args: &[String],
+) -> Command {
+    let mut command = Command::new(interpreter);
+    match language {
+        ShellScriptLanguage::Sh | ShellScriptLanguage::Bash => {
+            command.arg(script_path);
+        }
+        ShellScriptLanguage::Powershell => {
+            command.arg("-NoProfile").arg("-NonInteractive");
+            if cfg!(windows) {
+                command.arg("-ExecutionPolicy").arg("Bypass");
+            }
+            command.arg("-File").arg(script_path);
+        }
+    }
+    command.args(args);
+    command
+}
+
+fn find_local_script_interpreter(language: ShellScriptLanguage) -> Option<PathBuf> {
+    let candidates: &[&str] = match language {
+        ShellScriptLanguage::Sh => {
+            if cfg!(windows) {
+                &["sh.exe"]
+            } else {
+                &["sh"]
+            }
+        }
+        ShellScriptLanguage::Bash => {
+            if cfg!(windows) {
+                &["bash.exe"]
+            } else {
+                &["bash"]
+            }
+        }
+        ShellScriptLanguage::Powershell => {
+            if cfg!(windows) {
+                &["pwsh.exe", "powershell.exe"]
+            } else {
+                &["pwsh"]
+            }
+        }
+    };
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for directory in std::env::split_paths(&path) {
+        for candidate in candidates {
+            let path = directory.join(candidate);
+            if local_executable_file(&path) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn local_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn redact_local_script_paths(result: &mut LocalProcessResult, paths: &[&Path]) {
+    for value in [&mut result.1, &mut result.2] {
+        for path in paths {
+            let rendered = path.to_string_lossy();
+            if !rendered.is_empty() {
+                *value = value.replace(rendered.as_ref(), "<temporary-script>");
+                let alternate = if rendered.contains('\\') {
+                    rendered.replace('\\', "/")
+                } else {
+                    rendered.replace('/', "\\")
+                };
+                if alternate != rendered {
+                    *value = value.replace(&alternate, "<temporary-script>");
+                }
+            }
+        }
     }
 }
 

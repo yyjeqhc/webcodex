@@ -589,7 +589,7 @@ fn execution_purpose(event: &SessionEvent) -> Option<String> {
     }
     if !matches!(
         event.tool_name.as_str(),
-        "run_process" | "run_shell" | "run_job"
+        "run_process" | "run_script" | "run_shell" | "run_job"
     ) {
         return None;
     }

@@ -23,12 +23,24 @@ fn flattened_tool_arg_schema(schema_type: &str) -> Value {
 }
 
 fn flattened_tool_arg_schema_from_input(input_schema: &Value) -> Option<Value> {
-    let supported = match input_schema.get("type").and_then(Value::as_str) {
+    let direct_type_supported = match input_schema.get("type").and_then(Value::as_str) {
         Some("array") => true,
         Some("string" | "boolean" | "integer" | "number") => true,
         _ => false,
     };
-    if !supported {
+    let nullable_scalar_supported = input_schema
+        .get("anyOf")
+        .and_then(Value::as_array)
+        .is_some_and(|variants| {
+            !variants.is_empty()
+                && variants.iter().all(|variant| {
+                    matches!(
+                        variant.get("type").and_then(Value::as_str),
+                        Some("string" | "boolean" | "integer" | "number" | "null")
+                    )
+                })
+        });
+    if !direct_type_supported && !nullable_scalar_supported {
         return None;
     }
     let mut schema = input_schema.clone();

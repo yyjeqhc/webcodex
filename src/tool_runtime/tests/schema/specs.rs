@@ -261,6 +261,95 @@ fn run_process_schema_is_small_bounded_and_has_no_shell_or_environment_input() {
 }
 
 #[test]
+fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
+    let specs = registered_tool_specs();
+    let spec = specs
+        .iter()
+        .find(|spec| spec.name == "run_script")
+        .expect("run_script spec");
+    let properties = spec.input_schema["properties"].as_object().unwrap();
+    assert_eq!(
+        spec.input_schema["required"],
+        json!(["project", "language", "script"])
+    );
+    for field in [
+        "project",
+        "language",
+        "script",
+        "args",
+        "stdin",
+        "cwd",
+        "timeout_secs",
+        "purpose",
+        "session_id",
+        "allow_cross_project_session",
+    ] {
+        assert!(properties.contains_key(field), "missing {field}");
+    }
+    for forbidden in [
+        "command",
+        "executable",
+        "interpreter",
+        "interpreter_path",
+        "interpreter_args",
+        "shell",
+        "env",
+        "environment",
+        "temp_file",
+        "profile",
+        "pty",
+    ] {
+        assert!(
+            !properties.contains_key(forbidden),
+            "run_script must not expose {forbidden}"
+        );
+    }
+    assert_eq!(
+        properties["language"]["enum"],
+        json!(["sh", "bash", "powershell"])
+    );
+    assert_eq!(properties["script"]["minLength"], 1);
+    assert_eq!(properties["script"]["maxLength"], 512 * 1024);
+    assert_eq!(properties["args"]["type"], "array");
+    assert_eq!(properties["args"]["maxItems"], 256);
+    assert_eq!(properties["args"]["items"]["type"], "string");
+    assert_eq!(properties["args"]["items"]["maxLength"], 8192);
+    assert_eq!(properties["args"]["default"], json!([]));
+    assert_eq!(
+        properties["stdin"]["anyOf"],
+        json!([
+            {"type": "string", "maxLength": 65_536},
+            {"type": "null"}
+        ])
+    );
+    assert_eq!(properties["cwd"]["maxLength"], 1024);
+    assert_eq!(properties["timeout_secs"]["minimum"], 1);
+    assert_eq!(properties["timeout_secs"]["maximum"], 120);
+    assert_eq!(properties["timeout_secs"]["default"], 60);
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+
+    for language in ["sh", "bash", "powershell"] {
+        let parsed = ToolCall::from_tool_name(
+            "run_script",
+            json!({
+                "project": "demo",
+                "language": language,
+                "script": " ",
+                "args": [],
+                "stdin": null
+            }),
+        )
+        .unwrap_or_else(|error| panic!("{language} should parse: {error}"));
+        assert_eq!(parsed.tool_name(), "run_script");
+    }
+    assert!(ToolCall::from_tool_name(
+        "run_script",
+        json!({"project": "demo", "language": "cmd", "script": "echo no"})
+    )
+    .is_err());
+}
+
+#[test]
 fn cargo_fmt_conditional_timeout_schema_matches_tool_call_contract() {
     let specs = registered_tool_specs();
     let schema = &specs
@@ -528,6 +617,7 @@ fn tool_specs_covers_expected_tool_set() {
         "list_agents",
         "runtime_status",
         "run_process",
+        "run_script",
         "run_shell",
         "run_job",
         "stop_job",

@@ -48,10 +48,20 @@ impl ToolRuntime {
                 &resolved
             }
         };
-        if matches!(call, ToolCall::RunProcess { .. }) && ssh_resource.is_some() {
+        if matches!(
+            call,
+            ToolCall::RunProcess { .. } | ToolCall::RunScript { .. }
+        ) && ssh_resource.is_some()
+        {
+            let (tool, representation) = if matches!(call, ToolCall::RunScript { .. }) {
+                ("run_script", "typed script payloads")
+            } else {
+                ("run_process", "native argv boundaries")
+            };
             return Err(ToolResult::err_with_output(
-                "run_process is unavailable for named Session SSH resources because the current SSH transport cannot preserve native argv boundaries; no process was started. Use run_shell explicitly for remote shell semantics."
-                    .to_string(),
+                format!(
+                    "{tool} is unavailable for named Session SSH resources because the current SSH transport cannot preserve {representation}; execution was not started. Use run_shell explicitly for remote shell semantics."
+                ),
                 json!({
                     "command_started": false,
                     "command_completed": false,
@@ -123,10 +133,18 @@ impl ToolRuntime {
                             message
                         )));
                     }
-                    if matches!(required, AgentCapability::StructuredProcess) {
+                    if matches!(
+                        required,
+                        AgentCapability::StructuredProcess | AgentCapability::StructuredScript
+                    ) {
+                        let noun = if matches!(required, AgentCapability::StructuredScript) {
+                            "script"
+                        } else {
+                            "process"
+                        };
                         return Err(ToolResult::err_with_output(
                             format!(
-                                "capability_unavailable: agent client {} does not support {}; no process was started and no shell fallback was attempted",
+                                "capability_unavailable: agent client {} does not support {}; no {noun} was started and no shell fallback was attempted",
                                 client_id,
                                 required.label()
                             ),

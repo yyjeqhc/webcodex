@@ -1,8 +1,8 @@
 use super::super::input_schemas::{
     job_log_input_schema, job_status_input_schema, list_jobs_input_schema,
     open_session_shell_input_schema, run_job_input_schema, run_process_input_schema,
-    run_shell_input_schema, session_shell_exec_input_schema, session_shell_identity_input_schema,
-    stop_job_input_schema,
+    run_script_input_schema, run_shell_input_schema, session_shell_exec_input_schema,
+    session_shell_identity_input_schema, stop_job_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -11,8 +11,13 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "run_process",
-            "Preferred bounded native-process primitive. Pass executable and args as structured data; argv is executed directly without shell parsing. Windows .cmd/.bat files are rejected because they require shell/script semantics. Use run_shell explicitly for those files, pipelines, redirection, builtins, shell functions, or operator diagnostics.",
+            "Execute one bounded native process from a typed executable and argv, without shell parsing. Windows .cmd/.bat files are rejected; use run_shell for batch files or syntax such as pipelines, redirection, builtins, and shell functions.",
             run_process_input_schema(),
+        ),
+        tool_spec(
+            "run_script",
+            "Execute bounded sh, bash, or PowerShell content as typed data from a Runner-owned temporary file. The body never enters command or -c/-Command. Use run_shell only for explicit command-string or named SSH execution.",
+            run_script_input_schema(),
         ),
         tool_spec(
             "run_shell",

@@ -71,6 +71,8 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "project" => json!(SAMPLE_PROJECT),
         "command" => json!("true"),
         "executable" => json!("git"),
+        "language" => json!("sh"),
+        "script" => json!("true"),
         "patch" => json!("diff --git a/a b/a\n"),
         "paths" => json!(["old.txt"]),
         "items" => json!([{"path": "src/lib.rs"}]),

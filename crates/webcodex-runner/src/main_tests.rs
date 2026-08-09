@@ -2126,6 +2126,7 @@ fn shell_job_request(cwd: &Path, command: &str) -> ShellAgentShellRequest {
         create_dirs: false,
         command: command.to_string(),
         process: None,
+        script: None,
         stdin: None,
         timeout_secs: 10,
         requested_by: "tester".to_string(),
@@ -2186,6 +2187,7 @@ fn file_read_request(
         create_dirs: false,
         command: String::new(),
         process: None,
+        script: None,
         stdin: None,
         timeout_secs: 30,
         requested_by: "tester".to_string(),
@@ -2482,6 +2484,7 @@ fn apply_text_edits_request(
         create_dirs: false,
         command: String::new(),
         process: None,
+        script: None,
         stdin: None,
         timeout_secs: 30,
         requested_by: "tester".to_string(),
@@ -2516,6 +2519,7 @@ fn json_file_op_request(
         create_dirs: false,
         command: String::new(),
         process: None,
+        script: None,
         stdin: None,
         timeout_secs: 30,
         requested_by: "tester".to_string(),
@@ -6001,6 +6005,7 @@ fn register_request_announces_correct_protocol_version() {
     assert!(caps.async_shell_jobs);
     assert!(caps.structured_validation_argv);
     assert!(caps.structured_process_argv);
+    assert!(caps.structured_script_payload);
     assert!(caps.lsp_read_only_navigation);
     assert!(caps.project_lifecycle);
     assert!(caps.project_path_registration);
@@ -6257,6 +6262,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
         create_dirs: false,
         command: ": > queued-started".to_string(),
         process: None,
+        script: None,
         stdin: None,
         timeout_secs: 60,
         requested_by: "tester".to_string(),
@@ -6415,6 +6421,7 @@ fn dispatch_request_edit_routes_to_file_handler() {
         create_dirs: false,
         command: String::new(),
         process: None,
+        script: None,
         stdin: None,
         timeout_secs: 10,
         requested_by: "tester".to_string(),
@@ -6583,6 +6590,7 @@ fn dispatch_request_run_shell_sends_result_over_sink() {
             create_dirs: false,
             command: shell_echo(expected_stdout),
             process: None,
+            script: None,
             stdin: None,
             timeout_secs: 10,
             requested_by: "tester".to_string(),
@@ -6679,6 +6687,7 @@ fn dispatch_request_structured_process_uses_typed_argv_and_never_shell_fallback(
                 "; touch marker".to_string(),
             ],
         }),
+        script: None,
         stdin: None,
         timeout_secs: 10,
         requested_by: "tester".to_string(),
@@ -6733,6 +6742,7 @@ fn dispatch_request_structured_process_uses_typed_argv_and_never_shell_fallback(
         create_dirs: false,
         command: shell_write_file(&shell_fallback_marker),
         process: None,
+        script: None,
         stdin: None,
         timeout_secs: 10,
         requested_by: "tester".to_string(),
@@ -6755,6 +6765,115 @@ fn dispatch_request_structured_process_uses_typed_argv_and_never_shell_fallback(
     )
     .unwrap());
     match rx.try_recv().expect("structured process rejection") {
+        AgentEnvelope::Result { payload } => {
+            assert_eq!(payload.result.exit_code, None);
+            assert_eq!(
+                payload.command_execution_state,
+                Some(ShellCommandExecutionState::NotStarted)
+            );
+        }
+        other => panic!("expected result, got {:?}", other.kind()),
+    }
+    assert!(!shell_fallback_marker.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn dispatch_request_structured_script_uses_typed_file_and_never_shell_fallback() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = test_config(tmp.path().join("config/projects.d"));
+    let jobs = JobManager::new(max_concurrent_jobs(&cfg));
+    let pdir = projects_dir(&cfg).unwrap();
+    let hot = runtime_config(&cfg);
+    let persistent_shells = webcodex_runner::PersistentShellManager::new(
+        &cfg.shell,
+        webcodex_runner::SshConnectionPool::default(),
+    );
+    let observed_path = tmp.path().join("observed-script-path");
+    let marker = tmp.path().join("marker");
+    let shell_fallback_marker = tmp.path().join("shell-fallback-marker");
+
+    let request = ShellAgentShellRequest {
+        request_id: "req-structured-script".to_string(),
+        client_id: "ws-client".to_string(),
+        kind: "run_script".to_string(),
+        job_id: None,
+        cwd: Some(tmp.path().to_string_lossy().to_string()),
+        path: None,
+        content: None,
+        max_bytes: None,
+        expected_sha256: None,
+        expected_prefix: None,
+        start_line: None,
+        end_line: None,
+        create_dirs: false,
+        command: String::new(),
+        process: None,
+        script: Some(shell_protocol::ShellScriptPayload {
+            language: shell_protocol::ShellScriptLanguage::Sh,
+            script: "printf '%s' \"$0\" > \"$1\"\nprintf '%s\\n' \"$2\"\n".to_string(),
+            args: vec![
+                observed_path.to_string_lossy().into_owned(),
+                "; touch marker".to_string(),
+            ],
+        }),
+        stdin: None,
+        timeout_secs: 10,
+        requested_by: "tester".to_string(),
+        created_at: 0,
+        validation: None,
+        lsp: None,
+        sandbox: None,
+        job_context: None,
+        persistent_shell: None,
+    };
+    let mut malformed = request.clone();
+    malformed.request_id = "req-structured-script-malformed".to_string();
+    malformed.command = shell_write_file(&shell_fallback_marker);
+    malformed.script = None;
+
+    let (sink, mut rx) = ws_sink("ws-client");
+    assert!(dispatch_request(
+        &sink,
+        &hot.snapshot(),
+        &hot,
+        &jobs,
+        &persistent_shells,
+        &pdir,
+        &webcodex_runner::LspSupervisor::default(),
+        request,
+    )
+    .unwrap());
+    match rx.try_recv().expect("structured script result") {
+        AgentEnvelope::Result { payload } => {
+            assert_eq!(payload.result.exit_code, Some(0));
+            assert_eq!(payload.result.stdout.as_deref(), Some("; touch marker\n"));
+            assert_eq!(
+                payload.command_execution_state,
+                Some(ShellCommandExecutionState::Completed)
+            );
+        }
+        other => panic!("expected result, got {:?}", other.kind()),
+    }
+    assert!(!marker.exists());
+    let temporary_path =
+        PathBuf::from(std::fs::read_to_string(&observed_path).expect("script path evidence"));
+    assert!(!temporary_path.starts_with(tmp.path()));
+    assert!(!temporary_path.exists());
+
+    let (sink, mut rx) = ws_sink("ws-client");
+    assert!(dispatch_request(
+        &sink,
+        &hot.snapshot(),
+        &hot,
+        &jobs,
+        &persistent_shells,
+        &pdir,
+        &webcodex_runner::LspSupervisor::default(),
+        malformed,
+    )
+    .unwrap());
+    match rx.try_recv().expect("structured script rejection") {
         AgentEnvelope::Result { payload } => {
             assert_eq!(payload.result.exit_code, None);
             assert_eq!(
@@ -6792,6 +6911,7 @@ fn project_request(kind: &str, payload: serde_json::Value) -> ShellAgentShellReq
         create_dirs: false,
         command: String::new(),
         process: None,
+        script: None,
         stdin: Some(payload.to_string()),
         timeout_secs: 10,
         requested_by: "tester".to_string(),

@@ -2,238 +2,45 @@ use serde_json::json;
 use std::time::Duration;
 
 use super::helpers::{
-    bounded_tail, command_failed_message, command_outcome_unknown_message,
-    command_rejected_message, command_timeout_message, looks_like_command_timeout,
-    project_relative_agent_cwd, project_relative_cwd, resolve_agent_cwd, resolve_local_cwd,
-    resolve_sync_timeout_secs, run_process_sync_bounded_with_sandbox,
-    sync_timeout_out_of_range_result, LocalRunFailure, COMMAND_STDIO_TAIL_CHARS,
+    command_rejected_message, looks_like_command_timeout, project_relative_agent_cwd,
+    project_relative_cwd, resolve_agent_cwd, resolve_local_cwd, resolve_sync_timeout_secs,
+    run_script_sync_bounded_with_sandbox, sync_timeout_out_of_range_result, LocalRunFailure,
     DEFAULT_RUN_SHELL_TIMEOUT_SECS,
 };
-use super::shell::{
-    agent_command_lifecycle, command_execution_state_name, dispatch_uncertainty_lifecycle,
+use super::process::{
+    classify_process_failure, command_failure_result, local_error_state, outcome_unknown_result,
+    process_tool_failure_result, success_output,
 };
+use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
 use super::{ExecutionPurpose, ToolResult, ToolRuntime};
-use crate::shell_client::process_preview;
+use crate::shell_client::script_preview;
 use crate::shell_protocol::{
-    validate_process_argv, ShellCommandExecutionState, ShellProcessArgv, PROCESS_CWD_MAX_BYTES,
-    PROCESS_STDIN_MAX_BYTES,
+    validate_script_request, ShellCommandExecutionState, ShellScriptLanguage, ShellScriptPayload,
 };
-
-fn command_started(state: ShellCommandExecutionState) -> bool {
-    !matches!(state, ShellCommandExecutionState::NotStarted)
-}
-
-fn command_completed(state: ShellCommandExecutionState) -> bool {
-    matches!(state, ShellCommandExecutionState::Completed)
-}
-
-pub(crate) fn success_output(
-    exit_code: i32,
-    stdout: String,
-    stderr: String,
-    duration_ms: Option<u64>,
-) -> serde_json::Value {
-    let (stdout_tail, stdout_truncated) = bounded_tail(&stdout, COMMAND_STDIO_TAIL_CHARS);
-    let (stderr_tail, stderr_truncated) = bounded_tail(&stderr, COMMAND_STDIO_TAIL_CHARS);
-    json!({
-        "exit_code": exit_code,
-        "stdout_tail": stdout_tail,
-        "stderr_tail": stderr_tail,
-        "stdout_lines": stdout.lines().count(),
-        "stderr_lines": stderr.lines().count(),
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
-        "duration_ms": duration_ms,
-        "command_started": true,
-        "command_completed": true,
-        "command_ok": true,
-        "execution_state": command_execution_state_name(ShellCommandExecutionState::Completed),
-        "failure_kind": null,
-        "tool_failure": false,
-    })
-}
-
-pub(crate) fn command_failure_result(
-    exit_code: Option<i32>,
-    stdout: String,
-    stderr: String,
-    duration_ms: Option<u64>,
-    timeout_secs: u64,
-    state: ShellCommandExecutionState,
-) -> ToolResult {
-    let (stdout_tail, stdout_truncated) = bounded_tail(&stdout, COMMAND_STDIO_TAIL_CHARS);
-    let (stderr_tail, stderr_truncated) = bounded_tail(&stderr, COMMAND_STDIO_TAIL_CHARS);
-    let timed_out = state == ShellCommandExecutionState::TimedOut;
-    let output = json!({
-        "exit_code": exit_code,
-        "duration_ms": duration_ms,
-        "stdout_tail": stdout_tail,
-        "stderr_tail": stderr_tail,
-        "stdout_lines": stdout.lines().count(),
-        "stderr_lines": stderr.lines().count(),
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
-        "command_started": command_started(state),
-        "command_completed": command_completed(state),
-        "command_ok": false,
-        "execution_state": command_execution_state_name(state),
-        "failure_kind": if timed_out { "timeout" } else { "command_exit_nonzero" },
-        "tool_failure": false,
-    });
-    ToolResult {
-        success: false,
-        error: Some(if timed_out {
-            command_timeout_message(timeout_secs, &stdout_tail, &stderr_tail)
-        } else {
-            command_failed_message(exit_code, &stdout_tail, &stderr_tail)
-        }),
-        output,
-    }
-}
-
-pub(crate) fn process_tool_failure_result(
-    message: impl Into<String>,
-    failure_kind: &'static str,
-    state: ShellCommandExecutionState,
-) -> ToolResult {
-    ToolResult::err_with_output(
-        message.into(),
-        json!({
-            "command_started": command_started(state),
-            "command_completed": command_completed(state),
-            "command_ok": false,
-            "exit_code": null,
-            "execution_state": command_execution_state_name(state),
-            "failure_kind": failure_kind,
-            "tool_failure": true,
-        }),
-    )
-}
-
-pub(crate) fn outcome_unknown_result(reason: impl AsRef<str>) -> ToolResult {
-    process_tool_failure_result(
-        command_outcome_unknown_message(reason),
-        "outcome_unknown",
-        ShellCommandExecutionState::OutcomeUnknown,
-    )
-}
-
-pub(crate) fn classify_process_failure(message: &str) -> &'static str {
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("interpreter_unavailable") || lower.contains("interpreter is unavailable") {
-        "interpreter_unavailable"
-    } else if lower.contains("script_setup_failed")
-        || lower.contains("temporary script setup failed")
-    {
-        "script_setup_failed"
-    } else if lower.contains("invalid_structured_script_request") {
-        "invalid_arguments"
-    } else if lower.contains("unsupported_executable_type") {
-        "unsupported_executable_type"
-    } else if lower.contains("capability_unavailable")
-        || lower.contains("structured_process_argv")
-        || lower.contains("does not support")
-    {
-        "capability_unavailable"
-    } else if lower.contains("failed to spawn")
-        || lower.contains("not found")
-        || lower.contains("no such file")
-        || lower.contains("cannot find")
-        || lower.contains("executable is unavailable")
-    {
-        "spawn_failed"
-    } else if lower.contains("offline")
-        || lower.contains("not connected")
-        || lower.contains("no connected")
-        || lower.contains("unknown agent")
-        || lower.contains("unknown_project")
-    {
-        "agent_offline"
-    } else if lower.contains("permission")
-        || lower.contains("denied")
-        || lower.contains("outside")
-        || lower.contains("not allowed")
-        || lower.contains("sandbox")
-    {
-        "permission_denied"
-    } else {
-        "runtime_error"
-    }
-}
-
-fn validate_process_input(
-    process: &ShellProcessArgv,
-    stdin: Option<&str>,
-    cwd: Option<&str>,
-) -> Result<(), String> {
-    validate_process_argv(process)?;
-    if let Some(stdin) = stdin {
-        if stdin.len() > PROCESS_STDIN_MAX_BYTES {
-            return Err(format!(
-                "stdin is too large; maximum is {PROCESS_STDIN_MAX_BYTES} bytes"
-            ));
-        }
-        if stdin.contains('\0') {
-            return Err("stdin cannot contain NUL bytes".to_string());
-        }
-    }
-    if let Some(cwd) = cwd {
-        if cwd.len() > PROCESS_CWD_MAX_BYTES {
-            return Err(format!(
-                "cwd is too long; maximum is {PROCESS_CWD_MAX_BYTES} bytes"
-            ));
-        }
-        if cwd.contains('\0') {
-            return Err("cwd cannot contain NUL bytes".to_string());
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn local_error_state(
-    exit_code: i32,
-    stderr: &str,
-) -> Option<ShellCommandExecutionState> {
-    if exit_code != -1 {
-        return None;
-    }
-    let lower = stderr.to_ascii_lowercase();
-    if lower.starts_with("failed to execute process:")
-        || lower.starts_with("failed to configure inspect sandbox:")
-        || lower.starts_with("interpreter_unavailable:")
-        || lower.starts_with("script_setup_failed:")
-    {
-        Some(ShellCommandExecutionState::NotStarted)
-    } else if lower.starts_with("failed to wait for process:")
-        || lower.starts_with("failed to collect process output:")
-        || lower.starts_with("failed to write process stdin:")
-    {
-        Some(ShellCommandExecutionState::OutcomeUnknown)
-    } else {
-        None
-    }
-}
 
 fn decorate(
     output: &mut serde_json::Value,
     purpose: ExecutionPurpose,
     summary: &str,
+    language: ShellScriptLanguage,
     cwd: &str,
     executor: &str,
 ) {
-    output["execution_source"] = json!("run_process");
+    output["execution_source"] = json!("run_script");
     output["purpose"] = json!(purpose.as_str());
-    output["process_summary"] = json!(summary);
+    output["script_summary"] = json!(summary);
+    output["language"] = json!(language.as_str());
     output["cwd"] = json!(cwd);
     output["executor"] = json!(executor);
 }
 
 impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn run_process_with_contract_in_sandbox(
+    pub(crate) async fn run_script_with_contract_in_sandbox(
         &self,
         project: String,
-        executable: String,
+        language: ShellScriptLanguage,
+        script: String,
         args: Vec<String>,
         stdin: Option<String>,
         timeout_secs: Option<u64>,
@@ -247,17 +54,23 @@ impl ToolRuntime {
             Ok(timeout) => timeout,
             Err(_) => {
                 return sync_timeout_out_of_range_result(
-                    "run_process",
+                    "run_script",
                     DEFAULT_RUN_SHELL_TIMEOUT_SECS,
                 )
             }
         };
-        let process = ShellProcessArgv { executable, args };
-        if let Err(error) = validate_process_input(&process, stdin.as_deref(), cwd.as_deref()) {
+        let payload = ShellScriptPayload {
+            language,
+            script,
+            args,
+        };
+        if let Err(error) =
+            validate_script_request(&payload, stdin.as_deref(), cwd.as_deref(), timeout)
+        {
             return process_tool_failure_result(
                 command_rejected_message(
                     error,
-                    "correct the structured process fields and retry; use run_shell only when shell syntax is required.",
+                    "correct the typed script fields and retry; use run_shell only when an explicit command-string or SSH shell is required.",
                 ),
                 "invalid_arguments",
                 ShellCommandExecutionState::NotStarted,
@@ -266,14 +79,14 @@ impl ToolRuntime {
         if ssh_resource.is_some() {
             return process_tool_failure_result(
                 command_rejected_message(
-                    "named Session SSH resources do not support native structured argv",
-                    "use run_shell explicitly for this SSH resource, or run_process against the Runner-host project.",
+                    "named Session SSH resources do not support typed script payloads",
+                    "use run_shell explicitly for this SSH resource, or run_script against the Runner-host project.",
                 ),
                 "unsupported_resource",
                 ShellCommandExecutionState::NotStarted,
             );
         }
-        let summary = process_preview(&process.executable, process.args.iter().map(String::as_str));
+        let summary = script_preview(language.as_str(), payload.script.len(), payload.args.len());
         let declared_purpose = purpose.unwrap_or_default();
         let proj = match self.resolve_project(&project).await {
             Ok(project) => project,
@@ -319,10 +132,10 @@ impl ToolRuntime {
             let wait_timeout = timeout;
             let (request_id, receiver) = match self
                 .shell_clients
-                .enqueue_process_with_sandbox(
+                .enqueue_script_with_sandbox(
                     client_id,
                     Some(effective_cwd),
-                    process,
+                    payload,
                     stdin,
                     timeout,
                     wait_timeout,
@@ -336,7 +149,7 @@ impl ToolRuntime {
                     return process_tool_failure_result(
                         command_rejected_message(
                             &error,
-                            "confirm the Runner is connected and advertises structured_process_argv, then retry only if target state proves no process started.",
+                            "confirm the Runner is connected and advertises structured_script_payload, then retry only if target state proves no script started.",
                         ),
                         classify_process_failure(&error),
                         ShellCommandExecutionState::NotStarted,
@@ -359,11 +172,11 @@ impl ToolRuntime {
                             let reason = response
                                 .error
                                 .as_deref()
-                                .unwrap_or("Runner rejected the process before spawn");
+                                .unwrap_or("Runner rejected the script before spawn");
                             process_tool_failure_result(
                                     command_rejected_message(
                                         reason,
-                                        "inspect the rejection, correct executable/argv/cwd, then retry.",
+                                        "inspect the rejection, correct language/script/args/cwd, then retry.",
                                     ),
                                     classify_process_failure(reason),
                                     state,
@@ -405,7 +218,7 @@ impl ToolRuntime {
                     if dispatch == Some(false) {
                         process_tool_failure_result(
                             command_rejected_message(
-                                "process request waiter was dropped before Runner dispatch",
+                                "script request waiter was dropped before Runner dispatch",
                                 "check Runner connectivity, then retry.",
                             ),
                             "runtime_error",
@@ -413,7 +226,7 @@ impl ToolRuntime {
                         )
                     } else {
                         outcome_unknown_result(
-                            "process request waiter was dropped after dispatch may have occurred",
+                            "script request waiter was dropped after dispatch may have occurred",
                         )
                     }
                 }
@@ -436,8 +249,8 @@ impl ToolRuntime {
                             )
                     } else {
                         outcome_unknown_result(format!(
-                                "timed out waiting {wait_timeout} seconds for the Runner process result"
-                            ))
+                            "timed out waiting {wait_timeout} seconds for the Runner script result"
+                        ))
                     }
                 }
             };
@@ -445,6 +258,7 @@ impl ToolRuntime {
                 &mut result.output,
                 declared_purpose,
                 &summary,
+                language,
                 &resolved_cwd,
                 "agent",
             );
@@ -465,9 +279,8 @@ impl ToolRuntime {
             };
             let resolved_cwd =
                 project_relative_cwd(&proj, &cwd_path).unwrap_or_else(|_| ".".to_string());
-            let mut result = match run_process_sync_bounded_with_sandbox(
-                process.executable,
-                process.args,
+            let mut result = match run_script_sync_bounded_with_sandbox(
+                payload,
                 stdin,
                 cwd_path,
                 timeout,
@@ -481,7 +294,7 @@ impl ToolRuntime {
                             process_tool_failure_result(
                                 command_rejected_message(
                                     &stderr,
-                                    "correct the executable, cwd, or sandbox configuration, then retry.",
+                                    "correct the language, cwd, interpreter availability, or sandbox configuration, then retry.",
                                 ),
                                 classify_process_failure(&stderr),
                                 ShellCommandExecutionState::NotStarted,
@@ -516,17 +329,18 @@ impl ToolRuntime {
                 }
                 Err(LocalRunFailure::HardTimeout { bound_secs }) => {
                     outcome_unknown_result(format!(
-                    "the local process did not return within the {bound_secs}-second hard bound"
-                ))
+                        "the local script did not return within the {bound_secs}-second hard bound"
+                    ))
                 }
                 Err(LocalRunFailure::Join(error)) => outcome_unknown_result(format!(
-                    "the local process worker ended without returning a result: {error}"
+                    "the local script worker ended without returning a result: {error}"
                 )),
             };
             decorate(
                 &mut result.output,
                 declared_purpose,
                 &summary,
+                language,
                 &resolved_cwd,
                 "local",
             );

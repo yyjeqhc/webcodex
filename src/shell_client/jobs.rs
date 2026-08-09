@@ -128,14 +128,24 @@ pub(crate) fn process_preview<'a>(
     summary
 }
 
+/// Bounded, body-free script summary used for activity and Session evidence.
+/// It is presentation metadata only and can never be replayed as execution.
+pub(crate) fn script_preview(language: &str, script_bytes: usize, arg_count: usize) -> String {
+    format!("{language} script ({script_bytes} bytes, {arg_count} args)")
+}
+
 pub(super) fn request_preview(request: &ShellAgentShellRequest) -> String {
-    request
-        .process
-        .as_ref()
-        .map(|process| {
-            process_preview(&process.executable, process.args.iter().map(String::as_str))
-        })
-        .unwrap_or_else(|| command_preview(&request.command))
+    if let Some(script) = request.script.as_ref() {
+        script_preview(
+            script.language.as_str(),
+            script.script.len(),
+            script.args.len(),
+        )
+    } else if let Some(process) = request.process.as_ref() {
+        process_preview(&process.executable, process.args.iter().map(String::as_str))
+    } else {
+        command_preview(&request.command)
+    }
 }
 
 #[cfg(test)]

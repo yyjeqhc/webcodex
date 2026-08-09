@@ -204,6 +204,96 @@ fn key_tool_output_schemas_include_expected_fields() {
         "failure_kind",
         "tool_failure",
         "purpose",
+        "script_summary",
+        "language",
+        "cwd",
+        "executor",
+        "execution_source",
+        "execution_state",
+    ] {
+        assert!(
+            has_output_field("run_script", field),
+            "run_script missing {field}"
+        );
+    }
+    assert_eq!(
+        output_schema_property(&specs, "run_script", "language")["enum"],
+        serde_json::json!(["sh", "bash", "powershell"])
+    );
+    assert_eq!(
+        output_schema_property(&specs, "run_script", "execution_source")["const"],
+        "run_script"
+    );
+    let run_script_schema = &spec_named(&specs, "run_script").output_schema;
+    for (state, command_started, command_completed) in [
+        ("not_started", false, false),
+        ("outcome_unknown", true, false),
+        ("completed", true, true),
+        ("timed_out", true, false),
+    ] {
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::json!({
+                "success": false,
+                "output": {
+                    "execution_source": "run_script",
+                    "execution_state": state,
+                    "command_started": command_started,
+                    "command_completed": command_completed
+                },
+                "error": null
+            }),
+            run_script_schema,
+        )
+        .unwrap_or_else(|error| panic!("run_script state {state} should validate: {error}"));
+    }
+    assert!(
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::json!({
+                "success": false,
+                "output": {
+                    "execution_source": "run_script",
+                    "execution_state": "completed",
+                    "command_started": true,
+                    "command_completed": false
+                },
+                "error": null
+            }),
+            run_script_schema,
+        )
+        .is_err(),
+        "run_script must reject lifecycle booleans that contradict execution_state"
+    );
+    assert!(
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::json!({
+                "success": false,
+                "output": {
+                    "failure_kind": "permission_denied",
+                    "tool_failure": true
+                },
+                "error": "permission denied"
+            }),
+            run_script_schema,
+        )
+        .is_err(),
+        "an execution-style run_script denial must include the canonical lifecycle tuple"
+    );
+
+    for field in [
+        "duration_ms",
+        "exit_code",
+        "stdout_tail",
+        "stderr_tail",
+        "stdout_lines",
+        "stderr_lines",
+        "stdout_truncated",
+        "stderr_truncated",
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "failure_kind",
+        "tool_failure",
+        "purpose",
         "command_summary",
         "cwd",
         "shell",

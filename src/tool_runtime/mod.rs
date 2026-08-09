@@ -44,6 +44,7 @@ mod read_files;
 mod registry;
 mod runtime;
 mod runtime_info;
+mod script;
 mod search_project_texts;
 mod semantic_navigation;
 mod session_context;

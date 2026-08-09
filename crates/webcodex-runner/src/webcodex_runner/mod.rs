@@ -68,7 +68,8 @@ pub(crate) use shell::run_shell_with_profiles;
 pub(crate) use shell::{
     configured_prepared_shell_job_command, configured_shell_job_command,
     configured_validation_job_command, cwd_allowed, resolve_prepared_shell_profile,
-    run_process_with_profiles_in_sandbox_and_execution_state, run_shell_with_profiles_in_sandbox,
+    run_process_with_profiles_in_sandbox_and_execution_state,
+    run_script_with_profiles_in_sandbox_and_execution_state, run_shell_with_profiles_in_sandbox,
     run_shell_with_profiles_in_sandbox_and_execution_state, PreparedShellProfile,
     PreparedShellProfileCache,
 };

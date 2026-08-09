@@ -4,6 +4,7 @@ use super::config::{
 };
 use super::output::{CommandResult, ShellCommandResult};
 use super::projects::find_project_shell_context;
+use crate::shell_protocol::{ShellScriptLanguage, ShellScriptPayload};
 use std::collections::HashMap;
 #[cfg(windows)]
 use std::ffi::OsStr;
@@ -392,7 +393,6 @@ fn resolve_process_program(
     }
 }
 
-#[cfg(windows)]
 fn configured_process_path(
     shell: &ShellConfig,
     profile: Option<&PreparedShellProfile>,
@@ -413,6 +413,172 @@ fn configured_process_path(
     paths.extend(std::env::split_paths(&inherited));
     std::env::join_paths(paths)
         .map_err(|error| format!("failed to build process PATH from shell.path_prepend: {error}"))
+}
+
+fn configured_script_interpreter(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    language: ShellScriptLanguage,
+) -> Result<OsString, String> {
+    let configured_program = profile
+        .map(|profile| profile.program.as_str())
+        .unwrap_or(shell.program.as_str());
+    let configured_basename = Path::new(configured_program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(configured_program)
+        .to_ascii_lowercase();
+    let configured_matches = match language {
+        ShellScriptLanguage::Sh => matches!(configured_basename.as_str(), "sh" | "sh.exe"),
+        ShellScriptLanguage::Bash => {
+            matches!(configured_basename.as_str(), "bash" | "bash.exe")
+        }
+        ShellScriptLanguage::Powershell if cfg!(windows) => matches!(
+            configured_basename.as_str(),
+            "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe"
+        ),
+        ShellScriptLanguage::Powershell => {
+            matches!(configured_basename.as_str(), "pwsh" | "pwsh.exe")
+        }
+    };
+    let mut candidates = Vec::new();
+    if configured_matches {
+        candidates.push(configured_program.to_string());
+    }
+    match language {
+        ShellScriptLanguage::Sh => candidates.push("sh".to_string()),
+        ShellScriptLanguage::Bash => candidates.push("bash".to_string()),
+        ShellScriptLanguage::Powershell if cfg!(windows) => {
+            candidates.push("pwsh".to_string());
+            candidates.push("powershell".to_string());
+        }
+        ShellScriptLanguage::Powershell => candidates.push("pwsh".to_string()),
+    }
+    candidates.dedup_by(|left, right| {
+        if cfg!(windows) {
+            left.eq_ignore_ascii_case(right)
+        } else {
+            left == right
+        }
+    });
+    let path = configured_process_path(shell, profile)?;
+    for candidate in candidates {
+        if let Some(super::util::ResolvedProgram::Native(path)) =
+            super::util::resolve_program_in_path(&candidate, &path)
+        {
+            return Ok(path.into_os_string());
+        }
+    }
+    Err(format!(
+        "interpreter_unavailable: {} interpreter is unavailable; command was not started",
+        language.as_str()
+    ))
+}
+
+fn build_script_command(
+    interpreter: impl Into<OsString>,
+    language: ShellScriptLanguage,
+    script_path: &Path,
+    args: &[String],
+) -> Command {
+    let mut command = Command::new(interpreter.into());
+    match language {
+        ShellScriptLanguage::Sh | ShellScriptLanguage::Bash => {
+            command.arg(script_path);
+        }
+        ShellScriptLanguage::Powershell => {
+            command.arg("-NoProfile").arg("-NonInteractive");
+            if cfg!(windows) {
+                // Match the Runner's existing Windows PowerShell policy: a
+                // process-scoped bypass keeps Runner-owned temporary .ps1 files
+                // executable under the stock Restricted machine policy.
+                command.arg("-ExecutionPolicy").arg("Bypass");
+            }
+            command.arg("-File").arg(script_path);
+        }
+    }
+    command.args(args);
+    command
+}
+
+fn script_setup_error(action: &str, error: &std::io::Error) -> String {
+    format!(
+        "script_setup_failed: failed to {action} Runner-owned temporary script file ({:?}); command was not started",
+        error.kind()
+    )
+}
+
+fn create_temporary_script(
+    payload: &ShellScriptPayload,
+    inspect_scratch: Option<&crate::command_sandbox::InspectScratch>,
+) -> Result<(tempfile::TempPath, PathBuf, PathBuf), String> {
+    let mut builder = tempfile::Builder::new();
+    builder
+        .prefix("webcodex-script-")
+        .suffix(payload.language.file_extension());
+    let mut file = match inspect_scratch {
+        Some(scratch) => builder
+            .tempfile_in(scratch.path())
+            .map_err(|error| script_setup_error("create", &error))?,
+        None => builder
+            .tempfile()
+            .map_err(|error| script_setup_error("create", &error))?,
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| script_setup_error("secure", &error))?;
+    }
+    if payload.language == ShellScriptLanguage::Powershell {
+        // Windows PowerShell 5.1 needs a UTF-8 BOM to preserve arbitrary
+        // Unicode in script files. pwsh also accepts it. The BOM is encoding
+        // metadata, so a leading param(...) block remains the first script
+        // construct and no behavioral preamble is injected.
+        file.write_all(&[0xEF, 0xBB, 0xBF])
+            .map_err(|error| script_setup_error("write", &error))?;
+    }
+    file.write_all(payload.script.as_bytes())
+        .and_then(|_| file.flush())
+        .map_err(|error| script_setup_error("write", &error))?;
+    let original_path = file.path().to_path_buf();
+    // Avoid `canonicalize` here: on Windows it commonly adds a `\\?\` prefix
+    // that Windows PowerShell 5.1 does not reliably accept for `-File`.
+    let absolute_path = if file.path().is_absolute() {
+        file.path().to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(file.path()))
+            .map_err(|error| script_setup_error("resolve", &error))?
+    };
+    Ok((file.into_temp_path(), original_path, absolute_path))
+}
+
+fn redact_temporary_script_path(result: &mut ShellCommandResult, paths: &[&Path]) {
+    for value in [
+        result.result.stdout.as_mut(),
+        result.result.stderr.as_mut(),
+        result.result.error.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for path in paths {
+            let rendered = path.to_string_lossy();
+            if !rendered.is_empty() {
+                *value = value.replace(rendered.as_ref(), "<temporary-script>");
+                let alternate = if rendered.contains('\\') {
+                    rendered.replace('\\', "/")
+                } else {
+                    rendered.replace('/', "\\")
+                };
+                if alternate != rendered {
+                    *value = value.replace(&alternate, "<temporary-script>");
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn base_shell_env(
@@ -1320,10 +1486,172 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
         stdin,
         timeout_secs,
         stop_requested,
-        inspect_scratch,
+        inspect_scratch.as_ref(),
         start,
         "failed to spawn structured process",
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
+    generation: u64,
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    payload: &ShellScriptPayload,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    sandbox: Option<&str>,
+) -> ShellCommandResult {
+    // Typed script execution is consequential and receives the same Runner
+    // policy treatment as raw shell and structured native processes.
+    if !policy.allow_raw_shell {
+        return ShellCommandResult::not_started(CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some("structured script execution is disabled by local agent policy".into()),
+        });
+    }
+    let cwd_path = cwd
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+    if let Err(error) = cwd_allowed(policy, &cwd_path) {
+        return ShellCommandResult::not_started(CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(error),
+        });
+    }
+    let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
+    let start = Instant::now();
+    let inspect_scratch = match sandbox {
+        None => None,
+        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
+            match crate::command_sandbox::InspectScratch::create() {
+                Ok(scratch) => Some(scratch),
+                Err(error) => {
+                    return ShellCommandResult::not_started(CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(start.elapsed().as_millis() as u64),
+                        error: Some(format!("inspect sandbox unavailable: {error}")),
+                    })
+                }
+            }
+        }
+        Some(other) => {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(format!("unknown sandbox mode '{other}'")),
+            })
+        }
+    };
+
+    // Inspect mode cannot execute profile preparation outside Landlock. It
+    // uses the base configured environment and places the script itself in
+    // the same sandbox-visible private scratch that remains writable.
+    let profile = if inspect_scratch.is_none() {
+        match resolve_prepared_shell_profile(
+            generation,
+            shell,
+            projects_dir,
+            &cwd_path,
+            cwd.is_some(),
+            cache,
+            stop_requested,
+        ) {
+            Ok(profile) => profile,
+            Err(error) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                })
+            }
+        }
+    } else {
+        None
+    };
+    // Resolve the semantic interpreter before creating the payload file. A
+    // missing interpreter is therefore a definite pre-start rejection with
+    // no script side effect and no fallback to the configured shell parser.
+    let interpreter =
+        match configured_script_interpreter(shell, profile.as_deref(), payload.language) {
+            Ok(interpreter) => interpreter,
+            Err(error) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                })
+            }
+        };
+    let (temporary_path, original_path, absolute_path) =
+        match create_temporary_script(payload, inspect_scratch.as_ref()) {
+            Ok(temporary) => temporary,
+            Err(error) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                })
+            }
+        };
+    let mut command =
+        build_script_command(interpreter, payload.language, &absolute_path, &payload.args);
+    match profile.as_deref() {
+        Some(profile) => apply_env_snapshot(&mut command, &profile.env_snapshot),
+        None => {
+            if let Err(error) = apply_shell_environment(&mut command, shell) {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                });
+            }
+        }
+    }
+    let mut result = execute_configured_command(
+        policy,
+        command,
+        &cwd_path,
+        stdin,
+        timeout_secs,
+        stop_requested,
+        inspect_scratch.as_ref(),
+        start,
+        "failed to spawn script interpreter",
+    );
+    redact_temporary_script_path(&mut result, &[original_path.as_path(), &absolute_path]);
+    if let Err(error) = temporary_path.close() {
+        // Cleanup is infrastructure after the child result is already known.
+        // Never rewrite completed/timed_out/outcome_unknown lifecycle truth.
+        tracing::warn!(
+            language = payload.language.as_str(),
+            error_kind = ?error.kind(),
+            "failed to remove Runner-owned temporary script file"
+        );
+    }
+    result
 }
 
 // Test-only wrapper for callers that do not need prepared shell profiles; the
@@ -1577,7 +1905,7 @@ fn run_shell_impl(
         stdin,
         timeout_secs,
         stop_requested,
-        inspect_scratch,
+        inspect_scratch.as_ref(),
         start,
         &spawn_error_prefix,
     )
@@ -1591,7 +1919,7 @@ fn execute_configured_command(
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
-    inspect_scratch: Option<crate::command_sandbox::InspectScratch>,
+    inspect_scratch: Option<&crate::command_sandbox::InspectScratch>,
     start: Instant,
     spawn_error_prefix: &str,
 ) -> ShellCommandResult {
@@ -1601,7 +1929,7 @@ fn execute_configured_command(
     if stdin.is_some() {
         cmd.stdin(Stdio::piped());
     }
-    if let Some(scratch) = inspect_scratch.as_ref() {
+    if let Some(scratch) = inspect_scratch {
         if let Err(error) = crate::command_sandbox::sandbox_command_inspect(&mut cmd, scratch) {
             return ShellCommandResult::not_started(CommandResult {
                 exit_code: None,
@@ -1893,6 +2221,35 @@ mod runner_lifecycle_tests {
         )
     }
 
+    fn run_direct_script(
+        cwd: &Path,
+        language: ShellScriptLanguage,
+        script: String,
+        args: Vec<String>,
+        stdin: Option<&str>,
+        timeout_secs: u64,
+        sandbox: Option<&str>,
+    ) -> ShellCommandResult {
+        let projects_dir = tempfile::tempdir().unwrap();
+        run_script_with_profiles_in_sandbox_and_execution_state(
+            1,
+            &unrestricted_policy(),
+            &ShellConfig::default(),
+            projects_dir.path(),
+            &PreparedShellProfileCache::default(),
+            Some(cwd.to_string_lossy().as_ref()),
+            &ShellScriptPayload {
+                language,
+                script,
+                args,
+            },
+            stdin,
+            timeout_secs,
+            None,
+            sandbox,
+        )
+    }
+
     fn unrestricted_policy() -> AgentPolicy {
         AgentPolicy {
             allow_cwd_anywhere: true,
@@ -2115,6 +2472,422 @@ mod runner_lifecycle_tests {
 
         assert_eq!(result.execution_state, ShellCommandExecutionState::TimedOut);
         assert_eq!(result.result.exit_code, Some(-1));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn structured_sh_script_exceeds_legacy_limit_uses_temp_file_and_cleans_it() {
+        let cwd = tempfile::tempdir().unwrap();
+        let observed_path = cwd.path().join("observed-script-path");
+        let mut script = "# payload padding\n".repeat(2_400);
+        script.push_str(&format!(
+            "printf '%s' \"$0\" > '{}'\nprintf 'path=%s\\nhello\\n' \"$0\"\n",
+            observed_path.display()
+        ));
+        assert!(script.len() > 32 * 1024);
+
+        let result = run_direct_script(
+            cwd.path(),
+            ShellScriptLanguage::Sh,
+            script,
+            Vec::new(),
+            None,
+            10,
+            None,
+        );
+
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(0));
+        let temporary_path =
+            PathBuf::from(std::fs::read_to_string(&observed_path).expect("script path evidence"));
+        assert_eq!(
+            temporary_path.extension().and_then(|value| value.to_str()),
+            Some("sh")
+        );
+        assert!(!temporary_path.starts_with(cwd.path()));
+        assert!(
+            !temporary_path.exists(),
+            "temporary script must be removed after terminal execution"
+        );
+        let stdout = result.result.stdout.unwrap();
+        assert!(stdout.contains("path=<temporary-script>"), "{stdout}");
+        assert!(stdout.ends_with("hello\n"), "{stdout}");
+        assert!(
+            !stdout.contains(&temporary_path.to_string_lossy().to_string()),
+            "absolute temporary path must be redacted"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn structured_bash_script_preserves_content_and_literal_argument_boundaries() {
+        let cwd = tempfile::tempdir().unwrap();
+        let marker = cwd.path().join("marker");
+        let observed_path = cwd.path().join("bash-script-path");
+        let args = vec![
+            String::new(),
+            "two words".to_string(),
+            "$(touch marker)".to_string(),
+            "; touch marker".to_string(),
+            r"C:\path with spaces\trailing\\".to_string(),
+            "雪だるま☃".to_string(),
+        ];
+        let script = format!(
+            r#"printf '%s' "$0" > '{}'
+literal=$(cat <<'WEBCODEX_LITERAL'
+quotes: "'" $()
+semicolons: ;;; pipes: |||
+backslashes: C:\one\two\\
+Unicode: 雪だるま☃
+WEBCODEX_LITERAL
+)
+printf '%s\n' "$literal"
+for value in "$@"; do
+  printf '%s:%s\n' "${{#value}}" "$value"
+done
+"#,
+            observed_path.display()
+        );
+
+        let result = run_direct_script(
+            cwd.path(),
+            ShellScriptLanguage::Bash,
+            script,
+            args.clone(),
+            None,
+            10,
+            None,
+        );
+
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(0));
+        assert!(!marker.exists(), "shell-looking args must remain data");
+        let stdout = result.result.stdout.unwrap();
+        assert!(stdout.contains(r#"quotes: "'" $()"#), "{stdout}");
+        assert!(stdout.contains("semicolons: ;;; pipes: |||"), "{stdout}");
+        assert!(stdout.contains(r"backslashes: C:\one\two\\"), "{stdout}");
+        assert!(stdout.contains("Unicode: 雪だるま☃"), "{stdout}");
+        for value in &args {
+            assert!(
+                stdout.contains(&format!("{}:{value}", value.chars().count())),
+                "missing literal arg {value:?} in {stdout:?}"
+            );
+        }
+        let temporary_path = PathBuf::from(std::fs::read_to_string(observed_path).unwrap());
+        assert_eq!(
+            temporary_path.extension().and_then(|value| value.to_str()),
+            Some("sh")
+        );
+        assert!(!temporary_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn structured_script_stdin_nonzero_and_timeout_preserve_lifecycle() {
+        let cwd = tempfile::tempdir().unwrap();
+        let input = "line one\nUnicode 雪\n";
+        let stdin_result = run_direct_script(
+            cwd.path(),
+            ShellScriptLanguage::Sh,
+            "cat".to_string(),
+            Vec::new(),
+            Some(input),
+            10,
+            None,
+        );
+        assert_eq!(stdin_result.result.exit_code, Some(0));
+        assert_eq!(stdin_result.result.stdout.as_deref(), Some(input));
+
+        let language_semantics = run_direct_script(
+            cwd.path(),
+            ShellScriptLanguage::Sh,
+            "false\nprintf 'continued\\n'".to_string(),
+            Vec::new(),
+            None,
+            10,
+            None,
+        );
+        assert_eq!(language_semantics.result.exit_code, Some(0));
+        assert_eq!(
+            language_semantics.result.stdout.as_deref(),
+            Some("continued\n"),
+            "Runner must not inject set -e"
+        );
+
+        let nonzero = run_direct_script(
+            cwd.path(),
+            ShellScriptLanguage::Sh,
+            "exit 23".to_string(),
+            Vec::new(),
+            None,
+            10,
+            None,
+        );
+        assert_eq!(
+            nonzero.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(nonzero.result.exit_code, Some(23));
+
+        let timed_out = run_direct_script(
+            cwd.path(),
+            ShellScriptLanguage::Sh,
+            "sleep 2".to_string(),
+            Vec::new(),
+            None,
+            1,
+            None,
+        );
+        assert_eq!(
+            timed_out.execution_state,
+            ShellCommandExecutionState::TimedOut
+        );
+        assert_eq!(timed_out.result.exit_code, Some(-1));
+    }
+
+    #[test]
+    fn missing_script_interpreter_is_prestart_and_does_not_run_script() {
+        let cwd = tempfile::tempdir().unwrap();
+        let marker = cwd.path().join("marker");
+        let projects_dir = tempfile::tempdir().unwrap();
+        let mut shell = ShellConfig::default();
+        shell.program = "custom-shell".to_string();
+        shell.env.insert("PATH".to_string(), String::new());
+        let result = run_script_with_profiles_in_sandbox_and_execution_state(
+            1,
+            &unrestricted_policy(),
+            &shell,
+            projects_dir.path(),
+            &PreparedShellProfileCache::default(),
+            Some(cwd.path().to_string_lossy().as_ref()),
+            &ShellScriptPayload {
+                language: ShellScriptLanguage::Bash,
+                script: "touch marker".to_string(),
+                args: Vec::new(),
+            },
+            None,
+            10,
+            None,
+            None,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::NotStarted
+        );
+        assert!(result.result.exit_code.is_none());
+        assert!(result
+            .result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("interpreter_unavailable"));
+        assert!(!marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn arbitrary_configured_shell_is_not_treated_as_a_script_language() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cwd = tempfile::tempdir().unwrap();
+        let marker = cwd.path().join("custom-shell-ran");
+        let custom_shell = cwd.path().join("custom-shell");
+        std::fs::write(
+            &custom_shell,
+            format!("#!/bin/sh\nprintf ran > '{}'\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&custom_shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let projects_dir = tempfile::tempdir().unwrap();
+        let mut shell = ShellConfig::default();
+        shell.program = custom_shell.to_string_lossy().into_owned();
+        shell.env.insert("PATH".to_string(), String::new());
+        let result = run_script_with_profiles_in_sandbox_and_execution_state(
+            1,
+            &unrestricted_policy(),
+            &shell,
+            projects_dir.path(),
+            &PreparedShellProfileCache::default(),
+            Some(cwd.path().to_string_lossy().as_ref()),
+            &ShellScriptPayload {
+                language: ShellScriptLanguage::Bash,
+                script: "true".to_string(),
+                args: Vec::new(),
+            },
+            None,
+            10,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::NotStarted
+        );
+        assert!(result
+            .result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("interpreter_unavailable"));
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn sh_and_bash_plans_pass_a_script_file_without_command_text_mode() {
+        use std::ffi::OsStr;
+
+        let script_path = Path::new("/runner/scratch/payload.sh");
+        let script_args = vec!["two words".to_string(), "$(literal)".to_string()];
+        for (language, interpreter) in [
+            (ShellScriptLanguage::Sh, "sh"),
+            (ShellScriptLanguage::Bash, "bash"),
+        ] {
+            let command = build_script_command(interpreter, language, script_path, &script_args);
+            assert_eq!(command.get_program(), OsStr::new(interpreter));
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                [
+                    script_path.as_os_str(),
+                    OsStr::new("two words"),
+                    OsStr::new("$(literal)")
+                ]
+            );
+            assert!(!command
+                .get_args()
+                .any(|argument| argument == OsStr::new("-c")));
+        }
+    }
+
+    #[test]
+    fn powershell_plan_uses_ps1_file_and_never_command_text_mode() {
+        use std::ffi::OsStr;
+
+        let script_path = Path::new("/runner/scratch/payload.ps1");
+        let args = vec![
+            String::new(),
+            "two words".to_string(),
+            "$(literal)".to_string(),
+            "; literal".to_string(),
+        ];
+        let command =
+            build_script_command("pwsh", ShellScriptLanguage::Powershell, script_path, &args);
+        assert_eq!(command.get_program(), OsStr::new("pwsh"));
+        let actual = command.get_args().collect::<Vec<_>>();
+        let mut expected = vec![OsStr::new("-NoProfile"), OsStr::new("-NonInteractive")];
+        if cfg!(windows) {
+            expected.extend([OsStr::new("-ExecutionPolicy"), OsStr::new("Bypass")]);
+        }
+        expected.extend([
+            OsStr::new("-File"),
+            script_path.as_os_str(),
+            OsStr::new(""),
+            OsStr::new("two words"),
+            OsStr::new("$(literal)"),
+            OsStr::new("; literal"),
+        ]);
+        assert_eq!(actual, expected);
+        assert!(!actual.iter().any(|arg| {
+            let arg = arg.to_string_lossy();
+            arg.eq_ignore_ascii_case("-Command") || arg.eq_ignore_ascii_case("-c")
+        }));
+    }
+
+    #[test]
+    fn powershell_temp_file_uses_utf8_bom_without_script_preamble() {
+        let payload = ShellScriptPayload {
+            language: ShellScriptLanguage::Powershell,
+            script: "param([string]$Value)\nWrite-Output $Value".to_string(),
+            args: Vec::new(),
+        };
+        let (temporary_path, _original, absolute) =
+            create_temporary_script(&payload, None).unwrap();
+        let bytes = std::fs::read(&absolute).unwrap();
+        assert_eq!(&bytes[..3], &[0xEF, 0xBB, 0xBF]);
+        assert_eq!(&bytes[3..], payload.script.as_bytes());
+        temporary_path.close().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inspect_script_uses_sandbox_scratch_and_cannot_write_project() {
+        if crate::command_sandbox::inspect_sandbox_available().is_err() {
+            return;
+        }
+        let cwd = tempfile::tempdir().unwrap();
+        let marker = cwd.path().join("project-marker");
+        let script = format!(
+            "if printf denied > '{}'; then exit 91; fi\nprintf scratch > \"$TMPDIR/proof\"\ntest \"$(cat \"$TMPDIR/proof\")\" = scratch\nprintf '%s\\n' \"$0\"\n",
+            marker.display()
+        );
+        let result = run_direct_script(
+            cwd.path(),
+            ShellScriptLanguage::Sh,
+            script,
+            Vec::new(),
+            None,
+            10,
+            Some(crate::command_sandbox::INSPECT_SANDBOX_MODE),
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(0), "{:?}", result.result);
+        assert!(!marker.exists());
+        assert_eq!(
+            result.result.stdout.as_deref(),
+            Some("<temporary-script>\n")
+        );
+    }
+
+    #[test]
+    fn powershell_runtime_executes_from_file_when_available() {
+        let cwd = tempfile::tempdir().unwrap();
+        let projects_dir = tempfile::tempdir().unwrap();
+        if configured_script_interpreter(
+            &ShellConfig::default(),
+            None,
+            ShellScriptLanguage::Powershell,
+        )
+        .is_err()
+        {
+            return;
+        }
+        let result = run_script_with_profiles_in_sandbox_and_execution_state(
+            1,
+            &unrestricted_policy(),
+            &ShellConfig::default(),
+            projects_dir.path(),
+            &PreparedShellProfileCache::default(),
+            Some(cwd.path().to_string_lossy().as_ref()),
+            &ShellScriptPayload {
+                language: ShellScriptLanguage::Powershell,
+                script: "param([string]$Value)\nWrite-Output $Value".to_string(),
+                args: vec!["two words".to_string()],
+            },
+            None,
+            10,
+            None,
+            None,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(0), "{:?}", result.result);
+        assert!(result
+            .result
+            .stdout
+            .as_deref()
+            .unwrap_or_default()
+            .contains("two words"));
     }
 
     #[cfg(windows)]

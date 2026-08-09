@@ -1492,6 +1492,7 @@ mod tests {
             create_dirs: false,
             command: String::new(),
             process: None,
+            script: None,
             stdin: None,
             timeout_secs: 30,
             requested_by: "tester".to_string(),

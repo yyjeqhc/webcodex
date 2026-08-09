@@ -13,6 +13,7 @@ use super::tool_inputs::{
     default_true, ApplyFileChangeInput, CheckpointValidationInput, ExecutionPurpose,
     ExecutionShell, SessionMode, StartupDetail,
 };
+use crate::shell_protocol::ShellScriptLanguage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -409,8 +410,28 @@ pub enum ToolCall {
     /// part of this synchronous v1 contract.
     RunProcess {
         project: String,
-        #[serde(default)]
         executable: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        stdin: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        purpose: Option<ExecutionPurpose>,
+    },
+
+    /// Execute bounded script content transported as typed data and written to
+    /// a Runner-owned temporary file. The selected language is explicit and
+    /// never inherited from Session default_shell.
+    RunScript {
+        project: String,
+        language: ShellScriptLanguage,
+        script: String,
         #[serde(default)]
         args: Vec<String>,
         #[serde(default)]
@@ -1460,6 +1481,7 @@ impl ToolCall {
             Self::WorkspaceCheckpointRestore { .. } => "workspace_checkpoint_restore",
             Self::WorkspaceCheckpointDelete { .. } => "workspace_checkpoint_delete",
             Self::RunProcess { .. } => "run_process",
+            Self::RunScript { .. } => "run_script",
             Self::RunShell { .. } => "run_shell",
             Self::OpenSessionShell { .. } => "open_session_shell",
             Self::SessionShellExec { .. } => "session_shell_exec",
@@ -1522,6 +1544,7 @@ impl ToolCall {
     pub(crate) fn session_id(&self) -> Option<&str> {
         match self {
             Self::RunProcess { session_id, .. }
+            | Self::RunScript { session_id, .. }
             | Self::RunShell { session_id, .. }
             | Self::ApplyPatch { session_id, .. }
             | Self::ApplyPatchChecked { session_id, .. }
@@ -1582,6 +1605,7 @@ impl ToolCall {
     pub(crate) fn with_effective_session_id(mut self, effective_session_id: String) -> Self {
         match &mut self {
             Self::RunProcess { session_id, .. }
+            | Self::RunScript { session_id, .. }
             | Self::RunShell { session_id, .. }
             | Self::ApplyPatch { session_id, .. }
             | Self::ApplyPatchChecked { session_id, .. }
@@ -1645,7 +1669,7 @@ impl ToolCall {
         execution_context: &SessionExecutionContext,
     ) -> Self {
         match &mut self {
-            Self::RunProcess { cwd, .. } => {
+            Self::RunProcess { cwd, .. } | Self::RunScript { cwd, .. } => {
                 if cwd.is_none() {
                     *cwd = execution_context.default_cwd.clone();
                 }
@@ -1668,6 +1692,7 @@ impl ToolCall {
     pub(crate) fn project(&self) -> Option<&str> {
         match self {
             Self::RunProcess { project, .. }
+            | Self::RunScript { project, .. }
             | Self::RunShell { project, .. }
             | Self::OpenSessionShell { project, .. }
             | Self::SessionShellExec { project, .. }

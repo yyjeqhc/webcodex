@@ -52,6 +52,7 @@ base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 url = "2"
 sha2 = "0.10"
+tempfile = "3"
 # Custom QUIC agent transport. Quinn reuses the
 # rustls 0.23 + aws-lc-rs provider already present transitively (via
 # tokio-tungstenite / salvo). `rustls-pemfile` loads PEM cert/key on the
@@ -76,7 +77,6 @@ lto = "thin"
 codegen-units = 1
 
 [dev-dependencies]
-tempfile = "3"
 urlencoding = "2"
 salvo = { version = "0.93", features = ["test"] }
 # Self-signed cert generation for QUIC integration tests. Uses the `ring`

@@ -25,6 +25,7 @@ mod process;
 mod read_files;
 mod reconnect;
 mod schema;
+mod script;
 mod search_project_texts;
 mod session_shells;
 mod sessions;

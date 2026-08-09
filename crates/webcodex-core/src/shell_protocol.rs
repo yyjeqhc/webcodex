@@ -120,6 +120,11 @@ pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured
 /// older Runners may support validation argv without accepting arbitrary
 /// process argv.
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV: &str = "structured_process_argv";
+/// Model-facing bounded script content carried as typed protocol data. This is
+/// deliberately independent from raw shell and native process argv support:
+/// older Runners must fail closed rather than interpreting script text through
+/// the legacy command channel.
+pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD: &str = "structured_script_payload";
 /// Explicit capability for agent-side read-only LSP navigation. Missing on
 /// older agents and defaults to `false` so the server never dispatches typed
 /// LSP requests to agents that cannot handle them.
@@ -147,6 +152,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
@@ -209,6 +215,11 @@ pub struct ShellClientCapabilities {
     /// therefore false; the Server must fail closed without a shell fallback.
     #[serde(default)]
     pub structured_process_argv: bool,
+    /// Bounded typed script payloads executed from Runner-owned temporary
+    /// files. Missing on older agents and therefore false; this is never
+    /// inferred from shell, validation argv, or process argv support.
+    #[serde(default)]
+    pub structured_script_payload: bool,
     /// Read-only semantic navigation via agent-side rust-analyzer. Defaults to
     /// false for wire compatibility with older agents.
     #[serde(default)]
@@ -271,6 +282,7 @@ impl Default for ShellClientCapabilities {
             ssh_persistent_shell: false,
             structured_validation_argv: false,
             structured_process_argv: false,
+            structured_script_payload: false,
             lsp_read_only_navigation: false,
             sandbox_inspect_commands: false,
             project_lifecycle: false,
@@ -591,6 +603,47 @@ pub struct ShellProcessArgv {
     pub args: Vec<String>,
 }
 
+/// Explicit script language selected by the model-facing `run_script`
+/// contract. The Runner owns the mapping from this semantic language to a
+/// concrete interpreter; no executable path or custom shell grammar is
+/// accepted from the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShellScriptLanguage {
+    Sh,
+    Bash,
+    Powershell,
+}
+
+impl ShellScriptLanguage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sh => "sh",
+            Self::Bash => "bash",
+            Self::Powershell => "powershell",
+        }
+    }
+
+    pub fn file_extension(self) -> &'static str {
+        match self {
+            Self::Sh | Self::Bash => ".sh",
+            Self::Powershell => ".ps1",
+        }
+    }
+}
+
+/// Structured script representation carried end-to-end. This is the
+/// execution source of truth for `run_script`;
+/// `ShellAgentShellRequest.command` stays empty and is never populated by
+/// quoting or JSON-encoding this value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellScriptPayload {
+    pub language: ShellScriptLanguage,
+    pub script: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 /// Conservative cross-platform process-input limits.
 ///
 /// Windows ultimately represents argv in a CreateProcess command line even
@@ -606,6 +659,15 @@ pub const PROCESS_ARGV_MAX_BYTES: usize = 16_000;
 pub const PROCESS_STDIN_MAX_BYTES: usize = 64 * 1_024;
 pub const PROCESS_CWD_MAX_BYTES: usize = 1_024;
 pub const PROCESS_TIMEOUT_MAX_SECS: u64 = 120;
+
+pub const SCRIPT_MIN_BYTES: usize = 1;
+pub const SCRIPT_MAX_BYTES: usize = 512 * 1024;
+pub const SCRIPT_ARG_MAX_COUNT: usize = 256;
+pub const SCRIPT_ARG_MAX_BYTES: usize = 8_192;
+pub const SCRIPT_ARGV_MAX_BYTES: usize = 16_000;
+pub const SCRIPT_STDIN_MAX_BYTES: usize = 64 * 1024;
+pub const SCRIPT_CWD_MAX_BYTES: usize = 1_024;
+pub const SCRIPT_TIMEOUT_MAX_SECS: u64 = 120;
 
 /// Validate the transport-neutral executable/argv payload. Both Server and
 /// Runner call this so a stale or malicious peer cannot bypass either side.
@@ -648,6 +710,76 @@ pub fn validate_process_argv(process: &ShellProcessArgv) -> Result<(), String> {
             "run_process does not accept shell command modes; use run_shell for shell syntax"
                 .to_string(),
         );
+    }
+    Ok(())
+}
+
+/// Validate the complete transport-neutral script request. Both Server and
+/// Runner call this exact helper so bounds and rejection ordering cannot drift.
+/// Whitespace-only scripts are valid; only a zero-byte script is rejected.
+pub fn validate_script_request(
+    payload: &ShellScriptPayload,
+    stdin: Option<&str>,
+    cwd: Option<&str>,
+    timeout_secs: u64,
+) -> Result<(), String> {
+    if payload.script.len() < SCRIPT_MIN_BYTES {
+        return Err("script must contain at least 1 UTF-8 byte".to_string());
+    }
+    if payload.script.len() > SCRIPT_MAX_BYTES {
+        return Err(format!(
+            "script is too large; maximum is {SCRIPT_MAX_BYTES} bytes"
+        ));
+    }
+    if payload.script.contains('\0') {
+        return Err("script cannot contain NUL bytes".to_string());
+    }
+    if payload.args.len() > SCRIPT_ARG_MAX_COUNT {
+        return Err(format!(
+            "args may contain at most {SCRIPT_ARG_MAX_COUNT} entries"
+        ));
+    }
+    let mut total = 0usize;
+    for (index, arg) in payload.args.iter().enumerate() {
+        if arg.len() > SCRIPT_ARG_MAX_BYTES {
+            return Err(format!(
+                "args[{index}] is too long; maximum is {SCRIPT_ARG_MAX_BYTES} bytes"
+            ));
+        }
+        if arg.contains('\0') {
+            return Err(format!("args[{index}] cannot contain NUL bytes"));
+        }
+        total = total.saturating_add(1).saturating_add(arg.len());
+    }
+    if total > SCRIPT_ARGV_MAX_BYTES {
+        return Err(format!(
+            "script args are too large; maximum total is {SCRIPT_ARGV_MAX_BYTES} bytes"
+        ));
+    }
+    if let Some(stdin) = stdin {
+        if stdin.len() > SCRIPT_STDIN_MAX_BYTES {
+            return Err(format!(
+                "stdin is too large; maximum is {SCRIPT_STDIN_MAX_BYTES} bytes"
+            ));
+        }
+        if stdin.contains('\0') {
+            return Err("stdin cannot contain NUL bytes".to_string());
+        }
+    }
+    if let Some(cwd) = cwd {
+        if cwd.len() > SCRIPT_CWD_MAX_BYTES {
+            return Err(format!(
+                "cwd is too long; maximum is {SCRIPT_CWD_MAX_BYTES} bytes"
+            ));
+        }
+        if cwd.contains('\0') {
+            return Err("cwd cannot contain NUL bytes".to_string());
+        }
+    }
+    if timeout_secs == 0 || timeout_secs > SCRIPT_TIMEOUT_MAX_SECS {
+        return Err(format!(
+            "timeout_secs must be between 1 and {SCRIPT_TIMEOUT_MAX_SECS}"
+        ));
     }
     Ok(())
 }
@@ -802,6 +934,11 @@ pub struct ShellAgentShellRequest {
     /// defaults to `None` for backward compatibility with older envelopes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<ShellProcessArgv>,
+    /// Typed bounded script payload. Present only for `kind = "run_script"`;
+    /// defaults to `None` for backward compatibility with older envelopes.
+    /// The raw body never enters `command`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<ShellScriptPayload>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdin: Option<String>,
     pub timeout_secs: u64,
@@ -1927,6 +2064,41 @@ mod envelope_tests {
                     "$(not-shell)".to_string(),
                 ],
             }),
+            script: None,
+            stdin: Some("bounded input".to_string()),
+            timeout_secs: 60,
+            requested_by: "tester".to_string(),
+            created_at: 123,
+            validation: None,
+            lsp: None,
+            sandbox: None,
+            job_context: None,
+            persistent_shell: None,
+        }
+    }
+
+    fn sample_script_request() -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: "req-script-1".to_string(),
+            client_id: "ws-1".to_string(),
+            kind: "run_script".to_string(),
+            job_id: None,
+            cwd: Some("sub dir".to_string()),
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+            command: String::new(),
+            process: None,
+            script: Some(ShellScriptPayload {
+                language: ShellScriptLanguage::Bash,
+                script: "printf '%s\\n' \"$1\"".to_string(),
+                args: vec!["two words".to_string(), "$(literal)".to_string()],
+            }),
             stdin: Some("bounded input".to_string()),
             timeout_secs: 60,
             requested_by: "tester".to_string(),
@@ -1961,6 +2133,7 @@ mod envelope_tests {
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
                 structured_process_argv: true,
+                structured_script_payload: true,
                 lsp_read_only_navigation: false,
                 sandbox_inspect_commands: false,
                 project_lifecycle: false,
@@ -2150,6 +2323,7 @@ mod envelope_tests {
             create_dirs: false,
             command: "echo hi".to_string(),
             process: None,
+            script: None,
             stdin: Some("input".to_string()),
             timeout_secs: 10,
             requested_by: "tester".to_string(),
@@ -2219,12 +2393,60 @@ mod envelope_tests {
         }
     }
 
+    #[tokio::test]
+    async fn structured_script_request_round_trips_polling_websocket_and_quic() {
+        let request = sample_script_request();
+        let polling: ShellAgentPollResponse = serde_json::from_value(
+            serde_json::to_value(ShellAgentPollResponse {
+                success: true,
+                request: Some(request.clone()),
+                error: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(polling.request.as_ref().unwrap().script, request.script);
+        assert_eq!(polling.request.as_ref().unwrap().command, "");
+        assert!(polling.request.as_ref().unwrap().process.is_none());
+
+        let websocket_json = AgentEnvelope::Request {
+            request: request.clone(),
+        }
+        .to_json()
+        .unwrap();
+        assert!(!websocket_json.contains(r#""command":"printf"#));
+        match AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
+            AgentEnvelope::Request { request: decoded } => {
+                assert_eq!(decoded.script, request.script);
+                assert_eq!(decoded.command, "");
+                assert!(decoded.process.is_none());
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+
+        let frame = encode_quic_frame(&AgentEnvelope::Request {
+            request: request.clone(),
+        })
+        .unwrap();
+        let mut reader = frame.as_slice();
+        match read_quic_frame(&mut reader).await.unwrap() {
+            AgentEnvelope::Request { request: decoded } => {
+                assert_eq!(decoded.script, request.script);
+                assert_eq!(decoded.command, "");
+                assert!(decoded.process.is_none());
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+    }
+
     #[test]
     fn legacy_capabilities_do_not_imply_structured_process_argv() {
         let capabilities: ShellClientCapabilities =
             serde_json::from_str(r#"{"shell":true,"structured_validation_argv":true}"#).unwrap();
         assert!(capabilities.structured_validation_argv);
         assert!(!capabilities.structured_process_argv);
+        assert!(!capabilities.structured_script_payload);
+        assert!(!ShellClientCapabilities::default().structured_script_payload);
     }
 
     #[test]
@@ -2298,6 +2520,89 @@ mod envelope_tests {
             .unwrap_err()
             .contains("shell command mode"));
         }
+    }
+
+    #[test]
+    fn script_request_validation_is_bounded_and_allows_whitespace_only_content() {
+        let valid = ShellScriptPayload {
+            language: ShellScriptLanguage::Sh,
+            script: " \n".to_string(),
+            args: vec!["a".repeat(8_000), "b".repeat(7_998)],
+        };
+        assert!(validate_script_request(
+            &valid,
+            Some(&"i".repeat(SCRIPT_STDIN_MAX_BYTES)),
+            Some("."),
+            SCRIPT_TIMEOUT_MAX_SECS,
+        )
+        .is_ok());
+
+        let invalid_payloads = [
+            ShellScriptPayload {
+                language: ShellScriptLanguage::Sh,
+                script: String::new(),
+                args: Vec::new(),
+            },
+            ShellScriptPayload {
+                language: ShellScriptLanguage::Bash,
+                script: "x".repeat(SCRIPT_MAX_BYTES + 1),
+                args: Vec::new(),
+            },
+            ShellScriptPayload {
+                language: ShellScriptLanguage::Powershell,
+                script: "bad\0script".to_string(),
+                args: Vec::new(),
+            },
+            ShellScriptPayload {
+                language: ShellScriptLanguage::Sh,
+                script: "true".to_string(),
+                args: vec![String::new(); SCRIPT_ARG_MAX_COUNT + 1],
+            },
+            ShellScriptPayload {
+                language: ShellScriptLanguage::Sh,
+                script: "true".to_string(),
+                args: vec!["x".repeat(SCRIPT_ARG_MAX_BYTES + 1)],
+            },
+            ShellScriptPayload {
+                language: ShellScriptLanguage::Sh,
+                script: "true".to_string(),
+                args: vec!["bad\0arg".to_string()],
+            },
+            ShellScriptPayload {
+                language: ShellScriptLanguage::Sh,
+                script: "true".to_string(),
+                args: vec!["a".repeat(8_000), "b".repeat(8_000)],
+            },
+        ];
+        for payload in invalid_payloads {
+            assert!(validate_script_request(&payload, None, None, 60).is_err());
+        }
+        assert!(validate_script_request(
+            &valid,
+            Some(&"i".repeat(SCRIPT_STDIN_MAX_BYTES + 1)),
+            None,
+            60,
+        )
+        .is_err());
+        assert!(validate_script_request(&valid, Some("bad\0stdin"), None, 60).is_err());
+        assert!(validate_script_request(
+            &valid,
+            None,
+            Some(&"c".repeat(SCRIPT_CWD_MAX_BYTES + 1)),
+            60,
+        )
+        .is_err());
+        assert!(validate_script_request(&valid, None, Some("bad\0cwd"), 60).is_err());
+        assert!(validate_script_request(&valid, None, None, 0).is_err());
+        assert!(validate_script_request(&valid, None, None, SCRIPT_TIMEOUT_MAX_SECS + 1).is_err());
+    }
+
+    #[test]
+    fn cmd_is_not_a_script_language() {
+        let error = serde_json::from_value::<ShellScriptLanguage>(serde_json::json!("cmd"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown variant"), "{error}");
     }
 
     #[test]

@@ -33,6 +33,31 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::RunScript {
+                project,
+                language,
+                script,
+                args,
+                stdin,
+                session_id: _,
+                timeout_secs,
+                cwd,
+                purpose,
+            } => {
+                self.run_script_with_contract_in_sandbox(
+                    project,
+                    language,
+                    script,
+                    args,
+                    stdin,
+                    timeout_secs,
+                    cwd,
+                    purpose,
+                    sandbox,
+                    ssh_resource,
+                )
+                .await
+            }
             ToolCall::RunShell {
                 project,
                 command,

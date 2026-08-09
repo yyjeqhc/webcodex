@@ -1084,6 +1084,7 @@ mod tests {
             create_dirs: false,
             command: command.unwrap_or_default().to_string(),
             process: None,
+            script: None,
             stdin: None,
             timeout_secs: 5,
             requested_by: "tester".to_string(),

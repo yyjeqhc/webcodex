@@ -209,6 +209,7 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             ssh_persistent_shell: false,
             structured_validation_argv: true,
             structured_process_argv: true,
+            structured_script_payload: true,
             lsp_read_only_navigation: true,
             sandbox_inspect_commands: false,
             project_lifecycle: false,

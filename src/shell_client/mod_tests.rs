@@ -1540,6 +1540,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
                 structured_process_argv: true,
+                structured_script_payload: false,
                 lsp_read_only_navigation: true,
                 sandbox_inspect_commands: true,
                 project_lifecycle: true,

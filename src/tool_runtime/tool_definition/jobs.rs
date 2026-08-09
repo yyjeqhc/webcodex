@@ -1,4 +1,6 @@
-use super::AgentCapability::{AsyncJobs, PersistentShell, Shell, StructuredProcess};
+use super::AgentCapability::{
+    AsyncJobs, PersistentShell, Shell, StructuredProcess, StructuredScript,
+};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
     def, permission_risk, requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB,
@@ -16,6 +18,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_JOB,
         Some(StructuredProcess),
+        TOOL_PROVIDER_AGENT,
+        JobRun,
+        Some(JOB_RUN),
+        true,
+        NoPath,
+        true,
+        true,
+    ),
+    def(
+        "run_script",
+        ModelVisible,
+        TOOL_CATEGORY_JOB,
+        Some(StructuredScript),
         TOOL_PROVIDER_AGENT,
         JobRun,
         Some(JOB_RUN),

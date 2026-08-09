@@ -6,6 +6,7 @@ pub(crate) mod external_tools;
 pub(crate) mod files;
 pub(crate) mod lsp;
 pub(crate) mod output;
+pub(crate) mod output_text;
 pub(crate) mod patches;
 pub(crate) mod persistent_shell;
 pub(crate) mod projects;

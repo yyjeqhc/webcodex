@@ -3,6 +3,10 @@ use super::config::{
     ShellDialect, ShellProfileConfig,
 };
 use super::output::{CommandResult, ShellCommandResult};
+use super::output_text::{
+    append_bounded_text, normalize_captured_output_text, normalize_output_text,
+    CapturedOutputEncoding, FullStreamUtf8Validity, LeadingBom, OutputTextSource,
+};
 use super::projects::find_project_shell_context;
 use crate::shell_protocol::{ShellScriptLanguage, ShellScriptPayload};
 use std::collections::HashMap;
@@ -21,6 +25,7 @@ use webcodex_process::{GracefulTermination, ManagedChild};
 const SHELL_PROFILE_PREPARE_TIMEOUT_SECS: u64 = 30;
 const PROCESS_GROUP_TERMINATION_GRACE: Duration = Duration::from_millis(50);
 const PROFILE_PREPARE_PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+const RAW_TAIL_CAPTURE_ALLOWANCE: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PreparedShellProfileKey {
@@ -613,16 +618,8 @@ pub(crate) fn base_shell_env(
 }
 
 fn stderr_tail(bytes: &[u8]) -> String {
-    let text = String::from_utf8_lossy(bytes).to_string();
     const MAX_ERR: usize = 4096;
-    if text.len() <= MAX_ERR {
-        return text;
-    }
-    let mut start = text.len() - MAX_ERR;
-    while start < text.len() && !text.is_char_boundary(start) {
-        start += 1;
-    }
-    format!("[stderr truncated]\n{}", &text[start..])
+    normalize_output_text(bytes, false, MAX_ERR, OutputTextSource::LocalProcess)
 }
 
 struct ProfilePreparePipeReader {
@@ -1133,20 +1130,109 @@ pub(crate) fn cwd_allowed(policy: &AgentPolicy, cwd: &Path) -> Result<(), String
     ))
 }
 
-fn truncate_bytes(bytes: &[u8], max: usize) -> String {
-    let text = String::from_utf8_lossy(bytes).to_string();
-    if text.len() <= max {
-        return text;
+#[derive(Debug)]
+struct BoundedPipeTail {
+    bytes: Vec<u8>,
+    raw_truncated: bool,
+    encoding: CapturedOutputEncoding,
+}
+
+impl BoundedPipeTail {
+    fn normalize(&self, max_output_bytes: usize) -> String {
+        normalize_captured_output_text(
+            &self.bytes,
+            self.raw_truncated,
+            max_output_bytes,
+            OutputTextSource::LocalProcess,
+            self.encoding,
+        )
     }
-    let mut start = text.len() - max;
-    while start < text.len() && !text.is_char_boundary(start) {
-        start += 1;
+
+    #[cfg(test)]
+    fn normalize_as_windows_for_test(&self, max_output_bytes: usize) -> String {
+        super::output_text::normalize_captured_output_text_as_windows_for_test(
+            &self.bytes,
+            self.raw_truncated,
+            max_output_bytes,
+            self.encoding,
+        )
     }
-    format!(
-        "[output truncated to last {} bytes]\n{}",
-        max,
-        &text[start..]
-    )
+}
+
+#[derive(Debug)]
+struct IncrementalUtf8Validator {
+    valid_so_far: bool,
+    pending: Vec<u8>,
+}
+
+fn incomplete_utf8_sequence_len(first: u8) -> Option<usize> {
+    match first {
+        0xC2..=0xDF => Some(2),
+        0xE0..=0xEF => Some(3),
+        0xF0..=0xF4 => Some(4),
+        _ => None,
+    }
+}
+
+impl IncrementalUtf8Validator {
+    fn new() -> Self {
+        Self {
+            valid_so_far: true,
+            pending: Vec::with_capacity(3),
+        }
+    }
+
+    fn push(&mut self, mut bytes: &[u8]) {
+        if !self.valid_so_far {
+            return;
+        }
+        if !self.pending.is_empty() {
+            let sequence_len = incomplete_utf8_sequence_len(self.pending[0])
+                .expect("pending UTF-8 starts with a valid multibyte lead byte");
+            let needed = sequence_len - self.pending.len();
+            let take = needed.min(bytes.len());
+            if take < needed {
+                self.pending.extend_from_slice(&bytes[..take]);
+                if std::str::from_utf8(&self.pending)
+                    .is_err_and(|error| error.error_len().is_some())
+                {
+                    self.pending.clear();
+                    self.valid_so_far = false;
+                    return;
+                }
+                debug_assert!(self.pending.len() <= 3);
+                return;
+            }
+            let mut sequence = [0_u8; 4];
+            sequence[..self.pending.len()].copy_from_slice(&self.pending);
+            sequence[self.pending.len()..sequence_len].copy_from_slice(&bytes[..take]);
+            self.pending.clear();
+            if std::str::from_utf8(&sequence[..sequence_len]).is_err() {
+                self.valid_so_far = false;
+                return;
+            }
+            bytes = &bytes[take..];
+        }
+        match std::str::from_utf8(bytes) {
+            Ok(_) => {}
+            Err(error) if error.error_len().is_some() => {
+                self.valid_so_far = false;
+            }
+            Err(error) => {
+                self.pending
+                    .extend_from_slice(&bytes[error.valid_up_to()..]);
+                debug_assert!(self.pending.len() <= 3);
+            }
+        }
+    }
+
+    fn finish(&self) -> FullStreamUtf8Validity {
+        if self.valid_so_far && self.pending.is_empty() {
+            FullStreamUtf8Validity::Valid
+        } else {
+            FullStreamUtf8Validity::Invalid
+        }
+    }
 }
 
 fn with_cleanup_error(base: impl Into<String>, cleanup: Option<String>) -> String {
@@ -1274,7 +1360,7 @@ fn terminate_child_without_output(mut child: ManagedChild) -> Result<(), String>
 fn terminate_and_read_pipes(
     mut child: ManagedChild,
     max_output_bytes: usize,
-) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), String> {
+) -> Result<(std::process::ExitStatus, BoundedPipeTail, BoundedPipeTail), String> {
     let deadline = Instant::now() + Duration::from_secs(1);
     let cleanup = terminate_child_process_tree_until(&mut child, deadline).err();
     let output = read_pipes_until(child, max_output_bytes, deadline);
@@ -1294,7 +1380,7 @@ fn read_pipes_until(
     mut child: ManagedChild,
     max_output_bytes: usize,
     deadline: Instant,
-) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), String> {
+) -> Result<(std::process::ExitStatus, BoundedPipeTail, BoundedPipeTail), String> {
     let stdout = child
         .child_mut()
         .stdout
@@ -1347,23 +1433,129 @@ fn read_bounded_pipe_tail(
     mut pipe: impl Read,
     max_bytes: usize,
     stream_name: &'static str,
-) -> Result<Vec<u8>, String> {
-    let retained_limit = max_bytes.saturating_add(1);
+) -> Result<BoundedPipeTail, String> {
+    // Four extra raw bytes retain truncation evidence plus enough alignment
+    // room for the largest UTF-8 scalar. The decoded result is independently
+    // bounded after transcoding.
+    let retained_limit = max_bytes
+        .saturating_add(RAW_TAIL_CAPTURE_ALLOWANCE)
+        .max(RAW_TAIL_CAPTURE_ALLOWANCE);
     let mut output = Vec::with_capacity(retained_limit.min(64 * 1024));
+    let mut prefix = Vec::with_capacity(3);
+    let mut utf8_validator = IncrementalUtf8Validator::new();
+    let mut total_bytes = 0usize;
+    let mut raw_truncated = false;
     let mut chunk = [0_u8; 8192];
     loop {
         let read = pipe
             .read(&mut chunk)
             .map_err(|error| format!("failed to read {stream_name}: {error}"))?;
         if read == 0 {
-            return Ok(output);
+            let encoding = CapturedOutputEncoding {
+                full_stream_utf8: utf8_validator.finish(),
+                leading_bom: leading_bom(&prefix),
+            };
+            if raw_truncated {
+                align_and_restore_bom(encoding, total_bytes, &mut output);
+            }
+            return Ok(BoundedPipeTail {
+                bytes: output,
+                raw_truncated,
+                encoding,
+            });
         }
+        if prefix.len() < 3 {
+            let prefix_bytes = (3 - prefix.len()).min(read);
+            prefix.extend_from_slice(&chunk[..prefix_bytes]);
+        }
+        utf8_validator.push(&chunk[..read]);
+        total_bytes = total_bytes.saturating_add(read);
         output.extend_from_slice(&chunk[..read]);
         if output.len() > retained_limit {
             let discard = output.len() - retained_limit;
             output.drain(..discard);
+            raw_truncated = true;
         }
     }
+}
+
+fn leading_bom(prefix: &[u8]) -> LeadingBom {
+    if prefix.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        LeadingBom::Utf8
+    } else if prefix.starts_with(&[0xFF, 0xFE]) {
+        LeadingBom::Utf16Le
+    } else if prefix.starts_with(&[0xFE, 0xFF]) {
+        LeadingBom::Utf16Be
+    } else {
+        LeadingBom::None
+    }
+}
+
+fn align_and_restore_bom(encoding: CapturedOutputEncoding, total_bytes: usize, tail: &mut Vec<u8>) {
+    match encoding.leading_bom {
+        LeadingBom::Utf8 => restore_utf8_bom(tail),
+        LeadingBom::Utf16Le => restore_utf16_bom(tail, total_bytes, true),
+        LeadingBom::Utf16Be => restore_utf16_bom(tail, total_bytes, false),
+        LeadingBom::None if encoding.full_stream_utf8 == FullStreamUtf8Validity::Valid => {
+            align_valid_utf8_tail(tail);
+        }
+        LeadingBom::None => {}
+    }
+}
+
+fn align_valid_utf8_tail(tail: &mut Vec<u8>) {
+    let discard = tail
+        .iter()
+        .take(3)
+        .take_while(|byte| **byte & 0b1100_0000 == 0b1000_0000)
+        .count();
+    tail.drain(..discard);
+}
+
+fn restore_utf8_bom(tail: &mut Vec<u8>) {
+    let replace = 3.min(tail.len());
+    tail.drain(..replace);
+    align_valid_utf8_tail(tail);
+    let mut with_bom = Vec::with_capacity(3 + tail.len());
+    with_bom.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    with_bom.extend_from_slice(tail);
+    *tail = with_bom;
+}
+
+fn restore_utf16_bom(tail: &mut Vec<u8>, total_bytes: usize, little_endian: bool) {
+    let mut tail_start = total_bytes.saturating_sub(tail.len());
+    let alignment_discard = if tail_start < 2 {
+        2 - tail_start
+    } else {
+        (tail_start - 2) % 2
+    }
+    .min(tail.len());
+    if alignment_discard > 0 {
+        tail.drain(..alignment_discard);
+        tail_start = tail_start.saturating_add(alignment_discard);
+    }
+    debug_assert!(tail_start >= 2 || tail.is_empty());
+    let replace = 2.min(tail.len());
+    tail.drain(..replace);
+    if tail.len() >= 2 {
+        let first = if little_endian {
+            u16::from_le_bytes([tail[0], tail[1]])
+        } else {
+            u16::from_be_bytes([tail[0], tail[1]])
+        };
+        if (0xDC00..=0xDFFF).contains(&first) {
+            tail.drain(..2);
+        }
+    }
+    let bom = if little_endian {
+        [0xFF, 0xFE]
+    } else {
+        [0xFE, 0xFF]
+    };
+    let mut with_bom = Vec::with_capacity(2 + tail.len());
+    with_bom.extend_from_slice(&bom);
+    with_bom.extend_from_slice(tail);
+    *tail = with_bom;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2070,17 +2262,21 @@ fn execute_configured_command(
         {
             let duration_ms = start.elapsed().as_millis() as u64;
             return match terminate_and_read_pipes(child, policy.max_output_bytes) {
-                Ok((_status, stdout, stderr)) => ShellCommandResult::completed(CommandResult {
-                    exit_code: Some(-1),
-                    stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
-                    stderr: Some(format!(
-                        "{}{}job stopped by request",
-                        truncate_bytes(&stderr, policy.max_output_bytes),
-                        if stderr.is_empty() { "" } else { "\n" },
-                    )),
-                    duration_ms: Some(duration_ms),
-                    error: Some("job stopped".to_string()),
-                }),
+                Ok((_status, stdout, stderr)) => {
+                    let mut stderr = stderr.normalize(policy.max_output_bytes);
+                    append_bounded_text(
+                        &mut stderr,
+                        "job stopped by request",
+                        policy.max_output_bytes,
+                    );
+                    ShellCommandResult::completed(CommandResult {
+                        exit_code: Some(-1),
+                        stdout: Some(stdout.normalize(policy.max_output_bytes)),
+                        stderr: Some(stderr),
+                        duration_ms: Some(duration_ms),
+                        error: Some("job stopped".to_string()),
+                    })
+                }
                 Err(e) => ShellCommandResult::outcome_unknown(CommandResult {
                     exit_code: Some(-1),
                     stdout: None,
@@ -2097,15 +2293,16 @@ fn execute_configured_command(
                     let duration_ms = start.elapsed().as_millis() as u64;
                     return match terminate_and_read_pipes(child, policy.max_output_bytes) {
                         Ok((_status, stdout, stderr)) => {
+                            let mut stderr = stderr.normalize(policy.max_output_bytes);
+                            append_bounded_text(
+                                &mut stderr,
+                                &format!("command timed out after {} seconds", timeout_secs),
+                                policy.max_output_bytes,
+                            );
                             ShellCommandResult::timed_out(CommandResult {
                                 exit_code: Some(-1),
-                                stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
-                                stderr: Some(format!(
-                                    "{}{}command timed out after {} seconds",
-                                    truncate_bytes(&stderr, policy.max_output_bytes),
-                                    if stderr.is_empty() { "" } else { "\n" },
-                                    timeout_secs
-                                )),
+                                stdout: Some(stdout.normalize(policy.max_output_bytes)),
+                                stderr: Some(stderr),
                                 duration_ms: Some(duration_ms),
                                 error: Some("command timed out".to_string()),
                             })
@@ -2155,8 +2352,8 @@ fn execute_configured_command(
     match terminate_and_read_pipes(child, policy.max_output_bytes) {
         Ok((status, stdout, stderr)) => ShellCommandResult::completed(CommandResult {
             exit_code: Some(status.code().unwrap_or(-1)),
-            stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
-            stderr: Some(truncate_bytes(&stderr, policy.max_output_bytes)),
+            stdout: Some(stdout.normalize(policy.max_output_bytes)),
+            stderr: Some(stderr.normalize(policy.max_output_bytes)),
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: None,
         }),
@@ -2326,6 +2523,222 @@ mod runner_lifecycle_tests {
             allow_cwd_anywhere: true,
             ..AgentPolicy::default()
         }
+    }
+
+    #[test]
+    fn phase_f_powershell_utf8_preamble_precedes_requested_shell_command() {
+        let requested = "Write-Output '中文 🙂'";
+        let command = powershell_command_text(requested);
+        assert!(command.starts_with(POWERSHELL_UTF8_PREAMBLE));
+        let preamble_end = command.find('\n').expect("preamble line ending");
+        let requested_start = command.find(requested).expect("requested command");
+        assert!(preamble_end < requested_start);
+        assert!(command.contains("$LASTEXITCODE = 0"));
+        assert!(command.ends_with("exit 0"));
+
+        let init = Path::new(r"C:\runner profile\init.ps1");
+        let initialized = powershell_init_command_text(init, requested);
+        assert!(initialized.starts_with(POWERSHELL_UTF8_PREAMBLE));
+        assert!(
+            initialized
+                .find(". 'C:\\runner profile\\init.ps1'")
+                .unwrap()
+                < initialized.find(requested).unwrap()
+        );
+
+        let prepared = powershell_profile_prepare_script("Write-Output init", "MARKER");
+        assert!(prepared.starts_with(POWERSHELL_UTF8_PREAMBLE));
+    }
+
+    #[test]
+    fn phase_f_bounded_raw_tail_aligns_complete_utf8_before_windows_decode() {
+        assert_eq!(RAW_TAIL_CAPTURE_ALLOWANCE, 4);
+        let text = "中🙂".repeat(64);
+        let bytes = text.as_bytes();
+        let max = 64;
+        let raw_tail_offset = bytes.len() - (max + RAW_TAIL_CAPTURE_ALLOWANCE);
+        assert_eq!(raw_tail_offset, 380);
+        assert!(
+            !text.is_char_boundary(raw_tail_offset),
+            "test tail must begin inside a UTF-8 scalar"
+        );
+        let aligned_offset = (raw_tail_offset..bytes.len())
+            .find(|offset| text.is_char_boundary(*offset))
+            .unwrap();
+        assert_eq!(aligned_offset, 381);
+
+        let captured = read_bounded_pipe_tail(std::io::Cursor::new(bytes), max, "stdout").unwrap();
+        assert!(captured.raw_truncated);
+        assert_eq!(
+            captured.encoding.full_stream_utf8,
+            FullStreamUtf8Validity::Valid
+        );
+        assert_eq!(captured.encoding.leading_bom, LeadingBom::None);
+        assert_eq!(captured.bytes, &bytes[aligned_offset..]);
+        assert!(captured.bytes.len() <= max + RAW_TAIL_CAPTURE_ALLOWANCE);
+        assert!(
+            !crate::webcodex_runner::output_text::captured_windows_output_uses_oem_for_test(
+                &captured.bytes,
+                captured.encoding,
+            )
+        );
+
+        let normalized = captured.normalize_as_windows_for_test(max);
+        assert!(normalized.len() <= max);
+        assert!(std::str::from_utf8(normalized.as_bytes()).is_ok());
+        assert!(normalized.starts_with("[output truncated]\n"));
+        assert!(!normalized.contains('\u{fffd}'));
+        let retained = normalized.strip_prefix("[output truncated]\n").unwrap();
+        assert!(!retained.is_empty());
+        assert!(text.ends_with(retained), "{retained:?}");
+        assert!(retained.contains('中'));
+        assert!(retained.contains('🙂'));
+    }
+
+    #[test]
+    fn phase_f_bounded_raw_tail_restores_utf8_bom_after_scalar_alignment() {
+        let text = "中🙂".repeat(64);
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(text.as_bytes());
+        let max = 64;
+        let raw_tail_offset = bytes.len() - (max + RAW_TAIL_CAPTURE_ALLOWANCE);
+        let content_offset = raw_tail_offset - 3;
+        assert_eq!(raw_tail_offset, 383);
+        assert_eq!(content_offset, 380);
+        assert!(
+            !text.is_char_boundary(content_offset),
+            "test tail must begin inside a UTF-8 scalar"
+        );
+        let capacity_offset = content_offset + 3;
+        assert!(!text.is_char_boundary(capacity_offset));
+        let aligned_content_offset = (capacity_offset..text.len())
+            .find(|offset| text.is_char_boundary(*offset))
+            .unwrap();
+        assert_eq!(aligned_content_offset, 385);
+
+        let captured = read_bounded_pipe_tail(std::io::Cursor::new(&bytes), max, "stdout").unwrap();
+        assert!(captured.raw_truncated);
+        assert_eq!(
+            captured.encoding,
+            CapturedOutputEncoding {
+                full_stream_utf8: FullStreamUtf8Validity::Valid,
+                leading_bom: LeadingBom::Utf8,
+            }
+        );
+        let mut expected = vec![0xEF, 0xBB, 0xBF];
+        expected.extend_from_slice(&bytes[3 + aligned_content_offset..]);
+        assert_eq!(captured.bytes, expected);
+        assert!(captured.bytes.len() <= max + RAW_TAIL_CAPTURE_ALLOWANCE);
+
+        let normalized = captured.normalize_as_windows_for_test(max);
+        assert!(normalized.len() <= max);
+        assert!(normalized.starts_with("[output truncated]\n"));
+        assert!(!normalized.contains('\u{feff}'));
+        assert!(!normalized.contains('\u{fffd}'));
+        let retained = normalized.strip_prefix("[output truncated]\n").unwrap();
+        assert!(!retained.is_empty());
+        assert!(text.ends_with(retained), "{retained:?}");
+        assert!(retained.contains('中'));
+        assert!(retained.contains('🙂'));
+    }
+
+    #[test]
+    fn phase_f_invalid_full_stream_keeps_oem_classification_when_suffix_is_utf8() {
+        let max = 32;
+        let mut bytes = vec![0xFF];
+        bytes.extend(std::iter::repeat_n(b'x', 100));
+        let captured = read_bounded_pipe_tail(std::io::Cursor::new(bytes), max, "stderr").unwrap();
+        assert!(captured.raw_truncated);
+        assert_eq!(
+            captured.encoding,
+            CapturedOutputEncoding {
+                full_stream_utf8: FullStreamUtf8Validity::Invalid,
+                leading_bom: LeadingBom::None,
+            }
+        );
+        assert!(std::str::from_utf8(&captured.bytes).is_ok());
+        assert!(
+            crate::webcodex_runner::output_text::captured_windows_output_uses_oem_for_test(
+                &captured.bytes,
+                captured.encoding,
+            )
+        );
+        assert!(captured.bytes.len() <= max + RAW_TAIL_CAPTURE_ALLOWANCE);
+        assert!(captured.normalize_as_windows_for_test(max).len() <= max);
+    }
+
+    #[test]
+    fn phase_f_utf8_validator_handles_split_scalars_and_latches_invalidity() {
+        let scalar = "🙂".as_bytes();
+        let mut validator = IncrementalUtf8Validator::new();
+        validator.push(&scalar[..1]);
+        assert!(validator.valid_so_far);
+        assert_eq!(validator.pending.len(), 1);
+        validator.push(&scalar[1..3]);
+        assert!(validator.valid_so_far);
+        assert_eq!(validator.pending.len(), 3);
+        validator.push(&scalar[3..]);
+        assert!(validator.valid_so_far);
+        assert!(validator.pending.is_empty());
+        assert_eq!(validator.finish(), FullStreamUtf8Validity::Valid);
+
+        let mut across_capture_reads = vec![b'x'; 8191];
+        across_capture_reads.extend_from_slice(scalar);
+        let captured = read_bounded_pipe_tail(
+            std::io::Cursor::new(&across_capture_reads),
+            across_capture_reads.len(),
+            "stdout",
+        )
+        .unwrap();
+        assert!(!captured.raw_truncated);
+        assert_eq!(
+            captured.encoding.full_stream_utf8,
+            FullStreamUtf8Validity::Valid
+        );
+
+        let mut invalid = IncrementalUtf8Validator::new();
+        invalid.push(&[0xE2]);
+        assert!(invalid.valid_so_far);
+        assert_eq!(invalid.pending.len(), 1);
+        invalid.push(b"A");
+        assert!(!invalid.valid_so_far);
+        assert!(invalid.pending.is_empty());
+        invalid.push("valid later 🙂".as_bytes());
+        assert!(!invalid.valid_so_far);
+        assert!(invalid.pending.len() <= 3);
+        assert_eq!(invalid.finish(), FullStreamUtf8Validity::Invalid);
+
+        let mut incomplete_at_eof = IncrementalUtf8Validator::new();
+        incomplete_at_eof.push(&scalar[..3]);
+        assert_eq!(incomplete_at_eof.pending.len(), 3);
+        assert_eq!(incomplete_at_eof.finish(), FullStreamUtf8Validity::Invalid);
+    }
+
+    #[test]
+    fn phase_f_bounded_raw_tail_preserves_utf16_bom_and_unit_alignment() {
+        let max = 32;
+
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in "中".repeat(1000).encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        let captured = read_bounded_pipe_tail(std::io::Cursor::new(utf16), max, "stderr").unwrap();
+        assert!(captured.raw_truncated);
+        assert!(captured.bytes.len() <= max + RAW_TAIL_CAPTURE_ALLOWANCE);
+        assert!(captured.bytes.starts_with(&[0xFF, 0xFE]));
+        assert_eq!((captured.bytes.len() - 2) % 2, 0);
+
+        let mut surrogate_utf16 = vec![0xFF, 0xFE];
+        for unit in "🙂".repeat(1000).encode_utf16() {
+            surrogate_utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        let captured =
+            read_bounded_pipe_tail(std::io::Cursor::new(surrogate_utf16), max, "stderr").unwrap();
+        let first_retained_unit = u16::from_le_bytes([captured.bytes[2], captured.bytes[3]]);
+        assert!((0xD800..=0xDBFF).contains(&first_retained_unit));
+        let normalized = captured.normalize_as_windows_for_test(max);
+        assert!(!normalized.contains('\u{fffd}'));
+        assert!(normalized.ends_with("🙂🙂🙂"));
     }
 
     #[test]
@@ -2871,7 +3284,7 @@ done
     }
 
     #[test]
-    fn powershell_temp_file_uses_utf8_bom_without_script_preamble() {
+    fn phase_f_powershell_temp_file_uses_utf8_bom_without_script_preamble() {
         let payload = ShellScriptPayload {
             language: ShellScriptLanguage::Powershell,
             script: "param([string]$Value)\nWrite-Output $Value".to_string(),
@@ -2959,6 +3372,190 @@ done
             .as_deref()
             .unwrap_or_default()
             .contains("two words"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn phase_f_windows_native_utf8_and_utf16_stdout_stderr_normalize() {
+        let cwd = tempfile::tempdir().unwrap();
+        let helper = process_argv_helper();
+
+        let utf8 = run_direct_process(
+            cwd.path(),
+            &helper,
+            &["windows-utf8-output".to_string()],
+            None,
+            10,
+        );
+        assert_eq!(utf8.execution_state, ShellCommandExecutionState::Completed);
+        assert_eq!(utf8.result.exit_code, Some(17));
+        assert_eq!(utf8.result.stdout.as_deref(), Some("UTF8 中文 🙂\n"));
+        assert_eq!(utf8.result.stderr.as_deref(), Some("UTF8 中文 🙂\n"));
+
+        let utf16 = run_direct_process(
+            cwd.path(),
+            &helper,
+            &["windows-utf16-output".to_string()],
+            None,
+            10,
+        );
+        assert_eq!(utf16.execution_state, ShellCommandExecutionState::Completed);
+        assert_eq!(utf16.result.exit_code, Some(0));
+        assert_eq!(utf16.result.stdout.as_deref(), Some("UTF16 中文 🙂\n"));
+        assert_eq!(utf16.result.stderr.as_deref(), Some("UTF16 中文 🙂\n"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn phase_f_windows_native_oem_stdout_stderr_use_active_oem_page() {
+        let cwd = tempfile::tempdir().unwrap();
+        let expected_path = cwd.path().join("expected.txt");
+        let result = run_direct_process(
+            cwd.path(),
+            &process_argv_helper(),
+            &[
+                "windows-oem-output".to_string(),
+                expected_path.to_string_lossy().into_owned(),
+            ],
+            None,
+            10,
+        );
+        let expected = std::fs::read_to_string(expected_path).unwrap();
+        assert!(!expected.is_ascii());
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(23));
+        assert_eq!(result.result.stdout.as_deref(), Some(expected.as_str()));
+        assert_eq!(result.result.stderr.as_deref(), Some(expected.as_str()));
+        assert!(!result
+            .result
+            .stdout
+            .as_deref()
+            .unwrap_or_default()
+            .contains('\u{fffd}'));
+
+        let bounded_expected_path = cwd.path().join("bounded-expected.txt");
+        let projects_dir = tempfile::tempdir().unwrap();
+        let mut policy = unrestricted_policy();
+        policy.max_output_bytes = 64;
+        let bounded = run_process_with_profiles_in_sandbox_and_execution_state(
+            1,
+            &policy,
+            &ShellConfig::default(),
+            projects_dir.path(),
+            &PreparedShellProfileCache::default(),
+            Some(cwd.path().to_string_lossy().as_ref()),
+            &process_argv_helper().to_string_lossy(),
+            &[
+                "windows-oem-output".to_string(),
+                bounded_expected_path.to_string_lossy().into_owned(),
+                "1000".to_string(),
+            ],
+            None,
+            10,
+            None,
+            None,
+        );
+        for output in [bounded.result.stdout, bounded.result.stderr] {
+            let output = output.unwrap();
+            assert!(output.len() <= policy.max_output_bytes);
+            assert!(output.starts_with("[output truncated]\n"), "{output:?}");
+            assert!(std::str::from_utf8(output.as_bytes()).is_ok());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn phase_f_windows_powershell_shell_and_param_script_keep_semantics() {
+        let cwd = tempfile::tempdir().unwrap();
+        let shell = ShellConfig::default();
+        let shell_result = run_shell_impl(
+            &unrestricted_policy(),
+            &shell,
+            None,
+            Some(cwd.path().to_string_lossy().as_ref()),
+            "[Console]::Out.WriteLine('shell 中文 🙂'); [Console]::Error.WriteLine('error 中文 🙂'); exit 19",
+            None,
+            10,
+            None,
+            None,
+        );
+        assert_eq!(
+            shell_result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(shell_result.result.exit_code, Some(19));
+        assert_eq!(
+            shell_result.result.stdout.as_deref(),
+            Some("shell 中文 🙂\n")
+        );
+        assert_eq!(
+            shell_result.result.stderr.as_deref(),
+            Some("error 中文 🙂\n")
+        );
+
+        let script_result = run_direct_script(
+            cwd.path(),
+            ShellScriptLanguage::Powershell,
+            "param([string]$Value)\n\
+             $out = [Text.Encoding]::UTF8.GetBytes('script ' + $Value + \"`n\")\n\
+             [Console]::OpenStandardOutput().Write($out, 0, $out.Length)\n\
+             $err = [Text.Encoding]::UTF8.GetBytes('script-error ' + $Value + \"`n\")\n\
+             [Console]::OpenStandardError().Write($err, 0, $err.Length)"
+                .to_string(),
+            vec!["中文 🙂".to_string()],
+            None,
+            10,
+            None,
+        );
+        assert_eq!(
+            script_result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(script_result.result.exit_code, Some(0));
+        assert_eq!(
+            script_result.result.stdout.as_deref(),
+            Some("script 中文 🙂\n")
+        );
+        assert_eq!(
+            script_result.result.stderr.as_deref(),
+            Some("script-error 中文 🙂\n")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn phase_f_windows_timeout_retains_unicode_and_runs_child_once() {
+        let cwd = tempfile::tempdir().unwrap();
+        let marker = cwd.path().join("execution-marker");
+        let result = run_direct_process(
+            cwd.path(),
+            &process_argv_helper(),
+            &[
+                "windows-mark-output-sleep".to_string(),
+                marker.to_string_lossy().into_owned(),
+                "10000".to_string(),
+            ],
+            None,
+            1,
+        );
+        assert_eq!(result.execution_state, ShellCommandExecutionState::TimedOut);
+        assert_eq!(result.result.exit_code, Some(-1));
+        assert!(result
+            .result
+            .stdout
+            .as_deref()
+            .unwrap_or_default()
+            .contains("partial 中文 🙂\n"));
+        assert!(result
+            .result
+            .stderr
+            .as_deref()
+            .unwrap_or_default()
+            .contains("partial 中文 🙂\n"));
+        assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
     }
 
     #[cfg(windows)]

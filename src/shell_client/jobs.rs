@@ -417,6 +417,24 @@ pub(super) fn append_log_limited(target: &mut ShellJobLogState, chunk: Option<St
         .saturating_add(retained_line_count(&target.tail));
 }
 
+fn has_leading_transport_truncation_marker(value: &str) -> bool {
+    if value.starts_with("[output truncated]\n") || value.starts_with("[...]\n") {
+        return true;
+    }
+
+    let Some(rest) = value.strip_prefix("[output truncated to last ") else {
+        return false;
+    };
+    let Some(newline) = rest.find('\n') else {
+        return false;
+    };
+    let marker_tail = &rest[..newline];
+    let Some(byte_count) = marker_tail.strip_suffix(" bytes]") else {
+        return false;
+    };
+    !byte_count.is_empty() && byte_count.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 pub(super) fn replace_log_limited(target: &mut ShellJobLogState, value: Option<String>) {
     let Some(value) = value else {
         return;
@@ -425,7 +443,34 @@ pub(super) fn replace_log_limited(target: &mut ShellJobLogState, value: Option<S
     target.tail = value;
     target.first_retained_line = 1;
     target.next_line = 1usize.saturating_add(retained_line_count(&target.tail));
-    target.truncated = target.tail.starts_with("[output truncated to last ");
+    target.truncated = has_leading_transport_truncation_marker(&target.tail);
+}
+
+#[cfg(test)]
+mod replace_log_limited_tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_all_supported_transport_truncation_markers() {
+        for marker in [
+            "[output truncated to last 12000 bytes]\n",
+            "[output truncated]\n",
+            "[...]\n",
+        ] {
+            let mut log = ShellJobLogState::default();
+            replace_log_limited(&mut log, Some(format!("{marker}retained\n")));
+            assert!(log.truncated, "marker {marker:?}");
+        }
+    }
+
+    #[test]
+    fn ordinary_or_middle_marker_text_is_not_truncated() {
+        for value in ["ordinary output\n", "ordinary\n[output truncated]\n"] {
+            let mut log = ShellJobLogState::default();
+            replace_log_limited(&mut log, Some(value.to_string()));
+            assert!(!log.truncated, "value {value:?}");
+        }
+    }
 }
 
 pub(super) fn replace_log_from_snapshot(

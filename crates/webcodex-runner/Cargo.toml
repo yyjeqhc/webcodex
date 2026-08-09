@@ -33,6 +33,11 @@ webpki-roots = "0.26"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Globalization",
+] }
+
 # Windows-native process liveness probe for MCP tests (OpenProcess +
 # GetExitCodeProcess), the same probe approach webcodex-process already uses.
 [target.'cfg(windows)'.dev-dependencies]

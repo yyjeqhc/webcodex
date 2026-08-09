@@ -4,6 +4,7 @@ use crate::validation_bridge::{
     sanitize_bridge_text, MAX_VALIDATION_STDERR_CAPTURE_BYTES, MAX_VALIDATION_STDERR_SUMMARY_CHARS,
     MAX_VALIDATION_STDOUT_BYTES,
 };
+use crate::webcodex_runner::output_text::{normalize_output_text, OutputTextSource};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -191,7 +192,15 @@ pub(crate) fn run_bounded(
     let (stderr_bytes, stderr_capped) = stderr_rx
         .recv_timeout(remaining)
         .unwrap_or((Vec::new(), false));
-    let stderr_text = String::from_utf8_lossy(&stderr_bytes);
+    // Validation stdout remains the exact bounded byte buffer consumed by
+    // structured diagnostic parsers. Only the human/model-facing stderr
+    // summary crosses the local process-text normalization boundary.
+    let stderr_text = normalize_output_text(
+        &stderr_bytes,
+        stderr_capped,
+        MAX_VALIDATION_STDERR_CAPTURE_BYTES,
+        OutputTextSource::LocalProcess,
+    );
 
     if timed_out {
         return CapturedProcess {

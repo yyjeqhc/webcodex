@@ -1435,6 +1435,30 @@ fn parse_search_line_records(stdout: &str) -> (Vec<SearchLineRecord>, bool) {
     (records, bytes_truncated)
 }
 
+fn strip_leading_transport_truncation_marker(stdout: &str) -> (&str, bool) {
+    for marker in ["[output truncated]\n", "[...]\n"] {
+        if let Some(rest) = stdout.strip_prefix(marker) {
+            return (rest, true);
+        }
+    }
+
+    let Some(rest) = stdout.strip_prefix("[output truncated to last ") else {
+        return (stdout, false);
+    };
+    let Some(newline) = rest.find('\n') else {
+        return (stdout, false);
+    };
+    let marker_tail = &rest[..newline];
+    let Some(byte_count) = marker_tail.strip_suffix(" bytes]") else {
+        return (stdout, false);
+    };
+    if byte_count.is_empty() || !byte_count.bytes().all(|byte| byte.is_ascii_digit()) {
+        return (stdout, false);
+    }
+
+    (&rest[newline + 1..], true)
+}
+
 fn search_matches_from_records(
     records: &[SearchLineRecord],
     options: &SearchOptions,
@@ -1492,9 +1516,6 @@ fn parse_file_paths(stdout: &str, limit: usize) -> (Vec<SearchFile>, bool, bool)
     let (lines, bytes_truncated) = split_complete_search_lines(stdout);
     let mut paths = Vec::<String>::new();
     for line in lines {
-        if line.starts_with("[output truncated to last ") {
-            continue;
-        }
         if serde_json::from_str::<Value>(line).is_ok() {
             continue;
         }
@@ -1555,12 +1576,8 @@ fn parse_file_counts(stdout: &str, limit: usize) -> (Vec<SearchFileCount>, u64, 
     )
 }
 
-fn search_stdout_was_transport_truncated(stdout: &str) -> bool {
-    stdout.starts_with("[output truncated to last ")
-}
-
 fn parse_search_result(stdout: &str, options: &SearchOptions, backend: String) -> SearchResult {
-    let transport_truncated = search_stdout_was_transport_truncated(stdout);
+    let (stdout, transport_truncated) = strip_leading_transport_truncation_marker(stdout);
     let (data, limit_truncated, bytes_truncated) = match options.result_mode {
         SearchResultMode::Matches => {
             let (records, bytes_truncated) = parse_search_line_records(stdout);
@@ -4752,6 +4769,14 @@ mod tests {
         assert_eq!(matches[0]["path"], "src/a.rs");
     }
 
+    fn transport_truncation_markers() -> [&'static str; 3] {
+        [
+            "[output truncated to last 12000 bytes]\n",
+            "[output truncated]\n",
+            "[...]\n",
+        ]
+    }
+
     #[test]
     fn search_transport_truncated_stdout_is_not_mistaken_for_complete() {
         // The Runner keeps a tail of oversized output prefixed with a marker;
@@ -4781,6 +4806,142 @@ mod tests {
         let matches = result.output["matches"].as_array().unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0]["path"], "src/z.rs");
+    }
+
+    #[test]
+    fn search_transport_marker_forms_preserve_complete_matches() {
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "needle".to_string(),
+            path: None,
+            limit: Some(10),
+            context_before: None,
+            context_after: None,
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: None,
+            timeout_secs: None,
+        })
+        .unwrap();
+
+        for marker in transport_truncation_markers() {
+            let stdout = format!("{marker}src/a.rs:1:needle one\nsrc/b.rs:2:needle two\n");
+            let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
+            assert!(result.success, "marker {marker:?}: {:?}", result.error);
+            assert_eq!(result.output["truncated"], true, "marker {marker:?}");
+            assert_eq!(
+                result.output["truncation_reason"], "transport",
+                "marker {marker:?}"
+            );
+            let paths = result.output["matches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["path"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(paths, ["src/a.rs", "src/b.rs"], "marker {marker:?}");
+        }
+    }
+
+    #[test]
+    fn search_transport_marker_forms_never_become_file_paths() {
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "needle".to_string(),
+            path: None,
+            limit: Some(10),
+            context_before: None,
+            context_after: None,
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: Some(SearchResultMode::FilesWithMatches),
+            timeout_secs: None,
+        })
+        .unwrap();
+
+        for marker in transport_truncation_markers() {
+            let stdout = format!("{marker}src/a.rs\nsrc/b.rs\n");
+            let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
+            assert!(result.success, "marker {marker:?}: {:?}", result.error);
+            assert_eq!(result.output["truncated"], true, "marker {marker:?}");
+            assert_eq!(
+                result.output["truncation_reason"], "transport",
+                "marker {marker:?}"
+            );
+            let paths = result.output["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["path"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(paths, ["src/a.rs", "src/b.rs"], "marker {marker:?}");
+            assert!(
+                !paths.contains(&"[output truncated]"),
+                "Phase F long marker must not become a fake path"
+            );
+        }
+    }
+
+    #[test]
+    fn search_transport_marker_forms_make_counts_incomplete() {
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "needle".to_string(),
+            path: None,
+            limit: Some(10),
+            context_before: None,
+            context_after: None,
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: Some(SearchResultMode::Count),
+            timeout_secs: None,
+        })
+        .unwrap();
+
+        for marker in transport_truncation_markers() {
+            let stdout = format!("{marker}src/a.rs:2\nsrc/b.rs:3\n");
+            let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
+            assert!(result.success, "marker {marker:?}: {:?}", result.error);
+            assert_eq!(result.output["truncated"], true, "marker {marker:?}");
+            assert_eq!(
+                result.output["truncation_reason"], "transport",
+                "marker {marker:?}"
+            );
+            assert_eq!(result.output["returned_file_count"], 2, "marker {marker:?}");
+            assert_eq!(
+                result.output["returned_match_count"], 5,
+                "marker {marker:?}"
+            );
+            assert_eq!(result.output["count_complete"], false, "marker {marker:?}");
+            assert_eq!(
+                result.output["total_matches"],
+                Value::Null,
+                "marker {marker:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn search_transport_marker_text_in_middle_is_not_transport_truncation() {
+        let options = SearchOptions::normalize(SearchRequest {
+            pattern: "needle".to_string(),
+            path: None,
+            limit: Some(10),
+            context_before: None,
+            context_after: None,
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: None,
+            timeout_secs: None,
+        })
+        .unwrap();
+        let stdout = concat!(
+            "src/a.rs:1:needle one\n",
+            "[output truncated]\n",
+            "src/b.rs:2:needle two\n",
+        );
+        let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["truncated"], false);
+        assert_eq!(result.output["truncation_reason"], Value::Null);
+        assert_eq!(result.output["matches"].as_array().unwrap().len(), 2);
     }
 
     #[test]

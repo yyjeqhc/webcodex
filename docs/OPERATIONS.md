@@ -331,6 +331,40 @@ from a Runner-wide limit would be false when another authorization group owns
 hidden Jobs. These summaries contain no Job output, command, argv, script,
 stdin, environment, token, or credential data.
 
+### Windows process output
+
+No operator encoding setting is required for model-facing local process
+output. The Windows Runner proactively configures PowerShell shell/profile
+processes for UTF-8. Captured local `run_shell`, direct `run_process`, and
+typed `run_script` stdout/stderr—and the same local output retained by
+Jobs—are then normalized to valid UTF-8 as a safety net.
+
+Valid UTF-8 is preserved, a leading UTF-8 BOM is removed, BOM-declared
+UTF-16LE/BE is supported, and other non-UTF-8 native bytes use the active
+Windows OEM code page through the native Win32 converter. CRLF is presented as
+LF; a bare CR remains a bare CR so progress-style output is not expanded into
+new lines. Both raw capture and the final transcoded UTF-8 tail remain bounded,
+and truncation never presents a partial UTF-8 scalar.
+
+Synchronous raw-tail capture validates UTF-8 across the complete child stream
+with bounded incremental state: a valid/invalid fact plus at most three
+pending bytes for an incomplete scalar. When front truncation cuts an
+otherwise valid UTF-8 stream, the retained raw tail advances to the next
+scalar boundary before whole-buffer decoding. A leading UTF-8 BOM is preserved
+as metadata and restored with the retained content similarly aligned. The
+truncation boundary therefore cannot by itself cause U+FFFD or select the
+Windows OEM fallback. Complete streams with no supported BOM that are
+genuinely non-UTF-8 retain their OEM classification even if the retained
+suffix happens to be valid UTF-8.
+
+This is presentation only: it does not change process launch, argv, timeout,
+stop, Job identity, retry, or lifecycle state. Typed PowerShell files still
+use a UTF-8 BOM rather than an inserted preamble, preserving leading
+`param(...)` blocks. SSH output is remote data and never receives the local
+Windows OEM fallback. Persistent-shell framing retains its existing
+UTF-8/lossy behavior; Phase F does not add terminal encoding negotiation or
+binary-output transport.
+
 ## Pairing flow
 
 Pairing creates a short-lived code on the server side that the client exchanges to enroll. This avoids copying long-lived credentials between machines.

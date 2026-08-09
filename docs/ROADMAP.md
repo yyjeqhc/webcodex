@@ -20,8 +20,8 @@ The execution cycle remains centered on **model execution friction**, not
 fleet-management breadth. See [MODEL_EXECUTION.md](MODEL_EXECUTION.md) for the
 design contract.
 
-1. Execution Phases A–E are complete: lifecycle truth, structured process and script payloads, same-execution Job handoff, bounded batch observation, non-pinning polling dispatch, and practical Job concurrency/observability are implemented.
-2. Phase F, Windows output normalization, is the next execution-core phase. Keep Job state OS-neutral and make shell/native stderr UTF-8-stable without changing execution identity or timeout semantics.
+1. Execution Phases A–F are code-complete: lifecycle truth, structured process and script payloads, same-execution Job handoff, bounded batch observation, non-pinning polling dispatch, practical Job concurrency/observability, and bounded Windows local process-output normalization are implemented.
+2. Final execution acceptance and stabilization is next. Exercise the complete A–F acceptance gates, close any remaining Windows-runtime evidence, and fix only demonstrated integration or reliability gaps without adding another feature phase.
 3. Preserve structured MCP results and allow an optional conversation-level Orchestrator without making UI or optional MCP 2026 extensions part of execution truth.
 
 ## Deferred until there is a current need

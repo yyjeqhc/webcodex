@@ -47,6 +47,7 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use std::net::SocketAddr;
 use webcodex_runner::contains_any;
+use webcodex_runner::output_text::{OutputTextDecoder, OutputTextSource};
 #[cfg(test)]
 use webcodex_runner::QuicClientConfig;
 #[cfg(test)]
@@ -1911,17 +1912,18 @@ fn spawn_reader<R: Read + Send + 'static>(
     mut reader: R,
     tx: mpsc::SyncSender<OutputChunk>,
     stdout: bool,
+    source: OutputTextSource,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         // A bounded channel plus fixed-size reads prevents a fast child (or
         // one enormous line) from retaining unbounded output in the runner
         // while a transport send is slow.
         let mut buf = [0_u8; 8 * 1024];
-        let mut utf8_pending = Vec::with_capacity(buf.len() + 3);
+        let mut decoder = OutputTextDecoder::new(source);
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
-                    let text = take_utf8_output(&mut utf8_pending, true);
+                    let text = decoder.push(&[], true);
                     if !text.is_empty() {
                         let _ = if stdout {
                             tx.send(OutputChunk::Stdout(text))
@@ -1932,8 +1934,7 @@ fn spawn_reader<R: Read + Send + 'static>(
                     break;
                 }
                 Ok(read) => {
-                    utf8_pending.extend_from_slice(&buf[..read]);
-                    let text = take_utf8_output(&mut utf8_pending, false);
+                    let text = decoder.push(&buf[..read], false);
                     if !text.is_empty() {
                         let _ = if stdout {
                             tx.send(OutputChunk::Stdout(text))
@@ -1943,7 +1944,7 @@ fn spawn_reader<R: Read + Send + 'static>(
                     }
                 }
                 Err(_) => {
-                    let text = take_utf8_output(&mut utf8_pending, true);
+                    let text = decoder.push(&[], true);
                     if !text.is_empty() {
                         let _ = if stdout {
                             tx.send(OutputChunk::Stdout(text))
@@ -1956,43 +1957,6 @@ fn spawn_reader<R: Read + Send + 'static>(
             }
         }
     })
-}
-
-/// Drain every complete UTF-8 sequence from `pending`, retaining only a
-/// trailing incomplete scalar between reads. Truly invalid bytes keep the
-/// runner's historical lossy-decoding behavior, but a valid scalar split at
-/// the fixed read boundary is never replaced or cut.
-fn take_utf8_output(pending: &mut Vec<u8>, end_of_stream: bool) -> String {
-    let mut output = String::new();
-    loop {
-        match std::str::from_utf8(pending) {
-            Ok(text) => {
-                output.push_str(text);
-                pending.clear();
-                break;
-            }
-            Err(error) => {
-                let valid_up_to = error.valid_up_to();
-                if valid_up_to > 0 {
-                    let valid = std::str::from_utf8(&pending[..valid_up_to])
-                        .expect("valid_up_to always identifies valid UTF-8");
-                    output.push_str(valid);
-                    pending.drain(..valid_up_to);
-                }
-                if let Some(error_len) = error.error_len() {
-                    pending.drain(..error_len);
-                    output.push('\u{fffd}');
-                    continue;
-                }
-                if end_of_stream {
-                    output.push_str(&String::from_utf8_lossy(pending));
-                    pending.clear();
-                }
-                break;
-            }
-        }
-    }
-    output
 }
 
 /// Join the output reader threads until `deadline`. Returns the number of
@@ -3627,10 +3591,20 @@ impl JobManager {
                 let (tx, rx) = mpsc::sync_channel::<OutputChunk>(OUTPUT_CHANNEL_CAPACITY);
                 let mut readers = Vec::new();
                 if let Some(stdout) = stdout {
-                    readers.push(spawn_reader(stdout, tx.clone(), true));
+                    readers.push(spawn_reader(
+                        stdout,
+                        tx.clone(),
+                        true,
+                        OutputTextSource::LocalProcess,
+                    ));
                 }
                 if let Some(stderr) = stderr {
-                    readers.push(spawn_reader(stderr, tx.clone(), false));
+                    readers.push(spawn_reader(
+                        stderr,
+                        tx.clone(),
+                        false,
+                        OutputTextSource::LocalProcess,
+                    ));
                 }
                 drop(tx);
                 let step_status = loop {
@@ -4021,10 +3995,20 @@ impl JobManager {
             let (tx, rx) = mpsc::sync_channel::<OutputChunk>(OUTPUT_CHANNEL_CAPACITY);
             let mut readers = Vec::new();
             if let Some(stdout) = stdout.take() {
-                readers.push(spawn_reader(stdout, tx.clone(), true));
+                readers.push(spawn_reader(
+                    stdout,
+                    tx.clone(),
+                    true,
+                    OutputTextSource::RemoteSsh,
+                ));
             }
             if let Some(stderr) = stderr.take() {
-                readers.push(spawn_reader(stderr, tx.clone(), false));
+                readers.push(spawn_reader(
+                    stderr,
+                    tx.clone(),
+                    false,
+                    OutputTextSource::RemoteSsh,
+                ));
             }
             drop(tx);
             let timeout_secs = request.timeout_secs.min(policy.max_timeout_secs).max(1);

@@ -425,9 +425,66 @@ stdout, stderr, token, or credential content enters these fields.
 
 ### Phase F — Windows output normalization
 
-Make shell/native stderr model-readable and UTF-8-stable. Do not make this a reason to delay structured exec.
+Phase F is implemented for the local Runner process-output surfaces consumed by
+models: synchronous `run_shell`, `run_process`, and `run_script`; local shell,
+validation, process, and script Job logs/snapshots; Runner-generated
+shell-profile errors that include child stderr; and structured validation's
+human-facing stderr summary. Structured validation stdout remains raw bounded
+bytes until its diagnostic parser has consumed it.
 
-MCP App UI work may proceed after the core Job/observation contracts are usable, but UI polish is not a prerequisite for Phases A-E.
+Windows local process text follows one deterministic presentation pipeline:
+
+1. strip a leading UTF-8 BOM and decode the remainder as UTF-8;
+2. otherwise preserve a wholly valid UTF-8 buffer exactly;
+3. otherwise decode BOM-declared UTF-16LE or UTF-16BE, including surrogate
+   pairs, with replacement for malformed or truncated units;
+4. otherwise use the active Windows OEM code page captured once for the stream
+   and convert with `MultiByteToWideChar`;
+5. use bounded U+FFFD replacement when selected decoding cannot represent
+   malformed bytes.
+
+The streaming form detects BOMs across reads, preserves incomplete UTF-8
+scalars, UTF-16 units/surrogates, and OEM DBCS characters across read
+boundaries, chooses UTF-8 or the OEM fallback once the first non-ASCII
+encoding evidence arrives, and never switches repeatedly within a stream.
+ASCII is emitted immediately. Decoder state retains at most four bytes'
+equivalent of BOM/character/line-ending state, never the whole Job stream.
+
+Synchronous pipe capture separately preserves complete-stream UTF-8 validity
+while reading the full raw stream. Its incremental validator retains only a
+valid/invalid fact and an incomplete UTF-8 suffix of at most three bytes. If
+front truncation cuts a stream that was valid UTF-8, capture advances the raw
+tail by up to three bytes to the next scalar boundary before whole-buffer
+decoding. A leading UTF-8 BOM is restored as encoding metadata after the
+original front is discarded, and its retained content is aligned the same
+way. Thus a raw retention boundary alone cannot trigger Windows OEM fallback
+or create U+FFFD. A complete stream with no supported BOM that is genuinely
+non-UTF-8 remains classified for the deterministic OEM fallback even when its
+retained suffix is valid UTF-8.
+
+For these Windows local surfaces, CRLF is presented as LF while a lone CR is
+preserved. Raw capture remains bounded, and the decoded UTF-8 tail is bounded
+again after transcoding with a scalar-safe truncation marker, so UTF-16 or OEM
+expansion cannot bypass the model-facing byte limit. Unix local output retains
+the existing UTF-8/lossy and line-ending behavior.
+
+PowerShell shell/profile execution continues to set process-local UTF-8 output
+proactively. Typed PowerShell `run_script` continues to put only a UTF-8 BOM
+before the user body so a leading `param(...)` remains the first script
+construct. Phase F does not wrap direct native argv execution in a shell,
+restart or replay a child, reset a timeout, or change request/Job identity,
+promotion, stop, observation-token, exit-code, or
+`ShellCommandExecutionState` truth.
+
+Remote SSH streams keep their existing remote UTF-8/lossy contract and never
+use the local Windows OEM page. Persistent-shell framing/control parsing is
+also unchanged; adding encoding negotiation or redesigning that protocol is
+outside Phase F.
+
+Execution Phases A–F are now code-complete. The next execution work is final
+acceptance and stabilization across the complete gates above, including
+remaining Windows-runtime evidence where a Windows checkout is available.
+MCP App UI work may proceed independently; it is not execution truth.
 
 ## 8. Acceptance gates for execution changes
 

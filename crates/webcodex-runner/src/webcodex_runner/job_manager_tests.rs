@@ -286,12 +286,10 @@ fn job_reconciliation_local_snapshot_advances_before_best_effort_send() {
 #[test]
 fn job_reconciliation_utf8_log_tail_is_bounded_with_absolute_cursor() {
     let emoji = "🙂".as_bytes();
-    let mut split_scalar = emoji[..2].to_vec();
-    assert!(take_utf8_output(&mut split_scalar, false).is_empty());
-    assert_eq!(split_scalar, emoji[..2]);
-    split_scalar.extend_from_slice(&emoji[2..]);
-    assert_eq!(take_utf8_output(&mut split_scalar, false), "🙂");
-    assert!(split_scalar.is_empty());
+    let mut decoder = OutputTextDecoder::new(OutputTextSource::LocalProcess);
+    assert!(decoder.push(&emoji[..2], false).is_empty());
+    assert_eq!(decoder.push(&emoji[2..], false), "🙂");
+    assert!(decoder.push(&[], true).is_empty());
 
     let mut stream = ShellJobStreamSnapshot::default();
     let chunk = "🙂\n".repeat(JOB_SNAPSHOT_STREAM_MAX_BYTES / 2);
@@ -1436,6 +1434,166 @@ fn stop_terminates_a_structured_process_job_without_replacement() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn phase_f_windows_structured_job_normalizes_oem_stdout_and_stderr() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let expected_path = temp.path().join("expected-oem.txt");
+    let (sink, mut rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    enqueue_structured_process_job(
+        &manager,
+        sink,
+        temp.path(),
+        "phase-f-oem-job",
+        &helper.path,
+        vec![
+            "windows-oem-output".to_string(),
+            expected_path.to_string_lossy().into_owned(),
+        ],
+        None,
+        10,
+        None,
+    );
+    let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
+    let final_update = updates.last().expect("OEM Job terminal update");
+    let expected = std::fs::read_to_string(expected_path).unwrap();
+    let logs = final_update.log_snapshot.as_ref().unwrap();
+    assert_eq!(final_update.status, "failed");
+    assert_eq!(final_update.exit_code, Some(23));
+    assert_eq!(
+        final_update.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(logs.stdout.tail, expected);
+    assert_eq!(logs.stderr.tail, expected);
+}
+
+#[cfg(windows)]
+#[test]
+fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let marker = temp.path().join("split-started");
+    let (sink, mut rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let helper = helper.path.to_string_lossy().replace('\'', "''");
+    let marker_arg = marker.to_string_lossy().replace('\'', "''");
+    manager.enqueue(
+        sink,
+        1,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            ..AgentPolicy::default()
+        },
+        ShellConfig::default(),
+        SshConfig::default(),
+        temp.path().join("projects.d"),
+        serde_json::from_value(json!({
+            "request_id": "request-phase-f-stream",
+            "client_id": "structured-agent",
+            "kind": "start_job",
+            "job_id": "phase-f-stream",
+            "cwd": temp.path(),
+            "command": format!("& '{helper}' windows-utf8-split-output '{marker_arg}'"),
+            "timeout_secs": 10,
+            "requested_by": "test",
+            "created_at": chrono::Utc::now().timestamp(),
+            "job_context": test_job_context(temp.path(), Vec::new()),
+        }))
+        .unwrap(),
+    );
+    let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
+    let final_update = updates.last().expect("stream Job terminal update");
+    assert_eq!(final_update.status, "completed", "{final_update:?}");
+    assert_eq!(
+        final_update.log_snapshot.as_ref().unwrap().stdout.tail,
+        "split 中 🙂\n"
+    );
+    assert!(marker.exists());
+
+    let expected_path = temp.path().join("split-oem-expected");
+    let oem_marker = temp.path().join("split-oem-started");
+    let (sink, mut rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let expected_arg = expected_path.to_string_lossy().replace('\'', "''");
+    let marker_arg = oem_marker.to_string_lossy().replace('\'', "''");
+    manager.enqueue(
+        sink,
+        1,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            ..AgentPolicy::default()
+        },
+        ShellConfig::default(),
+        SshConfig::default(),
+        temp.path().join("projects.d"),
+        serde_json::from_value(json!({
+            "request_id": "request-phase-f-oem-stream",
+            "client_id": "structured-agent",
+            "kind": "start_job",
+            "job_id": "phase-f-oem-stream",
+            "cwd": temp.path(),
+            "command": format!(
+                "& '{helper}' windows-oem-split-output '{expected_arg}' '{marker_arg}'"
+            ),
+            "timeout_secs": 10,
+            "requested_by": "test",
+            "created_at": chrono::Utc::now().timestamp(),
+            "job_context": test_job_context(temp.path(), Vec::new()),
+        }))
+        .unwrap(),
+    );
+    let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
+    let final_update = updates.last().expect("OEM stream Job terminal update");
+    let logs = final_update.log_snapshot.as_ref().unwrap();
+    let expected = std::fs::read_to_string(expected_path).unwrap();
+    assert_eq!(final_update.status, "completed", "{final_update:?}");
+    assert_eq!(logs.stdout.tail, expected);
+    assert_eq!(logs.stderr.tail, expected);
+    assert!(oem_marker.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn phase_f_windows_structured_job_stop_retains_unicode_and_runs_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let marker = temp.path().join("stop-output-started.log");
+    let (sink, mut rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    enqueue_structured_process_job(
+        &manager,
+        sink,
+        temp.path(),
+        "phase-f-stop",
+        &helper.path,
+        vec![
+            "windows-mark-output-sleep".to_string(),
+            marker.to_string_lossy().into_owned(),
+            "10000".to_string(),
+        ],
+        None,
+        30,
+        None,
+    );
+    assert!(wait_until(Duration::from_secs(5), || marker.exists()));
+    manager.stop("phase-f-stop").unwrap();
+    let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
+    let final_update = updates.last().expect("stop terminal update");
+    let logs = final_update.log_snapshot.as_ref().unwrap();
+    assert_eq!(final_update.status, "stopped", "{final_update:?}");
+    assert_eq!(
+        final_update.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert!(logs.stdout.tail.contains("partial 中文 🙂\n"));
+    assert!(logs.stderr.tail.contains("partial 中文 🙂\n"));
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    assert_eq!(updates.iter().filter(|update| update.finished).count(), 1);
+}
+
 #[cfg(unix)]
 #[test]
 fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it() {
@@ -2350,7 +2508,12 @@ fn job_cleanup_after_parent_exit_terminates_descendant_and_reaches_eof() {
     let mut managed = ManagedChild::spawn(&mut cmd).expect("spawn job tree helper");
     let (tx, rx) = mpsc::sync_channel::<OutputChunk>(64);
     let stdout = managed.child_mut().stdout.take().expect("piped stdout");
-    let readers = vec![spawn_reader(stdout, tx.clone(), true)];
+    let readers = vec![spawn_reader(
+        stdout,
+        tx.clone(),
+        true,
+        OutputTextSource::LocalProcess,
+    )];
     drop(tx);
     let child = Arc::new(Mutex::new(managed));
 

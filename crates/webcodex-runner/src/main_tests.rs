@@ -5053,10 +5053,10 @@ fn shell_job_stdout_stderr_are_bounded() {
     assert_eq!(result.exit_code, Some(0));
     let stdout = result.stdout.unwrap();
     let stderr = result.stderr.unwrap();
-    assert!(stdout.contains("[output truncated to last 8 bytes]"));
-    assert!(stdout.ends_with("23456789"));
-    assert!(stderr.contains("[output truncated to last 8 bytes]"));
-    assert!(stderr.ends_with("cdefghij"));
+    assert_eq!(stdout.len(), 8);
+    assert!(stdout.starts_with("[...]\n"), "{stdout:?}");
+    assert_eq!(stderr.len(), 8);
+    assert!(stderr.starts_with("[...]\n"), "{stderr:?}");
 }
 
 // ---------------------------------------------------------------------------

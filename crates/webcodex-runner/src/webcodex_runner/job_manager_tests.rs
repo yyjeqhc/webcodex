@@ -530,7 +530,6 @@ struct FailFastAttempt {
 /// The deadline is wall-clock rather than a sleep count: under a loaded machine
 /// a 10ms sleep is not 10ms, so a counting loop silently shortens its own
 /// patience exactly when the job needs more of it.
-#[cfg(unix)]
 fn collect_job_updates(
     rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
     deadline: Duration,

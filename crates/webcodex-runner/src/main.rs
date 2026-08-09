@@ -27,21 +27,20 @@ use shell_protocol::{
     validation_infrastructure_failure_code, AgentPolicySummary, ShellAgentJobUpdateRequest,
     ShellAgentPollPayload, ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentProjectSummary,
     ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellClientRegisterResponse, ShellJobContext, ShellJobInventory, ShellJobLogSnapshot,
-    ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress, ShellJobValidationStep,
-    ShellProfileSummaryEntry, ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1,
-    JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
-    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
-    VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_STEP_WAIT_FAILED_CODE,
-    VALIDATION_TOOL_UNAVAILABLE_CODE,
+    ShellClientRegisterResponse, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
+    ShellJobLogSnapshot, ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress,
+    ShellJobValidationStep, ShellProfileSummaryEntry, ShellProfilesSummary,
+    AGENT_PROTOCOL_VERSION_POLLING_V1, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
+    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS, VALIDATION_STEP_SPAWN_FAILED_CODE,
+    VALIDATION_STEP_WAIT_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
 
 #[cfg(test)]
 use agent_init::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 #[cfg(test)]
 use shell_protocol::{
-    AgentEnvelope, ShellCommandExecutionState, AGENT_PROTOCOL_VERSION_QUIC_V1,
-    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+    AgentEnvelope, AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 #[cfg(test)]
 use std::collections::BTreeMap;
@@ -76,6 +75,10 @@ use webcodex_runner::{
     ReloadableAgentConfig, ShellConfig, SubmitResultError,
 };
 use webcodex_runner::{is_transport_failure, SshConfig, SshConnectionPool};
+use webcodex_runner::{
+    run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook,
+    run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook,
+};
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 const AGENT_REGISTER_PATH: &str = "/api/shell/agent/register";
@@ -202,6 +205,7 @@ fn test_job_snapshot(job_id: &str) -> ShellJobSnapshot {
         exit_code: None,
         duration_ms: None,
         error: None,
+        command_execution_state: None,
         context: shell_protocol::ShellJobContext {
             runtime_project_id: None,
             workflow_session_id: None,
@@ -213,6 +217,7 @@ fn test_job_snapshot(job_id: &str) -> ShellJobSnapshot {
             command_preview: "test job".to_string(),
             validation_steps: Vec::new(),
             validation: None,
+            structured_execution: None,
         },
         stdout: ShellJobStreamSnapshot::default(),
         stderr: ShellJobStreamSnapshot::default(),
@@ -233,6 +238,7 @@ fn test_job_context(cwd: &Path, validation_steps: Vec<String>) -> shell_protocol
         command_preview: "test command".to_string(),
         validation_steps,
         validation: None,
+        structured_execution: None,
     }
 }
 
@@ -1266,6 +1272,7 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.structured_validation_argv = true;
     capabilities.structured_process_argv = true;
     capabilities.structured_script_payload = true;
+    capabilities.structured_execution_jobs = true;
     capabilities.project_lifecycle = true;
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.
@@ -1965,6 +1972,7 @@ struct RunnerJobDelta {
     exit_code: Option<i32>,
     duration_ms: Option<u64>,
     error: Option<String>,
+    command_execution_state: Option<ShellCommandExecutionState>,
     validation_progress: Option<ShellJobValidationProgress>,
     finished: bool,
 }
@@ -1978,6 +1986,16 @@ fn runner_job_is_terminal(status: &str) -> bool {
 
 fn runner_job_is_active(status: &str) -> bool {
     matches!(status, "agent_queued" | "running" | "stop_requested")
+}
+
+fn structured_prestart_lifecycle(
+    request: &ShellAgentShellRequest,
+) -> Option<ShellCommandExecutionState> {
+    matches!(
+        request.kind.as_str(),
+        "start_process_job" | "start_script_job"
+    )
+    .then_some(ShellCommandExecutionState::NotStarted)
 }
 
 fn job_update_from_snapshot(
@@ -2003,6 +2021,7 @@ fn job_update_from_snapshot(
         exit_code: snapshot.exit_code,
         duration_ms: snapshot.duration_ms,
         error: snapshot.error.clone(),
+        command_execution_state: snapshot.command_execution_state,
         validation_progress: snapshot.validation_progress.clone(),
         finished: runner_job_is_terminal(&snapshot.status),
     }
@@ -2158,11 +2177,12 @@ fn validate_runner_job_context(
     }) {
         return Err("job recovery context purpose is invalid".to_string());
     }
-    if context
-        .shell
-        .as_deref()
-        .is_some_and(|shell| !matches!(shell, "sh" | "bash" | "configured" | "custom" | "remote"))
-    {
+    if context.shell.as_deref().is_some_and(|shell| {
+        !matches!(
+            shell,
+            "sh" | "bash" | "powershell" | "configured" | "custom" | "remote" | "direct_argv"
+        )
+    }) {
         return Err("job recovery context shell is invalid".to_string());
     }
     let validation_context = request.kind == "start_validation_job";
@@ -2193,6 +2213,56 @@ fn validate_runner_job_context(
     }) {
         return Err("job recovery context validation metadata is invalid".to_string());
     }
+    let expected_structured = match request.kind.as_str() {
+        "start_process_job" => {
+            if !request.command.is_empty()
+                || request.script.is_some()
+                || request.process.is_none()
+                || context.ssh_resource.is_some()
+            {
+                return Err("typed process Job request shape is invalid".to_string());
+            }
+            let process = request.process.as_ref().expect("checked process payload");
+            shell_protocol::validate_process_argv(process)?;
+            validate_runner_structured_common(request)?;
+            Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+                execution_source: "run_process".to_string(),
+                language: None,
+                script_bytes: None,
+                arg_count: process.args.len(),
+                stdin_present: request.stdin.is_some(),
+            })
+        }
+        "start_script_job" => {
+            if !request.command.is_empty()
+                || request.process.is_some()
+                || request.script.is_none()
+                || context.ssh_resource.is_some()
+            {
+                return Err("typed script Job request shape is invalid".to_string());
+            }
+            let script = request.script.as_ref().expect("checked script payload");
+            shell_protocol::validate_script_request(
+                script,
+                request.stdin.as_deref(),
+                request.cwd.as_deref(),
+                request.timeout_secs,
+            )?;
+            Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+                execution_source: "run_script".to_string(),
+                language: Some(script.language),
+                script_bytes: Some(script.script.len()),
+                arg_count: script.args.len(),
+                stdin_present: request.stdin.is_some(),
+            })
+        }
+        _ => None,
+    };
+    if context.structured_execution != expected_structured {
+        return Err(
+            "job recovery context structured execution metadata does not match request".to_string(),
+        );
+    }
     if let Some(project_id) = context.runtime_project_id.as_deref() {
         let prefix = format!("agent:{client_id}:");
         if !bounded(project_id, MAX_CONTEXT_FIELD_CHARS)
@@ -2215,6 +2285,42 @@ fn validate_runner_job_context(
         {
             return Err("job recovery context workflow_session_id is invalid".to_string());
         }
+    }
+    Ok(())
+}
+
+fn validate_runner_structured_common(request: &ShellAgentShellRequest) -> Result<(), String> {
+    if let Some(stdin) = request.stdin.as_deref() {
+        if stdin.len() > shell_protocol::PROCESS_STDIN_MAX_BYTES {
+            return Err(format!(
+                "stdin is too large; maximum is {} bytes",
+                shell_protocol::PROCESS_STDIN_MAX_BYTES
+            ));
+        }
+        if stdin.contains('\0') {
+            return Err("stdin cannot contain NUL bytes".to_string());
+        }
+    }
+    if let Some(cwd) = request.cwd.as_deref() {
+        if cwd.len() > shell_protocol::PROCESS_CWD_MAX_BYTES {
+            return Err(format!(
+                "cwd is too long; maximum is {} bytes",
+                shell_protocol::PROCESS_CWD_MAX_BYTES
+            ));
+        }
+        if cwd.contains('\0') {
+            return Err("cwd cannot contain NUL bytes".to_string());
+        }
+    }
+    if !(shell_protocol::STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS
+        ..=shell_protocol::STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS)
+        .contains(&request.timeout_secs)
+    {
+        return Err(format!(
+            "timeout_secs must be between {} and {}",
+            shell_protocol::STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
+            shell_protocol::STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS
+        ));
     }
     Ok(())
 }
@@ -2263,7 +2369,12 @@ impl JobManager {
                     job.snapshot.status = incoming_status.to_string();
                 }
             }
+            if delta.command_execution_state.is_some() {
+                job.snapshot.command_execution_state = delta.command_execution_state;
+            }
             if job.snapshot.started_at.is_none()
+                && job.snapshot.command_execution_state
+                    != Some(ShellCommandExecutionState::NotStarted)
                 && matches!(
                     job.snapshot.status.as_str(),
                     "running"
@@ -2351,6 +2462,7 @@ impl JobManager {
                 status: "failed".to_string(),
                 duration_ms: Some(0),
                 error: Some(error),
+                command_execution_state: structured_prestart_lifecycle(request),
                 validation_progress,
                 finished: true,
                 ..Default::default()
@@ -2597,6 +2709,7 @@ impl JobManager {
             return;
         };
         let Some(context) = request.job_context.clone() else {
+            let command_execution_state = structured_prestart_lifecycle(&request);
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
                 agent_instance_id: sink.agent_instance_id().to_string(),
@@ -2612,12 +2725,14 @@ impl JobManager {
                 exit_code: None,
                 duration_ms: Some(0),
                 error: Some("job start request is missing recovery context".to_string()),
+                command_execution_state,
                 validation_progress: None,
                 finished: true,
             });
             return;
         };
         if let Err(error) = validate_runner_job_context(&context, &request, sink.client_id()) {
+            let command_execution_state = structured_prestart_lifecycle(&request);
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
                 agent_instance_id: sink.agent_instance_id().to_string(),
@@ -2633,6 +2748,7 @@ impl JobManager {
                 exit_code: None,
                 duration_ms: Some(0),
                 error: Some(error),
+                command_execution_state,
                 validation_progress: None,
                 finished: true,
             });
@@ -2695,6 +2811,9 @@ impl JobManager {
                         exit_code: None,
                         duration_ms: terminal.then_some(0),
                         error: immediate_failure.clone(),
+                        command_execution_state: terminal
+                            .then(|| structured_prestart_lifecycle(&request))
+                            .flatten(),
                         context,
                         stdout: ShellJobStreamSnapshot::default(),
                         stderr: ShellJobStreamSnapshot::default(),
@@ -2752,7 +2871,14 @@ impl JobManager {
             self.shutdown_rejection(&request);
             return;
         }
-        self.start_shell_job(sink, generation, policy, shell, ssh, projects_dir, request);
+        if matches!(
+            request.kind.as_str(),
+            "start_process_job" | "start_script_job"
+        ) {
+            self.start_structured_job(generation, policy, shell, projects_dir, request);
+        } else {
+            self.start_shell_job(sink, generation, policy, shell, ssh, projects_dir, request);
+        }
     }
 
     fn start_available_queued(&self) {
@@ -2802,6 +2928,130 @@ impl JobManager {
             };
             self.start_now(sink, generation, policy, shell, ssh, projects_dir, request);
         }
+    }
+
+    fn start_structured_job(
+        &self,
+        generation: u64,
+        policy: AgentPolicy,
+        shell: ShellConfig,
+        projects_dir: PathBuf,
+        request: ShellAgentShellRequest,
+    ) {
+        let Some(job_id) = request.job_id.clone() else {
+            return;
+        };
+        let stop_requested = {
+            let _lifecycle = lock_unpoison(&self.lifecycle);
+            if self.shutting_down.load(Ordering::SeqCst) {
+                None
+            } else {
+                let mut jobs = lock_unpoison(&self.jobs);
+                let Some(job) = jobs.get_mut(&job_id) else {
+                    return;
+                };
+                job.slot_reserved = true;
+                Some(Arc::clone(&job.stop_requested))
+            }
+        };
+        let Some(stop_requested) = stop_requested else {
+            self.shutdown_rejection(&request);
+            return;
+        };
+        if (request.kind == "start_process_job" && request.process.is_none())
+            || (request.kind == "start_script_job" && request.script.is_none())
+        {
+            self.fail_job(
+                &request,
+                "typed structured Job request is missing its payload".to_string(),
+                None,
+            );
+            return;
+        }
+        let manager = self.clone_for_worker();
+        let worker_guard = self.workers.enter();
+        std::thread::spawn(move || {
+            let _worker_guard = worker_guard;
+            let started_manager = manager.clone_for_worker();
+            let started_job_id = job_id.clone();
+            let on_started = || {
+                started_manager.update_and_send(
+                    &started_job_id,
+                    RunnerJobDelta {
+                        status: "running".to_string(),
+                        ..Default::default()
+                    },
+                );
+            };
+            let result = match request.kind.as_str() {
+                "start_process_job" => {
+                    let process = request.process.as_ref().expect("validated process payload");
+                    run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+                        generation,
+                        &policy,
+                        &shell,
+                        &projects_dir,
+                        &manager.prepared_profiles,
+                        request.cwd.as_deref(),
+                        &process.executable,
+                        &process.args,
+                        request.stdin.as_deref(),
+                        request.timeout_secs,
+                        Some(stop_requested.as_ref()),
+                        request.sandbox.as_deref(),
+                        Some(&on_started),
+                    )
+                }
+                "start_script_job" => {
+                    let script = request.script.as_ref().expect("validated script payload");
+                    run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+                        generation,
+                        &policy,
+                        &shell,
+                        &projects_dir,
+                        &manager.prepared_profiles,
+                        request.cwd.as_deref(),
+                        script,
+                        request.stdin.as_deref(),
+                        request.timeout_secs,
+                        Some(stop_requested.as_ref()),
+                        request.sandbox.as_deref(),
+                        Some(&on_started),
+                    )
+                }
+                _ => unreachable!("structured Job dispatcher received legacy request"),
+            };
+            let execution_state = result.execution_state;
+            let stopped = stop_requested.load(Ordering::SeqCst)
+                && execution_state == ShellCommandExecutionState::Completed;
+            let status = match execution_state {
+                ShellCommandExecutionState::NotStarted => "failed",
+                ShellCommandExecutionState::OutcomeUnknown => "lost",
+                ShellCommandExecutionState::TimedOut => "timeout",
+                ShellCommandExecutionState::Completed if stopped => "stopped",
+                ShellCommandExecutionState::Completed
+                    if result.result.exit_code == Some(0) && result.result.error.is_none() =>
+                {
+                    "completed"
+                }
+                ShellCommandExecutionState::Completed => "failed",
+            };
+            manager.update_and_send(
+                &job_id,
+                RunnerJobDelta {
+                    status: status.to_string(),
+                    stdout_chunk: result.result.stdout,
+                    stderr_chunk: result.result.stderr,
+                    exit_code: result.result.exit_code,
+                    duration_ms: result.result.duration_ms,
+                    error: result.result.error,
+                    command_execution_state: Some(execution_state),
+                    finished: true,
+                    ..Default::default()
+                },
+            );
+            manager.start_available_queued();
+        });
     }
 
     fn start_shell_job(
@@ -3635,7 +3885,7 @@ impl JobManager {
                 None
             }
         };
-        if let Some((_sink, _generation, _policy, _shell, _ssh, _projects_dir, _request)) =
+        if let Some((_sink, _generation, _policy, _shell, _ssh, _projects_dir, request)) =
             queued_job
         {
             self.update_and_send(
@@ -3646,6 +3896,7 @@ impl JobManager {
                     exit_code: Some(-1),
                     duration_ms: Some(0),
                     error: Some("job stopped before start".to_string()),
+                    command_execution_state: structured_prestart_lifecycle(&request),
                     finished: true,
                     ..Default::default()
                 },

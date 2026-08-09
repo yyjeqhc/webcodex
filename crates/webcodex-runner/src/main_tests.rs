@@ -6006,6 +6006,7 @@ fn register_request_announces_correct_protocol_version() {
     assert!(caps.structured_validation_argv);
     assert!(caps.structured_process_argv);
     assert!(caps.structured_script_payload);
+    assert!(caps.structured_execution_jobs);
     assert!(caps.lsp_read_only_navigation);
     assert!(caps.project_lifecycle);
     assert!(caps.project_path_registration);
@@ -6191,6 +6192,7 @@ fn sink_send_job_update_sends_job_update_envelope() {
             exit_code: None,
             duration_ms: None,
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: false,
         };

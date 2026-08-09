@@ -811,6 +811,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
             exit_code: None,
             duration_ms: None,
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: false,
         })
@@ -953,6 +954,7 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
             exit_code: None,
             duration_ms: Some(1),
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: true,
         })

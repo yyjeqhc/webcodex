@@ -101,6 +101,7 @@ fn cargo_test_update(
         exit_code,
         duration_ms: Some(25),
         error: None,
+        command_execution_state: None,
         validation_progress: Some(progress),
         finished,
     }

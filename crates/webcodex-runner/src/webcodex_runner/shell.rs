@@ -1381,6 +1381,39 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
     stop_requested: Option<&AtomicBool>,
     sandbox: Option<&str>,
 ) -> ShellCommandResult {
+    run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+        generation,
+        policy,
+        shell,
+        projects_dir,
+        cache,
+        cwd,
+        executable,
+        args,
+        stdin,
+        timeout_secs,
+        stop_requested,
+        sandbox,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+    generation: u64,
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    executable: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    sandbox: Option<&str>,
+    on_started: Option<&dyn Fn()>,
+) -> ShellCommandResult {
     // Structured execution intentionally receives the same policy treatment
     // as run_shell. Absence of shell syntax is not a permission bypass.
     if !policy.allow_raw_shell {
@@ -1489,6 +1522,7 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
         inspect_scratch.as_ref(),
         start,
         "failed to spawn structured process",
+        on_started,
     )
 }
 
@@ -1505,6 +1539,37 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
     sandbox: Option<&str>,
+) -> ShellCommandResult {
+    run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+        generation,
+        policy,
+        shell,
+        projects_dir,
+        cache,
+        cwd,
+        payload,
+        stdin,
+        timeout_secs,
+        stop_requested,
+        sandbox,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state_with_start_hook(
+    generation: u64,
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    payload: &ShellScriptPayload,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    sandbox: Option<&str>,
+    on_started: Option<&dyn Fn()>,
 ) -> ShellCommandResult {
     // Typed script execution is consequential and receives the same Runner
     // policy treatment as raw shell and structured native processes.
@@ -1640,6 +1705,7 @@ pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
         inspect_scratch.as_ref(),
         start,
         "failed to spawn script interpreter",
+        on_started,
     );
     redact_temporary_script_path(&mut result, &[original_path.as_path(), &absolute_path]);
     if let Err(error) = temporary_path.close() {
@@ -1908,6 +1974,7 @@ fn run_shell_impl(
         inspect_scratch.as_ref(),
         start,
         &spawn_error_prefix,
+        None,
     )
 }
 
@@ -1922,6 +1989,7 @@ fn execute_configured_command(
     inspect_scratch: Option<&crate::command_sandbox::InspectScratch>,
     start: Instant,
     spawn_error_prefix: &str,
+    on_started: Option<&dyn Fn()>,
 ) -> ShellCommandResult {
     cmd.current_dir(cwd_path)
         .stdout(Stdio::piped())
@@ -1956,6 +2024,9 @@ fn execute_configured_command(
             });
         }
     };
+    if let Some(on_started) = on_started {
+        on_started();
+    }
     let mut stdin_writer = match stdin {
         Some(input) => match child.child_mut().stdin.take() {
             Some(mut child_stdin) => {

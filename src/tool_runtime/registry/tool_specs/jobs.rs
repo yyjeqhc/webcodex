@@ -11,12 +11,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "run_process",
-            "Execute one bounded native process from a typed executable and argv, without shell parsing. Windows .cmd/.bat files are rejected; use run_shell for batch files or syntax such as pipelines, redirection, builtins, and shell functions.",
+            "Execute one bounded native process from typed executable/argv without shell parsing. Short work returns terminal output; longer work may return the same execution as a durable Job. Windows .cmd/.bat files are rejected; use run_shell for batch files or shell syntax.",
             run_process_input_schema(),
         ),
         tool_spec(
             "run_script",
-            "Execute bounded sh, bash, or PowerShell content as typed data from a Runner-owned temporary file. The body never enters command or -c/-Command. Use run_shell only for explicit command-string or named SSH execution.",
+            "Execute bounded sh, bash, or PowerShell content as typed data from a Runner-owned temporary file. Short work returns terminal output; longer work may return the same execution as a durable Job. The body never enters command or -c/-Command.",
             run_script_input_schema(),
         ),
         tool_spec(

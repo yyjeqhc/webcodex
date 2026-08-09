@@ -1,8 +1,9 @@
 use super::auth::ShellClientAuthGroup;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentPolicySummary, PersistentShellResult, ShellAgentProjectSummary,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellJobCodexMetadata,
-    ShellJobValidationProgress, ShellRunResponse,
+    ShellAgentShellRequest, ShellClientCapabilities, ShellCommandExecutionState,
+    ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata, ShellJobValidationProgress,
+    ShellRunResponse, JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicU64;
@@ -51,6 +52,74 @@ pub(super) struct ShellClientRecord {
     pub(super) process_started_at: Option<i64>,
     /// Runner-reported build identity (register payload).
     pub(super) build: Option<AgentBuildInfo>,
+    /// Same-Server evidence that a hidden structured terminal Job was already
+    /// projected into its initiating tool result and deliberately discarded.
+    /// This stays process-local and is preserved only across registrations by
+    /// the same runner instance.
+    pub(super) projected_structured_terminal_suppressions:
+        VecDeque<ProjectedStructuredTerminalSuppression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProjectedStructuredTerminalSuppression {
+    pub(super) client_id: String,
+    pub(super) agent_instance_id: String,
+    pub(super) job_id: String,
+    pub(super) request_id: String,
+    pub(super) expires_at: i64,
+}
+
+impl ShellClientRecord {
+    pub(super) fn prune_projected_structured_terminal_suppressions(&mut self, now: i64) {
+        self.projected_structured_terminal_suppressions
+            .retain(|suppression| suppression.expires_at > now);
+    }
+
+    pub(super) fn remember_projected_structured_terminal(
+        &mut self,
+        job_id: String,
+        request_id: String,
+        now: i64,
+    ) {
+        self.prune_projected_structured_terminal_suppressions(now);
+        self.projected_structured_terminal_suppressions
+            .retain(|suppression| {
+                suppression.job_id != job_id || suppression.request_id != request_id
+            });
+        self.projected_structured_terminal_suppressions.push_back(
+            ProjectedStructuredTerminalSuppression {
+                client_id: self.client_id.clone(),
+                agent_instance_id: self.agent_instance_id.clone(),
+                job_id,
+                request_id,
+                expires_at: now.saturating_add(JOB_TERMINAL_RETENTION_SECS),
+            },
+        );
+        while self.projected_structured_terminal_suppressions.len()
+            > JOB_INVENTORY_MAX_TERMINAL_JOBS
+        {
+            self.projected_structured_terminal_suppressions.pop_front();
+        }
+    }
+
+    pub(super) fn suppresses_projected_structured_terminal(
+        &self,
+        client_id: &str,
+        agent_instance_id: &str,
+        job_id: &str,
+        request_id: &str,
+        now: i64,
+    ) -> bool {
+        self.projected_structured_terminal_suppressions
+            .iter()
+            .any(|suppression| {
+                suppression.expires_at > now
+                    && suppression.client_id == client_id
+                    && suppression.agent_instance_id == agent_instance_id
+                    && suppression.job_id == job_id
+                    && suppression.request_id == request_id
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -109,6 +178,8 @@ pub(super) struct ShellJobRecord {
     pub(super) stdout: ShellJobLogState,
     pub(super) stderr: ShellJobLogState,
     pub(super) error: Option<String>,
+    pub(super) command_execution_state: Option<ShellCommandExecutionState>,
+    pub(super) structured_execution: Option<ShellJobStructuredExecutionMetadata>,
     pub(super) codex: Option<ShellJobCodexMetadata>,
     pub(super) validation_steps: Vec<String>,
     pub(super) validation: Option<crate::shell_protocol::ShellJobValidationMetadata>,

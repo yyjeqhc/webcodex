@@ -67,6 +67,7 @@ impl SessionShellRecord {
             command_preview: String::new(),
             validation_steps: Vec::new(),
             validation: None,
+            structured_execution: None,
         })
     }
 }
@@ -461,6 +462,7 @@ impl ToolRuntime {
                 command_preview: String::new(),
                 validation_steps: Vec::new(),
                 validation: None,
+                structured_execution: None,
             };
             let request = PersistentShellRequest {
                 action: "open".to_string(),

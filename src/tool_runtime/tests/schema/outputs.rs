@@ -12,6 +12,36 @@ struct TemporaryDefaultOnlyOutputSchemaGap {
 const TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS:
     &[TemporaryDefaultOnlyOutputSchemaGap] = &[];
 
+fn structured_execution_output(
+    execution_source: &str,
+    execution_state: &str,
+    command_started: bool,
+    command_completed: bool,
+    promoted_to_job: bool,
+    terminal: bool,
+    job_id: Option<&str>,
+    job_status: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "success": promoted_to_job,
+        "output": {
+            "execution_source": execution_source,
+            "execution_state": execution_state,
+            "command_started": command_started,
+            "command_completed": command_completed,
+            "promoted_to_job": promoted_to_job,
+            "terminal": terminal,
+            "job_id": job_id,
+            "job_status": job_status,
+            "observation_token": if promoted_to_job { Some("observation") } else { None },
+            "effective_timeout_secs": 60,
+            "sync_wait_secs": 10,
+            "async_handoff_available": true
+        },
+        "error": null
+    })
+}
+
 #[test]
 fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
     let specs = registered_tool_specs();
@@ -105,6 +135,14 @@ fn key_tool_output_schemas_include_expected_fields() {
         "executor",
         "execution_source",
         "execution_state",
+        "promoted_to_job",
+        "terminal",
+        "job_id",
+        "job_status",
+        "observation_token",
+        "effective_timeout_secs",
+        "sync_wait_secs",
+        "async_handoff_available",
     ] {
         assert!(
             has_output_field("run_process", field),
@@ -113,7 +151,14 @@ fn key_tool_output_schemas_include_expected_fields() {
     }
     assert_eq!(
         output_schema_property(&specs, "run_process", "execution_state")["enum"],
-        serde_json::json!(["not_started", "outcome_unknown", "completed", "timed_out"])
+        serde_json::json!([
+            "not_started",
+            "outcome_unknown",
+            "completed",
+            "timed_out",
+            "queued",
+            "running"
+        ])
     );
     let run_process_schema = &spec_named(&specs, "run_process").output_schema;
     for (state, command_started, command_completed) in [
@@ -136,6 +181,27 @@ fn key_tool_output_schemas_include_expected_fields() {
         )
         .unwrap_or_else(|error| panic!("run_process state {state} should validate: {error}"));
     }
+    for (state, command_started, job_status) in [
+        ("queued", false, "agent_queued"),
+        ("running", true, "running"),
+    ] {
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &structured_execution_output(
+                "run_process",
+                state,
+                command_started,
+                false,
+                true,
+                false,
+                Some("job-1"),
+                Some(job_status),
+            ),
+            run_process_schema,
+        )
+        .unwrap_or_else(|error| {
+            panic!("run_process handoff state {state} should validate: {error}")
+        });
+    }
     assert!(
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
             &serde_json::json!({
@@ -150,7 +216,7 @@ fn key_tool_output_schemas_include_expected_fields() {
             run_process_schema,
         )
         .is_err(),
-        "run_process must reject lifecycle states outside the Phase A four-state contract"
+        "run_process must reject lifecycle states outside the terminal and handoff contract"
     );
     assert!(
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
@@ -210,6 +276,14 @@ fn key_tool_output_schemas_include_expected_fields() {
         "executor",
         "execution_source",
         "execution_state",
+        "promoted_to_job",
+        "terminal",
+        "job_id",
+        "job_status",
+        "observation_token",
+        "effective_timeout_secs",
+        "sync_wait_secs",
+        "async_handoff_available",
     ] {
         assert!(
             has_output_field("run_script", field),
@@ -246,6 +320,27 @@ fn key_tool_output_schemas_include_expected_fields() {
         )
         .unwrap_or_else(|error| panic!("run_script state {state} should validate: {error}"));
     }
+    for (state, command_started, job_status) in [
+        ("queued", false, "agent_queued"),
+        ("running", true, "running"),
+    ] {
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &structured_execution_output(
+                "run_script",
+                state,
+                command_started,
+                false,
+                true,
+                false,
+                Some("job-1"),
+                Some(job_status),
+            ),
+            run_script_schema,
+        )
+        .unwrap_or_else(|error| {
+            panic!("run_script handoff state {state} should validate: {error}")
+        });
+    }
     assert!(
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
             &serde_json::json!({
@@ -278,6 +373,117 @@ fn key_tool_output_schemas_include_expected_fields() {
         .is_err(),
         "an execution-style run_script denial must include the canonical lifecycle tuple"
     );
+
+    for (tool, execution_source, schema) in [
+        ("run_process", "run_process", run_process_schema),
+        ("run_script", "run_script", run_script_schema),
+    ] {
+        let mut promoted_without_job_id = structured_execution_output(
+            execution_source,
+            "running",
+            true,
+            false,
+            true,
+            false,
+            Some("job-1"),
+            Some("running"),
+        );
+        promoted_without_job_id["output"]
+            .as_object_mut()
+            .expect("output object")
+            .remove("job_id");
+        let impossible = [
+            ("promoted execution without job_id", promoted_without_job_id),
+            (
+                "running execution with command_started=false",
+                structured_execution_output(
+                    execution_source,
+                    "running",
+                    false,
+                    false,
+                    true,
+                    false,
+                    Some("job-1"),
+                    Some("running"),
+                ),
+            ),
+            ("promoted execution with async_handoff_available=false", {
+                let mut instance = structured_execution_output(
+                    execution_source,
+                    "running",
+                    true,
+                    false,
+                    true,
+                    false,
+                    Some("job-1"),
+                    Some("running"),
+                );
+                instance["output"]["async_handoff_available"] = serde_json::json!(false);
+                instance
+            }),
+            (
+                "queued execution with command_completed=true",
+                structured_execution_output(
+                    execution_source,
+                    "queued",
+                    false,
+                    true,
+                    true,
+                    false,
+                    Some("job-1"),
+                    Some("agent_queued"),
+                ),
+            ),
+            (
+                "completed execution promoted to a Job",
+                structured_execution_output(
+                    execution_source,
+                    "completed",
+                    true,
+                    true,
+                    true,
+                    false,
+                    Some("job-1"),
+                    Some("completed"),
+                ),
+            ),
+            (
+                "not_started execution with command_started=true",
+                structured_execution_output(
+                    execution_source,
+                    "not_started",
+                    true,
+                    false,
+                    false,
+                    true,
+                    None,
+                    None,
+                ),
+            ),
+            (
+                "timed_out execution with command_completed=true",
+                structured_execution_output(
+                    execution_source,
+                    "timed_out",
+                    true,
+                    true,
+                    false,
+                    true,
+                    None,
+                    None,
+                ),
+            ),
+        ];
+        for (description, instance) in impossible {
+            assert!(
+                crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+                    &instance, schema,
+                )
+                .is_err(),
+                "{tool} schema must reject {description}"
+            );
+        }
+    }
 
     for field in [
         "duration_ms",
@@ -564,6 +770,8 @@ fn key_tool_output_schemas_include_expected_fields() {
         "started_at",
         "ended_at",
         "error",
+        "command_execution_state",
+        "structured_execution",
         "command_preview_included",
         "active",
         "blocking_active",
@@ -584,6 +792,8 @@ fn key_tool_output_schemas_include_expected_fields() {
         "session_id",
         "ssh_resource",
         "exit_code",
+        "command_execution_state",
+        "structured_execution",
         "stdout_tail",
         "stderr_tail",
         "stdout_lines",
@@ -638,6 +848,8 @@ fn key_tool_output_schemas_include_expected_fields() {
         "started_at",
         "ended_at",
         "exit_code",
+        "command_execution_state",
+        "structured_execution",
     ] {
         assert!(
             job_summary_props.contains_key(field),
@@ -655,6 +867,8 @@ fn key_tool_output_schemas_include_expected_fields() {
         "session_id",
         "ssh_resource",
         "exit_code",
+        "command_execution_state",
+        "structured_execution",
         "stdout_tail",
         "stderr_tail",
         "stdout_lines",

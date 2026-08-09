@@ -9,9 +9,10 @@ use super::state::{
 use super::validation::validate_id;
 use super::{job_recovery_grace_secs, ShellClientRegistry};
 use crate::shell_protocol::{
-    ShellAgentProjectSummary, ShellJobInventory, ShellJobSnapshot, ShellJobStreamSnapshot,
-    JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES,
-    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
+    ShellAgentProjectSummary, ShellCommandExecutionState, ShellJobInventory, ShellJobSnapshot,
+    ShellJobStreamSnapshot, JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_JOBS,
+    JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
+    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };
 use std::collections::HashSet;
 
@@ -88,11 +89,12 @@ fn validate_context(
     }) {
         return Err("job inventory purpose is invalid".to_string());
     }
-    if context
-        .shell
-        .as_deref()
-        .is_some_and(|shell| !matches!(shell, "sh" | "bash" | "configured" | "custom"))
-    {
+    if context.shell.as_deref().is_some_and(|shell| {
+        !matches!(
+            shell,
+            "sh" | "bash" | "powershell" | "direct_argv" | "configured" | "custom" | "remote"
+        )
+    }) {
         return Err("job inventory shell is invalid".to_string());
     }
     if context.validation_steps.len() > 3
@@ -119,6 +121,15 @@ fn validate_context(
                 != context.validation_steps
     }) {
         return Err("job inventory validation metadata is invalid".to_string());
+    }
+    if context
+        .structured_execution
+        .as_ref()
+        .is_some_and(|metadata| !metadata.is_valid())
+        || (context.structured_execution.is_some()
+            && (!context.validation_steps.is_empty() || context.validation.is_some()))
+    {
+        return Err("job inventory structured execution metadata is invalid".to_string());
     }
     if context
         .workflow_session_id
@@ -209,6 +220,44 @@ fn validate_snapshot(
         .is_some_and(|error| !valid_bounded_text(error, MAX_SNAPSHOT_ERROR_CHARS))
     {
         return Err("job inventory error is invalid or oversized".to_string());
+    }
+    if active && snapshot.command_execution_state.is_some() {
+        return Err(
+            "active job inventory snapshot must not contain terminal lifecycle".to_string(),
+        );
+    }
+    if snapshot.context.structured_execution.is_some()
+        && terminal
+        && snapshot.command_execution_state.is_none()
+    {
+        return Err(
+            "terminal structured job inventory snapshot requires command_execution_state"
+                .to_string(),
+        );
+    }
+    if let Some(state) = snapshot.command_execution_state {
+        let consistent = match state {
+            ShellCommandExecutionState::NotStarted => {
+                snapshot.started_at.is_none()
+                    && matches!(
+                        snapshot.status.as_str(),
+                        "failed" | "stopped" | "cancelled" | "lost"
+                    )
+            }
+            ShellCommandExecutionState::OutcomeUnknown => {
+                matches!(snapshot.status.as_str(), "failed" | "lost")
+            }
+            ShellCommandExecutionState::TimedOut => {
+                matches!(snapshot.status.as_str(), "timeout" | "timed_out")
+            }
+            ShellCommandExecutionState::Completed => matches!(
+                snapshot.status.as_str(),
+                "completed" | "failed" | "stopped" | "cancelled"
+            ),
+        };
+        if !consistent {
+            return Err("job inventory command_execution_state is inconsistent".to_string());
+        }
     }
     validate_context(client_id, projects, snapshot)?;
     validate_stream_snapshot(&snapshot.stdout, "stdout")?;
@@ -348,6 +397,7 @@ fn same_context(job: &ShellJobRecord, snapshot: &ShellJobSnapshot) -> bool {
         && job.command_preview == context.command_preview
         && job.validation_steps == context.validation_steps
         && job.validation == context.validation
+        && job.structured_execution == context.structured_execution
 }
 
 pub(super) fn preflight_inventory_locked(
@@ -473,7 +523,11 @@ fn record_from_snapshot(
         client_id: client_id.to_string(),
         auth_group,
         agent_instance_id: agent_instance_id.to_string(),
-        kind: "shell".to_string(),
+        kind: context
+            .structured_execution
+            .as_ref()
+            .map(|metadata| metadata.execution_source.clone())
+            .unwrap_or_else(|| "shell".to_string()),
         project_id: context.runtime_project_id.clone(),
         session_id: context.workflow_session_id.clone(),
         ssh_resource: context.ssh_resource.clone(),
@@ -492,6 +546,8 @@ fn record_from_snapshot(
         stdout: ShellJobLogState::default(),
         stderr: ShellJobLogState::default(),
         error: snapshot.error.clone(),
+        command_execution_state: snapshot.command_execution_state,
+        structured_execution: context.structured_execution.clone(),
         codex: None,
         validation_steps: context.validation_steps.clone(),
         validation: context.validation.clone(),
@@ -520,6 +576,8 @@ fn apply_snapshot(job: &mut ShellJobRecord, snapshot: &ShellJobSnapshot, now: i6
     job.exit_code = snapshot.exit_code;
     job.duration_ms = snapshot.duration_ms;
     job.error = snapshot.error.clone();
+    job.command_execution_state = snapshot.command_execution_state;
+    job.structured_execution = snapshot.context.structured_execution.clone();
     job.validation_progress = snapshot.validation_progress.clone();
     job.validation = snapshot.context.validation.clone();
     replace_log_from_snapshot(&mut job.stdout, &snapshot.stdout);
@@ -545,6 +603,15 @@ fn remove_cleanup_terminal_jobs_locked(inner: &mut ShellClientRegistryInner) {
         .collect::<Vec<_>>();
     for job_id in removable {
         inner.jobs_by_id.remove(&job_id);
+    }
+}
+
+fn prune_projected_structured_terminal_suppressions_locked(
+    inner: &mut ShellClientRegistryInner,
+    now: i64,
+) {
+    for client in inner.clients.values_mut() {
+        client.prune_projected_structured_terminal_suppressions(now);
     }
 }
 
@@ -730,6 +797,7 @@ pub(crate) async fn recovery_timeout_sweep(registry: &ShellClientRegistry) {
     let now = crate::shell_client::now_ts();
     let mut inner = registry.inner.lock().await;
     registry.prune_expired_shared_key_clients_locked(&mut inner, now);
+    prune_projected_structured_terminal_suppressions_locked(&mut inner, now);
     expire_recovering_jobs_locked(&mut inner, None, now, RECOVERY_SWEEP_PASS_CAP);
     registry.prune_expired_terminal_jobs_locked(&mut inner, now);
 }
@@ -743,6 +811,7 @@ pub(super) fn reconcile_inventory_locked(
     inventory: &ShellJobInventory,
     now: i64,
 ) {
+    prune_projected_structured_terminal_suppressions_locked(inner, now);
     expire_recovering_jobs_locked(inner, Some(client_id), now, RECOVERY_SWEEP_PASS_CAP);
 
     let inventory_ids = inventory
@@ -779,6 +848,17 @@ pub(super) fn reconcile_inventory_locked(
     remove_job_control_requests(inner, client_id, &missing_job_ids);
 
     for snapshot in &inventory.jobs {
+        let suppress_unknown_terminal = is_final_job_status(&snapshot.status)
+            && snapshot.context.structured_execution.is_some()
+            && inner.clients.get(client_id).is_some_and(|client| {
+                client.suppresses_projected_structured_terminal(
+                    client_id,
+                    agent_instance_id,
+                    &snapshot.job_id,
+                    &snapshot.request_id,
+                    now,
+                )
+            });
         if let Some(existing) = inner.jobs_by_id.get_mut(&snapshot.job_id) {
             if is_final_job_status(&existing.status) {
                 // A server-authoritative terminal state (deadline, replacement,
@@ -793,6 +873,8 @@ pub(super) fn reconcile_inventory_locked(
                 continue;
             }
             apply_snapshot(existing, snapshot, now);
+        } else if suppress_unknown_terminal {
+            continue;
         } else {
             let mut record = record_from_snapshot(
                 client_id,

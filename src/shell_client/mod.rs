@@ -50,7 +50,7 @@ pub use handlers::{
 };
 #[cfg(test)]
 pub(crate) use job_updates::JobLogWaitOutcome;
-pub(crate) use job_updates::ShellJobStartMetadata;
+pub(crate) use job_updates::{ShellJobStartMetadata, StructuredJobExecution};
 pub(crate) use jobs::{
     command_preview, process_preview, script_preview, COMMAND_PREVIEW_MAX_CHARS,
 };

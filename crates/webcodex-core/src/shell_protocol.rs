@@ -125,6 +125,11 @@ pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV: &str = "structured_pr
 /// older Runners must fail closed rather than interpreting script text through
 /// the legacy command channel.
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD: &str = "structured_script_payload";
+/// Durable Job execution for both typed native processes and typed script
+/// payloads. This is deliberately independent from the synchronous structured
+/// execution and legacy async-shell capabilities: older B1/B2 Runners may
+/// advertise those capabilities without understanding typed Job starts.
+pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS: &str = "structured_execution_jobs";
 /// Explicit capability for agent-side read-only LSP navigation. Missing on
 /// older agents and defaults to `false` so the server never dispatches typed
 /// LSP requests to agents that cannot handle them.
@@ -153,6 +158,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
@@ -220,6 +226,11 @@ pub struct ShellClientCapabilities {
     /// inferred from shell, validation argv, or process argv support.
     #[serde(default)]
     pub structured_script_payload: bool,
+    /// Typed process and typed script requests can execute as durable Jobs.
+    /// Missing on older agents and therefore false; it is never inferred from
+    /// any synchronous structured-execution or async-shell capability.
+    #[serde(default)]
+    pub structured_execution_jobs: bool,
     /// Read-only semantic navigation via agent-side rust-analyzer. Defaults to
     /// false for wire compatibility with older agents.
     #[serde(default)]
@@ -283,6 +294,7 @@ impl Default for ShellClientCapabilities {
             structured_validation_argv: false,
             structured_process_argv: false,
             structured_script_payload: false,
+            structured_execution_jobs: false,
             lsp_read_only_navigation: false,
             sandbox_inspect_commands: false,
             project_lifecycle: false,
@@ -658,7 +670,13 @@ pub const PROCESS_ARG_MAX_BYTES: usize = 8_192;
 pub const PROCESS_ARGV_MAX_BYTES: usize = 16_000;
 pub const PROCESS_STDIN_MAX_BYTES: usize = 64 * 1_024;
 pub const PROCESS_CWD_MAX_BYTES: usize = 1_024;
-pub const PROCESS_TIMEOUT_MAX_SECS: u64 = 120;
+pub const STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS: u64 = 1;
+pub const STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS: u64 = 3_600;
+pub const STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS: u64 = 60;
+/// Compatibility ceiling for the pre-Phase-C direct synchronous Runner wire.
+/// Durable typed Jobs use `STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS` instead.
+pub const STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS: u64 = 120;
+pub const PROCESS_TIMEOUT_MAX_SECS: u64 = STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS;
 
 pub const SCRIPT_MIN_BYTES: usize = 1;
 pub const SCRIPT_MAX_BYTES: usize = 512 * 1024;
@@ -667,7 +685,7 @@ pub const SCRIPT_ARG_MAX_BYTES: usize = 8_192;
 pub const SCRIPT_ARGV_MAX_BYTES: usize = 16_000;
 pub const SCRIPT_STDIN_MAX_BYTES: usize = 64 * 1024;
 pub const SCRIPT_CWD_MAX_BYTES: usize = 1_024;
-pub const SCRIPT_TIMEOUT_MAX_SECS: u64 = 120;
+pub const SCRIPT_TIMEOUT_MAX_SECS: u64 = STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS;
 
 /// Validate the transport-neutral executable/argv payload. Both Server and
 /// Runner call this so a stale or malicious peer cannot bypass either side.
@@ -930,13 +948,15 @@ pub struct ShellAgentShellRequest {
     #[serde(default)]
     pub create_dirs: bool,
     pub command: String,
-    /// Typed native process payload. Present only for `kind = "run_process"`;
-    /// defaults to `None` for backward compatibility with older envelopes.
+    /// Typed native process payload. Present only for `kind = "run_process"`
+    /// or `kind = "start_process_job"`; defaults to `None` for backward
+    /// compatibility with older envelopes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<ShellProcessArgv>,
-    /// Typed bounded script payload. Present only for `kind = "run_script"`;
-    /// defaults to `None` for backward compatibility with older envelopes.
-    /// The raw body never enters `command`.
+    /// Typed bounded script payload. Present only for `kind = "run_script"` or
+    /// `kind = "start_script_job"`; defaults to `None` for backward
+    /// compatibility with older envelopes. The raw body never enters
+    /// `command`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script: Option<ShellScriptPayload>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1154,6 +1174,10 @@ pub struct ShellAgentJobUpdateRequest {
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
+    /// Phase-A structured execution lifecycle. It is absent for older Runner
+    /// updates and ordinary legacy shell Jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_execution_state: Option<ShellCommandExecutionState>,
     /// Executor-owned bounded progress for an internally submitted validation
     /// plan. Project stdout/stderr never populates this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1515,6 +1539,39 @@ impl ShellJobValidationMetadata {
     }
 }
 
+/// Safe bounded metadata for a structured execution Job. Raw executable argv,
+/// script bodies, script argv, and stdin are intentionally absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellJobStructuredExecutionMetadata {
+    pub execution_source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<ShellScriptLanguage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_bytes: Option<usize>,
+    pub arg_count: usize,
+    pub stdin_present: bool,
+}
+
+impl ShellJobStructuredExecutionMetadata {
+    pub fn is_valid(&self) -> bool {
+        match self.execution_source.as_str() {
+            "run_process" => {
+                self.language.is_none()
+                    && self.script_bytes.is_none()
+                    && self.arg_count <= PROCESS_ARG_MAX_COUNT
+            }
+            "run_script" => {
+                self.language.is_some()
+                    && self
+                        .script_bytes
+                        .is_some_and(|bytes| (SCRIPT_MIN_BYTES..=SCRIPT_MAX_BYTES).contains(&bytes))
+                    && self.arg_count <= SCRIPT_ARG_MAX_COUNT
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Safe server-derived metadata needed to reconstruct a job record after a
 /// server restart. This is an internal agent protocol model, not a public
 /// `run_job` input.
@@ -1541,6 +1598,8 @@ pub struct ShellJobContext {
     pub validation_steps: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation: Option<ShellJobValidationMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_execution: Option<ShellJobStructuredExecutionMetadata>,
 }
 
 /// One bounded stream tail plus absolute line range. `next_line` is the
@@ -1603,6 +1662,10 @@ pub struct ShellJobSnapshot {
     pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Phase-A lifecycle for typed structured execution Jobs. Older snapshots
+    /// and legacy shell Jobs omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_execution_state: Option<ShellCommandExecutionState>,
     pub context: ShellJobContext,
     #[serde(default)]
     pub stdout: ShellJobStreamSnapshot,
@@ -1680,6 +1743,10 @@ pub struct ShellJobInfo {
     pub elapsed_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_execution_state: Option<ShellCommandExecutionState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_execution: Option<ShellJobStructuredExecutionMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<ShellJobCodexMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2077,6 +2144,32 @@ mod envelope_tests {
         }
     }
 
+    fn sample_process_job_request() -> ShellAgentShellRequest {
+        let mut request = sample_process_request();
+        request.kind = "start_process_job".to_string();
+        request.job_id = Some("job-process-1".to_string());
+        request.job_context = Some(ShellJobContext {
+            runtime_project_id: None,
+            workflow_session_id: None,
+            ssh_resource: None,
+            project_cwd: Some("sub dir".to_string()),
+            cwd: Some("sub dir".to_string()),
+            purpose: Some("test".to_string()),
+            shell: Some("direct_argv".to_string()),
+            command_preview: "argv-helper literal space …".to_string(),
+            validation_steps: Vec::new(),
+            validation: None,
+            structured_execution: Some(ShellJobStructuredExecutionMetadata {
+                execution_source: "run_process".to_string(),
+                language: None,
+                script_bytes: None,
+                arg_count: 3,
+                stdin_present: true,
+            }),
+        });
+        request
+    }
+
     fn sample_script_request() -> ShellAgentShellRequest {
         ShellAgentShellRequest {
             request_id: "req-script-1".to_string(),
@@ -2111,6 +2204,32 @@ mod envelope_tests {
         }
     }
 
+    fn sample_script_job_request() -> ShellAgentShellRequest {
+        let mut request = sample_script_request();
+        request.kind = "start_script_job".to_string();
+        request.job_id = Some("job-script-1".to_string());
+        request.job_context = Some(ShellJobContext {
+            runtime_project_id: None,
+            workflow_session_id: None,
+            ssh_resource: None,
+            project_cwd: Some("sub dir".to_string()),
+            cwd: Some("sub dir".to_string()),
+            purpose: Some("test".to_string()),
+            shell: Some("bash".to_string()),
+            command_preview: "bash script (18 bytes, 2 args)".to_string(),
+            validation_steps: Vec::new(),
+            validation: None,
+            structured_execution: Some(ShellJobStructuredExecutionMetadata {
+                execution_source: "run_script".to_string(),
+                language: Some(ShellScriptLanguage::Bash),
+                script_bytes: Some(18),
+                arg_count: 2,
+                stdin_present: true,
+            }),
+        });
+        request
+    }
+
     fn sample_register() -> ShellClientRegisterRequest {
         ShellClientRegisterRequest {
             process_started_at: None,
@@ -2134,6 +2253,7 @@ mod envelope_tests {
                 structured_validation_argv: true,
                 structured_process_argv: true,
                 structured_script_payload: true,
+                structured_execution_jobs: true,
                 lsp_read_only_navigation: false,
                 sandbox_inspect_commands: false,
                 project_lifecycle: false,
@@ -2207,6 +2327,7 @@ mod envelope_tests {
         // a legacy/older runner that omits the field fails closed.
         assert!(!capabilities.ssh_shell);
         assert!(!capabilities.ssh_persistent_shell);
+        assert!(!capabilities.structured_execution_jobs);
         assert!(!capabilities.project_path_registration);
         assert!(!ShellClientCapabilities::default().ssh_persistent_shell);
         assert!(!ShellClientCapabilities::default().project_path_registration);
@@ -2233,6 +2354,7 @@ mod envelope_tests {
                 exit_code: None,
                 duration_ms: None,
                 error: None,
+                command_execution_state: None,
                 context: ShellJobContext {
                     runtime_project_id: Some("agent:oe:demo".to_string()),
                     workflow_session_id: Some("wc_sess_reconcile".to_string()),
@@ -2244,6 +2366,7 @@ mod envelope_tests {
                     command_preview: "cargo test focused".to_string(),
                     validation_steps: Vec::new(),
                     validation: None,
+                    structured_execution: None,
                 },
                 stdout: ShellJobStreamSnapshot {
                     tail: "one\n".to_string(),
@@ -2365,6 +2488,7 @@ mod envelope_tests {
         .unwrap();
         assert_eq!(polling.request.as_ref().unwrap().process, request.process);
         assert_eq!(polling.request.as_ref().unwrap().command, "");
+        assert_eq!(polling.request.as_ref().unwrap().kind, "run_process");
 
         let websocket_json = AgentEnvelope::Request {
             request: request.clone(),
@@ -2375,6 +2499,7 @@ mod envelope_tests {
             AgentEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.process, request.process);
                 assert_eq!(decoded.command, "");
+                assert_eq!(decoded.kind, "run_process");
             }
             other => panic!("expected request, got {:?}", other.kind()),
         }
@@ -2388,6 +2513,55 @@ mod envelope_tests {
             AgentEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.process, request.process);
                 assert_eq!(decoded.command, "");
+                assert_eq!(decoded.kind, "run_process");
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_process_job_request_round_trips_polling_websocket_and_quic() {
+        let request = sample_process_job_request();
+        let polling: ShellAgentPollResponse = serde_json::from_value(
+            serde_json::to_value(ShellAgentPollResponse {
+                success: true,
+                request: Some(request.clone()),
+                error: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(polling.request.as_ref().unwrap().process, request.process);
+        assert_eq!(polling.request.as_ref().unwrap().command, "");
+        assert_eq!(polling.request.as_ref().unwrap().kind, "start_process_job");
+        assert!(polling.request.as_ref().unwrap().script.is_none());
+
+        let websocket_json = AgentEnvelope::Request {
+            request: request.clone(),
+        }
+        .to_json()
+        .unwrap();
+        match AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
+            AgentEnvelope::Request { request: decoded } => {
+                assert_eq!(decoded.process, request.process);
+                assert_eq!(decoded.command, "");
+                assert_eq!(decoded.kind, "start_process_job");
+                assert!(decoded.script.is_none());
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+
+        let frame = encode_quic_frame(&AgentEnvelope::Request {
+            request: request.clone(),
+        })
+        .unwrap();
+        let mut reader = frame.as_slice();
+        match read_quic_frame(&mut reader).await.unwrap() {
+            AgentEnvelope::Request { request: decoded } => {
+                assert_eq!(decoded.process, request.process);
+                assert_eq!(decoded.command, "");
+                assert_eq!(decoded.kind, "start_process_job");
+                assert!(decoded.script.is_none());
             }
             other => panic!("expected request, got {:?}", other.kind()),
         }
@@ -2407,6 +2581,7 @@ mod envelope_tests {
         .unwrap();
         assert_eq!(polling.request.as_ref().unwrap().script, request.script);
         assert_eq!(polling.request.as_ref().unwrap().command, "");
+        assert_eq!(polling.request.as_ref().unwrap().kind, "run_script");
         assert!(polling.request.as_ref().unwrap().process.is_none());
 
         let websocket_json = AgentEnvelope::Request {
@@ -2419,6 +2594,7 @@ mod envelope_tests {
             AgentEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.script, request.script);
                 assert_eq!(decoded.command, "");
+                assert_eq!(decoded.kind, "run_script");
                 assert!(decoded.process.is_none());
             }
             other => panic!("expected request, got {:?}", other.kind()),
@@ -2433,10 +2609,76 @@ mod envelope_tests {
             AgentEnvelope::Request { request: decoded } => {
                 assert_eq!(decoded.script, request.script);
                 assert_eq!(decoded.command, "");
+                assert_eq!(decoded.kind, "run_script");
                 assert!(decoded.process.is_none());
             }
             other => panic!("expected request, got {:?}", other.kind()),
         }
+    }
+
+    #[tokio::test]
+    async fn structured_script_job_request_round_trips_polling_websocket_and_quic() {
+        let request = sample_script_job_request();
+        let polling: ShellAgentPollResponse = serde_json::from_value(
+            serde_json::to_value(ShellAgentPollResponse {
+                success: true,
+                request: Some(request.clone()),
+                error: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(polling.request.as_ref().unwrap().script, request.script);
+        assert_eq!(polling.request.as_ref().unwrap().command, "");
+        assert_eq!(polling.request.as_ref().unwrap().kind, "start_script_job");
+        assert!(polling.request.as_ref().unwrap().process.is_none());
+
+        let websocket_json = AgentEnvelope::Request {
+            request: request.clone(),
+        }
+        .to_json()
+        .unwrap();
+        assert!(!websocket_json.contains(r#""command":"printf"#));
+        match AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
+            AgentEnvelope::Request { request: decoded } => {
+                assert_eq!(decoded.script, request.script);
+                assert_eq!(decoded.command, "");
+                assert_eq!(decoded.kind, "start_script_job");
+                assert!(decoded.process.is_none());
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+
+        let frame = encode_quic_frame(&AgentEnvelope::Request {
+            request: request.clone(),
+        })
+        .unwrap();
+        let mut reader = frame.as_slice();
+        match read_quic_frame(&mut reader).await.unwrap() {
+            AgentEnvelope::Request { request: decoded } => {
+                assert_eq!(decoded.script, request.script);
+                assert_eq!(decoded.command, "");
+                assert_eq!(decoded.kind, "start_script_job");
+                assert!(decoded.process.is_none());
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn b2_capabilities_do_not_imply_structured_execution_jobs() {
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(
+                r#"{"shell":true,"async_jobs":true,"structured_validation_argv":true,"structured_process_argv":true,"structured_script_payload":true}"#,
+            )
+            .unwrap();
+        assert!(capabilities.structured_validation_argv);
+        assert!(capabilities.structured_process_argv);
+        assert!(capabilities.structured_script_payload);
+        assert!(capabilities.async_jobs);
+        assert!(!capabilities.structured_execution_jobs);
+        assert!(!ShellClientCapabilities::default().structured_script_payload);
+        assert!(!ShellClientCapabilities::default().structured_execution_jobs);
     }
 
     #[test]
@@ -2446,7 +2688,7 @@ mod envelope_tests {
         assert!(capabilities.structured_validation_argv);
         assert!(!capabilities.structured_process_argv);
         assert!(!capabilities.structured_script_payload);
-        assert!(!ShellClientCapabilities::default().structured_script_payload);
+        assert!(!capabilities.structured_execution_jobs);
     }
 
     #[test]
@@ -2729,6 +2971,7 @@ mod envelope_tests {
                 exit_code: None,
                 duration_ms: None,
                 error: None,
+                command_execution_state: None,
                 validation_progress: None,
                 finished: false,
             },
@@ -2739,6 +2982,26 @@ mod envelope_tests {
             AgentEnvelope::JobUpdate { payload } => assert_eq!(payload.job_id, "job-1"),
             other => panic!("expected job_update, got {:?}", other.kind()),
         }
+    }
+
+    #[test]
+    fn legacy_job_update_and_snapshot_default_structured_lifecycle_to_absent() {
+        let update: ShellAgentJobUpdateRequest = serde_json::from_value(serde_json::json!({
+            "client_id": "ws-1",
+            "agent_instance_id": "11111111-1111-1111-1111-111111111111",
+            "job_id": "job-legacy",
+            "status": "completed",
+            "exit_code": 0,
+            "finished": true
+        }))
+        .unwrap();
+        assert_eq!(update.command_execution_state, None);
+
+        let inventory = reconciliation_inventory();
+        let encoded = serde_json::to_value(&inventory).unwrap();
+        assert!(encoded["jobs"][0].get("command_execution_state").is_none());
+        let decoded: ShellJobInventory = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded.jobs[0].command_execution_state, None);
     }
 
     #[test]
@@ -2899,6 +3162,7 @@ mod envelope_tests {
             exit_code: None,
             duration_ms: None,
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: false,
         };

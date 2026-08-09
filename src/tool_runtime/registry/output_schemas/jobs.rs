@@ -5,8 +5,8 @@ use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_s
 fn process_execution_state_schema() -> Value {
     json!({
         "type": "string",
-        "enum": ["not_started", "outcome_unknown", "completed", "timed_out"],
-        "description": "Canonical lifecycle state. Only not_started is structurally safe to retry without first inspecting target state."
+        "enum": ["not_started", "outcome_unknown", "completed", "timed_out", "queued", "running"],
+        "description": "Canonical result lifecycle, plus queued/running only when the same execution has been exposed as a durable Job. Only not_started is structurally safe to retry without first inspecting target state."
     })
 }
 
@@ -21,6 +21,10 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                     {"required": ["command_ok"]},
                     {"required": ["failure_kind"]},
                     {"required": ["tool_failure"]},
+                    {"required": ["promoted_to_job"]},
+                    {"required": ["terminal"]},
+                    {"required": ["job_id"]},
+                    {"required": ["job_status"]},
                     {
                         "properties": {
                             "execution_source": {"const": execution_source}
@@ -39,13 +43,42 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
         },
         {
             "if": {
+                "anyOf": [
+                    {"required": ["promoted_to_job"]},
+                    {"required": ["terminal"]},
+                    {"required": ["job_id"]},
+                    {"required": ["job_status"]},
+                    {"required": ["effective_timeout_secs"]},
+                    {"required": ["sync_wait_secs"]},
+                    {"required": ["async_handoff_available"]}
+                ]
+            },
+            "then": {
+                "required": [
+                    "promoted_to_job",
+                    "terminal",
+                    "job_id",
+                    "job_status",
+                    "effective_timeout_secs",
+                    "sync_wait_secs",
+                    "async_handoff_available",
+                    "execution_state",
+                    "command_started",
+                    "command_completed"
+                ]
+            }
+        },
+        {
+            "if": {
                 "properties": {"execution_state": {"const": "not_started"}},
                 "required": ["execution_state"]
             },
             "then": {
                 "properties": {
                     "command_started": {"const": false},
-                    "command_completed": {"const": false}
+                    "command_completed": {"const": false},
+                    "promoted_to_job": {"const": false},
+                    "terminal": {"const": true}
                 },
                 "required": ["command_started", "command_completed"]
             }
@@ -58,7 +91,8 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
             "then": {
                 "properties": {
                     "command_started": {"const": true},
-                    "command_completed": {"const": false}
+                    "command_completed": {"const": false},
+                    "terminal": {"const": false}
                 },
                 "required": ["command_started", "command_completed"]
             }
@@ -71,7 +105,9 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
             "then": {
                 "properties": {
                     "command_started": {"const": true},
-                    "command_completed": {"const": true}
+                    "command_completed": {"const": true},
+                    "promoted_to_job": {"const": false},
+                    "terminal": {"const": true}
                 },
                 "required": ["command_started", "command_completed"]
             }
@@ -84,18 +120,206 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
             "then": {
                 "properties": {
                     "command_started": {"const": true},
-                    "command_completed": {"const": false}
+                    "command_completed": {"const": false},
+                    "promoted_to_job": {"const": false},
+                    "terminal": {"const": true}
                 },
                 "required": ["command_started", "command_completed"]
+            }
+        },
+        {
+            "if": {
+                "properties": {"execution_state": {"const": "queued"}},
+                "required": ["execution_state"]
+            },
+            "then": {
+                "properties": {
+                    "command_started": {"const": false},
+                    "command_completed": {"const": false},
+                    "promoted_to_job": {"const": true},
+                    "terminal": {"const": false}
+                },
+                "required": [
+                    "command_started",
+                    "command_completed",
+                    "promoted_to_job",
+                    "terminal"
+                ]
+            }
+        },
+        {
+            "if": {
+                "properties": {"execution_state": {"const": "running"}},
+                "required": ["execution_state"]
+            },
+            "then": {
+                "properties": {
+                    "command_started": {"const": true},
+                    "command_completed": {"const": false},
+                    "promoted_to_job": {"const": true},
+                    "terminal": {"const": false}
+                },
+                "required": [
+                    "command_started",
+                    "command_completed",
+                    "promoted_to_job",
+                    "terminal"
+                ]
+            }
+        },
+        {
+            "if": {
+                "properties": {"promoted_to_job": {"const": true}},
+                "required": ["promoted_to_job"]
+            },
+            "then": {
+                "properties": {
+                    "job_id": {"type": "string", "minLength": 1},
+                    "job_status": {"type": "string", "minLength": 1},
+                    "observation_token": {"type": "string", "minLength": 1},
+                    "terminal": {"const": false},
+                    "command_completed": {"const": false},
+                    "async_handoff_available": {"const": true},
+                    "execution_state": {
+                        "enum": ["queued", "running", "outcome_unknown"]
+                    }
+                },
+                "required": [
+                    "job_id",
+                    "job_status",
+                    "observation_token",
+                    "terminal",
+                    "command_completed",
+                    "async_handoff_available"
+                ]
+            }
+        },
+        {
+            "if": {
+                "properties": {"promoted_to_job": {"const": false}},
+                "required": ["promoted_to_job"]
+            },
+            "then": {
+                "properties": {
+                    "job_id": {"type": "null"},
+                    "job_status": {"type": "null"},
+                    "execution_state": {
+                        "enum": ["not_started", "outcome_unknown", "completed", "timed_out"]
+                    }
+                },
+                "required": ["job_id", "job_status"]
             }
         }
     ])
 }
 
+fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "promoted_to_job",
+            schema_type(
+                "boolean",
+                "True only when the same original execution continues as a durable Job.",
+            ),
+        ),
+        (
+            "terminal",
+            schema_type(
+                "boolean",
+                "Whether a trustworthy terminal projection is available from this tool call.",
+            ),
+        ),
+        (
+            "job_id",
+            nullable_schema(
+                "string",
+                "Durable continuation Job id, or null when no Job was exposed.",
+            ),
+        ),
+        (
+            "job_status",
+            nullable_schema(
+                "string",
+                "Authoritative durable Job status, or null when no Job was exposed.",
+            ),
+        ),
+        (
+            "observation_token",
+            nullable_schema(
+                "string",
+                "Current Job observation token when a continuation was exposed.",
+            ),
+        ),
+        (
+            "effective_timeout_secs",
+            schema_type(
+                "integer",
+                "Total execution budget in seconds, beginning with the one original execution.",
+            ),
+        ),
+        (
+            "sync_wait_secs",
+            schema_type(
+                "integer",
+                "Internal synchronous grace in seconds; this is not a second timeout budget.",
+            ),
+        ),
+        (
+            "async_handoff_available",
+            schema_type(
+                "boolean",
+                "Whether this Runner can continue typed structured execution as the same durable Job.",
+            ),
+        ),
+    ]
+}
+
+fn job_command_execution_state_schema() -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "string",
+                "enum": ["not_started", "outcome_unknown", "timed_out", "completed"]
+            },
+            {"type": "null"}
+        ],
+        "description": "Phase-A terminal lifecycle for a typed structured execution Job; null for active or legacy shell Jobs."
+    })
+}
+
+fn job_structured_execution_metadata_schema() -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "execution_source": {
+                        "type": "string",
+                        "enum": ["run_process", "run_script"]
+                    },
+                    "language": {
+                        "anyOf": [
+                            {"type": "string", "enum": ["sh", "bash", "powershell"]},
+                            {"type": "null"}
+                        ]
+                    },
+                    "script_bytes": nullable_schema("integer", "Script byte count for run_script."),
+                    "arg_count": schema_type("integer", "Typed argument count."),
+                    "stdin_present": schema_type("boolean", "Whether independent typed stdin was present.")
+                },
+                "required": ["execution_source", "arg_count", "stdin_present"],
+                "additionalProperties": false
+            },
+            {"type": "null"}
+        ],
+        "description": "Safe bounded structured-execution metadata. Raw process argv, script content, script args, and stdin are never present."
+    })
+}
+
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "run_process" => {
-            let mut schema = wrapped_output_schema(vec![
+            let mut properties = vec![
                 (
                     "duration_ms",
                     schema_type("integer", "Process duration in milliseconds."),
@@ -181,7 +405,9 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "execution_state",
                     process_execution_state_schema(),
                 ),
-            ]);
+            ];
+            properties.extend(structured_continuation_properties());
+            let mut schema = wrapped_output_schema(properties);
             schema["properties"]["output"]["properties"]["execution_source"]["const"] =
                 json!("run_process");
             schema["properties"]["output"]["allOf"] =
@@ -189,7 +415,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             Some(schema)
         }
         "run_script" => {
-            let mut schema = wrapped_output_schema(vec![
+            let mut properties = vec![
                 (
                     "duration_ms",
                     schema_type("integer", "Script duration in milliseconds."),
@@ -282,7 +508,9 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "execution_state",
                     process_execution_state_schema(),
                 ),
-            ]);
+            ];
+            properties.extend(structured_continuation_properties());
+            let mut schema = wrapped_output_schema(properties);
             schema["properties"]["output"]["properties"]["language"]["enum"] =
                 json!(["sh", "bash", "powershell"]);
             schema["properties"]["output"]["properties"]["execution_source"]["const"] =
@@ -542,6 +770,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 nullable_schema("string", "Job error message, when available."),
             ),
             (
+                "command_execution_state",
+                job_command_execution_state_schema(),
+            ),
+            (
+                "structured_execution",
+                job_structured_execution_metadata_schema(),
+            ),
+            (
                 "recovery_state",
                 nullable_schema("string", "Bounded recovery state such as recovering or reconciled."),
             ),
@@ -656,6 +892,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "exit_code",
                 nullable_schema("integer", "Process exit code, when available."),
+            ),
+            (
+                "command_execution_state",
+                job_command_execution_state_schema(),
+            ),
+            (
+                "structured_execution",
+                job_structured_execution_metadata_schema(),
             ),
             (
                 "stdout_tail",
@@ -901,6 +1145,8 @@ fn job_summary_schema() -> Value {
             "duration_ms": nullable_schema("integer", "Job duration in milliseconds, when available."),
             "elapsed_secs": nullable_schema("integer", "Elapsed job runtime in seconds, when available."),
             "exit_code": nullable_schema("integer", "Process exit code, when available."),
+            "command_execution_state": job_command_execution_state_schema(),
+            "structured_execution": job_structured_execution_metadata_schema(),
             "recovery_state": nullable_schema("string", "Bounded recovery state, when applicable."),
             "recovered_after_server_restart": schema_type("boolean", "True when rebuilt from a same-runner inventory."),
             "reconciled_at": nullable_schema("integer", "Latest reconciliation timestamp."),

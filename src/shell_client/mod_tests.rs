@@ -1541,6 +1541,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 structured_validation_argv: true,
                 structured_process_argv: true,
                 structured_script_payload: false,
+                structured_execution_jobs: true,
                 lsp_read_only_navigation: true,
                 sandbox_inspect_commands: true,
                 project_lifecycle: true,
@@ -3402,6 +3403,7 @@ async fn lease_stale_instance_job_update_rejected() {
             exit_code: None,
             duration_ms: None,
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: false,
         })
@@ -3430,6 +3432,7 @@ async fn lease_stale_instance_job_update_rejected() {
             exit_code: None,
             duration_ms: None,
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: false,
         })
@@ -3459,6 +3462,7 @@ async fn lease_stale_instance_job_update_rejected() {
             exit_code: Some(0),
             duration_ms: Some(1),
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: true,
         })
@@ -3609,6 +3613,7 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
             exit_code: None,
             duration_ms: None,
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: false,
         })
@@ -4337,6 +4342,7 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
                 exit_code: None,
                 duration_ms: None,
                 error: None,
+                command_execution_state: None,
                 validation_progress: None,
                 finished: false,
             },
@@ -4378,6 +4384,7 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
             exit_code: Some(0),
             duration_ms: Some(1),
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: true,
         })
@@ -4431,6 +4438,7 @@ fn wait_job_update(
         exit_code: finished.then_some(0),
         duration_ms: finished.then_some(2_000),
         error: None,
+        command_execution_state: None,
         validation_progress: None,
         finished,
     }
@@ -4736,6 +4744,7 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
             exit_code: None,
             duration_ms: None,
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: false,
         })
@@ -4763,6 +4772,7 @@ async fn job_log_wait_sequenced_update_changes_token_even_when_tail_is_same() {
             exit_code: None,
             duration_ms: None,
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: false,
         })
@@ -4867,6 +4877,7 @@ async fn job_log_wait_legacy_update_between_calls_and_noop_replacement() {
         exit_code: None,
         duration_ms: None,
         error: None,
+        command_execution_state: None,
         validation_progress: None,
         finished: false,
     };

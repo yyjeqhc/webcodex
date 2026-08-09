@@ -38,7 +38,7 @@ pub(crate) fn run_process_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Synchronous process timeout in seconds (minimum 1, maximum 120, default 60).",
+            "Total process execution budget in seconds (minimum 1, maximum 3600, default 60). Short work returns synchronously; longer work exposes the same execution as a durable Job when the Runner advertises structured_execution_jobs.",
             false,
         ),
         (
@@ -113,7 +113,7 @@ pub(crate) fn run_script_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Synchronous script timeout in seconds (minimum 1, maximum 120, default 60).",
+            "Total script execution budget in seconds (minimum 1, maximum 3600, default 60). Short work returns synchronously; longer work exposes the same execution as a durable Job when the Runner advertises structured_execution_jobs.",
             false,
         ),
         (

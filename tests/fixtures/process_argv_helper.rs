@@ -25,6 +25,20 @@ fn main() {
             let millis = args.next().unwrap().parse::<u64>().unwrap();
             std::thread::sleep(Duration::from_millis(millis));
         }
+        Some("mark-sleep") => {
+            use std::io::Write;
+            let marker = args.next().unwrap();
+            let nonce = args.next().unwrap();
+            let millis = args.next().unwrap().parse::<u64>().unwrap();
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(marker)
+                .unwrap();
+            writeln!(file, "{}:{nonce}", std::process::id()).unwrap();
+            std::thread::sleep(Duration::from_millis(millis));
+            println!("{nonce}");
+        }
         Some(mode) => {
             eprintln!("unknown mode: {mode}");
             std::process::exit(64);

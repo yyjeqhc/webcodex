@@ -234,15 +234,77 @@ active and is removed after execution whenever possible. PowerShell files use
 a UTF-8 BOM so Windows PowerShell 5.1 preserves Unicode without prepending
 script statements.
 
-Phase B2 deliberately does not add `cmd`/batch semantics, typed script transfer
-over named SSH Session resources, or synchronous-to-Job continuation.
-`run_shell` remains the explicit escape hatch for batch and SSH shell semantics.
-Phase C will generalize both `run_process` and `run_script` to the same-execution
-synchronous-to-Job handoff.
+Phase B2 deliberately does not add `cmd`/batch semantics or typed script
+transfer over named SSH Session resources. `run_shell` remains the explicit
+escape hatch for batch and SSH shell semantics.
 
 ### Phase C — general same-execution sync-to-Job handoff
 
-Apply the structured-validation pattern to general model execution: one start, short synchronous grace, same process continues as a Job, no retry-based promotion.
+Phase C is implemented for `run_process` and `run_script`. A capable Runner
+advertises the additive `structured_execution_jobs` capability only when it can
+execute both typed process Jobs and typed script Jobs. The Server creates one
+initially hidden Job, dispatches it exactly once, and waits for a bounded
+internal synchronous grace:
+
+- a terminal Job within the grace is projected back into the ordinary
+  `run_process` or `run_script` terminal result and its never-exposed Server Job
+  record is removed;
+- a still queued or running Job is made public with the same `job_id`,
+  observation token, project, Session, authorization, cwd, purpose, and sandbox
+  contract;
+- the Runner never receives a replacement request at handoff, and neither
+  process argv nor a script body is reconstructed as shell text.
+
+The public `timeout_secs` contract is a total execution budget from 1 through
+3,600 seconds, with a 60-second default. The internal synchronous grace is 10
+seconds and the effective wait is the smaller of that grace and the total
+budget. Handoff does not restart or extend the timeout clock. If the total
+budget has no continuation headroom, the initiating call waits for the original
+execution to terminate or time out instead of manufacturing a Job handoff.
+
+Typed Job wire requests are explicit. `start_process_job` carries
+`command=""`, a present `process` payload, an absent `script` payload, and
+independent typed `stdin`. `start_script_job` carries `command=""`, a present
+`script` payload, an absent `process` payload, and independent typed `stdin`.
+Polling, WebSocket, and QUIC use this common representation. Process Jobs retain
+direct `Command::new(executable).args(argv)` execution. Script Jobs retain the
+Runner-owned temporary file and semantic interpreter policy; they never use
+`sh -c`, `bash -c`, or PowerShell `-Command`. The Job task owns the script file
+and inspect scratch for the complete child lifetime, including after handoff.
+
+Job snapshots and terminal updates carry the existing
+`ShellCommandExecutionState` additively for typed structured Jobs. This
+preserves `not_started`, `outcome_unknown`, `timed_out`, and `completed`
+lifecycle truth independently from Job status. The model-facing initiating
+result uses `queued` or `running` only for an actual durable handoff; those are
+not new variants of `ShellCommandExecutionState`. Same-instance Runner
+reconciliation restores the same active structured Job without replaying its
+typed input. Safe durable metadata records only execution source, language or
+script byte count where applicable, argument count, stdin presence, and a
+bounded summary—not raw process argv, script content, script args, or stdin.
+
+Fast-terminal hidden handles are removed after their terminal result is
+projected by the initiating Server process. That Server process keeps a bounded,
+expiring suppression record for the exact runner instance, Job, and request it
+discarded. A same-instance transport reconnect to the same Server therefore
+suppresses a retained terminal inventory replay of that already-projected hidden
+handle instead of resurrecting it as a public duplicate.
+
+The suppression history is process-local only. After a Server restart, an
+otherwise unknown retained terminal structured snapshot cannot be proven to
+have been hidden, previously delivered, or already public, so it is recovered
+conservatively as public execution evidence. In both cases reconciliation never
+replays typed input or enqueues a replacement execution.
+
+The capability is fail-closed and is never inferred from `async_jobs`,
+`structured_process_argv`, `structured_script_payload`, or
+`structured_validation_argv`. A Phase B2 Runner without
+`structured_execution_jobs` retains the approved direct synchronous path for
+timeouts through 120 seconds. Larger timeouts fail before execution with
+`capability_unavailable`; there is no `run_shell` or `run_job` fallback. The
+inactive server-local compatibility path follows the same direct-through-120
+and reject-larger behavior. Named SSH Session resources remain unsupported for
+typed process and script execution and fail before enqueue.
 
 ### Phase D — batch Job observation
 

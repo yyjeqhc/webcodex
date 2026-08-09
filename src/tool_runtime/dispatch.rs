@@ -684,7 +684,7 @@ impl ToolRuntime {
             call @ (ToolCall::RunProcess { .. }
             | ToolCall::RunScript { .. }
             | ToolCall::RunShell { .. }) => {
-                self.dispatch_shell_tool(call, execution_sandbox, ssh_resource)
+                self.dispatch_shell_tool(call, execution_sandbox, ssh_resource, auth)
                     .await
             }
 

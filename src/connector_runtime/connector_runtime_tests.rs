@@ -42,6 +42,7 @@ async fn register_agent(registry: &ShellClientRegistry, project_id: &str, path: 
                     structured_validation_argv: true,
                     structured_process_argv: true,
                     structured_script_payload: false,
+                    structured_execution_jobs: false,
                     lsp_read_only_navigation: false,
                     sandbox_inspect_commands: false,
                     project_lifecycle: false,
@@ -1012,6 +1013,7 @@ async fn writable_start_registers_and_releases_a_reusable_git_worktree() {
                         exit_code: Some(0),
                         duration_ms: Some(1),
                         error: None,
+                        command_execution_state: None,
                         validation_progress: Some(
                             crate::shell_protocol::ShellJobValidationProgress {
                                 completed: 1,

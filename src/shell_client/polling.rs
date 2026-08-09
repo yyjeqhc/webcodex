@@ -103,7 +103,13 @@ impl ShellClientRegistry {
                 if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
                     if job.status == "queued" {
                         job.status = "agent_queued".to_string();
-                        job.started_at = Some(now_ts());
+                        // Dispatch proves only that the Runner accepted the
+                        // Job request. A typed structured Job becomes started
+                        // only when the Runner reports `running` after a
+                        // successful child spawn.
+                        if job.structured_execution.is_none() {
+                            job.started_at = Some(now_ts());
+                        }
                         super::jobs::notify_job_update(job);
                     }
                 }

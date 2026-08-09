@@ -81,6 +81,7 @@ impl ShellClientRegistry {
             disconnected_at: None,
             process_started_at: body.process_started_at,
             build: body.build,
+            projected_structured_terminal_suppressions: VecDeque::new(),
         };
         match (
             capabilities.job_state_reconciliation,
@@ -220,6 +221,9 @@ impl ShellClientRegistry {
         if let Some(existing) = inner.clients.get(&client_id) {
             if existing.agent_instance_id == agent_instance_id {
                 record.registered_at = existing.registered_at;
+                record.projected_structured_terminal_suppressions =
+                    existing.projected_structured_terminal_suppressions.clone();
+                record.prune_projected_structured_terminal_suppressions(now);
             }
         }
 

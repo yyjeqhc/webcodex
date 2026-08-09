@@ -462,6 +462,7 @@ impl ShellClientRegistry {
                 command_preview: command_preview(&body.command),
                 validation_steps: Vec::new(),
                 validation: None,
+                structured_execution: None,
             });
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();

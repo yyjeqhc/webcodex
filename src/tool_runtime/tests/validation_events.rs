@@ -996,6 +996,7 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
             exit_code: Some(0),
             duration_ms: Some(12),
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: true,
         })

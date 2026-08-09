@@ -1,4 +1,4 @@
-use super::job_updates::{JobLogWaitOutcome, ShellJobStartMetadata};
+use super::job_updates::{JobLogWaitOutcome, ShellJobStartMetadata, StructuredJobExecution};
 use super::reconciliation::{
     recovery_timeout_sweep, validate_job_inventory, RECOVERY_SWEEP_PASS_CAP,
 };
@@ -10,8 +10,9 @@ use super::{
 use crate::shell_protocol::{
     PersistentShellResult, ShellAgentJobUpdateRequest, ShellAgentPollRequest,
     ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellJobContext, ShellJobInventory, ShellJobLogSnapshot,
-    ShellJobOpRequest, ShellJobSnapshot, ShellJobStreamSnapshot, ShellJobValidationProgress,
+    ShellClientRegisterRequest, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
+    ShellJobLogSnapshot, ShellJobOpRequest, ShellJobSnapshot, ShellJobStreamSnapshot,
+    ShellJobValidationProgress, ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload,
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };
 
@@ -27,6 +28,9 @@ fn reconciliation_capabilities() -> ShellClientCapabilities {
         jobs: true,
         async_jobs: true,
         async_shell_jobs: true,
+        structured_process_argv: true,
+        structured_script_payload: true,
+        structured_execution_jobs: true,
         structured_validation_argv: true,
         job_state_reconciliation: true,
         ..Default::default()
@@ -174,6 +178,7 @@ fn snapshot_from_request(
         exit_code: terminal.then_some(0),
         duration_ms: terminal.then_some(2_000),
         error: None,
+        command_execution_state: None,
         context: request.job_context.clone().expect("job context"),
         stdout,
         stderr: ShellJobStreamSnapshot::default(),
@@ -204,6 +209,7 @@ fn update(
         exit_code: finished.then_some(0),
         duration_ms: finished.then_some(2_000),
         error: None,
+        command_execution_state: None,
         validation_progress: None,
         finished,
     }
@@ -261,6 +267,569 @@ async fn job_reconciliation_server_restart_restores_running_job_and_completion()
         .unwrap();
     assert_eq!(stdout.as_deref(), Some("one\ntwo\n"));
     assert_eq!(next_stdout, 3);
+}
+
+#[tokio::test]
+async fn structured_process_reconciliation_restores_active_and_terminal_evidence_without_redispatch(
+) {
+    let registry_a = ShellClientRegistry::default();
+    register(&registry_a, INSTANCE_A, empty_inventory()).await;
+    let job = registry_a
+        .start_job_with_metadata(
+            start_request(""),
+            "tester".to_string(),
+            ShellJobStartMetadata {
+                project_id: Some(RUNTIME_PROJECT_ID.to_string()),
+                session_id: Some(SESSION_ID.to_string()),
+                project_cwd: Some("/srv/demo".to_string()),
+                purpose: Some("test".to_string()),
+                shell: Some("direct_argv".to_string()),
+                visibility: ShellJobVisibility::HiddenUntilHandoff,
+                structured_execution: Some(StructuredJobExecution::Process(ShellProcessArgv {
+                    executable: "/bin/echo".to_string(),
+                    args: vec!["literal;$(touch never-executed)".to_string()],
+                })),
+                stdin: Some("typed stdin".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let request = registry_a
+        .poll(ShellAgentPollRequest {
+            client_id: CLIENT_ID.to_string(),
+            agent_instance_id: INSTANCE_A.to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("typed process Job request");
+    assert_eq!(request.kind, "start_process_job");
+    assert_eq!(request.command, "");
+    assert!(request.process.is_some());
+    assert!(request.script.is_none());
+
+    let running_snapshot =
+        snapshot_from_request(&job, &request, "running", 2, stream("started\n", 1, false));
+    let registry_b = ShellClientRegistry::default();
+    register(
+        &registry_b,
+        INSTANCE_A,
+        ShellJobInventory {
+            active_complete: true,
+            jobs: vec![running_snapshot],
+        },
+    )
+    .await;
+    let restored = registry_b.get_job(&job.job_id).await.unwrap();
+    assert_eq!(restored.job_id, job.job_id);
+    assert_eq!(restored.status, "running");
+    assert_eq!(restored.kind, "run_process");
+    assert_eq!(
+        restored
+            .structured_execution
+            .as_ref()
+            .map(|metadata| metadata.execution_source.as_str()),
+        Some("run_process")
+    );
+    assert!(restored.recovered_after_server_restart);
+    assert!(
+        registry_b
+            .poll(ShellAgentPollRequest {
+                client_id: CLIENT_ID.to_string(),
+                agent_instance_id: INSTANCE_A.to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "active snapshot reconciliation must not enqueue typed process input"
+    );
+
+    let mut terminal_snapshot = snapshot_from_request(
+        &job,
+        &request,
+        "failed",
+        3,
+        stream("retained process stdout\n", 42, true),
+    );
+    terminal_snapshot.exit_code = Some(7);
+    terminal_snapshot.stderr = stream("retained process stderr\n", 9, true);
+    terminal_snapshot.command_execution_state = Some(ShellCommandExecutionState::Completed);
+    register(
+        &registry_b,
+        INSTANCE_A,
+        ShellJobInventory {
+            active_complete: true,
+            jobs: vec![terminal_snapshot.clone()],
+        },
+    )
+    .await;
+    let completed = registry_b.get_job(&job.job_id).await.unwrap();
+    assert_eq!(completed.status, "failed");
+    assert_eq!(completed.exit_code, Some(7));
+    assert_eq!(
+        completed.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(completed.stdout_retained_from_line, Some(42));
+    assert_eq!(completed.stderr_retained_from_line, Some(9));
+    assert!(completed.stdout_log_truncated);
+    assert!(completed.stderr_log_truncated);
+    let (_, stdout, stderr, _, _) = registry_b
+        .job_log(&job.job_id, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stdout.as_deref(), Some("retained process stdout\n"));
+    assert_eq!(stderr.as_deref(), Some("retained process stderr\n"));
+    assert!(
+        registry_b
+            .poll(ShellAgentPollRequest {
+                client_id: CLIENT_ID.to_string(),
+                agent_instance_id: INSTANCE_A.to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "terminal snapshot reconciliation must not enqueue a replacement process"
+    );
+
+    let registry_c = ShellClientRegistry::default();
+    register(
+        &registry_c,
+        INSTANCE_A,
+        ShellJobInventory {
+            active_complete: true,
+            jobs: vec![terminal_snapshot],
+        },
+    )
+    .await;
+    let recovered = registry_c.get_job(&job.job_id).await.unwrap();
+    assert_eq!(recovered.job_id, job.job_id);
+    assert_eq!(recovered.status, "failed");
+    assert_eq!(recovered.exit_code, Some(7));
+    assert_eq!(
+        recovered.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(recovered.project_id.as_deref(), Some(RUNTIME_PROJECT_ID));
+    assert_eq!(recovered.session_id.as_deref(), Some(SESSION_ID));
+    assert_eq!(recovered.project_cwd.as_deref(), Some("/srv/demo"));
+    assert_eq!(recovered.cwd.as_deref(), Some("/srv/demo"));
+    assert_eq!(recovered.purpose.as_deref(), Some("test"));
+    assert_eq!(recovered.shell.as_deref(), Some("direct_argv"));
+    assert_eq!(recovered.stdout_retained_from_line, Some(42));
+    assert_eq!(recovered.stderr_retained_from_line, Some(9));
+    assert!(recovered.stdout_log_truncated);
+    assert!(recovered.stderr_log_truncated);
+    let metadata = recovered
+        .structured_execution
+        .as_ref()
+        .expect("safe process metadata");
+    assert_eq!(metadata.execution_source, "run_process");
+    assert_eq!(metadata.language, None);
+    assert_eq!(metadata.script_bytes, None);
+    assert_eq!(metadata.arg_count, 1);
+    assert!(metadata.stdin_present);
+    assert!(recovered.recovered_after_server_restart);
+    assert_eq!(
+        recovered.recovery_reason_code.as_deref(),
+        Some("server_restart_reconciliation")
+    );
+    let (_, stdout, stderr, _, _) = registry_c
+        .job_log(&job.job_id, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stdout.as_deref(), Some("retained process stdout\n"));
+    assert_eq!(stderr.as_deref(), Some("retained process stderr\n"));
+    assert_eq!(registry_c.list_jobs(Some(10)).await.len(), 1);
+    assert!(
+        registry_c
+            .poll(ShellAgentPollRequest {
+                client_id: CLIENT_ID.to_string(),
+                agent_instance_id: INSTANCE_A.to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "fresh-registry terminal recovery must not enqueue typed process input"
+    );
+    assert!(
+        !serde_json::to_string(&recovered)
+            .unwrap()
+            .contains("typed stdin"),
+        "recovered durable state must not contain typed stdin"
+    );
+}
+
+#[tokio::test]
+async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_without_redispatch() {
+    let registry_a = ShellClientRegistry::default();
+    register(&registry_a, INSTANCE_A, empty_inventory()).await;
+    let script_body = "printf 'retained script output\\n'\n".to_string();
+    let script_arg = "private structured script arg".to_string();
+    let script_stdin = "private structured script stdin".to_string();
+    let job = registry_a
+        .start_job_with_metadata(
+            start_request(""),
+            "tester".to_string(),
+            ShellJobStartMetadata {
+                project_id: Some(RUNTIME_PROJECT_ID.to_string()),
+                session_id: Some(SESSION_ID.to_string()),
+                project_cwd: Some("/srv/demo".to_string()),
+                purpose: Some("test".to_string()),
+                shell: Some("bash".to_string()),
+                visibility: ShellJobVisibility::HiddenUntilHandoff,
+                structured_execution: Some(StructuredJobExecution::Script(ShellScriptPayload {
+                    language: ShellScriptLanguage::Bash,
+                    script: script_body.clone(),
+                    args: vec![script_arg.clone()],
+                })),
+                stdin: Some(script_stdin.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let request = registry_a
+        .poll(ShellAgentPollRequest {
+            client_id: CLIENT_ID.to_string(),
+            agent_instance_id: INSTANCE_A.to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("typed script Job request");
+    assert_eq!(request.kind, "start_script_job");
+    assert_eq!(request.command, "");
+    assert!(request.process.is_none());
+    assert!(request.script.is_some());
+
+    let mut terminal_snapshot = snapshot_from_request(
+        &job,
+        &request,
+        "completed",
+        2,
+        stream("retained script stdout\n", 17, true),
+    );
+    terminal_snapshot.stderr = stream("retained script stderr\n", 4, true);
+    terminal_snapshot.command_execution_state = Some(ShellCommandExecutionState::Completed);
+
+    let registry_b = ShellClientRegistry::default();
+    register(
+        &registry_b,
+        INSTANCE_A,
+        ShellJobInventory {
+            active_complete: true,
+            jobs: vec![terminal_snapshot],
+        },
+    )
+    .await;
+
+    let recovered = registry_b.get_job(&job.job_id).await.unwrap();
+    assert_eq!(recovered.job_id, job.job_id);
+    assert_eq!(recovered.kind, "run_script");
+    assert_eq!(recovered.status, "completed");
+    assert_eq!(recovered.exit_code, Some(0));
+    assert_eq!(
+        recovered.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(recovered.project_id.as_deref(), Some(RUNTIME_PROJECT_ID));
+    assert_eq!(recovered.session_id.as_deref(), Some(SESSION_ID));
+    assert_eq!(recovered.project_cwd.as_deref(), Some("/srv/demo"));
+    assert_eq!(recovered.cwd.as_deref(), Some("/srv/demo"));
+    assert_eq!(recovered.purpose.as_deref(), Some("test"));
+    assert_eq!(recovered.shell.as_deref(), Some("bash"));
+    assert_eq!(recovered.stdout_retained_from_line, Some(17));
+    assert_eq!(recovered.stderr_retained_from_line, Some(4));
+    assert!(recovered.stdout_log_truncated);
+    assert!(recovered.stderr_log_truncated);
+    let metadata = recovered
+        .structured_execution
+        .as_ref()
+        .expect("safe script metadata");
+    assert_eq!(metadata.execution_source, "run_script");
+    assert_eq!(metadata.language, Some(ShellScriptLanguage::Bash));
+    assert_eq!(metadata.script_bytes, Some(script_body.len()));
+    assert_eq!(metadata.arg_count, 1);
+    assert!(metadata.stdin_present);
+    assert!(recovered.recovered_after_server_restart);
+    let (_, stdout, stderr, _, _) = registry_b
+        .job_log(&job.job_id, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stdout.as_deref(), Some("retained script stdout\n"));
+    assert_eq!(stderr.as_deref(), Some("retained script stderr\n"));
+    let durable = serde_json::to_string(&recovered).unwrap();
+    for raw in [&script_body, &script_arg, &script_stdin] {
+        assert!(
+            !durable.contains(raw),
+            "recovered durable state leaked raw structured script input"
+        );
+    }
+    assert_eq!(registry_b.list_jobs(Some(10)).await.len(), 1);
+    assert!(
+        registry_b
+            .poll(ShellAgentPollRequest {
+                client_id: CLIENT_ID.to_string(),
+                agent_instance_id: INSTANCE_A.to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "fresh-registry terminal recovery must not enqueue typed script input"
+    );
+}
+
+#[tokio::test]
+async fn projected_hidden_structured_terminal_is_suppressed_only_by_same_server_history() {
+    let registry = ShellClientRegistry::default();
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let job = registry
+        .start_job_with_metadata(
+            start_request(""),
+            "tester".to_string(),
+            ShellJobStartMetadata {
+                project_id: Some(RUNTIME_PROJECT_ID.to_string()),
+                session_id: Some(SESSION_ID.to_string()),
+                project_cwd: Some("/srv/demo".to_string()),
+                purpose: Some("test".to_string()),
+                shell: Some("direct_argv".to_string()),
+                visibility: ShellJobVisibility::HiddenUntilHandoff,
+                structured_execution: Some(StructuredJobExecution::Process(ShellProcessArgv {
+                    executable: "/bin/echo".to_string(),
+                    args: vec!["safe retained argument".to_string()],
+                })),
+                stdin: Some("private projected stdin".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(ShellAgentPollRequest {
+            client_id: CLIENT_ID.to_string(),
+            agent_instance_id: INSTANCE_A.to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("typed process Job request");
+    assert_eq!(request.kind, "start_process_job");
+
+    registry
+        .update_job(update(
+            INSTANCE_A,
+            &job.job_id,
+            1,
+            "running",
+            Some("started\n"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let mut terminal_update = update(
+        INSTANCE_A,
+        &job.job_id,
+        2,
+        "failed",
+        Some("retained process stdout\n"),
+        true,
+    );
+    terminal_update.stderr_chunk = Some("retained process stderr\n".to_string());
+    terminal_update.exit_code = Some(7);
+    terminal_update.command_execution_state = Some(ShellCommandExecutionState::Completed);
+    registry.update_job(terminal_update).await.unwrap();
+
+    let (projected, stdout, stderr, _, _) = registry
+        .hidden_job_log_for_auth(None, &job.job_id, None)
+        .await
+        .unwrap();
+    assert_eq!(projected.status, "failed");
+    assert_eq!(projected.exit_code, Some(7));
+    assert_eq!(
+        projected.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(
+        stdout.as_deref(),
+        Some("started\nretained process stdout\n")
+    );
+    assert_eq!(stderr.as_deref(), Some("retained process stderr\n"));
+
+    let mut retained_snapshot = snapshot_from_request(
+        &job,
+        &request,
+        "failed",
+        2,
+        stream("started\nretained process stdout\n", 42, true),
+    );
+    retained_snapshot.exit_code = Some(7);
+    retained_snapshot.stderr = stream("retained process stderr\n", 9, true);
+    retained_snapshot.command_execution_state = Some(ShellCommandExecutionState::Completed);
+
+    assert!(
+        registry
+            .remove_projected_hidden_structured_job_record(&job.job_id)
+            .await
+    );
+    assert!(registry.list_jobs(Some(10)).await.is_empty());
+    assert!(registry.get_job(&job.job_id).await.is_err());
+
+    register(
+        &registry,
+        INSTANCE_A,
+        ShellJobInventory {
+            active_complete: true,
+            jobs: vec![retained_snapshot.clone()],
+        },
+    )
+    .await;
+    assert!(registry.get_job(&job.job_id).await.is_err());
+    assert!(registry.list_jobs(Some(10)).await.is_empty());
+    assert!(
+        registry
+            .poll(ShellAgentPollRequest {
+                client_id: CLIENT_ID.to_string(),
+                agent_instance_id: INSTANCE_A.to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "same-Server suppression must not enqueue typed process input"
+    );
+    {
+        let inner = registry.inner.lock().await;
+        assert!(inner.pending_by_id.is_empty());
+        assert!(inner
+            .queues_by_client
+            .get(CLIENT_ID)
+            .is_none_or(|queue| queue.is_empty()));
+    }
+
+    let fresh_registry = ShellClientRegistry::default();
+    register(
+        &fresh_registry,
+        INSTANCE_A,
+        ShellJobInventory {
+            active_complete: true,
+            jobs: vec![retained_snapshot],
+        },
+    )
+    .await;
+    let recovered = fresh_registry.get_job(&job.job_id).await.unwrap();
+    assert_eq!(recovered.job_id, job.job_id);
+    assert_eq!(recovered.status, "failed");
+    assert_eq!(recovered.exit_code, Some(7));
+    assert_eq!(
+        recovered.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(recovered.project_id.as_deref(), Some(RUNTIME_PROJECT_ID));
+    assert_eq!(recovered.session_id.as_deref(), Some(SESSION_ID));
+    assert_eq!(recovered.project_cwd.as_deref(), Some("/srv/demo"));
+    assert_eq!(recovered.cwd.as_deref(), Some("/srv/demo"));
+    assert_eq!(recovered.purpose.as_deref(), Some("test"));
+    assert_eq!(recovered.shell.as_deref(), Some("direct_argv"));
+    assert_eq!(recovered.stdout_retained_from_line, Some(42));
+    assert_eq!(recovered.stderr_retained_from_line, Some(9));
+    assert!(recovered.stdout_log_truncated);
+    assert!(recovered.stderr_log_truncated);
+    assert!(recovered.recovered_after_server_restart);
+    assert_eq!(
+        recovered.recovery_reason_code.as_deref(),
+        Some("server_restart_reconciliation")
+    );
+    let metadata = recovered
+        .structured_execution
+        .as_ref()
+        .expect("safe structured process metadata");
+    assert_eq!(metadata.execution_source, "run_process");
+    assert_eq!(metadata.arg_count, 1);
+    assert!(metadata.stdin_present);
+    let (_, stdout, stderr, _, _) = fresh_registry
+        .job_log(&job.job_id, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stdout.as_deref(),
+        Some("started\nretained process stdout\n")
+    );
+    assert_eq!(stderr.as_deref(), Some("retained process stderr\n"));
+    assert_eq!(fresh_registry.list_jobs(Some(10)).await.len(), 1);
+    assert!(
+        fresh_registry
+            .poll(ShellAgentPollRequest {
+                client_id: CLIENT_ID.to_string(),
+                agent_instance_id: INSTANCE_A.to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "fresh-Server recovery must not enqueue typed process input"
+    );
+    assert!(!serde_json::to_string(&recovered)
+        .unwrap()
+        .contains("private projected stdin"));
+}
+
+#[tokio::test]
+async fn projected_structured_terminal_suppressions_are_bounded_and_expire() {
+    let registry = ShellClientRegistry::default();
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let now = now_ts();
+    {
+        let mut inner = registry.inner.lock().await;
+        let client = inner.clients.get_mut(CLIENT_ID).unwrap();
+        for index in 0..=JOB_INVENTORY_MAX_TERMINAL_JOBS {
+            client.remember_projected_structured_terminal(
+                format!("projected-job-{index}"),
+                format!("projected-request-{index}"),
+                now,
+            );
+        }
+        assert_eq!(
+            client.projected_structured_terminal_suppressions.len(),
+            JOB_INVENTORY_MAX_TERMINAL_JOBS
+        );
+        assert_eq!(
+            client
+                .projected_structured_terminal_suppressions
+                .front()
+                .map(|suppression| suppression.job_id.as_str()),
+            Some("projected-job-1")
+        );
+        assert!(client.suppresses_projected_structured_terminal(
+            CLIENT_ID,
+            INSTANCE_A,
+            "projected-job-64",
+            "projected-request-64",
+            now,
+        ));
+        assert!(!client.suppresses_projected_structured_terminal(
+            CLIENT_ID,
+            INSTANCE_A,
+            "projected-job-64",
+            "wrong-request",
+            now,
+        ));
+        for suppression in &mut client.projected_structured_terminal_suppressions {
+            suppression.expires_at = now;
+        }
+    }
+
+    recovery_timeout_sweep(&registry).await;
+
+    let inner = registry.inner.lock().await;
+    assert!(inner.clients[CLIENT_ID]
+        .projected_structured_terminal_suppressions
+        .is_empty());
 }
 
 #[tokio::test]
@@ -625,6 +1194,7 @@ async fn terminal_observed_legacy_trimmed_terminal_status_cleans_request_state()
             exit_code: Some(0),
             duration_ms: Some(20),
             error: None,
+            command_execution_state: None,
             validation_progress: None,
             finished: true,
         })
@@ -1198,6 +1768,7 @@ fn standalone_snapshot(job_id: &str, status: &str) -> ShellJobSnapshot {
         exit_code: terminal.then_some(0),
         duration_ms: terminal.then_some(1_000),
         error: None,
+        command_execution_state: None,
         context: ShellJobContext {
             runtime_project_id: None,
             workflow_session_id: None,
@@ -1209,6 +1780,7 @@ fn standalone_snapshot(job_id: &str, status: &str) -> ShellJobSnapshot {
             command_preview: "safe preview".to_string(),
             validation_steps: Vec::new(),
             validation: None,
+            structured_execution: None,
         },
         stdout: ShellJobStreamSnapshot::default(),
         stderr: ShellJobStreamSnapshot::default(),

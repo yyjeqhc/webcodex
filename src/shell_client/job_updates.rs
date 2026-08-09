@@ -1,8 +1,8 @@
 use super::auth::{assert_shell_client_access, shell_job_visible_to_auth};
 use super::jobs::{
     append_log_limited, assert_active_instance_locked, command_preview, is_final_job_status,
-    job_view, notify_job_update, observe_job_terminal, refresh_job_status_locked,
-    replace_log_limited, select_log_lines,
+    job_view, notify_job_update, observe_job_terminal, process_preview, refresh_job_status_locked,
+    replace_log_limited, script_preview, select_log_lines,
 };
 use super::reconciliation::validate_stream_snapshot;
 use super::requests::{
@@ -13,9 +13,12 @@ use super::state::{ShellJobRecord, ShellJobVisibility};
 use super::validation::{validate_agent_instance_id, validate_id, validate_run_request};
 use super::{now_ts, ShellClientRegistry};
 use crate::shell_protocol::{
-    validation_infrastructure_failure_code, ShellAgentJobUpdateRequest, ShellAgentShellRequest,
-    ShellJobContext, ShellJobInfo, ShellJobOpRequest, ShellJobValidationMetadata,
-    ShellJobValidationStep, ShellRunRequest,
+    validate_process_argv, validate_script_request, validation_infrastructure_failure_code,
+    ShellAgentJobUpdateRequest, ShellAgentShellRequest, ShellCommandExecutionState,
+    ShellJobContext, ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata,
+    ShellJobValidationMetadata, ShellJobValidationStep, ShellProcessArgv, ShellRunRequest,
+    ShellScriptPayload, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -88,6 +91,7 @@ struct JobPublicMutationSignature {
     ended_at: Option<i64>,
     exit_code: Option<i32>,
     duration_ms: Option<u64>,
+    command_execution_state: Option<ShellCommandExecutionState>,
     validation_progress: Option<crate::shell_protocol::ShellJobValidationProgress>,
     recovered_after_server_restart: bool,
     reconciled_at: Option<i64>,
@@ -106,6 +110,7 @@ fn public_mutation_signature(job: &ShellJobRecord) -> JobPublicMutationSignature
         ended_at: job.ended_at,
         exit_code: job.exit_code,
         duration_ms: job.duration_ms,
+        command_execution_state: job.command_execution_state,
         validation_progress: job.validation_progress.clone(),
         recovered_after_server_restart: job.recovered_after_server_restart,
         reconciled_at: job.reconciled_at,
@@ -197,6 +202,39 @@ fn validate_validation_progress(
     }
 }
 
+fn validate_command_execution_state(
+    job: &ShellJobRecord,
+    update: &ShellAgentJobUpdateRequest,
+) -> Result<(), ValidationProtocolError> {
+    let status = update.status.trim();
+    let terminal = is_final_job_status(status);
+    if !terminal && update.command_execution_state.is_some() {
+        return invalid_progress("command_execution_state_on_active_job");
+    }
+    if job.structured_execution.is_some() && terminal && update.command_execution_state.is_none() {
+        return invalid_progress("structured_job_lifecycle_missing");
+    }
+    let Some(state) = update.command_execution_state else {
+        return Ok(());
+    };
+    let valid = match state {
+        ShellCommandExecutionState::NotStarted => {
+            matches!(status, "failed" | "stopped" | "cancelled" | "lost")
+                && job.started_at.is_none()
+        }
+        ShellCommandExecutionState::OutcomeUnknown => matches!(status, "failed" | "lost"),
+        ShellCommandExecutionState::TimedOut => matches!(status, "timeout" | "timed_out"),
+        ShellCommandExecutionState::Completed => {
+            matches!(status, "completed" | "failed" | "stopped" | "cancelled")
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        invalid_progress("structured_job_lifecycle_invalid")
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ShellJobStartMetadata {
     pub(crate) project_id: Option<String>,
@@ -209,6 +247,49 @@ pub(crate) struct ShellJobStartMetadata {
     pub(crate) validation: Option<ShellJobValidationMetadata>,
     pub(crate) visibility: ShellJobVisibility,
     pub(crate) sandbox: Option<String>,
+    pub(crate) structured_execution: Option<StructuredJobExecution>,
+    pub(crate) stdin: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum StructuredJobExecution {
+    Process(ShellProcessArgv),
+    Script(ShellScriptPayload),
+}
+
+fn validate_structured_job_common(
+    cwd: Option<&str>,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+) -> Result<(), String> {
+    if let Some(stdin) = stdin {
+        if stdin.len() > PROCESS_STDIN_MAX_BYTES {
+            return Err(format!(
+                "stdin is too large; maximum is {PROCESS_STDIN_MAX_BYTES} bytes"
+            ));
+        }
+        if stdin.contains('\0') {
+            return Err("stdin cannot contain NUL bytes".to_string());
+        }
+    }
+    if let Some(cwd) = cwd {
+        if cwd.len() > PROCESS_CWD_MAX_BYTES {
+            return Err(format!(
+                "cwd is too long; maximum is {PROCESS_CWD_MAX_BYTES} bytes"
+            ));
+        }
+        if cwd.contains('\0') {
+            return Err("cwd cannot contain NUL bytes".to_string());
+        }
+    }
+    if !(STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS..=STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS)
+        .contains(&timeout_secs)
+    {
+        return Err(format!(
+            "timeout_secs must be between {STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS} and {STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS}"
+        ));
+    }
+    Ok(())
 }
 
 impl ShellClientRegistry {
@@ -246,15 +327,8 @@ impl ShellClientRegistry {
             .command
             .clone()
             .ok_or_else(|| "command is required for op=start".to_string())?;
-        let run = ShellRunRequest {
-            client_id: client_id.clone(),
-            cwd: body.cwd.clone(),
-            command: command.clone(),
-            stdin: None,
-            timeout_secs: body.timeout_secs.unwrap_or(120),
-            wait_timeout_secs: 0,
-        };
-        validate_run_request(&run)?;
+        let timeout_secs = body.timeout_secs.unwrap_or(120);
+        let normalized_job_cwd = body.cwd.clone().map(|cwd| cwd.trim().to_string());
         let request_id = next_request_id();
         let job_id = Uuid::new_v4().to_string();
         let created_at = now_ts();
@@ -279,6 +353,8 @@ impl ShellClientRegistry {
         let sandbox = metadata.sandbox;
         let validation_steps = metadata.validation_steps;
         let validation = metadata.validation;
+        let structured_execution = metadata.structured_execution;
+        let structured_stdin = metadata.stdin;
         if validation_steps.len() > 3
             || validation_steps.iter().any(|step| !step.is_canonical())
             || validation_steps
@@ -296,27 +372,130 @@ impl ShellClientRegistry {
         {
             return Err("invalid structured validation metadata".to_string());
         }
-        let request_kind = if validation_steps.is_empty() {
-            "start_job"
-        } else {
-            "start_validation_job"
-        };
-        let request_command = if validation_steps.is_empty() {
-            command.clone()
-        } else {
-            serde_json::to_string(&validation_steps)
-                .map_err(|error| format!("could not serialize validation plan: {error}"))?
+        if structured_execution.is_some()
+            && (!validation_steps.is_empty() || validation.is_some() || !command.is_empty())
+        {
+            return Err(
+                "typed structured Job starts require command=\"\" and no validation plan"
+                    .to_string(),
+            );
+        }
+        let (
+            request_kind,
+            request_command,
+            request_process,
+            request_script,
+            request_stdin,
+            safe_command_preview,
+            structured_metadata,
+            job_kind,
+        ) = match structured_execution {
+            Some(StructuredJobExecution::Process(process)) => {
+                validate_process_argv(&process)?;
+                validate_structured_job_common(
+                    normalized_job_cwd.as_deref(),
+                    structured_stdin.as_deref(),
+                    timeout_secs,
+                )?;
+                let preview =
+                    process_preview(&process.executable, process.args.iter().map(String::as_str));
+                let safe = ShellJobStructuredExecutionMetadata {
+                    execution_source: "run_process".to_string(),
+                    language: None,
+                    script_bytes: None,
+                    arg_count: process.args.len(),
+                    stdin_present: structured_stdin.is_some(),
+                };
+                (
+                    "start_process_job",
+                    String::new(),
+                    Some(process),
+                    None,
+                    structured_stdin,
+                    preview,
+                    Some(safe),
+                    "run_process",
+                )
+            }
+            Some(StructuredJobExecution::Script(script)) => {
+                validate_script_request(
+                    &script,
+                    structured_stdin.as_deref(),
+                    normalized_job_cwd.as_deref(),
+                    timeout_secs,
+                )?;
+                let preview = script_preview(
+                    script.language.as_str(),
+                    script.script.len(),
+                    script.args.len(),
+                );
+                let safe = ShellJobStructuredExecutionMetadata {
+                    execution_source: "run_script".to_string(),
+                    language: Some(script.language),
+                    script_bytes: Some(script.script.len()),
+                    arg_count: script.args.len(),
+                    stdin_present: structured_stdin.is_some(),
+                };
+                (
+                    "start_script_job",
+                    String::new(),
+                    None,
+                    Some(script),
+                    structured_stdin,
+                    preview,
+                    Some(safe),
+                    "run_script",
+                )
+            }
+            None => {
+                let run = ShellRunRequest {
+                    client_id: client_id.clone(),
+                    cwd: normalized_job_cwd.clone(),
+                    command: command.clone(),
+                    stdin: None,
+                    timeout_secs,
+                    wait_timeout_secs: 0,
+                };
+                validate_run_request(&run)?;
+                let request_kind = if validation_steps.is_empty() {
+                    "start_job"
+                } else {
+                    "start_validation_job"
+                };
+                let request_command = if validation_steps.is_empty() {
+                    command.clone()
+                } else {
+                    serde_json::to_string(&validation_steps)
+                        .map_err(|error| format!("could not serialize validation plan: {error}"))?
+                };
+                let preview = if validation_steps.is_empty() {
+                    command_preview(&run.command)
+                } else {
+                    format!(
+                        "validation: {}",
+                        validation_steps
+                            .iter()
+                            .map(|step| step.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                (
+                    request_kind,
+                    request_command,
+                    None,
+                    None,
+                    None,
+                    preview,
+                    None,
+                    "shell",
+                )
+            }
         };
         let validation_step_names = validation_steps
             .iter()
             .map(|step| step.name.clone())
             .collect::<Vec<_>>();
-        let normalized_job_cwd = run.cwd.clone().map(|cwd| cwd.trim().to_string());
-        let safe_command_preview = if validation_steps.is_empty() {
-            command_preview(&run.command)
-        } else {
-            format!("validation: {}", validation_step_names.join(", "))
-        };
         let job_context = ShellJobContext {
             runtime_project_id: metadata.project_id.clone(),
             workflow_session_id: metadata.session_id.clone(),
@@ -328,6 +507,7 @@ impl ShellClientRegistry {
             command_preview: safe_command_preview.clone(),
             validation_steps: validation_step_names.clone(),
             validation: validation.clone(),
+            structured_execution: structured_metadata.clone(),
         };
         let request = ShellAgentShellRequest {
             request_id: request_id.clone(),
@@ -344,10 +524,10 @@ impl ShellClientRegistry {
             end_line: None,
             create_dirs: false,
             command: request_command,
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: run.timeout_secs,
+            process: request_process,
+            script: request_script,
+            stdin: request_stdin,
+            timeout_secs,
             requested_by,
             created_at,
             validation: None,
@@ -368,6 +548,17 @@ impl ShellClientRegistry {
                 "agent client {} does not support async shell jobs",
                 client_id
             ));
+        }
+        if structured_metadata.is_some() && !client.capabilities.structured_execution_jobs {
+            return Err(format!(
+                "capability_unavailable: agent client {client_id} does not support structured_execution_jobs"
+            ));
+        }
+        if structured_metadata.is_some() && metadata.ssh_resource.is_some() {
+            return Err(
+                "ssh_resource_unsupported_for_request: typed structured Jobs do not support SSH resources"
+                    .to_string(),
+            );
         }
         if metadata.ssh_resource.is_some() && !client.capabilities.ssh_shell {
             return Err(format!(
@@ -416,7 +607,7 @@ impl ShellClientRegistry {
             client_id: client_id.clone(),
             auth_group,
             agent_instance_id,
-            kind: "shell".to_string(),
+            kind: job_kind.to_string(),
             project_id: metadata.project_id,
             session_id: metadata.session_id,
             ssh_resource: metadata.ssh_resource,
@@ -435,6 +626,8 @@ impl ShellClientRegistry {
             stdout: Default::default(),
             stderr: Default::default(),
             error: None,
+            command_execution_state: None,
+            structured_execution: structured_metadata,
             codex: body.codex.clone(),
             validation_steps: validation_step_names,
             validation,
@@ -481,10 +674,10 @@ impl ShellClientRegistry {
             .get_mut(job_id)
             .ok_or_else(|| format!("unknown shell job: {job_id}"))?;
         if job.visibility == ShellJobVisibility::CleanupPending {
-            return Err(format!("validation job cleanup is pending: {job_id}"));
+            return Err(format!("structured job cleanup is pending: {job_id}"));
         }
         // A terminal update may race the sync-wait deadline. Keep terminal
-        // records hidden so the original cargo call returns its structured
+        // records hidden so the initiating structured tool call returns its
         // terminal result instead of handing off an already-finished Job.
         if !is_final_job_status(&job.status) {
             job.visibility = ShellJobVisibility::Public;
@@ -537,10 +730,10 @@ impl ShellClientRegistry {
         ))
     }
 
-    /// Record validation cleanup synchronously. This is safe to call from a
-    /// future's Drop implementation and is deliberately separate from stop
-    /// delivery: the periodic registry lifecycle will retry any intent whose
-    /// immediate asynchronous processor is delayed or unavailable.
+    /// Record hidden structured-execution cleanup synchronously. This is safe
+    /// to call from a future's Drop implementation and is deliberately
+    /// separate from stop delivery: the periodic registry lifecycle retries
+    /// any intent whose immediate asynchronous processor is delayed.
     pub(crate) fn record_hidden_cleanup_intent(
         &self,
         job_id: String,
@@ -666,16 +859,14 @@ impl ShellClientRegistry {
                 )?;
                 let record = inner.jobs_by_id.get_mut(job_id).expect("job exists");
                 record.status = "stop_requested".to_string();
-                record.error = Some("internal validation cleanup requested".to_string());
+                record.error = Some("internal structured execution cleanup requested".to_string());
                 notify_client_locked(&inner, &job.client_id);
             }
         }
         Ok(false)
     }
 
-    /// Remove a job record entirely (agent-backed). Used by the structured
-    /// validation path when a validation completes inside its synchronous wait
-    /// window: the job is discarded rather than left as user-visible history.
+    /// Remove a job record entirely (agent-backed).
     /// The caller must ensure the job is terminal or stopped first; removing a
     /// still-active record would orphan the runner process (its later updates
     /// then fail harmlessly as "unknown shell job"). Also drops any still
@@ -692,6 +883,53 @@ impl ShellClientRegistry {
             if let Some(queue) = inner.queues_by_client.get_mut(&job.client_id) {
                 queue.retain(|id| id != &request_id);
             }
+        }
+        true
+    }
+
+    /// Discard a terminal hidden structured Job after its result has been
+    /// projected into the initiating `run_process` or `run_script` response.
+    ///
+    /// The exact discarded handle is retained only in the current Server
+    /// process, bounded by the Runner terminal-inventory limits. A same-runner
+    /// registration replay can then suppress that already-projected terminal
+    /// evidence without changing fresh-Server conservative recovery.
+    pub(crate) async fn remove_projected_hidden_structured_job_record(&self, job_id: &str) -> bool {
+        let mut inner = self.inner.lock().await;
+        let Some(job) = inner.jobs_by_id.get(job_id) else {
+            return false;
+        };
+        let Some(request_id) = job.request_id.clone() else {
+            return false;
+        };
+        if job.visibility != ShellJobVisibility::HiddenUntilHandoff
+            || !is_final_job_status(&job.status)
+            || job.structured_execution.is_none()
+        {
+            return false;
+        }
+        let client_id = job.client_id.clone();
+        let agent_instance_id = job.agent_instance_id.clone();
+        let Some(client) = inner.clients.get_mut(&client_id) else {
+            return false;
+        };
+        if client.agent_instance_id != agent_instance_id {
+            return false;
+        }
+        client.remember_projected_structured_terminal(
+            job_id.to_string(),
+            request_id.clone(),
+            now_ts(),
+        );
+
+        let removed = inner
+            .jobs_by_id
+            .remove(job_id)
+            .expect("projected structured Job was checked under the registry lock");
+        inner.request_to_job.remove(&request_id);
+        inner.pending_by_id.remove(&request_id);
+        if let Some(queue) = inner.queues_by_client.get_mut(&removed.client_id) {
+            queue.retain(|id| id != &request_id);
         }
         true
     }
@@ -1081,6 +1319,9 @@ impl ShellClientRegistry {
                 observe_job_terminal(job, terminal_now);
                 job.ended_at = Some(terminal_now);
                 job.error = Some("job stopped before agent picked it up".to_string());
+                if job.structured_execution.is_some() {
+                    job.command_execution_state = Some(ShellCommandExecutionState::NotStarted);
+                }
                 notify_job_update(job);
                 Ok(job_view(job))
             }
@@ -1311,7 +1552,9 @@ impl ShellClientRegistry {
                         .to_string(),
                 );
             }
-            if let Err(error) = validate_validation_progress(job, &body) {
+            if let Err(error) = validate_validation_progress(job, &body)
+                .and_then(|_| validate_command_execution_state(job, &body))
+            {
                 let terminal_now = now_ts();
                 job.status = "failed".to_string();
                 observe_job_terminal(job, terminal_now);
@@ -1319,6 +1562,13 @@ impl ShellClientRegistry {
                 job.exit_code = body.exit_code;
                 job.duration_ms = body.duration_ms;
                 job.error = Some(format!("executor protocol violation: {}", error.0));
+                if job.structured_execution.is_some() {
+                    job.command_execution_state = Some(if job.started_at.is_some() {
+                        ShellCommandExecutionState::OutcomeUnknown
+                    } else {
+                        ShellCommandExecutionState::NotStarted
+                    });
+                }
                 request_id_to_remove = job.request_id.clone();
             } else {
                 let was_recovering = job.status == "recovering";
@@ -1335,6 +1585,7 @@ impl ShellClientRegistry {
                     job.validation_progress = body.validation_progress.clone();
                 }
                 if job.started_at.is_none()
+                    && body.command_execution_state != Some(ShellCommandExecutionState::NotStarted)
                     && matches!(
                         incoming_status,
                         "running" | "completed" | "failed" | "stopped" | "timeout"
@@ -1357,6 +1608,7 @@ impl ShellClientRegistry {
                     job.exit_code = body.exit_code;
                     job.duration_ms = body.duration_ms;
                     job.error = body.error;
+                    job.command_execution_state = body.command_execution_state;
                     job.recovery_state = job.reconciled_at.map(|_| "reconciled".to_string());
                     job.recovering_since = None;
                     job.recovery_original_status = None;

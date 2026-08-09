@@ -1,8 +1,8 @@
 use super::state::{ShellClientRegistryInner, ShellJobLogState, ShellJobRecord};
 use super::{now_ts, CLIENT_ONLINE_WINDOW_SECS, MAX_OUTPUT_BYTES, MAX_QUEUED_REQUESTS_PER_CLIENT};
 use crate::shell_protocol::{
-    ShellAgentJobResult, ShellAgentShellJobResult, ShellAgentShellRequest, ShellJobInfo,
-    ShellJobStreamSnapshot,
+    ShellAgentJobResult, ShellAgentShellJobResult, ShellAgentShellRequest,
+    ShellCommandExecutionState, ShellJobInfo, ShellJobStreamSnapshot,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -315,6 +315,8 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         duration_ms: job.duration_ms,
         elapsed_secs,
         error: job.error.clone(),
+        command_execution_state: job.command_execution_state,
+        structured_execution: job.structured_execution.clone(),
         codex: job.codex.clone(),
         result,
         validation_progress: job.validation_progress.clone(),
@@ -540,6 +542,13 @@ pub(super) fn mark_job_lost(job: &mut ShellJobRecord, now: i64, reason_code: &st
         job.ended_at = Some(now);
     }
     job.error = Some(message.to_string());
+    if job.structured_execution.is_some() {
+        job.command_execution_state = Some(if job.started_at.is_some() {
+            ShellCommandExecutionState::OutcomeUnknown
+        } else {
+            ShellCommandExecutionState::NotStarted
+        });
+    }
     job.recovery_state = matches!(
         reason_code,
         "runner_inventory_missing"

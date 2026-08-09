@@ -893,6 +893,8 @@ impl ToolRuntime {
                     }),
                     visibility: crate::shell_client::ShellJobVisibility::HiddenUntilHandoff,
                     sandbox: sandbox.map(str::to_string),
+                    structured_execution: None,
+                    stdin: None,
                 },
                 auth,
             )

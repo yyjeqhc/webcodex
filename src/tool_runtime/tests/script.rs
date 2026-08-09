@@ -3,13 +3,14 @@
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::{
-    ShellAgentResultPayload, ShellAgentResultRequest, ShellClientCapabilities,
-    ShellCommandExecutionState, ShellScriptLanguage, SCRIPT_MAX_BYTES,
+    ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentResultRequest,
+    ShellClientCapabilities, ShellCommandExecutionState, ShellScriptLanguage, SCRIPT_MAX_BYTES,
 };
 use crate::tool_runtime::activity::{ActivityRecord, ActivityRecorder};
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 fn script_call(
     project: String,
@@ -57,6 +58,66 @@ async fn register_script_agent(
     )
     .await;
     crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+}
+
+async fn register_script_job_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    root: &std::path::Path,
+) -> String {
+    let mut capabilities = ShellClientCapabilities::default();
+    capabilities.shell = true;
+    capabilities.async_jobs = true;
+    capabilities.async_shell_jobs = true;
+    capabilities.structured_validation_argv = true;
+    capabilities.structured_process_argv = true;
+    capabilities.structured_script_payload = true;
+    capabilities.structured_execution_jobs = true;
+    register_agent_with_projects(
+        runtime,
+        client_id,
+        None,
+        capabilities,
+        vec![registered_project("demo", &root.to_string_lossy())],
+    )
+    .await;
+    crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+}
+
+async fn update_script_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    request: &crate::shell_protocol::ShellAgentShellRequest,
+    status: &str,
+    state: Option<ShellCommandExecutionState>,
+    exit_code: Option<i32>,
+    stdout: Option<&str>,
+    stderr: Option<&str>,
+    error: Option<&str>,
+) {
+    runtime
+        .shell_clients
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: client_id.to_string(),
+            agent_instance_id: "inst".to_string(),
+            job_id: request.job_id.clone().expect("structured Job id"),
+            request_id: Some(request.request_id.clone()),
+            update_seq: None,
+            status: status.to_string(),
+            stdout_chunk: stdout.map(str::to_string),
+            stderr_chunk: stderr.map(str::to_string),
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code,
+            duration_ms: state.map(|_| 25),
+            error: error.map(str::to_string),
+            command_execution_state: state,
+            validation_progress: None,
+            finished: state.is_some(),
+        })
+        .await
+        .unwrap();
 }
 
 async fn complete_script_lifecycle(
@@ -189,6 +250,379 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
         result.output["script_summary"],
         format!("bash script ({} bytes, 4 args)", large_script.len())
     );
+}
+
+#[tokio::test]
+async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
+    let project = register_script_job_agent(&runtime, "script-fast-job", temp.path()).await;
+    let auth = auth_context(None, true);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    script_call(
+                        project,
+                        None,
+                        ShellScriptLanguage::Bash,
+                        "printf 'fast\\n'\n",
+                    ),
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, "script-fast-job")
+        .await
+        .expect("hidden script Job should dispatch");
+    assert_eq!(request.kind, "start_script_job");
+    assert_eq!(request.command, "");
+    assert!(request.process.is_none());
+    assert!(request.script.is_some());
+    update_script_job(
+        &runtime,
+        "script-fast-job",
+        &request,
+        "running",
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    update_script_job(
+        &runtime,
+        "script-fast-job",
+        &request,
+        "completed",
+        Some(ShellCommandExecutionState::Completed),
+        Some(0),
+        Some("fast\n"),
+        None,
+        None,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["execution_state"], "completed");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["promoted_to_job"], false);
+    assert_eq!(result.output["terminal"], true);
+    assert!(result.output["job_id"].is_null());
+    assert!(runtime
+        .shell_clients
+        .hidden_job_ids_for_test()
+        .await
+        .is_empty());
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
+#[tokio::test]
+async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hidden_job() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
+    let project = register_script_job_agent(&runtime, "script-prestart-job", temp.path()).await;
+    let auth = auth_context(None, true);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    script_call(project, None, ShellScriptLanguage::Bash, "true\n"),
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, "script-prestart-job")
+        .await
+        .expect("hidden script Job should dispatch");
+    let queued = runtime
+        .shell_clients
+        .get_hidden_job_for_auth(Some(&auth), request.job_id.as_deref().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(queued.status, "agent_queued");
+    assert_eq!(
+        queued.started_at, None,
+        "Runner request dispatch alone must not imply interpreter spawn"
+    );
+    update_script_job(
+        &runtime,
+        "script-prestart-job",
+        &request,
+        "failed",
+        Some(ShellCommandExecutionState::NotStarted),
+        None,
+        None,
+        None,
+        Some("interpreter_unavailable: bash is unavailable"),
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["promoted_to_job"], false);
+    assert_eq!(result.output["terminal"], true);
+    assert_eq!(result.output["failure_kind"], "interpreter_unavailable");
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
+#[tokio::test]
+async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata_durable() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(40));
+    let project = register_script_job_agent(&runtime, "script-slow-job", temp.path()).await;
+    let session = runtime.sessions.start_session_with_guards(
+        Some(project.clone()),
+        Some("structured script continuation".to_string()),
+        SessionMode::Normal,
+        sessions::SessionGuards::default(),
+    );
+    let auth = auth_context(None, true);
+    let unique_body = format!(
+        "# raw-body-{}\n{}\nprintf 'done\\n'\n",
+        uuid::Uuid::new_v4(),
+        "# typed script payload\n".repeat(1_800)
+    );
+    assert!(unique_body.len() > 32 * 1024);
+    let unique_arg = format!("raw-arg-{}", uuid::Uuid::new_v4());
+    let unique_stdin = format!("raw-stdin-{}", uuid::Uuid::new_v4());
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        let body = unique_body.clone();
+        let arg = unique_arg.clone();
+        let stdin = unique_stdin.clone();
+        let session_id = session.session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunScript {
+                        project,
+                        language: ShellScriptLanguage::Bash,
+                        script: body,
+                        args: vec![arg],
+                        stdin: Some(stdin),
+                        session_id: Some(session_id),
+                        timeout_secs: Some(60),
+                        cwd: None,
+                        purpose: Some(ExecutionPurpose::Operation),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, "script-slow-job")
+        .await
+        .expect("typed script Job should dispatch");
+    assert_eq!(request.kind, "start_script_job");
+    assert_eq!(request.command, "");
+    assert!(request.process.is_none());
+    let payload = request.script.as_ref().expect("typed script payload");
+    assert_eq!(payload.script, unique_body);
+    assert_eq!(payload.args, [unique_arg.clone()]);
+    assert_eq!(request.stdin.as_deref(), Some(unique_stdin.as_str()));
+    assert!(!request.command.contains(&unique_body));
+    update_script_job(
+        &runtime,
+        "script-slow-job",
+        &request,
+        "running",
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    let handoff = task.await.unwrap();
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["promoted_to_job"], true);
+    assert_eq!(handoff.output["execution_state"], "running");
+    let job_id = handoff.output["job_id"].as_str().unwrap();
+    assert_eq!(request.job_id.as_deref(), Some(job_id));
+
+    let job = runtime.shell_clients.get_job(job_id).await.unwrap();
+    assert_eq!(job.kind, "run_script");
+    assert_eq!(job.session_id.as_deref(), Some(session.session_id.as_str()));
+    let metadata = job
+        .structured_execution
+        .as_ref()
+        .expect("safe structured metadata");
+    assert_eq!(metadata.execution_source, "run_script");
+    assert_eq!(metadata.language, Some(ShellScriptLanguage::Bash));
+    assert_eq!(metadata.script_bytes, Some(unique_body.len()));
+    assert_eq!(metadata.arg_count, 1);
+    assert!(metadata.stdin_present);
+    let durable = serde_json::to_string(&job).unwrap();
+    for raw in [&unique_body, &unique_arg, &unique_stdin] {
+        assert!(
+            !durable.contains(raw),
+            "durable Job state leaked raw structured execution input"
+        );
+    }
+    let handoff_summary = runtime
+        .dispatch_with_auth(
+            ToolCall::SessionHandoffSummary {
+                session_id: session.session_id.clone(),
+                project: Some(project.clone()),
+                include_workspace: Some(false),
+                include_checkpoints: Some(false),
+                include_validation: Some(false),
+                summary_only: false,
+                limit: Some(20),
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(handoff_summary.success, "{:?}", handoff_summary.error);
+    assert_eq!(handoff_summary.output["jobs"]["active_count"], 1);
+    assert_eq!(
+        handoff_summary.output["jobs"]["recent"][0]["job_id"],
+        job_id
+    );
+    let safe_session_projection = serde_json::to_string(&handoff_summary.output["jobs"]).unwrap();
+    for raw in [&unique_body, &unique_arg, &unique_stdin] {
+        assert!(
+            !safe_session_projection.contains(raw),
+            "Session Job projection leaked raw structured execution input"
+        );
+    }
+    let session_summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(100))
+        .unwrap();
+    assert_eq!(
+        session_summary
+            .events
+            .iter()
+            .filter(|event| event.tool_name == "run_script" && event.kind == "tool_call_started")
+            .count(),
+        1,
+        "handoff must not record a fake second model tool execution"
+    );
+
+    update_script_job(
+        &runtime,
+        "script-slow-job",
+        &request,
+        "completed",
+        Some(ShellCommandExecutionState::Completed),
+        Some(0),
+        Some("done\n"),
+        None,
+        None,
+    )
+    .await;
+    let terminal = runtime.shell_clients.get_job(job_id).await.unwrap();
+    assert_eq!(terminal.status, "completed");
+    assert_eq!(
+        terminal.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert!(next_patch_agent_request(&runtime, "script-slow-job")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn b2_script_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let mut capabilities = ShellClientCapabilities::default();
+    capabilities.shell = true;
+    capabilities.async_jobs = true;
+    capabilities.structured_process_argv = true;
+    capabilities.structured_script_payload = true;
+    capabilities.structured_execution_jobs = false;
+    register_agent_with_projects(
+        &runtime,
+        "script-b2",
+        None,
+        capabilities,
+        vec![registered_project("demo", &temp.path().to_string_lossy())],
+    )
+    .await;
+    let project = crate::tool_runtime::agent_project_runtime_id("script-b2", "demo");
+    let auth = auth_context(None, true);
+    let direct = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunScript {
+                        project,
+                        language: ShellScriptLanguage::Sh,
+                        script: "true".to_string(),
+                        args: Vec::new(),
+                        stdin: None,
+                        session_id: None,
+                        timeout_secs: Some(120),
+                        cwd: None,
+                        purpose: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, "script-b2")
+        .await
+        .expect("B2 direct script request");
+    assert_eq!(request.kind, "run_script");
+    complete_script_lifecycle(
+        &runtime,
+        "script-b2",
+        request.request_id,
+        ShellCommandExecutionState::Completed,
+        Some(0),
+        "",
+        "",
+        None,
+    )
+    .await;
+    let direct = direct.await.unwrap();
+    assert_eq!(direct.output["promoted_to_job"], false);
+    assert_eq!(direct.output["async_handoff_available"], false);
+
+    let rejected = runtime
+        .dispatch_with_auth(
+            ToolCall::RunScript {
+                project,
+                language: ShellScriptLanguage::Sh,
+                script: "true".to_string(),
+                args: Vec::new(),
+                stdin: None,
+                session_id: None,
+                timeout_secs: Some(121),
+                cwd: None,
+                purpose: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert_eq!(rejected.output["execution_state"], "not_started");
+    assert_eq!(rejected.output["command_started"], false);
+    assert_eq!(rejected.output["failure_kind"], "capability_unavailable");
+    assert!(next_patch_agent_request(&runtime, "script-b2")
+        .await
+        .is_none());
 }
 
 #[tokio::test]
@@ -745,17 +1179,6 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             args: Vec::new(),
             stdin: None,
             session_id: None,
-            timeout_secs: Some(121),
-            cwd: None,
-            purpose: None,
-        },
-        ToolCall::RunScript {
-            project: project.clone(),
-            language: ShellScriptLanguage::Sh,
-            script: "true".to_string(),
-            args: Vec::new(),
-            stdin: None,
-            session_id: None,
             timeout_secs: Some(60),
             cwd: Some("bad\0cwd".to_string()),
             purpose: None,
@@ -770,6 +1193,30 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
         assert_eq!(result.output["command_completed"], false);
         assert_eq!(result.output["failure_kind"], "invalid_arguments");
     }
+    let durable_only = runtime
+        .dispatch_with_auth(
+            ToolCall::RunScript {
+                project: project.clone(),
+                language: ShellScriptLanguage::Sh,
+                script: "true".to_string(),
+                args: Vec::new(),
+                stdin: None,
+                session_id: None,
+                timeout_secs: Some(121),
+                cwd: None,
+                purpose: None,
+            },
+            Some(&auth_context(None, true)),
+        )
+        .await;
+    assert_eq!(durable_only.output["execution_state"], "not_started");
+    assert_eq!(durable_only.output["command_started"], false);
+    assert_eq!(durable_only.output["command_completed"], false);
+    assert_eq!(
+        durable_only.output["failure_kind"],
+        "capability_unavailable"
+    );
+    assert_eq!(durable_only.output["async_handoff_available"], false);
     assert!(next_patch_agent_request(&runtime, "script-bounds")
         .await
         .is_none());

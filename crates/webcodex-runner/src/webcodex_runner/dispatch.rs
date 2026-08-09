@@ -12,7 +12,8 @@ use super::{
 };
 use crate::shell_protocol::{
     validate_process_argv, validate_script_request, ShellAgentShellRequest, ShellProcessArgv,
-    ShellScriptPayload, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
+    ShellScriptPayload, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
 };
 use crate::{handle_file_request, is_file_request_kind, JobManager};
 use std::path::Path;
@@ -180,7 +181,11 @@ pub(crate) fn dispatch_request(
     if ssh_resource.is_some()
         && !matches!(
             request.kind.as_str(),
-            "run_shell" | "start_job" | "start_validation_job"
+            "run_shell"
+                | "start_job"
+                | "start_validation_job"
+                | "start_process_job"
+                | "start_script_job"
         )
     {
         let result = CommandResult {
@@ -237,7 +242,7 @@ pub(crate) fn dispatch_request(
         ExternalRoute::Native => {}
     }
     match request.kind.as_str() {
-        "start_job" | "start_validation_job" => {
+        "start_job" | "start_validation_job" | "start_process_job" | "start_script_job" => {
             jobs.enqueue(
                 sink.clone(),
                 config.generation,
@@ -403,9 +408,11 @@ fn validate_run_process_request(
             return Err("cwd cannot contain NUL bytes".to_string());
         }
     }
-    if request.timeout_secs == 0 || request.timeout_secs > PROCESS_TIMEOUT_MAX_SECS {
+    if request.timeout_secs == 0
+        || request.timeout_secs > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS
+    {
         return Err(format!(
-            "timeout_secs must be between 1 and {PROCESS_TIMEOUT_MAX_SECS}"
+            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS}"
         ));
     }
     Ok(process)
@@ -433,6 +440,11 @@ fn validate_run_script_request(
         request.cwd.as_deref(),
         request.timeout_secs,
     )?;
+    if request.timeout_secs > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS {
+        return Err(format!(
+            "timeout_secs must be between 1 and {STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS}"
+        ));
+    }
     Ok(script)
 }
 

@@ -37,7 +37,7 @@ more responsive over polling, and more predictable on Windows.
   and OEM DBCS characters across chunk boundaries; PowerShell 5.1 script
   `param(...)` semantics and exactly-once timeout/stop behavior remain intact.
 
-## Compatibility and behavior changes
+## Breaking changes and compatibility
 
 There is no intentional breaking protocol change in 0.3.4. The new execution
 capabilities and observability fields are additive and fail closed when an older

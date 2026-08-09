@@ -13,7 +13,7 @@ WebCodex 是面向 coding assistant 的远程、可审计、有界执行层。�
 
 ## 下一阶段优先级
 
-下一轮以 **降低模型执行摩擦** 为中心，而不是继续扩张 fleet/运维能力。设计约束见 [MODEL_EXECUTION.md](MODEL_EXECUTION.md)。
+本次 execution cycle 以 **降低模型执行摩擦** 为中心，而不是继续扩张 fleet/运维能力；A–F 已完成最终验收，后续只做 maintenance/stabilization。设计约束见 [MODEL_EXECUTION.md](MODEL_EXECUTION.md)。
 
 1. Execution Phase A–F 已完成实现和最终验收：可信 lifecycle、structured process/script、同一次执行 Job handoff、有界 batch observation、non-pinning polling、实用 Job concurrency/observability，以及 Windows 本地 process output normalization 均已通过 Linux 回归与真实 Windows/MSVC service-context 验证。
 2. 本轮后续 execution 工作只做 maintenance/stabilization：只修有证据的 regression，保留 Linux/Windows acceptance evidence；没有新的具体需求时不再增加 execution feature phase。

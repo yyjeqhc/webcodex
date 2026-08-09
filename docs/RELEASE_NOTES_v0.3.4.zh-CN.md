@@ -29,7 +29,7 @@ durable Job，同时降低批量观察 Job 的对话轮次，让 polling 更顺�
   Streaming 能跨 chunk 保留被拆开的 UTF-8 scalar、UTF-16 unit 和 OEM DBCS character；
   PowerShell 5.1 的 `param(...)` 语义以及 timeout/stop exactly-once 行为保持不变。
 
-## 兼容性与行为变化
+## 破坏性变更与兼容性
 
 0.3.4 没有刻意引入 breaking protocol change。新的 execution capability 与 observability
 field 都是 additive；旧 Runner 没有声明对应 capability 时会 fail closed。

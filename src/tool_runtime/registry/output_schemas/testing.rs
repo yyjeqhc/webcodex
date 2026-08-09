@@ -47,17 +47,17 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ),
             (
                 "command_started",
-                schema_type("boolean", "Whether the command was dispatched to an executor."),
+                schema_type("boolean", "Whether callers must conservatively treat the command as started; true includes outcome_unknown because side effects may have occurred."),
             ),
             (
                 "command_completed",
-                schema_type("boolean", "Whether the command reached a terminal executor result. False when the validation continues as a Job."),
+                schema_type("boolean", "Whether the command reached a trustworthy terminal executor result. False for outcome_unknown, timed_out, and Job handoff."),
             ),
             (
                 "failure_kind",
                 schema_type(
                     "string",
-                    "Stable failure kind. Non-zero cargo_fmt, cargo_check, and cargo_test command exits use validation_failed; pre-start rejection, guard denial, timeout, and runtime errors do not.",
+                    "Stable failure kind. Non-zero cargo_fmt, cargo_check, and cargo_test command exits use validation_failed; outcome_unknown, pre-start rejection, guard denial, timeout, and runtime errors remain distinct.",
                 ),
             ),
             (
@@ -86,7 +86,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ),
             (
                 "execution_state",
-                schema_type("string", "completed, timed_out, queued, or running. queued/running indicate the validation was promoted to a Job."),
+                schema_type("string", "not_started, outcome_unknown, completed, timed_out, queued, or running. not_started proves pre-execution rejection; outcome_unknown means side effects may have occurred and blind retry is unsafe; queued/running indicate promotion to a Job."),
             ),
             (
                 "job_id",
@@ -110,7 +110,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ),
             (
                 "terminal",
-                schema_type("boolean", "True when the validation reached a terminal result."),
+                schema_type("boolean", "True when the execution request has a known terminal projection, including not_started or timed_out. False for Job handoff and outcome_unknown."),
             ),
             ("command_ok", schema_type("boolean", "Whether execution completed successfully.")),
             ("tool_failure", schema_type("boolean", "Whether rejection happened before execution.")),
@@ -294,10 +294,52 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "promoted_to_job": {"const": false},
                             "terminal": {"const": true},
                             "command_started": {"const": true},
-                            "command_completed": {"const": true},
+                            "command_completed": {"const": false},
                             "execution_state": {"const": "timed_out"},
                             "passed": {"const": false},
                             "failure_kind": {"const": "timeout"},
+                            "job_id": {"enum": []},
+                            "job_status": {"enum": []}
+                        }
+                    }
+                }
+            },
+            {
+                "required": ["error"],
+                "properties": {
+                    "success": {"const": false},
+                    "error": {"type": "string", "minLength": 1},
+                    "output": {
+                        "required": terminal_failure_required.clone(),
+                        "properties": {
+                            "promoted_to_job": {"const": false},
+                            "terminal": {"const": false},
+                            "command_started": {"const": true},
+                            "command_completed": {"const": false},
+                            "execution_state": {"const": "outcome_unknown"},
+                            "passed": {"const": false},
+                            "failure_kind": {"const": "outcome_unknown"},
+                            "job_id": {"enum": []},
+                            "job_status": {"enum": []}
+                        }
+                    }
+                }
+            },
+            {
+                "required": ["error"],
+                "properties": {
+                    "success": {"const": false},
+                    "error": {"type": "string", "minLength": 1},
+                    "output": {
+                        "required": terminal_failure_required.clone(),
+                        "properties": {
+                            "promoted_to_job": {"const": false},
+                            "terminal": {"const": true},
+                            "command_started": {"const": false},
+                            "command_completed": {"const": false},
+                            "execution_state": {"const": "not_started"},
+                            "passed": {"const": false},
+                            "failure_kind": {"enum": ["permission_denied", "project_not_found", "cwd_invalid", "sandbox_unavailable", "executor_unavailable"]},
                             "job_id": {"enum": []},
                             "job_status": {"enum": []}
                         }

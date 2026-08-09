@@ -43,7 +43,7 @@ pub(crate) use files::{
     handle_basic_file_request, is_basic_file_request_kind, resolve_requested_path,
 };
 pub(crate) use lsp::LspSupervisor;
-pub(crate) use output::{err_cmd, ok_cmd, CommandResult};
+pub(crate) use output::{err_cmd, ok_cmd, CommandResult, ShellCommandResult};
 pub(crate) use patches::{
     handle_apply_text_edits_file_request, handle_write_project_file_request,
     is_structured_edit_request_kind, validate_structured_edit_agent_path,
@@ -68,9 +68,10 @@ pub(crate) use shell::run_shell_with_profiles;
 pub(crate) use shell::{
     configured_prepared_shell_job_command, configured_shell_job_command,
     configured_validation_job_command, cwd_allowed, resolve_prepared_shell_profile,
-    run_shell_with_profiles_in_sandbox, PreparedShellProfile, PreparedShellProfileCache,
+    run_shell_with_profiles_in_sandbox, run_shell_with_profiles_in_sandbox_and_execution_state,
+    PreparedShellProfile, PreparedShellProfileCache,
 };
-pub(crate) use ssh::{is_transport_failure, run_ssh_shell, SshConnectionPool};
+pub(crate) use ssh::{is_transport_failure, run_ssh_shell_with_execution_state, SshConnectionPool};
 #[cfg(test)]
 pub(crate) use transport::{
     auto_transport_plan, build_ws_request, effective_transport, non_empty_token,

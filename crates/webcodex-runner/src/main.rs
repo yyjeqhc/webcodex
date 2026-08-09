@@ -40,7 +40,8 @@ use shell_protocol::{
 use agent_init::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 #[cfg(test)]
 use shell_protocol::{
-    AgentEnvelope, AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+    AgentEnvelope, ShellCommandExecutionState, AGENT_PROTOCOL_VERSION_QUIC_V1,
+    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 #[cfg(test)]
 use std::collections::BTreeMap;

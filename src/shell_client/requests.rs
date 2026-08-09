@@ -182,6 +182,8 @@ pub(super) fn resolve_disconnected_sync_requests_locked(
                 stderr: None,
                 duration_ms: None,
                 error: Some(error.to_string()),
+                request_dispatched: Some(pending.dispatched),
+                command_execution_state: None,
             };
             // The receiver may already be gone if the caller timed out first;
             // a failed send is expected and safe to ignore.
@@ -365,10 +367,19 @@ impl ShellClientRegistry {
     /// already polled it. This lets timeout callers distinguish queue timeout
     /// from an actually started command without retaining expired requests.
     pub async fn cancel_request(&self, request_id: &str) -> bool {
+        self.cancel_request_dispatch_state(request_id)
+            .await
+            .unwrap_or(false)
+    }
+
+    /// Cancel a pending synchronous request while preserving the distinction
+    /// between an undispatched request and one whose registry record was
+    /// already consumed. A missing record cannot prove that execution did not
+    /// start, so lifecycle-sensitive callers must treat `None` conservatively.
+    pub(crate) async fn cancel_request_dispatch_state(&self, request_id: &str) -> Option<bool> {
         let mut inner = self.inner.lock().await;
         inner.persistent_waiters.remove(request_id);
-        remove_pending_request_locked(&mut inner, request_id)
-            .is_some_and(|pending| pending.dispatched)
+        remove_pending_request_locked(&mut inner, request_id).map(|pending| pending.dispatched)
     }
 
     /// Enqueue one explicit persistent-shell lifecycle operation. Capability

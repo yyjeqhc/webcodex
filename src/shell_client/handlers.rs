@@ -5,7 +5,7 @@ use super::{
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
     ShellAgentPersistentShellResultRequest, ShellAgentPersistentShellResultResponse,
-    ShellAgentPollPayload, ShellAgentPollResponse, ShellAgentResultRequest,
+    ShellAgentPollPayload, ShellAgentPollResponse, ShellAgentResultPayload,
     ShellAgentResultResponse, ShellClientRegisterRequest, ShellClientRegisterResponse,
 };
 use salvo::prelude::*;
@@ -164,7 +164,7 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
         }));
         return;
     };
-    let body: ShellAgentResultRequest = match req.parse_json().await {
+    let body: ShellAgentResultPayload = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
@@ -184,7 +184,7 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
         }));
         return;
     }
-    if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.client_id) {
+    if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.result.client_id) {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentResultResponse {
             success: false,
@@ -193,7 +193,7 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
         return;
     }
     if let Err(e) = registry
-        .assert_client_access(auth.as_ref(), &body.client_id)
+        .assert_client_access(auth.as_ref(), &body.result.client_id)
         .await
     {
         res.status_code(StatusCode::FORBIDDEN);

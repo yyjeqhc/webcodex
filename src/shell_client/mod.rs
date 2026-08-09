@@ -457,6 +457,8 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stderr: None,
                 duration_ms: None,
                 error: Some("Shell client registry not configured".to_string()),
+                request_dispatched: None,
+                command_execution_state: None,
             },
         );
         return;
@@ -479,6 +481,8 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     stderr: None,
                     duration_ms: None,
                     error: Some(format!("Invalid JSON: {}", e)),
+                    request_dispatched: None,
+                    command_execution_state: None,
                 },
             );
             return;
@@ -506,6 +510,8 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stderr: None,
                 duration_ms: None,
                 error: Some(e),
+                request_dispatched: None,
+                command_execution_state: None,
             },
         );
         return;
@@ -529,6 +535,8 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     stderr: None,
                     duration_ms: None,
                     error: Some(e),
+                    request_dispatched: None,
+                    command_execution_state: None,
                 },
             );
             return;
@@ -551,10 +559,12 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stderr: None,
                 duration_ms: None,
                 error: Some("shell request waiter was dropped".to_string()),
+                request_dispatched: None,
+                command_execution_state: None,
             },
         ),
         Err(_elapsed) => {
-            registry.cancel_request(&request_id).await;
+            let request_dispatched = registry.cancel_request_dispatch_state(&request_id).await;
             render_shell_run(
                 res,
                 &audit,
@@ -573,6 +583,8 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         "timed out waiting {} seconds for shell client result",
                         wait_timeout_secs
                     )),
+                    request_dispatched,
+                    command_execution_state: None,
                 },
             );
         }

@@ -6143,11 +6143,15 @@ fn sink_submit_result_sends_result_envelope() {
         let env = rx.try_recv().expect("envelope was sent");
         match env {
             AgentEnvelope::Result { payload } => {
-                assert_eq!(payload.client_id, expected_client, "{label}");
-                assert_eq!(payload.agent_instance_id, expected_instance, "{label}");
-                assert_eq!(payload.request_id, "req-9");
-                assert_eq!(payload.exit_code, Some(0));
-                assert_eq!(payload.stdout.as_deref(), Some("hi"));
+                assert_eq!(payload.result.client_id, expected_client, "{label}");
+                assert_eq!(
+                    payload.result.agent_instance_id, expected_instance,
+                    "{label}"
+                );
+                assert_eq!(payload.result.request_id, "req-9");
+                assert_eq!(payload.result.exit_code, Some(0));
+                assert_eq!(payload.result.stdout.as_deref(), Some("hi"));
+                assert_eq!(payload.command_execution_state, None);
             }
             other => panic!("{label}: expected result, got {:?}", other.kind()),
         }
@@ -6436,9 +6440,12 @@ fn dispatch_request_edit_routes_to_file_handler() {
     let env = rx.try_recv().expect("result envelope was sent");
     match env {
         AgentEnvelope::Result { payload } => {
-            assert_eq!(payload.request_id, "req-edit");
-            assert_eq!(payload.exit_code, Some(0));
-            let stdout = payload.stdout.expect("file handler returns JSON stdout");
+            assert_eq!(payload.result.request_id, "req-edit");
+            assert_eq!(payload.result.exit_code, Some(0));
+            let stdout = payload
+                .result
+                .stdout
+                .expect("file handler returns JSON stdout");
             assert!(stdout.contains("\"created\":true"), "stdout was {stdout}");
             assert_eq!(
                 std::fs::read_to_string(tmp.path().join("new.txt")).unwrap(),
@@ -6514,10 +6521,10 @@ fn dispatch_request_rejects_unsupported_file_kinds_without_starting_command() {
         let env = rx.try_recv().expect("result envelope was sent");
         match env {
             AgentEnvelope::Result { payload } => {
-                assert_eq!(payload.exit_code, None, "{kind}");
-                assert_eq!(payload.stdout, None, "{kind}");
+                assert_eq!(payload.result.exit_code, None, "{kind}");
+                assert_eq!(payload.result.stdout, None, "{kind}");
                 assert_eq!(
-                    payload.error.as_deref(),
+                    payload.result.error.as_deref(),
                     Some(
                         "unsupported_file_request_kind: unsupported file request kind; command was not started"
                     ),
@@ -6593,9 +6600,13 @@ fn dispatch_request_run_shell_sends_result_over_sink() {
         let env = rx.try_recv().expect("result envelope was sent");
         match env {
             AgentEnvelope::Result { payload } => {
-                assert_eq!(payload.request_id, format!("req-{label}"));
-                assert_eq!(payload.exit_code, Some(0));
-                assert_eq!(payload.stdout.as_deref(), Some(expected_stdout));
+                assert_eq!(payload.result.request_id, format!("req-{label}"));
+                assert_eq!(payload.result.exit_code, Some(0));
+                assert_eq!(payload.result.stdout.as_deref(), Some(expected_stdout));
+                assert_eq!(
+                    payload.command_execution_state,
+                    Some(ShellCommandExecutionState::Completed)
+                );
             }
             other => panic!("{label}: expected result, got {:?}", other.kind()),
         }

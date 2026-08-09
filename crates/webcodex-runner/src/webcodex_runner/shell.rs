@@ -2,7 +2,7 @@ use super::config::{
     dialect_for_program, platform_default_dialect, validate_shell_config, AgentPolicy, ShellConfig,
     ShellDialect, ShellProfileConfig,
 };
-use super::output::CommandResult;
+use super::output::{CommandResult, ShellCommandResult};
 use super::projects::find_project_shell_context;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -1150,6 +1150,7 @@ pub(crate) fn run_shell(
         stop_requested,
         None,
     )
+    .result
 }
 
 #[cfg(test)]
@@ -1194,6 +1195,36 @@ pub(crate) fn run_shell_with_profiles_in_sandbox(
     stop_requested: Option<&AtomicBool>,
     sandbox: Option<&str>,
 ) -> CommandResult {
+    run_shell_with_profiles_in_sandbox_and_execution_state(
+        generation,
+        policy,
+        shell,
+        projects_dir,
+        cache,
+        cwd,
+        command,
+        stdin,
+        timeout_secs,
+        stop_requested,
+        sandbox,
+    )
+    .result
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_shell_with_profiles_in_sandbox_and_execution_state(
+    generation: u64,
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    command: &str,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    sandbox: Option<&str>,
+) -> ShellCommandResult {
     run_shell_impl(
         policy,
         shell,
@@ -1217,27 +1248,27 @@ fn run_shell_impl(
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
     sandbox: Option<&str>,
-) -> CommandResult {
+) -> ShellCommandResult {
     if !policy.allow_raw_shell {
-        return CommandResult {
+        return ShellCommandResult::not_started(CommandResult {
             exit_code: None,
             stdout: None,
             stderr: None,
             duration_ms: Some(0),
             error: Some("raw shell is disabled by local agent policy".to_string()),
-        };
+        });
     }
     let cwd_path = cwd
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
     if let Err(e) = cwd_allowed(policy, &cwd_path) {
-        return CommandResult {
+        return ShellCommandResult::not_started(CommandResult {
             exit_code: None,
             stdout: None,
             stderr: None,
             duration_ms: Some(0),
             error: Some(e),
-        };
+        });
     }
     let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
     let start = Instant::now();
@@ -1247,24 +1278,24 @@ fn run_shell_impl(
             match crate::command_sandbox::InspectScratch::create() {
                 Ok(scratch) => Some(scratch),
                 Err(error) => {
-                    return CommandResult {
+                    return ShellCommandResult::not_started(CommandResult {
                         exit_code: None,
                         stdout: None,
                         stderr: None,
                         duration_ms: Some(start.elapsed().as_millis() as u64),
                         error: Some(format!("inspect sandbox unavailable: {error}")),
-                    }
+                    })
                 }
             }
         }
         Some(other) => {
-            return CommandResult {
+            return ShellCommandResult::not_started(CommandResult {
                 exit_code: None,
                 stdout: None,
                 stderr: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
                 error: Some(format!("unknown sandbox mode '{other}'")),
-            }
+            })
         }
     };
     let mut prepared_profile_name = None;
@@ -1288,7 +1319,7 @@ fn run_shell_impl(
                         cmd
                     }
                     Err(e) => {
-                        return CommandResult {
+                        return ShellCommandResult::not_started(CommandResult {
                             exit_code: None,
                             stdout: None,
                             stderr: None,
@@ -1297,42 +1328,42 @@ fn run_shell_impl(
                                 "failed to configure shell profile '{}': {}",
                                 profile.profile_name, e
                             )),
-                        };
+                        });
                     }
                 },
                 Ok(None) => match configured_shell_command(shell, command) {
                     Ok(cmd) => cmd,
                     Err(e) => {
-                        return CommandResult {
+                        return ShellCommandResult::not_started(CommandResult {
                             exit_code: None,
                             stdout: None,
                             stderr: None,
                             duration_ms: Some(start.elapsed().as_millis() as u64),
                             error: Some(e),
-                        };
+                        });
                     }
                 },
                 Err(e) => {
-                    return CommandResult {
+                    return ShellCommandResult::not_started(CommandResult {
                         exit_code: None,
                         stdout: None,
                         stderr: None,
                         duration_ms: Some(start.elapsed().as_millis() as u64),
                         error: Some(e),
-                    };
+                    });
                 }
             }
         }
         None => match configured_shell_command(shell, command) {
             Ok(cmd) => cmd,
             Err(e) => {
-                return CommandResult {
+                return ShellCommandResult::not_started(CommandResult {
                     exit_code: None,
                     stdout: None,
                     stderr: None,
                     duration_ms: Some(start.elapsed().as_millis() as u64),
                     error: Some(e),
-                };
+                });
             }
         },
     };
@@ -1344,13 +1375,13 @@ fn run_shell_impl(
     }
     if let Some(scratch) = inspect_scratch.as_ref() {
         if let Err(error) = crate::command_sandbox::sandbox_command_inspect(&mut cmd, scratch) {
-            return CommandResult {
+            return ShellCommandResult::not_started(CommandResult {
                 exit_code: None,
                 stdout: None,
                 stderr: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
                 error: Some(format!("inspect sandbox unavailable: {error}")),
-            };
+            });
         }
     }
     // ManagedChild owns the whole shell process tree: a private process group
@@ -1367,13 +1398,13 @@ fn run_shell_impl(
                     format!("failed to spawn shell profile '{}': {}", profile_name, e)
                 })
                 .unwrap_or_else(|| format!("failed to spawn command: {}", e));
-            return CommandResult {
+            return ShellCommandResult::not_started(CommandResult {
                 exit_code: None,
                 stdout: None,
                 stderr: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
                 error: Some(error),
-            };
+            });
         }
     };
     if let Some(input) = stdin {
@@ -1387,7 +1418,7 @@ fn run_shell_impl(
                     // write failures still belong to the executor.
                     if e.kind() != std::io::ErrorKind::BrokenPipe {
                         let cleanup = terminate_child_without_output(child).err();
-                        return CommandResult {
+                        return ShellCommandResult::outcome_unknown(CommandResult {
                             exit_code: None,
                             stdout: None,
                             stderr: None,
@@ -1396,19 +1427,19 @@ fn run_shell_impl(
                                 format!("failed to write command stdin: {}", e),
                                 cleanup,
                             )),
-                        };
+                        });
                     }
                 }
             }
             None => {
                 let cleanup = terminate_child_without_output(child).err();
-                return CommandResult {
+                return ShellCommandResult::outcome_unknown(CommandResult {
                     exit_code: None,
                     stdout: None,
                     stderr: None,
                     duration_ms: Some(start.elapsed().as_millis() as u64),
                     error: Some(with_cleanup_error("stdin pipe missing", cleanup)),
-                };
+                });
             }
         }
     }
@@ -1419,7 +1450,7 @@ fn run_shell_impl(
         {
             let duration_ms = start.elapsed().as_millis() as u64;
             return match terminate_and_read_pipes(child, policy.max_output_bytes) {
-                Ok((_status, stdout, stderr)) => CommandResult {
+                Ok((_status, stdout, stderr)) => ShellCommandResult::completed(CommandResult {
                     exit_code: Some(-1),
                     stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
                     stderr: Some(format!(
@@ -1429,14 +1460,14 @@ fn run_shell_impl(
                     )),
                     duration_ms: Some(duration_ms),
                     error: Some("job stopped".to_string()),
-                },
-                Err(e) => CommandResult {
+                }),
+                Err(e) => ShellCommandResult::outcome_unknown(CommandResult {
                     exit_code: Some(-1),
                     stdout: None,
                     stderr: None,
                     duration_ms: Some(duration_ms),
                     error: Some(format!("job stopped; failed to collect output: {}", e)),
-                },
+                }),
             };
         }
         match child.try_wait() {
@@ -1445,19 +1476,21 @@ fn run_shell_impl(
                 if start.elapsed() >= Duration::from_secs(timeout_secs) {
                     let duration_ms = start.elapsed().as_millis() as u64;
                     return match terminate_and_read_pipes(child, policy.max_output_bytes) {
-                        Ok((_status, stdout, stderr)) => CommandResult {
-                            exit_code: Some(-1),
-                            stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
-                            stderr: Some(format!(
-                                "{}{}command timed out after {} seconds",
-                                truncate_bytes(&stderr, policy.max_output_bytes),
-                                if stderr.is_empty() { "" } else { "\n" },
-                                timeout_secs
-                            )),
-                            duration_ms: Some(duration_ms),
-                            error: Some("command timed out".to_string()),
-                        },
-                        Err(e) => CommandResult {
+                        Ok((_status, stdout, stderr)) => {
+                            ShellCommandResult::timed_out(CommandResult {
+                                exit_code: Some(-1),
+                                stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
+                                stderr: Some(format!(
+                                    "{}{}command timed out after {} seconds",
+                                    truncate_bytes(&stderr, policy.max_output_bytes),
+                                    if stderr.is_empty() { "" } else { "\n" },
+                                    timeout_secs
+                                )),
+                                duration_ms: Some(duration_ms),
+                                error: Some("command timed out".to_string()),
+                            })
+                        }
+                        Err(e) => ShellCommandResult::outcome_unknown(CommandResult {
                             exit_code: Some(-1),
                             stdout: None,
                             stderr: None,
@@ -1466,14 +1499,14 @@ fn run_shell_impl(
                                 "command timed out; failed to collect output: {}",
                                 e
                             )),
-                        },
+                        }),
                     };
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(e) => {
                 let cleanup = terminate_child_without_output(child).err();
-                return CommandResult {
+                return ShellCommandResult::outcome_unknown(CommandResult {
                     exit_code: None,
                     stdout: None,
                     stderr: None,
@@ -1482,24 +1515,120 @@ fn run_shell_impl(
                         format!("failed to wait command: {}", e),
                         cleanup,
                     )),
-                };
+                });
             }
         }
     }
     match terminate_and_read_pipes(child, policy.max_output_bytes) {
-        Ok((status, stdout, stderr)) => CommandResult {
+        Ok((status, stdout, stderr)) => ShellCommandResult::completed(CommandResult {
             exit_code: Some(status.code().unwrap_or(-1)),
             stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
             stderr: Some(truncate_bytes(&stderr, policy.max_output_bytes)),
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: None,
-        },
-        Err(e) => CommandResult {
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            duration_ms: Some(start.elapsed().as_millis() as u64),
-            error: Some(e),
-        },
+        }),
+        Err(e) => spawned_output_failure(start, e),
+    }
+}
+
+fn spawned_output_failure(start: Instant, error: String) -> ShellCommandResult {
+    ShellCommandResult::outcome_unknown(CommandResult {
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        duration_ms: Some(start.elapsed().as_millis() as u64),
+        error: Some(error),
+    })
+}
+
+#[cfg(test)]
+mod runner_lifecycle_tests {
+    use super::*;
+    use crate::shell_protocol::ShellCommandExecutionState;
+
+    fn unrestricted_policy() -> AgentPolicy {
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            ..AgentPolicy::default()
+        }
+    }
+
+    #[test]
+    fn pre_spawn_rejection_is_not_started() {
+        let mut policy = unrestricted_policy();
+        policy.allow_raw_shell = false;
+        let result = run_shell_impl(
+            &policy,
+            &ShellConfig::default(),
+            None,
+            None,
+            "exit 0",
+            None,
+            10,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::NotStarted
+        );
+        assert!(result.result.exit_code.is_none());
+    }
+
+    #[test]
+    fn terminal_process_result_is_completed() {
+        let result = run_shell_impl(
+            &unrestricted_policy(),
+            &ShellConfig::default(),
+            None,
+            None,
+            "exit 7",
+            None,
+            10,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(7));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn known_process_timeout_is_timed_out() {
+        let result = run_shell_impl(
+            &unrestricted_policy(),
+            &ShellConfig::default(),
+            None,
+            None,
+            "sleep 2",
+            None,
+            1,
+            None,
+            None,
+        );
+
+        assert_eq!(result.execution_state, ShellCommandExecutionState::TimedOut);
+        assert_eq!(result.result.exit_code, Some(-1));
+    }
+
+    #[test]
+    fn post_spawn_missing_output_pipe_is_outcome_unknown() {
+        let mut command = configured_shell_command(&ShellConfig::default(), "exit 0").unwrap();
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = ManagedChild::spawn(&mut command).unwrap();
+        drop(child.child_mut().stdout.take());
+
+        let error = terminate_and_read_pipes(child, 1024).unwrap_err();
+        assert!(error.contains("stdout pipe missing"), "{error}");
+        let result = spawned_output_failure(Instant::now(), error);
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::OutcomeUnknown
+        );
     }
 }

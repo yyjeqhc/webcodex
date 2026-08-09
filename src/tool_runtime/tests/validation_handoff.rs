@@ -8,7 +8,8 @@
 
 use super::support::*;
 use crate::shell_protocol::{
-    ShellAgentJobUpdateRequest, ShellClientCapabilities, ShellJobValidationProgress,
+    ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentResultRequest,
+    ShellClientCapabilities, ShellCommandExecutionState, ShellJobValidationProgress,
 };
 use crate::tool_runtime::tool_inputs::ExecutionPurpose;
 use crate::tool_runtime::validation_events::validation_summary_for_session;
@@ -43,6 +44,35 @@ async fn wait_for_agent_request(
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     panic!("agent request was not enqueued for {client_id}");
+}
+
+async fn complete_sync_shell_lifecycle(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    request_id: String,
+    execution_state: ShellCommandExecutionState,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+    error: Option<&str>,
+) {
+    runtime
+        .shell_clients
+        .complete(ShellAgentResultPayload {
+            result: ShellAgentResultRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                request_id,
+                exit_code,
+                stdout: Some(stdout.to_string()),
+                stderr: Some(stderr.to_string()),
+                duration_ms: Some(5),
+                error: error.map(str::to_string),
+            },
+            command_execution_state: Some(execution_state),
+        })
+        .await
+        .unwrap();
 }
 
 fn cargo_test_update(
@@ -820,28 +850,117 @@ async fn explicit_short_timeout_never_creates_a_job() {
         .await
         .expect("short validation should enqueue a shell request");
     assert_ne!(request.kind, "start_validation_job");
-    runtime
-        .shell_clients
-        .complete(crate::shell_protocol::ShellAgentResultRequest {
-            client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
-            request_id: request.request_id,
-            exit_code: Some(-1),
-            stdout: Some("partial output\n".to_string()),
-            stderr: Some("Command timed out after 1 seconds".to_string()),
-            duration_ms: Some(1000),
-            error: None,
-        })
-        .await
-        .unwrap();
+    complete_sync_shell_lifecycle(
+        &runtime,
+        client_id,
+        request.request_id,
+        ShellCommandExecutionState::TimedOut,
+        Some(-1),
+        "partial output\n",
+        "Command timed out after 1 seconds",
+        None,
+    )
+    .await;
 
     let result = task.await.unwrap();
     assert!(!result.success);
     assert_eq!(result.output["failure_kind"], "timeout");
-    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["execution_state"], "timed_out");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
     assert_cargo_result_matches_schema("cargo_check", &result);
     // No job was created.
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
+#[tokio::test]
+async fn legacy_sync_cargo_runner_pre_spawn_failure_stays_not_started() {
+    let client_id = "vhandoff-legacy-pre-spawn";
+    let runtime = runtime_with_agent_project(client_id);
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .cargo_check(project, None, None, None, None, None, None, Some(60))
+                .await
+        }
+    });
+    let request = wait_for_agent_request(&runtime, client_id).await;
+    complete_sync_shell_lifecycle(
+        &runtime,
+        client_id,
+        request.request_id,
+        ShellCommandExecutionState::NotStarted,
+        None,
+        "",
+        "",
+        Some("spawn_failed: cargo executable was not available"),
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["failure_kind"], "executor_unavailable");
+    assert_ne!(result.output["failure_kind"], "timeout");
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("Rejected before starting command")));
+    assert_cargo_result_matches_schema("cargo_check", &result);
+}
+
+#[tokio::test]
+async fn legacy_sync_cargo_runner_post_spawn_uncertainty_stays_outcome_unknown() {
+    let client_id = "vhandoff-legacy-outcome-unknown";
+    let runtime = runtime_with_agent_project(client_id);
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .cargo_check(project, None, None, None, None, None, None, Some(60))
+                .await
+        }
+    });
+    let request = wait_for_agent_request(&runtime, client_id).await;
+    complete_sync_shell_lifecycle(
+        &runtime,
+        client_id,
+        request.request_id,
+        ShellCommandExecutionState::OutcomeUnknown,
+        None,
+        "",
+        "",
+        Some("the Runner lost the process result after spawn"),
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["promoted_to_job"], false);
+    assert!(result.output.get("job_id").is_none());
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("Do not automatically retry")));
+    assert_cargo_result_matches_schema("cargo_check", &result);
 }
 
 /// A queued hidden validation can be cancelled atomically before the Runner
@@ -1341,6 +1460,9 @@ async fn legacy_agent_default_check_and_test_use_one_synchronous_120_second_exec
             .unwrap();
         let result = task.await.unwrap();
         assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["execution_state"], "completed");
+        assert_eq!(result.output["command_started"], true);
+        assert_eq!(result.output["command_completed"], true);
         assert_eq!(result.output["effective_timeout_secs"], 120);
         assert_eq!(result.output["promoted_to_job"], false);
         assert_eq!(result.output["async_handoff_available"], false);
@@ -1798,6 +1920,52 @@ async fn cargo_fmt_mutating_never_auto_promotes() {
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
 }
 
+#[tokio::test]
+async fn cargo_fmt_mutating_post_spawn_uncertainty_forbids_blind_retry() {
+    let client_id = "vhandoff-fmt-mutate-unknown";
+    let runtime = runtime_with_agent_project(client_id);
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .cargo_fmt(project, None, Some(false), Some(60))
+                .await
+        }
+    });
+    let request = wait_for_agent_request(&runtime, client_id).await;
+    complete_sync_shell_lifecycle(
+        &runtime,
+        client_id,
+        request.request_id,
+        ShellCommandExecutionState::OutcomeUnknown,
+        None,
+        "",
+        "",
+        Some("formatting process result was lost after spawn"),
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["promoted_to_job"], false);
+    assert!(result.output.get("job_id").is_none());
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("Do not automatically retry"), "{error}");
+    assert!(error.contains("inspect the actual Job, process, service, or target state"));
+    assert_cargo_result_matches_schema("cargo_fmt", &result);
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
 /// Cargo outputs use mutually exclusive strict branches for public Job
 /// handoff, terminal execution, and pre-start rejection.
 #[test]
@@ -1954,7 +2122,7 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
             "stdout_truncated": false,
             "stderr_truncated": false,
             "command_started": true,
-            "command_completed": true,
+            "command_completed": false,
             "promoted_to_job": false,
             "effective_timeout_secs": 1,
             "sync_wait_secs": 1,
@@ -1968,6 +2136,29 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
         }
     });
     assert!(accepts(&timeout), "terminal timeout should validate");
+
+    let mut outcome_unknown = timeout.clone();
+    outcome_unknown["error"] =
+        json!("Command execution outcome is unknown; do not automatically retry");
+    outcome_unknown["output"]["execution_state"] = json!("outcome_unknown");
+    outcome_unknown["output"]["failure_kind"] = json!("outcome_unknown");
+    outcome_unknown["output"]["terminal"] = json!(false);
+    assert!(
+        accepts(&outcome_unknown),
+        "outcome_unknown should have an intentional strict branch"
+    );
+    let mut unknown_claiming_completion = outcome_unknown.clone();
+    unknown_claiming_completion["output"]["command_completed"] = json!(true);
+    assert!(
+        !accepts(&unknown_claiming_completion),
+        "outcome_unknown must not claim command completion"
+    );
+    let mut unknown_with_job = outcome_unknown.clone();
+    unknown_with_job["output"]["job_id"] = json!("fabricated-job");
+    assert!(
+        !accepts(&unknown_with_job),
+        "outcome_unknown must not fabricate a Job handle"
+    );
 
     let rejection = json!({
         "success": false,

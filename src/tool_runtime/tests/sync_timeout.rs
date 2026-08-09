@@ -9,6 +9,7 @@
 use super::support::*;
 use crate::shell_protocol::{
     ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
+    ShellCommandExecutionState,
 };
 use crate::tool_runtime::helpers::{
     resolve_sync_timeout_secs, DEFAULT_RUN_SHELL_TIMEOUT_SECS, MIN_SYNC_TIMEOUT_SECS,
@@ -269,10 +270,10 @@ async fn run_shell_rejects_timeout_above_120_before_enqueue() {
 }
 
 #[tokio::test]
-async fn explicit_short_cargo_test_timeout_reports_real_terminal_timeout_without_job() {
-    // When `timeout_secs <= SYNC_VALIDATION_WAIT_SECS`, there is no handoff
-    // headroom: the command runs synchronously and a real terminal timeout is
-    // reported at the budget boundary. No Job is created.
+async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_job() {
+    // The server's result-wait timeout is not proof that the Runner command
+    // reached its own timeout. Once dispatched, the final outcome is unknown
+    // and the synchronous caller must not be invited to retry blindly.
     let client_id = "sync-short-full-test";
     let runtime = runtime_with_agent_project(client_id);
     let mut caps = ShellClientCapabilities::default();
@@ -322,14 +323,16 @@ async fn explicit_short_cargo_test_timeout_reports_real_terminal_timeout_without
 
     let result = task.await.unwrap();
     assert!(!result.success);
-    assert_eq!(result.output["failure_kind"], "timeout");
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
     assert_eq!(result.output["command_started"], true);
-    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["terminal"], false);
     assert_eq!(result.output["passed"], false);
     assert!(result
         .error
         .as_deref()
-        .is_some_and(|error| error.contains("command was started")));
+        .is_some_and(|error| error.contains("Do not automatically retry")));
 
     let client = runtime
         .shell_clients
@@ -363,6 +366,79 @@ async fn explicit_short_cargo_test_timeout_reports_real_terminal_timeout_without
             && event.tool_name == "cargo_test"
             && event.status.as_deref() == Some("failed")
     }));
+}
+
+#[tokio::test]
+async fn undispatched_shared_capture_wait_timeout_reports_not_started() {
+    let client_id = "sync-timeout-undispatched";
+    let runtime = runtime_with_agent_project(client_id);
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+
+    let output = runtime
+        .run_project_command_capture(&project, "cargo check".to_string(), 1, None)
+        .await
+        .expect("capture wait timeout is a lifecycle result");
+
+    assert_eq!(
+        output.execution_state,
+        ShellCommandExecutionState::NotStarted
+    );
+    assert!(output.exit_code.is_none());
+    assert!(output
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("timed out waiting 1 seconds for agent shell result")));
+    let client = runtime
+        .shell_clients
+        .get_client_view(client_id)
+        .await
+        .expect("registered client");
+    assert_eq!(client.pending_requests, 0);
+}
+
+#[tokio::test]
+async fn shared_capture_missing_pending_record_reports_outcome_unknown() {
+    let client_id = "sync-timeout-missing-record";
+    let runtime = runtime_with_agent_project(client_id);
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+
+    let capture = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .run_project_command_capture(&project, "cargo check".to_string(), 60, None)
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("capture request should be dispatched");
+    assert_eq!(
+        runtime
+            .shell_clients
+            .cancel_request_dispatch_state(&request.request_id)
+            .await,
+        Some(true)
+    );
+
+    let output = capture
+        .await
+        .unwrap()
+        .expect("a dropped waiter after dispatch is a lifecycle result");
+    assert_eq!(
+        output.execution_state,
+        ShellCommandExecutionState::OutcomeUnknown
+    );
+    assert!(output
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("after dispatch may have occurred")));
 }
 
 #[tokio::test]

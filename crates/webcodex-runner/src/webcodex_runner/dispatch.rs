@@ -4,9 +4,9 @@ use super::transport::ResultSubmission;
 use super::validation::{handle_validation_request, is_validation_request_kind};
 use super::{
     handle_project_lifecycle_op, handle_project_op_with_temporary_projects_root,
-    handle_resolve_or_register_project, run_shell_with_profiles_in_sandbox, run_ssh_shell,
-    AgentSink, CommandResult, HotAgentConfig, PersistentShellManager, ReloadableAgentConfig,
-    SubmitResultError,
+    handle_resolve_or_register_project, run_shell_with_profiles_in_sandbox_and_execution_state,
+    run_ssh_shell_with_execution_state, AgentSink, CommandResult, HotAgentConfig,
+    PersistentShellManager, ReloadableAgentConfig, ShellCommandResult, SubmitResultError,
 };
 use crate::shell_protocol::ShellAgentShellRequest;
 use crate::{handle_file_request, is_file_request_kind, JobManager};
@@ -117,26 +117,29 @@ pub(crate) fn dispatch_request(
         }
         ExternalRoute::NativeFallback(fallback) => {
             let request_id = request.request_id.clone();
-            let result = if is_file_request_kind(&request.kind) {
-                handle_file_request(policy, &request)
-            } else {
-                run_shell_with_profiles_in_sandbox(
-                    config.generation,
-                    policy,
-                    shell,
-                    projects_dir,
-                    &jobs.prepared_profiles,
-                    request.cwd.as_deref(),
-                    &request.command,
-                    request.stdin.as_deref(),
-                    request.timeout_secs,
-                    Some(runtime.shutdown_flag()),
-                    request.sandbox.as_deref(),
-                )
-            };
-            external_tools.complete_native_fallback(fallback, &result);
+            if is_file_request_kind(&request.kind) {
+                let result = handle_file_request(policy, &request);
+                external_tools.complete_native_fallback(fallback, &result);
+                return sink
+                    .submit_result_with_metadata(request_id, result, config, runtime)
+                    .map(|_| true);
+            }
+            let result = run_shell_with_profiles_in_sandbox_and_execution_state(
+                config.generation,
+                policy,
+                shell,
+                projects_dir,
+                &jobs.prepared_profiles,
+                request.cwd.as_deref(),
+                &request.command,
+                request.stdin.as_deref(),
+                request.timeout_secs,
+                Some(runtime.shutdown_flag()),
+                request.sandbox.as_deref(),
+            );
+            external_tools.complete_native_fallback(fallback, &result.result);
             return sink
-                .submit_result_with_metadata(request_id, result, config, runtime)
+                .submit_shell_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true);
         }
         ExternalRoute::Native => {}
@@ -227,11 +230,8 @@ pub(crate) fn dispatch_request(
         }
         _ => {
             let request_id = request.request_id.clone();
-            let result = match (
-                ssh_resource,
-                ssh_session_id,
-            ) {
-                (Some(resource), Some(session_id)) => run_ssh_shell(
+            let result = match (ssh_resource, ssh_session_id) {
+                (Some(resource), Some(session_id)) => run_ssh_shell_with_execution_state(
                     &jobs.ssh_pool,
                     config.generation,
                     &config.ssh,
@@ -245,7 +245,7 @@ pub(crate) fn dispatch_request(
                     Some(runtime.shutdown_flag()),
                     request.sandbox.as_deref(),
                 ),
-                (Some(_), None) => CommandResult {
+                (Some(_), None) => ShellCommandResult::not_started(CommandResult {
                     exit_code: None,
                     stdout: None,
                     stderr: None,
@@ -253,8 +253,8 @@ pub(crate) fn dispatch_request(
                     error: Some(
                         "ssh_session_required: an SSH resource requires a Workflow Session id; command was not started".to_string(),
                     ),
-                },
-                (None, _) => run_shell_with_profiles_in_sandbox(
+                }),
+                (None, _) => run_shell_with_profiles_in_sandbox_and_execution_state(
                     config.generation,
                     policy,
                     shell,
@@ -268,7 +268,7 @@ pub(crate) fn dispatch_request(
                     request.sandbox.as_deref(),
                 ),
             };
-            sink.submit_result_with_metadata(request_id, result, config, runtime)
+            sink.submit_shell_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }
     }

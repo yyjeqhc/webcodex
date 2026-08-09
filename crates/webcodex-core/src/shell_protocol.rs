@@ -588,6 +588,15 @@ pub struct ShellRunResponse {
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Server-owned dispatch evidence for synchronous requests. `Some(false)`
+    /// proves the request never left the queue; `Some(true)` does not by
+    /// itself prove that a command process was spawned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_dispatched: Option<bool>,
+    /// Runner-owned command lifecycle evidence. Absent for non-command
+    /// requests and legacy Runner results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_execution_state: Option<ShellCommandExecutionState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -731,6 +740,39 @@ pub struct ShellAgentResultRequest {
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
+}
+
+/// Narrow Runner-owned lifecycle evidence for one synchronous shell command.
+/// This is transport metadata, not a general execution framework: the Runner
+/// sets it from its actual process-spawn/collection path, while non-command
+/// request results omit it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellCommandExecutionState {
+    NotStarted,
+    OutcomeUnknown,
+    TimedOut,
+    Completed,
+}
+
+/// Transport payload for synchronous Runner results. Flattening preserves the
+/// existing HTTP/WebSocket/QUIC JSON shape and adds only optional shell-command
+/// lifecycle evidence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentResultPayload {
+    #[serde(flatten)]
+    pub result: ShellAgentResultRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_execution_state: Option<ShellCommandExecutionState>,
+}
+
+impl From<ShellAgentResultRequest> for ShellAgentResultPayload {
+    fn from(result: ShellAgentResultRequest) -> Self {
+        Self {
+            result,
+            command_execution_state: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1560,7 +1602,7 @@ pub enum AgentEnvelope {
     /// payload as `POST /api/shell/agent/result`.
     Result {
         #[serde(flatten)]
-        payload: ShellAgentResultRequest,
+        payload: ShellAgentResultPayload,
     },
     /// Agent -> server. Incremental or final update for an async job. Same
     /// payload as `POST /api/shell/agent/job_update`.
@@ -2058,21 +2100,30 @@ mod envelope_tests {
     #[test]
     fn result_and_job_update_envelopes_round_trip() {
         let result_env = AgentEnvelope::Result {
-            payload: ShellAgentResultRequest {
-                client_id: "ws-1".to_string(),
-                agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
-                request_id: "req-1".to_string(),
-                exit_code: Some(0),
-                stdout: Some("hi".to_string()),
-                stderr: None,
-                duration_ms: Some(5),
-                error: None,
+            payload: ShellAgentResultPayload {
+                result: ShellAgentResultRequest {
+                    client_id: "ws-1".to_string(),
+                    agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+                    request_id: "req-1".to_string(),
+                    exit_code: Some(0),
+                    stdout: Some("hi".to_string()),
+                    stderr: None,
+                    duration_ms: Some(5),
+                    error: None,
+                },
+                command_execution_state: Some(ShellCommandExecutionState::Completed),
             },
         };
         let json = result_env.to_json().unwrap();
         assert!(json.contains(r#""type":"result""#));
         match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
-            AgentEnvelope::Result { payload } => assert_eq!(payload.exit_code, Some(0)),
+            AgentEnvelope::Result { payload } => {
+                assert_eq!(payload.result.exit_code, Some(0));
+                assert_eq!(
+                    payload.command_execution_state,
+                    Some(ShellCommandExecutionState::Completed)
+                );
+            }
             other => panic!("expected result, got {:?}", other.kind()),
         }
 

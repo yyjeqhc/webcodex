@@ -6,7 +6,7 @@
 //! keys, passwords, SSH configuration, or a transport in a Workflow Session.
 
 use super::config::SshConfig;
-use super::output::CommandResult;
+use super::output::{CommandResult, ShellCommandResult};
 use super::shutdown::lock_unpoison;
 use super::AgentPolicy;
 use std::collections::HashMap;
@@ -423,23 +423,55 @@ pub(crate) fn run_ssh_shell(
     stop_requested: Option<&AtomicBool>,
     sandbox: Option<&str>,
 ) -> CommandResult {
+    run_ssh_shell_with_execution_state(
+        pool,
+        generation,
+        config,
+        policy,
+        resource_name,
+        session_id,
+        cwd,
+        command,
+        stdin,
+        timeout_secs,
+        stop_requested,
+        sandbox,
+    )
+    .result
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_ssh_shell_with_execution_state(
+    pool: &SshConnectionPool,
+    generation: u64,
+    config: &SshConfig,
+    policy: &AgentPolicy,
+    resource_name: &str,
+    session_id: &str,
+    cwd: Option<&str>,
+    command: &str,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    sandbox: Option<&str>,
+) -> ShellCommandResult {
     let start = Instant::now();
     if !policy.allow_raw_shell {
-        return command_error(
+        return ShellCommandResult::not_started(command_error(
             start,
             "raw shell is disabled by local agent policy".to_string(),
-        );
+        ));
     }
     if sandbox.is_some() {
-        return command_error(
+        return ShellCommandResult::not_started(command_error(
             start,
             "ssh_sandbox_unavailable: SSH resources cannot run in the local inspect sandbox; command was not started".to_string(),
-        );
+        ));
     }
     let prepared =
         match pool.prepare_command(generation, config, resource_name, session_id, cwd, command) {
             Ok(prepared) => prepared,
-            Err(error) => return command_error(start, error),
+            Err(error) => return ShellCommandResult::not_started(command_error(start, error)),
         };
     let key = prepared.key.clone();
     let mut result = run_piped_ssh_command(
@@ -450,9 +482,9 @@ pub(crate) fn run_ssh_shell(
         stop_requested,
         start,
     );
-    if is_transport_failure(result.exit_code, result.stderr.as_deref()) {
+    if is_transport_failure(result.result.exit_code, result.result.stderr.as_deref()) {
         pool.invalidate_after_transport_failure(&key);
-        if let Some(stderr) = result.stderr.as_mut() {
+        if let Some(stderr) = result.result.stderr.as_mut() {
             if !stderr.is_empty() && !stderr.ends_with('\n') {
                 stderr.push('\n');
             }
@@ -460,11 +492,12 @@ pub(crate) fn run_ssh_shell(
                 "webcodex: SSH transport ended after dispatch; the command may have started and was not retried",
             );
         }
-        if result.error.is_none() {
-            result.error = Some(
+        if result.result.error.is_none() {
+            result.result.error = Some(
                 "ssh_transport_failed: command may have started and was not retried".to_string(),
             );
         }
+        result.execution_state = crate::shell_protocol::ShellCommandExecutionState::OutcomeUnknown;
     }
     result
 }
@@ -741,7 +774,7 @@ fn run_piped_ssh_command(
     stdin: Option<&str>,
     stop_requested: Option<&AtomicBool>,
     start: Instant,
-) -> CommandResult {
+) -> ShellCommandResult {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin.is_some() {
         command.stdin(Stdio::piped());
@@ -749,10 +782,10 @@ fn run_piped_ssh_command(
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(_) => {
-            return command_error(
+            return ShellCommandResult::not_started(command_error(
                 start,
                 "ssh_command_spawn_failed: command was not started".to_string(),
-            )
+            ))
         }
     };
     if let Some(input) = stdin {
@@ -760,20 +793,20 @@ fn run_piped_ssh_command(
             if let Err(error) = child_stdin.write_all(input.as_bytes()) {
                 if error.kind() != std::io::ErrorKind::BrokenPipe {
                     let _ = terminate_ssh_child(&mut child);
-                    return command_error(
+                    return ShellCommandResult::outcome_unknown(command_error(
                         start,
                         "ssh_command_stdin_failed: command may have started and was not retried"
                             .to_string(),
-                    );
+                    ));
                 }
             }
         } else {
             let _ = terminate_ssh_child(&mut child);
-            return command_error(
+            return ShellCommandResult::outcome_unknown(command_error(
                 start,
                 "ssh_command_stdin_failed: command may have started and was not retried"
                     .to_string(),
-            );
+            ));
         }
     }
     let stdout = child.stdout.take();
@@ -813,11 +846,11 @@ fn run_piped_ssh_command(
             }
             Err(_) => {
                 let _ = terminate_ssh_child(&mut child);
-                return command_error(
+                return ShellCommandResult::outcome_unknown(command_error(
                     start,
                     "ssh_command_wait_failed: command may have started and was not retried"
                         .to_string(),
-                );
+                ));
             }
         }
     };
@@ -835,12 +868,17 @@ fn run_piped_ssh_command(
     let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
     if stopped {
         append_line(&mut stderr, "job stopped by request");
-        return CommandResult {
+        let result = CommandResult {
             exit_code: Some(-1),
             stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
             stderr: Some(stderr),
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some("job stopped".to_string()),
+        };
+        return if status.is_some() {
+            ShellCommandResult::completed(result)
+        } else {
+            ShellCommandResult::outcome_unknown(result)
         };
     }
     if timed_out {
@@ -848,21 +886,26 @@ fn run_piped_ssh_command(
             &mut stderr,
             &format!("command timed out after {timeout_secs} seconds"),
         );
-        return CommandResult {
+        let result = CommandResult {
             exit_code: Some(-1),
             stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
             stderr: Some(stderr),
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some("command timed out".to_string()),
         };
+        return if status.is_some() {
+            ShellCommandResult::timed_out(result)
+        } else {
+            ShellCommandResult::outcome_unknown(result)
+        };
     }
-    CommandResult {
+    ShellCommandResult::completed(CommandResult {
         exit_code: status.and_then(|status| status.code()).or(Some(-1)),
         stdout: Some(String::from_utf8_lossy(&stdout).into_owned()),
         stderr: Some(stderr),
         duration_ms: Some(start.elapsed().as_millis() as u64),
         error: None,
-    }
+    })
 }
 
 fn terminate_ssh_child(child: &mut Child) -> Result<ExitStatus, String> {

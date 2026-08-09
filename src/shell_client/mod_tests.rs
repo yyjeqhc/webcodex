@@ -1868,6 +1868,71 @@ async fn register_quic_v1_client(registry: &ShellClientRegistry, client_id: &str
 }
 
 #[tokio::test]
+async fn raw_shell_run_wait_timeout_preserves_known_dispatch_evidence() {
+    use salvo::test::{ResponseExt, TestClient};
+    use salvo::Service;
+
+    let client_id = "raw-shell-timeout";
+    let registry = Arc::new(ShellClientRegistry::default());
+    let mut registration = runner_registration(
+        client_id,
+        "inst",
+        vec![project_summary("webcodex", "/tmp/webcodex")],
+    );
+    registration.capabilities = Some(ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    });
+    registry.register(registration).await.unwrap();
+
+    let service = Service::new(
+        Router::new()
+            .hoop(affix_state::inject(registry.clone()))
+            .hoop(affix_state::inject(auth_context(None, true)))
+            .push(Router::with_path("api/shell/run").post(shell_run)),
+    );
+    let response = TestClient::post("http://localhost/api/shell/run")
+        .json(&json!({
+            "client_id": client_id,
+            "cwd": null,
+            "command": "echo hi",
+            "stdin": null,
+            "timeout_secs": 5,
+            "wait_timeout_secs": 1
+        }))
+        .send(&service);
+    let poll = async {
+        for _ in 0..200 {
+            if let Some(request) = registry
+                .poll(ShellAgentPollRequest {
+                    client_id: client_id.to_string(),
+                    agent_instance_id: "inst".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap()
+            {
+                return request;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("raw shell request was not dispatched");
+    };
+    let (mut response, request) = tokio::join!(response, poll);
+    assert_eq!(request.kind, "run_shell");
+    assert_eq!(response.status_code, Some(StatusCode::REQUEST_TIMEOUT));
+    let body = response
+        .take_json::<serde_json::Value>()
+        .await
+        .expect("raw shell timeout JSON");
+    assert_eq!(body["request_dispatched"], true);
+    assert!(
+        body.get("command_execution_state").is_none(),
+        "the server must not fabricate Runner lifecycle evidence: {body}"
+    );
+}
+
+#[tokio::test]
 async fn registry_allows_quic_v1_run_queueing() {
     let registry = ShellClientRegistry::default();
     register_quic_v1_client(&registry, "quic-run").await;
@@ -2968,9 +3033,48 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
         error.contains("offline"),
         "error should classify as agent_offline: {error}"
     );
+    assert!(
+        !error.to_ascii_lowercase().contains("command"),
+        "generic sync disconnect errors must remain request-neutral: {error}"
+    );
+    assert_eq!(response.request_dispatched, Some(false));
+    assert_eq!(response.command_execution_state, None);
     // No dangling waiter or queue entry remains.
     let after = registry.get_client_view("oe").await.unwrap();
     assert_eq!(after.pending_requests, 0);
+}
+
+#[tokio::test]
+async fn dispatched_file_request_disconnect_remains_request_neutral() {
+    let registry = ShellClientRegistry::default();
+    register_quic_v1_client(&registry, "oe").await;
+    let (_request_id, rx) = registry
+        .enqueue_file_op(file_request("read"), "tester".to_string())
+        .await
+        .unwrap();
+    registry
+        .poll(ShellAgentPollRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("file request should be dispatched");
+
+    registry.reconcile_disconnect("oe", "inst").await;
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+        .await
+        .expect("waiter must resolve promptly")
+        .expect("waiter must receive a response");
+    let error = response.error.as_deref().unwrap_or_default();
+    assert!(
+        !error.to_ascii_lowercase().contains("command"),
+        "generic sync disconnect errors must not invent command lifecycle prose: {error}"
+    );
+    assert_eq!(response.request_dispatched, Some(true));
+    assert_eq!(response.command_execution_state, None);
 }
 
 #[tokio::test]
@@ -4100,7 +4204,8 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
                 stderr: None,
                 duration_ms: Some(1),
                 error: None,
-            },
+            }
+            .into(),
             "conn-a",
         )
         .await

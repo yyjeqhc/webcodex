@@ -1,7 +1,8 @@
 use serde_json::{json, Value};
 
 use super::helpers::{
-    bounded_tail, command_rejected_message, looks_like_command_timeout, normalize_local_status,
+    bounded_tail, command_outcome_unknown_message, command_rejected_message,
+    command_timeout_message, looks_like_command_timeout, normalize_local_status,
     project_relative_cwd, resolve_local_cwd, resolve_sync_timeout_secs,
     sync_timeout_out_of_range_result, validate_project_relative_path,
     DEFAULT_CARGO_CHECK_TIMEOUT_SECS, DEFAULT_CARGO_FMT_TIMEOUT_SECS,
@@ -9,7 +10,7 @@ use super::helpers::{
     MIN_VALIDATION_TIMEOUT_SECS, SYNC_VALIDATION_WAIT_SECS,
 };
 use super::local_jobs::LocalJobRecord;
-use super::shell::ProjectCommandOutput;
+use super::shell::{command_execution_state_name, ProjectCommandOutput};
 use super::tool_result::ToolResult;
 use super::validation_parser::aggregate_cargo_test_summaries;
 use super::validation_profile::{
@@ -19,7 +20,8 @@ use super::{ExecutionPurpose, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::ShellJobStartMetadata;
 use crate::shell_protocol::{
-    ShellJobOpRequest, ShellJobValidationMetadata, ShellJobValidationStep,
+    ShellCommandExecutionState, ShellJobOpRequest, ShellJobValidationMetadata,
+    ShellJobValidationStep,
 };
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
@@ -114,7 +116,8 @@ pub(crate) fn parse_cargo_test_run_metadata(text: &str) -> CargoTestRunMetadata 
 }
 
 fn is_cargo_validation_failure(output: &ProjectCommandOutput, timeout_secs: u64) -> bool {
-    output.exit_code.is_some_and(|exit_code| exit_code != 0)
+    output.execution_state == ShellCommandExecutionState::Completed
+        && output.exit_code.is_some_and(|exit_code| exit_code != 0)
         && !looks_like_command_timeout(output.exit_code, &output.stderr, timeout_secs)
         && !looks_like_command_infrastructure_failure(&output.stderr)
 }
@@ -124,6 +127,24 @@ fn looks_like_command_infrastructure_failure(stderr: &str) -> bool {
     trimmed.starts_with("Failed to execute command:")
         || trimmed.starts_with("Failed to wait for command:")
         || trimmed.starts_with("Failed to collect command output:")
+}
+
+fn cargo_prestart_failure_kind(error: Option<&str>) -> &'static str {
+    let lower = error.unwrap_or_default().to_ascii_lowercase();
+    if lower.contains("permission") || lower.contains("denied") || lower.contains("not allowed") {
+        "permission_denied"
+    } else if lower.contains("sandbox") {
+        "sandbox_unavailable"
+    } else if lower.contains("cwd")
+        || lower.contains("working directory")
+        || lower.contains("directory")
+    {
+        "cwd_invalid"
+    } else if lower.contains("project") {
+        "project_not_found"
+    } else {
+        "executor_unavailable"
+    }
 }
 
 /// Shared structured-validation runtime budget + effective sync window.
@@ -1199,8 +1220,7 @@ impl ToolRuntime {
                     stderr,
                     duration_ms: ended_at.saturating_sub(now) as u64 * 1000,
                     error: None,
-                    command_started: true,
-                    command_completed: true,
+                    execution_state: ShellCommandExecutionState::Completed,
                 };
                 self.local_jobs.lock().await.remove(&job_id);
                 let _ = std::fs::remove_dir_all(&dir);
@@ -1444,7 +1464,7 @@ impl ToolRuntime {
             "stderr_truncated": stderr_truncated,
             "passed": passed,
             "command_started": true,
-            "command_completed": true,
+            "command_completed": !timed_out,
             "promoted_to_job": false,
             "effective_timeout_secs": handoff.effective_timeout_secs,
             "sync_wait_secs": handoff.sync_wait_secs,
@@ -1476,7 +1496,15 @@ impl ToolRuntime {
             let result = ToolResult {
                 success: false,
                 output: payload,
-                error: Some(format!("cargo command failed; {}", CARGO_FAILURE_GUIDANCE)),
+                error: Some(if timed_out {
+                    command_timeout_message(
+                        handoff.effective_timeout_secs,
+                        &stdout_tail,
+                        &stderr_tail,
+                    )
+                } else {
+                    format!("cargo command failed; {}", CARGO_FAILURE_GUIDANCE)
+                }),
             };
             self.shell_clients.remove_job_record(&job_id).await;
             result
@@ -1500,21 +1528,15 @@ impl ToolRuntime {
         source_stdout_truncated: bool,
         source_stderr_truncated: bool,
     ) -> ToolResult {
-        let timed_out = !output.command_completed
-            || looks_like_command_timeout(output.exit_code, &output.stderr, timeout_secs);
-        if let Some(error) = output.error.as_ref().filter(|_| !timed_out) {
-            return ToolResult::err(command_rejected_message(
-                error.clone(),
-                "verify the project id/cwd and agent connectivity, then retry or use run_shell for custom diagnostics.",
-            ));
-        }
+        let execution_state = output.execution_state;
         let (stdout_tail, bounded_stdout_truncated) =
             bounded_tail(&output.stdout, CARGO_STDIO_TAIL_CHARS);
         let (stderr_tail, bounded_stderr_truncated) =
             bounded_tail(&output.stderr, CARGO_STDIO_TAIL_CHARS);
         let stdout_truncated = source_stdout_truncated || bounded_stdout_truncated;
         let stderr_truncated = source_stderr_truncated || bounded_stderr_truncated;
-        let passed = output.exit_code == Some(0);
+        let passed =
+            execution_state == ShellCommandExecutionState::Completed && output.exit_code == Some(0);
         let validation_failed = is_cargo_validation_failure(&output, timeout_secs);
         let (resolved_cwd, shell, executor) = if config.is_agent() {
             let resolved = super::helpers::resolve_agent_cwd(config, cwd)
@@ -1540,7 +1562,7 @@ impl ToolRuntime {
             "executor": executor,
             "execution_source": adapter.tool_identity(),
             "purpose": purpose,
-            "execution_state": if timed_out { "timed_out" } else { "completed" },
+            "execution_state": command_execution_state_name(execution_state),
             "exit_code": output.exit_code,
             "duration_ms": output.duration_ms,
             "stdout_tail": stdout_tail,
@@ -1550,19 +1572,20 @@ impl ToolRuntime {
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
             "passed": passed,
-            "command_started": output.command_started,
-            "command_completed": true,
+            "command_started": execution_state != ShellCommandExecutionState::NotStarted,
+            "command_completed": execution_state == ShellCommandExecutionState::Completed,
             "promoted_to_job": promoted_to_job,
             "effective_timeout_secs": timeout_secs,
             "sync_wait_secs": sync_wait_secs,
-            "terminal": true,
+            "terminal": execution_state != ShellCommandExecutionState::OutcomeUnknown,
         });
-        let terminal_status = if timed_out {
-            "timeout"
-        } else if passed {
-            "completed"
-        } else {
-            "failed"
+        let terminal_status = match execution_state {
+            ShellCommandExecutionState::NotStarted | ShellCommandExecutionState::OutcomeUnknown => {
+                "lost"
+            }
+            ShellCommandExecutionState::TimedOut => "timeout",
+            ShellCommandExecutionState::Completed if passed => "completed",
+            ShellCommandExecutionState::Completed => "failed",
         };
         if let Some(projection) = crate::tool_runtime::jobs::validation_job_projection(
             Some(adapter.tool_identity()),
@@ -1575,20 +1598,58 @@ impl ToolRuntime {
         ) {
             apply_validation_projection_fields(&mut payload, &projection);
         }
-        if passed {
-            ToolResult::ok(payload)
-        } else {
-            payload["failure_kind"] = json!(if timed_out {
-                "timeout"
-            } else if validation_failed {
-                CARGO_VALIDATION_FAILURE_KIND
-            } else {
-                "process_exit"
-            });
-            ToolResult {
-                success: false,
-                output: payload,
-                error: Some(format!("cargo command failed; {}", CARGO_FAILURE_GUIDANCE)),
+        match execution_state {
+            ShellCommandExecutionState::Completed if passed => ToolResult::ok(payload),
+            ShellCommandExecutionState::NotStarted => {
+                payload["failure_kind"] =
+                    json!(cargo_prestart_failure_kind(output.error.as_deref()));
+                ToolResult {
+                    success: false,
+                    output: payload,
+                    error: Some(command_rejected_message(
+                        output
+                            .error
+                            .as_deref()
+                            .unwrap_or("the Runner rejected the Cargo command before process spawn"),
+                        "correct the project, cwd, permissions, sandbox, or Runner availability indicated by the rejection, then retry.",
+                    )),
+                }
+            }
+            ShellCommandExecutionState::OutcomeUnknown => {
+                payload["failure_kind"] = json!("outcome_unknown");
+                ToolResult {
+                    success: false,
+                    output: payload,
+                    error: Some(command_outcome_unknown_message(
+                        output.error.as_deref().unwrap_or(
+                            "the executor did not return a trustworthy terminal Cargo result",
+                        ),
+                    )),
+                }
+            }
+            ShellCommandExecutionState::TimedOut => {
+                payload["failure_kind"] = json!("timeout");
+                ToolResult {
+                    success: false,
+                    output: payload,
+                    error: Some(command_timeout_message(
+                        timeout_secs,
+                        &stdout_tail,
+                        &stderr_tail,
+                    )),
+                }
+            }
+            ShellCommandExecutionState::Completed => {
+                payload["failure_kind"] = json!(if validation_failed {
+                    CARGO_VALIDATION_FAILURE_KIND
+                } else {
+                    "process_exit"
+                });
+                ToolResult {
+                    success: false,
+                    output: payload,
+                    error: Some(format!("cargo command failed; {}", CARGO_FAILURE_GUIDANCE)),
+                }
             }
         }
     }

@@ -638,7 +638,8 @@ mod tests {
                     stderr: None,
                     duration_ms: Some(1),
                     error: None,
-                },
+                }
+                .into(),
             }
             .to_json()
             .unwrap()
@@ -664,7 +665,8 @@ mod tests {
                     stderr: None,
                     duration_ms: Some(1),
                     error: None,
-                },
+                }
+                .into(),
             }
             .to_json()
             .unwrap()
@@ -747,7 +749,8 @@ mod tests {
                 stderr: None,
                 duration_ms: Some(1),
                 error: None,
-            },
+            }
+            .into(),
         };
         ws.send(TungsteniteMessage::Text(
             result_env.to_json().unwrap().into(),
@@ -1120,7 +1123,8 @@ mod tests {
                     stderr: None,
                     duration_ms: Some(1),
                     error: None,
-                },
+                }
+                .into(),
             }
             .to_json()
             .unwrap()

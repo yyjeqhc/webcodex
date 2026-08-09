@@ -686,7 +686,7 @@ fn validation_event_schema() -> Value {
             "command_summary": { "type": "string", "maxLength": 512 },
             "cwd": { "type": "string", "maxLength": 4096 },
             "shell": { "type": "string", "enum": ["sh", "bash", "configured", "remote"] },
-            "execution_state": { "type": "string", "enum": ["started", "completed", "cancelled", "timed_out"] },
+            "execution_state": { "type": "string", "enum": ["not_started", "started", "outcome_unknown", "completed", "cancelled", "timed_out"] },
             "project": { "type": "string", "maxLength": 512 },
             "session_id": { "type": "string", "maxLength": 128 },
             "started_at": { "type": "integer" },

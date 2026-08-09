@@ -1,3 +1,4 @@
+use crate::shell_protocol::ShellCommandExecutionState;
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -7,6 +8,42 @@ pub(crate) struct CommandResult {
     pub(crate) stderr: Option<String>,
     pub(crate) duration_ms: Option<u64>,
     pub(crate) error: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ShellCommandResult {
+    pub(crate) result: CommandResult,
+    pub(crate) execution_state: ShellCommandExecutionState,
+}
+
+impl ShellCommandResult {
+    pub(crate) fn not_started(result: CommandResult) -> Self {
+        Self {
+            result,
+            execution_state: ShellCommandExecutionState::NotStarted,
+        }
+    }
+
+    pub(crate) fn outcome_unknown(result: CommandResult) -> Self {
+        Self {
+            result,
+            execution_state: ShellCommandExecutionState::OutcomeUnknown,
+        }
+    }
+
+    pub(crate) fn timed_out(result: CommandResult) -> Self {
+        Self {
+            result,
+            execution_state: ShellCommandExecutionState::TimedOut,
+        }
+    }
+
+    pub(crate) fn completed(result: CommandResult) -> Self {
+        Self {
+            result,
+            execution_state: ShellCommandExecutionState::Completed,
+        }
+    }
 }
 
 pub(crate) fn line_edit_stdout(value: serde_json::Value, start: Instant) -> CommandResult {

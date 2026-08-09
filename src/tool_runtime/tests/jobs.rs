@@ -5,7 +5,10 @@ use super::super::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use super::super::ToolRuntime;
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
+use crate::shell_protocol::{
+    ShellAgentResultPayload, ShellAgentResultRequest, ShellClientCapabilities,
+    ShellClientRegisterRequest, ShellCommandExecutionState,
+};
 use serde_json::json;
 use std::fs;
 use std::io::Write;
@@ -500,6 +503,45 @@ async fn run_shell_via_agent(
     task.await.unwrap()
 }
 
+async fn run_shell_via_agent_lifecycle_error(
+    client_id: &str,
+    error: &str,
+    execution_state: ShellCommandExecutionState,
+) -> ToolResult {
+    let runtime = runtime_with_agent_project(client_id);
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .run_shell(project, "printf lifecycle".to_string(), Some(30), None)
+            .await
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("run_shell should be dispatched");
+    runtime
+        .shell_clients
+        .complete(ShellAgentResultPayload {
+            result: ShellAgentResultRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                request_id: request.request_id,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(1),
+                error: Some(error.to_string()),
+            },
+            command_execution_state: Some(execution_state),
+        })
+        .await
+        .unwrap();
+    task.await.unwrap()
+}
+
 #[tokio::test]
 async fn run_shell_failure_reports_command_started_and_output_tail() {
     let result = run_shell_via_agent(
@@ -522,6 +564,7 @@ async fn run_shell_failure_reports_command_started_and_output_tail() {
     assert_eq!(result.output["command_started"], true);
     assert_eq!(result.output["command_completed"], true);
     assert_eq!(result.output["command_ok"], false);
+    assert_eq!(result.output["execution_state"], "completed");
     assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
     assert_eq!(result.output["tool_failure"], false);
 }
@@ -545,8 +588,47 @@ async fn run_shell_rejection_reports_not_started_and_no_files_modified() {
     assert_eq!(result.output["command_started"], false);
     assert_eq!(result.output["command_completed"], false);
     assert_eq!(result.output["command_ok"], false);
+    assert_eq!(result.output["execution_state"], "not_started");
     assert_eq!(result.output["failure_kind"], "agent_offline");
     assert_eq!(result.output["tool_failure"], true);
+}
+
+#[tokio::test]
+async fn run_shell_runner_pre_spawn_error_reports_not_started() {
+    let result = run_shell_via_agent_lifecycle_error(
+        "shell-pre-spawn-error",
+        "failed to spawn command: executable not found",
+        ShellCommandExecutionState::NotStarted,
+    )
+    .await;
+
+    assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or_default();
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert!(error.contains("No command was started"));
+    assert!(error.contains("No files were modified"));
+}
+
+#[tokio::test]
+async fn run_shell_runner_post_spawn_output_error_reports_unknown() {
+    let result = run_shell_via_agent_lifecycle_error(
+        "shell-post-spawn-error",
+        "stdout reader did not finish before cleanup deadline",
+        ShellCommandExecutionState::OutcomeUnknown,
+    )
+    .await;
+
+    assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or_default();
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    assert!(error.contains("Do not automatically retry"));
+    assert!(!error.contains("No command was started"));
+    assert!(!error.contains("No files were modified"));
 }
 
 #[tokio::test]
@@ -635,6 +717,11 @@ async fn run_shell_exit_codes_report_structured_command_results() {
             case.name
         );
         assert_eq!(
+            result.output["execution_state"], "completed",
+            "[{}] execution_state",
+            case.name
+        );
+        assert_eq!(
             result.output["command_ok"], case.expect_command_ok,
             "[{}] command_ok",
             case.name
@@ -661,18 +748,110 @@ async fn run_shell_exit_codes_report_structured_command_results() {
 }
 
 #[tokio::test]
-async fn run_shell_timeout_reports_structured_timeout_failure_kind() {
+async fn run_shell_result_wait_timeout_reports_unknown_outcome() {
     // The enqueued agent request is intentionally never completed, so the
-    // 1-second run_shell timeout fires while the command is still pending.
+    // result wait expires after dispatch without proving the command's final
+    // outcome.
     let result = run_shell_via_agent("shell-timeout", "sleep 2", Some(1), None).await;
 
     assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("Command execution outcome is unknown"));
+    assert!(error.contains("Do not automatically retry"));
+    assert!(error.contains("inspect the actual Job, process, service, or target state"));
+    assert!(!error.contains("No command was started"));
+    assert!(!error.contains("No files were modified"));
     assert_eq!(result.output["command_started"], true);
     assert_eq!(result.output["command_completed"], false);
     assert_eq!(result.output["command_ok"], false);
     assert!(result.output["exit_code"].is_null());
-    assert_eq!(result.output["failure_kind"], "timeout");
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
     assert_eq!(result.output["tool_failure"], true);
+}
+
+#[tokio::test]
+async fn run_shell_runner_timeout_preserves_known_timeout_state() {
+    let client_id = "shell-runner-timeout";
+    let runtime = runtime_with_agent_project(client_id);
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .run_shell(project, "sleep 2".to_string(), Some(1), None)
+            .await
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("run_shell should be dispatched");
+    runtime
+        .shell_clients
+        .complete(ShellAgentResultPayload {
+            result: ShellAgentResultRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                request_id: request.request_id,
+                exit_code: Some(-1),
+                stdout: Some("partial output".to_string()),
+                stderr: Some("runner stopped the process at its deadline".to_string()),
+                duration_ms: Some(1_000),
+                error: Some("runner timeout".to_string()),
+            },
+            command_execution_state: Some(ShellCommandExecutionState::TimedOut),
+        })
+        .await
+        .unwrap();
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["execution_state"], "timed_out");
+    assert_eq!(result.output["failure_kind"], "timeout");
+    assert_eq!(result.output["tool_failure"], false);
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("Command timed out after 1s"));
+    assert!(error.contains("do not blindly retry"));
+    assert!(error.contains("First inspect the actual process, service, and target state"));
+}
+
+#[tokio::test]
+async fn run_shell_transport_disconnect_after_dispatch_reports_unknown_outcome() {
+    let client_id = "shell-disconnect";
+    let runtime = runtime_with_agent_project(client_id);
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, client_id, None, caps).await;
+    let project = agent_test_project_id(client_id);
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .run_shell(project, "printf possibly-ran".to_string(), Some(30), None)
+            .await
+    });
+    next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("run_shell should be dispatched before disconnect");
+
+    runtime
+        .shell_clients
+        .reconcile_disconnect(client_id, "inst")
+        .await;
+
+    let result = task.await.unwrap();
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(!result.success);
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    assert!(error.contains("Command execution outcome is unknown"));
+    assert!(error.contains("Do not automatically retry"));
+    assert!(!error.contains("No command was started"));
+    assert!(!error.contains("No files were modified"));
 }
 
 #[tokio::test]

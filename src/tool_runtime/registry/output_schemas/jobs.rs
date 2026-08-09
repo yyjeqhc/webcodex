@@ -39,7 +39,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "command_started",
-                schema_type("boolean", "Whether the command process was started."),
+                schema_type(
+                    "boolean",
+                    "Whether callers must conservatively treat the command as started; true includes outcome_unknown because side effects may have occurred.",
+                ),
             ),
             (
                 "command_completed",
@@ -56,7 +59,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "failure_kind",
                 nullable_schema(
                     "string",
-                    "Structured failure kind such as command_exit_nonzero, timeout, agent_offline, spawn_failed, permission_denied, tool_schema_error, or runtime_error.",
+                    "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, agent_offline, spawn_failed, permission_denied, tool_schema_error, or runtime_error.",
                 ),
             ),
             (
@@ -97,7 +100,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "execution_state",
                 schema_type(
                     "string",
-                    "Execution state; started can mean a remote SSH transport failed after dispatch, leaving the final outcome unknown.",
+                    "Canonical lifecycle state: not_started, outcome_unknown, completed, or timed_out. Only not_started is structurally safe to retry without first inspecting target state.",
                 ),
             ),
         ])),

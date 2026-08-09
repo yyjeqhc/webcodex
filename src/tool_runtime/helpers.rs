@@ -505,6 +505,7 @@ pub(crate) fn sync_timeout_out_of_range_result(
             "command_completed": false,
             "command_ok": false,
             "exit_code": null,
+            "execution_state": "not_started",
             "failure_kind": "invalid_arguments",
             "tool_failure": true,
         }),
@@ -519,6 +520,13 @@ pub(crate) fn command_rejected_message(
         "Rejected before starting command: {}.\nNo command was started.\nNo files were modified.\nRetry guidance: {}",
         reason.as_ref(),
         guidance.as_ref()
+    )
+}
+
+pub(crate) fn command_outcome_unknown_message(reason: impl AsRef<str>) -> String {
+    format!(
+        "Command execution outcome is unknown: {}.\nThe command may have started or produced side effects, but WebCodex did not receive a terminal result.\nDo not automatically retry a potentially side-effecting command.\nRetry guidance: inspect the actual Job, process, service, or target state as appropriate before deciding whether retry is safe.",
+        reason.as_ref()
     )
 }
 
@@ -542,7 +550,7 @@ pub(crate) fn command_timeout_message(
     stderr_tail: &str,
 ) -> String {
     format!(
-        "Command timed out after {}s.\nCommand was started.\nOutput tails before timeout:\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: use run_job for longer commands or rerun with a narrower test filter.",
+        "Command timed out after {}s.\nCommand definitely started, but WebCodex cannot prove its side effects ended with the timeout.\nOutput tails before timeout:\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: do not blindly retry. First inspect the actual process, service, and target state. If validation is safe and idempotent, use run_job for longer observation or a narrower invocation.",
         timeout_secs, stdout_tail, stderr_tail
     )
 }
@@ -553,7 +561,9 @@ pub(crate) fn looks_like_command_timeout(
     timeout_secs: u64,
 ) -> bool {
     exit_code == Some(-1)
-        && stderr.contains(&format!("Command timed out after {} seconds", timeout_secs))
+        && stderr
+            .to_ascii_lowercase()
+            .contains(&format!("command timed out after {} seconds", timeout_secs))
 }
 
 pub(crate) fn is_safe_job_id(job_id: &str) -> bool {

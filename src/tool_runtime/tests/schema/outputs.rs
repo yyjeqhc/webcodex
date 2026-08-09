@@ -112,6 +112,24 @@ fn key_tool_output_schemas_include_expected_fields() {
             "run_shell missing {field}"
         );
     }
+    let run_shell_started_description =
+        output_schema_property(&specs, "run_shell", "command_started")["description"]
+            .as_str()
+            .expect("run_shell command_started description");
+    assert!(
+        run_shell_started_description.contains("outcome_unknown"),
+        "run_shell command_started must describe conservative unknown-outcome semantics: {run_shell_started_description}"
+    );
+    let run_shell_state_description =
+        output_schema_property(&specs, "run_shell", "execution_state")["description"]
+            .as_str()
+            .expect("run_shell execution_state description");
+    for state in ["not_started", "outcome_unknown", "completed", "timed_out"] {
+        assert!(
+            run_shell_state_description.contains(state),
+            "run_shell execution_state description missing {state}: {run_shell_state_description}"
+        );
+    }
     for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
         assert!(
             has_output_field(name, "failure_kind"),
@@ -124,6 +142,27 @@ fn key_tool_output_schemas_include_expected_fields() {
             description.contains("validation_failed"),
             "{name} failure_kind description should mention validation_failed: {description}"
         );
+        assert!(
+            description.contains("outcome_unknown"),
+            "{name} failure_kind description should mention outcome_unknown: {description}"
+        );
+        let state_description = output_schema_property(&specs, name, "execution_state")
+            ["description"]
+            .as_str()
+            .expect("cargo execution_state description");
+        for state in [
+            "not_started",
+            "outcome_unknown",
+            "completed",
+            "timed_out",
+            "queued",
+            "running",
+        ] {
+            assert!(
+                state_description.contains(state),
+                "{name} execution_state description missing {state}: {state_description}"
+            );
+        }
     }
     for field in ["tests_detected", "tests_run_count", "zero_tests_run"] {
         assert!(

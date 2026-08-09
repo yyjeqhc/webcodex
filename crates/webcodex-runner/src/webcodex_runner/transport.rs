@@ -10,14 +10,14 @@ use super::shutdown::{
     LSP_SHUTDOWN_BUDGET, PROVIDER_SHUTDOWN_BUDGET,
 };
 use super::util::contains_any;
-use super::PersistentShellManager;
+use super::{PersistentShellManager, ShellCommandResult};
 use crate::agent_init::{TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET};
 use crate::shell_protocol::{
     read_quic_frame, write_quic_frame, AgentEnvelope, QuicFrameError, ShellAgentJobUpdateRequest,
     ShellAgentJobUpdateResponse, ShellAgentPersistentShellResultRequest,
-    ShellAgentPersistentShellResultResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellAgentResultResponse, ShellJobInventory, AGENT_PROTOCOL_VERSION_QUIC_V1,
-    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+    ShellAgentPersistentShellResultResponse, ShellAgentProjectSummary, ShellAgentResultPayload,
+    ShellAgentResultRequest, ShellAgentResultResponse, ShellJobInventory,
+    AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 use crate::{
     build_register_request_with_provider_status, dispatch_request, handle_one_poll, register,
@@ -796,7 +796,7 @@ fn dropped_result_log_line(request_id: &str, attempts: usize, error: &str, token
 /// surface as errors that terminate the polling agent.
 fn submit_result_http(
     h: &HttpSendConfig,
-    body: &ShellAgentResultRequest,
+    body: &ShellAgentResultPayload,
 ) -> Result<ResultSubmission, SubmitResultError> {
     let mut attempt = 0usize;
     loop {
@@ -816,7 +816,7 @@ fn submit_result_http(
                     .unwrap_or_else(|| "result submission failed without error".to_string());
                 eprintln!(
                     "{}",
-                    permanent_result_rejection_log_line(&body.request_id, &reason, &h.token)
+                    permanent_result_rejection_log_line(&body.result.request_id, &reason, &h.token,)
                 );
                 return Ok(ResultSubmission::RejectedPermanent);
             }
@@ -827,7 +827,7 @@ fn submit_result_http(
                 eprintln!(
                     "{}",
                     permanent_result_rejection_log_line(
-                        &body.request_id,
+                        &body.result.request_id,
                         &error.to_string(),
                         &h.token
                     )
@@ -848,7 +848,7 @@ fn submit_result_http(
                     eprintln!(
                         "{}",
                         dropped_result_log_line(
-                            &body.request_id,
+                            &body.result.request_id,
                             attempt + 1,
                             &error.to_string(),
                             &h.token
@@ -897,16 +897,25 @@ impl AgentSink {
         request_id: String,
         result: CommandResult,
     ) -> Result<ResultSubmission, SubmitResultError> {
-        let body = ShellAgentResultRequest {
-            client_id: self.client_id().to_string(),
-            agent_instance_id: self.agent_instance_id().to_string(),
-            request_id,
-            exit_code: result.exit_code,
-            stdout: result.stdout,
-            stderr: result.stderr,
-            duration_ms: result.duration_ms,
-            error: result.error,
-        };
+        self.submit_result_payload(ShellAgentResultPayload {
+            result: ShellAgentResultRequest {
+                client_id: self.client_id().to_string(),
+                agent_instance_id: self.agent_instance_id().to_string(),
+                request_id,
+                exit_code: result.exit_code,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                duration_ms: result.duration_ms,
+                error: result.error,
+            },
+            command_execution_state: None,
+        })
+    }
+
+    fn submit_result_payload(
+        &self,
+        body: ShellAgentResultPayload,
+    ) -> Result<ResultSubmission, SubmitResultError> {
         match self {
             AgentSink::Http(h) => submit_result_http(h, &body),
             AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. } => {
@@ -919,6 +928,37 @@ impl AgentSink {
                 Ok(ResultSubmission::Accepted)
             }
         }
+    }
+
+    pub(crate) fn submit_shell_result_with_metadata(
+        &self,
+        request_id: String,
+        shell_result: ShellCommandResult,
+        config: &HotAgentConfig,
+        runtime: &ReloadableAgentConfig,
+    ) -> Result<ResultSubmission, SubmitResultError> {
+        let ShellCommandResult {
+            result,
+            execution_state,
+        } = shell_result;
+        let body = ShellAgentResultPayload {
+            result: ShellAgentResultRequest {
+                client_id: self.client_id().to_string(),
+                agent_instance_id: self.agent_instance_id().to_string(),
+                request_id,
+                exit_code: result.exit_code,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                duration_ms: result.duration_ms,
+                error: result.error,
+            },
+            command_execution_state: Some(execution_state),
+        };
+        let submitted = self.submit_result_payload(body);
+        if matches!(&submitted, Ok(ResultSubmission::Accepted)) {
+            self.send_provider_metadata_best_effort(config.generation, runtime);
+        }
+        submitted
     }
 
     pub(crate) fn submit_result_with_metadata(

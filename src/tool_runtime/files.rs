@@ -5186,6 +5186,8 @@ mod tests {
             stderr: None,
             duration_ms: Some(1),
             error: Some(message.to_string()),
+            request_dispatched: Some(true),
+            command_execution_state: None,
         }
     }
 

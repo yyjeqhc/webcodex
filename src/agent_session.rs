@@ -266,7 +266,9 @@ async fn dispatch_inbound(
 ) {
     match env {
         AgentEnvelope::Result { payload } => {
-            if payload.client_id != client_id || payload.agent_instance_id != agent_instance_id {
+            if payload.result.client_id != client_id
+                || payload.result.agent_instance_id != agent_instance_id
+            {
                 tracing::warn!(
                     client_id = client_id,
                     "agent {} result rejected: envelope identity does not match registered connection",

@@ -898,7 +898,8 @@ mod tests {
                     stderr: Some(String::new()),
                     duration_ms: Some(2),
                     error: None,
-                },
+                }
+                .into(),
             },
         )
         .await

@@ -2,17 +2,18 @@ use serde_json::json;
 use std::time::Duration;
 
 use super::helpers::{
-    bounded_tail, command_failed_message, command_rejected_message, command_timeout_message,
-    looks_like_command_timeout, project_relative_agent_cwd, project_relative_cwd,
-    resolve_agent_cwd, resolve_local_cwd, resolve_sync_timeout_secs,
-    run_command_sync_bounded_with_shell_and_sandbox, shell_escape_simple,
-    sync_timeout_out_of_range_result, LocalRunFailure, COMMAND_STDIO_TAIL_CHARS,
-    DEFAULT_RUN_SHELL_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS, MIN_SYNC_TIMEOUT_SECS,
+    bounded_tail, command_failed_message, command_outcome_unknown_message,
+    command_rejected_message, command_timeout_message, looks_like_command_timeout,
+    project_relative_agent_cwd, project_relative_cwd, resolve_agent_cwd, resolve_local_cwd,
+    resolve_sync_timeout_secs, run_command_sync_bounded_with_shell_and_sandbox,
+    shell_escape_simple, sync_timeout_out_of_range_result, LocalRunFailure,
+    COMMAND_STDIO_TAIL_CHARS, DEFAULT_RUN_SHELL_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS,
+    MIN_SYNC_TIMEOUT_SECS,
 };
 use super::tool_result::ToolResult;
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
 use crate::shell_client::command_preview;
-use crate::shell_protocol::ShellRunRequest;
+use crate::shell_protocol::{ShellCommandExecutionState, ShellRunRequest, ShellRunResponse};
 
 pub(crate) struct ProjectCommandOutput {
     pub(crate) exit_code: Option<i32>,
@@ -20,8 +21,82 @@ pub(crate) struct ProjectCommandOutput {
     pub(crate) stderr: String,
     pub(crate) duration_ms: u64,
     pub(crate) error: Option<String>,
-    pub(crate) command_started: bool,
-    pub(crate) command_completed: bool,
+    pub(crate) execution_state: ShellCommandExecutionState,
+}
+
+fn command_started(execution_state: ShellCommandExecutionState) -> bool {
+    !matches!(execution_state, ShellCommandExecutionState::NotStarted)
+}
+
+fn command_completed(execution_state: ShellCommandExecutionState) -> bool {
+    matches!(execution_state, ShellCommandExecutionState::Completed)
+}
+
+pub(crate) fn command_execution_state_name(
+    execution_state: ShellCommandExecutionState,
+) -> &'static str {
+    match execution_state {
+        ShellCommandExecutionState::NotStarted => "not_started",
+        ShellCommandExecutionState::OutcomeUnknown => "outcome_unknown",
+        ShellCommandExecutionState::Completed => "completed",
+        ShellCommandExecutionState::TimedOut => "timed_out",
+    }
+}
+
+fn agent_command_lifecycle(
+    response: &ShellRunResponse,
+    timeout_secs: u64,
+) -> ShellCommandExecutionState {
+    match response.command_execution_state {
+        Some(execution_state) => execution_state,
+        None if response.request_dispatched == Some(false) => {
+            ShellCommandExecutionState::NotStarted
+        }
+        None if looks_like_command_timeout(
+            response.exit_code,
+            response.stderr.as_deref().unwrap_or_default(),
+            timeout_secs,
+        ) =>
+        {
+            ShellCommandExecutionState::TimedOut
+        }
+        None if response.error.is_none() && response.exit_code.is_some() => {
+            ShellCommandExecutionState::Completed
+        }
+        None => ShellCommandExecutionState::OutcomeUnknown,
+    }
+}
+
+fn local_command_error_lifecycle(
+    exit_code: i32,
+    stderr: &str,
+) -> Option<ShellCommandExecutionState> {
+    if exit_code != -1 {
+        return None;
+    }
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("failed to collect output")
+        || lower.starts_with("failed to collect command output:")
+    {
+        return Some(ShellCommandExecutionState::OutcomeUnknown);
+    }
+    if stderr.starts_with("Failed to configure inspect sandbox:")
+        || stderr.starts_with("Failed to execute command:")
+    {
+        return Some(ShellCommandExecutionState::NotStarted);
+    }
+    if stderr.starts_with("Failed to wait for command:") {
+        return Some(ShellCommandExecutionState::OutcomeUnknown);
+    }
+    None
+}
+
+fn dispatch_uncertainty_lifecycle(request_dispatched: Option<bool>) -> ShellCommandExecutionState {
+    if request_dispatched == Some(false) {
+        ShellCommandExecutionState::NotStarted
+    } else {
+        ShellCommandExecutionState::OutcomeUnknown
+    }
 }
 
 impl ToolRuntime {
@@ -42,9 +117,10 @@ impl ToolRuntime {
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
             "duration_ms": duration_ms,
-            "command_started": true,
-            "command_completed": true,
+            "command_started": command_started(ShellCommandExecutionState::Completed),
+            "command_completed": command_completed(ShellCommandExecutionState::Completed),
             "command_ok": true,
+            "execution_state": command_execution_state_name(ShellCommandExecutionState::Completed),
             "failure_kind": null,
             "tool_failure": false,
         })
@@ -56,10 +132,11 @@ impl ToolRuntime {
         stderr: String,
         duration_ms: Option<u64>,
         timeout_secs: u64,
+        execution_state: ShellCommandExecutionState,
     ) -> ToolResult {
         let (stdout_tail, stdout_truncated) = bounded_tail(&stdout, COMMAND_STDIO_TAIL_CHARS);
         let (stderr_tail, stderr_truncated) = bounded_tail(&stderr, COMMAND_STDIO_TAIL_CHARS);
-        let timed_out = looks_like_command_timeout(exit_code, &stderr, timeout_secs);
+        let timed_out = execution_state == ShellCommandExecutionState::TimedOut;
         let output = json!({
             "exit_code": exit_code,
             "duration_ms": duration_ms,
@@ -69,9 +146,10 @@ impl ToolRuntime {
             "stderr_lines": stderr.lines().count(),
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
-            "command_started": true,
-            "command_completed": !timed_out,
+            "command_started": command_started(execution_state),
+            "command_completed": command_completed(execution_state),
             "command_ok": false,
+            "execution_state": command_execution_state_name(execution_state),
             "failure_kind": if timed_out { "timeout" } else { "command_exit_nonzero" },
             "tool_failure": false,
         });
@@ -90,19 +168,27 @@ impl ToolRuntime {
     fn run_shell_tool_failure_result(
         message: String,
         failure_kind: &'static str,
-        command_started: bool,
-        command_completed: bool,
+        execution_state: ShellCommandExecutionState,
     ) -> ToolResult {
         ToolResult::err_with_output(
             message,
             json!({
-                "command_started": command_started,
-                "command_completed": command_completed,
+                "command_started": command_started(execution_state),
+                "command_completed": command_completed(execution_state),
                 "command_ok": false,
                 "exit_code": null,
+                "execution_state": command_execution_state_name(execution_state),
                 "failure_kind": failure_kind,
                 "tool_failure": true,
             }),
+        )
+    }
+
+    fn run_shell_outcome_unknown_result(reason: impl AsRef<str>) -> ToolResult {
+        Self::run_shell_tool_failure_result(
+            command_outcome_unknown_message(reason),
+            "outcome_unknown",
+            ShellCommandExecutionState::OutcomeUnknown,
         )
     }
 
@@ -179,25 +265,47 @@ impl ToolRuntime {
                 .await?;
             match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
                 Ok(Ok(response)) => {
+                    let execution_state = agent_command_lifecycle(&response, timeout);
                     let exit_code = response.exit_code;
                     let stderr = response.stderr.unwrap_or_default();
-                    let timed_out = looks_like_command_timeout(exit_code, &stderr, timeout);
                     Ok(ProjectCommandOutput {
                         exit_code,
                         stdout: response.stdout.unwrap_or_default(),
                         stderr,
                         duration_ms: response.duration_ms.unwrap_or_default(),
-                        command_started: exit_code.is_some(),
-                        command_completed: !timed_out,
+                        execution_state,
                         error: response.error,
                     })
                 }
                 Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&request_id).await;
-                    Err("shell request waiter was dropped".to_string())
+                    let request_dispatched = self
+                        .shell_clients
+                        .cancel_request_dispatch_state(&request_id)
+                        .await;
+                    let execution_state = dispatch_uncertainty_lifecycle(request_dispatched);
+                    Ok(ProjectCommandOutput {
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        duration_ms: 0,
+                        error: Some(
+                            if execution_state == ShellCommandExecutionState::NotStarted {
+                                "shell request waiter was dropped before the queued request was dispatched"
+                                .to_string()
+                            } else {
+                                "shell request waiter was dropped after dispatch may have occurred"
+                                    .to_string()
+                            },
+                        ),
+                        execution_state,
+                    })
                 }
                 Err(_) => {
-                    let command_started = self.shell_clients.cancel_request(&request_id).await;
+                    let request_dispatched = self
+                        .shell_clients
+                        .cancel_request_dispatch_state(&request_id)
+                        .await;
+                    let execution_state = dispatch_uncertainty_lifecycle(request_dispatched);
                     Ok(ProjectCommandOutput {
                         exit_code: None,
                         stdout: String::new(),
@@ -206,8 +314,7 @@ impl ToolRuntime {
                         error: Some(format!(
                             "timed out waiting {wait_timeout} seconds for agent shell result"
                         )),
-                        command_started,
-                        command_completed: false,
+                        execution_state,
                     })
                 }
             }
@@ -220,24 +327,47 @@ impl ToolRuntime {
                 "sh".to_string(),
                 sandbox.map(str::to_string),
             )
-                .await
-                .map_err(|failure| match failure {
-                    LocalRunFailure::HardTimeout { bound_secs } => format!(
-                        "local command did not return within {} seconds (hard bound); an orphaned background process may still be holding its output pipes",
-                        bound_secs
-                    ),
-                    LocalRunFailure::Join(e) => format!("task join error: {}", e),
-                })?;
-            let timed_out = looks_like_command_timeout(Some(result.0), &result.2, timeout);
-            Ok(ProjectCommandOutput {
-                exit_code: Some(result.0),
-                stdout: result.1,
-                stderr: result.2,
-                duration_ms: result.3,
-                error: None,
-                command_started: true,
-                command_completed: !timed_out,
-            })
+            .await;
+            match result {
+                Ok((exit_code, stdout, stderr, duration_ms)) => {
+                    let execution_state = local_command_error_lifecycle(exit_code, &stderr)
+                        .unwrap_or_else(|| {
+                            if looks_like_command_timeout(Some(exit_code), &stderr, timeout) {
+                                ShellCommandExecutionState::TimedOut
+                            } else {
+                                ShellCommandExecutionState::Completed
+                            }
+                        });
+                    Ok(ProjectCommandOutput {
+                        exit_code: Some(exit_code),
+                        stdout,
+                        stderr,
+                        duration_ms,
+                        error: None,
+                        execution_state,
+                    })
+                }
+                Err(LocalRunFailure::HardTimeout { bound_secs }) => Ok(ProjectCommandOutput {
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration_ms: bound_secs.saturating_mul(1_000),
+                    error: Some(format!(
+                        "the local command did not return within the {bound_secs}-second hard bound"
+                    )),
+                    execution_state: ShellCommandExecutionState::OutcomeUnknown,
+                }),
+                Err(LocalRunFailure::Join(error)) => Ok(ProjectCommandOutput {
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration_ms: 0,
+                    error: Some(format!(
+                        "the local command worker ended without returning a result: {error}"
+                    )),
+                    execution_state: ShellCommandExecutionState::OutcomeUnknown,
+                }),
+            }
         }
     }
 
@@ -307,8 +437,7 @@ impl ToolRuntime {
                         "verify the project id with list_projects, then retry with a registered project.",
                     ),
                     "agent_offline",
-                    false,
-                    false,
+                    ShellCommandExecutionState::NotStarted,
                 )
             }
         };
@@ -321,8 +450,7 @@ impl ToolRuntime {
                     "start or update a Session for an agent-backed project, then retry.",
                 ),
                 "runtime_error",
-                false,
-                false,
+                ShellCommandExecutionState::NotStarted,
             );
         }
         if proj.is_agent() {
@@ -335,8 +463,7 @@ impl ToolRuntime {
                             "refresh the agent project registry with list_projects, then retry.",
                         ),
                         "agent_offline",
-                        false,
-                        false,
+                        ShellCommandExecutionState::NotStarted,
                     ),
                 };
             let (effective_cwd, resolved_cwd) = if ssh_resource.is_some() {
@@ -350,8 +477,7 @@ impl ToolRuntime {
                             "choose a valid remote cwd or omit it to use the Session/resource default.",
                         ),
                         "runtime_error",
-                        false,
-                        false,
+                        ShellCommandExecutionState::NotStarted,
                     );
                 }
                 (
@@ -368,8 +494,7 @@ impl ToolRuntime {
                                 "choose '.', an existing project-relative cwd, or an absolute path inside the registered project root.",
                             ),
                             "permission_denied",
-                            false,
-                            false,
+                            ShellCommandExecutionState::NotStarted,
                         )
                     }
                 };
@@ -384,8 +509,7 @@ impl ToolRuntime {
                         "start or resume the Session, then retry without automatic command retry.",
                     ),
                     "runtime_error",
-                    false,
-                    false,
+                    ShellCommandExecutionState::NotStarted,
                 );
             }
             let actual_shell =
@@ -435,47 +559,67 @@ impl ToolRuntime {
                             "confirm the agent is connected and the command request is allowed, then retry or use run_job for long-running work.",
                         ),
                         failure_kind,
-                        false,
-                        false,
+                        ShellCommandExecutionState::NotStarted,
                     );
                 }
             };
             match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
                 Ok(Ok(response)) => {
-                    let success = response.error.is_none() && response.exit_code == Some(0);
-                    let mut result = if success {
-                        ToolResult::ok(Self::run_shell_success_output(
-                            0,
-                            response.stdout.unwrap_or_default(),
-                            response.stderr.unwrap_or_default(),
-                            response.duration_ms,
-                        ))
-                    } else if let Some(error) = response.error {
-                        // A remote transport can disappear only after the
-                        // Runner has handed the command to its local SSH
-                        // client. Keep that distinction visible to callers:
-                        // the remote command may be running, and must never
-                        // be automatically retried as though it were a
-                        // pre-dispatch rejection.
-                        let command_may_have_started = response.exit_code.is_some()
-                            || error.contains("command may have started");
-                        Self::run_shell_tool_failure_result(
-                            command_rejected_message(
-                                &error,
-                                "inspect the rejection reason, adjust the cwd/command/project, then retry.",
-                            ),
-                            Self::classify_run_shell_enqueue_failure(&error),
-                            command_may_have_started,
-                            false,
-                        )
-                    } else {
-                        Self::run_shell_command_failure_result(
-                            response.exit_code,
-                            response.stdout.unwrap_or_default(),
-                            response.stderr.unwrap_or_default(),
-                            response.duration_ms,
-                            timeout,
-                        )
+                    let lifecycle = agent_command_lifecycle(&response, timeout);
+                    let exit_code = response.exit_code;
+                    let stdout = response.stdout.unwrap_or_default();
+                    let stderr = response.stderr.unwrap_or_default();
+                    let duration_ms = response.duration_ms;
+                    let error = response.error;
+                    let mut result = match lifecycle {
+                        ShellCommandExecutionState::NotStarted => {
+                            let reason = error
+                                .as_deref()
+                                .unwrap_or("Runner rejected the command before process spawn");
+                            Self::run_shell_tool_failure_result(
+                                command_rejected_message(
+                                    reason,
+                                    "inspect the rejection reason, adjust the cwd/command/project, then retry.",
+                                ),
+                                Self::classify_run_shell_enqueue_failure(reason),
+                                ShellCommandExecutionState::NotStarted,
+                            )
+                        }
+                        ShellCommandExecutionState::OutcomeUnknown => {
+                            Self::run_shell_outcome_unknown_result(error.as_deref().unwrap_or(
+                                "the Runner did not return a trustworthy terminal result",
+                            ))
+                        }
+                        ShellCommandExecutionState::TimedOut => {
+                            Self::run_shell_command_failure_result(
+                                exit_code,
+                                stdout,
+                                stderr,
+                                duration_ms,
+                                timeout,
+                                ShellCommandExecutionState::TimedOut,
+                            )
+                        }
+                        ShellCommandExecutionState::Completed
+                            if error.is_none() && exit_code == Some(0) =>
+                        {
+                            ToolResult::ok(Self::run_shell_success_output(
+                                0,
+                                stdout,
+                                stderr,
+                                duration_ms,
+                            ))
+                        }
+                        ShellCommandExecutionState::Completed => {
+                            Self::run_shell_command_failure_result(
+                                exit_code,
+                                stdout,
+                                stderr,
+                                duration_ms,
+                                timeout,
+                                ShellCommandExecutionState::Completed,
+                            )
+                        }
                     };
                     decorate_execution_output(
                         &mut result.output,
@@ -491,25 +635,46 @@ impl ToolRuntime {
                     result
                 }
                 Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&request_id).await;
-                    Self::run_shell_tool_failure_result(
-                        command_rejected_message(
+                    let dispatch_state = self
+                        .shell_clients
+                        .cancel_request_dispatch_state(&request_id)
+                        .await;
+                    if dispatch_state == Some(false) {
+                        Self::run_shell_tool_failure_result(
+                            command_rejected_message(
+                                "shell request waiter was dropped before the queued request was dispatched",
+                                "check agent connectivity, then retry or use run_job for recoverable long-running work.",
+                            ),
+                            "runtime_error",
+                            ShellCommandExecutionState::NotStarted,
+                        )
+                    } else {
+                        Self::run_shell_outcome_unknown_result(
                             "shell request waiter was dropped before a result was returned",
-                            "check agent connectivity, then retry or use run_job for recoverable long-running work.",
-                        ),
-                        "runtime_error",
-                        false,
-                        false,
-                    )
+                        )
+                    }
                 }
                 Err(_) => {
-                    let command_started = self.shell_clients.cancel_request(&request_id).await;
-                    Self::run_shell_tool_failure_result(
-                        command_timeout_message(wait_timeout, "", ""),
-                        "timeout",
-                        command_started,
-                        false,
-                    )
+                    let dispatch_state = self
+                        .shell_clients
+                        .cancel_request_dispatch_state(&request_id)
+                        .await;
+                    if dispatch_state == Some(false) {
+                        Self::run_shell_tool_failure_result(
+                            command_rejected_message(
+                                format!(
+                                    "timed out waiting {wait_timeout} seconds before the queued agent request was dispatched"
+                                ),
+                                "check agent connectivity and availability, then retry or use run_job for long-running work.",
+                            ),
+                            "timeout",
+                            ShellCommandExecutionState::NotStarted,
+                        )
+                    } else {
+                        Self::run_shell_outcome_unknown_result(format!(
+                            "timed out waiting {wait_timeout} seconds for the agent shell result"
+                        ))
+                    }
                 }
             }
         } else {
@@ -522,8 +687,7 @@ impl ToolRuntime {
                             "read the project root and choose an existing project-relative cwd, then retry.",
                         ),
                         "permission_denied",
-                        false,
-                        false,
+                        ShellCommandExecutionState::NotStarted,
                     )
                 }
             };
@@ -540,21 +704,42 @@ impl ToolRuntime {
             .await
             {
                 Ok((exit_code, stdout, stderr, duration_ms)) => {
-                    if exit_code == 0 {
-                        ToolResult::ok(Self::run_shell_success_output(
+                    match local_command_error_lifecycle(exit_code, &stderr) {
+                        Some(ShellCommandExecutionState::NotStarted) => {
+                            Self::run_shell_tool_failure_result(
+                                command_rejected_message(
+                                    &stderr,
+                                    "correct the local shell or sandbox configuration, then retry.",
+                                ),
+                                "runtime_error",
+                                ShellCommandExecutionState::NotStarted,
+                            )
+                        }
+                        Some(ShellCommandExecutionState::OutcomeUnknown) => {
+                            Self::run_shell_outcome_unknown_result(&stderr)
+                        }
+                        _ if exit_code == 0 => ToolResult::ok(Self::run_shell_success_output(
                             exit_code,
                             stdout,
                             stderr,
                             Some(duration_ms),
-                        ))
-                    } else {
-                        Self::run_shell_command_failure_result(
-                            Some(exit_code),
-                            stdout,
-                            stderr,
-                            Some(duration_ms),
-                            timeout,
-                        )
+                        )),
+                        _ => {
+                            let lifecycle =
+                                if looks_like_command_timeout(Some(exit_code), &stderr, timeout) {
+                                    ShellCommandExecutionState::TimedOut
+                                } else {
+                                    ShellCommandExecutionState::Completed
+                                };
+                            Self::run_shell_command_failure_result(
+                                Some(exit_code),
+                                stdout,
+                                stderr,
+                                Some(duration_ms),
+                                timeout,
+                                lifecycle,
+                            )
+                        }
                     }
                 }
                 // The command's own timeout is reported through the Ok tuple;
@@ -563,22 +748,13 @@ impl ToolRuntime {
                 // pipes) and the outer backstop fired instead of parking the
                 // MCP request indefinitely.
                 Err(LocalRunFailure::HardTimeout { bound_secs }) => {
-                    Self::run_shell_tool_failure_result(
-                        command_timeout_message(bound_secs, "", ""),
-                        "timeout",
-                        true,
-                        false,
-                    )
+                    Self::run_shell_outcome_unknown_result(format!(
+                        "the local command did not return within the {bound_secs}-second hard bound"
+                    ))
                 }
-                Err(LocalRunFailure::Join(e)) => Self::run_shell_tool_failure_result(
-                    command_rejected_message(
-                        format!("task join error: {}", e),
-                        "retry the command; if the worker keeps failing, inspect server logs.",
-                    ),
-                    "runtime_error",
-                    false,
-                    false,
-                ),
+                Err(LocalRunFailure::Join(e)) => Self::run_shell_outcome_unknown_result(format!(
+                    "the local command worker ended without returning a result: {e}"
+                )),
             };
             let mut result = result;
             decorate_execution_output(
@@ -608,25 +784,70 @@ fn decorate_execution_output(
     output["cwd"] = json!(cwd);
     output["shell"] = json!(shell);
     output["executor"] = json!(executor);
-    output["execution_state"] = json!(if output
-        .get("failure_kind")
-        .and_then(serde_json::Value::as_str)
-        == Some("timeout")
-    {
-        "timed_out"
-    } else if output
-        .get("command_started")
-        .and_then(serde_json::Value::as_bool)
-        == Some(true)
-        && output
-            .get("command_completed")
-            .and_then(serde_json::Value::as_bool)
-            == Some(false)
-    {
-        // `started` means the final remote outcome is unknown rather than
-        // that a persistent Shell is active.
-        "started"
-    } else {
-        "completed"
-    });
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{
+        agent_command_lifecycle, dispatch_uncertainty_lifecycle, local_command_error_lifecycle,
+    };
+    use crate::shell_protocol::{ShellCommandExecutionState, ShellRunResponse};
+
+    #[test]
+    fn local_executor_errors_preserve_the_start_boundary() {
+        assert!(matches!(
+            local_command_error_lifecycle(-1, "Failed to execute command: shell missing"),
+            Some(ShellCommandExecutionState::NotStarted)
+        ));
+        assert!(matches!(
+            local_command_error_lifecycle(-1, "Failed to wait for command: executor error"),
+            Some(ShellCommandExecutionState::OutcomeUnknown)
+        ));
+        assert!(matches!(
+            local_command_error_lifecycle(
+                -1,
+                "Command timed out after 1 seconds; failed to collect output: pipe error"
+            ),
+            Some(ShellCommandExecutionState::OutcomeUnknown)
+        ));
+        assert!(local_command_error_lifecycle(7, "ordinary stderr").is_none());
+    }
+
+    #[test]
+    fn capture_wait_uncertainty_requires_definite_undispatch_evidence() {
+        assert_eq!(
+            dispatch_uncertainty_lifecycle(Some(false)),
+            ShellCommandExecutionState::NotStarted
+        );
+        assert_eq!(
+            dispatch_uncertainty_lifecycle(Some(true)),
+            ShellCommandExecutionState::OutcomeUnknown
+        );
+        assert_eq!(
+            dispatch_uncertainty_lifecycle(None),
+            ShellCommandExecutionState::OutcomeUnknown
+        );
+    }
+
+    #[test]
+    fn agent_lifecycle_uses_structured_evidence_not_error_prose() {
+        let response = ShellRunResponse {
+            success: false,
+            request_id: "req-1".to_string(),
+            client_id: "agent-1".to_string(),
+            cwd: None,
+            command_preview: "ignored".to_string(),
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: None,
+            error: Some("Rejected before starting command".to_string()),
+            request_dispatched: Some(true),
+            command_execution_state: Some(ShellCommandExecutionState::OutcomeUnknown),
+        };
+        assert_eq!(
+            agent_command_lifecycle(&response, 30),
+            ShellCommandExecutionState::OutcomeUnknown
+        );
+    }
 }

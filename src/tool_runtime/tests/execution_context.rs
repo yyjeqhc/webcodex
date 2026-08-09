@@ -2,7 +2,10 @@
 
 use super::super::*;
 use super::support::*;
-use crate::shell_protocol::{ShellAgentResultRequest, ShellClientCapabilities};
+use crate::shell_protocol::{
+    ShellAgentResultPayload, ShellAgentResultRequest, ShellClientCapabilities,
+    ShellCommandExecutionState,
+};
 
 fn context(cwd: Option<&str>, shell: Option<ExecutionShell>) -> sessions::SessionExecutionContext {
     sessions::SessionExecutionContext {
@@ -598,25 +601,33 @@ async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
         .expect("SSH shell should enqueue");
     runtime
         .shell_clients
-        .complete(ShellAgentResultRequest {
-            client_id: "context-ssh-transport".to_string(),
-            agent_instance_id: "inst-context-ssh-transport".to_string(),
-            request_id: request.request_id,
-            exit_code: Some(255),
-            stdout: Some(String::new()),
-            stderr: Some("connection reset".to_string()),
-            duration_ms: Some(1),
-            error: Some(
-                "ssh_transport_failed: command may have started and was not retried".to_string(),
-            ),
+        .complete(ShellAgentResultPayload {
+            result: ShellAgentResultRequest {
+                client_id: "context-ssh-transport".to_string(),
+                agent_instance_id: "inst-context-ssh-transport".to_string(),
+                request_id: request.request_id,
+                exit_code: Some(255),
+                stdout: Some(String::new()),
+                stderr: Some("connection reset".to_string()),
+                duration_ms: Some(1),
+                error: Some("ssh transport failed after dispatch".to_string()),
+            },
+            command_execution_state: Some(ShellCommandExecutionState::OutcomeUnknown),
         })
         .await
         .unwrap();
     let result = task.await.unwrap();
     assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or_default();
     assert_eq!(result.output["command_started"], true);
     assert_eq!(result.output["command_completed"], false);
-    assert_eq!(result.output["execution_state"], "started");
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    assert!(error.contains("Command execution outcome is unknown"));
+    assert!(error.contains("Do not automatically retry"));
+    assert!(error.contains("inspect the actual Job, process, service, or target state"));
+    assert!(!error.contains("No command was started"));
+    assert!(!error.contains("No files were modified"));
     assert_eq!(result.output["ssh_resource"], "tmp");
 }
 

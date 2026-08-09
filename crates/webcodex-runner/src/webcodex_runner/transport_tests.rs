@@ -1510,7 +1510,14 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
         })
     };
     let server = start_concurrent_polling_server(handler);
-    let cfg = polling_agent_config(server.server_url.clone(), projects_dir.clone());
+    // Windows service accounts can have std::env::temp_dir() under
+    // C:\Windows\SystemTemp; production policy correctly rejects project
+    // roots under C:\Windows unless an explicit allowed_roots entry
+    // authorizes them. This test exercises polling project-cache
+    // invalidation, not project-root safety policy, so authorize this
+    // test's own temp root explicitly.
+    let mut cfg = polling_agent_config(server.server_url.clone(), projects_dir.clone());
+    cfg.policy.allowed_roots = vec![temp.path().to_path_buf()];
     let runtime = test_runtime(&cfg);
     let runner_runtime = runtime.clone();
     let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);

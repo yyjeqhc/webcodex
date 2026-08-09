@@ -481,10 +481,15 @@ use the local Windows OEM page. Persistent-shell framing/control parsing is
 also unchanged; adding encoding negotiation or redesigning that protocol is
 outside Phase F.
 
-Execution Phases A–F are now code-complete. The next execution work is final
-acceptance and stabilization across the complete gates above, including
-remaining Windows-runtime evidence where a Windows checkout is available.
-MCP App UI work may proceed independently; it is not execution truth.
+Execution Phases A–F are code-complete and have completed final acceptance and
+stabilization across the gates below. Acceptance covered Linux regressions plus
+real Windows/MSVC and MSI Runner service-context execution, including Phase F
+native UTF-8/OEM/UTF-16/PowerShell output, streaming, timeout/stop exactly-once
+behavior, output bounds, and E1 polling/cache behavior. The acceptance cycle
+found only test-infrastructure/fixture portability issues; production execution
+semantics did not require further changes. Future execution work in this cycle
+is maintenance-only unless new evidence demonstrates a concrete gap. MCP App UI
+work may proceed independently; it is not execution truth.
 
 ## 8. Acceptance gates for execution changes
 

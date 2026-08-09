@@ -1,4 +1,4 @@
-use super::AgentCapability::{AsyncJobs, PersistentShell, Shell};
+use super::AgentCapability::{AsyncJobs, PersistentShell, Shell, StructuredProcess};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
     def, permission_risk, requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB,
@@ -11,6 +11,19 @@ use crate::tool_runtime::metadata::{
 };
 
 pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
+    def(
+        "run_process",
+        ModelVisible,
+        TOOL_CATEGORY_JOB,
+        Some(StructuredProcess),
+        TOOL_PROVIDER_AGENT,
+        JobRun,
+        Some(JOB_RUN),
+        true,
+        NoPath,
+        true,
+        true,
+    ),
     def(
         "run_shell",
         ModelVisible,

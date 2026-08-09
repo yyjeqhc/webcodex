@@ -5,7 +5,9 @@ use super::config::{
 use super::output::{CommandResult, ShellCommandResult};
 use super::projects::find_project_shell_context;
 use std::collections::HashMap;
+#[cfg(windows)]
 use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -328,18 +330,89 @@ pub(crate) fn configured_validation_job_command(
     program: &str,
     args: &[String],
 ) -> Result<Command, String> {
-    let mut cmd = Command::new(program);
+    if profile.is_none() {
+        validate_shell_config(shell)?;
+    }
+    configured_process_command(shell, profile, program, args, None)
+}
+
+fn configured_process_command(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+) -> Result<Command, String> {
+    let resolved_program = resolve_process_program(shell, profile, program, cwd)?;
+    let mut cmd = Command::new(resolved_program);
     cmd.args(args);
-    // JobManager owns this process tree through ManagedChild; do not add
-    // the legacy setsid pre_exec here. ManagedChild creates the private group.
+    // ManagedChild (or JobManager for structured validation) owns this process
+    // tree. The executable and every argument remain separate OS values.
     match profile {
         Some(profile) => apply_env_snapshot(&mut cmd, &profile.env_snapshot),
-        None => {
-            validate_shell_config(shell)?;
-            apply_shell_environment(&mut cmd, shell)?;
-        }
+        None => apply_shell_environment(&mut cmd, shell)?,
     }
     Ok(cmd)
+}
+
+fn resolve_process_program(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    program: &str,
+    cwd: Option<&Path>,
+) -> Result<OsString, String> {
+    #[cfg(windows)]
+    {
+        let path = configured_process_path(shell, profile)?;
+        let program_path = Path::new(program);
+        let resolved_input = if !program_path.is_absolute() && program_path.components().count() > 1
+        {
+            cwd.map(|cwd| cwd.join(program_path))
+                .unwrap_or_else(|| program_path.to_path_buf())
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            program.to_string()
+        };
+        return match super::util::resolve_program_in_path(&resolved_input, &path) {
+            Some(super::util::ResolvedProgram::Native(path)) => Ok(path.into_os_string()),
+            Some(super::util::ResolvedProgram::Batch(_)) => Err(
+                "unsupported_executable_type: Windows .cmd/.bat files require shell/script semantics and cannot preserve run_process native argv; use run_shell as the current explicit escape hatch"
+                    .to_string(),
+            ),
+            None => Err(format!(
+                "structured process executable is unavailable or has an unsupported Windows extension: {program}"
+            )),
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (shell, profile, cwd);
+        Ok(OsString::from(program))
+    }
+}
+
+#[cfg(windows)]
+fn configured_process_path(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+) -> Result<OsString, String> {
+    if let Some(profile) = profile {
+        return Ok(env_lookup(&profile.env_snapshot, "PATH")
+            .map(OsString::from)
+            .unwrap_or_default());
+    }
+    if let Some(configured) = env_lookup(&shell.env, "PATH") {
+        return Ok(OsString::from(configured));
+    }
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    if shell.path_prepend.is_empty() {
+        return Ok(inherited);
+    }
+    let mut paths = shell.path_prepend.clone();
+    paths.extend(std::env::split_paths(&inherited));
+    std::env::join_paths(paths)
+        .map_err(|error| format!("failed to build process PATH from shell.path_prepend: {error}"))
 }
 
 pub(crate) fn base_shell_env(
@@ -1127,6 +1200,132 @@ fn read_bounded_pipe_tail(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
+    generation: u64,
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    executable: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    sandbox: Option<&str>,
+) -> ShellCommandResult {
+    // Structured execution intentionally receives the same policy treatment
+    // as run_shell. Absence of shell syntax is not a permission bypass.
+    if !policy.allow_raw_shell {
+        return ShellCommandResult::not_started(CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some("structured process execution is disabled by local agent policy".into()),
+        });
+    }
+    let cwd_path = cwd
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+    if let Err(error) = cwd_allowed(policy, &cwd_path) {
+        return ShellCommandResult::not_started(CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(error),
+        });
+    }
+    let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
+    let start = Instant::now();
+    let inspect_scratch = match sandbox {
+        None => None,
+        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
+            match crate::command_sandbox::InspectScratch::create() {
+                Ok(scratch) => Some(scratch),
+                Err(error) => {
+                    return ShellCommandResult::not_started(CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(start.elapsed().as_millis() as u64),
+                        error: Some(format!("inspect sandbox unavailable: {error}")),
+                    })
+                }
+            }
+        }
+        Some(other) => {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(format!("unknown sandbox mode '{other}'")),
+            })
+        }
+    };
+
+    // Preparing a configured profile can execute its Runner-owned init
+    // script. Inspect requests must not do that outside the sandbox, so they
+    // use only the configured base environment. In either case the requested
+    // executable and argv never pass through a shell parser.
+    let profile = if inspect_scratch.is_none() {
+        match resolve_prepared_shell_profile(
+            generation,
+            shell,
+            projects_dir,
+            &cwd_path,
+            cwd.is_some(),
+            cache,
+            stop_requested,
+        ) {
+            Ok(profile) => profile,
+            Err(error) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                })
+            }
+        }
+    } else {
+        None
+    };
+    let cmd = match configured_process_command(
+        shell,
+        profile.as_deref(),
+        executable,
+        args,
+        Some(&cwd_path),
+    ) {
+        Ok(cmd) => cmd,
+        Err(error) => {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(error),
+            })
+        }
+    };
+    execute_configured_command(
+        policy,
+        cmd,
+        &cwd_path,
+        stdin,
+        timeout_secs,
+        stop_requested,
+        inspect_scratch,
+        start,
+        "failed to spawn structured process",
+    )
+}
+
 // Test-only wrapper for callers that do not need prepared shell profiles; the
 // production request path uses `run_shell_with_profiles` directly.
 #[cfg(test)]
@@ -1302,7 +1501,7 @@ fn run_shell_impl(
     // Preparing a profile executes its init script. In inspect mode that
     // preparation must not happen outside Landlock, so use the base configured
     // shell and run its optional init script as part of the sandboxed command.
-    let mut cmd = match profiles.filter(|_| inspect_scratch.is_none()) {
+    let cmd = match profiles.filter(|_| inspect_scratch.is_none()) {
         Some((generation, projects_dir, cache)) => {
             match resolve_prepared_shell_profile(
                 generation,
@@ -1367,7 +1566,36 @@ fn run_shell_impl(
             }
         },
     };
-    cmd.current_dir(&cwd_path)
+    let spawn_error_prefix = prepared_profile_name
+        .as_deref()
+        .map(|profile_name| format!("failed to spawn shell profile '{profile_name}'"))
+        .unwrap_or_else(|| "failed to spawn command".to_string());
+    execute_configured_command(
+        policy,
+        cmd,
+        &cwd_path,
+        stdin,
+        timeout_secs,
+        stop_requested,
+        inspect_scratch,
+        start,
+        &spawn_error_prefix,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_configured_command(
+    policy: &AgentPolicy,
+    mut cmd: Command,
+    cwd_path: &Path,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    inspect_scratch: Option<crate::command_sandbox::InspectScratch>,
+    start: Instant,
+    spawn_error_prefix: &str,
+) -> ShellCommandResult {
+    cmd.current_dir(cwd_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if stdin.is_some() {
@@ -1384,52 +1612,31 @@ fn run_shell_impl(
             });
         }
     }
-    // ManagedChild owns the whole shell process tree: a private process group
-    // on Unix, a kill-on-close Job Object on Windows. `child_mut()` below only
-    // accesses pipe handles; every termination still goes through the managed
-    // tree API.
+    // ManagedChild owns the whole process tree: a private process group on
+    // Unix, a kill-on-close Job Object on Windows. `child_mut()` below only
+    // accesses pipe handles; every termination still uses the managed tree.
     let spawn = ManagedChild::spawn(&mut cmd);
     let mut child = match spawn {
         Ok(child) => child,
-        Err(e) => {
-            let error = prepared_profile_name
-                .as_deref()
-                .map(|profile_name| {
-                    format!("failed to spawn shell profile '{}': {}", profile_name, e)
-                })
-                .unwrap_or_else(|| format!("failed to spawn command: {}", e));
+        Err(error) => {
             return ShellCommandResult::not_started(CommandResult {
                 exit_code: None,
                 stdout: None,
                 stderr: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(error),
+                error: Some(format!("{spawn_error_prefix}: {error}")),
             });
         }
     };
-    if let Some(input) = stdin {
-        match child.child_mut().stdin.take() {
+    let mut stdin_writer = match stdin {
+        Some(input) => match child.child_mut().stdin.take() {
             Some(mut child_stdin) => {
-                if let Err(e) = child_stdin.write_all(input.as_bytes()) {
-                    // A command may reject a request or report a missing
-                    // capability before consuming its payload. Once it closes
-                    // stdin, BrokenPipe says nothing about the command's own
-                    // result, so preserve its exit status and output. Other
-                    // write failures still belong to the executor.
-                    if e.kind() != std::io::ErrorKind::BrokenPipe {
-                        let cleanup = terminate_child_without_output(child).err();
-                        return ShellCommandResult::outcome_unknown(CommandResult {
-                            exit_code: None,
-                            stdout: None,
-                            stderr: None,
-                            duration_ms: Some(start.elapsed().as_millis() as u64),
-                            error: Some(with_cleanup_error(
-                                format!("failed to write command stdin: {}", e),
-                                cleanup,
-                            )),
-                        });
-                    }
-                }
+                let input = input.as_bytes().to_vec();
+                let (tx, rx) = mpsc::sync_channel(1);
+                std::thread::spawn(move || {
+                    let _ = tx.send(child_stdin.write_all(&input));
+                });
+                Some(rx)
             }
             None => {
                 let cleanup = terminate_child_without_output(child).err();
@@ -1441,9 +1648,23 @@ fn run_shell_impl(
                     error: Some(with_cleanup_error("stdin pipe missing", cleanup)),
                 });
             }
-        }
-    }
+        },
+        None => None,
+    };
     loop {
+        if let Err(error) = poll_stdin_writer(&mut stdin_writer) {
+            let cleanup = terminate_child_without_output(child).err();
+            return ShellCommandResult::outcome_unknown(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(with_cleanup_error(
+                    format!("failed to write command stdin: {error}"),
+                    cleanup,
+                )),
+            });
+        }
         if stop_requested
             .map(|flag| flag.load(Ordering::SeqCst))
             .unwrap_or(false)
@@ -1519,6 +1740,19 @@ fn run_shell_impl(
             }
         }
     }
+    if let Err(error) = finish_stdin_writer(stdin_writer) {
+        let cleanup = terminate_child_without_output(child).err();
+        return ShellCommandResult::outcome_unknown(CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(with_cleanup_error(
+                format!("failed to write command stdin: {error}"),
+                cleanup,
+            )),
+        });
+    }
     match terminate_and_read_pipes(child, policy.max_output_bytes) {
         Ok((status, stdout, stderr)) => ShellCommandResult::completed(CommandResult {
             exit_code: Some(status.code().unwrap_or(-1)),
@@ -1528,6 +1762,54 @@ fn run_shell_impl(
             error: None,
         }),
         Err(e) => spawned_output_failure(start, e),
+    }
+}
+
+fn poll_stdin_writer(
+    receiver: &mut Option<mpsc::Receiver<std::io::Result<()>>>,
+) -> Result<(), String> {
+    let Some(active) = receiver.as_ref() else {
+        return Ok(());
+    };
+    match active.try_recv() {
+        Ok(Ok(())) => {
+            *receiver = None;
+            Ok(())
+        }
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+            // The child may deliberately close stdin before exiting. Its
+            // terminal status and output remain the source of truth.
+            *receiver = None;
+            Ok(())
+        }
+        Ok(Err(error)) => {
+            *receiver = None;
+            Err(error.to_string())
+        }
+        Err(mpsc::TryRecvError::Empty) => Ok(()),
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *receiver = None;
+            Err("stdin writer ended without a result".to_string())
+        }
+    }
+}
+
+fn finish_stdin_writer(
+    receiver: Option<mpsc::Receiver<std::io::Result<()>>>,
+) -> Result<(), String> {
+    let Some(receiver) = receiver else {
+        return Ok(());
+    };
+    match receiver.recv_timeout(Duration::from_secs(1)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            Err("stdin writer did not finish after process exit".to_string())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("stdin writer ended without a result".to_string())
+        }
     }
 }
 
@@ -1545,6 +1827,71 @@ fn spawned_output_failure(start: Instant, error: String) -> ShellCommandResult {
 mod runner_lifecycle_tests {
     use super::*;
     use crate::shell_protocol::ShellCommandExecutionState;
+    use std::sync::{Arc, OnceLock};
+
+    struct ProcessArgvHelper {
+        _temp: tempfile::TempDir,
+        path: PathBuf,
+    }
+
+    static PROCESS_ARGV_HELPER: OnceLock<Arc<ProcessArgvHelper>> = OnceLock::new();
+
+    fn process_argv_helper() -> PathBuf {
+        PROCESS_ARGV_HELPER
+            .get_or_init(|| {
+                let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../tests/fixtures/process_argv_helper.rs");
+                let temp = tempfile::tempdir().unwrap();
+                let output = temp.path().join(format!(
+                    "process-argv-helper{}",
+                    std::env::consts::EXE_SUFFIX
+                ));
+                let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+                let result = Command::new(rustc)
+                    .arg("--edition=2021")
+                    .arg("--crate-name=webcodex_process_argv_helper")
+                    .arg(source)
+                    .arg("-o")
+                    .arg(&output)
+                    .output()
+                    .expect("run rustc for process argv helper");
+                assert!(
+                    result.status.success(),
+                    "process argv helper compilation failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                Arc::new(ProcessArgvHelper {
+                    _temp: temp,
+                    path: output,
+                })
+            })
+            .path
+            .clone()
+    }
+
+    fn run_direct_process(
+        cwd: &Path,
+        executable: &Path,
+        args: &[String],
+        stdin: Option<&str>,
+        timeout_secs: u64,
+    ) -> ShellCommandResult {
+        let projects_dir = tempfile::tempdir().unwrap();
+        run_process_with_profiles_in_sandbox_and_execution_state(
+            1,
+            &unrestricted_policy(),
+            &ShellConfig::default(),
+            projects_dir.path(),
+            &PreparedShellProfileCache::default(),
+            Some(cwd.to_string_lossy().as_ref()),
+            &executable.to_string_lossy(),
+            args,
+            stdin,
+            timeout_secs,
+            None,
+            None,
+        )
+    }
 
     fn unrestricted_policy() -> AgentPolicy {
         AgentPolicy {
@@ -1630,5 +1977,210 @@ mod runner_lifecycle_tests {
             result.execution_state,
             ShellCommandExecutionState::OutcomeUnknown
         );
+    }
+
+    #[test]
+    fn structured_process_preserves_literal_argv_and_empty_boundaries() {
+        let cwd = tempfile::tempdir().unwrap();
+        let helper = process_argv_helper();
+        let values = vec![
+            String::new(),
+            "two words".to_string(),
+            "\"double\" and 'single'".to_string(),
+            "; semicolon".to_string(),
+            "$(not a command)".to_string(),
+            "a&b|c".to_string(),
+            r"C:\path with spaces\trailing\\".to_string(),
+            "雪だるま☃".to_string(),
+        ];
+        let mut args = vec!["argv".to_string()];
+        args.extend(values.clone());
+
+        let result = run_direct_process(cwd.path(), &helper, &args, None, 10);
+
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(0));
+        let expected = values
+            .iter()
+            .map(|value| format!("{}:{value}\n", value.len()))
+            .collect::<String>();
+        assert_eq!(result.result.stdout.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn structured_process_does_not_interpret_shell_injection_arguments() {
+        let cwd = tempfile::tempdir().unwrap();
+        let helper = process_argv_helper();
+        let marker = cwd.path().join("marker");
+        let values = vec!["$(touch marker)".to_string(), "; touch marker".to_string()];
+        let mut args = vec!["argv".to_string()];
+        args.extend(values.clone());
+
+        let result = run_direct_process(cwd.path(), &helper, &args, None, 10);
+
+        assert_eq!(result.result.exit_code, Some(0));
+        assert!(!marker.exists());
+        let stdout = result.result.stdout.unwrap();
+        for value in values {
+            assert!(stdout.contains(&format!("{}:{value}", value.len())));
+        }
+    }
+
+    #[test]
+    fn structured_process_supports_empty_args_and_bounded_stdin() {
+        let cwd = tempfile::tempdir().unwrap();
+        let helper = process_argv_helper();
+        let empty = run_direct_process(cwd.path(), &helper, &[], None, 10);
+        assert_eq!(empty.result.exit_code, Some(0));
+        assert_eq!(empty.result.stdout.as_deref(), Some(""));
+
+        let stdin = "line one\nUnicode 雪\n";
+        let with_stdin =
+            run_direct_process(cwd.path(), &helper, &["stdin".to_string()], Some(stdin), 10);
+        assert_eq!(with_stdin.result.exit_code, Some(0));
+        assert_eq!(with_stdin.result.stdout.as_deref(), Some(stdin));
+    }
+
+    #[test]
+    fn structured_process_can_exceed_legacy_shell_command_limit() {
+        let cwd = tempfile::tempdir().unwrap();
+        let helper = process_argv_helper();
+        let args = vec!["argv".to_string(), "a".repeat(4_500), "b".repeat(4_500)];
+        assert!(args.iter().map(String::len).sum::<usize>() > 8_000);
+
+        let result = run_direct_process(cwd.path(), &helper, &args, None, 10);
+
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(0));
+        let stdout = result.result.stdout.unwrap();
+        assert!(stdout.starts_with("4500:"));
+        assert!(stdout.contains("\n4500:"));
+    }
+
+    #[test]
+    fn structured_process_reports_prestart_completion_and_nonzero_truthfully() {
+        let cwd = tempfile::tempdir().unwrap();
+        let missing = cwd.path().join("definitely-missing-process");
+        let not_started = run_direct_process(cwd.path(), &missing, &[], None, 10);
+        assert_eq!(
+            not_started.execution_state,
+            ShellCommandExecutionState::NotStarted
+        );
+        assert_eq!(not_started.result.exit_code, None);
+
+        let helper = process_argv_helper();
+        let completed = run_direct_process(
+            cwd.path(),
+            &helper,
+            &["exit".to_string(), "0".to_string()],
+            None,
+            10,
+        );
+        assert_eq!(
+            completed.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(completed.result.exit_code, Some(0));
+
+        let nonzero = run_direct_process(
+            cwd.path(),
+            &helper,
+            &["exit".to_string(), "23".to_string()],
+            None,
+            10,
+        );
+        assert_eq!(
+            nonzero.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(nonzero.result.exit_code, Some(23));
+    }
+
+    #[test]
+    fn structured_process_known_timeout_is_timed_out() {
+        let cwd = tempfile::tempdir().unwrap();
+        let result = run_direct_process(
+            cwd.path(),
+            &process_argv_helper(),
+            &["sleep".to_string(), "2000".to_string()],
+            None,
+            1,
+        );
+
+        assert_eq!(result.execution_state, ShellCommandExecutionState::TimedOut);
+        assert_eq!(result.result.exit_code, Some(-1));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_run_process_accepts_only_native_resolution() {
+        let temp = tempfile::tempdir().unwrap();
+        let native = temp.path().join("native.exe");
+        std::fs::write(&native, b"MZ").unwrap();
+        let args = vec![
+            "space value".to_string(),
+            "\"quotes\"".to_string(),
+            r"backslash\\".to_string(),
+            "&|;".to_string(),
+        ];
+
+        let command = configured_process_command(
+            &ShellConfig::default(),
+            None,
+            &native.to_string_lossy(),
+            &args,
+            Some(temp.path()),
+        )
+        .unwrap();
+        assert_eq!(command.get_program(), native.as_os_str());
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            args.iter()
+                .map(|argument| OsStr::new(argument))
+                .collect::<Vec<_>>()
+        );
+
+        let marker = temp.path().join("batch-started");
+        let batch = temp.path().join("script.cmd");
+        std::fs::write(
+            &batch,
+            format!("@echo off\r\ncopy nul \"{}\"\r\n", marker.display()),
+        )
+        .unwrap();
+        let batch_result = run_direct_process(temp.path(), &batch, &args, None, 10);
+        assert_eq!(
+            batch_result.execution_state,
+            ShellCommandExecutionState::NotStarted
+        );
+        let batch_error = batch_result.result.error.as_deref().unwrap_or_default();
+        assert!(
+            batch_error.contains("unsupported_executable_type"),
+            "{batch_error}"
+        );
+        assert!(batch_error.contains("run_shell"), "{batch_error}");
+        assert!(
+            !marker.exists(),
+            "run_process must reject Batch before child spawn"
+        );
+
+        let unsupported = temp.path().join("script.vbs");
+        std::fs::write(&unsupported, b"WScript.Echo 1\r\n").unwrap();
+        let unsupported_result = run_direct_process(temp.path(), &unsupported, &[], None, 10);
+        assert_eq!(
+            unsupported_result.execution_state,
+            ShellCommandExecutionState::NotStarted
+        );
+        assert!(unsupported_result
+            .result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unsupported Windows extension"));
     }
 }

@@ -214,6 +214,16 @@ Remove contradictions between structured lifecycle fields and prose. Define and 
 
 Introduce the smallest direct-argv process primitive and a bounded script payload path. Reuse current project, permission, Session, timeout, output, and Runner boundaries. Keep shell as an escape hatch.
 
+Phase B1 provides `run_process`: a bounded executable plus string-array argv
+request carried to capable Runners as typed protocol data
+(`structured_process_argv`). It never reconstructs shell text and fails before
+start when that capability or true native argv transport is unavailable. On
+Windows, `.exe`, `.com`, and extensionless PE images are native executables;
+resolved `.cmd`/`.bat` files are rejected before spawn because they require
+shell/script semantics. `run_shell` remains the explicit escape hatch, with no
+automatic fallback. First-class script execution, `run_script`, and sync-to-Job
+continuation remain later work.
+
 ### Phase C — general same-execution sync-to-Job handoff
 
 Apply the structured-validation pattern to general model execution: one start, short synchronous grace, same process continues as a Job, no retry-based promotion.

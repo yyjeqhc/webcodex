@@ -404,6 +404,27 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Execute one native process directly from a structured executable and
+    /// argv. No shell parser, environment mutation, PTY, or durable handoff is
+    /// part of this synchronous v1 contract.
+    RunProcess {
+        project: String,
+        #[serde(default)]
+        executable: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        stdin: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        purpose: Option<ExecutionPurpose>,
+    },
+
     /// Execute a shell command in a project directory (sync, short-lived).
     RunShell {
         project: String,
@@ -1438,6 +1459,7 @@ impl ToolCall {
             Self::WorkspaceCheckpointShow { .. } => "workspace_checkpoint_show",
             Self::WorkspaceCheckpointRestore { .. } => "workspace_checkpoint_restore",
             Self::WorkspaceCheckpointDelete { .. } => "workspace_checkpoint_delete",
+            Self::RunProcess { .. } => "run_process",
             Self::RunShell { .. } => "run_shell",
             Self::OpenSessionShell { .. } => "open_session_shell",
             Self::SessionShellExec { .. } => "session_shell_exec",
@@ -1499,7 +1521,8 @@ impl ToolCall {
 
     pub(crate) fn session_id(&self) -> Option<&str> {
         match self {
-            Self::RunShell { session_id, .. }
+            Self::RunProcess { session_id, .. }
+            | Self::RunShell { session_id, .. }
             | Self::ApplyPatch { session_id, .. }
             | Self::ApplyPatchChecked { session_id, .. }
             | Self::DeleteProjectFiles { session_id, .. }
@@ -1558,7 +1581,8 @@ impl ToolCall {
 
     pub(crate) fn with_effective_session_id(mut self, effective_session_id: String) -> Self {
         match &mut self {
-            Self::RunShell { session_id, .. }
+            Self::RunProcess { session_id, .. }
+            | Self::RunShell { session_id, .. }
             | Self::ApplyPatch { session_id, .. }
             | Self::ApplyPatchChecked { session_id, .. }
             | Self::DeleteProjectFiles { session_id, .. }
@@ -1621,6 +1645,11 @@ impl ToolCall {
         execution_context: &SessionExecutionContext,
     ) -> Self {
         match &mut self {
+            Self::RunProcess { cwd, .. } => {
+                if cwd.is_none() {
+                    *cwd = execution_context.default_cwd.clone();
+                }
+            }
             Self::RunShell { cwd, shell, .. }
             | Self::RunJob { cwd, shell, .. }
             | Self::OpenSessionShell { cwd, shell, .. } => {
@@ -1638,7 +1667,8 @@ impl ToolCall {
 
     pub(crate) fn project(&self) -> Option<&str> {
         match self {
-            Self::RunShell { project, .. }
+            Self::RunProcess { project, .. }
+            | Self::RunShell { project, .. }
             | Self::OpenSessionShell { project, .. }
             | Self::SessionShellExec { project, .. }
             | Self::SessionShellStatus { project, .. }

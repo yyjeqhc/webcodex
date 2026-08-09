@@ -197,6 +197,66 @@ fn from_tool_name_parses_run_shell_with_optional_fields() {
 }
 
 #[test]
+fn from_tool_name_parses_structured_run_process_boundaries() {
+    let call = ToolCall::from_tool_name(
+        "run_process",
+        json!({
+            "project": "demo",
+            "executable": "git",
+            "args": ["status", "--porcelain", "two words", "$(literal)"],
+            "cwd": ".",
+            "stdin": "input\n",
+            "timeout_secs": 60,
+            "purpose": "diagnostic",
+            "session_id": "wc_sess_process"
+        }),
+    )
+    .unwrap();
+    match call {
+        ToolCall::RunProcess {
+            project,
+            executable,
+            args,
+            cwd,
+            stdin,
+            timeout_secs,
+            purpose,
+            session_id,
+        } => {
+            assert_eq!(project, "demo");
+            assert_eq!(executable, "git");
+            assert_eq!(
+                args,
+                ["status", "--porcelain", "two words", "$(literal)"].map(str::to_string)
+            );
+            assert_eq!(cwd.as_deref(), Some("."));
+            assert_eq!(stdin.as_deref(), Some("input\n"));
+            assert_eq!(timeout_secs, Some(60));
+            assert_eq!(purpose, Some(ExecutionPurpose::Diagnostic));
+            assert_eq!(session_id.as_deref(), Some("wc_sess_process"));
+        }
+        other => panic!("expected RunProcess, got {other:?}"),
+    }
+
+    let empty = ToolCall::from_tool_name(
+        "run_process",
+        json!({
+            "project": "demo",
+            "executable": "git",
+            "stdin": null
+        }),
+    )
+    .unwrap();
+    match empty {
+        ToolCall::RunProcess { args, stdin, .. } => {
+            assert!(args.is_empty());
+            assert!(stdin.is_none());
+        }
+        other => panic!("expected RunProcess, got {other:?}"),
+    }
+}
+
+#[test]
 fn from_tool_name_parses_job_status_and_job_log() {
     let call = ToolCall::from_tool_name("job_status", json!({"job_id": "abc"})).unwrap();
     assert!(matches!(

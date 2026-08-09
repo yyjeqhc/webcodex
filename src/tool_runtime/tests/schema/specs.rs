@@ -210,6 +210,57 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
 }
 
 #[test]
+fn run_process_schema_is_small_bounded_and_has_no_shell_or_environment_input() {
+    let specs = registered_tool_specs();
+    let spec = specs
+        .iter()
+        .find(|spec| spec.name == "run_process")
+        .expect("run_process spec");
+    let properties = spec.input_schema["properties"].as_object().unwrap();
+    assert_eq!(
+        spec.input_schema["required"],
+        json!(["project", "executable"])
+    );
+    for field in [
+        "project",
+        "executable",
+        "args",
+        "cwd",
+        "stdin",
+        "timeout_secs",
+        "purpose",
+        "session_id",
+    ] {
+        assert!(properties.contains_key(field), "missing {field}");
+    }
+    for forbidden in ["shell", "env", "environment"] {
+        assert!(
+            !properties.contains_key(forbidden),
+            "run_process must not expose {forbidden}"
+        );
+    }
+    assert_eq!(properties["executable"]["minLength"], 1);
+    assert_eq!(properties["executable"]["maxLength"], 1024);
+    assert_eq!(properties["args"]["type"], "array");
+    assert_eq!(properties["args"]["maxItems"], 256);
+    assert_eq!(properties["args"]["items"]["type"], "string");
+    assert_eq!(properties["args"]["items"]["maxLength"], 8192);
+    assert_eq!(properties["args"]["default"], json!([]));
+    assert_eq!(
+        properties["stdin"]["anyOf"],
+        json!([
+            {"type": "string", "maxLength": 65_536},
+            {"type": "null"}
+        ])
+    );
+    assert_eq!(properties["cwd"]["maxLength"], 1024);
+    assert_eq!(properties["timeout_secs"]["minimum"], 1);
+    assert_eq!(properties["timeout_secs"]["maximum"], 120);
+    assert_eq!(properties["timeout_secs"]["default"], 60);
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+}
+
+#[test]
 fn cargo_fmt_conditional_timeout_schema_matches_tool_call_contract() {
     let specs = registered_tool_specs();
     let schema = &specs
@@ -476,6 +527,7 @@ fn tool_specs_covers_expected_tool_set() {
         "list_projects",
         "list_agents",
         "runtime_status",
+        "run_process",
         "run_shell",
         "run_job",
         "stop_job",

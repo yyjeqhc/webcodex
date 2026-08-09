@@ -2,8 +2,185 @@ use serde_json::{json, Value};
 
 use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_schema};
 
+fn process_execution_state_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["not_started", "outcome_unknown", "completed", "timed_out"],
+        "description": "Canonical lifecycle state. Only not_started is structurally safe to retry without first inspecting target state."
+    })
+}
+
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
+        "run_process" => {
+            let mut schema = wrapped_output_schema(vec![
+                (
+                    "duration_ms",
+                    schema_type("integer", "Process duration in milliseconds."),
+                ),
+                (
+                    "exit_code",
+                    nullable_schema("integer", "Process exit code, when available."),
+                ),
+                (
+                    "stdout_tail",
+                    schema_type("string", "Bounded stdout tail."),
+                ),
+                (
+                    "stderr_tail",
+                    schema_type("string", "Bounded stderr tail."),
+                ),
+                (
+                    "stdout_lines",
+                    schema_type("integer", "Captured stdout line count."),
+                ),
+                (
+                    "stderr_lines",
+                    schema_type("integer", "Captured stderr line count."),
+                ),
+                (
+                    "stdout_truncated",
+                    schema_type("boolean", "Whether stdout_tail was truncated."),
+                ),
+                (
+                    "stderr_truncated",
+                    schema_type("boolean", "Whether stderr_tail was truncated."),
+                ),
+                (
+                    "command_started",
+                    schema_type(
+                        "boolean",
+                        "Whether callers must conservatively treat the process as started; true includes outcome_unknown because side effects may have occurred.",
+                    ),
+                ),
+                (
+                    "command_completed",
+                    schema_type(
+                        "boolean",
+                        "Whether the process reached a terminal result before tool timeout.",
+                    ),
+                ),
+                (
+                    "command_ok",
+                    schema_type("boolean", "Whether the process completed with exit code 0."),
+                ),
+                (
+                    "failure_kind",
+                    nullable_schema(
+                        "string",
+                        "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, capability_unavailable, unsupported_resource, unsupported_executable_type, spawn_failed, permission_denied, invalid_arguments, agent_offline, session_guard_denied, session_closed, or runtime_error.",
+                    ),
+                ),
+                (
+                    "tool_failure",
+                    schema_type(
+                        "boolean",
+                        "True for WebCodex tool/runtime failures; false for child exit status failures.",
+                    ),
+                ),
+                ("purpose", schema_type("string", "Declared execution purpose.")),
+                (
+                    "process_summary",
+                    schema_type(
+                        "string",
+                        "Bounded human-readable executable/argv summary; never execution input.",
+                    ),
+                ),
+                (
+                    "cwd",
+                    schema_type("string", "Resolved project-relative cwd."),
+                ),
+                ("executor", schema_type("string", "Executor type: local or agent.")),
+                (
+                    "execution_source",
+                    schema_type("string", "Always run_process."),
+                ),
+                (
+                    "execution_state",
+                    process_execution_state_schema(),
+                ),
+            ]);
+            schema["properties"]["output"]["allOf"] = json!([
+                {
+                    "if": {
+                        "anyOf": [
+                            {"required": ["execution_state"]},
+                            {"required": ["command_started"]},
+                            {"required": ["command_completed"]},
+                            {"required": ["command_ok"]},
+                            {"required": ["failure_kind"]},
+                            {"required": ["tool_failure"]},
+                            {
+                                "properties": {
+                                    "execution_source": {"const": "run_process"}
+                                },
+                                "required": ["execution_source"]
+                            }
+                        ]
+                    },
+                    "then": {
+                        "required": [
+                            "execution_state",
+                            "command_started",
+                            "command_completed"
+                        ]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {"execution_state": {"const": "not_started"}},
+                        "required": ["execution_state"]
+                    },
+                    "then": {
+                        "properties": {
+                            "command_started": {"const": false},
+                            "command_completed": {"const": false}
+                        },
+                        "required": ["command_started", "command_completed"]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {"execution_state": {"const": "outcome_unknown"}},
+                        "required": ["execution_state"]
+                    },
+                    "then": {
+                        "properties": {
+                            "command_started": {"const": true},
+                            "command_completed": {"const": false}
+                        },
+                        "required": ["command_started", "command_completed"]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {"execution_state": {"const": "completed"}},
+                        "required": ["execution_state"]
+                    },
+                    "then": {
+                        "properties": {
+                            "command_started": {"const": true},
+                            "command_completed": {"const": true}
+                        },
+                        "required": ["command_started", "command_completed"]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {"execution_state": {"const": "timed_out"}},
+                        "required": ["execution_state"]
+                    },
+                    "then": {
+                        "properties": {
+                            "command_started": {"const": true},
+                            "command_completed": {"const": false}
+                        },
+                        "required": ["command_started", "command_completed"]
+                    }
+                }
+            ]);
+            Some(schema)
+        }
         "run_shell" => Some(wrapped_output_schema(vec![
             (
                 "duration_ms",

@@ -1,5 +1,5 @@
 use super::jobs::{
-    assert_active_instance_locked, command_preview, observe_job_terminal, replace_log_limited,
+    assert_active_instance_locked, observe_job_terminal, replace_log_limited, request_preview,
     truncate_output, truncate_output_to,
 };
 use super::requests::{remove_pending_request_locked, take_pending_request_locked};
@@ -217,12 +217,13 @@ impl ShellClientRegistry {
                 super::jobs::notify_job_update(job);
             }
         }
+        let request_preview = request_preview(&pending.request);
         let response = ShellRunResponse {
             success,
             request_id,
             client_id,
             cwd: pending.request.cwd,
-            command_preview: command_preview(&pending.request.command),
+            command_preview: request_preview,
             exit_code: body.exit_code,
             stdout,
             stderr,

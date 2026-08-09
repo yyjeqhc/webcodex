@@ -1,13 +1,19 @@
 use super::super::input_schemas::{
     job_log_input_schema, job_status_input_schema, list_jobs_input_schema,
-    open_session_shell_input_schema, run_job_input_schema, run_shell_input_schema,
-    session_shell_exec_input_schema, session_shell_identity_input_schema, stop_job_input_schema,
+    open_session_shell_input_schema, run_job_input_schema, run_process_input_schema,
+    run_shell_input_schema, session_shell_exec_input_schema, session_shell_identity_input_schema,
+    stop_job_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
 
 pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
+        tool_spec(
+            "run_process",
+            "Preferred bounded native-process primitive. Pass executable and args as structured data; argv is executed directly without shell parsing. Windows .cmd/.bat files are rejected because they require shell/script semantics. Use run_shell explicitly for those files, pipelines, redirection, builtins, shell functions, or operator diagnostics.",
+            run_process_input_schema(),
+        ),
         tool_spec(
             "run_shell",
             "Bounded command escape hatch for validation, builds, tests, or diagnostics only. Do not use as the primary file editing path; prefer cargo_* / validate_patch for common checks and apply_text_edits for source edits.",

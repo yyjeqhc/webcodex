@@ -1,5 +1,8 @@
 use serde_json::json;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
@@ -253,6 +256,253 @@ pub(crate) async fn run_command_sync_bounded_with_shell_and_sandbox(
         Ok(Err(e)) => Err(LocalRunFailure::Join(e.to_string())),
         Err(_) => Err(LocalRunFailure::HardTimeout { bound_secs }),
     }
+}
+
+/// Maximum retained bytes per stream for one local synchronous direct process.
+/// Reader threads continuously drain the pipes, retaining only the tail, so a
+/// noisy child cannot deadlock on a full pipe or turn `run_process` into an
+/// unbounded output channel.
+const LOCAL_PROCESS_OUTPUT_MAX_BYTES: usize = 256 * 1024;
+
+pub(crate) async fn run_process_sync_bounded_with_sandbox(
+    executable: String,
+    args: Vec<String>,
+    stdin: Option<String>,
+    cwd: PathBuf,
+    timeout_secs: u64,
+    sandbox: Option<String>,
+) -> Result<(i32, String, String, u64), LocalRunFailure> {
+    let bound_secs = timeout_secs.saturating_add(LOCAL_RUN_HARD_GRACE_SECS);
+    let task = tokio::task::spawn_blocking(move || {
+        run_process_sync_with_sandbox(
+            &executable,
+            &args,
+            stdin.as_deref(),
+            &cwd,
+            timeout_secs,
+            sandbox.as_deref(),
+        )
+    });
+    match tokio::time::timeout(Duration::from_secs(bound_secs), task).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(error)) => Err(LocalRunFailure::Join(error.to_string())),
+        Err(_) => Err(LocalRunFailure::HardTimeout { bound_secs }),
+    }
+}
+
+fn run_process_sync_with_sandbox(
+    executable: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    cwd: &Path,
+    timeout_secs: u64,
+    sandbox: Option<&str>,
+) -> (i32, String, String, u64) {
+    let start = Instant::now();
+    let mut command = Command::new(executable);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let _scratch = match sandbox {
+        None => None,
+        Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
+            let scratch = match crate::command_sandbox::InspectScratch::create() {
+                Ok(scratch) => scratch,
+                Err(error) => {
+                    return (
+                        -1,
+                        String::new(),
+                        format!("Failed to configure inspect sandbox: {error}"),
+                        start.elapsed().as_millis() as u64,
+                    )
+                }
+            };
+            if let Err(error) =
+                crate::command_sandbox::sandbox_command_inspect(&mut command, &scratch)
+            {
+                return (
+                    -1,
+                    String::new(),
+                    format!("Failed to configure inspect sandbox: {error}"),
+                    start.elapsed().as_millis() as u64,
+                );
+            }
+            Some(scratch)
+        }
+        Some(other) => {
+            return (
+                -1,
+                String::new(),
+                format!("Failed to configure inspect sandbox: unknown sandbox mode '{other}'"),
+                start.elapsed().as_millis() as u64,
+            )
+        }
+    };
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return (
+                -1,
+                String::new(),
+                format!("Failed to execute process: {error}"),
+                start.elapsed().as_millis() as u64,
+            )
+        }
+    };
+    let pgid = child.id();
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_local_direct_process(&mut child, pgid);
+            return (
+                -1,
+                String::new(),
+                "Failed to collect process output: stdout pipe missing".to_string(),
+                start.elapsed().as_millis() as u64,
+            );
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_local_direct_process(&mut child, pgid);
+            return (
+                -1,
+                String::new(),
+                "Failed to collect process output: stderr pipe missing".to_string(),
+                start.elapsed().as_millis() as u64,
+            );
+        }
+    };
+    let stdout_reader = spawn_bounded_process_reader(stdout);
+    let stderr_reader = spawn_bounded_process_reader(stderr);
+    let stdin_writer = stdin.map(|input| {
+        let input = input.as_bytes().to_vec();
+        let child_stdin = child.stdin.take();
+        std::thread::spawn(move || match child_stdin {
+            Some(mut child_stdin) => child_stdin.write_all(&input),
+            None => Err(std::io::Error::other("stdin pipe missing")),
+        })
+    });
+
+    let timeout = Duration::from_secs(timeout_secs);
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if start.elapsed() >= timeout => {
+                timed_out = true;
+                break None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_local_direct_process(&mut child, pgid);
+                return (
+                    -1,
+                    String::new(),
+                    format!("Failed to wait for process: {error}"),
+                    start.elapsed().as_millis() as u64,
+                );
+            }
+        }
+    };
+    let status = if timed_out {
+        terminate_local_direct_process(&mut child, pgid);
+        None
+    } else {
+        // The direct child is terminal, but descendants may still own output
+        // pipes. Unix process-group ownership lets us close that whole tree.
+        reap_process_group(pgid);
+        status
+    };
+    let stdout = finish_bounded_process_reader(stdout_reader);
+    let stderr = finish_bounded_process_reader(stderr_reader);
+    let elapsed = start.elapsed().as_millis() as u64;
+    let stdin_error = stdin_writer
+        .and_then(|writer| writer.join().ok())
+        .and_then(Result::err)
+        .filter(|error| error.kind() != std::io::ErrorKind::BrokenPipe);
+    match (stdout, stderr, stdin_error) {
+        (_, _, Some(error)) => (
+            -1,
+            String::new(),
+            format!("Failed to write process stdin: {error}"),
+            elapsed,
+        ),
+        (Err(error), _, _) | (_, Err(error), _) => (
+            -1,
+            String::new(),
+            format!("Failed to collect process output: {error}"),
+            elapsed,
+        ),
+        (Ok(stdout), Ok(mut stderr), None) if timed_out => {
+            if !stderr.is_empty() && !stderr.ends_with('\n') {
+                stderr.push('\n');
+            }
+            stderr.push_str(&format!("Command timed out after {timeout_secs} seconds"));
+            (-1, stdout, stderr, elapsed)
+        }
+        (Ok(stdout), Ok(stderr), None) => (
+            status.and_then(|status| status.code()).unwrap_or(-1),
+            stdout,
+            stderr,
+            elapsed,
+        ),
+    }
+}
+
+fn terminate_local_direct_process(child: &mut Child, pgid: u32) {
+    reap_process_group(pgid);
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+fn spawn_bounded_process_reader(
+    mut pipe: impl Read + Send + 'static,
+) -> mpsc::Receiver<Result<String, String>> {
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut retained = Vec::new();
+        let mut chunk = [0_u8; 8192];
+        let result = loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => break Ok(String::from_utf8_lossy(&retained).to_string()),
+                Ok(count) => {
+                    retained.extend_from_slice(&chunk[..count]);
+                    if retained.len() > LOCAL_PROCESS_OUTPUT_MAX_BYTES {
+                        let discard = retained.len() - LOCAL_PROCESS_OUTPUT_MAX_BYTES;
+                        retained.drain(..discard);
+                    }
+                }
+                Err(error) => break Err(error.to_string()),
+            }
+        };
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+fn finish_bounded_process_reader(
+    reader: mpsc::Receiver<Result<String, String>>,
+) -> Result<String, String> {
+    reader
+        .recv_timeout(Duration::from_secs(1))
+        .map_err(|_| "process output reader did not finish".to_string())?
 }
 
 pub(crate) fn resolve_local_cwd(

@@ -1,7 +1,8 @@
 use super::state::{ShellClientRegistryInner, ShellJobLogState, ShellJobRecord};
 use super::{now_ts, CLIENT_ONLINE_WINDOW_SECS, MAX_OUTPUT_BYTES, MAX_QUEUED_REQUESTS_PER_CLIENT};
 use crate::shell_protocol::{
-    ShellAgentJobResult, ShellAgentShellJobResult, ShellJobInfo, ShellJobStreamSnapshot,
+    ShellAgentJobResult, ShellAgentShellJobResult, ShellAgentShellRequest, ShellJobInfo,
+    ShellJobStreamSnapshot,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -55,6 +56,88 @@ pub(crate) fn command_preview(command: &str) -> String {
     }
 }
 
+/// Bounded human-readable process summary. Argument boundaries are used only
+/// for display; this string is never executable input or a retry source.
+pub(crate) fn process_preview<'a>(
+    executable: &'a str,
+    args: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let mut summary = String::new();
+    let mut truncated = false;
+    let push = |summary: &mut String, character: char| {
+        if summary.chars().count() >= COMMAND_PREVIEW_MAX_CHARS {
+            false
+        } else {
+            summary.push(character);
+            true
+        }
+    };
+    for value in std::iter::once(executable).chain(args) {
+        if !summary.is_empty() && !push(&mut summary, ' ') {
+            truncated = true;
+            break;
+        }
+        let simple = !value.is_empty()
+            && value.chars().all(|character| {
+                character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '/' | '\\')
+            });
+        if !simple && !push(&mut summary, '"') {
+            truncated = true;
+            break;
+        }
+        for character in value.chars() {
+            let escaped = match character {
+                '"' => Some(['\\', '"']),
+                '\\' if !simple => Some(['\\', '\\']),
+                _ => None,
+            };
+            if let Some(escaped) = escaped {
+                if escaped
+                    .into_iter()
+                    .any(|character| !push(&mut summary, character))
+                {
+                    truncated = true;
+                    break;
+                }
+            } else if !push(
+                &mut summary,
+                if character.is_control() {
+                    '�'
+                } else {
+                    character
+                },
+            ) {
+                truncated = true;
+                break;
+            }
+        }
+        if truncated {
+            break;
+        }
+        if !simple && !push(&mut summary, '"') {
+            truncated = true;
+            break;
+        }
+    }
+    if crate::action_audit_sessions::secret_like_value(&summary) {
+        return "[redacted]".to_string();
+    }
+    if truncated {
+        summary.push('…');
+    }
+    summary
+}
+
+pub(super) fn request_preview(request: &ShellAgentShellRequest) -> String {
+    request
+        .process
+        .as_ref()
+        .map(|process| {
+            process_preview(&process.executable, process.args.iter().map(String::as_str))
+        })
+        .unwrap_or_else(|| command_preview(&request.command))
+}
+
 #[cfg(test)]
 mod command_preview_tests {
     use super::*;
@@ -67,6 +150,21 @@ mod command_preview_tests {
         );
         assert_eq!(command_preview("echo token=example"), "[redacted]");
         assert_eq!(command_preview("cargo test focused"), "cargo test focused");
+    }
+
+    #[test]
+    fn process_preview_is_bounded_readable_and_never_an_execution_encoding() {
+        let preview = process_preview(
+            "git",
+            ["status", "two words", "$(literal)", &"x".repeat(200)].into_iter(),
+        );
+        assert!(preview.starts_with("git status \"two words\" \"$(literal)\""));
+        assert!(preview.chars().count() <= COMMAND_PREVIEW_MAX_CHARS + 1);
+        assert!(preview.ends_with('…'));
+        assert_eq!(
+            process_preview("tool", ["Authorization: Bearer example"].into_iter()),
+            "[redacted]"
+        );
     }
 }
 

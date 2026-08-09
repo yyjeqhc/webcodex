@@ -281,6 +281,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .map(|definition| definition.name)
         .collect::<BTreeSet<_>>();
     assert!(current_session_fallback_tools.contains("read_file"));
+    assert!(current_session_fallback_tools.contains("run_process"));
     assert!(current_session_fallback_tools.contains("run_shell"));
     assert!(current_session_fallback_tools.contains("workspace_hygiene_check"));
     for name in [
@@ -301,6 +302,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
 
     for (tool, risk) in [
         ("cargo_check", PERMISSION_RISK_VALIDATION),
+        ("run_process", PERMISSION_RISK_SHELL),
         ("run_shell", PERMISSION_RISK_SHELL),
         ("run_job", PERMISSION_RISK_JOB),
         ("stop_job", PERMISSION_RISK_JOB),
@@ -344,6 +346,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
     use crate::tool_runtime::tool_definition::is_model_visible_tool_name;
 
     let cases = [
+        (
+            "run_process",
+            ToolRisk::JobRun,
+            AgentCapability::StructuredProcess,
+        ),
         ("run_shell", ToolRisk::JobRun, AgentCapability::Shell),
         (
             "open_session_shell",

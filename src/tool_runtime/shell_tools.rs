@@ -10,6 +10,29 @@ impl ToolRuntime {
         ssh_resource: Option<&str>,
     ) -> ToolResult {
         match call {
+            ToolCall::RunProcess {
+                project,
+                executable,
+                args,
+                stdin,
+                session_id: _,
+                timeout_secs,
+                cwd,
+                purpose,
+            } => {
+                self.run_process_with_contract_in_sandbox(
+                    project,
+                    executable,
+                    args,
+                    stdin,
+                    timeout_secs,
+                    cwd,
+                    purpose,
+                    sandbox,
+                    ssh_resource,
+                )
+                .await
+            }
             ToolCall::RunShell {
                 project,
                 command,

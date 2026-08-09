@@ -1,6 +1,79 @@
 use serde_json::{json, Value};
 
 use super::common::{object_schema, with_optional_session_id};
+use crate::shell_protocol::{
+    PROCESS_ARG_MAX_BYTES, PROCESS_ARG_MAX_COUNT, PROCESS_CWD_MAX_BYTES,
+    PROCESS_EXECUTABLE_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
+};
+
+pub(crate) fn run_process_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        ("project", "string", "Configured project id.", true),
+        (
+            "executable",
+            "string",
+            "Native executable name or path. It is executed directly and is never parsed as shell text. On Windows, .cmd/.bat files are rejected because they require shell/script semantics; use run_shell explicitly when those semantics are intended.",
+            true,
+        ),
+        (
+            "args",
+            "array",
+            "Ordered argv values passed literally to the child process. Defaults to an empty array. Runtime validation allows at most 16,000 UTF-8 bytes across executable and argv boundaries.",
+            false,
+        ),
+        (
+            "cwd",
+            "string",
+            "Project-relative working directory. Omit, empty string, or '.' for the project root. Named Session SSH resources are unsupported for run_process.",
+            false,
+        ),
+        (
+            "stdin",
+            "string",
+            "Optional bounded UTF-8 stdin payload passed through a pipe.",
+            false,
+        ),
+        (
+            "timeout_secs",
+            "integer",
+            "Synchronous process timeout in seconds (minimum 1, maximum 120, default 60).",
+            false,
+        ),
+        (
+            "purpose",
+            "string",
+            "Declared execution intent: validation, test, build, format, release, diagnostic, operation, or other. This records evidence and never changes authorization.",
+            false,
+        ),
+    ]));
+    schema["properties"]["executable"]["minLength"] = json!(1);
+    schema["properties"]["executable"]["maxLength"] = json!(PROCESS_EXECUTABLE_MAX_BYTES);
+    schema["properties"]["args"]["maxItems"] = json!(PROCESS_ARG_MAX_COUNT);
+    schema["properties"]["args"]["items"]["maxLength"] = json!(PROCESS_ARG_MAX_BYTES);
+    schema["properties"]["args"]["default"] = json!([]);
+    schema["properties"]["stdin"] = json!({
+        "anyOf": [
+            {"type": "string", "maxLength": PROCESS_STDIN_MAX_BYTES},
+            {"type": "null"}
+        ],
+        "description": "Optional bounded UTF-8 stdin payload passed through a pipe; null and omission both mean no stdin payload."
+    });
+    schema["properties"]["cwd"]["maxLength"] = json!(PROCESS_CWD_MAX_BYTES);
+    schema["properties"]["timeout_secs"]["minimum"] = json!(1);
+    schema["properties"]["timeout_secs"]["maximum"] = json!(PROCESS_TIMEOUT_MAX_SECS);
+    schema["properties"]["timeout_secs"]["default"] = json!(60);
+    schema["properties"]["purpose"]["enum"] = json!([
+        "validation",
+        "test",
+        "build",
+        "format",
+        "release",
+        "diagnostic",
+        "operation",
+        "other"
+    ]);
+    schema
+}
 
 pub(crate) fn run_shell_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![

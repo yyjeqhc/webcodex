@@ -13,6 +13,31 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         out.insert("project".to_string(), project);
     }
     match tool_name {
+        "run_process" => {
+            out.insert(
+                "executable_present".to_string(),
+                Value::Bool(obj.contains_key("executable")),
+            );
+            out.insert(
+                "stdin_present".to_string(),
+                Value::Bool(obj.contains_key("stdin")),
+            );
+            let args = obj.get("args").and_then(Value::as_array);
+            out.insert(
+                "arg_count".to_string(),
+                Value::from(args.map(Vec::len).unwrap_or_default()),
+            );
+            copy_keys(obj, &mut out, &["timeout_secs", "cwd", "purpose"]);
+            if let Some(executable) = obj.get("executable").and_then(Value::as_str) {
+                out.insert(
+                    "process_summary".to_string(),
+                    Value::String(crate::shell_client::process_preview(
+                        executable,
+                        args.into_iter().flatten().filter_map(Value::as_str),
+                    )),
+                );
+            }
+        }
         "run_shell" | "run_job" | "session_shell_exec" => {
             out.insert(
                 "command_present".to_string(),
@@ -260,6 +285,28 @@ fn copy_keys(
 impl ToolCall {
     pub(crate) fn session_log_arguments(&self) -> Value {
         match self {
+            Self::RunProcess {
+                project,
+                executable,
+                args,
+                stdin,
+                timeout_secs,
+                cwd,
+                purpose,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "executable_present": true,
+                "arg_count": args.len(),
+                "stdin_present": stdin.is_some(),
+                "process_summary": crate::shell_client::process_preview(
+                    executable,
+                    args.iter().map(String::as_str),
+                ),
+                "timeout_secs": timeout_secs,
+                "cwd": cwd,
+                "purpose": purpose,
+            }),
             Self::RunShell {
                 project,
                 command,

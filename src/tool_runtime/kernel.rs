@@ -107,9 +107,15 @@ impl ToolRuntime {
             extract_bool_arg(&concrete_arguments, ALLOW_CROSS_PROJECT_SESSION_FIELD);
         if let Some(session_id) = context.session_id {
             if !self.sessions.contains_session(session_id) {
+                let mut result = unknown_session_result(session_id);
+                super::dispatch::decorate_run_process_prestart_denial(
+                    &request.tool_name,
+                    &mut result,
+                    "unknown_session_id",
+                );
                 return ToolCallOutcome {
                     success: false,
-                    result: Some(unknown_session_result(session_id)),
+                    result: Some(result),
                     error_status: None,
                     project: None,
                 };
@@ -150,6 +156,11 @@ impl ToolRuntime {
                     &request.tool_name,
                     mismatch,
                 );
+                super::dispatch::decorate_run_process_prestart_denial(
+                    &request.tool_name,
+                    &mut result,
+                    session_context::SESSION_PROJECT_MISMATCH_KIND,
+                );
                 let event_id = self.sessions.record_tool_call_finished(
                     session_event,
                     false,
@@ -172,6 +183,11 @@ impl ToolRuntime {
             }
         }
         if let Some(mut result) = tool_disabled_result_from_definition(&request.tool_name) {
+            super::dispatch::decorate_run_process_prestart_denial(
+                &request.tool_name,
+                &mut result,
+                "capability_unavailable",
+            );
             if let Some(session_id) = context.session_id {
                 let session_event = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
@@ -228,6 +244,11 @@ impl ToolRuntime {
                     &request.tool_name,
                     denial,
                 );
+                super::dispatch::decorate_run_process_prestart_denial(
+                    &request.tool_name,
+                    &mut result,
+                    "session_lifecycle_denied",
+                );
                 let error_kind = result
                     .output
                     .get("error_kind")
@@ -267,6 +288,11 @@ impl ToolRuntime {
                 );
                 let mut result =
                     session_guard_denied_result(session_id, &request.tool_name, denial);
+                super::dispatch::decorate_run_process_prestart_denial(
+                    &request.tool_name,
+                    &mut result,
+                    "session_guard_denied",
+                );
                 let event_id = self.sessions.record_tool_call_finished(
                     session_event,
                     false,

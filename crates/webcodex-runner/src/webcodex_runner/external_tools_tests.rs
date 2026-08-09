@@ -207,6 +207,7 @@ fn agent_request(
         end_line: Some(20),
         create_dirs: false,
         command: String::new(),
+        process: None,
         stdin: None,
         // The effective MCP deadline is min(request, policy, config); a 1s
         // request pin would ignore the fixture's generous spawn budget and

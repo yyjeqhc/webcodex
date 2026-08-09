@@ -4,11 +4,15 @@ use super::transport::ResultSubmission;
 use super::validation::{handle_validation_request, is_validation_request_kind};
 use super::{
     handle_project_lifecycle_op, handle_project_op_with_temporary_projects_root,
-    handle_resolve_or_register_project, run_shell_with_profiles_in_sandbox_and_execution_state,
-    run_ssh_shell_with_execution_state, AgentSink, CommandResult, HotAgentConfig,
-    PersistentShellManager, ReloadableAgentConfig, ShellCommandResult, SubmitResultError,
+    handle_resolve_or_register_project, run_process_with_profiles_in_sandbox_and_execution_state,
+    run_shell_with_profiles_in_sandbox_and_execution_state, run_ssh_shell_with_execution_state,
+    AgentSink, CommandResult, HotAgentConfig, PersistentShellManager, ReloadableAgentConfig,
+    ShellCommandResult, SubmitResultError,
 };
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::shell_protocol::{
+    validate_process_argv, ShellAgentShellRequest, ShellProcessArgv, PROCESS_CWD_MAX_BYTES,
+    PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
+};
 use crate::{handle_file_request, is_file_request_kind, JobManager};
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -58,6 +62,50 @@ pub(crate) fn dispatch_request(
         .job_context
         .as_ref()
         .and_then(|context| context.workflow_session_id.as_deref());
+    if request.kind == "run_process" {
+        let request_id = request.request_id.clone();
+        let result = if ssh_resource.is_some() {
+            ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(
+                    "structured_process_ssh_unsupported: native argv is unavailable for SSH resources; command was not started"
+                        .to_string(),
+                ),
+            })
+        } else {
+            match validate_run_process_request(&request) {
+                Ok(process) => run_process_with_profiles_in_sandbox_and_execution_state(
+                    config.generation,
+                    policy,
+                    shell,
+                    projects_dir,
+                    &jobs.prepared_profiles,
+                    request.cwd.as_deref(),
+                    &process.executable,
+                    &process.args,
+                    request.stdin.as_deref(),
+                    request.timeout_secs,
+                    Some(runtime.shutdown_flag()),
+                    request.sandbox.as_deref(),
+                ),
+                Err(error) => ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(0),
+                    error: Some(format!(
+                        "invalid_structured_process_request: {error}; command was not started"
+                    )),
+                }),
+            }
+        };
+        return sink
+            .submit_shell_result_with_metadata(request_id, result, config, runtime)
+            .map(|_| true);
+    }
     if request.kind == "persistent_shell" {
         let request_id = request.request_id.clone();
         let operation = request.persistent_shell.clone();
@@ -272,6 +320,48 @@ pub(crate) fn dispatch_request(
                 .map(|_| true)
         }
     }
+}
+
+fn validate_run_process_request(
+    request: &ShellAgentShellRequest,
+) -> Result<&ShellProcessArgv, String> {
+    if request.job_id.is_some() {
+        return Err("job_id is not supported by synchronous run_process".to_string());
+    }
+    if !request.command.is_empty() {
+        return Err("command must be empty when process is present".to_string());
+    }
+    let process = request
+        .process
+        .as_ref()
+        .ok_or_else(|| "process payload is required".to_string())?;
+    validate_process_argv(process)?;
+    if let Some(stdin) = request.stdin.as_deref() {
+        if stdin.len() > PROCESS_STDIN_MAX_BYTES {
+            return Err(format!(
+                "stdin is too large; maximum is {PROCESS_STDIN_MAX_BYTES} bytes"
+            ));
+        }
+        if stdin.contains('\0') {
+            return Err("stdin cannot contain NUL bytes".to_string());
+        }
+    }
+    if let Some(cwd) = request.cwd.as_deref() {
+        if cwd.len() > PROCESS_CWD_MAX_BYTES {
+            return Err(format!(
+                "cwd is too long; maximum is {PROCESS_CWD_MAX_BYTES} bytes"
+            ));
+        }
+        if cwd.contains('\0') {
+            return Err("cwd cannot contain NUL bytes".to_string());
+        }
+    }
+    if request.timeout_secs == 0 || request.timeout_secs > PROCESS_TIMEOUT_MAX_SECS {
+        return Err(format!(
+            "timeout_secs must be between 1 and {PROCESS_TIMEOUT_MAX_SECS}"
+        ));
+    }
+    Ok(process)
 }
 
 fn lifecycle_project_id(request: &ShellAgentShellRequest) -> Option<String> {

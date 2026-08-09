@@ -43,7 +43,7 @@ pub(crate) fn command_execution_state_name(
     }
 }
 
-fn agent_command_lifecycle(
+pub(crate) fn agent_command_lifecycle(
     response: &ShellRunResponse,
     timeout_secs: u64,
 ) -> ShellCommandExecutionState {
@@ -91,7 +91,9 @@ fn local_command_error_lifecycle(
     None
 }
 
-fn dispatch_uncertainty_lifecycle(request_dispatched: Option<bool>) -> ShellCommandExecutionState {
+pub(crate) fn dispatch_uncertainty_lifecycle(
+    request_dispatched: Option<bool>,
+) -> ShellCommandExecutionState {
     if request_dispatched == Some(false) {
         ShellCommandExecutionState::NotStarted
     } else {

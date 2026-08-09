@@ -100,6 +100,110 @@ fn key_tool_output_schemas_include_expected_fields() {
         "failure_kind",
         "tool_failure",
         "purpose",
+        "process_summary",
+        "cwd",
+        "executor",
+        "execution_source",
+        "execution_state",
+    ] {
+        assert!(
+            has_output_field("run_process", field),
+            "run_process missing {field}"
+        );
+    }
+    assert_eq!(
+        output_schema_property(&specs, "run_process", "execution_state")["enum"],
+        serde_json::json!(["not_started", "outcome_unknown", "completed", "timed_out"])
+    );
+    let run_process_schema = &spec_named(&specs, "run_process").output_schema;
+    for (state, command_started, command_completed) in [
+        ("not_started", false, false),
+        ("outcome_unknown", true, false),
+        ("completed", true, true),
+        ("timed_out", true, false),
+    ] {
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::json!({
+                "success": false,
+                "output": {
+                    "execution_state": state,
+                    "command_started": command_started,
+                    "command_completed": command_completed
+                },
+                "error": null
+            }),
+            run_process_schema,
+        )
+        .unwrap_or_else(|error| panic!("run_process state {state} should validate: {error}"));
+    }
+    assert!(
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::json!({
+                "success": false,
+                "output": {
+                    "execution_state": "started",
+                    "command_started": true,
+                    "command_completed": false
+                },
+                "error": null
+            }),
+            run_process_schema,
+        )
+        .is_err(),
+        "run_process must reject lifecycle states outside the Phase A four-state contract"
+    );
+    assert!(
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::json!({
+                "success": false,
+                "output": {
+                    "execution_state": "not_started",
+                    "command_started": true,
+                    "command_completed": false
+                },
+                "error": null
+            }),
+            run_process_schema,
+        )
+        .is_err(),
+        "run_process must reject lifecycle booleans that contradict execution_state"
+    );
+    assert!(
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::json!({
+                "success": false,
+                "output": {
+                    "failure_kind": "permission_denied",
+                    "tool_failure": true
+                },
+                "error": "permission denied"
+            }),
+            run_process_schema,
+        )
+        .is_err(),
+        "an execution-style run_process denial must include the canonical lifecycle tuple"
+    );
+    let process_started_description =
+        output_schema_property(&specs, "run_process", "command_started")["description"]
+            .as_str()
+            .expect("run_process command_started description");
+    assert!(process_started_description.contains("outcome_unknown"));
+
+    for field in [
+        "duration_ms",
+        "exit_code",
+        "stdout_tail",
+        "stderr_tail",
+        "stdout_lines",
+        "stderr_lines",
+        "stdout_truncated",
+        "stderr_truncated",
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "failure_kind",
+        "tool_failure",
+        "purpose",
         "command_summary",
         "cwd",
         "shell",

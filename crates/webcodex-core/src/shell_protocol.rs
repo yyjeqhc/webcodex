@@ -115,6 +115,11 @@ pub const SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL: &str = "persistent_shell";
 /// must reject the request rather than silently opening a local shell.
 pub const SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL: &str = "ssh_persistent_shell";
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_validation_argv";
+/// General model-facing native process execution with a typed executable and
+/// argv. This is deliberately independent from structured Cargo validation:
+/// older Runners may support validation argv without accepting arbitrary
+/// process argv.
+pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV: &str = "structured_process_argv";
 /// Explicit capability for agent-side read-only LSP navigation. Missing on
 /// older agents and defaults to `false` so the server never dispatches typed
 /// LSP requests to agents that cannot handle them.
@@ -141,6 +146,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
@@ -199,6 +205,10 @@ pub struct ShellClientCapabilities {
     /// Missing on older agents and therefore fail-closed.
     #[serde(default)]
     pub structured_validation_argv: bool,
+    /// General native executable + argv requests. Missing on older agents and
+    /// therefore false; the Server must fail closed without a shell fallback.
+    #[serde(default)]
+    pub structured_process_argv: bool,
     /// Read-only semantic navigation via agent-side rust-analyzer. Defaults to
     /// false for wire compatibility with older agents.
     #[serde(default)]
@@ -260,6 +270,7 @@ impl Default for ShellClientCapabilities {
             persistent_shell: false,
             ssh_persistent_shell: false,
             structured_validation_argv: false,
+            structured_process_argv: false,
             lsp_read_only_navigation: false,
             sandbox_inspect_commands: false,
             project_lifecycle: false,
@@ -570,6 +581,111 @@ pub struct ShellRunRequest {
     pub wait_timeout_secs: u64,
 }
 
+/// Structured native process representation carried end-to-end. This is the
+/// execution source of truth for `run_process`; `ShellAgentShellRequest.command`
+/// stays empty and is never populated by quoting or JSON-encoding this value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellProcessArgv {
+    pub executable: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// Conservative cross-platform process-input limits.
+///
+/// Windows ultimately represents argv in a CreateProcess command line even
+/// when callers use `Command::args`. Limiting the raw UTF-8 executable + args
+/// plus one boundary byte per value to 16,000 bytes leaves room below the
+/// 32,767 UTF-16-unit platform ceiling even when quoting doubles every byte.
+/// The limit still permits a structured invocation larger than the legacy
+/// 8,000-byte shell-command channel. Long scripts/text belong to `run_script`.
+pub const PROCESS_EXECUTABLE_MAX_BYTES: usize = 1_024;
+pub const PROCESS_ARG_MAX_COUNT: usize = 256;
+pub const PROCESS_ARG_MAX_BYTES: usize = 8_192;
+pub const PROCESS_ARGV_MAX_BYTES: usize = 16_000;
+pub const PROCESS_STDIN_MAX_BYTES: usize = 64 * 1_024;
+pub const PROCESS_CWD_MAX_BYTES: usize = 1_024;
+pub const PROCESS_TIMEOUT_MAX_SECS: u64 = 120;
+
+/// Validate the transport-neutral executable/argv payload. Both Server and
+/// Runner call this so a stale or malicious peer cannot bypass either side.
+pub fn validate_process_argv(process: &ShellProcessArgv) -> Result<(), String> {
+    if process.executable.trim().is_empty() {
+        return Err("executable must not be empty".to_string());
+    }
+    if process.executable.len() > PROCESS_EXECUTABLE_MAX_BYTES {
+        return Err(format!(
+            "executable is too long; maximum is {PROCESS_EXECUTABLE_MAX_BYTES} bytes"
+        ));
+    }
+    if process.executable.contains('\0') {
+        return Err("executable cannot contain NUL bytes".to_string());
+    }
+    if process.args.len() > PROCESS_ARG_MAX_COUNT {
+        return Err(format!(
+            "args may contain at most {PROCESS_ARG_MAX_COUNT} entries"
+        ));
+    }
+    let mut total = process.executable.len();
+    for (index, arg) in process.args.iter().enumerate() {
+        if arg.len() > PROCESS_ARG_MAX_BYTES {
+            return Err(format!(
+                "args[{index}] is too long; maximum is {PROCESS_ARG_MAX_BYTES} bytes"
+            ));
+        }
+        if arg.contains('\0') {
+            return Err(format!("args[{index}] cannot contain NUL bytes"));
+        }
+        total = total.saturating_add(1).saturating_add(arg.len());
+    }
+    if total > PROCESS_ARGV_MAX_BYTES {
+        return Err(format!(
+            "executable and args are too large; maximum total is {PROCESS_ARGV_MAX_BYTES} bytes"
+        ));
+    }
+    if process_uses_shell_command_mode(process) {
+        return Err(
+            "run_process does not accept shell command modes; use run_shell for shell syntax"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Reject the shell-parser forms that would turn `run_process` back into a
+/// shell-text transport. Batch files remain a Runner-managed Windows launch
+/// mode and do not pass model-authored `/C` text through this check.
+pub fn process_uses_shell_command_mode(process: &ShellProcessArgv) -> bool {
+    let basename = process
+        .executable
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(process.executable.as_str())
+        .to_ascii_lowercase();
+    match basename.as_str() {
+        "sh" | "sh.exe" | "bash" | "bash.exe" => process
+            .args
+            .iter()
+            .take_while(|arg| *arg != "--")
+            .any(|arg| {
+                let lower = arg.to_ascii_lowercase();
+                lower == "-c"
+                    || (lower.starts_with('-')
+                        && !lower.starts_with("--")
+                        && lower[1..].contains('c'))
+            }),
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => process
+            .args
+            .iter()
+            .any(|arg| matches!(arg.to_ascii_lowercase().as_str(), "-command" | "-c")),
+        "cmd" | "cmd.exe" => process
+            .args
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("/c")),
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellRunResponse {
     pub success: bool,
@@ -682,6 +798,10 @@ pub struct ShellAgentShellRequest {
     #[serde(default)]
     pub create_dirs: bool,
     pub command: String,
+    /// Typed native process payload. Present only for `kind = "run_process"`;
+    /// defaults to `None` for backward compatibility with older envelopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<ShellProcessArgv>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdin: Option<String>,
     pub timeout_secs: u64,
@@ -1783,6 +1903,42 @@ where
 mod envelope_tests {
     use super::*;
 
+    fn sample_process_request() -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: "req-process-1".to_string(),
+            client_id: "ws-1".to_string(),
+            kind: "run_process".to_string(),
+            job_id: None,
+            cwd: Some("sub dir".to_string()),
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+            command: String::new(),
+            process: Some(ShellProcessArgv {
+                executable: "argv-helper".to_string(),
+                args: vec![
+                    "literal space".to_string(),
+                    "\"quote\"".to_string(),
+                    "$(not-shell)".to_string(),
+                ],
+            }),
+            stdin: Some("bounded input".to_string()),
+            timeout_secs: 60,
+            requested_by: "tester".to_string(),
+            created_at: 123,
+            validation: None,
+            lsp: None,
+            sandbox: None,
+            job_context: None,
+            persistent_shell: None,
+        }
+    }
+
     fn sample_register() -> ShellClientRegisterRequest {
         ShellClientRegisterRequest {
             process_started_at: None,
@@ -1804,6 +1960,7 @@ mod envelope_tests {
                 persistent_shell: true,
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
+                structured_process_argv: true,
                 lsp_read_only_navigation: false,
                 sandbox_inspect_commands: false,
                 project_lifecycle: false,
@@ -1992,6 +2149,7 @@ mod envelope_tests {
             end_line: None,
             create_dirs: false,
             command: "echo hi".to_string(),
+            process: None,
             stdin: Some("input".to_string()),
             timeout_secs: 10,
             requested_by: "tester".to_string(),
@@ -2016,6 +2174,129 @@ mod envelope_tests {
                 assert_eq!(request.command, "echo hi");
             }
             other => panic!("expected request, got {:?}", other.kind()),
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_process_request_round_trips_polling_websocket_and_quic() {
+        let request = sample_process_request();
+        let polling: ShellAgentPollResponse = serde_json::from_value(
+            serde_json::to_value(ShellAgentPollResponse {
+                success: true,
+                request: Some(request.clone()),
+                error: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(polling.request.as_ref().unwrap().process, request.process);
+        assert_eq!(polling.request.as_ref().unwrap().command, "");
+
+        let websocket_json = AgentEnvelope::Request {
+            request: request.clone(),
+        }
+        .to_json()
+        .unwrap();
+        match AgentEnvelope::from_slice(websocket_json.as_bytes()).unwrap() {
+            AgentEnvelope::Request { request: decoded } => {
+                assert_eq!(decoded.process, request.process);
+                assert_eq!(decoded.command, "");
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+
+        let frame = encode_quic_frame(&AgentEnvelope::Request {
+            request: request.clone(),
+        })
+        .unwrap();
+        let mut reader = frame.as_slice();
+        match read_quic_frame(&mut reader).await.unwrap() {
+            AgentEnvelope::Request { request: decoded } => {
+                assert_eq!(decoded.process, request.process);
+                assert_eq!(decoded.command, "");
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn legacy_capabilities_do_not_imply_structured_process_argv() {
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"shell":true,"structured_validation_argv":true}"#).unwrap();
+        assert!(capabilities.structured_validation_argv);
+        assert!(!capabilities.structured_process_argv);
+    }
+
+    #[test]
+    fn process_argv_validation_is_bounded_and_rejects_shell_command_modes() {
+        let valid = ShellProcessArgv {
+            executable: "tool".to_string(),
+            args: vec!["a".repeat(8_000), "b".repeat(7_994)],
+        };
+        assert!(validate_process_argv(&valid).is_ok());
+
+        let oversized = ShellProcessArgv {
+            executable: "tool".to_string(),
+            args: vec!["a".repeat(8_000), "b".repeat(7_995)],
+        };
+        assert!(validate_process_argv(&oversized)
+            .unwrap_err()
+            .contains("maximum total"));
+
+        for invalid in [
+            ShellProcessArgv {
+                executable: "x".repeat(PROCESS_EXECUTABLE_MAX_BYTES + 1),
+                args: Vec::new(),
+            },
+            ShellProcessArgv {
+                executable: "bad\0program".to_string(),
+                args: Vec::new(),
+            },
+            ShellProcessArgv {
+                executable: "tool".to_string(),
+                args: vec![String::new(); PROCESS_ARG_MAX_COUNT + 1],
+            },
+            ShellProcessArgv {
+                executable: "tool".to_string(),
+                args: vec!["x".repeat(PROCESS_ARG_MAX_BYTES + 1)],
+            },
+            ShellProcessArgv {
+                executable: "tool".to_string(),
+                args: vec!["bad\0arg".to_string()],
+            },
+        ] {
+            assert!(validate_process_argv(&invalid).is_err());
+        }
+
+        for (executable, args) in [
+            ("sh", vec!["-c".to_string(), "echo unsafe".to_string()]),
+            (
+                "bash.exe",
+                vec!["-lc".to_string(), "echo unsafe".to_string()],
+            ),
+            (
+                "powershell.exe",
+                vec![
+                    "-NoProfile".to_string(),
+                    "-Command".to_string(),
+                    "echo unsafe".to_string(),
+                ],
+            ),
+            (
+                "cmd.exe",
+                vec![
+                    "/D".to_string(),
+                    "/C".to_string(),
+                    "echo unsafe".to_string(),
+                ],
+            ),
+        ] {
+            assert!(validate_process_argv(&ShellProcessArgv {
+                executable: executable.to_string(),
+                args,
+            })
+            .unwrap_err()
+            .contains("shell command mode"));
         }
     }
 

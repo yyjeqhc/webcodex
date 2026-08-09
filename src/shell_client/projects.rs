@@ -10,6 +10,7 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SHELL,
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SSH_SHELL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
 };
 use std::fmt;
@@ -44,6 +45,7 @@ fn capability_enabled(caps: &ShellClientCapabilities, capability: &str) -> bool 
         SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL => caps.persistent_shell,
         SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL => caps.ssh_persistent_shell,
         SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV => caps.structured_validation_argv,
+        SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV => caps.structured_process_argv,
         SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION => caps.lsp_read_only_navigation,
         SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS => caps.sandbox_inspect_commands,
         SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE => caps.project_lifecycle,
@@ -88,7 +90,8 @@ impl ShellClientRegistry {
     /// Check whether a registered agent client supports a named capability.
     /// Recognized capability names: `shell`, `file_read`, `file_write`,
     /// `git`, `jobs`, `async_jobs`, `async_shell_jobs`,
-    /// `ssh_shell`, `persistent_shell`, `structured_validation_argv`, `lsp_read_only_navigation`,
+    /// `ssh_shell`, `persistent_shell`, `structured_validation_argv`,
+    /// `structured_process_argv`, `lsp_read_only_navigation`,
     /// `sandbox_inspect_commands`, `project_lifecycle`,
     /// `project_path_registration`, `job_state_reconciliation`. Unknown capability
     /// names return `false`.

@@ -1264,6 +1264,7 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // inferred from `ssh_shell` + `persistent_shell`.
     capabilities.ssh_persistent_shell = SshConnectionPool::is_available() && cfg!(unix);
     capabilities.structured_validation_argv = true;
+    capabilities.structured_process_argv = true;
     capabilities.project_lifecycle = true;
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.

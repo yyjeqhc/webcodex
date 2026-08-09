@@ -13,6 +13,45 @@ use super::{
 };
 use crate::auth::AuthContext;
 use crate::tool_runtime::project_resolution::{ProjectResolverError, ResolvedProject};
+use serde_json::Value;
+
+/// Add the Phase A lifecycle tuple to a definite pre-execution `run_process`
+/// denial without changing generic denial helpers used by unrelated tools.
+pub(super) fn decorate_run_process_prestart_denial(
+    tool_name: &str,
+    result: &mut ToolResult,
+    fallback_failure_kind: &'static str,
+) {
+    if tool_name != "run_process" {
+        return;
+    }
+    let mut output = match std::mem::take(&mut result.output) {
+        Value::Object(output) => output,
+        other => {
+            let mut output = serde_json::Map::new();
+            output.insert("value".to_string(), other);
+            output
+        }
+    };
+    let failure_kind = output
+        .get("failure_kind")
+        .and_then(Value::as_str)
+        .or_else(|| output.get("error_kind").and_then(Value::as_str))
+        .or_else(|| output.get("code").and_then(Value::as_str))
+        .unwrap_or(fallback_failure_kind)
+        .to_string();
+    output.insert(
+        "execution_state".to_string(),
+        Value::String("not_started".to_string()),
+    );
+    output.insert("command_started".to_string(), Value::Bool(false));
+    output.insert("command_completed".to_string(), Value::Bool(false));
+    output.insert("command_ok".to_string(), Value::Bool(false));
+    output.insert("exit_code".to_string(), Value::Null);
+    output.insert("failure_kind".to_string(), Value::String(failure_kind));
+    output.insert("tool_failure".to_string(), Value::Bool(true));
+    result.output = Value::Object(output);
+}
 
 /// Snapshot of the activity-relevant request facts, captured before the
 /// `ToolCall` is moved into execution.
@@ -154,7 +193,15 @@ impl ToolRuntime {
             client: project
                 .and_then(super::activity::agent_client_from_project)
                 .map(str::to_string),
-            command: call.command_text().map(str::to_string),
+            command: match call {
+                ToolCall::RunProcess {
+                    executable, args, ..
+                } => Some(crate::shell_client::process_preview(
+                    executable,
+                    args.iter().map(String::as_str),
+                )),
+                _ => call.command_text().map(str::to_string),
+            },
             paths: super::activity::paths_from_sanitized_arguments(&sanitized, 16),
         })
     }
@@ -198,7 +245,15 @@ impl ToolRuntime {
                             call = call.with_effective_session_id(session_id);
                         }
                     }
-                    Err(message) => return current_session_unavailable_result(message),
+                    Err(message) => {
+                        let mut result = current_session_unavailable_result(message);
+                        decorate_run_process_prestart_denial(
+                            call.tool_name(),
+                            &mut result,
+                            "current_session_unavailable",
+                        );
+                        return result;
+                    }
                 }
             }
         }
@@ -227,7 +282,13 @@ impl ToolRuntime {
             let malformed_work_on_project_session = matches!(&call, ToolCall::WorkOnProject { .. })
                 && !sessions::is_valid_session_id(session_id);
             if !malformed_work_on_project_session && !self.sessions.contains_session(session_id) {
-                return unknown_session_result(session_id);
+                let mut result = unknown_session_result(session_id);
+                decorate_run_process_prestart_denial(
+                    call.tool_name(),
+                    &mut result,
+                    "unknown_session_id",
+                );
+                return result;
             }
         }
         let execution_sandbox = inherited_sandbox.or_else(|| {
@@ -269,6 +330,11 @@ impl ToolRuntime {
                 );
                 let mut result =
                     session_project_mismatch_result(session_id, call.tool_name(), mismatch);
+                decorate_run_process_prestart_denial(
+                    call.tool_name(),
+                    &mut result,
+                    session_context::SESSION_PROJECT_MISMATCH_KIND,
+                );
                 let event_id = self.sessions.record_tool_call_finished(
                     session_start,
                     false,
@@ -294,7 +360,8 @@ impl ToolRuntime {
                 {
                     if matches!(
                         &call,
-                        ToolCall::RunShell { .. }
+                        ToolCall::RunProcess { .. }
+                            | ToolCall::RunShell { .. }
                             | ToolCall::RunJob { .. }
                             | ToolCall::OpenSessionShell { .. }
                             | ToolCall::CargoFmt { .. }
@@ -308,6 +375,11 @@ impl ToolRuntime {
             }
         }
         if let Some(mut result) = tool_disabled_result_from_definition(call.tool_name()) {
+            decorate_run_process_prestart_denial(
+                call.tool_name(),
+                &mut result,
+                "capability_unavailable",
+            );
             if let Some(session_id) = session_id.as_deref() {
                 let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
@@ -341,6 +413,11 @@ impl ToolRuntime {
                 );
                 let mut result =
                     session_lifecycle_denied_result(session_id, call.tool_name(), denial);
+                decorate_run_process_prestart_denial(
+                    call.tool_name(),
+                    &mut result,
+                    "session_lifecycle_denied",
+                );
                 let error_kind = result
                     .output
                     .get("error_kind")
@@ -366,6 +443,11 @@ impl ToolRuntime {
                     recorder_metadata.clone(),
                 );
                 let mut result = session_guard_denied_result(session_id, call.tool_name(), denial);
+                decorate_run_process_prestart_denial(
+                    call.tool_name(),
+                    &mut result,
+                    "session_guard_denied",
+                );
                 let event_id = self.sessions.record_tool_call_finished(
                     session_start,
                     false,
@@ -400,6 +482,9 @@ impl ToolRuntime {
             .await
         {
             let mut err = err;
+            let failure_kind =
+                super::process::classify_process_failure(err.error.as_deref().unwrap_or_default());
+            decorate_run_process_prestart_denial(call.tool_name(), &mut err, failure_kind);
             if let Some(session_id) = session_id.as_deref() {
                 let event_id = self.sessions.record_tool_call_finished(
                     session_start,
@@ -422,6 +507,11 @@ impl ToolRuntime {
         if let Some(decision) = permission.as_ref() {
             if !decision.allows_execution() {
                 let mut result = permissions::permission_execution_denied_result(decision);
+                decorate_run_process_prestart_denial(
+                    call.tool_name(),
+                    &mut result,
+                    "permission_denied",
+                );
                 if let Some(start) = session_start.as_mut() {
                     self.sessions
                         .record_permission_decision(start, decision.clone());
@@ -579,7 +669,7 @@ impl ToolRuntime {
             | ToolCall::RegisterProject { .. }
             | ToolCall::CreateProject { .. }) => self.dispatch_project_tool(call, auth).await,
 
-            call @ ToolCall::RunShell { .. } => {
+            call @ (ToolCall::RunProcess { .. } | ToolCall::RunShell { .. }) => {
                 self.dispatch_shell_tool(call, execution_sandbox, ssh_resource)
                     .await
             }

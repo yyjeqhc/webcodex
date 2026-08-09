@@ -587,7 +587,10 @@ fn execution_purpose(event: &SessionEvent) -> Option<String> {
             .to_string(),
         );
     }
-    if !matches!(event.tool_name.as_str(), "run_shell" | "run_job") {
+    if !matches!(
+        event.tool_name.as_str(),
+        "run_process" | "run_shell" | "run_job"
+    ) {
         return None;
     }
     let purpose = event

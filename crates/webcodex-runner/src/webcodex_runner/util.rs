@@ -7,18 +7,16 @@ use std::path::{Path, PathBuf};
 /// explicit.
 ///
 /// On Windows, `.cmd`/`.bat` batch scripts cannot be launched like native PE
-/// executables: `CreateProcess` refuses them directly and they must go
-/// through `cmd.exe`. Rust's `Command` performs that delegation
-/// automatically when the program has a `.cmd`/`.bat` extension, so callers
-/// can still `Command::new(resolved.path())` — but resolution, availability
-/// checks and spawn-error classification must know which kind was selected,
-/// and an extensionless POSIX shim (npm-style) must never be selected in
-/// place of a valid native program or batch script.
+/// executables: they require command-interpreter/script semantics. Callers
+/// must preserve this distinction and choose an execution contract explicitly;
+/// in particular, the native-argv `run_process` path accepts only
+/// [`ResolvedProgram::Native`]. An extensionless POSIX shim (npm-style) must
+/// never be selected in place of a valid native program or batch script.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResolvedProgram {
     /// Native executable (`.exe`, `.com`, or an extensionless PE image).
     Native(PathBuf),
-    /// Batch script (`.cmd` / `.bat`), launched via `cmd.exe`.
+    /// Batch script (`.cmd` / `.bat`), which requires shell/script semantics.
     Batch(PathBuf),
 }
 

@@ -51,7 +51,7 @@ pub use handlers::{
 #[cfg(test)]
 pub(crate) use job_updates::JobLogWaitOutcome;
 pub(crate) use job_updates::ShellJobStartMetadata;
-pub(crate) use jobs::{command_preview, COMMAND_PREVIEW_MAX_CHARS};
+pub(crate) use jobs::{command_preview, process_preview, COMMAND_PREVIEW_MAX_CHARS};
 #[cfg(test)]
 pub(crate) use projects::ShellClientLookupError;
 pub(crate) use reconciliation::recovery_timeout_sweep;

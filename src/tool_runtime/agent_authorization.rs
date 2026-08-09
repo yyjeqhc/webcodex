@@ -5,6 +5,7 @@ use crate::auth::AuthContext;
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SSH_SHELL,
 };
+use serde_json::json;
 
 /// The capability an agent-backed tool variant requires from the agent
 /// client. Non-agent tools (and tools without a project) require nothing.
@@ -47,6 +48,21 @@ impl ToolRuntime {
                 &resolved
             }
         };
+        if matches!(call, ToolCall::RunProcess { .. }) && ssh_resource.is_some() {
+            return Err(ToolResult::err_with_output(
+                "run_process is unavailable for named Session SSH resources because the current SSH transport cannot preserve native argv boundaries; no process was started. Use run_shell explicitly for remote shell semantics."
+                    .to_string(),
+                json!({
+                    "command_started": false,
+                    "command_completed": false,
+                    "command_ok": false,
+                    "exit_code": null,
+                    "execution_state": "not_started",
+                    "failure_kind": "unsupported_resource",
+                    "tool_failure": true,
+                }),
+            ));
+        }
         if !proj.is_agent() {
             if ssh_resource.is_some() {
                 return Err(ToolResult::err(
@@ -106,6 +122,24 @@ impl ToolRuntime {
                             "agent_capability_unavailable: {}",
                             message
                         )));
+                    }
+                    if matches!(required, AgentCapability::StructuredProcess) {
+                        return Err(ToolResult::err_with_output(
+                            format!(
+                                "capability_unavailable: agent client {} does not support {}; no process was started and no shell fallback was attempted",
+                                client_id,
+                                required.label()
+                            ),
+                            json!({
+                                "command_started": false,
+                                "command_completed": false,
+                                "command_ok": false,
+                                "exit_code": null,
+                                "execution_state": "not_started",
+                                "failure_kind": "capability_unavailable",
+                                "tool_failure": true,
+                            }),
+                        ));
                     }
                     return Err(ToolResult::err(message));
                 }

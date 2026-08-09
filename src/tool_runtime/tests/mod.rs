@@ -21,6 +21,7 @@ mod jobs;
 mod lsp;
 mod metadata;
 mod permission_gate;
+mod process;
 mod read_files;
 mod reconnect;
 mod schema;

@@ -672,7 +672,7 @@ fn validation_event_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "tool_name": { "type": "string", "enum": ["cargo_fmt", "cargo_check", "cargo_test", "validate_patch", "apply_patch_checked", "run_shell", "run_job"] },
+            "tool_name": { "type": "string", "enum": ["cargo_fmt", "cargo_check", "cargo_test", "validate_patch", "apply_patch_checked", "run_process", "run_shell", "run_job"] },
             "execution_source": { "type": "string" },
             "identity": { "type": "string", "maxLength": 256 },
             "purpose": { "type": "string", "enum": ["validation", "test", "build", "format", "release"] },
@@ -685,7 +685,7 @@ fn validation_event_schema() -> Value {
             "summary": { "type": "string", "maxLength": 80 },
             "command_summary": { "type": "string", "maxLength": 512 },
             "cwd": { "type": "string", "maxLength": 4096 },
-            "shell": { "type": "string", "enum": ["sh", "bash", "configured", "remote"] },
+            "shell": { "type": "string", "enum": ["sh", "bash", "configured", "remote", "direct_argv"] },
             "execution_state": { "type": "string", "enum": ["not_started", "started", "outcome_unknown", "completed", "cancelled", "timed_out"] },
             "project": { "type": "string", "maxLength": 512 },
             "session_id": { "type": "string", "maxLength": 128 },

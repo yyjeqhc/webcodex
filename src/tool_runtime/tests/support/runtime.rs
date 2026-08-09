@@ -70,6 +70,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
     match field {
         "project" => json!(SAMPLE_PROJECT),
         "command" => json!("true"),
+        "executable" => json!("git"),
         "patch" => json!("diff --git a/a b/a\n"),
         "paths" => json!(["old.txt"]),
         "items" => json!([{"path": "src/lib.rs"}]),

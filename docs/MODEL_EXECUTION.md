@@ -108,7 +108,7 @@ A first product batch primitive should be read-only and bounded, for example:
 
 ```yaml
 observe_jobs:
-  jobs:
+  items:
     - job_id: A
       after_observation_token: tokenA
     - job_id: B
@@ -308,7 +308,49 @@ typed process and script execution and fail before enqueue.
 
 ### Phase D — batch Job observation
 
-Add a bounded read-only `observe_jobs`-style primitive using existing Job observation tokens and existing batch response conventions. Keep batch launch out of scope initially.
+Phase D is implemented as the model-visible, read-only `observe_jobs`
+primitive. One call accepts 1 through 8 `items`, each containing a non-empty
+`job_id` and an optional opaque `after_observation_token`. The input has no
+project field: like `job_status` and `job_log`, authorization is resolved from
+the Job id across local and Agent executors. Duplicate Job ids are rejected
+before observation.
+
+The global tail defaults to 40 lines per stream and is bounded from 1 through
+200. `wait_secs`, when present, is bounded from 1 through 60 seconds and is one
+batch wall-clock budget, never a per-item or subscription budget.
+
+`observe_jobs` composes the existing `job_log_for_auth` implementation:
+
+- an immediate concurrent pass applies the supplied token and bounded tail to
+  every item in input order;
+- a missing baseline, a changed token (including an old Server epoch), an
+  already-terminal Job, or an item error is immediately actionable;
+- otherwise the batch races the canonical per-Job waits and uses a shared
+  read-only canonical observation heartbeat so a missed Agent notification
+  cannot defer a visible token change until the deadline;
+- the first meaningful change, terminal transition, or item error ends the
+  shared wait; an unchanged batch ends at the one shared deadline;
+- pending sibling wait futures are dropped without stopping, cancelling,
+  retrying, or otherwise mutating their Jobs;
+- after a wake, one final non-waiting canonical pass refreshes every item, so
+  the response does not combine one fresh Job with stale sibling snapshots.
+
+The deterministic outer `wake_reason` precedence is: no requested wait or any
+missing baseline yields `immediate`; otherwise an item error wins over
+`terminal`, which wins over `updated`, with `timeout` used only when every
+returned observation remains successful, nonterminal, and unchanged.
+Per-item `changed` and `terminal` fields remain the authoritative facts.
+
+Local, legacy shell, validation, structured process/script, and Agent-backed
+Jobs therefore retain the existing lifecycle, recovery/lost, validation,
+structured metadata, log truncation, token binding, and authorization
+semantics. Item failures are isolated; inaccessible and unknown Jobs share the
+same external behavior. Results retain whole items in input order under the
+existing model-result budget, expose `output_truncated` and the first omitted
+`next_index`, and never persist opaque token bodies in audit/session summaries.
+
+Phase D does not launch, retry, stop, schedule, or subscribe to Jobs. Batch
+launch and concurrency/dispatch work remain out of scope.
 
 ### Phase E — polling dispatch reliability and practical concurrency
 

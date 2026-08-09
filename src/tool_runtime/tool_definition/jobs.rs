@@ -165,6 +165,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
     ),
+    def(
+        "observe_jobs",
+        ModelVisible,
+        TOOL_CATEGORY_JOB,
+        None,
+        TOOL_PROVIDER_NATIVE,
+        ReadOnly,
+        Some(RUNTIME_READ),
+        false,
+        NoPath,
+        false,
+        false,
+    ),
 ];
 
 pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[

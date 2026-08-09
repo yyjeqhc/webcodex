@@ -16,7 +16,7 @@ use crate::tool_runtime::validation_events::validation_summary_for_session;
 use crate::tool_runtime::validation_profile::{
     validation_adapter_for_tool, ValidationCommandOptions,
 };
-use crate::tool_runtime::{ToolCall, ToolRuntime};
+use crate::tool_runtime::{ObserveJobsItem, ToolCall, ToolRuntime};
 use serde_json::json;
 
 /// Fetch the `start_validation_job` request that the agent should have polled
@@ -336,6 +336,22 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
         .unwrap_or("")
         .contains("running 1 test"));
     assert_eq!(log.output["validation"], status.output["validation"]);
+    let observed = runtime
+        .observe_jobs_for_auth(
+            vec![ObserveJobsItem {
+                job_id,
+                after_observation_token: None,
+            }],
+            200,
+            None,
+            None,
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    assert_eq!(
+        observed.output["items"][0]["output"]["validation"],
+        log.output["validation"]
+    );
 }
 
 /// Exactly-once execution: a fake command appends to a counter file; the count

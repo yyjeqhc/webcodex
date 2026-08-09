@@ -740,6 +740,7 @@ impl ToolRuntime {
             | ToolCall::StopJob { .. }
             | ToolCall::JobStatus { .. }
             | ToolCall::JobLog { .. }
+            | ToolCall::ObserveJobs { .. }
             | ToolCall::ListJobs { .. }
             | ToolCall::JobTail { .. }) => {
                 self.dispatch_job_tool(call, auth, execution_sandbox, ssh_resource)

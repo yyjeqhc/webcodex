@@ -32,6 +32,7 @@ mod local_jobs;
 mod lsp_tools;
 pub(crate) mod metadata;
 pub(crate) mod observations;
+mod observe_jobs;
 mod patch;
 mod patch_tools;
 pub(crate) mod permissions;
@@ -81,7 +82,9 @@ pub use runtime::ToolRuntime;
 #[allow(unused_imports)]
 pub use runtime_info::RuntimeInfo;
 #[allow(unused_imports)]
-pub use tool_call::{ReadFilesItem, SearchProjectTextsQuery, SearchResultMode, ToolCall};
+pub use tool_call::{
+    ObserveJobsItem, ReadFilesItem, SearchProjectTextsQuery, SearchResultMode, ToolCall,
+};
 pub(crate) use tool_call::{
     TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
     TOOL_CALL_WRAPPER_FIELDS,

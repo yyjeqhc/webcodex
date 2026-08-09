@@ -20,6 +20,7 @@ mod hygiene;
 mod jobs;
 mod lsp;
 mod metadata;
+mod observe_jobs;
 mod permission_gate;
 mod process;
 mod read_files;

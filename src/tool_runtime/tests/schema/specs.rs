@@ -255,7 +255,7 @@ fn run_process_schema_is_small_bounded_and_has_no_shell_or_environment_input() {
     );
     assert_eq!(properties["cwd"]["maxLength"], 1024);
     assert_eq!(properties["timeout_secs"]["minimum"], 1);
-    assert_eq!(properties["timeout_secs"]["maximum"], 120);
+    assert_eq!(properties["timeout_secs"]["maximum"], 3600);
     assert_eq!(properties["timeout_secs"]["default"], 60);
     assert_eq!(spec.input_schema["additionalProperties"], false);
 }
@@ -324,7 +324,7 @@ fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
     );
     assert_eq!(properties["cwd"]["maxLength"], 1024);
     assert_eq!(properties["timeout_secs"]["minimum"], 1);
-    assert_eq!(properties["timeout_secs"]["maximum"], 120);
+    assert_eq!(properties["timeout_secs"]["maximum"], 3600);
     assert_eq!(properties["timeout_secs"]["default"], 60);
     assert_eq!(spec.input_schema["additionalProperties"], false);
 

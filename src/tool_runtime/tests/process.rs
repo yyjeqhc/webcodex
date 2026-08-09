@@ -631,6 +631,34 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
         log.output["structured_execution"]["execution_source"],
         "run_process"
     );
+    let observed = runtime
+        .dispatch_with_auth(
+            ToolCall::ObserveJobs {
+                items: vec![ObserveJobsItem {
+                    job_id: job_id.clone(),
+                    after_observation_token: None,
+                }],
+                tail_lines: 20,
+                wait_secs: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    let observed_job = &observed.output["items"][0]["output"];
+    assert_eq!(observed_job["status"], log.output["status"]);
+    assert_eq!(
+        observed_job["command_execution_state"],
+        log.output["command_execution_state"]
+    );
+    assert_eq!(
+        observed_job["structured_execution"],
+        log.output["structured_execution"]
+    );
+    assert_eq!(
+        observed_job["observation_token"],
+        log.output["observation_token"]
+    );
     assert_eq!(
         runtime
             .shell_clients

@@ -16,6 +16,7 @@ use super::tool_inputs::{
 use crate::shell_protocol::ShellScriptLanguage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 
 pub(crate) const TOOL_CALL_TOOL_FIELD: &str = "tool";
 pub(crate) const TOOL_CALL_PARAMS_FIELD: &str = "params";
@@ -67,6 +68,15 @@ pub struct SearchProjectTextsQuery {
     pub timeout_secs: Option<i64>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObserveJobsItem {
+    #[serde(deserialize_with = "deserialize_non_empty_job_id")]
+    pub job_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_observation_token")]
+    pub after_observation_token: Option<String>,
+}
+
 fn deserialize_non_empty_read_path<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -76,6 +86,35 @@ where
         return Err(serde::de::Error::custom("path must not be empty"));
     }
     Ok(path)
+}
+
+fn deserialize_non_empty_job_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let job_id = String::deserialize(deserializer)?;
+    if job_id.trim().is_empty() {
+        return Err(serde::de::Error::custom("job_id must not be empty"));
+    }
+    Ok(job_id)
+}
+
+fn deserialize_optional_observation_token<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let token = Option::<String>::deserialize(deserializer)?;
+    if token
+        .as_ref()
+        .is_some_and(|token| token.len() > crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN)
+    {
+        return Err(serde::de::Error::custom(
+            "after_observation_token must not exceed 192 bytes",
+        ));
+    }
+    Ok(token)
 }
 
 fn deserialize_read_files_items<'de, D>(deserializer: D) -> Result<Vec<ReadFilesItem>, D::Error>
@@ -89,6 +128,59 @@ where
         ));
     }
     Ok(items)
+}
+
+fn deserialize_observe_jobs_items<'de, D>(deserializer: D) -> Result<Vec<ObserveJobsItem>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let items = Vec::<ObserveJobsItem>::deserialize(deserializer)?;
+    if !(1..=8).contains(&items.len()) {
+        return Err(serde::de::Error::custom(
+            "items must contain between 1 and 8 entries",
+        ));
+    }
+    let mut job_ids = HashSet::with_capacity(items.len());
+    if let Some(duplicate) = items
+        .iter()
+        .map(|item| item.job_id.as_str())
+        .find(|job_id| !job_ids.insert(*job_id))
+    {
+        return Err(serde::de::Error::custom(format!(
+            "duplicate job_id in items: {duplicate}"
+        )));
+    }
+    Ok(items)
+}
+
+fn deserialize_observe_jobs_tail_lines<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let tail_lines = usize::deserialize(deserializer)?;
+    if !(1..=200).contains(&tail_lines) {
+        return Err(serde::de::Error::custom(
+            "tail_lines must be between 1 and 200",
+        ));
+    }
+    Ok(tail_lines)
+}
+
+fn deserialize_observe_jobs_wait_secs<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let wait_secs = Option::<u64>::deserialize(deserializer)?;
+    if wait_secs.is_some_and(|wait_secs| !(1..=60).contains(&wait_secs)) {
+        return Err(serde::de::Error::custom(
+            "wait_secs must be between 1 and 60",
+        ));
+    }
+    Ok(wait_secs)
+}
+
+fn default_observe_jobs_tail_lines() -> usize {
+    super::observe_jobs::DEFAULT_OBSERVE_JOBS_TAIL_LINES
 }
 
 fn deserialize_search_project_texts_queries<'de, D>(
@@ -733,6 +825,21 @@ pub enum ToolCall {
         wait_secs: Option<u64>,
     },
 
+    /// Observe up to eight existing Jobs using one shared bounded wait. Each
+    /// item reuses the canonical single-Job observation-token and projection
+    /// path; item failures are isolated and no Job is launched or modified.
+    ObserveJobs {
+        #[serde(deserialize_with = "deserialize_observe_jobs_items")]
+        items: Vec<ObserveJobsItem>,
+        #[serde(
+            default = "default_observe_jobs_tail_lines",
+            deserialize_with = "deserialize_observe_jobs_tail_lines"
+        )]
+        tail_lines: usize,
+        #[serde(default, deserialize_with = "deserialize_observe_jobs_wait_secs")]
+        wait_secs: Option<u64>,
+    },
+
     /// List files in an agent-registered project directory (bounded, read-only).
     /// Returns project-relative paths plus a file/dir kind. Routed to the
     /// owning registered agent via the `file_list` op; the server never reads
@@ -1340,6 +1447,33 @@ fn reject_unknown_read_files_fields(arguments: &Value) -> Result<(), String> {
     ))
 }
 
+fn reject_unknown_observe_jobs_fields(arguments: &Value) -> Result<(), String> {
+    const ALLOWED: &[&str] = &[
+        "items",
+        "tail_lines",
+        "wait_secs",
+        // Wrapper/session metadata that transports may leave in params.
+        "session_id",
+        "recording_session_id",
+        "_session_id",
+    ];
+    let Some(object) = arguments.as_object() else {
+        return Ok(());
+    };
+    let unknown: Vec<&str> = object
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !ALLOWED.contains(key))
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "invalid arguments for tool 'observe_jobs': unknown field(s) {}",
+        unknown.join(", ")
+    ))
+}
+
 fn reject_unknown_search_project_texts_fields(arguments: &Value) -> Result<(), String> {
     const ALLOWED: &[&str] = &[
         "project",
@@ -1402,6 +1536,9 @@ impl ToolCall {
         }
         if name == "read_files" {
             reject_unknown_read_files_fields(&arguments)?;
+        }
+        if name == "observe_jobs" {
+            reject_unknown_observe_jobs_fields(&arguments)?;
         }
         if name == "search_project_texts" {
             reject_unknown_search_project_texts_fields(&arguments)?;
@@ -1506,6 +1643,7 @@ impl ToolCall {
             Self::StopJob { .. } => "stop_job",
             Self::JobStatus { .. } => "job_status",
             Self::JobLog { .. } => "job_log",
+            Self::ObserveJobs { .. } => "observe_jobs",
             Self::ListProjectFiles { .. } => "list_project_files",
             Self::ListProjectTrackedFiles { .. } => "list_project_tracked_files",
             Self::ProjectOverview { .. } => "project_overview",

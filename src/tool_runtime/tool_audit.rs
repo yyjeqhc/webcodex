@@ -88,6 +88,35 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "session_shell_status" | "close_session_shell" => {
             copy_keys(obj, &mut out, &["session_id", "shell_id"]);
         }
+        "observe_jobs" => {
+            let items = obj.get("items").and_then(Value::as_array);
+            out.insert(
+                "item_count".to_string(),
+                Value::from(items.map(Vec::len).unwrap_or_default()),
+            );
+            out.insert(
+                "token_count".to_string(),
+                Value::from(
+                    items
+                        .into_iter()
+                        .flatten()
+                        .filter(|item| item.get("after_observation_token").is_some())
+                        .count(),
+                ),
+            );
+            out.insert(
+                "job_ids".to_string(),
+                Value::Array(
+                    items
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|item| item.get("job_id").and_then(Value::as_str))
+                        .map(|job_id| Value::String(job_id.to_string()))
+                        .collect(),
+                ),
+            );
+            copy_keys(obj, &mut out, &["tail_lines", "wait_secs"]);
+        }
         "start_session" | "start_coding_task" | "update_session_context" => {
             copy_keys(
                 obj,
@@ -439,6 +468,23 @@ impl ToolCall {
                 "project": project,
                 "job_id": job_id,
                 "confirm": confirm,
+            }),
+            Self::ObserveJobs {
+                items,
+                tail_lines,
+                wait_secs,
+            } => serde_json::json!({
+                "item_count": items.len(),
+                "token_count": items
+                    .iter()
+                    .filter(|item| item.after_observation_token.is_some())
+                    .count(),
+                "job_ids": items
+                    .iter()
+                    .map(|item| item.job_id.as_str())
+                    .collect::<Vec<_>>(),
+                "tail_lines": tail_lines,
+                "wait_secs": wait_secs,
             }),
             Self::ApplyPatch { project, .. } => serde_json::json!({
                 "project": project,

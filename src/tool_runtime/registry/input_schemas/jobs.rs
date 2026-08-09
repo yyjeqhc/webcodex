@@ -409,6 +409,52 @@ pub(crate) fn job_log_input_schema() -> Value {
     schema
 }
 
+pub(crate) fn observe_jobs_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "description": "Existing Jobs to observe in input order. Duplicate job_id values are rejected.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "job_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Existing opaque runtime Job id."
+                        },
+                        "after_observation_token": {
+                            "type": "string",
+                            "maxLength": 192,
+                            "description": "Optional opaque Job-bound token from the latest snapshot. Return it unchanged. A stale server epoch is immediately actionable."
+                        }
+                    },
+                    "required": ["job_id"]
+                }
+            },
+            "tail_lines": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "default": 40,
+                "description": "Global bounded trailing line count per stdout/stderr stream for every returned Job."
+            },
+            "wait_secs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60,
+                "description": "Optional one shared bounded wait. It returns when any relevant Job changes and is never multiplied by item count."
+            }
+        },
+        "required": ["items"]
+    })
+}
+
 pub(crate) fn list_jobs_input_schema() -> Value {
     object_schema(vec![
         (

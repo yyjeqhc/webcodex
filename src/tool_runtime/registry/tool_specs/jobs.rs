@@ -1,8 +1,8 @@
 use super::super::input_schemas::{
     job_log_input_schema, job_status_input_schema, list_jobs_input_schema,
-    open_session_shell_input_schema, run_job_input_schema, run_process_input_schema,
-    run_script_input_schema, run_shell_input_schema, session_shell_exec_input_schema,
-    session_shell_identity_input_schema, stop_job_input_schema,
+    observe_jobs_input_schema, open_session_shell_input_schema, run_job_input_schema,
+    run_process_input_schema, run_script_input_schema, run_shell_input_schema,
+    session_shell_exec_input_schema, session_shell_identity_input_schema, stop_job_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -63,6 +63,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "job_log",
             "Read stdout/stderr for a runtime job. With after_observation_token and wait_secs (1..=60), waits once for progress or a terminal state; never a subscription.",
             job_log_input_schema(),
+        ),
+        tool_spec(
+            "observe_jobs",
+            "Observe 1 to 8 existing Jobs in input order with bounded tails and isolated item failures. When every active item has a current token, one shared wait returns on any Job change; never launches, retries, stops, or subscribes.",
+            observe_jobs_input_schema(),
         ),
         tool_spec(
             "list_jobs",

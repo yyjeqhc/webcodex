@@ -502,6 +502,39 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
             "Session Job projection leaked raw structured execution input"
         );
     }
+    let observed = runtime
+        .dispatch_with_auth(
+            ToolCall::ObserveJobs {
+                items: vec![ObserveJobsItem {
+                    job_id: job_id.to_string(),
+                    after_observation_token: None,
+                }],
+                tail_lines: 40,
+                wait_secs: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    let observed_job = &observed.output["items"][0]["output"];
+    assert_eq!(observed_job["status"], "running");
+    assert!(observed_job["command_execution_state"].is_null());
+    assert_eq!(
+        observed_job["structured_execution"]["execution_source"],
+        "run_script"
+    );
+    assert_eq!(
+        observed_job["structured_execution"]["script_bytes"],
+        unique_body.len()
+    );
+    let observed_serialized = serde_json::to_string(&observed.output).unwrap();
+    for raw in [&unique_body, &unique_arg, &unique_stdin] {
+        assert!(
+            !observed_serialized.contains(raw),
+            "observe_jobs leaked raw structured script input"
+        );
+    }
+    assert!(!observed_serialized.contains(".codex-inspect"));
     let session_summary = runtime
         .sessions
         .summary(&session.session_id, Some(100))

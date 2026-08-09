@@ -9,6 +9,7 @@ WebCodex is a remote, auditable, bounded execution layer for coding assistants. 
 - Server, CLI, and runner share code through workspace library crates with enforced package boundaries.
 - Authentication, project grants, allowed roots, path policy, authority mode, and audit evidence remain explicit boundaries.
 - Structured validation supports Rust, Node, Python, and Go recipes without installing dependencies or running networked setup hooks.
+- Typed process/script execution can continue as the same durable Job, and models can observe up to eight existing local or Agent Jobs through one bounded read-only batch wait.
 - The review console, reconnect continuity, read-only LSP navigation, shell profiles, and transport fallbacks are available.
 
 ## Next priorities
@@ -17,7 +18,7 @@ The next cycle is centered on **model execution friction**, not fleet-management
 
 1. Make execution lifecycle truthful: structured state, retry safety, and human-readable guidance must agree on whether work definitely did not start, is running, completed, or has an unknown outcome.
 2. Add the smallest structured process/argv and script-payload path so ordinary native commands do not require shell quoting; keep `run_shell` as an escape hatch.
-3. Generalize the existing validation pattern so one execution can return synchronously when short or continue as the same durable Job when long; add bounded batch Job observation using existing observation tokens.
+3. Preserve the completed same-execution handoff and bounded `observe_jobs` contract while extending execution behavior: one shared batch wait uses existing Job observation tokens and wakes on any relevant Job change.
 4. Fix transport-level execution reliability, especially polling dispatch starvation, before relying on higher concurrency; then expose only the practical running/queued/limit facts needed to tune deployments.
 5. Keep Job state OS-neutral and MCP-App-ready: normalize Windows output, preserve structured MCP results, and allow an optional conversation-level Orchestrator without making UI or optional MCP 2026 extensions part of execution truth.
 

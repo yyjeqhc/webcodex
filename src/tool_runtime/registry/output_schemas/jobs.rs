@@ -1,6 +1,9 @@
 use serde_json::{json, Value};
 
-use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_schema};
+use super::common::{
+    array_schema, nullable_schema, permission_decision_schema, schema_type, session_hint_schema,
+    wrapped_output_schema,
+};
 
 fn process_execution_state_schema() -> Value {
     json!({
@@ -313,6 +316,150 @@ fn job_structured_execution_metadata_schema() -> Value {
             {"type": "null"}
         ],
         "description": "Safe bounded structured-execution metadata. Raw process argv, script content, script args, and stdin are never present."
+    })
+}
+
+fn observe_jobs_output_schema() -> Value {
+    let job_observation = json!({
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+            "job_id": schema_type("string", "Runtime Job id."),
+            "status": schema_type("string", "Canonical current Job status."),
+            "exit_code": nullable_schema("integer", "Process exit code, when terminal and available."),
+            "command_execution_state": job_command_execution_state_schema(),
+            "structured_execution": job_structured_execution_metadata_schema(),
+            "stdout_tail": schema_type("string", "Bounded stdout tail."),
+            "stderr_tail": schema_type("string", "Bounded stderr tail."),
+            "stdout_lines": schema_type("integer", "Total observed stdout line count."),
+            "stderr_lines": schema_type("integer", "Total observed stderr line count."),
+            "stdout_truncated": schema_type("boolean", "Whether stdout_tail omits observed output."),
+            "stderr_truncated": schema_type("boolean", "Whether stderr_tail omits observed output."),
+            "stdout_retained_from_line": nullable_schema("integer", "First retained absolute stdout line, when available."),
+            "stderr_retained_from_line": nullable_schema("integer", "First retained absolute stderr line, when available."),
+            "earlier_stdout_unavailable": schema_type("boolean", "Whether earlier stdout is outside retained bounded logs."),
+            "earlier_stderr_unavailable": schema_type("boolean", "Whether earlier stderr is outside retained bounded logs."),
+            "recovery_state": nullable_schema("string", "Canonical bounded recovery state."),
+            "recovery_reason_code": nullable_schema("string", "Canonical bounded recovery reason code."),
+            "recovery_reason": nullable_schema("string", "Canonical bounded recovery explanation."),
+            "observation_token": schema_type("string", "Opaque Job-bound token for this returned snapshot."),
+            "last_update_seq": nullable_schema("integer", "Agent protocol diagnostic sequence, when available."),
+            "cursor": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "stdout": {"type": "integer", "minimum": 1},
+                    "stderr": {"type": "integer", "minimum": 1}
+                },
+                "required": ["stdout", "stderr"]
+            },
+            "wait_outcome": schema_type("string", "Canonical per-Job internal observation outcome; outer wake_reason is the batch wait fact."),
+            "waited_ms": schema_type("integer", "Canonical per-Job internal wait time. Final batch snapshots are non-waiting."),
+            "changed": schema_type("boolean", "Whether this snapshot differs from the item's supplied token."),
+            "terminal": schema_type("boolean", "Canonical terminal classification."),
+            "executor": {
+                "type": "string",
+                "enum": ["local", "agent"]
+            },
+            "session_id": nullable_schema("string", "Owning Workflow Session, when recorded."),
+            "ssh_resource": nullable_schema("string", "Named SSH resource, when recorded."),
+            "cwd": nullable_schema("string", "Recorded working directory."),
+            "shell": nullable_schema("string", "Recorded execution shell or executor."),
+            "purpose": nullable_schema("string", "Declared execution purpose."),
+            "command_summary": nullable_schema("string", "Bounded safe command summary."),
+            "detected_summary": {
+                "type": "object",
+                "additionalProperties": true
+            },
+            "validation": {
+                "anyOf": [
+                    {"type": "object", "additionalProperties": true},
+                    {"type": "null"}
+                ]
+            }
+        },
+        "required": [
+            "job_id", "status", "exit_code", "stdout_tail", "stderr_tail",
+            "stdout_lines", "stderr_lines", "stdout_truncated", "stderr_truncated",
+            "observation_token", "cursor", "wait_outcome", "waited_ms", "changed",
+            "terminal", "executor", "cwd", "shell", "purpose", "command_summary",
+            "detected_summary", "validation"
+        ]
+    });
+    let item = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "index": {"type": "integer", "minimum": 0, "maximum": 7},
+            "job_id": {"type": "string", "minLength": 1},
+            "success": {"type": "boolean"},
+            "output": {"anyOf": [job_observation.clone(), {"type": "null"}]},
+            "error_kind": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "error": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+        },
+        "required": ["index", "job_id", "success", "output", "error_kind", "error"],
+        "allOf": [{
+            "if": {"properties": {"success": {"const": true}}, "required": ["success"]},
+            "then": {
+                "properties": {
+                    "output": job_observation,
+                    "error_kind": {"type": "null"},
+                    "error": {"type": "null"}
+                }
+            },
+            "else": {
+                "properties": {
+                    "output": {"type": "null"},
+                    "error_kind": {"type": "string"},
+                    "error": {"type": "string"}
+                }
+            }
+        }]
+    });
+    let batch_output = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "requested_count": {"type": "integer", "minimum": 1, "maximum": 8},
+            "returned_count": {"type": "integer", "minimum": 0, "maximum": 8},
+            "succeeded_count": {"type": "integer", "minimum": 0, "maximum": 8},
+            "failed_count": {"type": "integer", "minimum": 0, "maximum": 8},
+            "items": {"type": "array", "maxItems": 8, "items": item},
+            "wake_reason": {
+                "type": "string",
+                "enum": ["immediate", "updated", "terminal", "item_error", "timeout"]
+            },
+            "waited_ms": {"type": "integer", "minimum": 0},
+            "changed_count": {"type": "integer", "minimum": 0, "maximum": 8},
+            "terminal_count": {"type": "integer", "minimum": 0, "maximum": 8},
+            "output_truncated": {"type": "boolean"},
+            "next_index": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 7}, {"type": "null"}]},
+            "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
+            "session_id": schema_type("string", "Session id used for outer batch telemetry."),
+            "session_event_id": schema_type("string", "Outer batch Session event id."),
+            "session_hint": session_hint_schema(),
+            "permission": permission_decision_schema()
+        },
+        "required": [
+            "requested_count", "returned_count", "succeeded_count", "failed_count",
+            "items", "wake_reason", "waited_ms", "changed_count", "terminal_count",
+            "output_truncated", "next_index"
+        ]
+    });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "success": {"type": "boolean"},
+            "output": {"anyOf": [batch_output.clone(), {"type": "object", "additionalProperties": true}, {"type": "null"}]},
+            "error": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+        },
+        "required": ["success", "output"],
+        "allOf": [{
+            "if": {"properties": {"success": {"const": true}}, "required": ["success"]},
+            "then": {"properties": {"output": batch_output, "error": {"type": "null"}}},
+            "else": {"required": ["error"], "properties": {"error": {"type": "string"}}}
+        }]
     })
 }
 
@@ -857,6 +1004,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "True when command_preview is bounded and secret-like command text is replaced with [redacted]."),
             ),
         ])),
+        "observe_jobs" => Some(observe_jobs_output_schema()),
         "job_log" | "job_tail" => Some(wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),
             (

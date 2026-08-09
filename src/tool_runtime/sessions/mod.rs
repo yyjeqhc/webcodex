@@ -47,4 +47,6 @@ pub(crate) use util::redact_and_bound_instruction;
 // Test-only surface: keep the runtime re-export list narrow while still
 // allowing crate-level tests to reach these constants without pub-ing `model`.
 #[cfg(test)]
+pub(crate) use events::session_input_summary_for_tool;
+#[cfg(test)]
 pub(crate) use model::{MAX_VALIDATION_EXCERPT_CHARS, TOOL_CALL_EXPECTATION_METADATA_FIELDS};

@@ -5,7 +5,8 @@ live in [`AGENTS.md`](../../AGENTS.md).** This file explains durable product
 structure so agents do not re-litigate settled shape during ordinary tasks.
 
 Related product docs: [`ARCHITECTURE.md`](../ARCHITECTURE.md),
-[`CONCEPTS.md`](../CONCEPTS.md), [`TESTING.md`](../TESTING.md).
+[`CONCEPTS.md`](../CONCEPTS.md), [`MODEL_EXECUTION.md`](../MODEL_EXECUTION.md),
+[`TESTING.md`](../TESTING.md).
 
 ---
 
@@ -282,3 +283,37 @@ Runner registration reports `process_started_at` and
 | Connected ≠ compatible | Transport liveness never implies protocol/build compatibility |
 | Direction | Per-runner facts say which side to upgrade (`action`); no fallback shims or version-translation layers |
 | Shell dialects | `ShellProfilesSummary` reports `default_dialect` (`sh` \| `bash` \| `custom`) and `available_dialects`; each profile entry reports `dialect`. The server never guesses the remote shell; custom profiles that do not map to sh/bash report `custom`, and agents needing deterministic syntax must pass an explicit `shell=sh\|bash`. No PATH/env/init-script contents are ever sent |
+
+---
+
+## 10. Model execution and durable continuation
+
+The standing direction for model-facing execution is defined in
+[`MODEL_EXECUTION.md`](../MODEL_EXECUTION.md). The durable decisions are:
+
+1. **Structured lifecycle is execution truth.** Retry safety must not depend on
+   interpreting prose. `command_started`, completion state, failure
+   classification, Job state, and guidance must not contradict one another.
+2. **Prefer direct argv/process execution for ordinary commands.** Shell command
+   strings remain an escape hatch for real shell semantics; long script content
+   belongs in a bounded payload channel rather than an ever-larger quoted string.
+3. **One execution may outlive one tool/model turn.** When work exceeds a short
+   synchronous grace window, the same execution should continue as a durable Job;
+   handoff must not be implemented as cancel-and-retry.
+4. **Job/observation is the continuation API.** Durable Job identity, lifecycle,
+   bounded logs, observation token, cancellation, ownership, and recovery/lost
+   semantics remain OS-, transport-, and presentation-neutral. Batch observation
+   should reuse this model rather than create a second scheduler or revision
+   system.
+5. **Optional host UI is an adapter, not an owner.** MCP Apps or another host may
+   observe Jobs and later resume a model, but core execution cannot depend on
+   Apps, MCP Tasks, MRTR, elicitation, progress extensions, or iframe state. If
+   automatic model resume is provided, one conversation-level Orchestrator owns
+   that authority; independent Job Views do not race to resume the model.
+6. **Transport fallback must preserve execution semantics.** Polling, WebSocket,
+   and QUIC may differ in delivery behavior, but none may silently duplicate a
+   command or turn a transport stall into a false pre-start rejection.
+
+Do not broaden an execution task into fleet upgrade management, Windows SCM
+productization, a generic process/service API, PTY support, or polished MCP App UI
+unless the user task explicitly requires that scope.

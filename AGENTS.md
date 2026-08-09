@@ -18,8 +18,10 @@ These are the always-on rules for ordinary repository work. Read only the linked
 - Do not design for hypothetical consumers, tenants, deployment scales, or trust boundaries that the product does not have.
 - Protect real boundaries—credentials, public entry points, destructive actions, wrong-target execution, repository history, and published artifacts—without adding policy machinery for imaginary ones.
 - When two designs satisfy the current need, choose the one with fewer concepts, states, configuration paths, and maintenance costs.
+- For model-facing execution, prefer structured process/argv and durable Job/observation primitives over shell-text orchestration. Keep shell as an escape hatch; structured lifecycle state is the source of truth for retry safety.
+- Treat demonstrated host features such as MCP App orchestration as optional adapters. Core execution and Job semantics must remain protocol-, UI-, transport-, and OS-neutral.
 
-Product direction: [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Product direction: [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/MODEL_EXECUTION.md`](docs/MODEL_EXECUTION.md).
 
 ## 3. Follow intent and make focused changes
 

@@ -27,6 +27,7 @@
 ## Architecture / Contributor
 
 - [Architecture](ARCHITECTURE.md)
+- [Model Execution and Durable Continuation](MODEL_EXECUTION.md)
 - [Testing](TESTING.md)
 - [端到端验证](E2E_VALIDATION.zh-CN.md) / [English](E2E_VALIDATION.md)
 - [Console Development](CONSOLE_DEVELOPMENT.md)

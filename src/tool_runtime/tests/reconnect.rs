@@ -40,6 +40,7 @@ fn register_request(
         policy: None,
         process_started_at,
         build,
+        job_concurrency_limit: None,
         job_inventory: None,
     }
 }

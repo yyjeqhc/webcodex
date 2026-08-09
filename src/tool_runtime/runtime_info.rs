@@ -10,6 +10,10 @@ use crate::shell_protocol::{ShellClientView, ShellJobInfo};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+const RUNNING_JOB_STATUSES: &[&str] = &["running", "started"];
+const AGENT_QUEUED_JOB_STATUSES: &[&str] = &["queued", "agent_queued"];
+const LOCAL_QUEUED_JOB_STATUSES: &[&str] = &["queued"];
+
 /// Lightweight runtime metadata injected into `ToolRuntime` so observability
 /// tools (e.g. `runtime_status`) can report auth/public-url state without the
 /// runtime holding a full `Config` (which would couple it to HTTP/fs details).
@@ -57,7 +61,7 @@ impl RuntimeInfo {
 impl ToolRuntime {
     pub(crate) async fn list_agents(&self, auth: Option<&AuthContext>) -> ToolResult {
         let clients = self.shell_clients.list_clients_for_auth(auth).await;
-        let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, None).await;
+        let agent_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
         let now = chrono::Utc::now().timestamp();
         let agents: Vec<Value> = clients
             .iter()
@@ -77,6 +81,7 @@ impl ToolRuntime {
                     "pending_requests": c.pending_requests,
                     "projects_count": enabled_projects_count(c),
                     "active_jobs": active_jobs_for_client(&agent_jobs, &c.client_id),
+                    "job_concurrency": job_concurrency_for_client(c, &agent_jobs),
                     "capabilities": c.capabilities,
                     "projects": c.projects,
                     "policy": sanitized_policy_summary(c.policy.as_ref()),
@@ -144,7 +149,7 @@ impl ToolRuntime {
         });
 
         let now = chrono::Utc::now().timestamp();
-        let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, None).await;
+        let agent_jobs = self.shell_clients.list_all_jobs_for_auth(auth).await;
 
         // -- agents summary ---------------------------------------------------
         // Build a trimmed client list so the summary never leaks per-request
@@ -174,6 +179,7 @@ impl ToolRuntime {
                     "last_seen_age_secs": last_seen_age_secs(c, now),
                     "pending_requests": c.pending_requests,
                     "active_jobs": active_jobs_for_client(&agent_jobs, &c.client_id),
+                    "job_concurrency": job_concurrency_for_client(c, &agent_jobs),
                     "capabilities": c.capabilities,
                     "projects_count": enabled_projects_count(c),
                     "policy": sanitized_policy_summary(c.policy.as_ref()),
@@ -226,6 +232,14 @@ impl ToolRuntime {
             .iter()
             .filter(|job| job.status == "recovering")
             .count();
+        let agent_running = agent_jobs
+            .iter()
+            .filter(|job| job_status_is_running(&job.status))
+            .count();
+        let agent_queued = agent_jobs
+            .iter()
+            .filter(|job| job_status_is_agent_queued(&job.status))
+            .count();
         let reconciled_count = agent_jobs
             .iter()
             .filter(|job| job.recovery_state.as_deref() == Some("reconciled"))
@@ -245,6 +259,8 @@ impl ToolRuntime {
             })
             .count();
         let mut local_active = 0usize;
+        let mut local_running = 0usize;
+        let mut local_queued = 0usize;
         for dir in local_job_dirs {
             if let Some(status) = std::fs::read_to_string(dir.join("status"))
                 .ok()
@@ -254,13 +270,19 @@ impl ToolRuntime {
                 if ACTIVE_JOB_STATUSES.contains(&normalized.as_str()) {
                     local_active += 1;
                 }
+                local_running += usize::from(job_status_is_running(&normalized));
+                local_queued += usize::from(job_status_is_local_queued(&normalized));
             }
         }
         let active_count = agent_active + local_active;
+        let running_count = agent_running + local_running;
+        let queued_count = agent_queued + local_queued;
         let jobs = json!({
             "agent_known_count": agent_known_count,
             "local_known_count": local_known_count,
             "active_count": active_count,
+            "running_count": running_count,
+            "queued_count": queued_count,
             "recovering_count": recovering_count,
             "reconciled_count": reconciled_count,
             "lost_after_reconcile_count": lost_after_reconcile_count,
@@ -347,6 +369,8 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
         },
         "jobs": {
             "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
+            "running_count": status.pointer("/jobs/running_count").cloned().unwrap_or(Value::Null),
+            "queued_count": status.pointer("/jobs/queued_count").cloned().unwrap_or(Value::Null),
         },
         "agents": {
             "count": status.pointer("/agents/count").cloned().unwrap_or_else(|| json!(0)),
@@ -804,6 +828,35 @@ fn active_jobs_for_client(agent_jobs: &[ShellJobInfo], client_id: &str) -> usize
         .count()
 }
 
+fn job_status_is_running(status: &str) -> bool {
+    RUNNING_JOB_STATUSES.contains(&status)
+}
+
+fn job_status_is_agent_queued(status: &str) -> bool {
+    AGENT_QUEUED_JOB_STATUSES.contains(&status)
+}
+
+fn job_status_is_local_queued(status: &str) -> bool {
+    LOCAL_QUEUED_JOB_STATUSES.contains(&status)
+}
+
+fn job_concurrency_for_client(client: &ShellClientView, agent_jobs: &[ShellJobInfo]) -> Value {
+    let mut running = 0usize;
+    let mut queued = 0usize;
+    for job in agent_jobs
+        .iter()
+        .filter(|job| job.client_id == client.client_id)
+    {
+        running += usize::from(job_status_is_running(&job.status));
+        queued += usize::from(job_status_is_agent_queued(&job.status));
+    }
+    json!({
+        "limit": client.job_concurrency_limit,
+        "running": running,
+        "queued": queued,
+    })
+}
+
 fn agent_health_clients(
     clients: &[ShellClientView],
     agent_jobs: &[ShellJobInfo],
@@ -820,6 +873,7 @@ fn agent_health_clients(
                 "projects_count": enabled_projects_count(client),
                 "pending_requests": client.pending_requests,
                 "active_jobs": active_jobs_for_client(agent_jobs, &client.client_id),
+                "job_concurrency": job_concurrency_for_client(client, agent_jobs),
             })
         })
         .collect()
@@ -913,5 +967,58 @@ impl Default for RuntimeInfo {
                 crate::config::QuicServerConfig::default().runtime_status(),
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod phase_e2_status_tests {
+    use super::*;
+
+    #[test]
+    fn concurrency_counts_use_only_canonical_running_and_queued_statuses() {
+        for status in ["running", "started"] {
+            assert!(job_status_is_running(status), "{status}");
+            assert!(!job_status_is_agent_queued(status), "{status}");
+        }
+        for status in ["queued", "agent_queued"] {
+            assert!(job_status_is_agent_queued(status), "{status}");
+            assert!(!job_status_is_running(status), "{status}");
+        }
+        assert!(job_status_is_local_queued("queued"));
+        assert!(!job_status_is_local_queued("agent_queued"));
+        for status in [
+            "stop_requested",
+            "recovering",
+            "completed",
+            "failed",
+            "stopped",
+            "lost",
+            "timeout",
+            "timed_out",
+            "cancelled",
+        ] {
+            assert!(!job_status_is_running(status), "{status}");
+            assert!(!job_status_is_agent_queued(status), "{status}");
+            assert!(!job_status_is_local_queued(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn compact_runtime_status_keeps_minimum_job_state_counts() {
+        let compact = compact_runtime_status(&json!({
+            "jobs": {
+                "active_count": 5,
+                "running_count": 2,
+                "queued_count": 1,
+            }
+        }));
+        assert_eq!(
+            compact["jobs"],
+            json!({
+                "active_count": 5,
+                "running_count": 2,
+                "queued_count": 1,
+            })
+        );
     }
 }

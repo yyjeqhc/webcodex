@@ -25,6 +25,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -61,6 +62,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),
@@ -347,6 +349,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -441,6 +444,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: format!("inst-{}", client_id),
@@ -469,6 +473,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{}", client_id),
@@ -644,6 +649,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_projects(
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -673,6 +679,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_with_shell_profiles(
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),

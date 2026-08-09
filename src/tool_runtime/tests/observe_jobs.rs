@@ -761,6 +761,7 @@ async fn observe_jobs_recovering_lost_and_stop_requested_match_job_log_semantics
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: Some(ShellJobInventory {
                 active_complete: true,
                 jobs: Vec::new(),

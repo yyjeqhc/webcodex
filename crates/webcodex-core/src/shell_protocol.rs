@@ -513,6 +513,11 @@ pub struct ShellClientRegisterRequest {
     /// for mixed-version diagnostics; never carries paths or environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<AgentBuildInfo>,
+    /// Effective static Job execution concurrency configured for this Runner
+    /// process. Older Runners omit it, so the Server must preserve `None`
+    /// rather than infer a value from capabilities or observed Jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_concurrency_limit: Option<usize>,
     /// Complete active plus bounded recent-terminal inventory for the current
     /// runner process. Required when `job_state_reconciliation` is declared;
     /// absent for older runners.
@@ -580,6 +585,10 @@ pub struct ShellClientView {
     /// Runner-reported build identity, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<AgentBuildInfo>,
+    /// Runner-reported effective static Job execution concurrency. `None` for
+    /// older Runners; the Server never infers this value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_concurrency_limit: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2263,6 +2272,7 @@ mod envelope_tests {
             projects: None,
             agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string()),
             policy: None,
+            job_concurrency_limit: Some(4),
             job_inventory: None,
         }
     }
@@ -2307,6 +2317,7 @@ mod envelope_tests {
                     payload.agent_protocol_version.as_deref(),
                     Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1),
                 );
+                assert_eq!(payload.job_concurrency_limit, Some(4));
                 let caps = payload.capabilities.expect("capabilities");
                 assert!(caps.shell);
                 assert!(!caps.file_write);
@@ -2395,6 +2406,7 @@ mod envelope_tests {
         let polling_back: ShellClientRegisterRequest =
             serde_json::from_slice(&polling_json).unwrap();
         assert_eq!(polling_back.job_inventory.as_ref(), Some(&inventory));
+        assert_eq!(polling_back.job_concurrency_limit, Some(4));
 
         let mut websocket = polling.clone();
         websocket.agent_protocol_version = Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string());
@@ -2408,6 +2420,7 @@ mod envelope_tests {
         match websocket_back {
             AgentEnvelope::Register { payload, .. } => {
                 assert_eq!(payload.job_inventory.as_ref(), Some(&inventory));
+                assert_eq!(payload.job_concurrency_limit, Some(4));
             }
             other => panic!("expected websocket register, got {:?}", other.kind()),
         }
@@ -2423,6 +2436,7 @@ mod envelope_tests {
         match read_quic_frame(&mut quic_reader).await.unwrap() {
             AgentEnvelope::Register { payload, .. } => {
                 assert_eq!(payload.job_inventory.as_ref(), Some(&inventory));
+                assert_eq!(payload.job_concurrency_limit, Some(4));
             }
             other => panic!("expected quic register, got {:?}", other.kind()),
         }
@@ -3105,6 +3119,17 @@ mod envelope_tests {
     }
 
     #[test]
+    fn older_register_request_without_job_concurrency_limit_deserializes_as_unknown() {
+        let json = r#"{
+            "client_id": "legacy-runner",
+            "agent_instance_id": "legacy-instance",
+            "capabilities": {"shell": true}
+        }"#;
+        let request: ShellClientRegisterRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.job_concurrency_limit, None);
+    }
+
+    #[test]
     fn register_request_without_agent_instance_id_is_rejected() {
         // An old agent that omits agent_instance_id must be rejected at
         // deserialization: the field is now required for correctness.
@@ -3280,6 +3305,7 @@ mod envelope_tests {
                 projects: None,
                 agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
                 policy: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
             },
             auth_token: Some("wc_agent_secret".to_string()),

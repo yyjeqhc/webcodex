@@ -640,7 +640,7 @@ fn structured_test_sink(
     client_id: &str,
     instance_id: &str,
 ) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
-    let (tx, rx) = tokio::sync::mpsc::channel(32);
+    let (tx, rx) = tokio::sync::mpsc::channel(256);
     (
         AgentSink::WebSocket {
             tx,
@@ -692,6 +692,455 @@ fn enqueue_structured_process_job(
             "job_context": context,
         }))
         .unwrap(),
+    );
+}
+
+struct GatedStructuredJob {
+    job_id: String,
+    started: PathBuf,
+    active: PathBuf,
+    release: PathBuf,
+}
+
+impl GatedStructuredJob {
+    fn new(root: &Path, job_id: &str) -> Self {
+        Self {
+            job_id: job_id.to_string(),
+            started: root.join(format!("{job_id}.started")),
+            active: root.join(format!("{job_id}.active")),
+            release: root.join(format!("{job_id}.release")),
+        }
+    }
+
+    fn args(&self) -> Vec<String> {
+        vec![
+            "gate".to_string(),
+            self.started.to_string_lossy().into_owned(),
+            self.active.to_string_lossy().into_owned(),
+            self.release.to_string_lossy().into_owned(),
+            self.job_id.clone(),
+        ]
+    }
+
+    fn release(&self) {
+        std::fs::write(&self.release, "release\n").unwrap();
+    }
+}
+
+fn enqueue_gated_structured_job(
+    manager: &JobManager,
+    sink: &AgentSink,
+    cwd: &Path,
+    helper: &StructuredProcessHelper,
+    job: &GatedStructuredJob,
+) {
+    enqueue_structured_process_job(
+        manager,
+        sink.clone(),
+        cwd,
+        &job.job_id,
+        &helper.path,
+        job.args(),
+        None,
+        20,
+        None,
+    );
+}
+
+fn active_gated_children(jobs: &[GatedStructuredJob]) -> usize {
+    jobs.iter().filter(|job| job.active.exists()).count()
+}
+
+fn wait_for_all_started(jobs: &[GatedStructuredJob]) {
+    assert!(
+        wait_until(Duration::from_secs(10), || jobs
+            .iter()
+            .all(|job| job.started.exists())),
+        "gated children did not all start: {:?}",
+        jobs.iter()
+            .map(|job| (&job.job_id, job.started.exists()))
+            .collect::<Vec<_>>()
+    );
+}
+
+fn wait_for_job_workers(manager: &JobManager) {
+    assert!(
+        manager.wait_for_workers(Instant::now() + Duration::from_secs(10)),
+        "Job workers did not finish"
+    );
+}
+
+fn assert_gated_job_started_once(job: &GatedStructuredJob) {
+    let starts = std::fs::read_to_string(&job.started).unwrap();
+    assert_eq!(
+        starts.lines().count(),
+        1,
+        "{} started more than once",
+        job.job_id
+    );
+    assert!(starts.contains(&job.job_id));
+}
+
+#[test]
+fn phase_e2_default_four_gates_fifth_and_promotes_same_job_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(DEFAULT_MAX_CONCURRENT_JOBS);
+    let jobs = (1..=5)
+        .map(|index| GatedStructuredJob::new(temp.path(), &format!("default-{index}")))
+        .collect::<Vec<_>>();
+
+    for job in &jobs {
+        enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, job);
+    }
+    wait_for_all_started(&jobs[..4]);
+    assert_eq!(active_gated_children(&jobs), 4);
+    assert!(
+        !jobs[4].started.exists(),
+        "the fifth child started before a Job slot opened"
+    );
+    let queued = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == jobs[4].job_id)
+        .expect("original fifth Job remains queryable");
+    assert_eq!(queued.status, "agent_queued");
+    assert_eq!(queued.request_id, "request-default-5");
+
+    jobs[0].release();
+    assert!(
+        wait_until(Duration::from_secs(10), || jobs[4].active.exists()),
+        "the original fifth Job was not promoted"
+    );
+    assert!(!jobs[0].active.exists());
+    assert_eq!(
+        active_gated_children(&jobs),
+        4,
+        "simultaneously started children exceeded or failed to reach the default"
+    );
+    let promoted = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == jobs[4].job_id)
+        .expect("promoted fifth Job retains its record");
+    assert_eq!(promoted.status, "running");
+    assert_eq!(promoted.request_id, "request-default-5");
+
+    for job in &jobs[1..] {
+        job.release();
+    }
+    wait_for_job_workers(&manager);
+    for job in &jobs {
+        assert_gated_job_started_once(job);
+        let snapshot = manager
+            .inventory()
+            .jobs
+            .into_iter()
+            .find(|snapshot| snapshot.job_id == job.job_id)
+            .unwrap();
+        assert_eq!(snapshot.status, "completed");
+        assert_eq!(snapshot.request_id, format!("request-{}", job.job_id));
+    }
+}
+
+#[test]
+fn phase_e2_explicit_limit_one_serializes_jobs_strictly() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let first = GatedStructuredJob::new(temp.path(), "serial-a");
+    let second = GatedStructuredJob::new(temp.path(), "serial-b");
+
+    enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &first);
+    enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &second);
+    wait_for_all_started(std::slice::from_ref(&first));
+    assert!(first.active.exists());
+    assert!(!second.active.exists());
+    assert!(!second.started.exists());
+
+    first.release();
+    wait_for_all_started(std::slice::from_ref(&second));
+    assert!(!first.active.exists());
+    assert_eq!(
+        usize::from(second.active.exists()),
+        1,
+        "limit=1 did not serialize execution"
+    );
+    second.release();
+    wait_for_job_workers(&manager);
+    assert_gated_job_started_once(&first);
+    assert_gated_job_started_once(&second);
+}
+
+#[test]
+fn phase_e2_explicit_higher_limit_starts_all_eight_children() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(8);
+    let jobs = (1..=8)
+        .map(|index| GatedStructuredJob::new(temp.path(), &format!("higher-{index}")))
+        .collect::<Vec<_>>();
+
+    for job in &jobs {
+        enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, job);
+    }
+    wait_for_all_started(&jobs);
+    assert_eq!(
+        active_gated_children(&jobs),
+        8,
+        "explicit limit=8 was capped at a smaller default"
+    );
+    for job in &jobs {
+        job.release();
+    }
+    wait_for_job_workers(&manager);
+    for job in &jobs {
+        assert_gated_job_started_once(job);
+    }
+}
+
+#[test]
+fn phase_e2_single_client_queue_promotes_fifo() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let first = GatedStructuredJob::new(temp.path(), "fifo-a");
+    let second = GatedStructuredJob::new(temp.path(), "fifo-b");
+    let third = GatedStructuredJob::new(temp.path(), "fifo-c");
+
+    for job in [&first, &second, &third] {
+        enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, job);
+    }
+    wait_for_all_started(std::slice::from_ref(&first));
+    assert!(!second.started.exists());
+    assert!(!third.started.exists());
+
+    first.release();
+    wait_for_all_started(std::slice::from_ref(&second));
+    assert!(!third.started.exists(), "C started before queued B");
+    second.release();
+    wait_for_all_started(std::slice::from_ref(&third));
+    third.release();
+    wait_for_job_workers(&manager);
+    for job in [&first, &second, &third] {
+        assert_gated_job_started_once(job);
+    }
+}
+
+#[test]
+fn phase_e2_prestart_structured_failure_releases_slot_for_queued_job() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    manager.install_sink(sink.clone());
+
+    let failed_job_id = "prestart-failure";
+    let mut failed_snapshot = test_job_snapshot(failed_job_id);
+    failed_snapshot.status = "agent_queued".to_string();
+    failed_snapshot.started_at = None;
+    failed_snapshot.update_seq = 1;
+    failed_snapshot.context = structured_process_context(temp.path(), 0, false);
+    lock_unpoison(&manager.jobs).insert(
+        failed_job_id.to_string(),
+        RunningJob {
+            client_id: "structured-agent".to_string(),
+            agent_instance_id: "structured-instance".to_string(),
+            snapshot: failed_snapshot,
+            child: None,
+            stop_requested: Arc::new(AtomicBool::new(false)),
+            slot_reserved: true,
+        },
+    );
+
+    let queued = GatedStructuredJob::new(temp.path(), "after-prestart-failure");
+    enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &queued);
+    assert!(!queued.started.exists());
+    let failed_request: ShellAgentShellRequest = serde_json::from_value(json!({
+        "request_id": "request-prestart-failure",
+        "client_id": "structured-agent",
+        "kind": "start_process_job",
+        "job_id": failed_job_id,
+        "cwd": temp.path(),
+        "command": "",
+        "timeout_secs": 20,
+        "requested_by": "test",
+        "created_at": chrono::Utc::now().timestamp(),
+        "job_context": structured_process_context(temp.path(), 0, false),
+    }))
+    .unwrap();
+    manager.start_structured_job(
+        1,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            ..AgentPolicy::default()
+        },
+        ShellConfig::default(),
+        temp.path().join("projects.d"),
+        failed_request,
+    );
+
+    assert!(
+        wait_until(Duration::from_secs(10), || queued.started.exists()),
+        "queued Job stayed blocked after the reserved pre-start slot failed"
+    );
+    let failed = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == failed_job_id)
+        .unwrap();
+    assert_eq!(failed.status, "failed");
+    assert_eq!(
+        failed.command_execution_state,
+        Some(ShellCommandExecutionState::NotStarted)
+    );
+    assert!(
+        !lock_unpoison(&manager.jobs)
+            .get(failed_job_id)
+            .unwrap()
+            .slot_reserved
+    );
+
+    queued.release();
+    wait_for_job_workers(&manager);
+    assert_gated_job_started_once(&queued);
+}
+
+#[test]
+fn phase_e2_stopped_queued_job_never_executes_after_slot_release() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let first = GatedStructuredJob::new(temp.path(), "queued-stop-a");
+    let stopped = GatedStructuredJob::new(temp.path(), "queued-stop-b");
+
+    enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &first);
+    enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &stopped);
+    wait_for_all_started(std::slice::from_ref(&first));
+    assert!(!stopped.started.exists());
+    manager.stop(&stopped.job_id).unwrap();
+    let stopped_snapshot = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == stopped.job_id)
+        .unwrap();
+    assert_eq!(stopped_snapshot.status, "stopped");
+    assert_eq!(
+        stopped_snapshot.command_execution_state,
+        Some(ShellCommandExecutionState::NotStarted)
+    );
+
+    first.release();
+    wait_for_job_workers(&manager);
+    assert!(
+        !stopped.started.exists(),
+        "stopped queued Job spawned after a slot opened"
+    );
+    assert!(!stopped.active.exists());
+    assert!(lock_unpoison(&manager.queued)
+        .iter()
+        .all(|entry| entry.6.job_id.as_deref() != Some(stopped.job_id.as_str())));
+}
+
+#[cfg(unix)]
+#[test]
+fn phase_e2_validation_job_shares_the_same_job_manager_slot_limit() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let blocker = GatedStructuredJob::new(temp.path(), "validation-slot-blocker");
+    enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &blocker);
+    wait_for_all_started(std::slice::from_ref(&blocker));
+
+    let bin = temp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let cargo = bin.join("cargo");
+    let validation_marker = temp.path().join("validation.started");
+    std::fs::write(
+        &cargo,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' validation > \"{}\"\n",
+            validation_marker.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let steps = vec![ShellJobValidationStep {
+        name: "check".to_string(),
+        program: "cargo".to_string(),
+        args: vec!["check".to_string(), "--all-targets".to_string()],
+        env: Vec::new(),
+    }];
+    let mut shell = ShellConfig::default();
+    shell.path_prepend.push(bin);
+    manager.enqueue(
+        sink,
+        1,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            ..AgentPolicy::default()
+        },
+        shell,
+        SshConfig::default(),
+        temp.path().join("projects.d"),
+        serde_json::from_value(json!({
+            "request_id": "request-validation-shared-slot",
+            "client_id": "structured-agent",
+            "kind": "start_validation_job",
+            "job_id": "validation-shared-slot",
+            "cwd": temp.path(),
+            "command": serde_json::to_string(&steps).unwrap(),
+            "timeout_secs": 20,
+            "requested_by": "test",
+            "created_at": chrono::Utc::now().timestamp(),
+            "job_context": test_job_context(temp.path(), vec!["check".to_string()]),
+        }))
+        .unwrap(),
+    );
+    assert!(!validation_marker.exists());
+    assert_eq!(
+        manager
+            .inventory()
+            .jobs
+            .iter()
+            .find(|snapshot| snapshot.job_id == "validation-shared-slot")
+            .unwrap()
+            .status,
+        "agent_queued"
+    );
+
+    blocker.release();
+    assert!(
+        wait_until(Duration::from_secs(10), || validation_marker.exists()),
+        "validation Job did not start after the shared slot opened"
+    );
+    wait_for_job_workers(&manager);
+    let validation = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "validation-shared-slot")
+        .unwrap();
+    assert_eq!(validation.status, "completed");
+    assert_eq!(
+        validation.validation_progress,
+        Some(ShellJobValidationProgress {
+            completed: 1,
+            current_step: None,
+            failed_step: None,
+        })
     );
 }
 

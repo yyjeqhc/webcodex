@@ -54,12 +54,11 @@ use webcodex_runner::{
     agent_project_summary, auto_transport_plan, build_ws_request, default_quic_alpn,
     default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs,
     default_websocket_connect_timeout_secs, effective_transport, handle_project_op,
-    load_agent_project_summaries_from_dir, max_concurrent_jobs, non_empty_token,
-    parse_agent_project_toml, quic_client_bind_addr_for, resolve_quic_config,
-    resolve_quic_server_addrs, run_shell, run_shell_with_profiles,
-    run_shell_with_profiles_in_sandbox, server_url_to_ws, sha256_hex_bytes,
-    validate_project_path_policy, websocket_session, AgentRuntimeState, ShellProfileConfig,
-    CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
+    load_agent_project_summaries_from_dir, non_empty_token, parse_agent_project_toml,
+    quic_client_bind_addr_for, resolve_quic_config, resolve_quic_server_addrs, run_shell,
+    run_shell_with_profiles, run_shell_with_profiles_in_sandbox, server_url_to_ws,
+    sha256_hex_bytes, validate_project_path_policy, websocket_session, AgentRuntimeState,
+    ShellProfileConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
 };
 use webcodex_runner::{
     client_profile_agent_config, configured_prepared_shell_job_command,
@@ -68,7 +67,7 @@ use webcodex_runner::{
     handle_artifact_file_request, handle_basic_file_request, handle_checkpoint_file_request,
     handle_write_project_file_request, hostname, is_artifact_request_kind,
     is_basic_file_request_kind, is_checkpoint_request_kind, is_project_op,
-    is_structured_edit_request_kind, load_config, ok_cmd, projects_dir,
+    is_structured_edit_request_kind, load_config, max_concurrent_jobs, ok_cmd, projects_dir,
     resolve_prepared_shell_profile, resolve_requested_path, run_agent, validate_client_profile,
     validate_structured_edit_agent_path, AgentConfig, AgentPolicy, AgentProjectCache, AgentSink,
     CommandResult, HotAgentConfig, HttpSendConfig, PreparedShellProfile, PreparedShellProfileCache,
@@ -1630,6 +1629,7 @@ fn build_register_request_with_provider_status(
             )),
             process_started_at: Some(process_started_at()),
             build: Some(runner_build_info()),
+            job_concurrency_limit: Some(max_concurrent_jobs(cfg)),
             // A legacy runner (capability disabled for E2E) must not send a job
             // inventory: the server rejects inventory without the capability and
             // vice-versa, so a true legacy client advertises neither.

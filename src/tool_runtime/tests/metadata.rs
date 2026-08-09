@@ -98,6 +98,7 @@ async fn register_agent_projects_for_auth(
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: format!("inst-{}", client_id),
@@ -637,6 +638,7 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
         .register(crate::shell_protocol::ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "profile-agent".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -1847,6 +1849,7 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: Some(4),
             job_inventory: None,
             client_id: "agent-1".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -1886,6 +1889,10 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     assert!(clients[0]["last_seen_age_secs"].is_i64());
     assert_eq!(clients[0]["pending_requests"], 0);
     assert_eq!(clients[0]["active_jobs"], 0);
+    assert_eq!(
+        clients[0]["job_concurrency"],
+        json!({"limit": 4, "running": 0, "queued": 0})
+    );
     let health_clients = agents["summary"]["clients"].as_array().unwrap();
     assert_eq!(health_clients.len(), 1);
     assert_eq!(health_clients[0]["client_id"], "agent-1");
@@ -1894,6 +1901,10 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     assert_eq!(health_clients[0]["projects_count"], 0);
     assert_eq!(health_clients[0]["pending_requests"], 0);
     assert_eq!(health_clients[0]["active_jobs"], 0);
+    assert_eq!(
+        health_clients[0]["job_concurrency"],
+        json!({"limit": 4, "running": 0, "queued": 0})
+    );
     // last_seen must be present as an integer unix timestamp (seconds).
     assert!(
         clients[0]["last_seen"].is_i64(),
@@ -1913,6 +1924,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "policy-agent".to_string(),
             agent_instance_id: "inst-p".to_string(),
@@ -2053,6 +2065,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "provider-surface".to_string(),
             agent_instance_id: "inst-surface".to_string(),
@@ -2137,6 +2150,7 @@ async fn runtime_status_policy_summary_is_null_for_older_agents() {
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "legacy-agent".to_string(),
             agent_instance_id: "inst-l".to_string(),
@@ -2160,6 +2174,10 @@ async fn runtime_status_policy_summary_is_null_for_older_agents() {
     let clients = result.output["agents"]["clients"].as_array().unwrap();
     // Older/minimal payload -> policy is null, not a fatal error.
     assert!(clients[0]["policy"].is_null());
+    assert_eq!(
+        clients[0]["job_concurrency"],
+        json!({"limit": null, "running": 0, "queued": 0})
+    );
 }
 
 #[tokio::test]
@@ -2170,6 +2188,7 @@ async fn list_agents_includes_sanitized_policy_summary() {
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: Some(8),
             job_inventory: None,
             client_id: "list-policy-agent".to_string(),
             agent_instance_id: "inst-lp".to_string(),
@@ -2208,11 +2227,19 @@ async fn list_agents_includes_sanitized_policy_summary() {
     assert_eq!(health_clients[0]["transport"], "polling");
     assert_eq!(health_clients[0]["pending_requests"], 0);
     assert_eq!(health_clients[0]["active_jobs"], 0);
+    assert_eq!(
+        health_clients[0]["job_concurrency"],
+        json!({"limit": 8, "running": 0, "queued": 0})
+    );
     let agents = result.output["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0]["projects_count"], 0);
     assert!(agents[0]["last_seen_age_secs"].is_i64());
     assert_eq!(agents[0]["active_jobs"], 0);
+    assert_eq!(
+        agents[0]["job_concurrency"],
+        json!({"limit": 8, "running": 0, "queued": 0})
+    );
     let policy = &agents[0]["policy"];
     assert_eq!(policy["allow_raw_shell"], false);
     assert_eq!(policy["allow_cwd_anywhere"], true);
@@ -2233,6 +2260,7 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "ws-stale".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2302,6 +2330,7 @@ async fn runtime_status_reflects_websocket_transport_label() {
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "ws-agent".to_string(),
             agent_instance_id: "inst".to_string(),
@@ -2389,13 +2418,36 @@ async fn runtime_status_counts_local_jobs() {
         "job-done".to_string(),
         LocalJobRecord::new("demo".to_string(), done_dir),
     );
+    let queued_dir = root.join(".codex/jobs/job-queued");
+    fs::create_dir_all(&queued_dir).unwrap();
+    fs::write(queued_dir.join("status"), "queued").unwrap();
+    fs::write(
+        queued_dir.join("metadata.json"),
+        serde_json::to_string(&json!({
+            "job_id": "job-queued",
+            "project": "demo",
+            "command": "sleep 10",
+            "status": "queued",
+            "created_at": 2,
+            "executor": "local",
+            "path": root.to_string_lossy(),
+            "kind": "shell",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    runtime.local_jobs.lock().await.insert(
+        "job-queued".to_string(),
+        LocalJobRecord::new("demo".to_string(), queued_dir),
+    );
 
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let jobs = &result.output["jobs"];
-    assert_eq!(jobs["local_known_count"], 2);
-    // Only the running job is active.
-    assert_eq!(jobs["active_count"], 1);
+    assert_eq!(jobs["local_known_count"], 3);
+    assert_eq!(jobs["active_count"], 2);
+    assert_eq!(jobs["running_count"], 1);
+    assert_eq!(jobs["queued_count"], 1);
     assert_eq!(jobs["agent_known_count"], 0);
 }
 

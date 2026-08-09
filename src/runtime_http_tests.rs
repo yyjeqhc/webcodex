@@ -159,6 +159,7 @@ async fn register_import_agent_with_capabilities(
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "importer".to_string(),
             agent_instance_id: "inst-import".to_string(),
@@ -394,6 +395,12 @@ async fn http_runtime_status_correct_bearer_returns_summary() {
     assert_eq!(out["projects"]["effective"]["status"], "ok");
     assert!(out["agents"]["count"].is_i64());
     assert!(out["jobs"]["active_count"].is_i64());
+    assert!(out["jobs"]["running_count"].is_i64());
+    assert!(out["jobs"]["queued_count"].is_i64());
+    assert_eq!(
+        out["agents"]["clients"][0]["job_concurrency"],
+        json!({"limit": null, "running": 0, "queued": 0})
+    );
     assert!(out["tools"]["count"].is_i64());
     // No secrets in the HTTP response either.
     let serialized = serde_json::to_string(&body).unwrap();

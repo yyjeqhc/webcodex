@@ -1309,16 +1309,42 @@ fn missing_projects_dir_returns_empty_list() {
 }
 
 #[test]
-fn max_concurrent_jobs_defaults_to_two_and_clamps_to_one() {
+fn phase_e2_max_concurrent_jobs_normalizes_to_inventory_capacity() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 4);
     assert_eq!(max_concurrent_jobs(&cfg), DEFAULT_MAX_CONCURRENT_JOBS);
 
     cfg.max_concurrent_jobs = Some(0);
     assert_eq!(max_concurrent_jobs(&cfg), 1);
 
+    cfg.max_concurrent_jobs = Some(1);
+    assert_eq!(max_concurrent_jobs(&cfg), 1);
+
     cfg.max_concurrent_jobs = Some(4);
     assert_eq!(max_concurrent_jobs(&cfg), 4);
+
+    cfg.max_concurrent_jobs = Some(8);
+    assert_eq!(max_concurrent_jobs(&cfg), 8);
+
+    cfg.max_concurrent_jobs = Some(64);
+    assert_eq!(max_concurrent_jobs(&cfg), 64);
+
+    cfg.max_concurrent_jobs = Some(65);
+    assert_eq!(max_concurrent_jobs(&cfg), 64);
+
+    cfg.max_concurrent_jobs = Some(128);
+    assert_eq!(max_concurrent_jobs(&cfg), 64);
+
+    cfg.max_concurrent_jobs = Some(usize::MAX);
+    assert_eq!(max_concurrent_jobs(&cfg), 64);
+}
+
+#[test]
+fn phase_e2_polling_dispatch_and_job_execution_concurrency_defaults_are_independent() {
+    assert_eq!(POLLING_DISPATCH_MAX_IN_FLIGHT, 2);
+    assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 4);
+    assert_ne!(POLLING_DISPATCH_MAX_IN_FLIGHT, DEFAULT_MAX_CONCURRENT_JOBS);
 }
 
 // ---------------------------------------------------------------------------
@@ -6014,6 +6040,35 @@ fn register_request_announces_correct_protocol_version() {
         caps.sandbox_inspect_commands,
         crate::command_sandbox::inspect_sandbox_available().is_ok()
     );
+}
+
+#[test]
+fn phase_e2_register_request_reports_effective_job_concurrency_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    for (configured, expected) in [
+        (None, 4),
+        (Some(0), 1),
+        (Some(1), 1),
+        (Some(8), 8),
+        (Some(64), 64),
+        (Some(65), 64),
+        (Some(128), 64),
+    ] {
+        cfg.max_concurrent_jobs = configured;
+        for protocol in [
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+            AGENT_PROTOCOL_VERSION_QUIC_V1,
+        ] {
+            let body = build_register_request(&cfg, Vec::new(), protocol, "inst-limit", 0);
+            assert_eq!(
+                body.job_concurrency_limit,
+                Some(expected),
+                "configured={configured:?} protocol={protocol}"
+            );
+        }
+    }
 }
 
 #[test]

@@ -211,6 +211,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: config.executor_client_id.clone(),
                 agent_instance_id: "project-agent-instance".to_string(),

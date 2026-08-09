@@ -58,6 +58,7 @@ async fn register_legacy_031_runner(
                 version: Some("0.3.1".to_string()),
                 git_commit: None,
             }),
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),

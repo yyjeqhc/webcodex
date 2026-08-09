@@ -39,6 +39,30 @@ fn main() {
             std::thread::sleep(Duration::from_millis(millis));
             println!("{nonce}");
         }
+        Some("gate") => {
+            use std::io::Write;
+            let started = args.next().unwrap();
+            let active = args.next().unwrap();
+            let release = args.next().unwrap();
+            let nonce = args.next().unwrap();
+            let mut started_file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&started)
+                .unwrap();
+            writeln!(started_file, "{}:{nonce}", std::process::id()).unwrap();
+            std::fs::write(&active, format!("{nonce}\n")).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while !std::path::Path::new(&release).exists() {
+                if std::time::Instant::now() >= deadline {
+                    eprintln!("gate release timed out: {nonce}");
+                    std::process::exit(70);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            std::fs::remove_file(&active).unwrap();
+            println!("{nonce}");
+        }
         Some(mode) => {
             eprintln!("unknown mode: {mode}");
             std::process::exit(64);

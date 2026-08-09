@@ -52,6 +52,9 @@ pub(super) struct ShellClientRecord {
     pub(super) process_started_at: Option<i64>,
     /// Runner-reported build identity (register payload).
     pub(super) build: Option<AgentBuildInfo>,
+    /// Runner-reported effective static Job execution concurrency. This is
+    /// safe operational metadata and remains unknown for older Runners.
+    pub(super) job_concurrency_limit: Option<usize>,
     /// Same-Server evidence that a hidden structured terminal Job was already
     /// projected into its initiating tool result and deliberately discarded.
     /// This stays process-local and is preserved only across registrations by

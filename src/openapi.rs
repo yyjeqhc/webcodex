@@ -1,5 +1,6 @@
 use salvo::prelude::*;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 use crate::tool_runtime::sessions::{
     TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_EXPECTED_FAILURE_FIELD,
@@ -46,6 +47,48 @@ fn flattened_tool_arg_schema_from_input(input_schema: &Value) -> Option<Value> {
     let mut schema = input_schema.clone();
     schema["description"] = Value::String(FLATTENED_TOOL_ARG_DESCRIPTION.to_string());
     Some(schema)
+}
+
+fn flattened_tool_arg_semantic_key(schema: &Value) -> String {
+    fn without_descriptions(value: &Value) -> Value {
+        match value {
+            Value::Object(object) => Value::Object(
+                object
+                    .iter()
+                    .filter(|(key, _)| key.as_str() != "description")
+                    .map(|(key, value)| (key.clone(), without_descriptions(value)))
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.iter().map(without_descriptions).collect()),
+            _ => value.clone(),
+        }
+    }
+
+    serde_json::to_string(&without_descriptions(schema))
+        .expect("flattened OpenAPI argument schemas must serialize")
+}
+
+fn flattened_tool_arg_schema_union(schemas: BTreeMap<String, (String, Value)>) -> Option<Value> {
+    let mut schemas = schemas
+        .into_values()
+        .map(|(_, schema)| schema)
+        .collect::<Vec<_>>();
+    if schemas.len() == 1 {
+        return schemas.pop();
+    }
+    if schemas.is_empty() {
+        return None;
+    }
+
+    for schema in &mut schemas {
+        if let Some(object) = schema.as_object_mut() {
+            object.remove("description");
+        }
+    }
+    Some(json!({
+        "description": FLATTENED_TOOL_ARG_DESCRIPTION,
+        "anyOf": schemas
+    }))
 }
 
 pub(crate) fn public_url() -> String {
@@ -1951,31 +1994,62 @@ fn tool_call_request_properties_mut(
 }
 
 fn insert_tool_call_request_flattened_arg_properties(schemas: &mut Value) {
+    insert_tool_call_request_flattened_arg_properties_for_specs(schemas, registered_tool_specs());
+}
+
+fn insert_tool_call_request_flattened_arg_properties_for_specs(
+    schemas: &mut Value,
+    specs: impl IntoIterator<Item = crate::tool_runtime::ToolSpec>,
+) {
     let Some(properties) = tool_call_request_properties_mut(schemas) else {
         return;
     };
 
-    for spec in registered_tool_specs() {
+    let mut schemas_by_field = BTreeMap::<String, BTreeMap<String, (String, Value)>>::new();
+    for spec in specs {
         let input_properties = spec.input_schema["properties"].as_object();
         for field in accepted_flattened_args_for_spec(&spec) {
             if properties.contains_key(&field) {
                 continue;
             }
-            if let Some(input_schema) = input_properties.and_then(|props| props.get(&field)) {
-                let schema = if field == "execution_context" {
-                    let mut schema = input_schema.clone();
-                    schema["description"] =
-                        Value::String(FLATTENED_TOOL_ARG_DESCRIPTION.to_string());
-                    Some(schema)
+            let schema =
+                if let Some(input_schema) = input_properties.and_then(|props| props.get(&field)) {
+                    let schema = if field == "execution_context" {
+                        let mut schema = input_schema.clone();
+                        schema["description"] =
+                            Value::String(FLATTENED_TOOL_ARG_DESCRIPTION.to_string());
+                        Some(schema)
+                    } else {
+                        flattened_tool_arg_schema_from_input(input_schema)
+                    };
+                    let Some(schema) = schema else {
+                        continue;
+                    };
+                    schema
                 } else {
-                    flattened_tool_arg_schema_from_input(input_schema)
+                    flattened_tool_arg_schema("string")
                 };
-                if let Some(schema) = schema {
-                    properties.insert(field, schema);
+
+            let semantic_key = flattened_tool_arg_semantic_key(&schema);
+            let rendered =
+                serde_json::to_string(&schema).expect("flattened OpenAPI schema must serialize");
+            let alternatives = schemas_by_field.entry(field).or_default();
+            match alternatives.entry(semantic_key) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert((rendered, schema));
                 }
-            } else {
-                properties.insert(field, flattened_tool_arg_schema("string"));
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    if rendered < entry.get().0 {
+                        entry.insert((rendered, schema));
+                    }
+                }
             }
+        }
+    }
+
+    for (field, schemas) in schemas_by_field {
+        if let Some(schema) = flattened_tool_arg_schema_union(schemas) {
+            properties.insert(field, schema);
         }
     }
 }

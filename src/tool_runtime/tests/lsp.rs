@@ -276,6 +276,7 @@ async fn register_lsp_agent(
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: client_id.to_string(),
             agent_instance_id: "inst".to_string(),
@@ -1003,6 +1004,7 @@ async fn capability_default_false_on_old_registration() {
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "legacy".into(),
             agent_instance_id: "inst".into(),

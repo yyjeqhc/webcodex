@@ -334,6 +334,7 @@ async fn open_anonymous_can_bind_current_session_and_record_project_read() {
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "open-current".to_string(),
                 agent_instance_id: "inst-open-current".to_string(),

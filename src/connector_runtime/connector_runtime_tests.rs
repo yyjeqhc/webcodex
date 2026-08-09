@@ -22,6 +22,7 @@ async fn register_agent(registry: &ShellClientRegistry, project_id: &str, path: 
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "hosted".to_string(),
                 agent_instance_id: "instance".to_string(),

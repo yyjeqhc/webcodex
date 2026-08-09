@@ -265,6 +265,72 @@ Older setups may use flat paths directly under `/etc/webcodex/`:
 
 This layout does not support multiple clients on the same machine. Migrate to profile-based config when possible.
 
+### Runner Job concurrency
+
+`max_concurrent_jobs` in `agent.toml` controls how many Jobs one Runner/client
+may execute at the same time:
+
+```toml
+max_concurrent_jobs = 4
+```
+
+The setting is optional. Its deterministic default is `4`, and its effective
+range is `1..=64`: `0` normalizes to `1`, values from `1` through `64` are
+preserved, and explicit values above `64` normalize to `64`. The upper bound is
+not a new scheduler policy or an arbitrary smaller cap. It is the unchanged
+`JOB_INVENTORY_MAX_ACTIVE_JOBS = 64` hard bound under which Runner inventory
+contains every active Job or rejects further starts.
+
+This is a restart-required Runner setting. A configuration reload reports
+`max_concurrent_jobs` in `restart_required_fields`; the running process keeps
+its startup value until the Runner is restarted. It is an operational tuning
+control, not a security boundary.
+
+Job execution concurrency is distinct from transport capacity. Polling remains
+fixed at two in-flight dispatch workers so one long request does not pin
+transport progress; changing `max_concurrent_jobs` does not change that
+transport bound. Thus an effective Job limit of `64` remains distinct from
+`POLLING_DISPATCH_MAX_IN_FLIGHT = 2`. Structured process Jobs, structured
+script Jobs, validation Jobs, and ordinary shell Jobs all share the same
+`JobManager` slots.
+
+When all Job slots are reserved, an accepted Job remains the same queryable Job
+with the same `job_id` and reports `agent_queued`. Opening a slot promotes that
+original queued Job exactly once. Stopping it while queued terminalizes it
+before child spawn; it is not recreated or re-dispatched later. Queued Jobs
+remain durable/queryable within the existing same-process Job continuation and
+reconciliation contract; this does not make the Runner's in-memory queue
+persistent across a Runner process restart.
+
+Inspect the limit and caller-visible dynamic state with `list_agents` or full
+`runtime_status`:
+
+```json
+{
+  "job_concurrency": {
+    "limit": 4,
+    "running": 2,
+    "queued": 1
+  }
+}
+```
+
+Current Runners report an effective limit from `1` through `64`; registration
+rejects explicit wire values outside that range. Older Runners report
+`"limit": null`, which remains unknown rather than inferred. Running counts
+include only `running` and `started`; queued counts include `queued` and
+`agent_queued` for Agent Jobs and `queued` for local Jobs. `stop_requested` and
+`recovering` remain separate active lifecycle states. `runtime_status.jobs` and
+compact runtime status also report `active_count`, `running_count`, and
+`queued_count`.
+
+Dynamic counts follow the caller's existing Job authorization filter, while
+the static Runner limit is safe operational metadata. Therefore WebCodex does
+not report `available_slots` or `saturated`: subtracting a caller-visible count
+from a Runner-wide limit would be false when another authorization group owns
+hidden Jobs. These summaries contain no Job output, command, argv, script,
+stdin, environment, token, or credential data.
+
 ## Pairing flow
 
 Pairing creates a short-lived code on the server side that the client exchanges to enroll. This avoids copying long-lived credentials between machines.

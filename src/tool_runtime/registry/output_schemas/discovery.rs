@@ -37,11 +37,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "agents",
-                open_object_schema("Agent counts and client summaries. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
+                open_object_schema("Agent counts and client summaries. Per-client job_concurrency contains the static Runner limit plus caller-visible running and queued counts. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
             ),
             (
                 "jobs",
-                open_object_schema("Bounded runtime job counts, including active_count, recovering_count, reconciled_count, and lost_after_reconcile_count."),
+                open_object_schema("Bounded runtime job counts, including active_count, running_count, queued_count, recovering_count, reconciled_count, and lost_after_reconcile_count."),
             ),
             ("tools", open_object_schema("Runtime tool counts and names.")),
             (
@@ -70,11 +70,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "list_agents" => Some(wrapped_output_schema(vec![
             (
                 "agents",
-                array_schema(open_object_schema("Agent summary."), "Agent summaries."),
+                array_schema(open_object_schema("Agent summary including job_concurrency limit/running/queued facts."), "Agent summaries."),
             ),
             (
                 "clients",
-                array_schema(open_object_schema("Client summary."), "Client summaries."),
+                array_schema(open_object_schema("Client summary including job_concurrency limit/running/queued facts."), "Client summaries."),
             ),
             ("count", schema_type("integer", "Agent/client count.")),
         ])),

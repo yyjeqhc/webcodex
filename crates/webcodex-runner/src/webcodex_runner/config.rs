@@ -5,7 +5,9 @@ use crate::agent_init::{
     DEFAULT_POLL_INTERVAL_MS, TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC,
     TRANSPORT_WEBSOCKET,
 };
-use crate::shell_protocol::{AgentConfigReloadStatus, ShellClientCapabilities};
+use crate::shell_protocol::{
+    AgentConfigReloadStatus, ShellClientCapabilities, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -15,7 +17,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
 pub(crate) const CLIENT_PROFILE_ERROR: &str =
     "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
-pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 2;
+pub(crate) const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
 pub(crate) const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -545,6 +547,7 @@ pub(crate) fn max_concurrent_jobs(cfg: &AgentConfig) -> usize {
     cfg.max_concurrent_jobs
         .unwrap_or(DEFAULT_MAX_CONCURRENT_JOBS)
         .max(1)
+        .min(JOB_INVENTORY_MAX_ACTIVE_JOBS)
 }
 
 fn default_client_base_dir() -> Result<PathBuf, String> {

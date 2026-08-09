@@ -335,6 +335,7 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
             policy: None,
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
         })
         .await
@@ -849,6 +850,7 @@ async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_i
         .register(ShellClientRegisterRequest {
             process_started_at: None,
             build: None,
+            job_concurrency_limit: None,
             job_inventory: None,
             client_id: "mcp-client".to_string(),
             agent_instance_id: "inst".to_string(),

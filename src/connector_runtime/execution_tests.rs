@@ -103,6 +103,7 @@ pub(crate) async fn console_fixture() -> ConsoleFixture {
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "laptop".into(),
                 agent_instance_id: "instance-b".into(),
@@ -159,6 +160,7 @@ async fn fixture_built(
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),
@@ -547,6 +549,7 @@ async fn connector_readiness_uses_registered_agent_capabilities() {
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),
@@ -1895,6 +1898,7 @@ async fn old_agent_cannot_receive_a_structured_validation_job() {
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),
@@ -3123,6 +3127,7 @@ async fn read_only_commands_run_is_denied_even_when_agent_advertises_sandbox() {
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),
@@ -3179,6 +3184,7 @@ async fn enable_inspect_sandbox(fixture: &Fixture) {
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),
@@ -3677,6 +3683,7 @@ async fn manifestless_python_unittest_checks_finish_with_clean_result() {
             ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: "hosted".into(),
                 agent_instance_id: "instance".into(),

@@ -14,7 +14,9 @@ use super::{
     now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
     TRANSPORT_POLLING,
 };
-use crate::shell_protocol::{ShellClientRegisterRequest, ShellClientView};
+use crate::shell_protocol::{
+    ShellClientRegisterRequest, ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+};
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -48,6 +50,14 @@ impl ShellClientRegistry {
         validate_optional_field(&body.owner, "owner")?;
         validate_optional_field(&body.hostname, "hostname")?;
         validate_project_summary_count(body.projects.as_deref())?;
+        if body
+            .job_concurrency_limit
+            .is_some_and(|limit| !(1..=JOB_INVENTORY_MAX_ACTIVE_JOBS).contains(&limit))
+        {
+            return Err(format!(
+                "job_concurrency_limit must be between 1 and {JOB_INVENTORY_MAX_ACTIVE_JOBS}"
+            ));
+        }
 
         let client_id = body.client_id.trim().to_string();
         let agent_instance_id = body.agent_instance_id.trim().to_string();
@@ -81,6 +91,7 @@ impl ShellClientRegistry {
             disconnected_at: None,
             process_started_at: body.process_started_at,
             build: body.build,
+            job_concurrency_limit: body.job_concurrency_limit,
             projected_structured_terminal_suppressions: VecDeque::new(),
         };
         match (
@@ -844,6 +855,7 @@ impl ShellClientRegistry {
             disconnected_at: client.disconnected_at,
             process_started_at: client.process_started_at,
             build: client.build.clone(),
+            job_concurrency_limit: client.job_concurrency_limit,
         })
     }
 }

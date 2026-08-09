@@ -27,7 +27,7 @@ Verify these facts against current code before implementation; the paths below a
 - structured Cargo validation already demonstrates the desired handoff pattern: start exactly one execution, wait for a bounded synchronous grace window, then expose the same execution as a Job if it is still running.
 - Job observation already has opaque Job-bound `observation_token` values and bounded wait outcomes. New observation APIs should reuse that model instead of inventing another revision mechanism.
 - the polling Runner currently backgrounds persistent-shell work specially, while ordinary polling dispatch waits for worker completion before the next poll. Long ordinary work can therefore starve transport progress even though execution itself is running correctly.
-- the Runner default `max_concurrent_jobs` remains conservative. Concurrency tuning is useful, but it is secondary to correct dispatch and observation semantics.
+- the Runner defaults `max_concurrent_jobs` to four while retaining the existing deterministic, restart-required operator override and an effective range of 1 through 64. The upper normalization point is the unchanged hard active Job inventory bound, not a new scheduler policy.
 
 ## 3. Core design invariants
 
@@ -380,12 +380,48 @@ progress. Results may complete out of dequeue order and remain correlated by
 `request_id`. WebSocket and QUIC retain their existing background
 `spawn_blocking` dispatch behavior.
 
-#### Phase E2 — practical concurrency tuning (deferred)
+#### Phase E2 — practical concurrency tuning (implemented)
 
-Deployment concurrency tuning, model/operator running/queued/limit
-observability, and fairness or scheduling beyond the fixed E1 polling-dispatch
-guarantee remain deferred. The E1 worker bound is not a Job execution limit and
-is not tied to `max_concurrent_jobs`.
+The Runner's deterministic default Job execution concurrency is four. An
+explicit `max_concurrent_jobs = N` remains supported, has an effective range of
+1 through 64, and remains restart-required rather than hot-reloadable. Zero
+normalizes to one, and values above 64 normalize to 64.
+`JobManager` continues to own the existing per-client slot reservation,
+bounded in-memory queue, terminal slot release, and eligible FIFO promotion.
+Promotion starts the original queued Job and request exactly once with the
+same `job_id`; no scheduler, priority, adaptive host tuning, or replacement
+dispatch was introduced. The 64 ceiling is the existing
+`JOB_INVENTORY_MAX_ACTIVE_JOBS` hard bound: Runner inventory must contain every
+active Job or reject further starts. The active inventory constant remains
+unchanged; using it to bound effective concurrency adds no smaller scheduler
+policy.
+
+Polling dispatch capacity remains independently fixed at two in-flight
+requests. It is transport progress capacity, not Job execution concurrency,
+and is not coupled to the effective `max_concurrent_jobs` range.
+
+Runner registration additively reports the effective static limit as
+`job_concurrency_limit`, so it contains only 1 through 64. Older Runner
+registrations omit the field and remain unknown; the Server does not infer it
+from capabilities, protocol version, inventory, or observed state. The field
+is safe operational metadata and adds no capability bit, acknowledgement, or
+request/response round trip.
+
+The Server derives caller-visible concurrency state from canonical,
+authorization-filtered Job records:
+
+- running: `running` or `started`;
+- queued: `queued` or `agent_queued`.
+
+`stop_requested`, `recovering`, and terminal states retain their existing
+lifecycle meaning. `list_agents` and full `runtime_status` client summaries
+expose `job_concurrency { limit, running, queued }`; the top-level
+`runtime_status.jobs` summary exposes `active_count`, `running_count`, and
+`queued_count`; compact runtime status retains those three counts. Because the
+dynamic counts are authorization-filtered while the static limit is
+Runner-wide, WebCodex deliberately exposes neither `available_slots` nor a
+derived `saturated` value. No command, argv, script, stdin, environment,
+stdout, stderr, token, or credential content enters these fields.
 
 ### Phase F — Windows output normalization
 

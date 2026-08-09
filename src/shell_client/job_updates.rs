@@ -966,6 +966,34 @@ impl ShellClientRegistry {
         auth: Option<&crate::auth::AuthContext>,
         limit: Option<usize>,
     ) -> Vec<ShellJobInfo> {
+        self.visible_job_records_for_auth(auth)
+            .await
+            .into_iter()
+            .take(limit.unwrap_or(20).clamp(1, 100))
+            .map(|job| job_view(&job))
+            .collect()
+    }
+
+    /// Complete caller-visible Agent Job set for aggregate observability.
+    /// Unlike the public list projection, this has no display pagination:
+    /// runtime counts must not silently drop an older active Job behind newer
+    /// records. Authorization and public-visibility filtering are identical
+    /// to `list_jobs_for_auth`.
+    pub(crate) async fn list_all_jobs_for_auth(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Vec<ShellJobInfo> {
+        self.visible_job_records_for_auth(auth)
+            .await
+            .into_iter()
+            .map(|job| job_view(&job))
+            .collect()
+    }
+
+    async fn visible_job_records_for_auth(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Vec<ShellJobRecord> {
         let mut inner = self.inner.lock().await;
         let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
         for job_id in job_ids {
@@ -979,10 +1007,7 @@ impl ShellClientRegistry {
             .cloned()
             .collect::<Vec<_>>();
         jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        jobs.into_iter()
-            .take(limit.unwrap_or(20).clamp(1, 100))
-            .map(|job| job_view(&job))
-            .collect()
+        jobs
     }
 
     /// Count active jobs for one exact runtime project without applying the

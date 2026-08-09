@@ -489,6 +489,7 @@ mod tests {
             .register(ShellClientRegisterRequest {
                 process_started_at: None,
                 build: None,
+                job_concurrency_limit: None,
                 job_inventory: None,
                 client_id: client_id.to_string(),
                 agent_instance_id: "inst".to_string(),

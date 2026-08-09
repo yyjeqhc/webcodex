@@ -76,6 +76,7 @@ fn register_request(instance: &str, inventory: ShellJobInventory) -> ShellClient
         policy: None,
         process_started_at: Some(1_700_000_000),
         build: None,
+        job_concurrency_limit: None,
         job_inventory: Some(inventory),
     }
 }

@@ -9,6 +9,13 @@ fn runtime_accepted_flattened_action_fields() -> std::collections::BTreeSet<Stri
     fields
 }
 
+fn flattened_schema_alternatives(schema: &Value) -> Vec<&Value> {
+    schema["anyOf"].as_array().map_or_else(
+        || vec![schema],
+        |alternatives| alternatives.iter().collect(),
+    )
+}
+
 #[test]
 fn openapi_flattened_session_mode_includes_inspect() {
     let spec = build_openapi_spec();
@@ -502,13 +509,29 @@ fn openapi_read_files_is_available_through_strict_flattened_runtime_fields() {
         .unwrap();
     assert!(description.contains("read_file"));
     assert!(description.contains("read_files"));
+    assert!(description.contains("observe_jobs"));
 
     let items = &tool_call["properties"]["items"];
-    assert_eq!(items["type"], "array");
-    assert_eq!(items["minItems"], 1);
-    assert_eq!(items["maxItems"], 8);
-    assert_eq!(items["items"]["additionalProperties"], false);
-    assert_eq!(items["items"]["required"], json!(["path"]));
+    let alternatives = flattened_schema_alternatives(items);
+    let read_files = alternatives
+        .iter()
+        .copied()
+        .find(|alternative| alternative["items"]["required"] == json!(["path"]))
+        .expect("flattened items must retain the read_files array shape");
+    let observe_jobs = alternatives
+        .iter()
+        .copied()
+        .find(|alternative| alternative["items"]["required"] == json!(["job_id"]))
+        .expect("flattened items must retain the observe_jobs array shape");
+    for alternative in [read_files, observe_jobs] {
+        assert_eq!(alternative["type"], "array");
+        assert_eq!(alternative["minItems"], 1);
+        assert_eq!(alternative["maxItems"], 8);
+        assert_eq!(alternative["items"]["type"], "object");
+        assert_eq!(alternative["items"]["additionalProperties"], false);
+    }
+    assert!(read_files["items"]["properties"].get("path").is_some());
+    assert!(observe_jobs["items"]["properties"].get("job_id").is_some());
     assert_eq!(tool_call["additionalProperties"], false);
 
     let examples = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
@@ -520,6 +543,23 @@ fn openapi_read_files_is_available_through_strict_flattened_runtime_fields() {
             .unwrap()
             .len(),
         2
+    );
+}
+
+#[test]
+fn openapi_dynamic_flattened_arg_collisions_are_independent_of_tool_order() {
+    let mut forward = json!({"ToolCallRequest": {"properties": {}}});
+    let mut reverse = json!({"ToolCallRequest": {"properties": {}}});
+    let specs = registered_tool_specs();
+    let mut reversed_specs = specs.clone();
+    reversed_specs.reverse();
+
+    insert_tool_call_request_flattened_arg_properties_for_specs(&mut forward, specs);
+    insert_tool_call_request_flattened_arg_properties_for_specs(&mut reverse, reversed_specs);
+
+    assert_eq!(
+        forward["ToolCallRequest"]["properties"],
+        reverse["ToolCallRequest"]["properties"]
     );
 }
 
@@ -836,7 +876,11 @@ fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
         flattened_props["result_mode"]["enum"],
         json!(["matches", "files_with_matches", "count"])
     );
-    assert_eq!(flattened_props["timeout_secs"]["type"], "integer");
+    assert!(
+        flattened_schema_alternatives(&flattened_props["timeout_secs"])
+            .iter()
+            .all(|schema| schema["type"] == "integer")
+    );
     // Search timeout is server-clamped; the dedicated SearchProjectTextRequest
     // schema must not reject out-of-range integers with minimum/maximum.
     // ToolCallRequest.timeout_secs is a shared flattened field also used by

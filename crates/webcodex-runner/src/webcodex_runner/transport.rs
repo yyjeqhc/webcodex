@@ -21,8 +21,8 @@ use crate::shell_protocol::{
 };
 use crate::{
     build_register_request_with_provider_status, dispatch_request, handle_one_poll, register,
-    AgentHttpError, AgentHttpErrorKind, CommandResult, JobManager, PollingRecoveryAction,
-    RegisterRecoveryAction,
+    AgentHttpError, AgentHttpErrorKind, CommandResult, JobManager, PollingDispatchSupervisor,
+    PollingRecoveryAction, RegisterRecoveryAction,
 };
 use reqwest::blocking::Client;
 use std::fmt;
@@ -1512,6 +1512,90 @@ fn run_polling_agent(
     run_polling_agent_with_shutdown(cfg, once, agent_instance_id, shutdown, runtime)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PollFailureDirective {
+    Continue,
+    Shutdown,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_poll_failure(
+    error: crate::PollError,
+    cfg: &AgentConfig,
+    runtime: &AgentRuntimeState,
+    shutdown: &AtomicBool,
+    registered: &mut bool,
+    recovering: &mut bool,
+    session_refreshed_during_recovery: &mut bool,
+    recovery_backoff: &mut RetryBackoff,
+) -> Result<PollFailureDirective, String> {
+    // Polling has no durable transport lease to prove a Server still knows
+    // these process handles. Fail closed at the first recovery boundary
+    // instead of advertising false survival after a Server restart or lost
+    // registration.
+    runtime
+        .persistent_shells
+        .close_all("runner_transport_disconnected");
+    match error.recovery_action() {
+        PollingRecoveryAction::Shutdown => Ok(PollFailureDirective::Shutdown),
+        PollingRecoveryAction::Fatal => Err(error.into_message()),
+        PollingRecoveryAction::RetryPoll => {
+            *recovering = true;
+            // Refresh the same-instance registration once per recovery
+            // episode. This covers a server restart that lost in-memory
+            // session state without registering on every repeated 5xx.
+            if !*session_refreshed_during_recovery {
+                *registered = false;
+            }
+            let delay = recovery_backoff.next_delay();
+            eprintln!(
+                "webcodex-runner transient poll failure; retrying delay={} error={}",
+                format_delay(delay),
+                concise_log_error(&error.to_string(), &cfg.token)
+            );
+            if sleep_or_shutdown(delay, shutdown) {
+                Ok(PollFailureDirective::Shutdown)
+            } else {
+                Ok(PollFailureDirective::Continue)
+            }
+        }
+        PollingRecoveryAction::ReRegister => {
+            *recovering = true;
+            *registered = false;
+            *session_refreshed_during_recovery = false;
+            let delay = recovery_backoff.next_delay();
+            eprintln!(
+                "webcodex-runner polling session lost; re-registering delay={} error={}",
+                format_delay(delay),
+                concise_log_error(&error.to_string(), &cfg.token)
+            );
+            if sleep_or_shutdown(delay, shutdown) {
+                Ok(PollFailureDirective::Shutdown)
+            } else {
+                Ok(PollFailureDirective::Continue)
+            }
+        }
+    }
+}
+
+fn complete_polling_after_shutdown(
+    runtime: &AgentRuntimeState,
+    polling_dispatches: &mut PollingDispatchSupervisor,
+    project_cache: &mut AgentProjectCache,
+) -> Result<(), String> {
+    // Match the former synchronous dispatch race: a fatal submission response
+    // that has already reached a worker gets a bounded chance to reach polling
+    // control instead of being masked by a simultaneous clean shutdown.
+    if let Err(error) =
+        polling_dispatches.wait_for_shutdown_outcome(project_cache, Duration::from_millis(500))
+    {
+        if error.recovery_action() == PollingRecoveryAction::Fatal {
+            return Err(error.into_message());
+        }
+    }
+    complete_polling_shutdown(runtime)
+}
+
 fn run_polling_agent_with_shutdown(
     cfg: AgentConfig,
     once: bool,
@@ -1525,6 +1609,10 @@ fn run_polling_agent_with_shutdown(
         .map_err(|e| format!("failed to create http client: {}", e))?;
     let jobs = runtime.jobs.clone();
     let mut project_cache = AgentProjectCache::default();
+    let mut polling_dispatches = PollingDispatchSupervisor::new(
+        Arc::clone(&runtime.background_threads),
+        runtime.dispatches.clone(),
+    );
     let mut registered = false;
     let mut recovering = false;
     let mut session_refreshed_during_recovery = false;
@@ -1532,7 +1620,32 @@ fn run_polling_agent_with_shutdown(
     let mut lease_conflict_started: Option<Instant> = None;
     loop {
         if shutdown.load(Ordering::SeqCst) {
-            return complete_polling_shutdown(runtime);
+            return complete_polling_after_shutdown(
+                runtime,
+                &mut polling_dispatches,
+                &mut project_cache,
+            );
+        }
+        if let Err(error) = polling_dispatches.drain_completed(&mut project_cache) {
+            match handle_poll_failure(
+                error,
+                &cfg,
+                runtime,
+                shutdown.as_ref(),
+                &mut registered,
+                &mut recovering,
+                &mut session_refreshed_during_recovery,
+                &mut recovery_backoff,
+            )? {
+                PollFailureDirective::Continue => continue,
+                PollFailureDirective::Shutdown => {
+                    return complete_polling_after_shutdown(
+                        runtime,
+                        &mut polling_dispatches,
+                        &mut project_cache,
+                    );
+                }
+            }
         }
         if !registered {
             match register(
@@ -1582,7 +1695,11 @@ fn run_polling_agent_with_shutdown(
                             concise_log_error(&error.to_string(), &cfg.token)
                         );
                         if sleep_or_shutdown(delay, shutdown.as_ref()) {
-                            return complete_polling_shutdown(runtime);
+                            return complete_polling_after_shutdown(
+                                runtime,
+                                &mut polling_dispatches,
+                                &mut project_cache,
+                            );
                         }
                     }
                     RegisterRecoveryAction::WaitForLease => {
@@ -1603,14 +1720,50 @@ fn run_polling_agent_with_shutdown(
                             format_delay(delay)
                         );
                         if sleep_or_shutdown(delay, shutdown.as_ref()) {
-                            return complete_polling_shutdown(runtime);
+                            return complete_polling_after_shutdown(
+                                runtime,
+                                &mut polling_dispatches,
+                                &mut project_cache,
+                            );
                         }
                     }
                 },
             }
             continue;
         }
-        match handle_one_poll(
+        if !once {
+            if let Err(error) = polling_dispatches
+                .wait_for_capacity_or_shutdown(&mut project_cache, shutdown.as_ref())
+            {
+                match handle_poll_failure(
+                    error,
+                    &cfg,
+                    runtime,
+                    shutdown.as_ref(),
+                    &mut registered,
+                    &mut recovering,
+                    &mut session_refreshed_during_recovery,
+                    &mut recovery_backoff,
+                )? {
+                    PollFailureDirective::Continue => continue,
+                    PollFailureDirective::Shutdown => {
+                        return complete_polling_after_shutdown(
+                            runtime,
+                            &mut polling_dispatches,
+                            &mut project_cache,
+                        );
+                    }
+                }
+            }
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            return complete_polling_after_shutdown(
+                runtime,
+                &mut polling_dispatches,
+                &mut project_cache,
+            );
+        }
+        let mut poll_result = handle_one_poll(
             &client,
             &cfg,
             &runtime.config,
@@ -1621,8 +1774,15 @@ fn run_polling_agent_with_shutdown(
             &runtime.lsp,
             &shutdown,
             &runtime.dispatches,
+            &mut polling_dispatches,
             once,
-        ) {
+        );
+        // A background fatal result submission takes precedence over an
+        // unrelated poll response from the same turn.
+        if let Err(error) = polling_dispatches.drain_completed(&mut project_cache) {
+            poll_result = Err(error);
+        }
+        match poll_result {
             Ok(ran_request) => {
                 recovery_backoff.reset();
                 lease_conflict_started = None;
@@ -1640,7 +1800,11 @@ fn run_polling_agent_with_shutdown(
                             Duration::from_millis(cfg.poll_interval_ms),
                             shutdown.as_ref(),
                         ) {
-                            return complete_polling_shutdown(runtime);
+                            return complete_polling_after_shutdown(
+                                runtime,
+                                &mut polling_dispatches,
+                                &mut project_cache,
+                            );
                         }
                     }
                     return Ok(());
@@ -1650,58 +1814,33 @@ fn run_polling_agent_with_shutdown(
                         Duration::from_millis(cfg.poll_interval_ms),
                         shutdown.as_ref(),
                     ) {
-                        return complete_polling_shutdown(runtime);
+                        return complete_polling_after_shutdown(
+                            runtime,
+                            &mut polling_dispatches,
+                            &mut project_cache,
+                        );
                     }
                 }
             }
-            Err(e) => {
-                // Polling has no durable transport lease to prove a Server
-                // still knows these process handles. Fail closed at the first
-                // recovery boundary instead of advertising false survival
-                // after a Server restart or lost registration.
-                runtime
-                    .persistent_shells
-                    .close_all("runner_transport_disconnected");
-                match e.recovery_action() {
-                    PollingRecoveryAction::Shutdown => {
-                        return complete_polling_shutdown(runtime);
-                    }
-                    PollingRecoveryAction::Fatal => return Err(e.into_message()),
-                    PollingRecoveryAction::RetryPoll => {
-                        recovering = true;
-                        // Refresh the same-instance registration once per
-                        // recovery episode. This covers a server restart that
-                        // lost in-memory session state without registering on
-                        // every repeated 5xx response.
-                        if !session_refreshed_during_recovery {
-                            registered = false;
-                        }
-                        let delay = recovery_backoff.next_delay();
-                        eprintln!(
-                            "webcodex-runner transient poll failure; retrying delay={} error={}",
-                            format_delay(delay),
-                            concise_log_error(&e.to_string(), &cfg.token)
-                        );
-                        if sleep_or_shutdown(delay, shutdown.as_ref()) {
-                            return complete_polling_shutdown(runtime);
-                        }
-                    }
-                    PollingRecoveryAction::ReRegister => {
-                        recovering = true;
-                        registered = false;
-                        session_refreshed_during_recovery = false;
-                        let delay = recovery_backoff.next_delay();
-                        eprintln!(
-                            "webcodex-runner polling session lost; re-registering delay={} error={}",
-                            format_delay(delay),
-                            concise_log_error(&e.to_string(), &cfg.token)
-                        );
-                        if sleep_or_shutdown(delay, shutdown.as_ref()) {
-                            return complete_polling_shutdown(runtime);
-                        }
-                    }
+            Err(error) => match handle_poll_failure(
+                error,
+                &cfg,
+                runtime,
+                shutdown.as_ref(),
+                &mut registered,
+                &mut recovering,
+                &mut session_refreshed_during_recovery,
+                &mut recovery_backoff,
+            )? {
+                PollFailureDirective::Continue => {}
+                PollFailureDirective::Shutdown => {
+                    return complete_polling_after_shutdown(
+                        runtime,
+                        &mut polling_dispatches,
+                        &mut project_cache,
+                    );
                 }
-            }
+            },
         }
     }
 }

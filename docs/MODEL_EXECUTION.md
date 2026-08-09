@@ -354,7 +354,38 @@ launch and concurrency/dispatch work remain out of scope.
 
 ### Phase E — polling dispatch reliability and practical concurrency
 
-Ensure ordinary long dispatch cannot pin the polling loop. Add focused observability for running/queued/limit state and tune deployment concurrency only after dispatch semantics are correct.
+#### Phase E1 — bounded non-pinning polling dispatch (implemented)
+
+Normal polling dispatch is process-local, bounded, and no longer pins the
+polling control loop behind one ordinary long request. After the Server
+atomically dequeues a request, the Runner hands it exactly once to a background
+dispatch worker and may poll again while capacity remains. The fixed E1 bound
+is two in-flight polling dispatches, the smallest value that permits one long
+ordinary request plus a later Job/control or persistent-shell close request.
+There is no Runner-side pending queue. When both slots are occupied, polling
+waits for a worker completion before dequeuing more Server work.
+
+Worker completions carry the correlated request id, dispatch outcome, and a
+project-cache invalidation fact back to polling control. Fatal result submission
+errors retain the existing structured `PollError::from_submit` classification
+and stop that polling transport episode; permanent result rejection and
+transient retry exhaustion remain non-replaying delivery outcomes. Every worker
+is covered by the existing dispatch activity tracker through result submission
+and its thread handle remains in the existing bounded shutdown accounting.
+`--once` keeps its synchronous one-request and Job-drain contract.
+
+This changes neither Server dequeue truth nor execution identity: a request is
+not cancelled, reconstructed, requeued, or re-executed to make polling
+progress. Results may complete out of dequeue order and remain correlated by
+`request_id`. WebSocket and QUIC retain their existing background
+`spawn_blocking` dispatch behavior.
+
+#### Phase E2 — practical concurrency tuning (deferred)
+
+Deployment concurrency tuning, model/operator running/queued/limit
+observability, and fairness or scheduling beyond the fixed E1 polling-dispatch
+guarantee remain deferred. The E1 worker bound is not a Job execution limit and
+is not tied to `max_concurrent_jobs`.
 
 ### Phase F — Windows output normalization
 

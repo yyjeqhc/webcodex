@@ -9,7 +9,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing_subscriber::EnvFilter;
 use webcodex_process::{GracefulTermination, ManagedChild};
-use webcodex_runner::shutdown::{lock_unpoison, ActivityTracker};
+use webcodex_runner::shutdown::{lock_unpoison, ActivityTracker, BackgroundThreads};
 
 #[cfg(test)]
 #[path = "webcodex_runner/job_manager_tests.rs"]
@@ -802,6 +802,282 @@ impl PollError {
 impl std::fmt::Display for PollError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message)
+    }
+}
+
+/// Polling needs enough independent dispatch capacity for one long ordinary
+/// request plus a later request (notably a Job start/stop or persistent-shell
+/// close), but E1 deliberately does not introduce deployment tuning. Two is
+/// the smallest bound that removes the one-request starvation failure while
+/// keeping the process-local OS-thread surface conservative.
+pub(crate) const POLLING_DISPATCH_MAX_IN_FLIGHT: usize = 2;
+
+struct PollingDispatch {
+    request_id: String,
+    project_cache_invalidation_required: bool,
+    sink: AgentSink,
+    config: Arc<HotAgentConfig>,
+    runtime: Arc<ReloadableAgentConfig>,
+    jobs: JobManager,
+    persistent_shells: webcodex_runner::PersistentShellManager,
+    projects_dir: PathBuf,
+    lsp: webcodex_runner::LspSupervisor,
+    request: ShellAgentShellRequest,
+}
+
+impl PollingDispatch {
+    fn run(self) -> Result<bool, SubmitResultError> {
+        dispatch_request(
+            &self.sink,
+            &self.config,
+            &self.runtime,
+            &self.jobs,
+            &self.persistent_shells,
+            &self.projects_dir,
+            &self.lsp,
+            self.request,
+        )
+    }
+}
+
+struct PollingDispatchCompletion {
+    request_id: String,
+    project_cache_invalidation_required: bool,
+    dispatch_result: Result<bool, SubmitResultError>,
+}
+
+/// Sends a completion even if a worker unwinds. It is declared before the
+/// ActivityGuard in the worker so reverse drop order releases the activity
+/// slot only after dispatch and result submission, then publishes completion.
+struct PollingDispatchCompletionOnDrop {
+    completion_tx: mpsc::SyncSender<PollingDispatchCompletion>,
+    request_id: String,
+    project_cache_invalidation_required: bool,
+    dispatch_result: Option<Result<bool, SubmitResultError>>,
+}
+
+impl PollingDispatchCompletionOnDrop {
+    fn new(
+        completion_tx: mpsc::SyncSender<PollingDispatchCompletion>,
+        request_id: String,
+        project_cache_invalidation_required: bool,
+    ) -> Self {
+        Self {
+            completion_tx,
+            request_id,
+            project_cache_invalidation_required,
+            dispatch_result: None,
+        }
+    }
+
+    fn complete(&mut self, result: Result<bool, SubmitResultError>) {
+        self.dispatch_result = Some(result);
+    }
+}
+
+impl Drop for PollingDispatchCompletionOnDrop {
+    fn drop(&mut self) {
+        let dispatch_result = self.dispatch_result.take().unwrap_or_else(|| {
+            Err(SubmitResultError::TransportClosed(
+                "polling dispatch worker closed unexpectedly".to_string(),
+            ))
+        });
+        let _ = self.completion_tx.send(PollingDispatchCompletion {
+            request_id: std::mem::take(&mut self.request_id),
+            project_cache_invalidation_required: self.project_cache_invalidation_required,
+            dispatch_result,
+        });
+    }
+}
+
+/// Process-local coordination for normal polling dispatches. The Server queue
+/// remains the only pending-work queue: this supervisor admits at most two
+/// already-dequeued requests, creates no local holding queue, and returns
+/// worker completion/fatal submission outcomes to the polling control loop.
+pub(crate) struct PollingDispatchSupervisor {
+    completion_tx: mpsc::SyncSender<PollingDispatchCompletion>,
+    completion_rx: mpsc::Receiver<PollingDispatchCompletion>,
+    in_flight: usize,
+    background_threads: Arc<BackgroundThreads>,
+    dispatches: ActivityTracker,
+}
+
+impl PollingDispatchSupervisor {
+    pub(crate) fn new(
+        background_threads: Arc<BackgroundThreads>,
+        dispatches: ActivityTracker,
+    ) -> Self {
+        let (completion_tx, completion_rx) = mpsc::sync_channel(POLLING_DISPATCH_MAX_IN_FLIGHT);
+        Self {
+            completion_tx,
+            completion_rx,
+            in_flight: 0,
+            background_threads,
+            dispatches,
+        }
+    }
+
+    fn has_capacity(&self) -> bool {
+        self.in_flight < POLLING_DISPATCH_MAX_IN_FLIGHT
+    }
+
+    fn spawn(&mut self, dispatch: PollingDispatch) -> Result<(), PollError> {
+        if !self.has_capacity() {
+            return Err(PollError::new(
+                PollErrorKind::Config,
+                "polling dispatch capacity invariant violated",
+            ));
+        }
+        let completion_tx = self.completion_tx.clone();
+        let dispatch_guard = self.dispatches.enter();
+        let request_id = dispatch.request_id.clone();
+        let project_cache_invalidation_required = dispatch.project_cache_invalidation_required;
+        let handle = std::thread::Builder::new()
+            .name("webcodex-poll-dispatch".to_string())
+            .spawn(move || {
+                let mut completion = PollingDispatchCompletionOnDrop::new(
+                    completion_tx,
+                    request_id,
+                    project_cache_invalidation_required,
+                );
+                let _dispatch_guard = dispatch_guard;
+                completion.complete(dispatch.run());
+            })
+            .map_err(|error| {
+                PollError::new(
+                    PollErrorKind::Config,
+                    format!("failed to start polling dispatch worker: {error}"),
+                )
+            })?;
+        self.in_flight += 1;
+        self.background_threads.register(handle);
+        Ok(())
+    }
+
+    fn record_completion(
+        &mut self,
+        project_cache: &mut AgentProjectCache,
+        completion: PollingDispatchCompletion,
+    ) -> Result<bool, SubmitResultError> {
+        self.in_flight = self.in_flight.checked_sub(1).unwrap_or_else(|| {
+            debug_assert!(false, "polling completion without an in-flight dispatch");
+            0
+        });
+        let _request_id = completion.request_id;
+        if completion.project_cache_invalidation_required && completion.dispatch_result.is_ok() {
+            project_cache.invalidate();
+        }
+        completion.dispatch_result
+    }
+
+    /// Inspect every completion currently available. This is called before
+    /// each poll and after each poll/dispatch turn, so a fatal result delivery
+    /// failure cannot be silently discarded by background dispatch.
+    pub(crate) fn drain_completed(
+        &mut self,
+        project_cache: &mut AgentProjectCache,
+    ) -> Result<(), PollError> {
+        loop {
+            match self.completion_rx.try_recv() {
+                Ok(completion) => {
+                    let result = self
+                        .record_completion(project_cache, completion)
+                        .map(|_| ())
+                        .map_err(PollError::from_submit);
+                    let _ = self.background_threads.reap_finished();
+                    result?;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    let _ = self.background_threads.reap_finished();
+                    return Ok(());
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(PollError::from_submit(SubmitResultError::TransportClosed(
+                        "polling dispatch completion channel closed".to_string(),
+                    )));
+                }
+            }
+        }
+    }
+
+    /// Apply backpressure before another Server dequeue. There is no local
+    /// pending queue: when both slots are occupied the control loop waits for
+    /// one worker completion (or shutdown) and only then polls again.
+    pub(crate) fn wait_for_capacity_or_shutdown(
+        &mut self,
+        project_cache: &mut AgentProjectCache,
+        shutdown: &AtomicBool,
+    ) -> Result<(), PollError> {
+        while !self.has_capacity() {
+            if shutdown.load(Ordering::SeqCst) {
+                return Err(PollError::from_submit(SubmitResultError::Shutdown(
+                    "process shutdown".to_string(),
+                )));
+            }
+            match self.completion_rx.recv_timeout(Duration::from_millis(25)) {
+                Ok(completion) => {
+                    let result = self
+                        .record_completion(project_cache, completion)
+                        .map(|_| ())
+                        .map_err(PollError::from_submit);
+                    let _ = self.background_threads.reap_finished();
+                    result?;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(PollError::from_submit(SubmitResultError::TransportClosed(
+                        "polling dispatch completion channel closed".to_string(),
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Preserve the former synchronous dispatch's bounded shutdown race:
+    /// already-returned fatal auth/protocol/config outcomes win over clean
+    /// shutdown. A worker-reported Shutdown is remembered while remaining
+    /// completions get a short chance to expose a sibling fatal outcome.
+    pub(crate) fn wait_for_shutdown_outcome(
+        &mut self,
+        project_cache: &mut AgentProjectCache,
+        wait: Duration,
+    ) -> Result<(), PollError> {
+        let deadline = Instant::now() + wait;
+        let mut shutdown_error = None;
+        while self.in_flight > 0 && Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self
+                .completion_rx
+                .recv_timeout(remaining.min(Duration::from_millis(25)))
+            {
+                Ok(completion) => {
+                    match self.record_completion(project_cache, completion) {
+                        Ok(_) => {}
+                        Err(error @ SubmitResultError::Shutdown(_)) => {
+                            shutdown_error = Some(error);
+                        }
+                        Err(error) => {
+                            let _ = self.background_threads.reap_finished();
+                            return Err(PollError::from_submit(error));
+                        }
+                    }
+                    let _ = self.background_threads.reap_finished();
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(PollError::from_submit(SubmitResultError::TransportClosed(
+                        "polling dispatch completion channel closed".to_string(),
+                    )));
+                }
+            }
+        }
+        let _ = self.background_threads.reap_finished();
+        if let Some(error) = shutdown_error {
+            Err(PollError::from_submit(error))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -3967,6 +4243,7 @@ fn handle_one_poll(
     lsp: &webcodex_runner::LspSupervisor,
     shutdown: &Arc<AtomicBool>,
     dispatches: &ActivityTracker,
+    polling_dispatches: &mut PollingDispatchSupervisor,
     once: bool,
 ) -> Result<bool, PollError> {
     let metadata_config = runtime.snapshot();
@@ -4035,30 +4312,41 @@ fn handle_one_poll(
         Err(error) => return Err(PollError::new(PollErrorKind::Config, error)),
     };
     let lsp = lsp.clone();
-    let dispatch_guard = dispatches.enter();
-    let persistent_shell_background = request.kind == "persistent_shell" && !once;
-    let (result_tx, result_rx) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let _dispatch_guard = dispatch_guard;
-        let result = dispatch_request(
-            &sink,
-            &hot,
-            &runtime,
-            &jobs,
-            &persistent_shells,
-            &projects_dir,
-            &lsp,
-            request,
-        );
-        let _ = result_tx.send(result);
-    });
-    // Persistent-shell operations must not pin the polling loop behind a
-    // long-running command. A later close request needs its own poll turn so
-    // it can terminate the process group; the dispatch tracker keeps the
-    // worker accounted for during normal shutdown.
-    if persistent_shell_background {
+    let dispatch = PollingDispatch {
+        request_id: request.request_id.clone(),
+        project_cache_invalidation_required: project_op,
+        sink,
+        config: hot,
+        runtime,
+        jobs,
+        persistent_shells,
+        projects_dir,
+        lsp,
+        request,
+    };
+    if !once {
+        polling_dispatches.spawn(dispatch)?;
         return Ok(true);
     }
+
+    // `--once` deliberately retains its existing synchronous contract: the
+    // one delivered ordinary request stays tracked until dispatch and result
+    // submission finish, and the caller still drains any Job work afterward.
+    let dispatch_guard = dispatches.enter();
+    let (result_tx, result_rx) = mpsc::sync_channel(1);
+    let handle = std::thread::Builder::new()
+        .name("webcodex-poll-dispatch-once".to_string())
+        .spawn(move || {
+            let _dispatch_guard = dispatch_guard;
+            let _ = result_tx.send(dispatch.run());
+        })
+        .map_err(|error| {
+            PollError::new(
+                PollErrorKind::Config,
+                format!("failed to start polling dispatch worker: {error}"),
+            )
+        })?;
+    polling_dispatches.background_threads.register(handle);
     let result = loop {
         match result_rx.recv_timeout(Duration::from_millis(25)) {
             Ok(result) => break result,
@@ -4090,6 +4378,7 @@ fn handle_one_poll(
     if project_op && result.is_ok() {
         project_cache.invalidate();
     }
+    let _ = polling_dispatches.background_threads.reap_finished();
     result.map_err(PollError::from_submit)
 }
 

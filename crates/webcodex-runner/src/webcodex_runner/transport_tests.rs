@@ -3,6 +3,7 @@ use super::*;
 use crate::shell_protocol::{
     ShellAgentShellRequest, ShellClientCapabilities, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
+use crate::POLLING_DISPATCH_MAX_IN_FLIGHT;
 use futures_util::{SinkExt, StreamExt};
 use std::io::{Read, Write};
 use std::net::{TcpListener as StdTcpListener, TcpStream};
@@ -399,6 +400,7 @@ enum ScriptStep {
         body: &'static str,
     },
     PollDeliver(&'static str),
+    PollDeliverRequest(ShellAgentShellRequest),
     PollEmpty,
     PollResponse {
         status: &'static str,
@@ -419,11 +421,105 @@ enum ScriptStep {
     },
 }
 
+impl ScriptStep {
+    fn expected_path(&self) -> &'static str {
+        match self {
+            Self::Register | Self::RegisterResponse { .. } | Self::RegisterTypedResponse { .. } => {
+                "/api/shell/agent/register"
+            }
+            Self::PollDeliver(_)
+            | Self::PollDeliverRequest(_)
+            | Self::PollEmpty
+            | Self::PollResponse { .. }
+            | Self::PollTypedResponse { .. }
+            | Self::PollOversized { .. }
+            | Self::PollClose => "/api/shell/agent/poll",
+            Self::Result { .. } => "/api/shell/agent/result",
+        }
+    }
+}
+
 struct ScriptedServer {
     server_url: String,
     requests: Arc<Mutex<Vec<(String, String)>>>,
     shutdown: Arc<AtomicBool>,
     handle: thread::JoinHandle<()>,
+}
+
+struct ConcurrentHttpResponse {
+    status: &'static str,
+    content_type: &'static str,
+    body: String,
+}
+
+impl ConcurrentHttpResponse {
+    fn json(body: impl Into<String>) -> Self {
+        Self {
+            status: "200 OK",
+            content_type: "application/json",
+            body: body.into(),
+        }
+    }
+}
+
+struct ConcurrentPollingServer {
+    server_url: String,
+    done: Arc<AtomicBool>,
+    handle: thread::JoinHandle<()>,
+}
+
+impl ConcurrentPollingServer {
+    fn finish(self) {
+        self.done.store(true, Ordering::SeqCst);
+        self.handle.join().unwrap();
+    }
+}
+
+fn start_concurrent_polling_server(
+    handler: Arc<dyn Fn(&str, &str) -> ConcurrentHttpResponse + Send + Sync>,
+) -> ConcurrentPollingServer {
+    let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let done = Arc::new(AtomicBool::new(false));
+    let server_done = Arc::clone(&done);
+    let handle = thread::spawn(move || {
+        let mut connections = Vec::new();
+        while !server_done.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let handler = Arc::clone(&handler);
+                    connections.push(thread::spawn(move || {
+                        let request = read_http_request(&mut stream);
+                        let path = request_path(&request).to_string();
+                        let body = request
+                            .find("\r\n\r\n")
+                            .map(|index| request[index + 4..].to_string())
+                            .unwrap_or_default();
+                        let response = handler(&path, &body);
+                        write_http_response(
+                            &mut stream,
+                            response.status,
+                            response.content_type,
+                            &response.body,
+                        );
+                    }));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("concurrent polling server accept failed: {error}"),
+            }
+        }
+        for connection in connections {
+            connection.join().unwrap();
+        }
+    });
+    ConcurrentPollingServer {
+        server_url: format!("http://{addr}"),
+        done,
+        handle,
+    }
 }
 
 fn sync_file_request(request_id: &str) -> ShellAgentShellRequest {
@@ -456,6 +552,113 @@ fn sync_file_request(request_id: &str) -> ShellAgentShellRequest {
     }
 }
 
+fn polling_shell_request(request_id: &str, cwd: &Path, command: String) -> ShellAgentShellRequest {
+    ShellAgentShellRequest {
+        request_id: request_id.to_string(),
+        client_id: "oe".to_string(),
+        kind: "run_shell".to_string(),
+        job_id: None,
+        cwd: Some(cwd.to_string_lossy().into_owned()),
+        path: None,
+        content: None,
+        max_bytes: None,
+        expected_sha256: None,
+        expected_prefix: None,
+        start_line: None,
+        end_line: None,
+        create_dirs: false,
+        command,
+        process: None,
+        script: None,
+        stdin: None,
+        timeout_secs: 10,
+        requested_by: "tester".to_string(),
+        created_at: 0,
+        validation: None,
+        lsp: None,
+        sandbox: None,
+        job_context: None,
+        persistent_shell: None,
+    }
+}
+
+fn polling_job_request(
+    request_id: &str,
+    job_id: &str,
+    cwd: &Path,
+    command: String,
+) -> ShellAgentShellRequest {
+    let mut request = polling_shell_request(request_id, cwd, command);
+    request.kind = "start_job".to_string();
+    request.job_id = Some(job_id.to_string());
+    request.job_context = Some(crate::test_job_context(cwd, Vec::new()));
+    request
+}
+
+fn polling_persistent_shell_request(
+    request_id: &str,
+    action: &str,
+    shell_id: &str,
+    command: Option<String>,
+) -> ShellAgentShellRequest {
+    let mut request = sync_file_request(request_id);
+    request.kind = "persistent_shell".to_string();
+    request.command = command.clone().unwrap_or_default();
+    request.timeout_secs = 30;
+    request.persistent_shell = Some(crate::shell_protocol::PersistentShellRequest {
+        action: action.to_string(),
+        shell_id: shell_id.to_string(),
+        workflow_session_id: "wc_sess_polling_e1".to_string(),
+        runtime_project_id: "agent:oe:demo".to_string(),
+        cwd: None,
+        shell: Some("bash".to_string()),
+        command,
+        timeout_secs: Some(30),
+        purpose: Some("test".to_string()),
+    });
+    request
+}
+
+#[cfg(unix)]
+fn posix_quote(value: &Path) -> String {
+    super::super::shell::shell_quote(&value.to_string_lossy())
+}
+
+#[cfg(unix)]
+fn gated_marker_command(started: &Path, release: &Path, marker: &Path, value: &str) -> String {
+    format!(
+        "printf '%s\\n' '{}' >> {}; : > {}; while [ ! -f {} ]; do sleep 0.01; done; printf '%s\\n' '{}'",
+        value,
+        posix_quote(marker),
+        posix_quote(started),
+        posix_quote(release),
+        value,
+    )
+}
+
+fn poll_delivery_response(request: Option<&ShellAgentShellRequest>) -> ConcurrentHttpResponse {
+    let request = request
+        .map(serde_json::to_value)
+        .transpose()
+        .unwrap()
+        .unwrap_or(serde_json::Value::Null);
+    ConcurrentHttpResponse::json(
+        serde_json::json!({"success": true, "request": request, "error": null}).to_string(),
+    )
+}
+
+fn register_success_response() -> ConcurrentHttpResponse {
+    ConcurrentHttpResponse::json(r#"{"success":true,"client":null,"error":null}"#)
+}
+
+fn result_success_response() -> ConcurrentHttpResponse {
+    ConcurrentHttpResponse::json(r#"{"success":true}"#)
+}
+
+fn job_update_success_response() -> ConcurrentHttpResponse {
+    ConcurrentHttpResponse::json(r#"{"success":true,"job":null,"error":null}"#)
+}
+
 fn accept_with_deadline(listener: &StdTcpListener, deadline: Duration) -> TcpStream {
     let start = Instant::now();
     listener.set_nonblocking(true).unwrap();
@@ -486,7 +689,9 @@ fn start_scripted_agent_server(steps: Vec<ScriptStep>) -> ScriptedServer {
     let shutdown = Arc::new(AtomicBool::new(false));
     let server_shutdown = Arc::clone(&shutdown);
     let handle = thread::spawn(move || {
-        for step in steps {
+        let mut steps = steps.into_iter().map(Some).collect::<Vec<_>>();
+        let mut remaining = steps.len();
+        while remaining > 0 {
             let mut stream = accept_with_deadline(&listener, Duration::from_secs(8));
             let request = read_http_request(&mut stream);
             let path = request_path(&request).to_string();
@@ -495,6 +700,33 @@ fn start_scripted_agent_server(steps: Vec<ScriptStep>) -> ScriptedServer {
                 .map(|index| request[index + 4..].to_string())
                 .unwrap_or_default();
             recorded.lock().unwrap().push((path.clone(), body));
+            let Some(index) = steps.iter().position(|step| {
+                step.as_ref()
+                    .is_some_and(|step| step.expected_path() == path)
+            }) else {
+                // Normal background dispatch may issue the next poll before a
+                // fast worker reaches its scripted result response. When the
+                // remaining script contains only result work for that turn,
+                // answer the speculative poll as empty without consuming or
+                // reordering the result script.
+                if path == "/api/shell/agent/poll"
+                    && steps.iter().any(|step| {
+                        step.as_ref()
+                            .is_some_and(|step| step.expected_path() == "/api/shell/agent/result")
+                    })
+                {
+                    write_http_response(
+                        &mut stream,
+                        "200 OK",
+                        "application/json",
+                        r#"{"success":true,"request":null,"error":null}"#,
+                    );
+                    continue;
+                }
+                panic!("scripted server has no remaining response for {path}");
+            };
+            let step = steps[index].take().expect("matched scripted step");
+            remaining -= 1;
             match step {
                 ScriptStep::Register => {
                     assert_eq!(path, "/api/shell/agent/register");
@@ -521,6 +753,15 @@ fn start_scripted_agent_server(steps: Vec<ScriptStep>) -> ScriptedServer {
                     assert_eq!(path, "/api/shell/agent/poll", "expected poll, got {path}");
                     let request_json =
                         serde_json::to_string(&sync_file_request(request_id)).unwrap();
+                    let body = format!(
+                        r#"{{"success":true,"request":{},"error":null}}"#,
+                        request_json
+                    );
+                    write_http_response(&mut stream, "200 OK", "application/json", &body);
+                }
+                ScriptStep::PollDeliverRequest(request) => {
+                    assert_eq!(path, "/api/shell/agent/poll", "expected poll, got {path}");
+                    let request_json = serde_json::to_string(&request).unwrap();
                     let body = format!(
                         r#"{{"success":true,"request":{},"error":null}}"#,
                         request_json
@@ -625,6 +866,817 @@ fn recorded_paths(requests: &Mutex<Vec<(String, String)>>) -> Vec<String> {
         .collect()
 }
 
+fn recorded_path_count(requests: &Mutex<Vec<(String, String)>>, expected: &str) -> usize {
+    requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(path, _)| path == expected)
+        .count()
+}
+
+#[cfg(unix)]
+#[test]
+fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exactly_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let started_a = temp.path().join("a-started");
+    let release_a = temp.path().join("a-release");
+    let marker_a = temp.path().join("a-marker");
+    let request_a = polling_shell_request(
+        "req-slow-a",
+        temp.path(),
+        gated_marker_command(&started_a, &release_a, &marker_a, "dispatch-a"),
+    );
+    let request_b = polling_shell_request(
+        "req-fast-b",
+        temp.path(),
+        "printf '%s\\n' 'dispatch-b'".to_string(),
+    );
+
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let results = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let runner_shutdown = Arc::new(AtomicBool::new(false));
+    let (event_tx, event_rx) = std::sync::mpsc::channel::<String>();
+    let handler = {
+        let poll_count = Arc::clone(&poll_count);
+        let results = Arc::clone(&results);
+        let runner_shutdown = Arc::clone(&runner_shutdown);
+        let event_tx = event_tx.clone();
+        let request_a = request_a.clone();
+        let request_b = request_b.clone();
+        Arc::new(move |path: &str, body: &str| match path {
+            "/api/shell/agent/register" => register_success_response(),
+            "/api/shell/agent/poll" => {
+                let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                match index {
+                    0 => poll_delivery_response(Some(&request_a)),
+                    1 => {
+                        let _ = event_tx.send("poll-b".to_string());
+                        poll_delivery_response(Some(&request_b))
+                    }
+                    _ => poll_delivery_response(None),
+                }
+            }
+            "/api/shell/agent/result" => {
+                let body: serde_json::Value = serde_json::from_str(body).unwrap();
+                let request_id = body["request_id"].as_str().unwrap().to_string();
+                results.lock().unwrap().push(body);
+                let _ = event_tx.send(format!("result-{request_id}"));
+                if request_id == "req-slow-a" {
+                    runner_shutdown.store(true, Ordering::SeqCst);
+                }
+                result_success_response()
+            }
+            other => panic!("unexpected polling test endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let runtime = test_runtime(&cfg);
+    let runner_runtime = runtime.clone();
+    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
+    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
+    let runner = thread::spawn(move || {
+        let result = run_polling_agent_with_shutdown(
+            cfg,
+            false,
+            "inst-e1-correlation",
+            runner_shutdown_for_thread,
+            &runner_runtime,
+        );
+        let _ = runner_tx.send(result);
+    });
+
+    assert_eq!(
+        event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "poll-b",
+        "the next poll must reach the Server before A is released"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !started_a.exists() {
+        assert!(Instant::now() < deadline, "slow request A did not start");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "result-req-fast-b",
+        "B must complete while A is still blocked"
+    );
+    assert!(!release_a.exists());
+    std::fs::write(&release_a, "release\n").unwrap();
+    assert_eq!(
+        event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "result-req-slow-a"
+    );
+
+    runner_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("polling runner completion")
+        .expect("polling runner should shut down cleanly");
+    runner.join().unwrap();
+    server.finish();
+
+    let results = results.lock().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["request_id"], "req-fast-b");
+    assert_eq!(results[0]["stdout"], "dispatch-b\n");
+    assert_eq!(results[1]["request_id"], "req-slow-a");
+    assert_eq!(results[1]["stdout"], "dispatch-a\n");
+    assert_eq!(
+        std::fs::read_to_string(&marker_a).unwrap().lines().count(),
+        1,
+        "poll continuation and out-of-order completion must not replay A"
+    );
+    assert!(poll_count.load(Ordering::SeqCst) >= 2);
+    assert_eq!(runtime.dispatches.active(), 0);
+    assert_eq!(runtime.background_threads.pending(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut requests = Vec::new();
+    let mut started = Vec::new();
+    let mut releases = Vec::new();
+    let mut markers = Vec::new();
+    for label in ["a", "b", "c"] {
+        let started_path = temp.path().join(format!("{label}-started"));
+        let release_path = temp.path().join(format!("{label}-release"));
+        let marker_path = temp.path().join(format!("{label}-marker"));
+        requests.push(polling_shell_request(
+            &format!("req-bound-{label}"),
+            temp.path(),
+            gated_marker_command(
+                &started_path,
+                &release_path,
+                &marker_path,
+                &format!("bound-{label}"),
+            ),
+        ));
+        started.push(started_path);
+        releases.push(release_path);
+        markers.push(marker_path);
+    }
+
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let result_count = Arc::new(AtomicUsize::new(0));
+    let runner_shutdown = Arc::new(AtomicBool::new(false));
+    let (third_poll_tx, third_poll_rx) = std::sync::mpsc::sync_channel(1);
+    let handler = {
+        let poll_count = Arc::clone(&poll_count);
+        let result_count = Arc::clone(&result_count);
+        let runner_shutdown = Arc::clone(&runner_shutdown);
+        let requests = requests.clone();
+        Arc::new(move |path: &str, _body: &str| match path {
+            "/api/shell/agent/register" => register_success_response(),
+            "/api/shell/agent/poll" => {
+                let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                if index == 2 {
+                    let _ = third_poll_tx.send(());
+                }
+                poll_delivery_response(requests.get(index))
+            }
+            "/api/shell/agent/result" => {
+                if result_count.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                    runner_shutdown.store(true, Ordering::SeqCst);
+                }
+                result_success_response()
+            }
+            other => panic!("unexpected polling bound endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let runtime = test_runtime(&cfg);
+    let runner_runtime = runtime.clone();
+    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
+    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
+    let runner = thread::spawn(move || {
+        let result = run_polling_agent_with_shutdown(
+            cfg,
+            false,
+            "inst-e1-bound",
+            runner_shutdown_for_thread,
+            &runner_runtime,
+        );
+        let _ = runner_tx.send(result);
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !(started[0].exists() && started[1].exists()) {
+        assert!(Instant::now() < deadline, "first two workers did not start");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(runtime.dispatches.active(), POLLING_DISPATCH_MAX_IN_FLIGHT);
+    assert!(
+        third_poll_rx
+            .recv_timeout(Duration::from_millis(200))
+            .is_err(),
+        "the Runner dequeued a third request while both dispatch slots were occupied"
+    );
+
+    std::fs::write(&releases[0], "release\n").unwrap();
+    third_poll_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("releasing one slot must allow the third poll");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !started[2].exists() {
+        assert!(Instant::now() < deadline, "third worker did not start");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        runtime.dispatches.active(),
+        POLLING_DISPATCH_MAX_IN_FLIGHT,
+        "active polling dispatches exceeded the fixed bound"
+    );
+    std::fs::write(&releases[1], "release\n").unwrap();
+    std::fs::write(&releases[2], "release\n").unwrap();
+
+    runner_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("bounded polling runner completion")
+        .expect("bounded polling runner should shut down cleanly");
+    runner.join().unwrap();
+    server.finish();
+    assert_eq!(result_count.load(Ordering::SeqCst), 3);
+    for marker in markers {
+        assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    }
+    assert_eq!(runtime.dispatches.active(), 0);
+    assert_eq!(runtime.background_threads.pending(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn polling_job_start_dispatches_behind_one_long_ordinary_request() {
+    let temp = tempfile::tempdir().unwrap();
+    let started_a = temp.path().join("ordinary-started");
+    let release_a = temp.path().join("ordinary-release");
+    let marker_a = temp.path().join("ordinary-marker");
+    let job_marker = temp.path().join("job-marker");
+    let request_a = polling_shell_request(
+        "req-ordinary",
+        temp.path(),
+        gated_marker_command(&started_a, &release_a, &marker_a, "ordinary"),
+    );
+    let request_b = polling_job_request(
+        "req-job-start",
+        "job-behind-ordinary",
+        temp.path(),
+        format!("printf '%s\\n' 'job-ran' > {}", posix_quote(&job_marker)),
+    );
+
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let runner_shutdown = Arc::new(AtomicBool::new(false));
+    let ordinary_done = Arc::new(AtomicBool::new(false));
+    let job_done = Arc::new(AtomicBool::new(false));
+    let (job_tx, job_rx) = std::sync::mpsc::sync_channel(1);
+    let handler = {
+        let poll_count = Arc::clone(&poll_count);
+        let runner_shutdown = Arc::clone(&runner_shutdown);
+        let ordinary_done = Arc::clone(&ordinary_done);
+        let job_done = Arc::clone(&job_done);
+        let request_a = request_a.clone();
+        let request_b = request_b.clone();
+        Arc::new(move |path: &str, body: &str| match path {
+            "/api/shell/agent/register" => register_success_response(),
+            "/api/shell/agent/poll" => {
+                let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                match index {
+                    0 => poll_delivery_response(Some(&request_a)),
+                    1 => poll_delivery_response(Some(&request_b)),
+                    _ => poll_delivery_response(None),
+                }
+            }
+            "/api/shell/agent/job_update" => {
+                let update: serde_json::Value = serde_json::from_str(body).unwrap();
+                if update["job_id"] == "job-behind-ordinary"
+                    && update["finished"] == true
+                    && !job_done.swap(true, Ordering::SeqCst)
+                {
+                    let _ = job_tx.send(());
+                    if ordinary_done.load(Ordering::SeqCst) {
+                        runner_shutdown.store(true, Ordering::SeqCst);
+                    }
+                }
+                job_update_success_response()
+            }
+            "/api/shell/agent/result" => {
+                ordinary_done.store(true, Ordering::SeqCst);
+                if job_done.load(Ordering::SeqCst) {
+                    runner_shutdown.store(true, Ordering::SeqCst);
+                }
+                result_success_response()
+            }
+            other => panic!("unexpected Job-behind-ordinary endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let runtime = test_runtime(&cfg);
+    let runner_runtime = runtime.clone();
+    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
+    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
+    let runner = thread::spawn(move || {
+        let result = run_polling_agent_with_shutdown(
+            cfg,
+            false,
+            "inst-e1-job",
+            runner_shutdown_for_thread,
+            &runner_runtime,
+        );
+        let _ = runner_tx.send(result);
+    });
+
+    job_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("Job B must finish while ordinary A remains gated");
+    assert!(started_a.exists());
+    assert!(!release_a.exists());
+    assert_eq!(std::fs::read_to_string(&job_marker).unwrap(), "job-ran\n");
+    std::fs::write(&release_a, "release\n").unwrap();
+
+    runner_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Job-behind-ordinary runner completion")
+        .expect("Job-behind-ordinary runner should shut down cleanly");
+    runner.join().unwrap();
+    server.finish();
+    assert_eq!(
+        std::fs::read_to_string(&marker_a).unwrap().lines().count(),
+        1
+    );
+    assert_eq!(runtime.dispatches.active(), 0);
+    assert_eq!(runtime.background_threads.pending(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn polling_once_waits_for_its_tracked_ordinary_dispatch() {
+    let temp = tempfile::tempdir().unwrap();
+    let started = temp.path().join("once-started");
+    let release = temp.path().join("once-release");
+    let marker = temp.path().join("once-marker");
+    let request = polling_shell_request(
+        "req-once-slow",
+        temp.path(),
+        gated_marker_command(&started, &release, &marker, "once"),
+    );
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let result_count = Arc::new(AtomicUsize::new(0));
+    let handler = {
+        let poll_count = Arc::clone(&poll_count);
+        let result_count = Arc::clone(&result_count);
+        let request = request.clone();
+        Arc::new(move |path: &str, _body: &str| match path {
+            "/api/shell/agent/register" => register_success_response(),
+            "/api/shell/agent/poll" => {
+                let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                poll_delivery_response((index == 0).then_some(&request))
+            }
+            "/api/shell/agent/result" => {
+                result_count.fetch_add(1, Ordering::SeqCst);
+                result_success_response()
+            }
+            other => panic!("unexpected polling --once endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let runtime = test_runtime(&cfg);
+    let runner_runtime = runtime.clone();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
+    let runner = thread::spawn(move || {
+        let result =
+            run_polling_agent_with_shutdown(cfg, true, "inst-e1-once", shutdown, &runner_runtime);
+        let _ = runner_tx.send(result);
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !started.exists() {
+        assert!(Instant::now() < deadline, "--once request did not start");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        runner_rx.try_recv().is_err(),
+        "--once returned while its ordinary dispatch was still active"
+    );
+    std::fs::write(&release, "release\n").unwrap();
+    runner_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("--once runner completion")
+        .expect("--once runner should complete successfully");
+    runner.join().unwrap();
+    server.finish();
+
+    assert_eq!(poll_count.load(Ordering::SeqCst), 1);
+    assert_eq!(result_count.load(Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    assert!(runtime
+        .dispatches
+        .wait_until(Instant::now() + Duration::from_secs(1)));
+    assert!(
+        runtime.background_threads.pending() <= 1,
+        "the --once worker must remain in the shutdown-owned registry"
+    );
+    runtime.shutdown();
+    assert_eq!(runtime.background_threads.pending(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn polling_once_preserves_job_manager_drain_before_exit() {
+    let temp = tempfile::tempdir().unwrap();
+    let started = temp.path().join("once-job-started");
+    let release = temp.path().join("once-job-release");
+    let marker = temp.path().join("once-job-marker");
+    let request = polling_job_request(
+        "req-once-job",
+        "job-once-drain",
+        temp.path(),
+        gated_marker_command(&started, &release, &marker, "once-job"),
+    );
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let (terminal_tx, terminal_rx) = std::sync::mpsc::sync_channel(1);
+    let handler = {
+        let poll_count = Arc::clone(&poll_count);
+        let request = request.clone();
+        Arc::new(move |path: &str, body: &str| match path {
+            "/api/shell/agent/register" => register_success_response(),
+            "/api/shell/agent/poll" => {
+                let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                poll_delivery_response((index == 0).then_some(&request))
+            }
+            "/api/shell/agent/job_update" => {
+                let update: serde_json::Value = serde_json::from_str(body).unwrap();
+                if update["finished"] == true {
+                    let _ = terminal_tx.send(());
+                }
+                job_update_success_response()
+            }
+            other => panic!("unexpected polling --once Job endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let runtime = test_runtime(&cfg);
+    let runner_runtime = runtime.clone();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
+    let runner = thread::spawn(move || {
+        let result = run_polling_agent_with_shutdown(
+            cfg,
+            true,
+            "inst-e1-once-job",
+            shutdown,
+            &runner_runtime,
+        );
+        let _ = runner_tx.send(result);
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !started.exists() {
+        assert!(Instant::now() < deadline, "--once Job did not start");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        runner_rx.try_recv().is_err(),
+        "--once returned before JobManager drained its active Job"
+    );
+    std::fs::write(&release, "release\n").unwrap();
+    terminal_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("--once Job terminal update");
+    runner_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("--once Job runner completion")
+        .expect("--once Job runner should complete successfully");
+    runner.join().unwrap();
+    server.finish();
+
+    assert_eq!(poll_count.load(Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    assert!(!runtime.jobs.has_work());
+    runtime.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying() {
+    let temp = tempfile::tempdir().unwrap();
+    let started = temp.path().join("shutdown-started");
+    let never_release = temp.path().join("shutdown-release");
+    let marker = temp.path().join("shutdown-marker");
+    let request = polling_shell_request(
+        "req-shutdown-active",
+        temp.path(),
+        gated_marker_command(&started, &never_release, &marker, "shutdown"),
+    );
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let result_bodies = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let handler = {
+        let poll_count = Arc::clone(&poll_count);
+        let result_bodies = Arc::clone(&result_bodies);
+        let request = request.clone();
+        Arc::new(move |path: &str, body: &str| match path {
+            "/api/shell/agent/register" => register_success_response(),
+            "/api/shell/agent/poll" => {
+                let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                poll_delivery_response((index == 0).then_some(&request))
+            }
+            "/api/shell/agent/result" => {
+                result_bodies
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_str(body).unwrap());
+                result_success_response()
+            }
+            other => panic!("unexpected active-shutdown endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let cfg = polling_agent_config(server.server_url.clone(), temp.path().join("projects.d"));
+    let runtime =
+        AgentRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_secs(2));
+    let runner_runtime = runtime.clone();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_for_thread = Arc::clone(&shutdown);
+    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
+    let runner = thread::spawn(move || {
+        let result = run_polling_agent_with_shutdown(
+            cfg,
+            false,
+            "inst-e1-shutdown",
+            shutdown_for_thread,
+            &runner_runtime,
+        );
+        let _ = runner_tx.send(result);
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !started.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "shutdown fixture dispatch did not start"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    let shutdown_started = Instant::now();
+    shutdown.store(true, Ordering::SeqCst);
+    runner_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("active-shutdown runner completion")
+        .expect("active-shutdown runner should exit cleanly");
+    runner.join().unwrap();
+    assert!(
+        shutdown_started.elapsed() < Duration::from_secs(3),
+        "shutdown exceeded its bounded cleanup budget"
+    );
+    let polls_after_completion = poll_count.load(Ordering::SeqCst);
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        poll_count.load(Ordering::SeqCst),
+        polls_after_completion,
+        "polling continued after shutdown completed"
+    );
+    server.finish();
+
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    assert_eq!(runtime.dispatches.active(), 0);
+    assert_eq!(runtime.background_threads.pending(), 0);
+    let results = result_bodies.lock().unwrap();
+    assert!(results.len() <= 1);
+    if let Some(result) = results.first() {
+        assert_ne!(
+            result["command_execution_state"], "not_started",
+            "shutdown after dispatch must not rewrite lifecycle truth as pre-start"
+        );
+    }
+}
+
+#[test]
+fn polling_background_project_operation_invalidates_the_project_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    let projects_dir = temp.path().join("projects.d");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut request = sync_file_request("req-register-project");
+    request.kind = "register_project".to_string();
+    request.stdin = Some(
+        serde_json::json!({
+            "id": "e1-project",
+            "name": "E1 project",
+            "path": project,
+            "allow_patch": true
+        })
+        .to_string(),
+    );
+
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let project_result_seen = Arc::new(AtomicBool::new(false));
+    let refreshed_seen = Arc::new(AtomicBool::new(false));
+    let runner_shutdown = Arc::new(AtomicBool::new(false));
+    let (refreshed_tx, refreshed_rx) = std::sync::mpsc::sync_channel(1);
+    let handler = {
+        let poll_count = Arc::clone(&poll_count);
+        let project_result_seen = Arc::clone(&project_result_seen);
+        let refreshed_seen = Arc::clone(&refreshed_seen);
+        let runner_shutdown = Arc::clone(&runner_shutdown);
+        let request = request.clone();
+        Arc::new(move |path: &str, body: &str| match path {
+            "/api/shell/agent/register" => register_success_response(),
+            "/api/shell/agent/poll" => {
+                let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+                let refreshed = payload["projects"].as_array().is_some_and(|projects| {
+                    projects.iter().any(|project| project["id"] == "e1-project")
+                });
+                if refreshed
+                    && project_result_seen.load(Ordering::SeqCst)
+                    && !refreshed_seen.swap(true, Ordering::SeqCst)
+                {
+                    let _ = refreshed_tx.send(());
+                    runner_shutdown.store(true, Ordering::SeqCst);
+                }
+                let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                poll_delivery_response((index == 0).then_some(&request))
+            }
+            "/api/shell/agent/result" => {
+                project_result_seen.store(true, Ordering::SeqCst);
+                result_success_response()
+            }
+            other => panic!("unexpected project-cache endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let cfg = polling_agent_config(server.server_url.clone(), projects_dir.clone());
+    let runtime = test_runtime(&cfg);
+    let runner_runtime = runtime.clone();
+    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
+    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
+    let runner = thread::spawn(move || {
+        let result = run_polling_agent_with_shutdown(
+            cfg,
+            false,
+            "inst-e1-project-cache",
+            runner_shutdown_for_thread,
+            &runner_runtime,
+        );
+        let _ = runner_tx.send(result);
+    });
+
+    refreshed_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("a later poll must carry refreshed project metadata");
+    runner_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("project-cache runner completion")
+        .expect("project-cache runner should shut down cleanly");
+    runner.join().unwrap();
+    server.finish();
+    assert!(projects_dir.join("e1-project.toml").exists());
+    assert!(poll_count.load(Ordering::SeqCst) >= 2);
+    assert!(refreshed_seen.load(Ordering::SeqCst));
+}
+
+#[cfg(unix)]
+#[test]
+fn polling_persistent_shell_exec_remains_responsive_to_close() {
+    #[derive(Default)]
+    struct PersistentState {
+        open_delivered: bool,
+        open_done: bool,
+        exec_delivered: bool,
+        close_delivered: bool,
+        result_ids: Vec<String>,
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    let projects_dir = temp.path().join("projects.d");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&projects_dir).unwrap();
+    std::fs::write(
+        projects_dir.join("demo.toml"),
+        format!(
+            "id = \"demo\"\npath = {:?}\nallow_patch = true\n",
+            project.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let started = project.join("persistent-started");
+    let marker = project.join("persistent-marker");
+    let shell_id = "wc_shell_polling_e1";
+    let open = polling_persistent_shell_request("req-ps-open", "open", shell_id, None);
+    let exec = polling_persistent_shell_request(
+        "req-ps-exec",
+        "exec",
+        shell_id,
+        Some(format!(
+            "printf '%s\\n' 'ran' >> {}; : > {}; sleep 30",
+            posix_quote(&marker),
+            posix_quote(&started)
+        )),
+    );
+    let close = polling_persistent_shell_request("req-ps-close", "close", shell_id, None);
+    let state = Arc::new(Mutex::new(PersistentState::default()));
+    let allow_close = Arc::new(AtomicBool::new(false));
+    let runner_shutdown = Arc::new(AtomicBool::new(false));
+    let handler = {
+        let state = Arc::clone(&state);
+        let allow_close = Arc::clone(&allow_close);
+        let runner_shutdown = Arc::clone(&runner_shutdown);
+        let open = open.clone();
+        let exec = exec.clone();
+        let close = close.clone();
+        Arc::new(move |path: &str, body: &str| match path {
+            "/api/shell/agent/register" => register_success_response(),
+            "/api/shell/agent/poll" => {
+                let mut state = state.lock().unwrap();
+                if !state.open_delivered {
+                    state.open_delivered = true;
+                    poll_delivery_response(Some(&open))
+                } else if state.open_done && !state.exec_delivered {
+                    state.exec_delivered = true;
+                    poll_delivery_response(Some(&exec))
+                } else if state.exec_delivered
+                    && allow_close.load(Ordering::SeqCst)
+                    && !state.close_delivered
+                {
+                    state.close_delivered = true;
+                    poll_delivery_response(Some(&close))
+                } else {
+                    poll_delivery_response(None)
+                }
+            }
+            "/api/shell/agent/persistent_shell_result" => {
+                let result: serde_json::Value = serde_json::from_str(body).unwrap();
+                let request_id = result["request_id"].as_str().unwrap().to_string();
+                let mut state = state.lock().unwrap();
+                if request_id == "req-ps-open" {
+                    state.open_done = true;
+                }
+                state.result_ids.push(request_id);
+                if state.result_ids.iter().any(|id| id == "req-ps-exec")
+                    && state.result_ids.iter().any(|id| id == "req-ps-close")
+                {
+                    runner_shutdown.store(true, Ordering::SeqCst);
+                }
+                result_success_response()
+            }
+            other => panic!("unexpected persistent-shell polling endpoint: {other}"),
+        })
+    };
+    let server = start_concurrent_polling_server(handler);
+    let cfg = polling_agent_config(server.server_url.clone(), projects_dir);
+    let runtime = test_runtime(&cfg);
+    let runner_runtime = runtime.clone();
+    let runner_shutdown_for_thread = Arc::clone(&runner_shutdown);
+    let (runner_tx, runner_rx) = std::sync::mpsc::sync_channel(1);
+    let runner = thread::spawn(move || {
+        let result = run_polling_agent_with_shutdown(
+            cfg,
+            false,
+            "inst-e1-persistent",
+            runner_shutdown_for_thread,
+            &runner_runtime,
+        );
+        let _ = runner_tx.send(result);
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !started.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "persistent-shell exec did not start"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    allow_close.store(true, Ordering::SeqCst);
+    runner_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("persistent-shell polling runner completion")
+        .expect("persistent-shell polling runner should shut down cleanly");
+    runner.join().unwrap();
+    server.finish();
+
+    let mut result_ids = state.lock().unwrap().result_ids.clone();
+    result_ids.sort();
+    assert_eq!(
+        result_ids,
+        vec![
+            "req-ps-close".to_string(),
+            "req-ps-exec".to_string(),
+            "req-ps-open".to_string(),
+        ]
+    );
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    assert_eq!(runtime.persistent_shells.active_count(), 0);
+    assert_eq!(runtime.dispatches.active(), 0);
+    assert_eq!(runtime.background_threads.pending(), 0);
+}
+
 #[test]
 fn polling_502_reregisters_once_then_processes_request() {
     let server = start_scripted_agent_server(vec![
@@ -650,17 +1702,24 @@ fn polling_502_reregisters_once_then_processes_request() {
         started.elapsed() >= Duration::from_millis(450),
         "poll recovery skipped its first backoff"
     );
+    let paths = recorded_paths(&server.requests);
     assert_eq!(
-        recorded_paths(&server.requests),
-        vec![
+        &paths[..3],
+        &[
             "/api/shell/agent/register",
             "/api/shell/agent/poll",
             "/api/shell/agent/register",
-            "/api/shell/agent/poll",
-            "/api/shell/agent/result",
-            "/api/shell/agent/poll",
         ],
         "the first transient poll failure refreshes the same-instance session once"
+    );
+    assert_eq!(
+        recorded_path_count(&server.requests, "/api/shell/agent/register"),
+        2,
+        "background dispatch must not create a registration storm"
+    );
+    assert!(
+        recorded_path_count(&server.requests, "/api/shell/agent/poll") >= 3,
+        "polling must resume after recovery and continue around result delivery"
     );
     let results = recorded_result_bodies(&server.requests);
     assert_eq!(results.len(), 1);
@@ -1237,9 +2296,21 @@ fn polling_shutdown_uses_the_process_coordinator_once() {
 
 #[test]
 fn polling_result_permanent_400_is_dropped_once_and_polling_continues() {
+    #[cfg(unix)]
+    let marker_temp = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let marker = marker_temp.path().join("permanent-marker");
+    #[cfg(unix)]
+    let delivery = ScriptStep::PollDeliverRequest(polling_shell_request(
+        "req-expired",
+        marker_temp.path(),
+        format!("printf '%s\\n' 'ran' >> {}", posix_quote(&marker)),
+    ));
+    #[cfg(not(unix))]
+    let delivery = ScriptStep::PollDeliver("req-expired");
     let server = start_scripted_agent_server(vec![
         ScriptStep::Register,
-        ScriptStep::PollDeliver("req-expired"),
+        delivery,
         ScriptStep::Result {
             status: "400 Bad Request",
             body: r#"{"success":false,"error":"unknown or expired shell request: req-expired"}"#,
@@ -1264,28 +2335,35 @@ fn polling_result_permanent_400_is_dropped_once_and_polling_continues() {
         2,
         "the permanently rejected request result must be submitted once"
     );
-    assert!(
-        result_bodies[0].contains("req-expired"),
-        "{result_bodies:?}"
-    );
-    assert!(result_bodies[1].contains("req-next"), "{result_bodies:?}");
-    let paths: Vec<String> = server
-        .requests
-        .lock()
-        .unwrap()
+    let mut result_ids = result_bodies
         .iter()
-        .map(|(path, _)| path.clone())
-        .collect();
+        .map(|body| {
+            serde_json::from_str::<serde_json::Value>(body).unwrap()["request_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    result_ids.sort();
     assert_eq!(
-        paths,
-        vec![
-            "/api/shell/agent/register",
-            "/api/shell/agent/poll",
-            "/api/shell/agent/result",
-            "/api/shell/agent/poll",
-            "/api/shell/agent/result",
-            "/api/shell/agent/poll",
-        ],
+        result_ids,
+        vec!["req-expired".to_string(), "req-next".to_string()],
+        "out-of-order dispatch must still submit each request result once"
+    );
+    assert_eq!(
+        recorded_path_count(&server.requests, "/api/shell/agent/register"),
+        1,
+        "permanent result rejection must not re-register"
+    );
+    assert!(
+        recorded_path_count(&server.requests, "/api/shell/agent/poll") >= 3,
+        "both requests and a later empty turn must be polled"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::read_to_string(marker).unwrap().lines().count(),
+        1,
+        "permanent result rejection must not replay child execution"
     );
 }
 
@@ -1350,31 +2428,34 @@ fn polling_result_503_retries_same_payload_then_continues() {
         "503 must retry the exact result body"
     );
     assert!(result_bodies[0].contains("req-503"), "{result_bodies:?}");
-    let paths: Vec<String> = server
-        .requests
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(path, _)| path.clone())
-        .collect();
     assert_eq!(
-        paths,
-        vec![
-            "/api/shell/agent/register",
-            "/api/shell/agent/poll",
-            "/api/shell/agent/result",
-            "/api/shell/agent/result",
-            "/api/shell/agent/poll",
-        ],
+        recorded_path_count(&server.requests, "/api/shell/agent/register"),
+        1,
         "503 recovery must neither re-register nor stop polling"
+    );
+    assert!(
+        recorded_path_count(&server.requests, "/api/shell/agent/poll") >= 2,
+        "polling must continue while the worker retries result delivery"
     );
 }
 
 #[test]
 fn polling_result_server_unavailable_retry_exhaustion_drops_then_continues() {
+    #[cfg(unix)]
+    let marker_temp = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let marker = marker_temp.path().join("exhaustion-marker");
+    #[cfg(unix)]
+    let delivery = ScriptStep::PollDeliverRequest(polling_shell_request(
+        "req-exhausted",
+        marker_temp.path(),
+        format!("printf '%s\\n' 'ran' >> {}", posix_quote(&marker)),
+    ));
+    #[cfg(not(unix))]
+    let delivery = ScriptStep::PollDeliver("req-exhausted");
     let server = start_scripted_agent_server(vec![
         ScriptStep::Register,
-        ScriptStep::PollDeliver("req-exhausted"),
+        delivery,
         ScriptStep::Result {
             status: "503 Service Unavailable",
             body: r#"{"success":false,"error":"temporary gateway failure"}"#,
@@ -1407,25 +2488,20 @@ fn polling_result_server_unavailable_retry_exhaustion_drops_then_continues() {
         result_bodies.iter().all(|body| body == &result_bodies[0]),
         "every bounded retry must use the exact original payload"
     );
-    let paths: Vec<String> = server
-        .requests
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(path, _)| path.clone())
-        .collect();
     assert_eq!(
-        paths,
-        vec![
-            "/api/shell/agent/register",
-            "/api/shell/agent/poll",
-            "/api/shell/agent/result",
-            "/api/shell/agent/result",
-            "/api/shell/agent/result",
-            "/api/shell/agent/result",
-            "/api/shell/agent/poll",
-        ],
+        recorded_path_count(&server.requests, "/api/shell/agent/register"),
+        1,
         "exhaustion must release the result and poll without re-registering"
+    );
+    assert!(
+        recorded_path_count(&server.requests, "/api/shell/agent/poll") >= 2,
+        "polling must stay live while the bounded result retry runs"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::read_to_string(marker).unwrap().lines().count(),
+        1,
+        "transient result retry exhaustion must not replay child execution"
     );
 }
 
@@ -1605,6 +2681,40 @@ fn polling_result_401_and_403_are_terminal_auth_errors_without_credentials() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn polling_fatal_background_submission_reaches_control_without_reexecution() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("fatal-marker");
+    let request = polling_shell_request(
+        "req-fatal-background",
+        temp.path(),
+        format!("printf '%s\\n' 'ran' >> {}", posix_quote(&marker)),
+    );
+    let server = start_scripted_agent_server(vec![
+        ScriptStep::Register,
+        ScriptStep::PollDeliverRequest(request),
+        ScriptStep::Result {
+            status: "401 Unauthorized",
+            body: r#"{"success":false,"error":"unauthorized"}"#,
+        },
+    ]);
+    let error = run_polling_agent_against_scripted_server(&server, false)
+        .expect_err("fatal background result submission must stop polling control");
+    server.handle.join().unwrap();
+
+    assert!(
+        error.contains("authentication failed for /api/shell/agent/result"),
+        "{error}"
+    );
+    assert_eq!(recorded_result_bodies(&server.requests).len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(marker).unwrap().lines().count(),
+        1,
+        "fatal result submission must not replay the command"
+    );
+}
+
 #[test]
 fn polling_result_404_is_terminal_protocol_error_without_retry() {
     let server = start_scripted_agent_server(vec![
@@ -1653,21 +2763,13 @@ fn polling_result_success_submits_once_and_continues() {
         result_bodies[0].contains("req-success"),
         "{result_bodies:?}"
     );
-    let paths: Vec<String> = server
-        .requests
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(path, _)| path.clone())
-        .collect();
     assert_eq!(
-        paths,
-        vec![
-            "/api/shell/agent/register",
-            "/api/shell/agent/poll",
-            "/api/shell/agent/result",
-            "/api/shell/agent/poll",
-        ]
+        recorded_path_count(&server.requests, "/api/shell/agent/register"),
+        1
+    );
+    assert!(
+        recorded_path_count(&server.requests, "/api/shell/agent/poll") >= 2,
+        "successful result delivery must not pin the next poll"
     );
 }
 

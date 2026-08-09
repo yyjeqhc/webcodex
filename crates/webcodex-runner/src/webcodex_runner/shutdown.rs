@@ -357,29 +357,41 @@ impl BackgroundThreads {
         lock_unpoison(&self.handles).push(handle);
     }
 
+    /// Join every worker that has already finished without waiting for active
+    /// workers. Long-lived transports use this to keep a process-local worker
+    /// registry from growing with completed polling dispatches; shutdown still
+    /// owns and bounds every handle that remains active.
+    pub(crate) fn reap_finished(&self) -> BackgroundJoinResult {
+        let finished = {
+            let mut handles = lock_unpoison(&self.handles);
+            let mut finished = Vec::new();
+            let mut index = 0;
+            while index < handles.len() {
+                if handles[index].is_finished() {
+                    finished.push(handles.swap_remove(index));
+                } else {
+                    index += 1;
+                }
+            }
+            finished
+        };
+        let mut result = BackgroundJoinResult::default();
+        for handle in finished {
+            if handle.join().is_err() {
+                result.panicked += 1;
+            } else {
+                result.joined += 1;
+            }
+        }
+        result
+    }
+
     pub(crate) fn join_until(&self, deadline: Instant) -> BackgroundJoinResult {
         let mut result = BackgroundJoinResult::default();
         loop {
-            let finished = {
-                let mut handles = lock_unpoison(&self.handles);
-                let mut finished = Vec::new();
-                let mut index = 0;
-                while index < handles.len() {
-                    if handles[index].is_finished() {
-                        finished.push(handles.swap_remove(index));
-                    } else {
-                        index += 1;
-                    }
-                }
-                finished
-            };
-            for handle in finished {
-                if handle.join().is_err() {
-                    result.panicked += 1;
-                } else {
-                    result.joined += 1;
-                }
-            }
+            let reaped = self.reap_finished();
+            result.joined += reaped.joined;
+            result.panicked += reaped.panicked;
             let pending = lock_unpoison(&self.handles).len();
             if pending == 0 {
                 return result;

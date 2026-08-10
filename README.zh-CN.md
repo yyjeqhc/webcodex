@@ -20,10 +20,20 @@ WebCodex 把 ChatGPT、Claude 和其他 MCP 客户端连接到你的本地仓库
 | --- | --- |
 | ![MCP 会话](docs/assets/mcp-1.png) | ![WebCodex console](docs/assets/gpt-action-1.png) |
 
-## 三步开始
+## 快速开始
 
 当前 package 支持 Linux x64、Linux arm64、macOS arm64 和 Windows x64；npm installer 需要
 Node.js 18 或更新版本。
+
+先按实际部署方式选择入口：
+
+| 目标 | 从这里开始 |
+| --- | --- |
+| 使用已有 hosted Server | 安装 WebCodex，然后在仓库中运行 `webcodex connect <server>`。 |
+| 临时把一个本地项目接给 ChatGPT/MCP | 使用 `webcodex share`，自动启动本地 Server + Runner 与 Cloudflare Quick Tunnel。 |
+| 长期运行自己的 Server | 部署 server-only Docker/Compose，在前面配置 stable HTTPS domain 或 named tunnel，再把每台持有仓库的机器 enrollment 为 Runner。 |
+
+### Hosted Server：接入一个项目
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -121,15 +131,20 @@ Server 负责连接、凭据和工具请求协调；真正的文件、Git 和命
 Runner 机器完成。仓库和本地工具链留在 Runner 主机上，连接中只传输当前工具调用
 所需的输入与结果。
 
-## 选择接入方式
+## 长期自托管
 
-| 目标 | 推荐方式 |
-| --- | --- |
-| 通过 hosted 服务接入一个项目 | 使用 `webcodex connect <server>`，本地只运行 Runner。 |
-| 临时把当前本地项目接给 ChatGPT/MCP client | 使用 `webcodex share`，启动本地 Server + Agent 与临时 Quick Tunnel。 |
-| 保持纯本地、不开放公网 | 使用 `webcodex setup` + `webcodex run`（share 调试也可用 `--tunnel none`）。 |
-| 长期稳定部署 | 自托管 Server，并配置 stable HTTPS domain/tunnel、service 与按需 OAuth。 |
-| 需要用户、设备 enrollment、撤销和审计 | 使用 managed `webcodex login` 流程。 |
+稳定的个人部署应把 Server 与真正持有仓库的机器分开：
+
+1. 在常在线 Linux 主机上部署 server-only Docker/Compose。
+2. 为 Server 提供稳定 HTTPS hostname。可以使用 Nginx，也可以使用 named Cloudflare
+   Tunnel 或其他长期 reverse tunnel，把公网 hostname 转发到 loopback Server。
+   `trycloudflare.com` Quick Tunnel 只用于临时开发/测试。
+3. 在 Server 上创建短期 pairing code。
+4. 在每台真正持有仓库的工作站/服务器上运行 `webcodex login`，再把生成的 Runner
+   profile 安装成 user service。
+
+这样 ChatGPT/MCP 只需要一个稳定 `/mcp` endpoint，而仓库、Git 状态、编译器和本地
+工具链都继续留在各 Runner 机器上。
 
 ## 使用 Docker 自托管 Server
 
@@ -167,6 +182,11 @@ webcodex agent status --scope user \
 
 System service 与高级覆盖参数见
 [构建与安装](docs/BUILD_INSTALL.zh-CN.md#runner-service-scope)。
+
+如果 Runner 所在网络需要出站 HTTP proxy，应把代理环境变量传给 Runner process/service。
+WebSocket 会遵循 `HTTPS_PROXY` / `HTTP_PROXY`、`ALL_PROXY` 与 `NO_PROXY`
+（也支持对应小写变量）；当前支持的代理传输是 HTTP `CONNECT`。变量优先级、限制和
+fallback 行为见 [Agent transport](docs/AGENT_TRANSPORTS.zh-CN.md)。
 
 ## 接入客户端
 

@@ -275,13 +275,21 @@ Use separate server/runtime instances for untrusted users.
 
 ## Public HTTPS URL
 
-GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup, so configure one before importing `/openapi.json` into ChatGPT.
+Hosted MCP clients and GPT Actions require a public HTTPS URL. WebCodex CLI does not automate a long-lived reverse proxy or tunnel, so configure one before connecting a hosted client.
 
 Set the same public URL in the server env file:
 
 ```text
 WEBCODEX_PUBLIC_URL=https://your-domain.example
 ```
+
+For hosts where opening an inbound port is inconvenient, a durable Cloudflare Tunnel is also a
+valid front door: publish a stable hostname and route it to `http://127.0.0.1:8080`. Use a
+named/remotely managed production tunnel rather than the temporary `trycloudflare.com` Quick
+Tunnel. The same hostname must carry ordinary HTTPS requests and `/api/agents/ws`; Cloudflare
+supports WebSocket upgrades through its proxy. See the
+[Cloudflare Tunnel documentation](https://developers.cloudflare.com/tunnel/) for tunnel and DNS
+lifecycle management.
 
 Minimal Nginx example:
 
@@ -397,6 +405,12 @@ Important agent settings:
 | `transport` | Prefer `auto` with `[quic]` configured: QUIC first, then WebSocket, then polling. Use strict `quic`, `websocket`, or `polling` only when you want exactly one transport. |
 | `projects_dir` | Directory of project registry files. |
 | `temporary_projects_root` | Optional existing Runner-owned root for managed temporary projects; it is validated against the effective Runner path policy (and must be inside `allowed_roots` in narrowed deployments). |
+
+When the Runner needs an outbound HTTP proxy, set the proxy variables in the Runner's actual
+service environment, not only in an interactive shell. WebSocket uses `HTTPS_PROXY`/`https_proxy`
+for `wss://`, `HTTP_PROXY`/`http_proxy` for `ws://`, then `ALL_PROXY`/`all_proxy`; matching
+`NO_PROXY`/`no_proxy` bypasses it. Current support is an `http://host:port` proxy via CONNECT;
+see [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) for the exact boundary.
 | `[policy]` | Local execution boundary. |
 | `[shell]` | Optional shell profile definitions and bounded persistent-shell limits. |
 | `[ssh.resources.<name>]` | Optional named SSH target for Session-bound `run_shell` / `run_job`; contains only `host` (including a normal OpenSSH Host alias) and optional remote `default_cwd`. |

@@ -26,6 +26,16 @@ toolchains installed on the machine that owns the project.
 Supported package platforms are Linux x64, Linux arm64, macOS arm64, and Windows x64. The
 npm installer requires Node.js 18 or newer.
 
+Pick the path that matches how you want to run WebCodex:
+
+| Goal | Start here |
+| --- | --- |
+| Use an existing hosted Server | Install WebCodex, then run `webcodex connect <server>` in the repository. |
+| Temporarily expose one local project | Run `webcodex share`; it starts a local Server + Runner and a Cloudflare Quick Tunnel. |
+| Run your own long-lived Server | Deploy the server-only Docker/Compose stack, put a stable HTTPS domain or named tunnel in front of it, then enroll each repository machine as a Runner. |
+
+### Hosted Server: connect one project
+
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
@@ -130,15 +140,21 @@ the actual work on the machine that owns the repository. Repositories and local
 toolchains stay on that Runner host; only the requested tool inputs and results
 travel through the connection.
 
-## Choose a setup
+## Long-lived self-hosting
 
-| Goal | Recommended path |
-| --- | --- |
-| Connect one project through the hosted service | Use `webcodex connect <server>`. Only the Runner runs locally. |
-| Temporarily expose the current local project to ChatGPT/MCP | Use `webcodex share`; it starts local Server + Agent and a temporary Quick Tunnel. |
-| Keep everything local without public access | Use `webcodex setup` + `webcodex run` (or `webcodex share --tunnel none` for share debugging). |
-| Run a stable long-lived deployment | Self-host the Server with a stable HTTPS domain/tunnel, service management, and OAuth as needed. |
-| Use managed users, device enrollment, revocation, and audit | Use `webcodex login` and the managed deployment flow. |
+A durable personal deployment keeps the Server separate from the machines that own your
+repositories:
+
+1. Deploy the server-only Docker/Compose stack on an always-on Linux host.
+2. Publish it through a stable HTTPS hostname. Nginx is supported; a named Cloudflare Tunnel
+   or another durable reverse tunnel can also route the hostname to the loopback Server.
+   Cloudflare Quick Tunnel (`trycloudflare.com`) is only for temporary development/testing.
+3. Create a short-lived pairing code on the Server.
+4. On each workstation/server that owns repositories, run `webcodex login`, then install its
+   generated Runner profile as a user service.
+
+This gives ChatGPT/MCP one stable `/mcp` endpoint while files, Git state, compilers, and other
+local toolchains stay on the Runner machines.
 
 ## Self-host the Server with Docker
 
@@ -178,6 +194,12 @@ webcodex agent status --scope user \
 
 See [Build and Install](docs/BUILD_INSTALL.md#runner-service-scopes) for system
 services and advanced overrides.
+
+If a Runner host needs an outbound HTTP proxy, make the proxy variables available to the
+Runner process/service. WebSocket honors `HTTPS_PROXY` / `HTTP_PROXY`, `ALL_PROXY`, and
+`NO_PROXY` (including lowercase forms); the supported proxy transport is HTTP `CONNECT`.
+See [Agent transports](docs/AGENT_TRANSPORTS.md) for precedence, limitations, and fallback
+behavior.
 
 ## Client access
 

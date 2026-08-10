@@ -257,13 +257,20 @@ WebCodex runtime job API 面向可信单操作者部署。
 
 ## Public HTTPS URL
 
-GPT Actions 需要 public HTTPS URL。WebCodex CLI 不会自动配置 reverse proxy 或 tunnel，所以在把 `/openapi.json` 导入 ChatGPT 之前需要先配置好对外 HTTPS。
+Hosted MCP client 和 GPT Actions 都需要 public HTTPS URL。WebCodex CLI 不会自动配置长期 reverse proxy 或 tunnel，因此连接 hosted client 前需要先准备稳定的对外 HTTPS。
 
 在 server env 文件中设置同一个 public URL：
 
 ```text
 WEBCODEX_PUBLIC_URL=https://your-domain.example
 ```
+
+如果主机不方便开放入站端口，也可以使用长期 Cloudflare Tunnel 作为公网入口：发布
+stable hostname，并转发到 `http://127.0.0.1:8080`。长期部署应使用 named / remotely
+managed tunnel，而不是临时 `trycloudflare.com` Quick Tunnel。同一 hostname 需要同时
+承载普通 HTTPS 请求与 `/api/agents/ws`；Cloudflare proxy 支持 WebSocket upgrade。
+Tunnel 与 DNS 生命周期管理见
+[Cloudflare Tunnel 官方文档](https://developers.cloudflare.com/tunnel/)。
 
 最小 Nginx 示例：
 
@@ -368,6 +375,12 @@ webcodex-runner --profile workstation
 | `transport` | 推荐配置 `[quic]` 并使用 `auto`：先 QUIC，再 WebSocket，再 polling。只有明确需要单一 transport 时才使用 strict `quic`、`websocket` 或 `polling`。 |
 | `projects_dir` | 项目注册文件目录。 |
 | `temporary_projects_root` | 可选的、已存在的 Runner 托管临时项目根目录；它会按 effective Runner path policy 校验（收窄部署时必须位于 `allowed_roots` 内）。 |
+
+Runner 需要出站 HTTP proxy 时，应把代理变量配置到 Runner **实际 service environment**，
+而不是只写在交互 shell 中。WebSocket 对 `wss://` 使用 `HTTPS_PROXY`/`https_proxy`，
+对 `ws://` 使用 `HTTP_PROXY`/`http_proxy`，随后 fallback 到 `ALL_PROXY`/`all_proxy`；
+匹配 `NO_PROXY`/`no_proxy` 时绕过代理。当前支持 `http://host:port` + CONNECT，完整
+边界见 [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md)。
 | `[policy]` | 本地执行边界。 |
 | `[shell]` | 可选 shell profile 定义和有界 persistent-shell 限额。 |
 

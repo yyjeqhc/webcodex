@@ -1485,6 +1485,88 @@ fn corrupted_ledger_does_not_panic() {
 }
 
 #[test]
+fn persistence_snapshot_shares_payload_and_stays_stable_across_message_cow() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let session = store.start_session(None, Some("shared snapshot".to_string()));
+    assert!(store
+        .record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Api,
+            "read_file",
+            &json!({
+                "project": "demo",
+                "path": "src/lib.rs",
+                "query": "snapshot payload"
+            }),
+        )
+        .is_some());
+    let message = post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "snapshot message payload",
+    );
+    store.flush_persistence();
+
+    let (snapshot_ready_tx, snapshot_ready_rx) = std::sync::mpsc::channel();
+    let (allow_old_write_tx, allow_old_write_rx) = std::sync::mpsc::channel();
+    let snapshot_session_id = session.session_id.clone();
+    let delayed_store = store.clone();
+    let delayed_write = std::thread::spawn(move || {
+        delayed_store.persist_after_mutation_with(|path, ledger| {
+            let snapshot = ledger
+                .sessions
+                .iter()
+                .find(|record| record.session_id == snapshot_session_id)
+                .unwrap();
+            let event = snapshot.events.last().unwrap();
+            let message = snapshot.messages.last().unwrap();
+            assert_eq!(std::sync::Arc::strong_count(event), 2);
+            assert_eq!(std::sync::Arc::strong_count(message), 2);
+            assert_eq!(message.status, SessionMessageStatus::Open);
+
+            snapshot_ready_tx.send(()).unwrap();
+            allow_old_write_rx.recv().unwrap();
+
+            assert_eq!(std::sync::Arc::strong_count(message), 1);
+            assert_eq!(message.status, SessionMessageStatus::Open);
+            assert_eq!(message.resolution, None);
+            write_ledger_atomic(path, ledger)
+        });
+    });
+    snapshot_ready_rx.recv().unwrap();
+
+    let resolved = store
+        .resolve_message(
+            &session.session_id,
+            &message.message_id,
+            Some("resolved after snapshot".to_string()),
+        )
+        .unwrap();
+    assert_eq!(resolved.status, SessionMessageStatus::Resolved);
+    assert_eq!(
+        resolved.resolution.as_deref(),
+        Some("resolved after snapshot")
+    );
+
+    allow_old_write_tx.send(()).unwrap();
+    delayed_write.join().unwrap();
+
+    let restored = flush_and_restore(&store, ledger);
+    let messages = restored
+        .list_messages(&session.session_id, ListSessionMessagesFilter::default())
+        .unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].status, SessionMessageStatus::Resolved);
+    assert_eq!(
+        messages[0].resolution.as_deref(),
+        Some("resolved after snapshot")
+    );
+}
+
+#[test]
 fn concurrent_persistence_reloads_current_snapshot_before_write() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");

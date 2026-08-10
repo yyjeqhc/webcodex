@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub(crate) const SESSION_ID_PREFIX: &str = "wc_sess_";
@@ -295,14 +296,14 @@ pub(super) struct SessionRecord {
     pub(super) lifecycle: SessionLifecycle,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
-    pub(super) events: VecDeque<SessionEvent>,
+    pub(super) events: VecDeque<Arc<SessionEvent>>,
     /// Cumulative number of events ever appended to this session ledger,
     /// including events the per-session event cap has since evicted. This is
     /// the source of truth for "did the durable ledger ever hold more events
     /// than are retained now". The persisted counterpart carries the additive
     /// serde default; the in-memory record is always constructed explicitly.
     pub(super) events_observed: u64,
-    pub(super) messages: VecDeque<SessionMessage>,
+    pub(super) messages: VecDeque<Arc<SessionMessage>>,
     pub(super) project_instructions: Option<ProjectInstructionsSnapshot>,
 }
 
@@ -524,8 +525,8 @@ pub(super) struct PersistedSessionRecord {
     pub(super) lifecycle: SessionLifecycle,
     pub(super) created_at: i64,
     pub(super) updated_at: i64,
-    pub(super) events: Vec<SessionEvent>,
-    pub(super) messages: Vec<SessionMessage>,
+    pub(super) events: Vec<Arc<SessionEvent>>,
+    pub(super) messages: Vec<Arc<SessionMessage>>,
     /// Additive v1 field. Cumulative number of events ever appended, including
     /// those the per-session event cap has evicted. Older ledgers omit it and
     /// deserialize to 0; the restore path treats 0 as "retain exactly the

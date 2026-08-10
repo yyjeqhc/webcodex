@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::events::{
     exploration_tool_kind, is_valid_session_id, sanitize_failure_expectation_result,
@@ -28,6 +29,20 @@ impl PersistedSessionRecord {
             .messages
             .len()
             .saturating_sub(DEFAULT_MAX_MESSAGES_PER_SESSION);
+        let events: Vec<_> = record.events.iter().skip(event_skip).cloned().collect();
+        let messages: Vec<_> = record.messages.iter().skip(message_skip).cloned().collect();
+        debug_assert!(record
+            .events
+            .iter()
+            .skip(event_skip)
+            .zip(&events)
+            .all(|(record, snapshot)| Arc::ptr_eq(record, snapshot)));
+        debug_assert!(record
+            .messages
+            .iter()
+            .skip(message_skip)
+            .zip(&messages)
+            .all(|(record, snapshot)| Arc::ptr_eq(record, snapshot)));
         Self {
             session_id: record.session_id.clone(),
             project: record.project.clone(),
@@ -38,8 +53,8 @@ impl PersistedSessionRecord {
             lifecycle: record.lifecycle,
             created_at: record.created_at,
             updated_at: record.updated_at,
-            events: record.events.iter().skip(event_skip).cloned().collect(),
-            messages: record.messages.iter().skip(message_skip).cloned().collect(),
+            events,
+            messages,
             events_observed: record.events_observed,
         }
     }
@@ -49,20 +64,24 @@ impl PersistedSessionRecord {
         if !is_valid_session_id(&session_id) {
             return None;
         }
-        let events: VecDeque<SessionEvent> = self
+        let events: VecDeque<Arc<SessionEvent>> = self
             .events
             .into_iter()
+            .map(|event| Arc::try_unwrap(event).unwrap_or_else(|event| (*event).clone()))
             .filter_map(|event| sanitize_persisted_event(event, &session_id))
+            .map(Arc::new)
             .rev()
             .take(max_events_per_session)
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
             .collect();
-        let messages: VecDeque<SessionMessage> = self
+        let messages: VecDeque<Arc<SessionMessage>> = self
             .messages
             .into_iter()
+            .map(|message| Arc::try_unwrap(message).unwrap_or_else(|message| (*message).clone()))
             .filter_map(|message| sanitize_persisted_message(message, &session_id))
+            .map(Arc::new)
             .rev()
             .take(DEFAULT_MAX_MESSAGES_PER_SESSION)
             .collect::<Vec<_>>()

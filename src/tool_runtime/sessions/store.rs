@@ -653,7 +653,7 @@ impl SessionStore {
                             record.project_instructions = Some(project_instructions);
                         }
                     }
-                    record.events.push_back(event);
+                    record.events.push_back(Arc::new(event));
                     record.events_observed = record.events_observed.saturating_add(1);
                     while record.events.len() > max_events {
                         record.events.pop_front();
@@ -716,7 +716,7 @@ impl SessionStore {
                     created_at: now,
                     updated_at: now,
                     messages: VecDeque::new(),
-                    events: VecDeque::from([event]),
+                    events: VecDeque::from([Arc::new(event)]),
                     events_observed: 1,
                     project_instructions: request.project_instructions,
                 };
@@ -877,7 +877,7 @@ impl SessionStore {
                 .expect("validated Session disappeared under store lock");
             record.execution_context = execution_context;
             record.updated_at = now;
-            record.events.push_back(event);
+            record.events.push_back(Arc::new(event));
             record.events_observed = record.events_observed.saturating_add(1);
             while record.events.len() > max_events {
                 record.events.pop_front();
@@ -1592,7 +1592,7 @@ impl SessionStoreInner {
                         .expect("session present after lifecycle read");
                     record.lifecycle = SessionLifecycle::Closed;
                     record.updated_at = now;
-                    record.events.push_back(event);
+                    record.events.push_back(Arc::new(event));
                     record.events_observed = record.events_observed.saturating_add(1);
                     while record.events.len() > max_events {
                         record.events.pop_front();
@@ -1779,7 +1779,7 @@ impl SessionStoreInner {
             resolution: None,
         };
         record.updated_at = now;
-        record.messages.push_back(message.clone());
+        record.messages.push_back(Arc::new(message.clone()));
         while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
             record.messages.pop_front();
         }
@@ -1806,7 +1806,7 @@ impl SessionStoreInner {
             .filter(|message| filter.status.is_none_or(|status| message.status == status))
             .rev()
             .take(limit)
-            .cloned()
+            .map(|message| message.as_ref().clone())
             .collect())
     }
 
@@ -1834,6 +1834,7 @@ impl SessionStoreInner {
         else {
             return Err(SessionMessageError::UnknownMessage);
         };
+        let message = Arc::make_mut(message);
         let resolution = match resolution {
             Some(value) => Some(validate_resolution_text(value)?),
             None => None,
@@ -1877,7 +1878,7 @@ impl SessionStoreInner {
         let max_events_per_session = self.max_events_per_session;
         if let Some(record) = self.sessions.get_mut(&event.session_id) {
             record.updated_at = now_ts();
-            record.events.push_back(event);
+            record.events.push_back(Arc::new(event));
             record.events_observed = record.events_observed.saturating_add(1);
             while record.events.len() > max_events_per_session {
                 record.events.pop_front();
@@ -1906,7 +1907,7 @@ impl SessionStoreInner {
             .rev()
             .find(|event| event.event_id == event_id)
         {
-            event.permission = Some(permission);
+            Arc::make_mut(event).permission = Some(permission);
             true
         } else {
             false
@@ -1929,7 +1930,7 @@ impl SessionStoreInner {
         else {
             return false;
         };
-        event.persistent_shell = Some(evidence);
+        Arc::make_mut(event).persistent_shell = Some(evidence);
         record.updated_at = now_ts();
         true
     }
@@ -2037,6 +2038,7 @@ impl SessionStoreInner {
         let finished_events: Vec<&SessionEvent> = record
             .events
             .iter()
+            .map(Arc::as_ref)
             .filter(|event| event.kind == "tool_call_finished")
             .collect();
         let counts = SessionCounts {
@@ -2078,7 +2080,12 @@ impl SessionStoreInner {
         let observed_total = record.events_observed.max(retained_total as u64) as usize;
         // The returned window is further sliced by the requested `limit`.
         let skip = retained_total.saturating_sub(limit);
-        let events: Vec<SessionEvent> = record.events.iter().skip(skip).cloned().collect();
+        let events: Vec<SessionEvent> = record
+            .events
+            .iter()
+            .skip(skip)
+            .map(|event| event.as_ref().clone())
+            .collect();
         let events_returned = events.len();
         // Truncated when the durable ledger ever held more events than we are
         // returning: either the per-session cap evicted older events, or the

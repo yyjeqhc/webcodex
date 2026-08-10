@@ -161,7 +161,7 @@ pub(super) fn take_recent_kind(
         .filter(|message| message.kind == kind)
         .filter(|message| status.is_none_or(|status| message.status == status))
         .take(limit)
-        .cloned()
+        .map(|message| message.as_ref().clone())
         .map(bound_message_for_summary)
         .collect()
 }

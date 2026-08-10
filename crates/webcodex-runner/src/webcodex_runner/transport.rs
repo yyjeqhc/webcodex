@@ -38,6 +38,9 @@ use std::time::{Duration, Instant};
 pub(crate) const WS_OUTGOING_CAPACITY: usize = 64;
 /// WebSocket ping interval.
 const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
+/// HTTP CONNECT response headers are read one byte at a time so no tunneled
+/// WebSocket bytes can be over-read or lost before tungstenite takes ownership.
+const WS_PROXY_CONNECT_HEADER_MAX_BYTES: usize = 16 * 1024;
 /// Bounded reconnect backoff after a transport disconnect or transient error.
 const RECONNECT_BACKOFF_STEPS: [Duration; 5] = [
     Duration::from_secs(1),
@@ -80,6 +83,19 @@ const POLLING_RECOVERY_BACKOFF_STEPS: [Duration; 5] = [
     Duration::from_secs(5),
     Duration::from_secs(10),
 ];
+/// Empty successful polls back off independently from transient transport
+/// recovery. The configured poll interval remains the minimum; the built-in
+/// progression stops at 5 seconds so idle dispatch latency stays well below
+/// the Server's 30-second default synchronous tool wait.
+const POLLING_IDLE_BACKOFF_STEPS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+];
+/// Polling periodically refreshes the Server's project projection so external
+/// projects.d and Git metadata changes remain discoverable without attaching
+/// the full inventory to every poll.
+const POLLING_PROJECT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 /// The current server contract keeps an active polling instance online for
 /// 60 seconds. Permit one lease window plus scheduling slack during deployment
 /// replacement, but do not let a real duplicate runner retry forever.
@@ -428,12 +444,17 @@ fn complete_polling_shutdown(runtime: &AgentRuntimeState) -> Result<(), String> 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AgentTransportError {
     Transient(String),
+    ProxyConfiguration(String),
     Fatal(String),
 }
 
 impl AgentTransportError {
     fn transient(message: impl Into<String>) -> Self {
         Self::Transient(message.into())
+    }
+
+    fn proxy_configuration(message: impl Into<String>) -> Self {
+        Self::ProxyConfiguration(message.into())
     }
 
     fn fatal(message: impl Into<String>) -> Self {
@@ -444,9 +465,15 @@ impl AgentTransportError {
         matches!(self, Self::Fatal(_))
     }
 
+    fn is_proxy_configuration(&self) -> bool {
+        matches!(self, Self::ProxyConfiguration(_))
+    }
+
     fn into_message(self) -> String {
         match self {
-            Self::Transient(message) | Self::Fatal(message) => message,
+            Self::Transient(message) | Self::ProxyConfiguration(message) | Self::Fatal(message) => {
+                message
+            }
         }
     }
 }
@@ -454,8 +481,16 @@ impl AgentTransportError {
 impl fmt::Display for AgentTransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Transient(message) | Self::Fatal(message) => f.write_str(message),
+            Self::Transient(message) | Self::ProxyConfiguration(message) | Self::Fatal(message) => {
+                f.write_str(message)
+            }
         }
+    }
+}
+
+impl From<String> for AgentTransportError {
+    fn from(message: String) -> Self {
+        classify_session_error(message)
     }
 }
 
@@ -1199,6 +1234,87 @@ pub(crate) fn auto_transport_plan(cfg: &AgentConfig) -> Vec<&'static str> {
 }
 
 #[derive(Debug, Clone)]
+struct PollingIdleBackoff {
+    initial: Duration,
+    next_step: usize,
+    first: bool,
+}
+
+impl PollingIdleBackoff {
+    fn new(initial: Duration) -> Self {
+        Self {
+            initial,
+            next_step: 0,
+            first: true,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.next_step = 0;
+        self.first = true;
+    }
+
+    fn next_delay(&mut self) -> Duration {
+        if self.first {
+            self.first = false;
+            return self.initial;
+        }
+        while let Some(step) = POLLING_IDLE_BACKOFF_STEPS.get(self.next_step).copied() {
+            self.next_step += 1;
+            if step > self.initial {
+                return step;
+            }
+        }
+        self.initial.max(
+            *POLLING_IDLE_BACKOFF_STEPS
+                .last()
+                .expect("polling idle backoff is non-empty"),
+        )
+    }
+}
+
+fn polling_idle_delay(backoff: &mut PollingIdleBackoff, ran_request: bool) -> Option<Duration> {
+    if ran_request {
+        backoff.reset();
+        None
+    } else {
+        Some(backoff.next_delay())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PollingProjectRefresh {
+    last_sent_at: Instant,
+}
+
+impl PollingProjectRefresh {
+    fn new(now: Instant) -> Self {
+        Self { last_sent_at: now }
+    }
+
+    fn mark_sent(&mut self, now: Instant) {
+        self.last_sent_at = now;
+    }
+
+    fn should_refresh(&self, project_cache: &AgentProjectCache, now: Instant) -> bool {
+        project_cache.needs_refresh()
+            || now.saturating_duration_since(self.last_sent_at) >= POLLING_PROJECT_REFRESH_INTERVAL
+    }
+}
+
+fn polling_projects_for_poll(
+    refresh: &PollingProjectRefresh,
+    project_cache: &mut AgentProjectCache,
+    cfg: &AgentConfig,
+    shutdown: &AtomicBool,
+    now: Instant,
+) -> Option<Vec<ShellAgentProjectSummary>> {
+    refresh
+        .should_refresh(project_cache, now)
+        .then(|| project_cache.get_with_shutdown(cfg, Some(shutdown)))
+}
+
+#[derive(Debug, Clone)]
 struct RetryBackoff {
     attempts: usize,
     steps: &'static [Duration],
@@ -1317,7 +1433,7 @@ fn decide_stream_session(
     mode: StreamSupervisorMode,
     transport: StreamTransport,
     once: bool,
-    result: Result<AgentSessionExit, String>,
+    result: Result<AgentSessionExit, AgentTransportError>,
 ) -> StreamSessionDecision {
     match result {
         Ok(AgentSessionExit::Shutdown) => StreamSessionDecision::Complete { shutdown: true },
@@ -1326,8 +1442,14 @@ fn decide_stream_session(
             StreamSessionDecision::Complete { shutdown: false }
         }
         Ok(AgentSessionExit::TransportDisconnected) => StreamSessionDecision::Reconnect(None),
+        Err(error) if error.is_proxy_configuration() => {
+            if matches!(mode, StreamSupervisorMode::Strict(_)) {
+                StreamSessionDecision::Fatal(error.into_message())
+            } else {
+                StreamSessionDecision::TryNext(error)
+            }
+        }
         Err(error) => {
-            let error = classify_session_error(error);
             if error.is_fatal()
                 || matches!(mode, StreamSupervisorMode::Strict(_)) && once
                 || mode == StreamSupervisorMode::Auto
@@ -1365,14 +1487,14 @@ async fn run_stream_session(
     agent_instance_id: &str,
     once: bool,
     runtime: &AgentRuntimeState,
-) -> Result<AgentSessionExit, String> {
+) -> Result<AgentSessionExit, AgentTransportError> {
     match transport {
         StreamTransport::WebSocket => {
-            websocket_session(cfg, projects, agent_instance_id, runtime).await
+            websocket_session_classified(cfg, projects, agent_instance_id, runtime).await
         }
-        StreamTransport::Quic => {
-            quic_session(cfg, projects, agent_instance_id, once, runtime).await
-        }
+        StreamTransport::Quic => quic_session(cfg, projects, agent_instance_id, once, runtime)
+            .await
+            .map_err(classify_session_error),
     }
 }
 
@@ -1609,6 +1731,8 @@ fn run_polling_agent_with_shutdown(
         .map_err(|e| format!("failed to create http client: {}", e))?;
     let jobs = runtime.jobs.clone();
     let mut project_cache = AgentProjectCache::default();
+    let mut idle_backoff = PollingIdleBackoff::new(Duration::from_millis(cfg.poll_interval_ms));
+    let mut project_refresh = PollingProjectRefresh::new(Instant::now());
     let mut polling_dispatches = PollingDispatchSupervisor::new(
         Arc::clone(&runtime.background_threads),
         runtime.dispatches.clone(),
@@ -1662,6 +1786,8 @@ fn run_polling_agent_with_shutdown(
                     registered = true;
                     lease_conflict_started = None;
                     recovery_backoff.reset();
+                    idle_backoff.reset();
+                    project_refresh.mark_sent(Instant::now());
                     let sink = AgentSink::Http(HttpSendConfig {
                         client: client.clone(),
                         server_url: cfg.server_url.clone(),
@@ -1763,6 +1889,14 @@ fn run_polling_agent_with_shutdown(
                 &mut project_cache,
             );
         }
+        let poll_projects = polling_projects_for_poll(
+            &project_refresh,
+            &mut project_cache,
+            &cfg,
+            shutdown.as_ref(),
+            Instant::now(),
+        );
+        let sent_project_refresh = poll_projects.is_some();
         let mut poll_result = handle_one_poll(
             &client,
             &cfg,
@@ -1770,6 +1904,7 @@ fn run_polling_agent_with_shutdown(
             &jobs,
             &runtime.persistent_shells,
             &mut project_cache,
+            poll_projects,
             agent_instance_id,
             &runtime.lsp,
             &shutdown,
@@ -1784,9 +1919,13 @@ fn run_polling_agent_with_shutdown(
         }
         match poll_result {
             Ok(ran_request) => {
+                if sent_project_refresh {
+                    project_refresh.mark_sent(Instant::now());
+                }
                 recovery_backoff.reset();
                 lease_conflict_started = None;
                 if recovering {
+                    idle_backoff.reset();
                     eprintln!(
                         "webcodex-runner polling recovery succeeded phase=poll client_id={}",
                         concise_log_error(&cfg.client_id, &cfg.token)
@@ -1809,11 +1948,8 @@ fn run_polling_agent_with_shutdown(
                     }
                     return Ok(());
                 }
-                if !ran_request {
-                    if sleep_or_shutdown(
-                        Duration::from_millis(cfg.poll_interval_ms),
-                        shutdown.as_ref(),
-                    ) {
+                if let Some(delay) = polling_idle_delay(&mut idle_backoff, ran_request) {
+                    if sleep_or_shutdown(delay, shutdown.as_ref()) {
                         return complete_polling_after_shutdown(
                             runtime,
                             &mut polling_dispatches,
@@ -2569,6 +2705,338 @@ pub(crate) fn build_ws_request(
     Ok(request)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HttpProxyEndpoint {
+    host: String,
+    port: u16,
+}
+
+fn first_nonempty_env_value_with<F>(names: &[&str], get_env: &mut F) -> Option<std::ffi::OsString>
+where
+    F: FnMut(&str) -> Option<std::ffi::OsString>,
+{
+    names.iter().find_map(|name| {
+        get_env(name).and_then(|value| {
+            if value.as_os_str().is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        })
+    })
+}
+
+fn split_no_proxy_host_port(entry: &str) -> (&str, Option<u16>) {
+    if let Some(rest) = entry.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            let host = &rest[..end];
+            let suffix = &rest[end + 1..];
+            if suffix.is_empty() {
+                return (host, None);
+            }
+            if let Some(port) = suffix
+                .strip_prefix(':')
+                .and_then(|value| value.parse().ok())
+            {
+                return (host, Some(port));
+            }
+            return (entry, None);
+        }
+    }
+    if entry.bytes().filter(|byte| *byte == b':').count() == 1 {
+        if let Some((host, port)) = entry.rsplit_once(':') {
+            if let Ok(port) = port.parse::<u16>() {
+                return (host, Some(port));
+            }
+        }
+    }
+    (entry, None)
+}
+
+fn no_proxy_entry_matches(entry: &str, target_host: &str, target_port: u16) -> bool {
+    let entry = entry.trim();
+    if entry.is_empty() {
+        return false;
+    }
+    if entry == "*" {
+        return true;
+    }
+    let (pattern, port) = split_no_proxy_host_port(entry);
+    if port.is_some_and(|port| port != target_port) {
+        return false;
+    }
+    let pattern = pattern
+        .trim()
+        .trim_end_matches('.')
+        .strip_prefix("*.")
+        .unwrap_or(pattern.trim().trim_end_matches('.'))
+        .trim_start_matches('.');
+    if pattern.is_empty() {
+        return false;
+    }
+    let target_host = target_host.trim_end_matches('.');
+    if let Ok(pattern_ip) = pattern.parse::<std::net::IpAddr>() {
+        return target_host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|target_ip| target_ip == pattern_ip);
+    }
+    if pattern.eq_ignore_ascii_case("localhost") {
+        return target_host.eq_ignore_ascii_case("localhost");
+    }
+    let target = target_host.to_ascii_lowercase();
+    let pattern = pattern.to_ascii_lowercase();
+    target == pattern
+        || target
+            .strip_suffix(&pattern)
+            .is_some_and(|prefix| prefix.ends_with('.'))
+}
+
+fn no_proxy_matches(no_proxy: &str, target_host: &str, target_port: u16) -> bool {
+    no_proxy
+        .split(',')
+        .any(|entry| no_proxy_entry_matches(entry, target_host, target_port))
+}
+
+fn canonical_url_host(parsed: &url::Url) -> Option<String> {
+    match parsed.host()? {
+        url::Host::Domain(host) => (!host.is_empty()).then(|| host.to_string()),
+        url::Host::Ipv4(host) => Some(host.to_string()),
+        url::Host::Ipv6(host) => Some(host.to_string()),
+    }
+}
+
+fn parse_http_proxy_endpoint(raw: &str) -> Result<HttpProxyEndpoint, AgentTransportError> {
+    let parsed = url::Url::parse(raw.trim()).map_err(|_| {
+        AgentTransportError::proxy_configuration(
+            "websocket connect failed: proxy configuration is invalid",
+        )
+    })?;
+    if parsed.scheme() != "http" {
+        return Err(AgentTransportError::proxy_configuration(
+            "websocket connect failed: proxy scheme is unsupported",
+        ));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(AgentTransportError::proxy_configuration(
+            "websocket connect failed: proxy authentication is unsupported",
+        ));
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() || !matches!(parsed.path(), "" | "/")
+    {
+        return Err(AgentTransportError::proxy_configuration(
+            "websocket connect failed: proxy URL options are unsupported",
+        ));
+    }
+    let host = canonical_url_host(&parsed).ok_or_else(|| {
+        AgentTransportError::proxy_configuration(
+            "websocket connect failed: proxy configuration is invalid",
+        )
+    })?;
+    let port = parsed.port_or_known_default().ok_or_else(|| {
+        AgentTransportError::proxy_configuration(
+            "websocket connect failed: proxy configuration is invalid",
+        )
+    })?;
+    Ok(HttpProxyEndpoint { host, port })
+}
+
+fn websocket_proxy_from_env_with<F>(
+    ws_url: &str,
+    mut get_env: F,
+) -> Result<Option<HttpProxyEndpoint>, AgentTransportError>
+where
+    F: FnMut(&str) -> Option<std::ffi::OsString>,
+{
+    let target = url::Url::parse(ws_url).map_err(|_| {
+        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+    })?;
+    let proxy_names: &[&str] = match target.scheme() {
+        "wss" => &["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"],
+        "ws" => &["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"],
+        _ => {
+            return Err(AgentTransportError::fatal(
+                "websocket connect failed: websocket target scheme is invalid",
+            ));
+        }
+    };
+    let Some(proxy_raw) = first_nonempty_env_value_with(proxy_names, &mut get_env) else {
+        return Ok(None);
+    };
+    let target_host = canonical_url_host(&target).ok_or_else(|| {
+        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+    })?;
+    let target_port = target.port_or_known_default().ok_or_else(|| {
+        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+    })?;
+    if let Some(no_proxy_raw) =
+        first_nonempty_env_value_with(&["NO_PROXY", "no_proxy"], &mut get_env)
+    {
+        let no_proxy = no_proxy_raw.into_string().map_err(|_| {
+            AgentTransportError::proxy_configuration(
+                "websocket connect failed: NO_PROXY configuration is invalid",
+            )
+        })?;
+        if no_proxy_matches(&no_proxy, &target_host, target_port) {
+            return Ok(None);
+        }
+    }
+    let proxy = proxy_raw.into_string().map_err(|_| {
+        AgentTransportError::proxy_configuration(
+            "websocket connect failed: proxy configuration is invalid",
+        )
+    })?;
+    parse_http_proxy_endpoint(&proxy).map(Some)
+}
+
+fn websocket_proxy_from_env(
+    ws_url: &str,
+) -> Result<Option<HttpProxyEndpoint>, AgentTransportError> {
+    websocket_proxy_from_env_with(ws_url, |name| std::env::var_os(name))
+}
+
+fn target_authority(host: &str, port: u16) -> String {
+    if host.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+fn websocket_target_endpoint(ws_url: &str) -> Result<(String, u16), AgentTransportError> {
+    let target = url::Url::parse(ws_url).map_err(|_| {
+        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+    })?;
+    let host = canonical_url_host(&target).ok_or_else(|| {
+        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+    })?;
+    let port = target.port_or_known_default().ok_or_else(|| {
+        AgentTransportError::fatal("websocket connect failed: websocket target is invalid")
+    })?;
+    Ok((host, port))
+}
+
+async fn http_proxy_connect_tunnel(
+    proxy: &HttpProxyEndpoint,
+    target_host: &str,
+    target_port: u16,
+) -> Result<tokio::net::TcpStream, AgentTransportError> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::net::TcpStream::connect((proxy.host.as_str(), proxy.port))
+        .await
+        .map_err(|_| {
+            AgentTransportError::transient("websocket connect failed: proxy TCP connect failed")
+        })?;
+    let authority = target_authority(target_host, target_port);
+    let request = format!(
+        "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nConnection: keep-alive\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await.map_err(|_| {
+        AgentTransportError::transient("websocket connect failed: proxy CONNECT write failed")
+    })?;
+
+    let mut headers = Vec::with_capacity(1024);
+    loop {
+        if headers.len() >= WS_PROXY_CONNECT_HEADER_MAX_BYTES {
+            return Err(AgentTransportError::transient(format!(
+                "websocket connect failed: proxy CONNECT response headers exceeded {} bytes",
+                WS_PROXY_CONNECT_HEADER_MAX_BYTES
+            )));
+        }
+        let mut byte = [0u8; 1];
+        let read = stream.read(&mut byte).await.map_err(|_| {
+            AgentTransportError::transient("websocket connect failed: proxy CONNECT read failed")
+        })?;
+        if read == 0 {
+            return Err(AgentTransportError::transient(
+                "websocket connect failed: proxy CONNECT response was malformed",
+            ));
+        }
+        headers.push(byte[0]);
+        if headers.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    let headers = std::str::from_utf8(&headers).map_err(|_| {
+        AgentTransportError::transient(
+            "websocket connect failed: proxy CONNECT response was malformed",
+        )
+    })?;
+    let status_line = headers.split("\r\n").next().ok_or_else(|| {
+        AgentTransportError::transient(
+            "websocket connect failed: proxy CONNECT response was malformed",
+        )
+    })?;
+    let mut parts = status_line.split_whitespace();
+    let version = parts
+        .next()
+        .filter(|version| version.starts_with("HTTP/"))
+        .ok_or_else(|| {
+            AgentTransportError::transient(
+                "websocket connect failed: proxy CONNECT response was malformed",
+            )
+        })?;
+    let _ = version;
+    let status = parts
+        .next()
+        .and_then(|status| status.parse::<u16>().ok())
+        .ok_or_else(|| {
+            AgentTransportError::transient(
+                "websocket connect failed: proxy CONNECT response was malformed",
+            )
+        })?;
+    if status == 407 {
+        return Err(AgentTransportError::proxy_configuration(
+            "websocket connect failed: proxy CONNECT returned HTTP 407",
+        ));
+    }
+    if !(200..300).contains(&status) {
+        return Err(AgentTransportError::transient(format!(
+            "websocket connect failed: proxy CONNECT returned HTTP {status}"
+        )));
+    }
+    Ok(stream)
+}
+
+async fn connect_websocket_request_with_proxy(
+    request: tokio_tungstenite::tungstenite::http::Request<()>,
+    ws_url: &str,
+    proxy: Option<&HttpProxyEndpoint>,
+    token: &str,
+) -> Result<RunnerWebSocket, AgentTransportError> {
+    let Some(proxy) = proxy else {
+        return tokio_tungstenite::connect_async(request)
+            .await
+            .map(|(stream, _)| stream)
+            .map_err(|error| {
+                classify_session_error(format!(
+                    "websocket connect failed: {}",
+                    concise_log_error(&error.to_string(), token)
+                ))
+            });
+    };
+    let (target_host, target_port) = websocket_target_endpoint(ws_url)?;
+    let stream = http_proxy_connect_tunnel(proxy, &target_host, target_port).await?;
+    tokio_tungstenite::client_async_tls_with_config(request, stream, None, None)
+        .await
+        .map(|(stream, _)| stream)
+        .map_err(|error| {
+            classify_session_error(format!(
+                "websocket connect failed: {}",
+                concise_log_error(&error.to_string(), token)
+            ))
+        })
+}
+
+async fn connect_websocket_request(
+    request: tokio_tungstenite::tungstenite::http::Request<()>,
+    ws_url: &str,
+    token: &str,
+) -> Result<RunnerWebSocket, AgentTransportError> {
+    let proxy = websocket_proxy_from_env(ws_url)?;
+    connect_websocket_request_with_proxy(request, ws_url, proxy.as_ref(), token).await
+}
+
 fn run_websocket_agent(
     cfg: AgentConfig,
     once: bool,
@@ -2587,12 +3055,24 @@ fn run_websocket_agent(
 
 /// One WebSocket connection lifecycle: connect, register, then serve requests
 /// until the socket closes or a fatal server error arrives.
+#[cfg(test)]
 pub(crate) async fn websocket_session(
     cfg: &AgentConfig,
     projects: Vec<ShellAgentProjectSummary>,
     agent_instance_id: &str,
     runtime: &AgentRuntimeState,
 ) -> Result<AgentSessionExit, String> {
+    websocket_session_classified(cfg, projects, agent_instance_id, runtime)
+        .await
+        .map_err(AgentTransportError::into_message)
+}
+
+async fn websocket_session_classified(
+    cfg: &AgentConfig,
+    projects: Vec<ShellAgentProjectSummary>,
+    agent_instance_id: &str,
+    runtime: &AgentRuntimeState,
+) -> Result<AgentSessionExit, AgentTransportError> {
     websocket_session_with_shutdown(
         cfg,
         projects,
@@ -2609,7 +3089,7 @@ async fn websocket_session_with_shutdown<F>(
     agent_instance_id: &str,
     runtime: &AgentRuntimeState,
     shutdown: F,
-) -> Result<AgentSessionExit, String>
+) -> Result<AgentSessionExit, AgentTransportError>
 where
     F: std::future::Future<Output = ()>,
 {
@@ -2622,21 +3102,19 @@ where
     let connect = tokio::select! {
         result = tokio::time::timeout(
             Duration::from_secs(cfg.websocket_connect_timeout_secs),
-            tokio_tungstenite::connect_async(request),
+            connect_websocket_request(request, &ws_url, &cfg.token),
         ) => result,
         _ = &mut shutdown => {
             runtime.request_shutdown_signal();
             return Ok(AgentSessionExit::Shutdown);
         }
     };
-    let (mut ws_stream, _resp) = connect
-        .map_err(|_| {
-            format!(
-                "websocket connect timed out after {}s",
-                cfg.websocket_connect_timeout_secs
-            )
-        })?
-        .map_err(|e| format!("websocket connect failed: {}", e))?;
+    let mut ws_stream = connect.map_err(|_| {
+        format!(
+            "websocket connect timed out after {}s",
+            cfg.websocket_connect_timeout_secs
+        )
+    })??;
 
     // Register over the socket. The prepared-profile cache is empty at
     // registration time (snapshots are prepared lazily on first use), so
@@ -2733,6 +3211,7 @@ where
         shutdown,
     )
     .await
+    .map_err(classify_session_error)
 }
 
 #[cfg(test)]

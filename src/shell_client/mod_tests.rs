@@ -1310,6 +1310,44 @@ async fn registry_poll_updates_projects() {
 }
 
 #[tokio::test]
+async fn registry_poll_without_projects_preserves_existing_projection() {
+    let registry = ShellClientRegistry::default();
+    registry
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst".to_string(),
+            display_name: None,
+            owner: Some("alice".to_string()),
+            hostname: None,
+            capabilities: None,
+            projects: Some(vec![project_summary("one", "/tmp/one")]),
+            agent_protocol_version: None,
+            policy: None,
+        })
+        .await
+        .unwrap();
+
+    let polled = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap();
+    assert!(polled.is_none());
+
+    let projects = registry.list_client_projects("oe").await.unwrap();
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].id, "one");
+    assert_eq!(projects[0].path, "/tmp/one");
+}
+
+#[tokio::test]
 async fn registry_project_owner_check_enforces_boundary() {
     let registry = ShellClientRegistry::default();
     registry

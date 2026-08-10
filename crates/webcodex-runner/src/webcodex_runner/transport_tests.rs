@@ -248,6 +248,22 @@ fn read_http_request(stream: &mut TcpStream) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+async fn read_async_http_headers(stream: &mut tokio::net::TcpStream) -> String {
+    use tokio::io::AsyncReadExt;
+
+    let mut bytes = Vec::new();
+    loop {
+        assert!(bytes.len() < 64 * 1024, "test HTTP header exceeded bound");
+        let mut byte = [0u8; 1];
+        let read = stream.read(&mut byte).await.unwrap();
+        assert!(read > 0, "peer closed before HTTP headers completed");
+        bytes.push(byte[0]);
+        if bytes.ends_with(b"\r\n\r\n") {
+            return String::from_utf8(bytes).unwrap();
+        }
+    }
+}
+
 fn request_path(request: &str) -> &str {
     request
         .lines()
@@ -1489,6 +1505,13 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
             "/api/shell/agent/register" => register_success_response(),
             "/api/shell/agent/poll" => {
                 let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+                let index = poll_count.fetch_add(1, Ordering::SeqCst);
+                if index == 0 {
+                    assert!(
+                        payload["projects"].is_null(),
+                        "ordinary poll immediately after register must omit projects"
+                    );
+                }
                 let refreshed = payload["projects"].as_array().is_some_and(|projects| {
                     projects.iter().any(|project| project["id"] == "e1-project")
                 });
@@ -1499,7 +1522,6 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
                     let _ = refreshed_tx.send(());
                     runner_shutdown.store(true, Ordering::SeqCst);
                 }
-                let index = poll_count.fetch_add(1, Ordering::SeqCst);
                 poll_delivery_response((index == 0).then_some(&request))
             }
             "/api/shell/agent/result" => {
@@ -2906,6 +2928,42 @@ fn reconnect_backoff_is_bounded_exponential() {
 }
 
 #[test]
+fn polling_idle_backoff_progression_cap_and_request_reset() {
+    let mut backoff = PollingIdleBackoff::new(Duration::from_secs(1));
+    assert_eq!(
+        polling_idle_delay(&mut backoff, false),
+        Some(Duration::from_secs(1))
+    );
+    assert_eq!(
+        polling_idle_delay(&mut backoff, false),
+        Some(Duration::from_secs(2))
+    );
+    assert_eq!(
+        polling_idle_delay(&mut backoff, false),
+        Some(Duration::from_secs(5))
+    );
+    assert_eq!(
+        polling_idle_delay(&mut backoff, false),
+        Some(Duration::from_secs(5))
+    );
+
+    assert_eq!(polling_idle_delay(&mut backoff, true), None);
+    assert_eq!(
+        polling_idle_delay(&mut backoff, false),
+        Some(Duration::from_secs(1))
+    );
+
+    let mut custom = PollingIdleBackoff::new(Duration::from_secs(3));
+    assert_eq!(custom.next_delay(), Duration::from_secs(3));
+    assert_eq!(custom.next_delay(), Duration::from_secs(5));
+    assert_eq!(custom.next_delay(), Duration::from_secs(5));
+
+    let mut above_default_cap = PollingIdleBackoff::new(Duration::from_secs(60));
+    assert_eq!(above_default_cap.next_delay(), Duration::from_secs(60));
+    assert_eq!(above_default_cap.next_delay(), Duration::from_secs(60));
+}
+
+#[test]
 fn polling_recovery_backoff_is_bounded_and_resets() {
     let mut backoff = RetryBackoff::new(&POLLING_RECOVERY_BACKOFF_STEPS);
     assert_eq!(backoff.next_delay(), Duration::from_millis(500));
@@ -2938,6 +2996,10 @@ fn polling_lease_conflict_retry_has_a_finite_total_wait() {
 fn transport_error_classification_separates_transient_and_fatal() {
     let transient = classify_session_error("websocket connect failed: connection refused");
     assert!(!transient.is_fatal(), "{transient}");
+
+    let proxy_network =
+        AgentTransportError::transient("websocket connect failed: proxy TCP connect failed");
+    assert!(matches!(proxy_network, AgentTransportError::Transient(_)));
 
     let fatal = classify_session_error("register rejected by server: unauthorized");
     assert!(fatal.is_fatal(), "{fatal}");
@@ -2979,7 +3041,7 @@ fn stream_supervisor_once_semantics_are_explicit_and_shared() {
                 StreamSupervisorMode::Strict(transport),
                 transport,
                 true,
-                Err("connection refused".to_string()),
+                Err(classify_session_error("connection refused")),
             ),
             StreamSessionDecision::Fatal(error) if error == "connection refused"
         ));
@@ -2990,7 +3052,7 @@ fn stream_supervisor_once_semantics_are_explicit_and_shared() {
             StreamSupervisorMode::Auto,
             StreamTransport::Quic,
             true,
-            Err("connection refused".to_string()),
+            Err(classify_session_error("connection refused")),
         ),
         StreamSessionDecision::TryNext(AgentTransportError::Transient(error))
             if error == "connection refused"
@@ -3000,7 +3062,7 @@ fn stream_supervisor_once_semantics_are_explicit_and_shared() {
             StreamSupervisorMode::Auto,
             StreamTransport::WebSocket,
             true,
-            Err("connection refused".to_string()),
+            Err(classify_session_error("connection refused")),
         ),
         StreamSessionDecision::Fatal(error) if error == "connection refused"
     ));
@@ -3023,7 +3085,7 @@ fn stream_supervisor_reconnect_and_auto_fallback_semantics_are_shared() {
                 StreamSupervisorMode::Strict(transport),
                 transport,
                 false,
-                Err("connection refused".to_string()),
+                Err(classify_session_error("connection refused")),
             ),
             StreamSessionDecision::Reconnect(Some(AgentTransportError::Transient(error)))
                 if error == "connection refused"
@@ -3042,7 +3104,7 @@ fn stream_supervisor_reconnect_and_auto_fallback_semantics_are_shared() {
                 StreamSupervisorMode::Auto,
                 transport,
                 false,
-                Err("connection refused".to_string()),
+                Err(classify_session_error("connection refused")),
             ),
             StreamSessionDecision::TryNext(AgentTransportError::Transient(error))
                 if error == "connection refused"
@@ -3052,11 +3114,93 @@ fn stream_supervisor_reconnect_and_auto_fallback_semantics_are_shared() {
                 StreamSupervisorMode::Auto,
                 transport,
                 false,
-                Err("register rejected by server: unauthorized".to_string()),
+                Err(classify_session_error(
+                    "register rejected by server: unauthorized",
+                )),
             ),
             StreamSessionDecision::Fatal(error) if error.contains("register rejected")
         ));
     }
+}
+
+#[test]
+fn websocket_proxy_configuration_errors_are_mode_sensitive() {
+    let unsupported = parse_http_proxy_endpoint("socks5://proxy.test:1080")
+        .expect_err("unsupported proxy scheme must fail configuration");
+    assert!(matches!(
+        decide_stream_session(
+            StreamSupervisorMode::Strict(StreamTransport::WebSocket),
+            StreamTransport::WebSocket,
+            false,
+            Err(unsupported),
+        ),
+        StreamSessionDecision::Fatal(error) if error.contains("proxy scheme is unsupported")
+    ));
+
+    let auth = parse_http_proxy_endpoint("http://proxy-user:proxy-pass@proxy.test:8080")
+        .expect_err("proxy auth URL must fail configuration");
+    assert!(matches!(
+        decide_stream_session(
+            StreamSupervisorMode::Strict(StreamTransport::WebSocket),
+            StreamTransport::WebSocket,
+            false,
+            Err(auth),
+        ),
+        StreamSessionDecision::Fatal(error) if error.contains("proxy authentication is unsupported")
+    ));
+
+    let unsupported = parse_http_proxy_endpoint("socks5://proxy.test:1080")
+        .expect_err("unsupported proxy scheme must fail configuration");
+    assert!(matches!(
+        decide_stream_session(
+            StreamSupervisorMode::Auto,
+            StreamTransport::WebSocket,
+            false,
+            Err(unsupported),
+        ),
+        StreamSessionDecision::TryNext(AgentTransportError::ProxyConfiguration(error))
+            if error.contains("proxy scheme is unsupported")
+    ));
+
+    let proxy_auth_required = AgentTransportError::proxy_configuration(
+        "websocket connect failed: proxy CONNECT returned HTTP 407",
+    );
+    assert!(matches!(
+        decide_stream_session(
+            StreamSupervisorMode::Strict(StreamTransport::WebSocket),
+            StreamTransport::WebSocket,
+            false,
+            Err(proxy_auth_required),
+        ),
+        StreamSessionDecision::Fatal(error) if error.contains("HTTP 407")
+    ));
+
+    let proxy_auth_required = AgentTransportError::proxy_configuration(
+        "websocket connect failed: proxy CONNECT returned HTTP 407",
+    );
+    assert!(matches!(
+        decide_stream_session(
+            StreamSupervisorMode::Auto,
+            StreamTransport::WebSocket,
+            false,
+            Err(proxy_auth_required),
+        ),
+        StreamSessionDecision::TryNext(AgentTransportError::ProxyConfiguration(error))
+            if error.contains("HTTP 407")
+    ));
+
+    let network =
+        AgentTransportError::transient("websocket connect failed: proxy TCP connect failed");
+    assert!(matches!(
+        decide_stream_session(
+            StreamSupervisorMode::Strict(StreamTransport::WebSocket),
+            StreamTransport::WebSocket,
+            false,
+            Err(network),
+        ),
+        StreamSessionDecision::Reconnect(Some(AgentTransportError::Transient(error)))
+            if error.contains("proxy TCP connect failed")
+    ));
 }
 
 #[test]
@@ -3217,6 +3361,68 @@ fn polling_idle_empty_response_remains_successful_once() {
 }
 
 #[test]
+fn polling_register_sends_projects_and_ordinary_poll_omits_them() {
+    let server = start_scripted_agent_server(vec![ScriptStep::Register, ScriptStep::PollEmpty]);
+    run_polling_agent_against_scripted_server(&server, false)
+        .expect("empty polling turn should stop cleanly with scripted shutdown");
+    server.handle.join().unwrap();
+
+    let requests = server.requests.lock().unwrap();
+    let register: serde_json::Value = serde_json::from_str(&requests[0].1).unwrap();
+    let poll: serde_json::Value = serde_json::from_str(&requests[1].1).unwrap();
+    assert!(
+        register["projects"].is_array(),
+        "register must send full projects"
+    );
+    assert!(
+        poll["projects"].is_null(),
+        "ordinary poll must omit project refresh"
+    );
+}
+
+#[test]
+fn polling_project_refresh_is_periodic_and_invalidation_is_immediate() {
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = polling_agent_config(
+        "http://127.0.0.1:1".to_string(),
+        temp.path().join("projects.d"),
+    );
+    let shutdown = AtomicBool::new(false);
+    let mut project_cache = AgentProjectCache::default();
+    let start = Instant::now();
+    let _ = project_cache.get_with_shutdown(&cfg, Some(&shutdown));
+    let mut refresh = PollingProjectRefresh::new(start);
+
+    assert!(polling_projects_for_poll(
+        &refresh,
+        &mut project_cache,
+        &cfg,
+        &shutdown,
+        start + POLLING_PROJECT_REFRESH_INTERVAL - Duration::from_millis(1),
+    )
+    .is_none());
+    assert!(polling_projects_for_poll(
+        &refresh,
+        &mut project_cache,
+        &cfg,
+        &shutdown,
+        start + POLLING_PROJECT_REFRESH_INTERVAL,
+    )
+    .is_some());
+
+    refresh.mark_sent(start + POLLING_PROJECT_REFRESH_INTERVAL);
+    project_cache.invalidate();
+    assert!(polling_projects_for_poll(
+        &refresh,
+        &mut project_cache,
+        &cfg,
+        &shutdown,
+        start + POLLING_PROJECT_REFRESH_INTERVAL + Duration::from_millis(1),
+    )
+    .is_some());
+}
+
+#[test]
 fn polling_shutdown_interrupts_retry_sleep() {
     let shutdown = Arc::new(AtomicBool::new(false));
     let trigger = Arc::clone(&shutdown);
@@ -3231,6 +3437,422 @@ fn polling_shutdown_interrupts_retry_sleep() {
         started.elapsed() < Duration::from_millis(500),
         "shutdown-aware polling sleep did not return promptly"
     );
+}
+
+#[test]
+fn websocket_proxy_env_precedence_and_no_proxy_bypass() {
+    use std::ffi::OsString;
+
+    let values = std::collections::HashMap::from([
+        (
+            "HTTPS_PROXY",
+            OsString::from("http://https-upper.test:8001"),
+        ),
+        (
+            "https_proxy",
+            OsString::from("http://https-lower.test:8002"),
+        ),
+        ("HTTP_PROXY", OsString::from("http://http-upper.test:8003")),
+        ("http_proxy", OsString::from("http://http-lower.test:8004")),
+        ("ALL_PROXY", OsString::from("http://all-upper.test:8005")),
+        ("all_proxy", OsString::from("http://all-lower.test:8006")),
+    ]);
+    let wss =
+        websocket_proxy_from_env_with("wss://example.test/ws", |name| values.get(name).cloned())
+            .unwrap()
+            .unwrap();
+    assert_eq!(wss.host, "https-upper.test");
+    assert_eq!(wss.port, 8001);
+    let ws =
+        websocket_proxy_from_env_with("ws://example.test/ws", |name| values.get(name).cloned())
+            .unwrap()
+            .unwrap();
+    assert_eq!(ws.host, "http-upper.test");
+    assert_eq!(ws.port, 8003);
+
+    let fallback_values = std::collections::HashMap::from([
+        (
+            "https_proxy",
+            OsString::from("http://https-lower-only.test:8101"),
+        ),
+        ("ALL_PROXY", OsString::from("http://all-fallback.test:8102")),
+    ]);
+    let wss = websocket_proxy_from_env_with("wss://example.test/ws", |name| {
+        fallback_values.get(name).cloned()
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(wss.host, "https-lower-only.test");
+    assert_eq!(wss.port, 8101);
+
+    let all_only = std::collections::HashMap::from([(
+        "all_proxy",
+        OsString::from("http://all-lower-only.test:8103"),
+    )]);
+    let ws =
+        websocket_proxy_from_env_with("ws://example.test/ws", |name| all_only.get(name).cloned())
+            .unwrap()
+            .unwrap();
+    assert_eq!(ws.host, "all-lower-only.test");
+    assert_eq!(ws.port, 8103);
+
+    for (url, no_proxy, bypass) in [
+        ("ws://localhost/ws", "localhost", true),
+        ("ws://127.0.0.1/ws", "127.0.0.1", true),
+        ("wss://api.example.com/ws", "api.example.com", true),
+        ("wss://deep.example.com/ws", ".example.com", true),
+        (
+            "wss://api.example.com:8443/ws",
+            "api.example.com:8443",
+            true,
+        ),
+        ("wss://api.example.com/ws", "api.example.com:8443", false),
+        ("wss://anything.test/ws", "*", true),
+    ] {
+        let values = std::collections::HashMap::from([
+            ("HTTP_PROXY", OsString::from("http://proxy.test:8080")),
+            ("HTTPS_PROXY", OsString::from("http://proxy.test:8080")),
+            ("NO_PROXY", OsString::from(no_proxy)),
+        ]);
+        let selected =
+            websocket_proxy_from_env_with(url, |name| values.get(name).cloned()).unwrap();
+        assert_eq!(selected.is_none(), bypass, "url={url} no_proxy={no_proxy}");
+    }
+
+    let lower_no_proxy = std::collections::HashMap::from([
+        ("HTTP_PROXY", OsString::from("http://proxy.test:8080")),
+        ("no_proxy", OsString::from("localhost")),
+    ]);
+    assert!(websocket_proxy_from_env_with("ws://localhost/ws", |name| {
+        lower_no_proxy.get(name).cloned()
+    })
+    .unwrap()
+    .is_none());
+}
+
+#[test]
+fn websocket_proxy_ipv6_hosts_are_canonical() {
+    use std::ffi::OsString;
+
+    let proxy = parse_http_proxy_endpoint("http://[::1]:8080").unwrap();
+    assert_eq!(proxy.host, "::1");
+    assert_eq!(proxy.port, 8080);
+
+    let (target_host, target_port) =
+        websocket_target_endpoint("wss://[2001:db8::1]/api/agents/ws").unwrap();
+    assert_eq!(target_host, "2001:db8::1");
+    assert_eq!(target_port, 443);
+    let authority = target_authority(&target_host, target_port);
+    assert_eq!(authority, "[2001:db8::1]:443");
+    assert!(!authority.contains("[["), "{authority}");
+
+    let values = std::collections::HashMap::from([
+        ("HTTP_PROXY", OsString::from("http://proxy.test:8080")),
+        ("NO_PROXY", OsString::from("::1")),
+    ]);
+    assert!(
+        websocket_proxy_from_env_with("ws://[::1]/api/agents/ws", |name| {
+            values.get(name).cloned()
+        })
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[test]
+fn websocket_proxy_invalid_configuration_is_sanitized() {
+    use std::ffi::OsString;
+
+    let proxy_secret = "PROXY_PASSWORD_DO_NOT_LEAK";
+    let query_secret = "PROXY_QUERY_DO_NOT_LEAK";
+    let raw = format!("http://proxy-user:{proxy_secret}@proxy.test:8080/?token={query_secret}");
+    let values = std::collections::HashMap::from([("HTTP_PROXY", OsString::from(raw))]);
+    let error =
+        websocket_proxy_from_env_with("ws://server.test/ws", |name| values.get(name).cloned())
+            .expect_err("credentialed proxy URL is intentionally unsupported");
+    assert!(matches!(error, AgentTransportError::ProxyConfiguration(_)));
+    let error = error.to_string();
+    assert!(
+        error.contains("proxy authentication is unsupported"),
+        "{error}"
+    );
+    assert!(!error.contains("proxy-user"), "{error}");
+    assert!(!error.contains(proxy_secret), "{error}");
+    assert!(!error.contains(query_secret), "{error}");
+}
+
+#[tokio::test]
+async fn websocket_http_proxy_connect_tunnels_websocket_handshake() {
+    use tokio::io::AsyncWriteExt;
+
+    let target_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_addr = target_listener.local_addr().unwrap();
+    let seen_auth = Arc::new(Mutex::new(None::<String>));
+    let server_seen_auth = Arc::clone(&seen_auth);
+    let target = tokio::spawn(async move {
+        let (stream, _) = target_listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_hdr_async(
+            stream,
+            move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                  response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+            *server_seen_auth.lock().unwrap() = request
+                .headers()
+                .get(tokio_tungstenite::tungstenite::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+            Ok(response)
+        })
+        .await
+        .unwrap();
+        let _ = ws.send(WsMessage::Close(None)).await;
+    });
+
+    let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = proxy_listener.local_addr().unwrap();
+    let proxy = tokio::spawn(async move {
+        let (mut downstream, _) = proxy_listener.accept().await.unwrap();
+        let connect = read_async_http_headers(&mut downstream).await;
+        let expected = format!("CONNECT {target_addr} HTTP/1.1");
+        assert!(connect.starts_with(&expected), "{connect}");
+        assert!(
+            !connect.to_ascii_lowercase().contains("authorization:"),
+            "{connect}"
+        );
+        assert!(!connect.contains("SERVER_TOKEN_DO_NOT_LEAK"), "{connect}");
+        let mut upstream = tokio::net::TcpStream::connect(target_addr).await.unwrap();
+        downstream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .await
+            .unwrap();
+        let _ = tokio::io::copy_bidirectional(&mut downstream, &mut upstream).await;
+        connect
+    });
+
+    let token = "SERVER_TOKEN_DO_NOT_LEAK";
+    let ws_url = format!("ws://{target_addr}/api/agents/ws");
+    let request = build_ws_request(&ws_url, token).unwrap();
+    let endpoint = HttpProxyEndpoint {
+        host: "127.0.0.1".to_string(),
+        port: proxy_addr.port(),
+    };
+    let ws = tokio::time::timeout(
+        Duration::from_secs(5),
+        connect_websocket_request_with_proxy(request, &ws_url, Some(&endpoint), token),
+    )
+    .await
+    .expect("proxy websocket connect timed out")
+    .expect("proxy websocket connect failed");
+    drop(ws);
+
+    let connect = tokio::time::timeout(Duration::from_secs(5), proxy)
+        .await
+        .expect("proxy tunnel task did not finish")
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), target)
+        .await
+        .expect("target websocket task did not finish")
+        .unwrap();
+    assert!(connect.starts_with(&format!("CONNECT {target_addr} HTTP/1.1")));
+    assert_eq!(
+        seen_auth.lock().unwrap().as_deref(),
+        Some("Bearer SERVER_TOKEN_DO_NOT_LEAK")
+    );
+}
+
+#[tokio::test]
+async fn websocket_proxy_ipv6_target_connect_authority_has_single_brackets() {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let proxy = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let connect = read_async_http_headers(&mut stream).await;
+        assert!(
+            connect.starts_with("CONNECT [2001:db8::1]:443 HTTP/1.1"),
+            "{connect}"
+        );
+        assert!(!connect.contains("[[2001:db8::1]]"), "{connect}");
+        stream
+            .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        connect
+    });
+
+    let ws_url = "wss://[2001:db8::1]/api/agents/ws";
+    let request = build_ws_request(ws_url, "SERVER_TOKEN_DO_NOT_LEAK").unwrap();
+    let endpoint = HttpProxyEndpoint {
+        host: "127.0.0.1".to_string(),
+        port: addr.port(),
+    };
+    let error = connect_websocket_request_with_proxy(
+        request,
+        ws_url,
+        Some(&endpoint),
+        "SERVER_TOKEN_DO_NOT_LEAK",
+    )
+    .await
+    .expect_err("synthetic proxy must reject the IPv6 target");
+    let connect = proxy.await.unwrap();
+
+    assert!(connect.starts_with("CONNECT [2001:db8::1]:443 HTTP/1.1"));
+    assert!(
+        matches!(error, AgentTransportError::Transient(_)),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn websocket_wss_proxy_uses_connect_before_target_tls() {
+    use tokio::io::AsyncWriteExt;
+
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let server_token = "SERVER_TOKEN_DO_NOT_LEAK";
+    let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = proxy_listener.local_addr().unwrap();
+    let proxy = tokio::spawn(async move {
+        let (mut stream, _) = proxy_listener.accept().await.unwrap();
+        let connect = read_async_http_headers(&mut stream).await;
+        assert!(
+            connect.starts_with("CONNECT server.test:443 HTTP/1.1"),
+            "{connect}"
+        );
+        assert!(
+            !connect.to_ascii_lowercase().contains("authorization:"),
+            "{connect}"
+        );
+        assert!(!connect.contains(server_token), "{connect}");
+        stream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .await
+            .unwrap();
+        connect
+    });
+
+    let ws_url = "wss://server.test/api/agents/ws";
+    let request = build_ws_request(ws_url, server_token).unwrap();
+    let endpoint = HttpProxyEndpoint {
+        host: "127.0.0.1".to_string(),
+        port: proxy_addr.port(),
+    };
+    let error = tokio::time::timeout(
+        Duration::from_secs(5),
+        connect_websocket_request_with_proxy(request, ws_url, Some(&endpoint), server_token),
+    )
+    .await
+    .expect("wss proxy CONNECT test timed out")
+    .expect_err("the synthetic tunnel closes before target TLS can complete");
+    let connect = proxy.await.unwrap();
+
+    assert!(connect.starts_with("CONNECT server.test:443 HTTP/1.1"));
+    let error = error.to_string();
+    assert!(error.contains("websocket connect failed"), "{error}");
+    assert!(!error.contains(server_token), "{error}");
+}
+
+#[tokio::test]
+async fn websocket_proxy_network_failure_remains_transient() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let peer = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        drop(stream);
+    });
+    let endpoint = HttpProxyEndpoint {
+        host: "127.0.0.1".to_string(),
+        port: addr.port(),
+    };
+    let error = http_proxy_connect_tunnel(&endpoint, "server.test", 443)
+        .await
+        .expect_err("closed proxy connection must fail");
+    peer.await.unwrap();
+    assert!(
+        matches!(error, AgentTransportError::Transient(_)),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn websocket_proxy_connect_rejects_non_success_without_leaking_secrets() {
+    use tokio::io::AsyncWriteExt;
+
+    let proxy_secret = "PROXY_RESPONSE_SECRET_DO_NOT_LEAK";
+    let server_token = "SERVER_TOKEN_DO_NOT_LEAK";
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let proxy = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let connect = read_async_http_headers(&mut stream).await;
+        assert!(!connect.contains(server_token), "{connect}");
+        let response = format!(
+            "HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: {}\r\n\r\n{}",
+            proxy_secret.len(),
+            proxy_secret
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let ws_url = "ws://127.0.0.1:9/api/agents/ws";
+    let request = build_ws_request(ws_url, server_token).unwrap();
+    let endpoint = HttpProxyEndpoint {
+        host: "127.0.0.1".to_string(),
+        port: addr.port(),
+    };
+    let error = tokio::time::timeout(
+        Duration::from_secs(5),
+        connect_websocket_request_with_proxy(request, ws_url, Some(&endpoint), server_token),
+    )
+    .await
+    .expect("non-success CONNECT test timed out")
+    .expect_err("non-2xx CONNECT status must fail");
+    proxy.await.unwrap();
+    assert!(
+        matches!(&error, AgentTransportError::ProxyConfiguration(_)),
+        "{error}"
+    );
+    let error = error.to_string();
+    assert!(error.contains("HTTP 407"), "{error}");
+    assert!(!error.contains(proxy_secret), "{error}");
+    assert!(!error.contains(server_token), "{error}");
+}
+
+#[tokio::test]
+async fn websocket_proxy_connect_response_header_is_bounded_and_redacted() {
+    use tokio::io::AsyncWriteExt;
+
+    let proxy_secret = "PROXY_RESPONSE_SECRET_DO_NOT_LEAK";
+    let server_token = "SERVER_TOKEN_DO_NOT_LEAK";
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let proxy = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let connect = read_async_http_headers(&mut stream).await;
+        assert!(!connect.contains(server_token), "{connect}");
+        let mut response = format!("HTTP/1.1 200 OK\r\nX-Secret: {proxy_secret}\r\n").into_bytes();
+        response.extend(std::iter::repeat(b'x').take(WS_PROXY_CONNECT_HEADER_MAX_BYTES + 1024));
+        let _ = stream.write_all(&response).await;
+    });
+
+    let ws_url = "ws://127.0.0.1:9/api/agents/ws";
+    let request = build_ws_request(ws_url, server_token).unwrap();
+    let endpoint = HttpProxyEndpoint {
+        host: "127.0.0.1".to_string(),
+        port: addr.port(),
+    };
+    let error = tokio::time::timeout(
+        Duration::from_secs(5),
+        connect_websocket_request_with_proxy(request, ws_url, Some(&endpoint), server_token),
+    )
+    .await
+    .expect("bounded CONNECT response test timed out")
+    .expect_err("oversized CONNECT headers must fail");
+    proxy.await.unwrap();
+    let error = error.to_string();
+    assert!(error.contains("response headers exceeded"), "{error}");
+    assert!(!error.contains(proxy_secret), "{error}");
+    assert!(!error.contains(server_token), "{error}");
 }
 
 #[tokio::test]

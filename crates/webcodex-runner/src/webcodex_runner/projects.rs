@@ -696,6 +696,10 @@ impl AgentProjectCache {
         self.projects.clone()
     }
 
+    pub(crate) fn needs_refresh(&self) -> bool {
+        self.refreshed_at.is_none()
+    }
+
     pub(crate) fn invalidate(&mut self) {
         self.projects.clear();
         self.refreshed_at = None;

@@ -4223,6 +4223,7 @@ fn handle_one_poll(
     jobs: &JobManager,
     persistent_shells: &webcodex_runner::PersistentShellManager,
     project_cache: &mut AgentProjectCache,
+    poll_projects: Option<Vec<ShellAgentProjectSummary>>,
     agent_instance_id: &str,
     lsp: &webcodex_runner::LspSupervisor,
     shutdown: &Arc<AtomicBool>,
@@ -4247,7 +4248,7 @@ fn handle_one_poll(
         request: ShellAgentPollRequest {
             client_id: cfg.client_id.clone(),
             agent_instance_id: agent_instance_id.to_string(),
-            projects: Some(project_cache.get_with_shutdown(cfg, Some(shutdown.as_ref()))),
+            projects: poll_projects,
         },
         tool_providers: provider_update
             .as_ref()

@@ -76,6 +76,8 @@ keepalive_interval_secs = 20
 
 `auto` attempts QUIC first when `[quic]` is present. If QUIC cannot connect, it tries WebSocket, then polling. When `[quic]` is absent, the agent logs that QUIC is not configured and starts with WebSocket. `websocket_connect_timeout_secs` bounds only the WebSocket connect attempt; timeout fallback to polling is normal in networks that block WebSocket.
 
+WebSocket connections honor proxy environment variables. `wss://` uses `HTTPS_PROXY` / `https_proxy` and then `ALL_PROXY` / `all_proxy`; `ws://` uses `HTTP_PROXY` / `http_proxy` and then `ALL_PROXY` / `all_proxy`. `NO_PROXY` / `no_proxy` bypasses the proxy for matching localhost, IP, hostname/domain suffix, host:port, or `*` entries. The current Runner supports `http://host:port` proxies through HTTP `CONNECT`; HTTPS proxies, SOCKS, and proxy authentication are not supported and fail closed rather than silently connecting directly. The WebSocket connect timeout covers proxy TCP connect, CONNECT, target TLS, and the WebSocket handshake. QUIC does not use these proxy settings.
+
 Use strict QUIC when you want connection failures to stay failures instead of falling back:
 
 ```toml

@@ -72,6 +72,8 @@ keepalive_interval_secs = 20
 
 当 `[quic]` 存在时，`auto` 会先尝试 QUIC。如果 QUIC 连接失败，会尝试 WebSocket，然后 polling。
 
+WebSocket 连接会遵循代理环境变量。`wss://` 依次使用 `HTTPS_PROXY` / `https_proxy`、`ALL_PROXY` / `all_proxy`；`ws://` 依次使用 `HTTP_PROXY` / `http_proxy`、`ALL_PROXY` / `all_proxy`。`NO_PROXY` / `no_proxy` 可按 localhost、IP、hostname/domain suffix、host:port 或 `*` 绕过代理。当前 Runner 仅支持通过 HTTP `CONNECT` 使用 `http://host:port` proxy；不支持 HTTPS proxy、SOCKS 或 proxy authentication，遇到这些配置会 fail closed，不会偷偷 direct-connect。`websocket_connect_timeout_secs` 同时覆盖 proxy TCP connect、CONNECT、目标站 TLS 和 WebSocket handshake。QUIC 不使用这些 proxy 设置。
+
 如果希望连接失败保持失败、不要自动 fallback，可以使用 strict QUIC：
 
 ```toml

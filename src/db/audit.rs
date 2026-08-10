@@ -142,18 +142,14 @@ impl Database {
         closed_at: i64,
     ) -> anyhow::Result<Option<ActionSessionRecord>> {
         let conn = self.conn.lock().unwrap();
-        let changed = conn.execute(
+        conn.execute(
             "UPDATE action_sessions
              SET status = 'closed', closed_at = ?2, updated_at = ?2
              WHERE session_id = ?1 AND status != 'closed'",
             params![session_id, closed_at],
         )?;
         drop(conn);
-        if changed == 1 {
-            self.get_action_session(session_id)
-        } else {
-            self.get_action_session(session_id)
-        }
+        self.get_action_session(session_id)
     }
 
     pub fn insert_action_event(&self, event: &ActionEventRecord) -> anyhow::Result<()> {

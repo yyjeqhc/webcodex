@@ -1578,7 +1578,7 @@ impl ToolRuntime {
         continuation_feedback_value(ContinuationFeedbackInput {
             session_summary: projection_summary,
             validation: &validation,
-            jobs: &jobs,
+            jobs,
             discussion: &discussion,
             continuation: continuation_kind,
             suggest_exploration_continuity: true,
@@ -1721,7 +1721,7 @@ impl ToolRuntime {
         // The owning runner must support the structured file capability.
         if !self
             .shell_clients
-            .client_supports_for_auth(&client_id, SHELL_CLIENT_CAPABILITY_FILE_READ, auth)
+            .client_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_FILE_READ, auth)
             .await
             .unwrap_or(false)
         {

@@ -796,14 +796,10 @@ impl ConnectorRuntime {
                 return store_error_outcome(error, None);
             }
         };
-        let navigation = if let Some(window) = window {
-            Some(
-                self.db
-                    .activate_window_project(subject_id, window.key(), &project_identity),
-            )
-        } else {
-            None
-        };
+        let navigation = window.map(|window| {
+            self.db
+                .activate_window_project(subject_id, window.key(), &project_identity)
+        });
         let brief = project_brief(
             &task,
             prepared.project_overview.as_ref(),
@@ -1471,11 +1467,12 @@ impl ConnectorRuntime {
                 // 16-change schema limit).
                 let mut changed_paths: Vec<&str> = Vec::new();
                 for change in &input.changes {
-                    for path in [Some(change.path.as_str()), change.to_path.as_deref()] {
-                        if let Some(path) = path {
-                            if !changed_paths.contains(&path) {
-                                changed_paths.push(path);
-                            }
+                    for path in [Some(change.path.as_str()), change.to_path.as_deref()]
+                        .into_iter()
+                        .flatten()
+                    {
+                        if !changed_paths.contains(&path) {
+                            changed_paths.push(path);
                         }
                     }
                 }

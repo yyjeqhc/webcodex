@@ -696,24 +696,24 @@ impl ToolRuntime {
                 Some(&shell_id),
             );
         }
-        if record.executor == "local" {
-            if !local_cwd_within_project(&project_config, Path::new(&record.cwd)) {
-                if let Ok(result) = self
-                    .close_record(&record, "persistent_shell_cwd_boundary_changed")
-                    .await
-                {
-                    self.session_shells.apply_result(&result).await;
-                } else {
-                    self.session_shells
-                        .mark_lost(&shell_id, "persistent_shell_cwd_boundary_changed")
-                        .await;
-                }
-                return shell_tool_error(
-                    "shell_reset_required",
-                    "persistent shell cwd is no longer inside the current local project boundary",
-                    Some(&shell_id),
-                );
+        if record.executor == "local"
+            && !local_cwd_within_project(&project_config, Path::new(&record.cwd))
+        {
+            if let Ok(result) = self
+                .close_record(&record, "persistent_shell_cwd_boundary_changed")
+                .await
+            {
+                self.session_shells.apply_result(&result).await;
+            } else {
+                self.session_shells
+                    .mark_lost(&shell_id, "persistent_shell_cwd_boundary_changed")
+                    .await;
             }
+            return shell_tool_error(
+                "shell_reset_required",
+                "persistent shell cwd is no longer inside the current local project boundary",
+                Some(&shell_id),
+            );
         }
         let result = if record.executor == "agent" || record.executor == "ssh" {
             let client_id = record.client_id.as_deref().unwrap_or_default();

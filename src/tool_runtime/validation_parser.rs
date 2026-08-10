@@ -378,7 +378,6 @@ fn parse_span_line(line: &str) -> Option<Span> {
     let location = line
         .trim_start()
         .strip_prefix("-->")?
-        .trim_start()
         .split_whitespace()
         .next()?;
     parse_location(location)

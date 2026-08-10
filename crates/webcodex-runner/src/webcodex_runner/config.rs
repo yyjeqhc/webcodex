@@ -546,8 +546,7 @@ fn default_max_output_bytes() -> usize {
 pub(crate) fn max_concurrent_jobs(cfg: &AgentConfig) -> usize {
     cfg.max_concurrent_jobs
         .unwrap_or(DEFAULT_MAX_CONCURRENT_JOBS)
-        .max(1)
-        .min(JOB_INVENTORY_MAX_ACTIVE_JOBS)
+        .clamp(1, JOB_INVENTORY_MAX_ACTIVE_JOBS)
 }
 
 fn default_client_base_dir() -> Result<PathBuf, String> {

@@ -506,7 +506,7 @@ pub(super) async fn parse_form_body(req: &mut Request) -> Option<Vec<(String, St
         return None;
     }
     Some(
-        url::form_urlencoded::parse(&body)
+        url::form_urlencoded::parse(body)
             .into_owned()
             .collect::<Vec<_>>(),
     )

@@ -710,7 +710,7 @@ fn run_prepare_command(
     }
     // ManagedChild owns the whole profile-prepare process tree: a private
     // process group on Unix, a kill-on-close Job Object on Windows.
-    let mut child = ManagedChild::spawn(&mut cmd.stdout(Stdio::piped()).stderr(Stdio::piped()))
+    let mut child = ManagedChild::spawn(cmd.stdout(Stdio::piped()).stderr(Stdio::piped()))
         .map_err(|e| format!("failed to spawn profile prepare command: {}", e))?;
     let stdout = match child.child_mut().stdout.take() {
         Some(stdout) => stdout,

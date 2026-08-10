@@ -87,7 +87,7 @@ pub(crate) fn validate_service_file_scope(
         .components()
         .filter_map(|component| component.as_os_str().to_str())
         .collect::<Vec<_>>();
-    if components.iter().any(|component| *component == "..") {
+    if components.contains(&"..") {
         return Err("--service-file cannot contain '..' path components".to_string());
     }
     let is_user_unit_path = components

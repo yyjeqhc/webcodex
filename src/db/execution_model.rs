@@ -116,9 +116,11 @@ const EXECUTOR: Fact = Some("executor");
 const UNKNOWN_REASON: &str = "executor_terminal_unknown";
 
 fn active_state(execution: &ConnectorExecution, state: &'static str) -> StateOutcome {
-    let state = (execution.state == "cancel_requested")
-        .then_some("cancel_requested")
-        .unwrap_or(state);
+    let state = if execution.state == "cancel_requested" {
+        "cancel_requested"
+    } else {
+        state
+    };
     (state, None, None, None)
 }
 

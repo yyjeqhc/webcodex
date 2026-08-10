@@ -609,7 +609,7 @@ pub(crate) fn normalize_observed_project_path(path: &str) -> Option<String> {
 
     let path = path.trim();
     if path.is_empty()
-        || path.as_bytes().len() > MAX_OBSERVED_PATH_BYTES
+        || path.len() > MAX_OBSERVED_PATH_BYTES
         || path.starts_with('\\')
         || path.chars().any(char::is_control)
     {
@@ -626,7 +626,7 @@ pub(crate) fn normalize_observed_project_path(path: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join("/");
     if normalized.is_empty()
-        || normalized.as_bytes().len() > MAX_OBSERVED_PATH_BYTES
+        || normalized.len() > MAX_OBSERVED_PATH_BYTES
         || crate::validation_bridge::validate_project_relative_path(&normalized).is_err()
     {
         return None;

@@ -494,14 +494,14 @@ fn remove_job_control_requests(
     let request_ids = inner
         .pending_by_id
         .iter()
-        .filter_map(|(request_id, pending)| {
-            (pending.request.client_id == client_id
+        .filter(|(_, pending)| {
+            pending.request.client_id == client_id
                 && pending
                     .job_id
                     .as_ref()
-                    .is_some_and(|job_id| job_ids.contains(job_id)))
-            .then(|| request_id.clone())
+                    .is_some_and(|job_id| job_ids.contains(job_id))
         })
+        .map(|(request_id, _)| request_id.clone())
         .collect::<Vec<_>>();
     for request_id in request_ids {
         remove_job_request_mapping(inner, client_id, Some(&request_id));
@@ -595,11 +595,10 @@ fn remove_cleanup_terminal_jobs_locked(inner: &mut ShellClientRegistryInner) {
     let removable = inner
         .jobs_by_id
         .iter()
-        .filter_map(|(job_id, job)| {
-            (job.visibility == ShellJobVisibility::CleanupPending
-                && is_final_job_status(&job.status))
-            .then(|| job_id.clone())
+        .filter(|(_, job)| {
+            job.visibility == ShellJobVisibility::CleanupPending && is_final_job_status(&job.status)
         })
+        .map(|(job_id, _)| job_id.clone())
         .collect::<Vec<_>>();
     for job_id in removable {
         inner.jobs_by_id.remove(&job_id);
@@ -822,13 +821,13 @@ pub(super) fn reconcile_inventory_locked(
     let missing = inner
         .jobs_by_id
         .iter()
-        .filter_map(|(job_id, job)| {
-            (job.client_id == client_id
+        .filter(|(job_id, job)| {
+            job.client_id == client_id
                 && job.agent_instance_id == agent_instance_id
                 && is_runner_active_job_status(&job.status)
-                && !inventory_ids.contains(job_id.as_str()))
-            .then(|| (job_id.clone(), job.request_id.clone()))
+                && !inventory_ids.contains(job_id.as_str())
         })
+        .map(|(job_id, job)| (job_id.clone(), job.request_id.clone()))
         .collect::<Vec<_>>();
     let missing_job_ids = missing
         .iter()
@@ -905,12 +904,12 @@ pub(super) fn terminate_instance_jobs_locked(
     let jobs = inner
         .jobs_by_id
         .iter()
-        .filter_map(|(job_id, job)| {
-            (job.client_id == client_id
+        .filter(|(_, job)| {
+            job.client_id == client_id
                 && job.agent_instance_id == agent_instance_id
-                && (job.status == "queued" || is_runner_active_job_status(&job.status)))
-            .then(|| (job_id.clone(), job.request_id.clone()))
+                && (job.status == "queued" || is_runner_active_job_status(&job.status))
         })
+        .map(|(job_id, job)| (job_id.clone(), job.request_id.clone()))
         .collect::<Vec<_>>();
     let terminated_job_ids = jobs
         .iter()

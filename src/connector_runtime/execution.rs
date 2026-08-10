@@ -252,14 +252,14 @@ impl ExecutionService {
             status,
             chrono::Utc::now().timestamp(),
         )?;
-        if attached.state == "cancel_requested" {
-            if self.dispatch_cancel(&task, &attached, &auth).await == CancelDispatch::Failed {
-                return self.db.finish_connector_execution(
-                    &execution.execution_id,
-                    ConnectorExecutionFailure::Unknown("cancel_transport_unknown"),
-                    chrono::Utc::now().timestamp(),
-                );
-            }
+        if attached.state == "cancel_requested"
+            && self.dispatch_cancel(&task, &attached, &auth).await == CancelDispatch::Failed
+        {
+            return self.db.finish_connector_execution(
+                &execution.execution_id,
+                ConnectorExecutionFailure::Unknown("cancel_transport_unknown"),
+                chrono::Utc::now().timestamp(),
+            );
         }
         if attached.is_terminal() {
             return Ok(attached);

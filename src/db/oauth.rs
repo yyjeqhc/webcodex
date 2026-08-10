@@ -865,8 +865,8 @@ impl Database {
                 last_used_at: Some(now),
                 ..old
             };
-            return Ok(RotateResult::Rotated(rotated));
-        } // MutexGuard dropped here (unreachable — all paths return above).
+            Ok(RotateResult::Rotated(rotated))
+        } // MutexGuard dropped here.
     }
 }
 

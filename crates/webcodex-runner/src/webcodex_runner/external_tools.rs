@@ -1284,10 +1284,9 @@ impl McpConnection {
                     Ordering::SeqCst,
                 )
                 .is_ok()
+            && lock_unpoison(&self.child).terminate_tree().is_err()
         {
-            if lock_unpoison(&self.child).terminate_tree().is_err() {
-                self.shutdown_failures.fetch_add(1, Ordering::SeqCst);
-            }
+            self.shutdown_failures.fetch_add(1, Ordering::SeqCst);
         }
 
         while Instant::now() < deadline && !self.process_reaped_and_group_gone() {

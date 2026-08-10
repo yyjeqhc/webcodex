@@ -237,7 +237,7 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
 /// - Writes 0600 permissions on Unix.
 pub fn run_agent_init(opts: AgentInitOptions) -> Result<String, String> {
     let content = generated_agent_config_toml(&opts)?;
-    if opts.output == PathBuf::from("-") {
+    if opts.output.as_os_str() == "-" {
         return Ok(content);
     }
     if opts.output.exists() && !opts.overwrite {

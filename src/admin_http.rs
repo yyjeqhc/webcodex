@@ -249,7 +249,7 @@ fn project_dashboard(
     })
 }
 
-fn require_admin<'a>(depot: &'a Depot) -> Result<AuthContext, (StatusCode, &'static str)> {
+fn require_admin(depot: &Depot) -> Result<AuthContext, (StatusCode, &'static str)> {
     let auth = depot
         .obtain::<AuthContext>()
         .cloned()
@@ -386,7 +386,7 @@ async fn dashboard(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         return error(
             res,
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
-            &message,
+            message,
         );
     }
     let Ok(auth) = depot.obtain::<AuthContext>().cloned() else {

@@ -194,7 +194,7 @@ pub(crate) fn parse(args: &[String]) -> Result<TaskCliCommand, String> {
                 });
             }
             if limit_set || json_output {
-                return Err(format!("--limit/--json are only valid with task list"));
+                return Err("--limit/--json are only valid with task list".to_string());
             }
             let task_id = positional.remove(0);
             let reason = positional
@@ -223,7 +223,7 @@ pub(crate) fn parse(args: &[String]) -> Result<TaskCliCommand, String> {
                 ));
             }
             if limit_set || json_output {
-                return Err(format!("--limit/--json are only valid with task list"));
+                return Err("--limit/--json are only valid with task list".to_string());
             }
             let task_id = positional.remove(0);
             let approval_id = positional.remove(0);

@@ -376,10 +376,7 @@ fn sanitize_response_free_text(response: &mut ValidationBridgeResponse) {
         .map(|text| sanitize_bridge_text(&text));
     response.message = response.message.take().map(bound_error_message);
     if let Some(diagnostics) = response.diagnostics.as_mut() {
-        diagnostics.reason = diagnostics
-            .reason
-            .take()
-            .map(|text| bound_error_message(text));
+        diagnostics.reason = diagnostics.reason.take().map(bound_error_message);
         for diagnostic in &mut diagnostics.diagnostics {
             diagnostic.message = sanitize_bridge_text(&diagnostic.message);
             diagnostic.code = diagnostic

@@ -156,7 +156,7 @@ pub(crate) fn validation_job_projection(
     truncated: bool,
 ) -> Option<Value> {
     let tool = tool?;
-    let kind = kind.unwrap_or_else(|| match tool {
+    let kind = kind.unwrap_or(match tool {
         "cargo_test" => "test",
         "cargo_fmt" => "format",
         _ => "check",
@@ -1047,8 +1047,6 @@ fn stop_job_output(
         "already_stop_requested"
     } else if terminal {
         "stopped"
-    } else if terminal_pending || stopped {
-        "requested"
     } else {
         "requested"
     };

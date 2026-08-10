@@ -1526,9 +1526,7 @@ impl ToolCall {
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         if name == "start_coding_task" {
-            if let Err(message) = reject_unknown_start_coding_task_fields(&arguments) {
-                return Err(message);
-            }
+            reject_unknown_start_coding_task_fields(&arguments)?;
             validate_coding_project_source_shape(name, &arguments, true)?;
         }
         if name == "work_on_project" {
@@ -1790,10 +1788,10 @@ impl ToolCall {
             | Self::Hover { session_id, .. }
             | Self::WorkspaceSymbols { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
-            | Self::FindReferences { session_id, .. } => {
-                if session_id.is_none() {
-                    *session_id = Some(effective_session_id);
-                }
+            | Self::FindReferences { session_id, .. }
+                if session_id.is_none() =>
+            {
+                *session_id = Some(effective_session_id);
             }
             _ => {}
         }
@@ -1807,10 +1805,8 @@ impl ToolCall {
         execution_context: &SessionExecutionContext,
     ) -> Self {
         match &mut self {
-            Self::RunProcess { cwd, .. } | Self::RunScript { cwd, .. } => {
-                if cwd.is_none() {
-                    *cwd = execution_context.default_cwd.clone();
-                }
+            Self::RunProcess { cwd, .. } | Self::RunScript { cwd, .. } if cwd.is_none() => {
+                *cwd = execution_context.default_cwd.clone();
             }
             Self::RunShell { cwd, shell, .. }
             | Self::RunJob { cwd, shell, .. }

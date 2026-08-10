@@ -170,7 +170,7 @@ fn map_agent_read_error(resp: &ShellRunResponse) -> ReadFileReason {
     let text = resp
         .error
         .as_deref()
-        .or_else(|| resp.stderr.as_deref())
+        .or(resp.stderr.as_deref())
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
@@ -1993,10 +1993,10 @@ fn validate_artifact_mime_for_path(
     mime_type: Option<&str>,
 ) -> Result<Option<String>, String> {
     let mime_type = validate_artifact_mime(mime_type)?;
-    if matches!(mime_type.as_deref(), Some("application/octet-stream")) {
-        if !has_safe_octet_stream_artifact_extension(path) {
-            return Err(octet_stream_safe_extension_error());
-        }
+    if matches!(mime_type.as_deref(), Some("application/octet-stream"))
+        && !has_safe_octet_stream_artifact_extension(path)
+    {
+        return Err(octet_stream_safe_extension_error());
     }
     Ok(mime_type)
 }

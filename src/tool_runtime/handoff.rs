@@ -374,7 +374,7 @@ impl ToolRuntime {
             .unwrap_or_else(|| json!({}));
         let changed_files_count = counts
             .as_object()
-            .and_then(|obj| {
+            .map(|obj| {
                 let modified = obj.get("modified").and_then(Value::as_u64).unwrap_or(0);
                 let added = obj.get("added").and_then(Value::as_u64).unwrap_or(0);
                 let deleted = obj.get("deleted").and_then(Value::as_u64).unwrap_or(0);
@@ -382,7 +382,7 @@ impl ToolRuntime {
                 let copied = obj.get("copied").and_then(Value::as_u64).unwrap_or(0);
                 let untracked = obj.get("untracked").and_then(Value::as_u64).unwrap_or(0);
                 let conflicted = obj.get("conflicted").and_then(Value::as_u64).unwrap_or(0);
-                Some(modified + added + deleted + renamed + copied + untracked + conflicted)
+                modified + added + deleted + renamed + copied + untracked + conflicted
             })
             .unwrap_or(0);
 
@@ -1315,7 +1315,7 @@ fn handoff_suggested_next_actions(
     if let Some(checkpoints) = output.get("checkpoints") {
         let lkg_is_null = checkpoints
             .get("latest_last_known_good")
-            .map_or(true, Value::is_null);
+            .is_none_or(Value::is_null);
         if lkg_is_null {
             push(
                 &mut actions,

@@ -688,11 +688,11 @@ fn parse_fixed_decimal(bytes: &[u8]) -> Option<usize> {
     std::str::from_utf8(bytes).ok()?.parse().ok()
 }
 
-fn parse_show_changes_wire_block<'a>(
-    stdout: &'a str,
+fn parse_show_changes_wire_block(
+    stdout: &str,
     end: usize,
     kind: u8,
-) -> Option<(&'a str, &'a str, usize)> {
+) -> Option<(&str, &str, usize)> {
     let bytes = stdout.as_bytes();
     let trailer_start = end.checked_sub(SHOW_CHANGES_BLOCK_TRAILER_BYTES)?;
     let trailer = bytes.get(trailer_start..end)?;
@@ -1074,7 +1074,7 @@ fn parse_show_changes_head(head: &str) -> serde_json::Value {
 }
 
 fn frame_bytes_match(value: &str, reported: Option<usize>, budget: usize) -> bool {
-    let actual = value.as_bytes().len();
+    let actual = value.len();
     actual <= budget && reported == Some(actual)
 }
 

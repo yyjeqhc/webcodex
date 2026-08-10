@@ -461,7 +461,7 @@ only for local/trusted-network demos."
     );
     let acceptor = TcpListener::new(addr.clone()).bind().await;
     tracing::info!("Server started successfully!");
-    let port = addr.split(':').last().unwrap_or("8080");
+    let port = addr.split(':').next_back().unwrap_or("8080");
     let base = format!("http://localhost:{}", port);
     tracing::info!("Runtime base: {}", base);
     tracing::info!("MCP endpoint: {}/mcp", base);

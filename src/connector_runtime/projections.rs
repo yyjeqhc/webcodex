@@ -660,10 +660,7 @@ pub(super) fn paginate_search_output(
     output
 }
 
-/// Distinct paths this task has applied via successful, non-dry-run
-/// `edits_apply` calls, in first-seen order. Derived purely from the durable
-/// event log so callers never pay for a workspace scan.
-
+/// Whether a kernel failure may have applied workspace changes.
 pub(super) fn kernel_failure_may_have_applied(error: &KernelFailure) -> bool {
     let KernelFailure::Tool(result) = error else {
         return false;

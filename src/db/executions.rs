@@ -451,9 +451,11 @@ impl Database {
                 return Ok(Some(execution));
             }
             let immediate = execution.state == "accepted" && execution.executor_reference.is_none();
-            let state = immediate
-                .then_some("cancelled")
-                .unwrap_or("cancel_requested");
+            let state = if immediate {
+                "cancelled"
+            } else {
+                "cancel_requested"
+            };
             tx.execute(
                 "UPDATE wc_executions SET state = ?1,
                         cancel_requested_at = COALESCE(cancel_requested_at, ?2),

@@ -167,7 +167,7 @@ pub fn build_project_overview(
                 Err(_) => skipped_unreadable = true,
             }
         }
-        children.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
+        children.sort_by_key(|left| left.file_name());
 
         for child in children {
             let Some(name) = child.file_name().to_str().map(str::to_string) else {

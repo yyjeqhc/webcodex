@@ -819,49 +819,48 @@ impl ShellClientRegistry {
         if matches!(
             job.status.as_str(),
             "agent_queued" | "running" | "stop_requested"
-        ) {
-            if job.status != "stop_requested" {
-                let stop_request_id = next_request_id();
-                let request = ShellAgentShellRequest {
-                    request_id: stop_request_id.clone(),
-                    client_id: job.client_id.clone(),
-                    kind: "stop_job".to_string(),
-                    job_id: Some(job_id.to_string()),
-                    cwd: None,
-                    path: None,
-                    content: None,
-                    max_bytes: None,
-                    expected_sha256: None,
-                    expected_prefix: None,
-                    start_line: None,
-                    end_line: None,
-                    create_dirs: false,
-                    command: String::new(),
-                    process: None,
-                    script: None,
-                    stdin: None,
-                    timeout_secs: 1,
-                    requested_by: "tool_runtime_cleanup".to_string(),
-                    created_at: now_ts(),
-                    validation: None,
-                    lsp: None,
-                    sandbox: None,
-                    job_context: None,
-                    persistent_shell: None,
-                };
-                enqueue_pending_request_locked(
-                    &mut inner,
-                    &job.client_id,
-                    stop_request_id,
-                    request,
-                    None,
-                    Some(job_id.to_string()),
-                )?;
-                let record = inner.jobs_by_id.get_mut(job_id).expect("job exists");
-                record.status = "stop_requested".to_string();
-                record.error = Some("internal structured execution cleanup requested".to_string());
-                notify_client_locked(&inner, &job.client_id);
-            }
+        ) && job.status != "stop_requested"
+        {
+            let stop_request_id = next_request_id();
+            let request = ShellAgentShellRequest {
+                request_id: stop_request_id.clone(),
+                client_id: job.client_id.clone(),
+                kind: "stop_job".to_string(),
+                job_id: Some(job_id.to_string()),
+                cwd: None,
+                path: None,
+                content: None,
+                max_bytes: None,
+                expected_sha256: None,
+                expected_prefix: None,
+                start_line: None,
+                end_line: None,
+                create_dirs: false,
+                command: String::new(),
+                process: None,
+                script: None,
+                stdin: None,
+                timeout_secs: 1,
+                requested_by: "tool_runtime_cleanup".to_string(),
+                created_at: now_ts(),
+                validation: None,
+                lsp: None,
+                sandbox: None,
+                job_context: None,
+                persistent_shell: None,
+            };
+            enqueue_pending_request_locked(
+                &mut inner,
+                &job.client_id,
+                stop_request_id,
+                request,
+                None,
+                Some(job_id.to_string()),
+            )?;
+            let record = inner.jobs_by_id.get_mut(job_id).expect("job exists");
+            record.status = "stop_requested".to_string();
+            record.error = Some("internal structured execution cleanup requested".to_string());
+            notify_client_locked(&inner, &job.client_id);
         }
         Ok(false)
     }
@@ -1006,7 +1005,7 @@ impl ShellClientRegistry {
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
             .cloned()
             .collect::<Vec<_>>();
-        jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        jobs.sort_by_key(|job| std::cmp::Reverse(job.created_at));
         jobs
     }
 
@@ -1093,7 +1092,7 @@ impl ShellClientRegistry {
             .filter(|job| status.map(|status| status == job.status).unwrap_or(true))
             .cloned()
             .collect::<Vec<_>>();
-        jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        jobs.sort_by_key(|job| std::cmp::Reverse(job.created_at));
         Ok(jobs
             .into_iter()
             .take(limit.unwrap_or(20).clamp(1, 100))

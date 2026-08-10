@@ -105,10 +105,12 @@ pub(crate) fn read_protected_secret(path: &Path) -> Result<String, String> {
         return Err("private authentication material is not a regular file".to_string());
     }
     #[cfg(unix)]
-    if {
+    let has_unsafe_permissions = {
         use std::os::unix::fs::PermissionsExt;
         metadata.permissions().mode() & 0o077 != 0
-    } {
+    };
+    #[cfg(unix)]
+    if has_unsafe_permissions {
         return Err("private authentication material is not protected".to_string());
     }
     std::fs::read_to_string(path)

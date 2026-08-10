@@ -141,7 +141,7 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
         return;
     }
 
-    let form: TokenRequest = match serde_urlencoded::from_bytes(&body) {
+    let form: TokenRequest = match serde_urlencoded::from_bytes(body) {
         Ok(f) => f,
         Err(e) => {
             oauth_error(

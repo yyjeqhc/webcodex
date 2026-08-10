@@ -2716,13 +2716,13 @@ impl JobManager {
         let mut jobs = lock_unpoison(&self.jobs);
         let expired = jobs
             .iter()
-            .filter_map(|(job_id, job)| {
-                (runner_job_is_terminal(&job.snapshot.status)
+            .filter(|(_, job)| {
+                runner_job_is_terminal(&job.snapshot.status)
                     && job.snapshot.ended_at.is_some_and(|ended| {
                         now.saturating_sub(ended) >= JOB_TERMINAL_RETENTION_SECS
-                    }))
-                .then(|| job_id.clone())
+                    })
             })
+            .map(|(job_id, _)| job_id.clone())
             .collect::<Vec<_>>();
         for job_id in expired {
             jobs.remove(&job_id);
@@ -3719,7 +3719,7 @@ impl JobManager {
                             ),
                             out,
                             err,
-                            validation.then(|| ShellJobValidationProgress {
+                            validation.then_some(ShellJobValidationProgress {
                                 completed: step_index,
                                 current_step: None,
                                 failed_step: None,
@@ -3739,7 +3739,7 @@ impl JobManager {
                                 ),
                                 out,
                                 err,
-                                validation.then(|| ShellJobValidationProgress {
+                                validation.then_some(ShellJobValidationProgress {
                                     completed: step_index,
                                     current_step: None,
                                     failed_step: None,
@@ -3762,7 +3762,7 @@ impl JobManager {
                                 ),
                                 out,
                                 err,
-                                validation.then(|| ShellJobValidationProgress {
+                                validation.then_some(ShellJobValidationProgress {
                                     completed: step_index,
                                     current_step: None,
                                     failed_step: None,
@@ -3796,7 +3796,7 @@ impl JobManager {
                             ),
                             out,
                             err,
-                            validation.then(|| ShellJobValidationProgress {
+                            validation.then_some(ShellJobValidationProgress {
                                 completed: step_index,
                                 current_step: None,
                                 failed_step: None,

@@ -182,10 +182,10 @@ impl Drop for ManagedChild {
         // numeric pgid, which may already belong to an unrelated group. `Child`
         // does not reap on drop, so make a short bounded effort to reap our
         // direct child and avoid accumulating zombies in a long-lived Runner.
-        if !self.tree_exited.load(Ordering::Acquire) {
-            if matches!(signal_group(self.pgid, libc::SIGKILL), Ok(false)) {
-                self.tree_exited.store(true, Ordering::Release);
-            }
+        if !self.tree_exited.load(Ordering::Acquire)
+            && matches!(signal_group(self.pgid, libc::SIGKILL), Ok(false))
+        {
+            self.tree_exited.store(true, Ordering::Release);
         }
         let Some(deadline) = Instant::now().checked_add(DROP_REAP_TIMEOUT) else {
             return;
@@ -234,10 +234,10 @@ fn group_exists(pgid: u32) -> bool {
     // EPERM means the group exists but belongs to another user — which cannot
     // happen for our own group, but conservatively report it as present. Any
     // other error (notably ESRCH) means the group is gone.
-    match io::Error::last_os_error().raw_os_error() {
-        Some(code) if code == libc::EPERM => true,
-        _ => false,
-    }
+    matches!(
+        io::Error::last_os_error().raw_os_error(),
+        Some(code) if code == libc::EPERM
+    )
 }
 
 /// Whether the group contains any member that can still execute code.

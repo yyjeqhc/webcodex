@@ -849,7 +849,7 @@ impl ToolRuntime {
                 "fix the cargo argument format, then retry.",
             ));
         };
-        let dispatched_command = match serde_json::to_string(&[step.clone()]) {
+        let dispatched_command = match serde_json::to_string(std::slice::from_ref(&step)) {
             Ok(command) => command,
             Err(_) => {
                 return ToolResult::err(command_rejected_message(

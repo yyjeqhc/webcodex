@@ -484,18 +484,14 @@ impl ShellClientRegistry {
         let request_ids = inner
             .pending_by_id
             .iter()
-            .filter_map(|(request_id, pending)| {
-                expired_set
-                    .contains(&pending.request.client_id)
-                    .then(|| request_id.clone())
-            })
+            .filter(|(_, pending)| expired_set.contains(&pending.request.client_id))
+            .map(|(request_id, _)| request_id.clone())
             .collect::<HashSet<_>>();
         let job_ids = inner
             .jobs_by_id
             .iter()
-            .filter_map(|(job_id, job)| {
-                expired_set.contains(&job.client_id).then(|| job_id.clone())
-            })
+            .filter(|(_, job)| expired_set.contains(&job.client_id))
+            .map(|(job_id, _)| job_id.clone())
             .collect::<HashSet<_>>();
 
         for client_id in &expired {
@@ -717,10 +713,10 @@ impl ShellClientRegistry {
         let extra_job_requests = inner
             .pending_by_id
             .iter()
-            .filter_map(|(request_id, pending)| {
-                (pending.request.client_id == client_id && pending.job_id.is_some())
-                    .then(|| request_id.clone())
+            .filter(|(_, pending)| {
+                pending.request.client_id == client_id && pending.job_id.is_some()
             })
+            .map(|(request_id, _)| request_id.clone())
             .collect::<Vec<_>>();
         for request_id in extra_job_requests {
             inner.pending_by_id.remove(&request_id);

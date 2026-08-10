@@ -1352,7 +1352,7 @@ fn next_lease_conflict_delay(backoff: &mut RetryBackoff, elapsed: Duration) -> O
 }
 
 fn format_delay(delay: Duration) -> String {
-    if delay.as_millis() % 1000 == 0 {
+    if delay.as_millis().is_multiple_of(1000) {
         format!("{}s", delay.as_secs())
     } else {
         format!("{}ms", delay.as_millis())

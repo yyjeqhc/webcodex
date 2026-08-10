@@ -1119,7 +1119,7 @@ impl Database {
 
     /// Deliver-once watermark for human guidance attached to capability
     /// responses. Reads/advances are scoped like every other task accessor.
-
+    ///
     /// Claim the guidance a task has not yet delivered, advancing the
     /// watermark in the same transaction.
     ///

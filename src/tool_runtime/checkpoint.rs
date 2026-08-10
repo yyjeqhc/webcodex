@@ -469,11 +469,9 @@ impl ToolRuntime {
             .root()
             .canonicalize()
             .map_err(|err| format!("Project root does not exist: {err}"))?;
-        Ok(tokio::task::spawn_blocking(move || {
-            create_workspace_checkpoint(&root, include_untracked)
-        })
-        .await
-        .map_err(|err| format!("task join error: {err}"))?)
+        tokio::task::spawn_blocking(move || create_workspace_checkpoint(&root, include_untracked))
+            .await
+            .map_err(|err| format!("task join error: {err}"))
     }
 
     async fn run_checkpoint_restore(
@@ -498,11 +496,9 @@ impl ToolRuntime {
             .root()
             .canonicalize()
             .map_err(|err| format!("Project root does not exist: {err}"))?;
-        Ok(
-            tokio::task::spawn_blocking(move || restore_workspace_checkpoint(&root, &checkpoint))
-                .await
-                .map_err(|err| format!("task join error: {err}"))?,
-        )
+        tokio::task::spawn_blocking(move || restore_workspace_checkpoint(&root, &checkpoint))
+            .await
+            .map_err(|err| format!("task join error: {err}"))
     }
 }
 

@@ -143,9 +143,10 @@ fn normalize_provider_call(mut call: ProviderCallSummary) -> Option<ProviderCall
         "edit_file" | "search_project_text"
     ) || !matches!(call.selected_provider.as_str(), "claude_code" | "native")
         || !matches!(call.result.as_str(), "success" | "failure")
-        || !call.write_state.as_deref().map_or(true, |state| {
-            matches!(state, "not_submitted" | "confirmed" | "uncertain")
-        })
+        || !call
+            .write_state
+            .as_deref()
+            .is_none_or(|state| matches!(state, "not_submitted" | "confirmed" | "uncertain"))
     {
         return None;
     }

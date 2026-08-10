@@ -133,17 +133,12 @@ pub(super) struct PendingShellRequest {
     pub(super) dispatched: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum ShellJobVisibility {
+    #[default]
     Public,
     HiddenUntilHandoff,
     CleanupPending,
-}
-
-impl Default for ShellJobVisibility {
-    fn default() -> Self {
-        Self::Public
-    }
 }
 
 #[derive(Debug, Clone)]

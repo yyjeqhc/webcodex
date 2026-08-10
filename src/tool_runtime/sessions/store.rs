@@ -1227,9 +1227,7 @@ impl SessionStore {
         error: Option<&str>,
         error_kind: Option<&str>,
     ) -> Option<String> {
-        let Some(start) = start else {
-            return None;
-        };
+        let start = start?;
         let finished_at = now_ts();
         let duration_ms = start
             .started_instant

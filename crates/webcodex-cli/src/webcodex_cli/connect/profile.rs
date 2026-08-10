@@ -436,7 +436,7 @@ pub(super) fn atomic_write(path: &Path, content: &[u8], secret: bool) -> Result<
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(if secret { 0o600 } else { 0o600 });
+            options.mode(0o600);
         }
         let mut file = options
             .open(&temporary)

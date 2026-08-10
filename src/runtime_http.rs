@@ -158,7 +158,7 @@ pub async fn tools_list(req: &mut Request, depot: &mut Depot, res: &mut Response
     let options = if body.is_empty() || body.iter().all(|b| b.is_ascii_whitespace()) {
         ListToolsOptions::default()
     } else {
-        match serde_json::from_slice::<ListToolsOptions>(&body) {
+        match serde_json::from_slice::<ListToolsOptions>(body) {
             Ok(options) => options,
             Err(e) => {
                 res.status_code(StatusCode::BAD_REQUEST);

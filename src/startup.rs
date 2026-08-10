@@ -41,10 +41,10 @@ impl CliCommandOutput {
 }
 
 pub fn is_project_command(args: &[String]) -> bool {
-    match args.first().map(String::as_str) {
-        Some("setup" | "doctor" | "status" | "run" | "share" | "task") => true,
-        _ => false,
-    }
+    matches!(
+        args.first().map(String::as_str),
+        Some("setup" | "doctor" | "status" | "run" | "share" | "task")
+    )
 }
 
 pub(crate) fn project_cli_action<I, S>(args: I) -> ProjectCliAction

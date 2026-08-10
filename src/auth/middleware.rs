@@ -482,9 +482,9 @@ pub(crate) fn require_json_same_origin(
     req: &Request,
 ) -> Result<(), (u16, &'static str, &'static str)> {
     require_same_origin(req)?;
-    if !req
+    if req
         .content_type()
-        .is_some_and(|content_type| content_type.essence_str() == "application/json")
+        .is_none_or(|content_type| content_type.essence_str() != "application/json")
     {
         return Err((
             415,

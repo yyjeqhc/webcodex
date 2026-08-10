@@ -100,7 +100,7 @@ pub(crate) async fn oauth_revoke(req: &mut Request, depot: &mut Depot, res: &mut
         return;
     }
 
-    let form: RevokeRequest = match serde_urlencoded::from_bytes(&body) {
+    let form: RevokeRequest = match serde_urlencoded::from_bytes(body) {
         Ok(f) => f,
         Err(e) => {
             oauth_error(

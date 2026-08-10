@@ -854,18 +854,13 @@ pub(crate) enum SessionMessageStatus {
     Resolved,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionMessagePriority {
     Low,
+    #[default]
     Normal,
     High,
-}
-
-impl Default for SessionMessagePriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

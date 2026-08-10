@@ -96,18 +96,13 @@ pub(crate) fn is_checkpoint_validation_status(value: &str) -> bool {
     CHECKPOINT_VALIDATION_STATUS_VALUES.contains(&value)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionMode {
+    #[default]
     Normal,
     Inspect,
     ReadOnly,
-}
-
-impl Default for SessionMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 impl SessionMode {

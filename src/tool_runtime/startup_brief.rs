@@ -1114,10 +1114,7 @@ fn startup_verdict(
             "pass the explicit Workflow Session id on subsequent project tools",
         );
     }
-    if continuation_actions
-        .iter()
-        .any(|action| *action == EXPLORATION_CONTINUITY_ACTION)
-    {
+    if continuation_actions.contains(&EXPLORATION_CONTINUITY_ACTION) {
         push_unique(&mut actions, EXPLORATION_CONTINUITY_ACTION);
     }
     if actions.is_empty() {

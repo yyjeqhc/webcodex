@@ -1354,7 +1354,7 @@ impl ShellJobValidationStep {
             ("test", "python") => {
                 args == ["-m", "pytest"] || args == ["-B", "-m", "unittest", "discover", "-v"]
             }
-            (kind, manager) if matches!(manager, "npm" | "pnpm" | "yarn" | "bun") => {
+            (kind, "npm" | "pnpm" | "yarn" | "bun") => {
                 args.len() == 3
                     && args[0] == "run"
                     && args[1] == "--silent"

@@ -24,11 +24,10 @@ fn flattened_tool_arg_schema(schema_type: &str) -> Value {
 }
 
 fn flattened_tool_arg_schema_from_input(input_schema: &Value) -> Option<Value> {
-    let direct_type_supported = match input_schema.get("type").and_then(Value::as_str) {
-        Some("array") => true,
-        Some("string" | "boolean" | "integer" | "number") => true,
-        _ => false,
-    };
+    let direct_type_supported = matches!(
+        input_schema.get("type").and_then(Value::as_str),
+        Some("array" | "string" | "boolean" | "integer" | "number")
+    );
     let nullable_scalar_supported = input_schema
         .get("anyOf")
         .and_then(Value::as_array)

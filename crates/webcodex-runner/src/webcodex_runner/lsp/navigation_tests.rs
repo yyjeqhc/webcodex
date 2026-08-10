@@ -235,8 +235,10 @@ fn capability_default_is_false_and_new_agent_sets_true() {
     let _serial = super::serialize_fake_lsp_test();
     let old: ShellClientCapabilities = serde_json::from_str(r#"{"shell":true}"#).unwrap();
     assert!(!old.lsp_read_only_navigation);
-    let mut caps = ShellClientCapabilities::default();
-    caps.lsp_read_only_navigation = true;
+    let caps = ShellClientCapabilities {
+        lsp_read_only_navigation: true,
+        ..Default::default()
+    };
     let json = serde_json::to_string(&caps).unwrap();
     assert!(json.contains("lsp_read_only_navigation"));
 }

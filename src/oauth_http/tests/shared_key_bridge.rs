@@ -510,7 +510,7 @@ async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
     assert!(!ctx.has_scope(crate::auth::SCOPE_ACCOUNT_MANAGE));
 
     let mut resp = TestClient::post("http://localhost/api/oauth/clients/list")
-        .add_header("authorization", &format!("Bearer {}", access_token), true)
+        .add_header("authorization", format!("Bearer {}", access_token), true)
         .body("{}")
         .send(&service)
         .await;
@@ -582,7 +582,7 @@ async fn bridge_issued_access_token_is_rejected_on_agent_path_without_updating_l
     assert!(before_last_used.is_none(), "precondition");
 
     let resp = TestClient::post("http://localhost/api/shell/agent/register")
-        .add_header("authorization", &format!("Bearer {}", access_token), true)
+        .add_header("authorization", format!("Bearer {}", access_token), true)
         .send(&service)
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));

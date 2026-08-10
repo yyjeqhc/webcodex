@@ -977,8 +977,10 @@ allow_cwd_anywhere = true
 
 #[test]
 fn agent_config_persistent_shell_limits_are_validated() {
-    let mut shell = ShellConfig::default();
-    shell.max_persistent_shells = 0;
+    let mut shell = ShellConfig {
+        max_persistent_shells: 0,
+        ..Default::default()
+    };
     assert!(validate_shell_config(&shell)
         .unwrap_err()
         .contains("max_persistent_shells"));

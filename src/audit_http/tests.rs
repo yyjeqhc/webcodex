@@ -393,7 +393,7 @@ async fn http_audit_responses_do_not_leak_secret_fields_or_values() {
         ("/api/audit/session", json!({ "session_id": "leak-1" })),
         ("/api/audit/stats", json!({ "session_id": "leak-1" })),
     ] {
-        let mut resp = TestClient::post(&format!("http://localhost{}", path))
+        let mut resp = TestClient::post(format!("http://localhost{}", path))
             .bearer_auth("secret")
             .json(&body)
             .send(&service)

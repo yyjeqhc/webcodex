@@ -348,7 +348,7 @@ async fn post_connector(
     token: &str,
     body: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
-    let mut response = TestClient::post(&format!("http://localhost{path}"))
+    let mut response = TestClient::post(format!("http://localhost{path}"))
         .bearer_auth(token)
         .json(&body)
         .send(&fixture.service)

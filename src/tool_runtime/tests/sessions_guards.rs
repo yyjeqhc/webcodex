@@ -441,9 +441,11 @@ async fn current_session_binding_cannot_cross_project_boundary() {
 async fn read_only_current_session_guard_blocks_write_before_enqueue() {
     let runtime = runtime_with_agent_project("current-guard");
     let window = ClientWindow::for_test("current-guard-window");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
-    caps.file_write = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        file_write: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "current-guard", None, caps).await;
     let project = agent_test_project_id("current-guard");
     let session = runtime.sessions.start_session_with_guards(

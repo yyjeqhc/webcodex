@@ -746,12 +746,14 @@ async fn startup_uses_project_scoped_lifecycle_aware_job_summary() {
     seed_rules(root_a.path());
     seed_rules(root_b.path());
     let runtime = ToolRuntime::new_for_tests();
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
-    caps.git = true;
-    caps.file_read = true;
-    caps.file_write = true;
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        git: true,
+        file_read: true,
+        file_write: true,
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent_with_projects(
         &runtime,
         "startup-jobs",

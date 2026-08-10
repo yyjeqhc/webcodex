@@ -38,7 +38,12 @@ fn serialize_fake_mcp_test() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[cfg(not(windows))]
-fn serialize_fake_mcp_test() {}
+struct FakeMcpTestSerialGuard;
+
+#[cfg(not(windows))]
+fn serialize_fake_mcp_test() -> FakeMcpTestSerialGuard {
+    FakeMcpTestSerialGuard
+}
 
 struct FakeBinary {
     _temp: TempDir,
@@ -333,9 +338,11 @@ search_project_text = "project_search"
     let disabled = ClaudeCodeMcpProvider::new(ClaudeCodeMcpConfig::default());
     assert!(!disabled.status().available);
 
-    let mut missing = ClaudeCodeMcpConfig::default();
-    missing.enabled = true;
-    missing.command = "/definitely/missing/claude".to_string();
+    let missing = ClaudeCodeMcpConfig {
+        enabled: true,
+        command: "/definitely/missing/claude".to_string(),
+        ..Default::default()
+    };
     let provider = ClaudeCodeMcpProvider::new(missing);
     assert!(!provider.status().available);
 
@@ -948,8 +955,10 @@ fn opt_in_real_claude_mcp_probe() {
         return;
     }
     let root = tempfile::tempdir().unwrap();
-    let mut config = ClaudeCodeMcpConfig::default();
-    config.enabled = true;
+    let config = ClaudeCodeMcpConfig {
+        enabled: true,
+        ..Default::default()
+    };
     let provider = ClaudeCodeMcpProvider::new(config);
     provider
         .project_client(root.path(), Instant::now() + Duration::from_secs(30))
@@ -977,8 +986,10 @@ fn opt_in_real_claude_mcp_smoke() {
     fs::write(root.join("edit.txt"), "before\n").unwrap();
     let root = root.canonicalize().unwrap();
 
-    let mut config = ClaudeCodeMcpConfig::default();
-    config.enabled = true;
+    let mut config = ClaudeCodeMcpConfig {
+        enabled: true,
+        ..Default::default()
+    };
     let provider = ClaudeCodeMcpProvider::new(config.clone());
     let client = provider
         .project_client(&root, Instant::now() + Duration::from_secs(30))

@@ -87,9 +87,11 @@ async fn cargo_validation_tools_accept_long_total_runtime_budget() {
     // they are no longer limited to the 120s synchronous cap.
     let runtime = runtime_with_agent_project("sync-timeout-cargo-long")
         .with_validation_sync_wait(std::time::Duration::from_millis(10));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "sync-timeout-cargo-long", None, caps).await;
     let project = agent_test_project_id("sync-timeout-cargo-long");
     for (tool_name, timeout) in [
@@ -154,8 +156,10 @@ async fn cargo_validation_tools_accept_long_total_runtime_budget() {
 #[tokio::test]
 async fn cargo_validation_tools_reject_timeout_outside_1_3600() {
     let runtime = runtime_with_agent_project("sync-timeout-cargo-range");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "sync-timeout-cargo-range", None, caps).await;
     let project = agent_test_project_id("sync-timeout-cargo-range");
 
@@ -255,8 +259,10 @@ async fn cargo_fmt_mutating_timeout_stays_within_120_seconds() {
 #[tokio::test]
 async fn run_shell_rejects_timeout_above_120_before_enqueue() {
     let runtime = runtime_with_agent_project("sync-timeout-shell");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "sync-timeout-shell", None, caps).await;
     let project = agent_test_project_id("sync-timeout-shell");
 
@@ -276,8 +282,10 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
     // and the synchronous caller must not be invited to retry blindly.
     let client_id = "sync-short-full-test";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
@@ -372,8 +380,10 @@ async fn dispatched_shared_capture_wait_timeout_reports_outcome_unknown_without_
 async fn undispatched_shared_capture_wait_timeout_reports_not_started() {
     let client_id = "sync-timeout-undispatched";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -403,8 +413,10 @@ async fn undispatched_shared_capture_wait_timeout_reports_not_started() {
 async fn shared_capture_missing_pending_record_reports_outcome_unknown() {
     let client_id = "sync-timeout-missing-record";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -444,8 +456,10 @@ async fn shared_capture_missing_pending_record_reports_outcome_unknown() {
 #[tokio::test]
 async fn timeout_rejection_does_not_pollute_validation_summary() {
     let runtime = runtime_with_agent_project("sync-timeout-ledger");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "sync-timeout-ledger", None, caps).await;
     let project = agent_test_project_id("sync-timeout-ledger");
     let auth = auth_context(None, true);

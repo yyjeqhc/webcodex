@@ -4342,7 +4342,7 @@ mod tests {
 
     #[test]
     fn parse_search_context_matches_returns_context_line_numbers() {
-        let stdout = "src/lib.rs\01-one\nsrc/lib.rs\02-two\nsrc/lib.rs\03:needle\nsrc/lib.rs\04-four\nsrc/lib.rs\05-five\n";
+        let stdout = "src/lib.rs\x001-one\nsrc/lib.rs\x002-two\nsrc/lib.rs\x003:needle\nsrc/lib.rs\x004-four\nsrc/lib.rs\x005-five\n";
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
             path: None,
@@ -4500,7 +4500,7 @@ mod tests {
             timeout_secs: None,
         })
         .unwrap();
-        let count_suffix = "\02\n";
+        let count_suffix = "\x002\n";
         let path = format!(
             "src/{}",
             "a".repeat(SEARCH_OUTPUT_BYTE_BUDGET - "src/".len() - count_suffix.len())

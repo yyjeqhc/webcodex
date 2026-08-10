@@ -1541,8 +1541,10 @@ async fn session_handoff_summary_only_is_compact() {
 #[tokio::test]
 async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
     let runtime = test_runtime();
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     let auth = open_auth_context();
     register_agent_projects_for_auth(
         &runtime,
@@ -1648,8 +1650,10 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
 #[tokio::test]
 async fn session_handoff_summary_treats_stop_requested_as_nonblocking() {
     let runtime = test_runtime();
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     let auth = open_auth_context();
     register_agent_projects_for_auth(
         &runtime,
@@ -3536,8 +3540,8 @@ fn session_event_omitted_optional_fields_still_deserialize() {
     assert_eq!(event.tool_name, "show_changes");
     assert!(event.input_summary.is_none());
     assert_eq!(event.status.as_deref(), Some("succeeded"));
-    assert_eq!(
-        event.diff_review_like, false,
+    assert!(
+        !event.diff_review_like,
         "legacy ledger rows without diff_review_like must default to false"
     );
 }

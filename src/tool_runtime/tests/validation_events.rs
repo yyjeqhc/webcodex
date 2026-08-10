@@ -482,7 +482,7 @@ fn cargo_test_run_metadata_sums_mixed_rust_test_harness_sections() {
          test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
     );
 
-    assert_eq!(metadata.tests_detected, true);
+    assert!(metadata.tests_detected);
     assert_eq!(metadata.tests_run_count, Some(1));
     assert_eq!(metadata.zero_tests_run, Some(false));
 }
@@ -940,8 +940,10 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let mut capabilities = crate::shell_protocol::ShellClientCapabilities::default();
-    capabilities.async_shell_jobs = true;
+    let capabilities = crate::shell_protocol::ShellClientCapabilities {
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent_projects_for_auth(
         &runtime,
         "validation-job",

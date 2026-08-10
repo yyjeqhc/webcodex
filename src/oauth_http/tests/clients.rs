@@ -56,7 +56,7 @@ async fn oauth_client_create_returns_client_secret_once() {
     .send(&service)
     .await;
     let list_body: serde_json::Value = resp.take_json().await.unwrap();
-    assert!(list_body["clients"].as_array().unwrap().len() >= 1);
+    assert!(!list_body["clients"].as_array().unwrap().is_empty());
     let clients = list_body["clients"].as_array().unwrap();
     assert!(clients.iter().all(|c| c.get("client_secret").is_none()));
     assert!(clients

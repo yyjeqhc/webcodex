@@ -558,7 +558,7 @@ async fn http_agent_tokens_register_hash_enforces_transport_and_client_id_bindin
         } else {
             json!({})
         };
-        let resp = TestClient::post(&format!("http://localhost{}", path))
+        let resp = TestClient::post(format!("http://localhost{}", path))
             .bearer_auth(&token)
             .json(&body)
             .send(&service)
@@ -896,7 +896,7 @@ async fn http_agent_token_cannot_call_management_endpoints() {
             }),
             _ => unreachable!(),
         };
-        let resp = TestClient::post(&format!("http://localhost{}", path))
+        let resp = TestClient::post(format!("http://localhost{}", path))
             .bearer_auth(&agent_token)
             .json(&body)
             .send(&service)
@@ -926,7 +926,7 @@ async fn http_agent_tokens_unauthorized_responses_are_json() {
         "/api/agent-tokens/list",
         "/api/agent-tokens/revoke",
     ] {
-        let resp = TestClient::post(&format!("http://localhost{}", path))
+        let resp = TestClient::post(format!("http://localhost{}", path))
             .json(&json!({}))
             .send(&service)
             .await;

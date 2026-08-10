@@ -657,11 +657,10 @@ mod tests {
                 "{action} must refuse the malformed reason"
             );
             let body: serde_json::Value = response.take_json().await.unwrap();
-            assert_eq!(
+            assert!(
                 serde_json::to_string(&body)
                     .unwrap()
                     .contains("invalid decision input"),
-                true,
                 "unexpected error body: {body}"
             );
         }

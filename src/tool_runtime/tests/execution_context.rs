@@ -188,8 +188,10 @@ async fn run_job_inherits_session_cwd_and_shell() {
     std::fs::create_dir_all(&frontend).unwrap();
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.async_shell_jobs = true;
+    let capabilities = ShellClientCapabilities {
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent_projects_for_auth(
         &runtime,
         "context-job",
@@ -244,11 +246,13 @@ async fn run_job_inherits_session_cwd_and_shell() {
 async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_and_jobs() {
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.ssh_shell = true;
-    capabilities.jobs = true;
-    capabilities.async_jobs = true;
-    capabilities.async_shell_jobs = true;
+    let capabilities = ShellClientCapabilities {
+        ssh_shell: true,
+        jobs: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent_projects_for_auth(
         &runtime,
         "context-ssh",
@@ -380,8 +384,10 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
 async fn session_ssh_resource_rejects_structured_cargo_before_legacy_sync_start() {
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.ssh_shell = true;
+    let capabilities = ShellClientCapabilities {
+        ssh_shell: true,
+        ..Default::default()
+    };
     register_agent_projects_for_auth(
         &runtime,
         "context-ssh-cargo",
@@ -445,8 +451,10 @@ async fn session_ssh_resource_rejects_mutating_cargo_fmt_before_start() {
 
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.ssh_shell = true;
+    let capabilities = ShellClientCapabilities {
+        ssh_shell: true,
+        ..Default::default()
+    };
     register_agent_projects_for_auth(
         &runtime,
         "context-ssh-cargo-fmt",
@@ -552,8 +560,10 @@ async fn session_ssh_resource_requires_runner_ssh_shell_capability() {
 async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
     let runtime = test_runtime();
     let auth = open_auth_context();
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.ssh_shell = true;
+    let capabilities = ShellClientCapabilities {
+        ssh_shell: true,
+        ..Default::default()
+    };
     register_agent_projects_for_auth(
         &runtime,
         "context-ssh-transport",

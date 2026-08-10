@@ -15,10 +15,12 @@ use std::os::unix::fs::PermissionsExt;
 #[tokio::test]
 async fn write_project_file_with_session_id_records_changed_path_without_content() {
     let runtime = runtime_with_agent_project("telemetry-write");
-    let mut caps = ShellClientCapabilities::default();
-    caps.file_write = true;
-    caps.shell = true;
-    caps.git = true;
+    let caps = ShellClientCapabilities {
+        file_write: true,
+        shell: true,
+        git: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "telemetry-write", None, caps).await;
     let project = agent_test_project_id("telemetry-write");
     let session = runtime.sessions.start_session(None, None);
@@ -422,8 +424,10 @@ async fn artifact_upload_begin_policy_rejection_is_classified() {
 #[tokio::test]
 async fn validate_patch_never_enqueues_mutating_apply_command() {
     let runtime = runtime_with_agent_project("patcher");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "patcher", None, caps).await;
 
     let project = agent_test_project_id("patcher");
@@ -2834,8 +2838,10 @@ async fn project_overview_rejects_invalid_paths_before_agent_request() {
 #[tokio::test]
 async fn search_project_text_requires_shell_capability() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = false;
+    let caps = ShellClientCapabilities {
+        shell: false,
+        ..Default::default()
+    };
     register_agent(&runtime, "oe", None, caps).await;
     let bootstrap = auth_context(None, true);
     let result = runtime
@@ -3399,8 +3405,10 @@ async fn read_file_rejects_parent_traversal_before_reaching_agent() {
     // a file the caller was never granted. The project boundary therefore has
     // to be enforced server-side, before the request is queued for the agent.
     let runtime = runtime_with_agent_project("traversal-read");
-    let mut caps = ShellClientCapabilities::default();
-    caps.file_read = true;
+    let caps = ShellClientCapabilities {
+        file_read: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "traversal-read", None, caps).await;
     let project = agent_test_project_id("traversal-read");
 
@@ -3438,8 +3446,10 @@ async fn read_file_rejects_parent_traversal_before_reaching_agent() {
 #[tokio::test]
 async fn read_file_still_routes_project_relative_paths_to_agent() {
     let runtime = runtime_with_agent_project("traversal-ok");
-    let mut caps = ShellClientCapabilities::default();
-    caps.file_read = true;
+    let caps = ShellClientCapabilities {
+        file_read: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "traversal-ok", None, caps).await;
     let project = agent_test_project_id("traversal-ok");
 
@@ -3485,8 +3495,10 @@ async fn read_file_refuses_secret_paths_before_reaching_agent() {
     // read_file returned them verbatim. Case variants must be refused too:
     // the old search predicate was case-sensitive.
     let runtime = runtime_with_agent_project("secret-read");
-    let mut caps = ShellClientCapabilities::default();
-    caps.file_read = true;
+    let caps = ShellClientCapabilities {
+        file_read: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "secret-read", None, caps).await;
     let project = agent_test_project_id("secret-read");
 
@@ -3537,8 +3549,10 @@ async fn read_file_still_allows_bulk_tree_paths_by_explicit_path() {
     // `.git` and `target` are skipped by bulk operations for cost, not
     // secrecy. Reading one by explicit path must keep working.
     let runtime = runtime_with_agent_project("bulk-read");
-    let mut caps = ShellClientCapabilities::default();
-    caps.file_read = true;
+    let caps = ShellClientCapabilities {
+        file_read: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "bulk-read", None, caps).await;
     let project = agent_test_project_id("bulk-read");
 

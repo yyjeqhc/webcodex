@@ -1840,7 +1840,7 @@ mod tests {
             Some("shell_reset_required"),
             "{reset:?}"
         );
-        assert_eq!(reset.command_started, false, "{reset:?}");
+        assert!(!reset.command_started, "{reset:?}");
         assert_eq!(reset.stdout, "", "{reset:?}");
 
         // The old shell is closed and can no longer run user commands; a
@@ -1857,7 +1857,7 @@ mod tests {
             stale.error_code.is_some(),
             "closed old shell must reject further execs: {stale:?}"
         );
-        assert_eq!(stale.command_started, false, "{stale:?}");
+        assert!(!stale.command_started, "{stale:?}");
         assert_eq!(stale.stdout, "", "{stale:?}");
         assert_eq!(manager.active_count(), 0, "{stale:?}");
 

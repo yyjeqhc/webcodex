@@ -76,11 +76,13 @@ async fn register_process_agent(
     structured_process_argv: bool,
     sandbox_inspect_commands: bool,
 ) -> String {
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.shell = true;
-    capabilities.structured_validation_argv = true;
-    capabilities.structured_process_argv = structured_process_argv;
-    capabilities.sandbox_inspect_commands = sandbox_inspect_commands;
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        structured_validation_argv: true,
+        structured_process_argv,
+        sandbox_inspect_commands,
+        ..Default::default()
+    };
     register_agent_with_projects(
         runtime,
         client_id,
@@ -97,14 +99,16 @@ async fn register_process_job_agent(
     client_id: &str,
     root: &std::path::Path,
 ) -> String {
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.shell = true;
-    capabilities.async_jobs = true;
-    capabilities.async_shell_jobs = true;
-    capabilities.structured_validation_argv = true;
-    capabilities.structured_process_argv = true;
-    capabilities.structured_script_payload = true;
-    capabilities.structured_execution_jobs = true;
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        structured_process_argv: true,
+        structured_script_payload: true,
+        structured_execution_jobs: true,
+        ..Default::default()
+    };
     register_agent_with_projects(
         runtime,
         client_id,
@@ -828,12 +832,14 @@ async fn promoted_process_inherits_the_initiating_session_without_a_second_tool_
 async fn b2_process_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.shell = true;
-    capabilities.async_jobs = true;
-    capabilities.structured_process_argv = true;
-    capabilities.structured_script_payload = true;
-    capabilities.structured_execution_jobs = false;
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        async_jobs: true,
+        structured_process_argv: true,
+        structured_script_payload: true,
+        structured_execution_jobs: false,
+        ..Default::default()
+    };
     register_agent_with_projects(
         &runtime,
         "process-b2",

@@ -143,7 +143,7 @@ async fn http_jobs_routes_require_bearer_auth() {
         ("/api/jobs/list", json!({})),
         ("/api/jobs/tail", json!({"job_id": "abc"})),
     ] {
-        let resp = TestClient::post(&format!("http://localhost{}", path))
+        let resp = TestClient::post(format!("http://localhost{}", path))
             .json(&body)
             .send(&service)
             .await;

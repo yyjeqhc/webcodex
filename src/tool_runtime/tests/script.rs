@@ -43,12 +43,14 @@ async fn register_script_agent(
     structured_script_payload: bool,
     sandbox_inspect_commands: bool,
 ) -> String {
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.shell = true;
-    capabilities.structured_validation_argv = true;
-    capabilities.structured_process_argv = true;
-    capabilities.structured_script_payload = structured_script_payload;
-    capabilities.sandbox_inspect_commands = sandbox_inspect_commands;
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        structured_validation_argv: true,
+        structured_process_argv: true,
+        structured_script_payload,
+        sandbox_inspect_commands,
+        ..Default::default()
+    };
     register_agent_with_projects(
         runtime,
         client_id,
@@ -65,14 +67,16 @@ async fn register_script_job_agent(
     client_id: &str,
     root: &std::path::Path,
 ) -> String {
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.shell = true;
-    capabilities.async_jobs = true;
-    capabilities.async_shell_jobs = true;
-    capabilities.structured_validation_argv = true;
-    capabilities.structured_process_argv = true;
-    capabilities.structured_script_payload = true;
-    capabilities.structured_execution_jobs = true;
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        structured_process_argv: true,
+        structured_script_payload: true,
+        structured_execution_jobs: true,
+        ..Default::default()
+    };
     register_agent_with_projects(
         runtime,
         client_id,
@@ -434,7 +438,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
     assert!(request.process.is_none());
     let payload = request.script.as_ref().expect("typed script payload");
     assert_eq!(payload.script, unique_body);
-    assert_eq!(payload.args, [unique_arg.clone()]);
+    assert_eq!(payload.args.as_slice(), std::slice::from_ref(&unique_arg));
     assert_eq!(request.stdin.as_deref(), Some(unique_stdin.as_str()));
     assert!(!request.command.contains(&unique_body));
     update_script_job(
@@ -576,12 +580,14 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
 async fn b2_script_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.shell = true;
-    capabilities.async_jobs = true;
-    capabilities.structured_process_argv = true;
-    capabilities.structured_script_payload = true;
-    capabilities.structured_execution_jobs = false;
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        async_jobs: true,
+        structured_process_argv: true,
+        structured_script_payload: true,
+        structured_execution_jobs: false,
+        ..Default::default()
+    };
     register_agent_with_projects(
         &runtime,
         "script-b2",

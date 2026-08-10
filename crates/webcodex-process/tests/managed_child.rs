@@ -403,7 +403,7 @@ fn repeated_terminate_is_idempotent() {
 
     managed.terminate_tree().expect("first terminate");
     // Second call must not panic and should succeed (tree already gone).
-    let _ = managed.terminate_tree().expect("second terminate");
+    managed.terminate_tree().expect("second terminate");
     assert!(
         managed
             .wait_tree_exit(Duration::from_secs(10))

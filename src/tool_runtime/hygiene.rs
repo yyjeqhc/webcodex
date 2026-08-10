@@ -1105,7 +1105,7 @@ mod tests {
         );
         assert_eq!(summary["git_available"], false);
         assert_eq!(summary["clean"], false);
-        assert!(summary["warnings"].as_array().unwrap().len() >= 1);
+        assert!(!summary["warnings"].as_array().unwrap().is_empty());
     }
 
     #[test]

@@ -8,9 +8,11 @@ use serde_json::json;
 #[tokio::test]
 async fn git_status_with_session_id_records_git_read_event() {
     let runtime = runtime_with_agent_project("telemetry-git");
-    let mut caps = ShellClientCapabilities::default();
-    caps.git = true;
-    caps.shell = false;
+    let caps = ShellClientCapabilities {
+        git: true,
+        shell: false,
+        ..Default::default()
+    };
     register_agent(&runtime, "telemetry-git", None, caps).await;
     let project = agent_test_project_id("telemetry-git");
     let session = runtime.sessions.start_session(None, None);
@@ -60,8 +62,10 @@ async fn git_log_parses_commits() {
     commit_file(root, "a.txt", "two\n", "second commit");
     let stdout = git_log_stdout(root, 20, 0);
     let runtime = runtime_with_agent_project("git-log-parse");
-    let mut caps = ShellClientCapabilities::default();
-    caps.git = true;
+    let caps = ShellClientCapabilities {
+        git: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "git-log-parse", None, caps).await;
     let project = agent_test_project_id("git-log-parse");
 
@@ -120,8 +124,10 @@ async fn git_log_limit_and_skip_returns_second_recent_and_truncated() {
     commit_file(root, "a.txt", "three\n", "third commit");
     let stdout = git_log_stdout(root, 1, 1);
     let runtime = runtime_with_agent_project("git-log-page");
-    let mut caps = ShellClientCapabilities::default();
-    caps.git = true;
+    let caps = ShellClientCapabilities {
+        git: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "git-log-page", None, caps).await;
     let project = agent_test_project_id("git-log-page");
 
@@ -163,8 +169,10 @@ async fn git_log_limit_and_skip_returns_second_recent_and_truncated() {
 #[tokio::test]
 async fn git_log_unknown_project_and_unknown_session_are_structured_errors() {
     let runtime = runtime_with_agent_project("git-log-errors");
-    let mut caps = ShellClientCapabilities::default();
-    caps.git = true;
+    let caps = ShellClientCapabilities {
+        git: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "git-log-errors", None, caps).await;
     let project = agent_test_project_id("git-log-errors");
 
@@ -199,8 +207,10 @@ async fn git_log_read_only_session_allowed_and_recorded() {
     commit_file(root, "a.txt", "one\n", "first commit");
     let stdout = git_log_stdout(root, 5, 0);
     let runtime = runtime_with_agent_project("git-log-readonly");
-    let mut caps = ShellClientCapabilities::default();
-    caps.git = true;
+    let caps = ShellClientCapabilities {
+        git: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "git-log-readonly", None, caps).await;
     let project = agent_test_project_id("git-log-readonly");
     let session_result = runtime

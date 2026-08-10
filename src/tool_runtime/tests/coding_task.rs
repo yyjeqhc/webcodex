@@ -336,11 +336,13 @@ async fn start_coding_task_creates_managed_temporary_project_then_restores_it_as
     // registration to be reported again. The same normal resolver and Session
     // ledger then recover the project/session pair without a temporary type.
     let runtime2 = ToolRuntime::new_for_tests().with_session_ledger(&ledger);
-    let mut capabilities = ShellClientCapabilities::default();
-    capabilities.shell = true;
-    capabilities.git = true;
-    capabilities.file_read = true;
-    capabilities.file_write = true;
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        git: true,
+        file_read: true,
+        file_write: true,
+        ..Default::default()
+    };
     let mut temporary_summary = registered_project(
         temporary_project_id,
         temporary_root.to_string_lossy().as_ref(),
@@ -551,13 +553,10 @@ async fn start_coding_task_can_explicitly_disable_current_binding() {
     assert!(start_tool.get("inputSchema").is_none());
     assert!(start_tool.get("outputSchema").is_none());
     assert_eq!(result.output["git"]["clean"], true);
-    assert!(
-        result.output["git"]["recent_commits"]
-            .as_array()
-            .unwrap()
-            .len()
-            >= 1
-    );
+    assert!(!result.output["git"]["recent_commits"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -971,7 +970,7 @@ async fn start_coding_task_tracked_modified_is_nonblocking_and_allows_continued_
     // proving the tool is not using HEAD as the silent baseline.
     let head_content = "fn main() {\n    println!(\"head\");\n}\n";
     let head_err = crate::tool_runtime::files::apply_text_edits_to_string(
-        &head_content,
+        head_content,
         "src/example.rs",
         &[crate::tool_runtime::tool_inputs::ApplyTextEditInput {
             kind: crate::tool_runtime::tool_inputs::ApplyTextEditKind::ReplaceExact,
@@ -2300,10 +2299,12 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "add readme");
     let runtime = test_runtime();
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
-    caps.git = true;
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        git: true,
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     let project_path = tmp.path().to_string_lossy().to_string();
     let auth = open_auth_context();
     register_agent_projects_for_auth(
@@ -2430,10 +2431,12 @@ async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "add readme");
     let runtime = test_runtime();
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
-    caps.git = true;
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        git: true,
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     let project_path = tmp.path().to_string_lossy().to_string();
     let auth = open_auth_context();
     register_agent_projects_for_auth(

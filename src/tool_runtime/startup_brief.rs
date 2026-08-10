@@ -1678,7 +1678,7 @@ mod tests {
 
     fn failure(index: usize) -> Value {
         json!({
-            "kind": if index % 2 == 0 { "test" } else { "diagnostic" },
+            "kind": if index.is_multiple_of(2) { "test" } else { "diagnostic" },
             "name": format!("very_long_failure_name_{index}_{}", "x".repeat(180)),
             "file": format!("src/generated/{index}/{}.rs", "y".repeat(180)),
             "line": index + 1,

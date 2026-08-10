@@ -317,14 +317,14 @@ async fn gate_send(
     path: &str,
     auth: Option<&str>,
 ) -> (salvo::http::StatusCode, serde_json::Value) {
-    let mut req = TestClient::post(&format!("http://localhost{}", path));
+    let mut req = TestClient::post(format!("http://localhost{}", path));
     if path == "/api/agents/ws"
         || path.starts_with("/api/agents/ws?")
         || path == "/oauth/authorize"
         || path.starts_with("/oauth/authorize?")
     {
         // These endpoints are GET-mounted in this test router.
-        req = TestClient::get(&format!("http://localhost{}", path));
+        req = TestClient::get(format!("http://localhost{}", path));
     }
     if let Some(token) = auth {
         req = req.bearer_auth(token);
@@ -1746,7 +1746,7 @@ async fn auth_middleware_accepts_valid_oauth2_access_token() {
 
     let service = salvo::Service::new(gate_router(config, db.clone()));
     let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
-        .add_header("authorization", &format!("Bearer {}", plaintext), true)
+        .add_header("authorization", format!("Bearer {}", plaintext), true)
         .send(&service)
         .await;
     assert_eq!(
@@ -1800,7 +1800,7 @@ async fn auth_middleware_rejects_refresh_token_as_bearer() {
 
     let service = salvo::Service::new(gate_router(config, db));
     let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
-        .add_header("authorization", &format!("Bearer {}", plaintext), true)
+        .add_header("authorization", format!("Bearer {}", plaintext), true)
         .send(&service)
         .await;
     assert_eq!(
@@ -1823,7 +1823,7 @@ async fn auth_middleware_rejects_bridge_oauth2_on_agent_path_without_updating_la
 
     let service = salvo::Service::new(gate_router(config, db.clone()));
     let resp = salvo::test::TestClient::post("http://localhost/api/shell/agent/register")
-        .add_header("authorization", &format!("Bearer {}", plaintext), true)
+        .add_header("authorization", format!("Bearer {}", plaintext), true)
         .send(&service)
         .await;
     assert_eq!(
@@ -2129,7 +2129,7 @@ async fn auth_middleware_forbidden_uses_insufficient_scope_challenge() {
     let service = salvo::Service::new(gate_router(config, db));
     // OAuth2 token on agent transport path → 403, not 401
     let resp = salvo::test::TestClient::post("http://localhost/api/shell/agent/register")
-        .add_header("authorization", &format!("Bearer {}", plaintext), true)
+        .add_header("authorization", format!("Bearer {}", plaintext), true)
         .send(&service)
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));

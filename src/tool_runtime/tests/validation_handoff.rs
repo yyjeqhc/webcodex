@@ -167,9 +167,11 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
     let client_id = "vhandoff-fast-check";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(300));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
@@ -249,9 +251,11 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     let client_id = "vhandoff-long-test";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -364,9 +368,11 @@ async fn validation_command_starts_exactly_once_across_handoff() {
     let counter = tmp.path().join("starts.txt");
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -447,9 +453,11 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
     let client_id = "vhandoff-success";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
@@ -565,9 +573,11 @@ async fn partial_agent_job_logs_null_complete_validation_counts_everywhere() {
     let client_id = "vhandoff-partial-counts";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
@@ -696,9 +706,11 @@ async fn handoff_job_terminal_failure_is_validation_failed_not_timeout() {
     let client_id = "vhandoff-fail";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -778,9 +790,11 @@ async fn handoff_job_total_timeout_is_classified_timeout() {
     let client_id = "vhandoff-timeout";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -847,9 +861,11 @@ async fn handoff_job_total_timeout_is_classified_timeout() {
 async fn explicit_short_timeout_never_creates_a_job() {
     let client_id = "vhandoff-short";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -894,8 +910,10 @@ async fn explicit_short_timeout_never_creates_a_job() {
 async fn legacy_sync_cargo_runner_pre_spawn_failure_stays_not_started() {
     let client_id = "vhandoff-legacy-pre-spawn";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -938,8 +956,10 @@ async fn legacy_sync_cargo_runner_pre_spawn_failure_stays_not_started() {
 async fn legacy_sync_cargo_runner_post_spawn_uncertainty_stays_outcome_unknown() {
     let client_id = "vhandoff-legacy-outcome-unknown";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -992,9 +1012,11 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
     let client_id = "vhandoff-invalid-args";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
@@ -1085,9 +1107,11 @@ async fn cancel_queued_before_handoff_removes_start_request_and_hidden_record() 
     let client_id = "vhandoff-cancel-queued";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_secs(60));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -1154,9 +1178,11 @@ async fn cancel_running_before_handoff_retains_record_until_runner_stops() {
     let client_id = "vhandoff-cancel-running";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_secs(60));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -1261,9 +1287,11 @@ async fn stop_job_stops_a_handoff_job() {
     let client_id = "vhandoff-stop";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let auth = auth_context(None, true);
@@ -1342,9 +1370,11 @@ async fn terminal_validation_result_fields_are_consistent_between_executors() {
     let _ = tmp;
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -1897,9 +1927,11 @@ mod tests {
 async fn cargo_fmt_mutating_never_auto_promotes() {
     let client_id = "vhandoff-fmt-mutate";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
-    caps.structured_validation_argv = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 
@@ -1941,8 +1973,10 @@ async fn cargo_fmt_mutating_never_auto_promotes() {
 async fn cargo_fmt_mutating_post_spawn_uncertainty_forbids_blind_retry() {
     let client_id = "vhandoff-fmt-mutate-unknown";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
 

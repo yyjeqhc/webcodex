@@ -454,8 +454,7 @@ mod tests {
             0o700
         );
 
-        let script = format!(
-            "set -eu\n\
+        let script = "set -eu\n\
              cat tracked.txt > \"$TMPDIR/read-copy\"\n\
              printf scratch > \"$TMPDIR/direct-write\"\n\
              ! touch created.txt\n\
@@ -466,7 +465,7 @@ mod tests {
              ! truncate -s 0 tracked.txt\n\
              test \"$(cat tracked.txt)\" = original\n\
              test \"$CARGO_TARGET_DIR\" = \"$TMPDIR/target\""
-        );
+            .to_string();
         let mut command = std::process::Command::new("/bin/sh");
         command.arg("-c").arg(script).current_dir(project.path());
         sandbox_command_inspect(&mut command, &scratch).unwrap();

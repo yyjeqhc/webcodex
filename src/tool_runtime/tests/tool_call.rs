@@ -506,7 +506,7 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
         "secret",
     ] {
         assert!(
-            !lower.contains(&forbidden),
+            !lower.contains(forbidden),
             "unknown-tool error must not leak '{}': {}",
             forbidden,
             err

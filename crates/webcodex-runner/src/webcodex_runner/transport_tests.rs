@@ -278,7 +278,7 @@ fn write_http_response(stream: &mut TcpStream, status: &str, content_type: &str,
         "HTTP/1.1 {}\r\ncontent-type: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
         status,
         content_type,
-        body.as_bytes().len(),
+        body.len(),
         body
     )
     .unwrap();
@@ -3831,7 +3831,10 @@ async fn websocket_proxy_connect_response_header_is_bounded_and_redacted() {
         let connect = read_async_http_headers(&mut stream).await;
         assert!(!connect.contains(server_token), "{connect}");
         let mut response = format!("HTTP/1.1 200 OK\r\nX-Secret: {proxy_secret}\r\n").into_bytes();
-        response.extend(std::iter::repeat(b'x').take(WS_PROXY_CONNECT_HEADER_MAX_BYTES + 1024));
+        response.extend(std::iter::repeat_n(
+            b'x',
+            WS_PROXY_CONNECT_HEADER_MAX_BYTES + 1024,
+        ));
         let _ = stream.write_all(&response).await;
     });
 

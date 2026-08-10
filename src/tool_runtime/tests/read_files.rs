@@ -346,7 +346,7 @@ async fn read_files_deadline_preserves_completed_results_and_cancels_unfinished_
                 .await
         }
     });
-    let requests = vec![
+    let requests = [
         next_read_request(&runtime, client_id).await,
         next_read_request(&runtime, client_id).await,
         next_read_request(&runtime, client_id).await,

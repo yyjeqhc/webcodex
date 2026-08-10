@@ -735,8 +735,10 @@ async fn unique_short_agent_project_id_is_resolved_by_runtime_surface() {
 #[tokio::test]
 async fn agent_run_shell_without_shell_capability_is_rejected() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = false;
+    let caps = ShellClientCapabilities {
+        shell: false,
+        ..Default::default()
+    };
     register_agent(&runtime, "oe", None, caps).await;
     let bootstrap = auth_context(None, true);
     let result = runtime
@@ -811,9 +813,16 @@ async fn agent_run_job_without_async_capability_is_rejected() {
 #[tokio::test]
 async fn agent_git_status_without_shell_or_git_is_rejected() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = false; // git stays false by default
-    register_agent(&runtime, "oe", None, caps).await;
+    register_agent(
+        &runtime,
+        "oe",
+        None,
+        ShellClientCapabilities {
+            shell: false,
+            ..Default::default()
+        },
+    )
+    .await;
     let bootstrap = auth_context(None, true);
     let result = runtime
         .dispatch_with_auth(
@@ -859,8 +868,10 @@ async fn agent_tool_unknown_client_returns_unknown_project_error() {
 #[tokio::test]
 async fn agent_tool_rejects_non_owner_api_key() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "oe", Some("alice"), caps).await;
     let bob = auth_context(Some("bob"), false);
     // Use run_job (async) so the test does not hang if owner check leaked.
@@ -887,8 +898,10 @@ async fn agent_tool_rejects_non_owner_api_key() {
 #[tokio::test]
 async fn agent_tool_rejects_missing_auth_context() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "oe", Some("alice"), caps).await;
     // dispatch_with_auth(None): no owner can be proven for an owned agent.
     let result = runtime
@@ -917,8 +930,10 @@ async fn agent_tool_rejects_missing_auth_context() {
 #[tokio::test]
 async fn agent_tool_allows_owner_api_key_for_run_job() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "oe", Some("alice"), caps).await;
     let alice = auth_context(Some("alice"), false);
     let result = runtime
@@ -942,8 +957,10 @@ async fn agent_tool_allows_owner_api_key_for_run_job() {
 #[tokio::test]
 async fn agent_tool_allows_bootstrap_token_for_run_job() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "oe", Some("alice"), caps).await;
     let bootstrap = auth_context(None, true);
     let result = runtime
@@ -2423,7 +2440,7 @@ async fn runtime_status_tools_summary_lists_names() {
     assert!(result.success);
     let tools = &result.output["tools"];
     let names = tools["names"].as_array().unwrap();
-    assert!(names.len() > 0);
+    assert!(!names.is_empty());
     assert!(
         names.iter().any(|n| n == "runtime_status"),
         "tools.names must include runtime_status: {:?}",

@@ -1320,11 +1320,13 @@ mod tests {
     #[test]
     fn clean_repository_skips_zero_byte_diff_and_untracked_budgets() {
         let repo = repo("context-clean-fast-path");
-        let mut budget = ProjectContextBudget::default();
-        budget.max_tracked_diff_bytes = 0;
-        budget.max_untracked_file_count = 0;
-        budget.max_bytes_per_untracked_file = 0;
-        budget.max_total_untracked_bytes = 0;
+        let budget = ProjectContextBudget {
+            max_tracked_diff_bytes: 0,
+            max_untracked_file_count: 0,
+            max_bytes_per_untracked_file: 0,
+            max_total_untracked_bytes: 0,
+            ..Default::default()
+        };
 
         let first = capture_project_context_with_budget(repo.path(), None, budget.clone()).unwrap();
         let second = capture_project_context_with_budget(repo.path(), None, budget).unwrap();
@@ -1341,9 +1343,11 @@ mod tests {
         let repo = repo("context-large-untracked");
         let file = File::create(repo.path().join("large.bin")).unwrap();
         file.set_len(4096).unwrap();
-        let mut budget = ProjectContextBudget::default();
-        budget.max_bytes_per_untracked_file = 32;
-        budget.max_total_untracked_bytes = 32;
+        let budget = ProjectContextBudget {
+            max_bytes_per_untracked_file: 32,
+            max_total_untracked_bytes: 32,
+            ..Default::default()
+        };
 
         let first = capture_project_context_with_budget(repo.path(), None, budget.clone()).unwrap();
         let second = capture_project_context_with_budget(repo.path(), None, budget).unwrap();
@@ -1372,8 +1376,10 @@ mod tests {
             )
             .unwrap();
         }
-        let mut count_budget = ProjectContextBudget::default();
-        count_budget.max_untracked_file_count = 2;
+        let count_budget = ProjectContextBudget {
+            max_untracked_file_count: 2,
+            ..Default::default()
+        };
         let count_limited =
             capture_project_context_with_budget(repo.path(), None, count_budget).unwrap();
         assert!(count_limited
@@ -1381,9 +1387,11 @@ mod tests {
             .warnings
             .contains(&"untracked_file_count_exceeded".to_string()));
 
-        let mut byte_budget = ProjectContextBudget::default();
-        byte_budget.max_bytes_per_untracked_file = 32;
-        byte_budget.max_total_untracked_bytes = 40;
+        let byte_budget = ProjectContextBudget {
+            max_bytes_per_untracked_file: 32,
+            max_total_untracked_bytes: 40,
+            ..Default::default()
+        };
         let byte_limited =
             capture_project_context_with_budget(repo.path(), None, byte_budget).unwrap();
         assert!(byte_limited
@@ -1420,8 +1428,10 @@ mod tests {
             .map(|index| format!("new-{index:04}\n"))
             .collect::<String>();
         std::fs::write(repo.path().join("src/generated.txt"), changed).unwrap();
-        let mut budget = ProjectContextBudget::default();
-        budget.max_tracked_diff_bytes = 64;
+        let budget = ProjectContextBudget {
+            max_tracked_diff_bytes: 64,
+            ..Default::default()
+        };
 
         let first = capture_project_context_with_budget(repo.path(), None, budget.clone()).unwrap();
         let second = capture_project_context_with_budget(repo.path(), None, budget).unwrap();
@@ -1474,8 +1484,10 @@ mod tests {
             std::fs::create_dir_all(repo.path().join(directory)).unwrap();
             std::fs::write(repo.path().join(directory).join(name), "{}\n").unwrap();
         }
-        let mut candidate_budget = ProjectContextBudget::default();
-        candidate_budget.max_manifest_candidates = 2;
+        let candidate_budget = ProjectContextBudget {
+            max_manifest_candidates: 2,
+            ..Default::default()
+        };
         let candidate_limited =
             capture_project_context_with_budget(repo.path(), None, candidate_budget).unwrap();
         assert_eq!(candidate_limited.manifests.len(), 2);
@@ -1487,8 +1499,10 @@ mod tests {
         let non_git = tempfile::tempdir().unwrap();
         std::fs::create_dir(non_git.path().join("nested")).unwrap();
         std::fs::write(non_git.path().join("nested/package.json"), "{}\n").unwrap();
-        let mut scan_budget = ProjectContextBudget::default();
-        scan_budget.max_scan_entries = 1;
+        let scan_budget = ProjectContextBudget {
+            max_scan_entries: 1,
+            ..Default::default()
+        };
         let scan_limited =
             capture_project_context_with_budget(non_git.path(), None, scan_budget).unwrap();
         assert!(scan_limited
@@ -1500,8 +1514,10 @@ mod tests {
     #[test]
     fn elapsed_budget_marks_incomplete_without_exposing_paths() {
         let repo = repo("context-elapsed-budget");
-        let mut budget = ProjectContextBudget::default();
-        budget.max_elapsed = Duration::ZERO;
+        let budget = ProjectContextBudget {
+            max_elapsed: Duration::ZERO,
+            ..Default::default()
+        };
         let fingerprint = capture_project_context_with_budget(repo.path(), None, budget).unwrap();
         assert!(!fingerprint.completeness.complete);
         assert!(fingerprint

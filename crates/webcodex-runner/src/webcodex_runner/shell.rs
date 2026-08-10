@@ -3141,8 +3141,10 @@ done
         let cwd = tempfile::tempdir().unwrap();
         let marker = cwd.path().join("marker");
         let projects_dir = tempfile::tempdir().unwrap();
-        let mut shell = ShellConfig::default();
-        shell.program = "custom-shell".to_string();
+        let mut shell = ShellConfig {
+            program: "custom-shell".to_string(),
+            ..Default::default()
+        };
         shell.env.insert("PATH".to_string(), String::new());
         let result = run_script_with_profiles_in_sandbox_and_execution_state(
             1,
@@ -3190,8 +3192,10 @@ done
         .unwrap();
         std::fs::set_permissions(&custom_shell, std::fs::Permissions::from_mode(0o700)).unwrap();
         let projects_dir = tempfile::tempdir().unwrap();
-        let mut shell = ShellConfig::default();
-        shell.program = custom_shell.to_string_lossy().into_owned();
+        let mut shell = ShellConfig {
+            program: custom_shell.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
         shell.env.insert("PATH".to_string(), String::new());
         let result = run_script_with_profiles_in_sandbox_and_execution_state(
             1,

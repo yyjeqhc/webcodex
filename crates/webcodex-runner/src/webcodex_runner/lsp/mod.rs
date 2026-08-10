@@ -22,7 +22,12 @@ fn serialize_fake_lsp_test() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[cfg(all(test, not(windows)))]
-fn serialize_fake_lsp_test() {}
+struct FakeLspTestSerialGuard;
+
+#[cfg(all(test, not(windows)))]
+fn serialize_fake_lsp_test() -> FakeLspTestSerialGuard {
+    FakeLspTestSerialGuard
+}
 
 #[cfg(test)]
 #[path = "navigation_tests.rs"]

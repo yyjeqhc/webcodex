@@ -70,9 +70,11 @@ async fn register_and_start_agent_job(
     crate::shell_protocol::ShellAgentShellRequest,
     crate::auth::AuthContext,
 ) {
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_jobs = true;
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        async_jobs: true,
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent(runtime, client_id, None, caps).await;
     let auth = bootstrap_auth_context();
     let started = runtime
@@ -104,9 +106,11 @@ async fn start_owned_agent_job(
     project_id: &str,
     auth: &crate::auth::AuthContext,
 ) -> String {
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_jobs = true;
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        async_jobs: true,
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     register_agent_projects_for_auth(
         runtime,
         client_id,
@@ -752,10 +756,12 @@ async fn observe_jobs_recovering_lost_and_stop_requested_match_job_log_semantics
         lost_log.output["terminal"]
     );
 
-    let mut recovering_caps = ShellClientCapabilities::default();
-    recovering_caps.async_jobs = true;
-    recovering_caps.async_shell_jobs = true;
-    recovering_caps.job_state_reconciliation = true;
+    let recovering_caps = ShellClientCapabilities {
+        async_jobs: true,
+        async_shell_jobs: true,
+        job_state_reconciliation: true,
+        ..Default::default()
+    };
     runtime
         .shell_clients
         .register(ShellClientRegisterRequest {

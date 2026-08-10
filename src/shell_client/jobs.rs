@@ -166,7 +166,7 @@ mod command_preview_tests {
     fn process_preview_is_bounded_readable_and_never_an_execution_encoding() {
         let preview = process_preview(
             "git",
-            ["status", "two words", "$(literal)", &"x".repeat(200)].into_iter(),
+            ["status", "two words", "$(literal)", &"x".repeat(200)],
         );
         assert!(preview.starts_with("git status \"two words\" \"$(literal)\""));
         assert!(preview.chars().count() <= COMMAND_PREVIEW_MAX_CHARS + 1);

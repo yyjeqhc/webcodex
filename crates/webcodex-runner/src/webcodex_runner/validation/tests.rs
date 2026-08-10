@@ -88,7 +88,7 @@ fn write_fake_pyright(bin_dir: &std::path::Path, spec: &FakePyrightSpec) -> Path
     {
         let mut script = String::from("#!/bin/sh\n");
         if spec.delay_ms > 0 {
-            script.push_str(&format!("sleep {}\n", (spec.delay_ms + 999) / 1000));
+            script.push_str(&format!("sleep {}\n", spec.delay_ms.div_ceil(1000)));
         }
         script.push_str("cat \"$(dirname \"$0\")/pyright.stdout\"\n");
         if !spec.stderr.is_empty() {

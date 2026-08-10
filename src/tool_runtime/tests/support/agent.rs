@@ -520,10 +520,12 @@ pub(in crate::tool_runtime::tests) async fn next_agent_request_for_instance(
 
 pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> ToolRuntime {
     let runtime = test_runtime();
-    let mut file_caps = ShellClientCapabilities::default();
-    file_caps.file_read = true;
-    file_caps.git = true;
-    file_caps.shell = true;
+    let file_caps = ShellClientCapabilities {
+        file_read: true,
+        git: true,
+        shell: true,
+        ..Default::default()
+    };
     register_agent_projects(
         &runtime,
         "workstation",

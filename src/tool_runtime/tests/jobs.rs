@@ -32,8 +32,10 @@ async fn seed_local_job(
 #[tokio::test]
 async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     let runtime = runtime_with_agent_project("telemetry-shell");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "telemetry-shell", None, caps).await;
     let project = agent_test_project_id("telemetry-shell");
     let session = runtime.sessions.start_session(None, None);
@@ -475,8 +477,10 @@ async fn run_shell_via_agent(
     completion: Option<(i32, &str, &str)>,
 ) -> ToolResult {
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let runtime_for_task = runtime.clone();
@@ -509,8 +513,10 @@ async fn run_shell_via_agent_lifecycle_error(
     execution_state: ShellCommandExecutionState,
 ) -> ToolResult {
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let runtime_for_task = runtime.clone();
@@ -774,8 +780,10 @@ async fn run_shell_result_wait_timeout_reports_unknown_outcome() {
 async fn run_shell_runner_timeout_preserves_known_timeout_state() {
     let client_id = "shell-runner-timeout";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let runtime_for_task = runtime.clone();
@@ -822,8 +830,10 @@ async fn run_shell_runner_timeout_preserves_known_timeout_state() {
 async fn run_shell_transport_disconnect_after_dispatch_reports_unknown_outcome() {
     let client_id = "shell-disconnect";
     let runtime = runtime_with_agent_project(client_id);
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
     let runtime_for_task = runtime.clone();
@@ -1779,8 +1789,10 @@ async fn register_job_agent_for_auth(
     project_id: &str,
     auth: &crate::auth::AuthContext,
 ) {
-    let mut caps = ShellClientCapabilities::default();
-    caps.async_shell_jobs = true;
+    let caps = ShellClientCapabilities {
+        async_shell_jobs: true,
+        ..Default::default()
+    };
     runtime
         .shell_clients
         .register_with_auth(

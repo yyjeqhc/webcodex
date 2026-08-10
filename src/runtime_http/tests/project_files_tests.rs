@@ -52,8 +52,10 @@ async fn dedicated_read_project_file_with_session_id_records_event() {
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
-    let mut caps = crate::shell_protocol::ShellClientCapabilities::default();
-    caps.file_read = true;
+    let caps = crate::shell_protocol::ShellClientCapabilities {
+        file_read: true,
+        ..Default::default()
+    };
     let (runtime, registry) =
         super::register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
     let service = Service::new(super::build_projects_router(config, db, runtime));
@@ -122,8 +124,10 @@ async fn dedicated_read_project_file_without_session_id_succeeds() {
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
-    let mut caps = crate::shell_protocol::ShellClientCapabilities::default();
-    caps.file_read = true;
+    let caps = crate::shell_protocol::ShellClientCapabilities {
+        file_read: true,
+        ..Default::default()
+    };
     let (runtime, registry) =
         super::register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
     let service = Service::new(super::build_projects_router(config, db, runtime));
@@ -258,7 +262,7 @@ async fn http_console_routes_require_bearer_auth() {
         ),
         ("/api/projects/git_diff_summary", json!({"project": "demo"})),
     ] {
-        let resp = TestClient::post(&format!("http://localhost{}", path))
+        let resp = TestClient::post(format!("http://localhost{}", path))
             .json(&body)
             .send(&service)
             .await;
@@ -275,7 +279,7 @@ async fn http_console_routes_require_bearer_auth() {
 async fn retired_edit_compatibility_routes_are_unreachable() {
     let (_tmp, service) = super::phase2_service();
     for path in ["/api/projects/replace_in_file", "/api/projects/write_file"] {
-        let resp = TestClient::post(&format!("http://localhost{path}"))
+        let resp = TestClient::post(format!("http://localhost{path}"))
             .bearer_auth("secret")
             .json(&json!({}))
             .send(&service)
@@ -400,7 +404,7 @@ async fn http_phase3_mutation_actions_require_bearer_auth() {
             json!({"project": "demo", "paths": ["x.txt"]}),
         ),
     ] {
-        let resp = TestClient::post(&format!("http://localhost{}", path))
+        let resp = TestClient::post(format!("http://localhost{}", path))
             .json(&body)
             .send(&service)
             .await;
@@ -438,7 +442,7 @@ async fn http_phase3_mutation_actions_dispatch_to_runtime() {
             json!({"project": "agent:nope:nope", "paths": ["x.txt"]}),
         ),
     ] {
-        let mut resp = TestClient::post(&format!("http://localhost{}", path))
+        let mut resp = TestClient::post(format!("http://localhost{}", path))
             .bearer_auth("secret")
             .json(&body)
             .send(&service)

@@ -441,7 +441,7 @@ fn show_changes_status_output_over_256k_keeps_branch_header_observable() {
     );
     let observation =
         parse_show_changes_status_observation(&frames.status, &frames.status_result, "");
-    assert_eq!(observation.status_observed(), true);
+    assert!(observation.status_observed());
     // Totals stay exact even though records were bounded.
     assert_eq!(frames.files_total, Some(total));
     assert_eq!(frames.files_truncated, Some(true));
@@ -501,7 +501,7 @@ fn show_changes_head_fields_match_git_in_sh_and_bash() {
         let (exit, stdout, stderr) = run_command_full_capture(&wrapped, tmp.path(), 30);
         assert_eq!(exit, 0, "{shell} failed: {stderr}\n{stdout}");
         let frames = split_show_changes_stdout(&stdout, false);
-        assert_eq!(frames.head_bytes, Some(frames.head.as_bytes().len()));
+        assert_eq!(frames.head_bytes, Some(frames.head.len()));
         let output =
             bounded_show_changes_output_from_frames(&frames, tmp.path(), false, 20, 80, &stderr);
         assert_eq!(
@@ -562,13 +562,13 @@ fn show_changes_crlf_diff_bytes_match_parsed_frame_exactly() {
         "final CR from CRLF diff line was lost: {:?}",
         frames.diff.as_bytes().last()
     );
-    assert_eq!(frames.diff_bytes, Some(frames.diff.as_bytes().len()));
+    assert_eq!(frames.diff_bytes, Some(frames.diff.len()));
     let output =
         bounded_show_changes_output_from_frames(&frames, tmp.path(), true, 20, 80, &stderr);
     assert_eq!(output["transport_safe"], true, "{output}");
     eprintln!(
         "crlf_diff frame_bytes={} metadata_bytes={}",
-        frames.diff.as_bytes().len(),
+        frames.diff.len(),
         frames.diff_bytes.unwrap()
     );
 }
@@ -681,7 +681,7 @@ fn show_changes_transport_safe_requires_every_modern_metadata_frame() {
     }
 
     let mut wrong_diff_bytes = frames.clone();
-    wrong_diff_bytes.diff_bytes = Some(frames.diff.as_bytes().len() + 1);
+    wrong_diff_bytes.diff_bytes = Some(frames.diff.len() + 1);
     let wrong_diff_output = bounded_show_changes_output_from_frames(
         &wrong_diff_bytes,
         tmp.path(),
@@ -694,7 +694,7 @@ fn show_changes_transport_safe_requires_every_modern_metadata_frame() {
 
     let mut oversized_stat = frames.clone();
     oversized_stat.stat = "x".repeat(SHOW_CHANGES_DIFF_STAT_BYTES + 1);
-    oversized_stat.diff_stat_bytes = Some(oversized_stat.stat.as_bytes().len());
+    oversized_stat.diff_stat_bytes = Some(oversized_stat.stat.len());
     let oversized_output =
         bounded_show_changes_output_from_frames(&oversized_stat, tmp.path(), true, 20, 80, &stderr);
     assert_eq!(oversized_output["transport_safe"], false);
@@ -868,8 +868,10 @@ fn show_changes_schema_covers_truncation_and_transport_fields() {
 #[tokio::test]
 async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper() {
     let runtime = runtime_with_agent_project("show-native");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "show-native", None, caps).await;
     let project = agent_test_project_id("show-native");
     let task = tokio::spawn({
@@ -1087,8 +1089,10 @@ fn show_changes_session_changed_paths_are_deduped() {
 #[tokio::test]
 async fn show_changes_session_event_limit_is_bounded() {
     let runtime = runtime_with_agent_project("show");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "show", None, caps).await;
     let session = runtime.sessions.start_session(None, None);
     for idx in 0..250 {
@@ -1406,9 +1410,11 @@ async fn git_diff_hunks_rejects_unsafe_paths_before_project_dispatch() {
 #[tokio::test]
 async fn show_changes_with_session_id_returns_session_block_and_records_call() {
     let runtime = runtime_with_agent_project("telemetry-show");
-    let mut caps = ShellClientCapabilities::default();
-    caps.file_read = true;
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        file_read: true,
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "telemetry-show", None, caps).await;
     let project = agent_test_project_id("telemetry-show");
     let session = runtime.sessions.start_session(None, None);
@@ -1645,9 +1651,16 @@ fn git_diff_summary_command_is_read_only() {
 #[tokio::test]
 async fn git_or_shell_tools_rejected_without_git_or_shell_capability() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = false; // git stays false by default
-    register_agent(&runtime, "oe", None, caps).await;
+    register_agent(
+        &runtime,
+        "oe",
+        None,
+        ShellClientCapabilities {
+            shell: false,
+            ..Default::default()
+        },
+    )
+    .await;
     let bootstrap = auth_context(None, true);
 
     let calls = [
@@ -2172,13 +2185,10 @@ async fn show_changes_non_git_project_still_returns_session_summary() {
     assert_eq!(result.output["git_available"], false);
     assert_eq!(result.output["session"]["found"], true);
     assert_eq!(result.output["session"]["session_id"], session.session_id);
-    assert!(
-        result.output["session"]["recent_events"]
-            .as_array()
-            .unwrap()
-            .len()
-            >= 1
-    );
+    assert!(!result.output["session"]["recent_events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     assert_eq!(
         result.output["session"]["changed_paths"],
         json!(["src/foo.rs"])
@@ -2517,7 +2527,7 @@ fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
     assert_eq!(frames.diff_trunc_bytes, Some(true));
     assert_eq!(frames.diff_trunc_hunk_count, Some(false));
     assert_eq!(frames.diff_trunc_hunk_lines, Some(false));
-    assert_eq!(frames.diff_bytes, Some(frames.diff.as_bytes().len()));
+    assert_eq!(frames.diff_bytes, Some(frames.diff.len()));
 
     let output =
         bounded_show_changes_output_from_frames(&frames, tmp.path(), true, 20, 80, &stderr);
@@ -2552,7 +2562,7 @@ fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
         "long_path_diff raw_bytes={} bounded_bytes={} diff_frame_bytes={}",
         raw_diff.len(),
         stdout_bytes,
-        frames.diff.as_bytes().len()
+        frames.diff.len()
     );
 }
 
@@ -2690,9 +2700,9 @@ fn show_changes_oversized_no_hunk_preamble_is_bounded_and_drained() {
         run_command_full_capture(&format!("{env} git diff --unified=80"), tmp.path(), 30);
     assert_ne!(raw_exit, 0, "external diff must fail: {raw_stderr}");
     assert!(
-        raw_diff.as_bytes().len() > SHOW_CHANGES_DIFF_BYTES,
+        raw_diff.len() > SHOW_CHANGES_DIFF_BYTES,
         "raw no-hunk bytes={} budget={SHOW_CHANGES_DIFF_BYTES}",
-        raw_diff.as_bytes().len()
+        raw_diff.len()
     );
     assert!(!raw_diff.lines().any(|line| line.starts_with("@@ ")));
 
@@ -2701,9 +2711,9 @@ fn show_changes_oversized_no_hunk_preamble_is_bounded_and_drained() {
         run_command_full_capture(&format!("{env} {command}"), tmp.path(), 30);
     assert_eq!(exit, 0, "bounded command failed: {stderr}\n{stdout}");
     assert!(
-        stdout.as_bytes().len() <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES,
+        stdout.len() <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES,
         "bounded stdout bytes={}",
-        stdout.as_bytes().len()
+        stdout.len()
     );
     let frames = split_show_changes_stdout(&stdout, true);
     assert!(
@@ -2727,8 +2737,8 @@ fn show_changes_oversized_no_hunk_preamble_is_bounded_and_drained() {
     );
     eprintln!(
         "oversized_no_hunk raw_bytes={} bounded_stdout_bytes={} diff_exit={} reasons={}",
-        raw_diff.as_bytes().len(),
-        stdout.as_bytes().len(),
+        raw_diff.len(),
+        stdout.len(),
         raw_exit,
         output["truncation_reasons"]
     );
@@ -2833,7 +2843,7 @@ fn show_changes_long_commit_subject_stays_within_budget() {
     let frames = split_show_changes_stdout(&stdout, false);
     let observation =
         parse_show_changes_status_observation(&frames.status, &frames.status_result, &stderr);
-    assert_eq!(observation.status_observed(), true);
+    assert!(observation.status_observed());
     // The pathological subject overflows the HEAD byte budget, so the HEAD
     // record is dropped whole and reported via the structured truncation flag
     // and reason code rather than leaking into the output.
@@ -2915,9 +2925,9 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
             "bounded envelope failed: {stderr}\n{stdout}"
         );
         assert!(
-            stdout.as_bytes().len() <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES,
+            stdout.len() <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES,
             "bounded stdout bytes={}",
-            stdout.as_bytes().len()
+            stdout.len()
         );
 
         let frames = split_show_changes_stdout(&stdout, include_diff);
@@ -2979,7 +2989,7 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
             frames.diff_stat_exit.unwrap(),
             frames.diff_exit,
             result.success,
-            stdout.as_bytes().len()
+            stdout.len()
         );
     }
 }

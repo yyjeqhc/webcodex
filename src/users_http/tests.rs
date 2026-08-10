@@ -777,7 +777,7 @@ async fn http_unauthorized_responses_are_json() {
         "/api/tokens/list",
         "/api/tokens/revoke",
     ] {
-        let resp = TestClient::post(&format!("http://localhost{}", path))
+        let resp = TestClient::post(format!("http://localhost{}", path))
             .json(&json!({}))
             .send(&service)
             .await;

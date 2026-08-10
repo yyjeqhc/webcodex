@@ -1180,8 +1180,10 @@ async fn checkpoint_create_requires_agent_file_read_capability() {
 #[tokio::test]
 async fn checkpoint_restore_requires_agent_file_write_capability() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.file_read = true;
+    let caps = ShellClientCapabilities {
+        file_read: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "oe", None, caps).await;
     let bootstrap = auth_context(None, true);
     let result = runtime
@@ -1203,8 +1205,10 @@ async fn checkpoint_restore_requires_agent_file_write_capability() {
 #[tokio::test]
 async fn checkpoint_metadata_tools_enforce_agent_owner_boundary() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = false;
+    let caps = ShellClientCapabilities {
+        shell: false,
+        ..Default::default()
+    };
     register_agent(&runtime, "oe", Some("alice"), caps).await;
     let bob = auth_context(Some("bob"), false);
     let result = runtime

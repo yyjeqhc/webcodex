@@ -288,7 +288,7 @@ pub(super) fn valid_authorize_url_with_resource(
 }
 
 pub(super) fn authorized_get(url: &str, token: &str) -> salvo::test::RequestBuilder {
-    TestClient::get(url).add_header("authorization", &format!("Bearer {}", token), true)
+    TestClient::get(url).add_header("authorization", format!("Bearer {}", token), true)
 }
 
 pub(super) fn auth_code_count(db: &crate::Database) -> i64 {

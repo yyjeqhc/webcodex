@@ -148,8 +148,10 @@ async fn agent_run_shell_resolves_relative_cwd_from_registered_project_root() {
 #[tokio::test]
 async fn cargo_check_failure_includes_stderr_tail_or_guidance() {
     let runtime = runtime_with_agent_project("cargo-checker");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "cargo-checker", None, caps).await;
     let project = agent_test_project_id("cargo-checker");
     let runtime_for_task = runtime.clone();
@@ -192,8 +194,10 @@ async fn cargo_check_failure_includes_stderr_tail_or_guidance() {
 #[tokio::test]
 async fn cargo_test_failure_includes_stderr_tail_or_guidance() {
     let runtime = runtime_with_agent_project("cargo-tester");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "cargo-tester", None, caps).await;
     let project = agent_test_project_id("cargo-tester");
     let runtime_for_task = runtime.clone();
@@ -243,8 +247,10 @@ async fn cargo_test_failure_includes_stderr_tail_or_guidance() {
 #[tokio::test]
 async fn cargo_test_output_includes_bounded_failed_test_diagnostics() {
     let runtime = runtime_with_agent_project("cargo-diag");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "cargo-diag", None, caps).await;
     let project = agent_test_project_id("cargo-diag");
     let runtime_for_task = runtime.clone();
@@ -343,8 +349,10 @@ test result: FAILED. 7 passed; 3 failed; 1 ignored; 0 measured; 0 filtered out\n
 #[tokio::test]
 async fn cargo_test_passing_output_includes_empty_failed_test_details_diagnostics() {
     let runtime = runtime_with_agent_project("cargo-pass-diag");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "cargo-pass-diag", None, caps).await;
     let project = agent_test_project_id("cargo-pass-diag");
     let runtime_for_task = runtime.clone();
@@ -398,8 +406,10 @@ test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out\n",
 #[tokio::test]
 async fn cargo_test_multi_harness_counts_match_diagnostics_summary() {
     let runtime = runtime_with_agent_project("cargo-multi-harness");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "cargo-multi-harness", None, caps).await;
     let project = agent_test_project_id("cargo-multi-harness");
     let runtime_for_task = runtime.clone();
@@ -460,8 +470,10 @@ test result: ok. 0 passed; 0 failed; 2 ignored\n",
 #[tokio::test]
 async fn cargo_test_agent_timeout_is_not_validation_failed() {
     let runtime = runtime_with_agent_project("cargo-timeout");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "cargo-timeout", None, caps).await;
     let project = agent_test_project_id("cargo-timeout");
     let runtime_for_task = runtime.clone();
@@ -511,8 +523,10 @@ async fn cargo_test_agent_timeout_is_not_validation_failed() {
 #[tokio::test]
 async fn cargo_fmt_failure_includes_stderr_tail_or_guidance() {
     let runtime = runtime_with_agent_project("cargo-formatter");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "cargo-formatter", None, caps).await;
     let project = agent_test_project_id("cargo-formatter");
     let runtime_for_task = runtime.clone();
@@ -549,8 +563,10 @@ async fn cargo_fmt_failure_includes_stderr_tail_or_guidance() {
 #[tokio::test]
 async fn apply_patch_agent_does_not_require_server_local_project_root() {
     let runtime = runtime_with_agent_project("patcher");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     runtime
         .shell_clients
         .register(ShellClientRegisterRequest {
@@ -675,8 +691,10 @@ new file mode 100644\n\
 #[tokio::test]
 async fn apply_patch_agent_command_excludes_patch_content_and_uses_stdin_and_cwd() {
     let runtime = runtime_with_agent_project("patcher");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "patcher", None, caps).await;
 
     let project = agent_test_project_id("patcher");
@@ -715,8 +733,10 @@ async fn apply_patch_agent_command_excludes_patch_content_and_uses_stdin_and_cwd
 #[tokio::test]
 async fn apply_patch_rejects_nul_byte_patch() {
     let runtime = runtime_with_agent_project("patcher");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "patcher", None, caps).await;
     let project = agent_test_project_id("patcher");
     let patch = "diff --git a/A b/A\n--- a/A\n+++ b/A\n@@ -1 +1 @@\n-a\n\0+b\n";
@@ -728,8 +748,10 @@ async fn apply_patch_rejects_nul_byte_patch() {
 #[tokio::test]
 async fn apply_patch_checked_does_not_apply_when_check_fails() {
     let runtime = runtime_with_agent_project("patcher");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "patcher", None, caps).await;
 
     let project = agent_test_project_id("patcher");
@@ -777,8 +799,10 @@ async fn apply_patch_checked_does_not_apply_when_check_fails() {
 #[tokio::test]
 async fn apply_patch_checked_applies_large_patch_over_command_limit_via_stdin() {
     let runtime = runtime_with_agent_project("patcher");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "patcher", None, caps).await;
 
     let project = agent_test_project_id("patcher");
@@ -1097,8 +1121,10 @@ async fn mutating_dispatch_feeds_the_activity_recorder() {
     let recorder = std::sync::Arc::new(CapturingRecorder::default());
     let runtime =
         runtime_with_agent_project("activity-shell").with_activity_recorder(recorder.clone());
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    let caps = ShellClientCapabilities {
+        shell: true,
+        ..Default::default()
+    };
     register_agent(&runtime, "activity-shell", None, caps).await;
     let project = agent_test_project_id("activity-shell");
 

@@ -5,7 +5,7 @@ use super::super::project_instructions::{
 };
 use super::super::tool_inputs::{ExecutionShell, SessionMode};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{value::RawValue, Value};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -234,7 +234,7 @@ impl CurrentSessionKey {
 /// - Create always yields [`SessionLifecycle::Active`].
 /// - Explicit `close_session` may transition `Active → Closed`.
 /// - `Closed → Active` is not allowed (no reopen in this phase).
-/// - `Archived` is reserved for Phase 3+ and is never produced yet.
+/// - `Archived` is a reserved wire state and is never produced by the store.
 ///
 /// LRU eviction remains capacity management, not a lifecycle transition.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -244,7 +244,7 @@ pub(crate) enum SessionLifecycle {
     Active,
     /// Explicitly closed; query remains allowed, mutations are denied.
     Closed,
-    /// Reserved — Phase 3+. Not produced yet; treated like Closed for denial.
+    /// Reserved wire state. Not produced; treated like Closed for denial.
     Archived,
 }
 
@@ -305,6 +305,79 @@ pub(super) struct SessionRecord {
     pub(super) events_observed: u64,
     pub(super) messages: VecDeque<Arc<SessionMessage>>,
     pub(super) project_instructions: Option<ProjectInstructionsSnapshot>,
+}
+
+/// Internal residency state is deliberately orthogonal to business lifecycle.
+/// Active sessions stay hot; historical closed sessions may keep only one
+/// compact, immutable durable JSON object plus the small metadata required for
+/// lifecycle/authorization checks and LRU bookkeeping.
+#[derive(Debug)]
+pub(super) enum StoredSession {
+    Hot(SessionRecord),
+    Cold(ColdSessionRecord),
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ColdSessionRecord {
+    pub(super) session_id: String,
+    pub(super) project: Option<String>,
+    pub(super) mode: SessionMode,
+    pub(super) guards: SessionGuards,
+    pub(super) lifecycle: SessionLifecycle,
+    pub(super) updated_at: i64,
+    pub(super) project_instructions: Option<ProjectInstructionsSummarySnapshot>,
+    pub(super) raw: Arc<RawValue>,
+}
+
+impl StoredSession {
+    pub(super) fn session_id(&self) -> &str {
+        match self {
+            Self::Hot(record) => &record.session_id,
+            Self::Cold(record) => &record.session_id,
+        }
+    }
+
+    pub(super) fn project(&self) -> Option<&str> {
+        match self {
+            Self::Hot(record) => record.project.as_deref(),
+            Self::Cold(record) => record.project.as_deref(),
+        }
+    }
+
+    pub(super) fn lifecycle(&self) -> SessionLifecycle {
+        match self {
+            Self::Hot(record) => record.lifecycle,
+            Self::Cold(record) => record.lifecycle,
+        }
+    }
+
+    pub(super) fn mode_guards(&self) -> (SessionMode, SessionGuards) {
+        match self {
+            Self::Hot(record) => (record.mode, record.guards),
+            Self::Cold(record) => (record.mode, record.guards),
+        }
+    }
+
+    pub(super) fn updated_at(&self) -> i64 {
+        match self {
+            Self::Hot(record) => record.updated_at,
+            Self::Cold(record) => record.updated_at,
+        }
+    }
+
+    pub(super) fn hot(&self) -> Option<&SessionRecord> {
+        match self {
+            Self::Hot(record) => Some(record),
+            Self::Cold(_) => None,
+        }
+    }
+
+    pub(super) fn hot_mut(&mut self) -> Option<&mut SessionRecord> {
+        match self {
+            Self::Hot(record) => Some(record),
+            Self::Cold(_) => None,
+        }
+    }
 }
 
 /// Options for creating a new session. Using a struct keeps the
@@ -447,12 +520,29 @@ pub(crate) struct SessionStoreStatus {
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct PersistedSessionLedger {
     pub(super) version: u32,
-    pub(super) sessions: Vec<PersistedSessionRecord>,
+    pub(super) sessions: Vec<PersistedSessionSnapshot>,
     /// Additive v1 field. Old ledgers omit it and deserialize to an empty map.
     /// The lossy wrapper prevents one malformed binding entry from rejecting
     /// otherwise valid Workflow Session records and events.
     #[serde(default)]
     pub(super) durable_current_bindings: PersistedCurrentBindings,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum PersistedSessionSnapshot {
+    Hot(PersistedSessionRecord),
+    Cold(Arc<RawValue>),
+}
+
+impl PersistedSessionSnapshot {
+    #[cfg(test)]
+    pub(super) fn hot(&self) -> Option<&PersistedSessionRecord> {
+        match self {
+            Self::Hot(record) => Some(record),
+            Self::Cold(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

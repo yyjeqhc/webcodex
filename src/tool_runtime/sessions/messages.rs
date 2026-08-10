@@ -4,8 +4,9 @@
 
 use super::model::{
     ListSessionMessagesFilter, PostSessionMessageInput, SessionDiscussionSummary, SessionInboxHint,
-    SessionMessage, SessionMessageError,
+    SessionMessage, SessionMessageError, DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT,
 };
+use super::query::{build_discussion_summary, build_inbox_hint};
 use super::store::SessionStore;
 
 impl SessionStore {
@@ -26,8 +27,22 @@ impl SessionStore {
         session_id: &str,
         filter: ListSessionMessagesFilter,
     ) -> Result<Vec<SessionMessage>, SessionMessageError> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.list_messages(session_id, filter)
+        self.with_record_for_query(session_id, |record, _| {
+            let limit = filter
+                .limit
+                .unwrap_or(DEFAULT_MESSAGE_LIST_LIMIT)
+                .clamp(0, MAX_MESSAGE_LIST_LIMIT);
+            record
+                .messages
+                .iter()
+                .filter(|message| filter.kind.is_none_or(|kind| message.kind == kind))
+                .filter(|message| filter.status.is_none_or(|status| message.status == status))
+                .rev()
+                .take(limit)
+                .map(|message| message.as_ref().clone())
+                .collect()
+        })
+        .ok_or(SessionMessageError::UnknownSession)
     }
 
     pub(crate) fn resolve_message(
@@ -49,12 +64,17 @@ impl SessionStore {
         session_id: &str,
         limit: Option<usize>,
     ) -> Result<SessionDiscussionSummary, SessionMessageError> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.discussion_summary(session_id, limit)
+        self.with_record_for_query(session_id, |record, _| {
+            let limit = limit
+                .unwrap_or(DEFAULT_MESSAGE_LIST_LIMIT)
+                .clamp(0, MAX_MESSAGE_LIST_LIMIT);
+            build_discussion_summary(record, limit)
+        })
+        .ok_or(SessionMessageError::UnknownSession)
     }
 
     pub(crate) fn inbox_hint(&self, session_id: &str) -> Option<SessionInboxHint> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.inbox_hint(session_id)
+        self.with_record_for_query(session_id, |record, _| build_inbox_hint(record))
+            .flatten()
     }
 }

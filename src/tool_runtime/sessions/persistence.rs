@@ -5,22 +5,33 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde::Deserialize;
+
+use super::super::project_instructions::ProjectInstructionsSummarySnapshot;
 use super::events::{
     exploration_tool_kind, is_valid_session_id, sanitize_failure_expectation_result,
     sanitize_observed_paths, sanitize_persisted_validation_output_summary,
     sanitize_persistent_shell_event_evidence, session_input_summary_for_tool,
 };
 use super::model::{
-    DurableCurrentBinding, PersistedSessionLedger, PersistedSessionRecord, SessionEvent,
-    SessionGuards, SessionLifecycle, SessionMessage, SessionRecord,
-    DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS,
-    MAX_INPUT_ARRAY_ITEMS, MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS, MESSAGE_ID_PREFIX,
-    SESSION_LEDGER_VERSION,
+    ColdSessionRecord, DurableCurrentBinding, PersistedCurrentBindings, PersistedSessionLedger,
+    PersistedSessionRecord, SessionEvent, SessionGuards, SessionLifecycle, SessionMessage,
+    SessionRecord, StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX,
+    MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS, MAX_MESSAGE_CHARS,
+    MAX_MESSAGE_RESOLUTION_CHARS, MESSAGE_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::query::validate_message_tags;
 use super::util::{
     bound_chars, bound_event_error_summary, bound_summary_string, redact_and_bound_instruction,
 };
+
+#[derive(Deserialize)]
+struct LoadedSessionLedger {
+    version: u32,
+    sessions: Vec<PersistedSessionRecord>,
+    #[serde(default)]
+    durable_current_bindings: PersistedCurrentBindings,
+}
 
 impl PersistedSessionRecord {
     pub(super) fn from_record(record: &SessionRecord, max_events_per_session: usize) -> Self {
@@ -57,6 +68,31 @@ impl PersistedSessionRecord {
             messages,
             events_observed: record.events_observed,
         }
+    }
+
+    pub(super) fn still_matches_record(&self, record: &SessionRecord) -> bool {
+        self.session_id == record.session_id
+            && self.project == record.project
+            && self.title == record.title
+            && self.mode == record.mode
+            && self.guards == record.guards
+            && self.execution_context == record.execution_context
+            && self.lifecycle == record.lifecycle
+            && self.created_at == record.created_at
+            && self.updated_at == record.updated_at
+            && self.events_observed == record.events_observed
+            && self.events.len() == record.events.len()
+            && self.messages.len() == record.messages.len()
+            && self
+                .events
+                .iter()
+                .zip(&record.events)
+                .all(|(snapshot, live)| Arc::ptr_eq(snapshot, live))
+            && self
+                .messages
+                .iter()
+                .zip(&record.messages)
+                .all(|(snapshot, live)| Arc::ptr_eq(snapshot, live))
     }
 
     pub(super) fn into_record(self, max_events_per_session: usize) -> Option<SessionRecord> {
@@ -118,8 +154,47 @@ impl PersistedSessionRecord {
     }
 }
 
+pub(super) fn cold_session_from_record(
+    record: &SessionRecord,
+    max_events_per_session: usize,
+) -> Result<ColdSessionRecord, serde_json::Error> {
+    debug_assert!(!record.lifecycle.allows_mutation());
+    let project_instructions = record
+        .project_instructions
+        .as_ref()
+        .map(|snapshot| snapshot.to_summary());
+    let persisted = PersistedSessionRecord::from_record(record, max_events_per_session);
+    cold_session_from_persisted(&persisted, project_instructions)
+}
+
+pub(super) fn cold_session_from_persisted(
+    persisted: &PersistedSessionRecord,
+    project_instructions: Option<ProjectInstructionsSummarySnapshot>,
+) -> Result<ColdSessionRecord, serde_json::Error> {
+    let raw = Arc::from(serde_json::value::to_raw_value(persisted)?);
+    Ok(ColdSessionRecord {
+        session_id: persisted.session_id.clone(),
+        project: persisted.project.clone(),
+        mode: persisted.mode,
+        guards: persisted.guards,
+        lifecycle: persisted.lifecycle,
+        updated_at: persisted.updated_at,
+        project_instructions,
+        raw,
+    })
+}
+
+pub(super) fn materialize_cold_session(
+    record: &ColdSessionRecord,
+    max_events_per_session: usize,
+) -> Option<SessionRecord> {
+    serde_json::from_str::<PersistedSessionRecord>(record.raw.get())
+        .ok()?
+        .into_record(max_events_per_session)
+}
+
 pub(super) struct RestoredSessionLedger {
-    pub(super) sessions: HashMap<String, SessionRecord>,
+    pub(super) sessions: HashMap<String, StoredSession>,
     pub(super) durable_current_bindings: HashMap<String, DurableCurrentBinding>,
     pub(super) lru: VecDeque<String>,
     pub(super) restored_sessions: usize,
@@ -159,7 +234,7 @@ pub(super) fn load_persisted_ledger(
             return RestoredSessionLedger::empty(Some(error));
         }
     };
-    let ledger = match serde_json::from_str::<PersistedSessionLedger>(&content) {
+    let ledger = match serde_json::from_str::<LoadedSessionLedger>(&content) {
         Ok(ledger) => ledger,
         Err(err) => {
             let error = bound_summary_string(&format!(
@@ -178,20 +253,34 @@ pub(super) fn load_persisted_ledger(
         return RestoredSessionLedger::empty(Some(error));
     }
     let mut discarded_binding_count = ledger.durable_current_bindings.malformed_count;
-    let mut records: Vec<SessionRecord> = ledger
+    let mut records: Vec<StoredSession> = ledger
         .sessions
         .into_iter()
         .filter_map(|record| record.into_record(max_events_per_session))
+        .map(|record| {
+            if record.lifecycle.allows_mutation() {
+                StoredSession::Hot(record)
+            } else {
+                match cold_session_from_record(&record, max_events_per_session) {
+                    Ok(cold) => StoredSession::Cold(cold),
+                    Err(err) => {
+                        tracing::warn!("session cold restore serialization failed: {err}");
+                        StoredSession::Hot(record)
+                    }
+                }
+            }
+        })
         .collect();
-    records.sort_by_key(|record| record.updated_at);
+    records.sort_by_key(StoredSession::updated_at);
     while records.len() > max_sessions {
         records.remove(0);
     }
     let mut sessions = HashMap::new();
     let mut lru = VecDeque::new();
     for record in records {
-        lru.push_back(record.session_id.clone());
-        sessions.insert(record.session_id.clone(), record);
+        let session_id = record.session_id().to_string();
+        lru.push_back(session_id.clone());
+        sessions.insert(session_id, record);
     }
     let restored_sessions = sessions.len();
 
@@ -205,7 +294,7 @@ pub(super) fn load_persisted_ledger(
         if !is_lower_hex_sha256(&binding.binding_key_sha256)
             || !is_valid_session_id(session_id)
             || binding.updated_at < 0
-            || session.lifecycle != SessionLifecycle::Active
+            || session.lifecycle() != SessionLifecycle::Active
         {
             discarded_binding_count = discarded_binding_count.saturating_add(1);
             continue;

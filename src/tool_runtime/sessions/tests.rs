@@ -1519,6 +1519,7 @@ fn persistence_snapshot_shares_payload_and_stays_stable_across_message_cow() {
             let snapshot = ledger
                 .sessions
                 .iter()
+                .filter_map(|snapshot| snapshot.hot())
                 .find(|record| record.session_id == snapshot_session_id)
                 .unwrap();
             let event = snapshot.events.last().unwrap();
@@ -2552,7 +2553,10 @@ fn persisted_session_record_serde_defaults_missing_lifecycle() {
     let ledger: PersistedSessionLedger = serde_json::from_str(&ledger_json).unwrap();
     assert_eq!(ledger.version, SESSION_LEDGER_VERSION);
     assert_eq!(ledger.sessions.len(), 1);
-    assert_eq!(ledger.sessions[0].lifecycle, SessionLifecycle::Active);
+    assert_eq!(
+        ledger.sessions[0].hot().unwrap().lifecycle,
+        SessionLifecycle::Active
+    );
     assert!(ledger.durable_current_bindings.records.is_empty());
     assert_eq!(ledger.durable_current_bindings.malformed_count, 0);
 }
@@ -2601,6 +2605,266 @@ fn active_to_closed_succeeds_and_emits_session_closed_event() {
     assert_eq!(closed_events.len(), 1);
     assert_eq!(closed_events[0].tool_name, "close_session");
     assert_eq!(closed_events[0].status.as_deref(), Some("succeeded"));
+}
+
+#[test]
+fn closed_session_coldifies_payload_and_queries_without_reheating() {
+    let store = SessionStore::default();
+    let session = store.start_session(None, Some("cold history".to_string()));
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "retained closed message",
+    );
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "read_file",
+        &json!({"project": "demo", "path": "src/lib.rs"}),
+    );
+    store.record_tool_call_finished(start, true, &json!({"content": "retained"}), None, None);
+    assert!(store
+        .hot_payload_entry_count_for_test(&session.session_id)
+        .is_some_and(|entries| entries > 0));
+
+    let outcome = store.close_session(&session.session_id).unwrap();
+    assert!(!outcome.already_closed);
+    assert_eq!(
+        store.hot_payload_entry_count_for_test(&session.session_id),
+        None
+    );
+    assert!(store
+        .cold_payload_bytes_for_test(&session.session_id)
+        .is_some_and(|bytes| bytes > 0));
+
+    let other = store.start_session(None, Some("other cold history".to_string()));
+    store.close_session(&other.session_id).unwrap();
+    assert!(store
+        .cold_payload_bytes_for_test(&other.session_id)
+        .is_some());
+
+    let summary = store.summary(&session.session_id, Some(50)).unwrap();
+    assert_eq!(summary.lifecycle, SessionLifecycle::Closed);
+    assert!(summary
+        .events
+        .iter()
+        .any(|event| event.kind == "session_closed"));
+    let messages = store
+        .list_messages(&session.session_id, ListSessionMessagesFilter::default())
+        .unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].message, "retained closed message");
+    assert_eq!(
+        store.hot_payload_entry_count_for_test(&session.session_id),
+        None,
+        "cold queries must not install a hot SessionRecord"
+    );
+    assert_eq!(
+        store.hot_payload_entry_count_for_test(&other.session_id),
+        None,
+        "querying one cold Session must not heat another historical Session"
+    );
+
+    let query_start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "session_summary",
+        &json!({"session_id": session.session_id.clone()}),
+    );
+    store.record_tool_call_finished(query_start, true, &json!({"success": true}), None, None);
+    assert_eq!(
+        store.hot_payload_entry_count_for_test(&session.session_id),
+        None,
+        "closed recorder events must rewrite the cold payload in place"
+    );
+
+    let repeated = store.close_session(&session.session_id).unwrap();
+    assert!(repeated.already_closed);
+    let summary = store.summary(&session.session_id, Some(100)).unwrap();
+    assert_eq!(
+        summary
+            .events
+            .iter()
+            .filter(|event| event.kind == "session_closed")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn close_cleanup_evidence_rewrites_cold_payload_without_reheating() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let session = store.start_session(None, Some("cold close evidence".to_string()));
+    store.close_session(&session.session_id).unwrap();
+    assert!(store
+        .cold_payload_bytes_for_test(&session.session_id)
+        .is_some());
+
+    store.record_session_close_persistent_shell_evidence(
+        &session.session_id,
+        "wc_shell_cold_close",
+        "closed",
+        "completed",
+        None,
+        false,
+    );
+    assert_eq!(
+        store.hot_payload_entry_count_for_test(&session.session_id),
+        None
+    );
+
+    let restored = flush_and_restore(&store, ledger);
+    assert!(restored
+        .cold_payload_bytes_for_test(&session.session_id)
+        .is_some());
+    let summary = restored.summary(&session.session_id, Some(50)).unwrap();
+    let evidence = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "session_closed")
+        .and_then(|event| event.persistent_shell.as_ref())
+        .expect("close cleanup evidence must survive cold persistence");
+    assert_eq!(evidence.shell_id.as_deref(), Some("wc_shell_cold_close"));
+    assert_eq!(evidence.shell_state.as_deref(), Some("closed"));
+    assert_eq!(evidence.execution_state.as_deref(), Some("completed"));
+}
+
+#[test]
+fn closed_cold_round_trip_preserves_evidence_and_active_stays_hot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 20);
+    let closed = store.start_session(Some("proj".to_string()), Some("historical".to_string()));
+    post_message(
+        &store,
+        &closed.session_id,
+        SessionMessageKind::Note,
+        "durable historical message",
+    );
+    let start = store.record_tool_call_started(
+        Some(&closed.session_id),
+        SessionTransport::Api,
+        "read_file",
+        &json!({"project": "proj", "path": "history.rs"}),
+    );
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({"content": "history evidence"}),
+        None,
+        None,
+    );
+    store.close_session(&closed.session_id).unwrap();
+
+    let active = store.start_session(Some("proj".to_string()), Some("active".to_string()));
+    post_message(
+        &store,
+        &active.session_id,
+        SessionMessageKind::Progress,
+        "active message",
+    );
+    assert_eq!(
+        store.hot_payload_entry_count_for_test(&closed.session_id),
+        None
+    );
+    assert!(store
+        .hot_payload_entry_count_for_test(&active.session_id)
+        .is_some());
+    assert_eq!(store.cold_payload_bytes_for_test(&active.session_id), None);
+
+    let before_summary = store.summary(&closed.session_id, Some(100)).unwrap();
+    let before_messages = store
+        .list_messages(&closed.session_id, ListSessionMessagesFilter::default())
+        .unwrap();
+    store.flush_persistence();
+    let raw = std::fs::read_to_string(&ledger).unwrap();
+    let ledger_value: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(ledger_value["version"], SESSION_LEDGER_VERSION);
+    let closed_json = ledger_value["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["session_id"] == closed.session_id)
+        .unwrap();
+    assert_eq!(closed_json["lifecycle"], "closed");
+    assert!(closed_json["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["message"] == "durable historical message"));
+
+    drop(store);
+    let restored = SessionStore::with_persistence(&ledger, 10, 20);
+    assert_eq!(
+        restored.hot_payload_entry_count_for_test(&closed.session_id),
+        None,
+        "restored closed session must not keep the parsed event/message graph"
+    );
+    assert!(restored
+        .cold_payload_bytes_for_test(&closed.session_id)
+        .is_some_and(|bytes| bytes > 0));
+    assert!(restored
+        .hot_payload_entry_count_for_test(&active.session_id)
+        .is_some());
+    assert_eq!(
+        restored.cold_payload_bytes_for_test(&active.session_id),
+        None
+    );
+
+    let after_summary = restored.summary(&closed.session_id, Some(100)).unwrap();
+    let after_messages = restored
+        .list_messages(&closed.session_id, ListSessionMessagesFilter::default())
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&after_summary).unwrap(),
+        serde_json::to_value(&before_summary).unwrap()
+    );
+    assert_eq!(after_messages.len(), before_messages.len());
+    assert_eq!(after_messages[0].message, before_messages[0].message);
+    assert_eq!(after_summary.lifecycle, SessionLifecycle::Closed);
+    assert_eq!(
+        restored.hot_payload_entry_count_for_test(&closed.session_id),
+        None,
+        "restart query must materialize only a temporary target record"
+    );
+    assert_eq!(
+        restored
+            .summary(&active.session_id, Some(10))
+            .unwrap()
+            .lifecycle,
+        SessionLifecycle::Active
+    );
+}
+
+#[test]
+fn cold_session_query_touch_preserves_lru_capacity_order() {
+    let store = SessionStore::new(2, 10);
+    let first = store.start_session(None, Some("cold survivor".to_string()));
+    store.close_session(&first.session_id).unwrap();
+    let second = store.start_session(None, Some("old active".to_string()));
+
+    assert!(store
+        .cold_payload_bytes_for_test(&first.session_id)
+        .is_some());
+    store.summary(&first.session_id, Some(10)).unwrap();
+    let third = store.start_session(None, Some("new active".to_string()));
+
+    assert!(store.contains_session(&first.session_id));
+    assert!(!store.contains_session(&second.session_id));
+    assert!(store.contains_session(&third.session_id));
+    assert_eq!(
+        store.lifecycle_state(&first.session_id),
+        Some(SessionLifecycle::Closed)
+    );
+    assert!(store
+        .cold_payload_bytes_for_test(&first.session_id)
+        .is_some());
+    assert!(store
+        .hot_payload_entry_count_for_test(&third.session_id)
+        .is_some());
 }
 
 #[test]

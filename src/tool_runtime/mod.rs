@@ -72,16 +72,11 @@ pub(crate) mod validation_profile;
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[cfg(test)]
 pub(crate) use agent_authorization::required_agent_capability;
-#[allow(unused_imports)]
-pub(crate) use local_jobs::{
-    LocalJobKiller, LocalJobRecord, SystemJobKiller, TerminateOutcome, ACTIVE_JOB_STATUSES,
-    ACTIVE_LOCAL_STATUSES,
-};
-#[allow(unused_imports)]
+pub(crate) use local_jobs::ACTIVE_JOB_STATUSES;
+#[cfg(test)]
+pub(crate) use local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller, TerminateOutcome};
 pub use runtime::ToolRuntime;
-#[allow(unused_imports)]
 pub use runtime_info::RuntimeInfo;
-#[allow(unused_imports)]
 pub use tool_call::{
     ObserveJobsItem, ReadFilesItem, SearchProjectTextsQuery, SearchResultMode, ToolCall,
 };
@@ -90,42 +85,37 @@ pub(crate) use tool_call::{
     TOOL_CALL_WRAPPER_FIELDS,
 };
 #[cfg(test)]
-#[allow(unused_imports)]
 pub use tool_definition::is_known_tool_name;
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) use tool_definition::is_model_hidden_tool_name;
-#[allow(unused_imports)]
-pub(crate) use tool_definition::runtime_tool_category as tool_manifest_category;
-#[allow(unused_imports)]
-pub(crate) use tool_definition::AgentCapability;
 #[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use tool_definition::{known_tool_names, model_hidden_tool_names};
-#[allow(unused_imports)]
+pub(crate) use tool_definition::{
+    known_tool_names, model_hidden_tool_names, runtime_tool_category as tool_manifest_category,
+    AgentCapability,
+};
 pub use tool_inputs::{
-    default_true, ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
-    CheckpointValidationInput, ExecutionPurpose, ExecutionShell, ListToolsOptions, SessionMode,
+    default_true, ApplyFileChangeInput, ExecutionPurpose, ExecutionShell, ListToolsOptions,
+    SessionMode,
+};
+#[cfg(test)]
+pub use tool_inputs::{
+    ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, CheckpointValidationInput,
     StartupDetail,
 };
-#[allow(unused_imports)]
 pub use tool_result::ToolResult;
-#[allow(unused_imports)]
 pub use tool_spec::ToolSpec;
 
 use serde_json::json;
 
-#[allow(unused_imports)]
-pub(crate) use crate::config::CodexConfig;
-#[allow(unused_imports)]
-pub(crate) use project_resolution::{
-    agent_project_runtime_id, ProjectResolverError, ProjectResolverErrorKind,
-};
+#[cfg(test)]
+pub(crate) use project_resolution::ProjectResolverErrorKind;
+pub(crate) use project_resolution::{agent_project_runtime_id, ProjectResolverError};
 pub(crate) use registry::{accepted_flattened_args_for_spec, registered_tool_specs};
-#[allow(unused_imports)]
+#[cfg(test)]
+pub(crate) use session_context::current_session_principal;
 pub(crate) use session_context::{
-    add_session_telemetry_hint, current_session_key, current_session_principal,
-    session_guard_denied_result, unknown_session_result, ALLOW_CROSS_PROJECT_SESSION_FIELD,
+    add_session_telemetry_hint, current_session_key, session_guard_denied_result,
+    unknown_session_result, ALLOW_CROSS_PROJECT_SESSION_FIELD,
 };
 pub(crate) use session_shell::SessionShellRegistry;
 #[cfg(test)]

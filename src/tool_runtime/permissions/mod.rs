@@ -20,9 +20,6 @@ mod tests;
 
 pub(crate) use evaluator::PermissionEvaluator;
 pub(crate) use model::{PermissionDecision, DEFAULT_PERMISSION_RECENT_LIMIT};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use policy::authority_profile_payload_for;
 pub(crate) use policy::EffectiveAuthorityConfig;
 
 // Shared with the connector approval gate: one authority contract for both
@@ -35,13 +32,9 @@ pub(crate) use policy::TRUSTED_AGENT_AUTO_REASON;
 #[cfg(test)]
 pub(crate) use evaluator::permission_decision_for_tool;
 #[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use model::{
-    AuthorityModeParseError, PermissionOutcome, AUTHORITY_MODE_ENV, LEGACY_PERMISSION_MODE_ENV,
-};
+pub(crate) use model::{PermissionOutcome, AUTHORITY_MODE_ENV};
 #[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use policy::{resolve_authority_mode, AuthoritySource, RESTRICTED_DENY_REASON};
+pub(crate) use policy::{resolve_authority_mode, RESTRICTED_DENY_REASON};
 
 use serde_json::{json, Value};
 

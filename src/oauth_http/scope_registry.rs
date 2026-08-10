@@ -44,7 +44,6 @@ pub(crate) fn oauth_discovery_scopes_supported() -> Vec<&'static str> {
 /// independently because they confer no WebCodex API permission and refresh
 /// tokens were already issued by the pre-existing flow. Output is deduplicated
 /// and ordered by permission scope first, then protocol scope.
-#[allow(dead_code)]
 pub(crate) fn normalize_oauth_scopes(
     requested: Option<&str>,
     client_allowed: &str,

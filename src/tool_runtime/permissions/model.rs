@@ -88,7 +88,6 @@ impl std::error::Error for AuthorityModeParseError {}
 /// Distinct from HTTP/MCP protocol success. Wire form is stored on
 /// [`PermissionDecision::status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Approved / Pending / HardDenied reserved for summaries.
 pub(crate) enum PermissionOutcome {
     AutoApproved,
     Approved,
@@ -117,7 +116,6 @@ impl PermissionOutcome {
         matches!(self, Self::AutoApproved | Self::Approved)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn parse(raw: &str) -> Option<Self> {
         match raw {
             "auto_approved" => Some(Self::AutoApproved),
@@ -150,7 +148,6 @@ pub(crate) struct PermissionDecision {
 }
 
 impl PermissionDecision {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn outcome(&self) -> Option<PermissionOutcome> {
         PermissionOutcome::parse(&self.status)
     }

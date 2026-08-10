@@ -1,6 +1,5 @@
 use super::auth::auth_context;
 use super::runtime::test_runtime;
-use crate::config::CodexConfig;
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
     AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
@@ -333,7 +332,6 @@ pub(in crate::tool_runtime::tests) fn runtime_with_agent_project(client_id: &str
     let _ = client_id;
     ToolRuntime::new(
         Arc::new(ShellClientRegistry::default()),
-        Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     )
 }
@@ -379,7 +377,6 @@ pub(in crate::tool_runtime::tests) fn runtime_with_local_project(
     let _ = (root, project_id);
     ToolRuntime::new(
         Arc::new(ShellClientRegistry::default()),
-        Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     )
 }

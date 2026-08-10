@@ -181,6 +181,7 @@ fn unsupported_protocol_version(id: Option<Value>, requested: &str) -> Value {
     )
 }
 
+#[cfg(test)]
 fn inferred_protocol_era(request: &JsonRpcRequest) -> McpProtocolEra {
     if request_protocol_version(&request.params) == Some(MCP_STATELESS_PROTOCOL_VERSION) {
         McpProtocolEra::Stateless2026
@@ -823,7 +824,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
 /// Business logic stays in `ToolRuntime`; this function only frames the
 /// JSON-RPC envelope and translates tool results into MCP content blocks.
 /// Test-friendly wrapper: no lifecycle hooks.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 async fn handle_mcp_request(
     runtime: &ToolRuntime,
     request: JsonRpcRequest,

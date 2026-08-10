@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 impl ShellClientRegistry {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn register(
         &self,
         body: ShellClientRegisterRequest,
@@ -317,7 +317,7 @@ impl ShellClientRegistry {
     /// server-internal connection lease and use this path directly; long-lived
     /// transports use [`Self::touch_client_for_connection`] instead so a stale
     /// same-instance connection cannot revive the new lease.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn touch_client(
         &self,
         client_id: &str,

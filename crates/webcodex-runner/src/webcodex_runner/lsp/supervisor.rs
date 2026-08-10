@@ -1,4 +1,6 @@
-use super::super::util::{find_executable_in_path, is_executable_file, resolve_program_in_path};
+#[cfg(windows)]
+use super::super::util::resolve_program_in_path;
+use super::super::util::{find_executable_in_path, is_executable_file};
 use super::language::{profile_for_kind, LanguageProfile};
 use super::protocol::{read_message, write_message, FramingError, MAX_LSP_MESSAGE_BYTES};
 use serde_json::{json, Value};
@@ -40,7 +42,6 @@ pub(crate) enum LspServerKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Retained for Commit 2 position-aware tools.
 pub(crate) enum PositionEncoding {
     Utf8,
     Utf16,
@@ -76,17 +77,13 @@ pub(crate) struct ResolvedCommandInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Status surface for Commit 2 lsp_status / health checks.
 pub(crate) enum LspServerStatus {
-    Available,
-    Unavailable,
     Initializing,
     Running,
     Crashed,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Error variants map 1:1 to future tool error envelopes.
 pub(crate) enum LspError {
     ServerUnavailable,
     SpawnFailed(String),
@@ -100,6 +97,9 @@ pub(crate) enum LspError {
     JsonRpc {
         code: i64,
         message: String,
+        // Captured from the server for diagnostic fidelity; the production
+        // envelope currently exposes only the bounded message.
+        #[cfg_attr(not(test), allow(dead_code))]
         data: Option<Value>,
     },
     WriterFailed(String),
@@ -109,7 +109,6 @@ pub(crate) enum LspError {
         limit: usize,
     },
     InvalidProjectRoot(String),
-    ShutdownFailed(String),
 }
 
 impl LspError {
@@ -153,9 +152,6 @@ impl fmt::Display for LspError {
                 write!(f, "language server capacity exceeded (limit {limit})")
             }
             Self::InvalidProjectRoot(message) => write!(f, "invalid project root: {message}"),
-            Self::ShutdownFailed(message) => {
-                write!(f, "language server shutdown failed: {message}")
-            }
         }
     }
 }
@@ -181,7 +177,7 @@ impl LspCommand {
         self
     }
 
-    #[allow(dead_code)] // Builder used by tests and Commit 2 custom command wiring.
+    #[cfg(test)]
     pub(crate) fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.env.push((key.into(), value.into()));
         self
@@ -322,18 +318,6 @@ impl LspSupervisor {
         }
     }
 
-    #[allow(dead_code)] // Commit 2 lsp_status / availability probes.
-    pub(crate) fn availability(&self, kind: LspServerKind) -> LspServerStatus {
-        if self
-            .resolve_command(kind)
-            .is_some_and(|command| command.is_available(kind))
-        {
-            LspServerStatus::Available
-        } else {
-            LspServerStatus::Unavailable
-        }
-    }
-
     /// Resolve command availability and source without starting a server and
     /// without returning absolute executable paths.
     pub(crate) fn resolve_command_info(&self, kind: LspServerKind) -> Option<ResolvedCommandInfo> {
@@ -384,7 +368,7 @@ impl LspSupervisor {
         }
     }
 
-    #[allow(dead_code)] // Generic request API retained for supervisor diagnostics and tests.
+    #[cfg(test)]
     pub(crate) fn request(
         &self,
         validated_project_root: &Path,
@@ -534,7 +518,7 @@ impl LspSupervisor {
         ))
     }
 
-    #[allow(dead_code)] // Commit 2 tools may override per-call timeouts.
+    #[cfg(test)]
     pub(crate) fn request_with_timeout(
         &self,
         validated_project_root: &Path,
@@ -1623,7 +1607,6 @@ struct ServerInstance {
     open_documents: Mutex<HashMap<String, OpenDocumentState>>,
     diagnostics: Arc<DiagnosticsCache>,
     last_used: Mutex<Instant>,
-    #[allow(dead_code)] // Bounded capture retained for Commit 2 diagnostics/status.
     stderr: Arc<Mutex<BoundedStderr>>,
     reader_thread: Mutex<Option<JoinHandle<()>>>,
     stderr_thread: Mutex<Option<JoinHandle<()>>>,
@@ -2279,14 +2262,12 @@ fn wait_unpoison<'a, T>(condvar: &Condvar, guard: MutexGuard<'a, T>) -> MutexGua
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // URI classification for Commit 2 document tools.
 pub(crate) enum ProjectUriClassification {
     InsideProject(PathBuf),
     OutsideProject,
     Unsupported,
 }
 
-#[allow(dead_code)] // Commit 2 document URI validation.
 pub(crate) fn classify_uri_against_project_root(
     canonical_project_root: &Path,
     uri: &str,

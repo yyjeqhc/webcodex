@@ -1,4 +1,3 @@
-use crate::config::CodexConfig;
 use crate::projects::ProjectConfig;
 use crate::shell_client::ShellClientRegistry;
 use crate::tool_runtime::{RuntimeInfo, ToolRuntime, ToolSpec};
@@ -165,15 +164,10 @@ pub(in crate::tool_runtime::tests) fn runtime_with_project(
     let _ = (root, project_id);
     ToolRuntime::new(
         Arc::new(ShellClientRegistry::default()),
-        Arc::new(CodexConfig::default()),
         Arc::new(RuntimeInfo::default()),
     )
 }
 
 pub(in crate::tool_runtime::tests) fn runtime_with_info(info: RuntimeInfo) -> ToolRuntime {
-    ToolRuntime::new(
-        Arc::new(ShellClientRegistry::default()),
-        Arc::new(CodexConfig::default()),
-        Arc::new(info),
-    )
+    ToolRuntime::new(Arc::new(ShellClientRegistry::default()), Arc::new(info))
 }

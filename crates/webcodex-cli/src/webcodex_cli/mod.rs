@@ -94,8 +94,6 @@ pub(crate) use output::{
     compare_build_commits, local_cli_build_metadata, render_build_metadata_block,
     runtime_build_metadata, server_status_revision_check,
 };
-#[cfg(test)]
-pub(crate) use pairing::{ensure_enroll_outputs_available, resolve_pairing_create_token};
 pub(crate) use pairing::{run_client_enroll, run_pairing_create};
 pub(crate) use profiles::{
     agent_config_for_scope, agent_service_file_for_scope, client_profile_agent_config,

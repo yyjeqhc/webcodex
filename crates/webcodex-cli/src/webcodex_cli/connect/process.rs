@@ -12,6 +12,7 @@ use super::profile::{
     atomic_write, ensure_private_directory, protect_secret_file, sha256_hex,
     validate_existing_regular_file, ProfileLock,
 };
+#[cfg(windows)]
 use webcodex_agent_config::paths::paths_equal;
 
 const CONNECT_MARKER_FILE: &str = "hosted-connect";

@@ -10,26 +10,6 @@ pub const ACTION_SESSION_IDLE_TIMEOUT_SECS: i64 = 1800;
 const MAX_SUMMARY_TEXT: usize = 500;
 const MAX_PREVIEW_TEXT: usize = 120;
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub const AUDITED_ACTION_ROUTES: &[&str] = &[
-    "/api/tools/call",
-    "/api/runtime/status",
-    "/api/artifacts/import",
-    "/api/projects/list",
-    "/api/projects/read_file",
-    "/api/projects/git_status",
-    "/api/projects/git_diff",
-    "/api/projects/apply_patch",
-    "/api/projects/run_job",
-    "/api/projects/run_shell",
-    "/api/shell/clients",
-    "/api/shell/run",
-    "/api/shell/file",
-    "/api/shell/job",
-    "/api/shell/jobs/shell_batch",
-];
-
 /// Aggregate audit statistics over a set of decoded action events. Returned by
 /// the read-only `POST /api/audit/stats` endpoint.
 #[derive(Debug, Clone, Serialize)]

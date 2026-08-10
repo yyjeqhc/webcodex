@@ -1,9 +1,11 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum ToolRisk {
     ReadOnly,
     ProjectWrite,
     JobRun,
+    /// Reserved for account-control tools; the current runtime manifest has
+    /// no model-facing account mutation tool.
+    #[allow(dead_code)]
     AccountManage,
     Unknown,
 }

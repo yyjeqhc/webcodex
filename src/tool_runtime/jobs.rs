@@ -1485,7 +1485,7 @@ impl ToolRuntime {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) async fn job_status(&self, job_id: String) -> ToolResult {
         self.job_status_for_auth(job_id, false, None).await
     }
@@ -1604,7 +1604,7 @@ impl ToolRuntime {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) async fn job_log(
         &self,
         job_id: String,
@@ -1798,17 +1798,6 @@ impl ToolRuntime {
         }
     }
 
-    /// `list_jobs`: bounded job summaries across agent and local executors.
-    /// Never returns stdout/stderr bodies — only metadata.
-    #[allow(dead_code)]
-    pub(crate) async fn list_jobs(
-        &self,
-        limit: Option<usize>,
-        status: Option<String>,
-    ) -> ToolResult {
-        self.list_jobs_for_auth(limit, status, None).await
-    }
-
     pub(crate) async fn list_jobs_for_auth(
         &self,
         limit: Option<usize>,
@@ -1866,7 +1855,7 @@ impl ToolRuntime {
     /// `job_tail`: bounded stdout/stderr tails for a job. Reuses the bounded
     /// `job_log` path with a tail-focused default so the console never reads
     /// full logs by default.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) async fn job_tail(&self, job_id: String, tail_lines: Option<usize>) -> ToolResult {
         self.job_tail_for_auth(job_id, tail_lines, None, None, None)
             .await

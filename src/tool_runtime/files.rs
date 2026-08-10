@@ -771,7 +771,7 @@ pub(crate) const DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES: &[&str] = &["/usr/bin/
 ///
 /// Runtime shell commands re-implement the same policy (agent PATH may differ
 /// from the server). This helper is the testable mirror of that policy.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn resolve_search_head_command(
     path_env: Option<&str>,
     absolute_candidates: &[&str],
@@ -793,7 +793,7 @@ pub(crate) fn resolve_search_head_command(
     None
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 fn is_executable_file(path: &Path) -> bool {
     if !path.is_file() {
         return false;

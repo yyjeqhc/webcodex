@@ -244,7 +244,7 @@ fn lsp_server_status_entry(
         }
         Some(LspServerStatus::Initializing) => (false, LspAvailabilityStatus::Initializing, None),
         Some(LspServerStatus::Crashed) => (false, LspAvailabilityStatus::Crashed, None),
-        Some(LspServerStatus::Available) | Some(LspServerStatus::Unavailable) | None => {
+        None => {
             if available {
                 (false, LspAvailabilityStatus::Available, None)
             } else {

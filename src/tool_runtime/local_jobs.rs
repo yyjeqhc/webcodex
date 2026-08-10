@@ -74,7 +74,7 @@ struct LocalJobLogSnapshot {
     truncated: bool,
 }
 impl LocalJobRecord {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn new(project: String, dir: PathBuf) -> Self {
         let observation = read_observation(&dir).ok();
         let terminal = observation
@@ -290,7 +290,6 @@ impl LocalJobRecord {
             Err(_) => self.terminal_text(name),
         }
     }
-    #[allow(dead_code)]
     pub(crate) fn read_log_lines(
         &self,
         name: &str,

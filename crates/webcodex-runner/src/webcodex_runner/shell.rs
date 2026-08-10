@@ -1966,6 +1966,7 @@ pub(crate) fn run_shell_with_profiles(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_shell_with_profiles_in_sandbox(
     generation: u64,

@@ -15,7 +15,9 @@ use crate::shell_protocol::{
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::{OsStr, OsString};
+#[cfg(windows)]
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
@@ -89,10 +91,6 @@ impl ProviderError {
 struct ToolExecutionContext<'a> {
     project_root: &'a Path,
     target: PathBuf,
-    /// Retained because tests construct this struct with the field and the
-    /// router still fills it; not read by the production search path.
-    #[allow(dead_code)]
-    relative_path: &'a str,
     max_output_bytes: usize,
     timeout_secs: u64,
 }
@@ -263,7 +261,7 @@ impl ExternalToolRouter {
             Err(error) => return self.failure_or_native(capability, error, started),
         };
         let checked = validate_context(policy, request, capability, &payload);
-        let (root, target, relative) = match checked {
+        let (root, target) = match checked {
             Ok(checked) => checked,
             Err(error) => {
                 self.claude.record_error(&error);
@@ -285,7 +283,6 @@ impl ExternalToolRouter {
         let context = ToolExecutionContext {
             project_root: &root,
             target,
-            relative_path: &relative,
             max_output_bytes: request
                 .max_bytes
                 .unwrap_or(MAX_MCP_OUTPUT_BYTES)
@@ -435,7 +432,7 @@ fn validate_context(
     request: &ShellAgentShellRequest,
     _capability: ProviderCapability,
     payload: &Value,
-) -> Result<(PathBuf, PathBuf, String), ProviderError> {
+) -> Result<(PathBuf, PathBuf), ProviderError> {
     let root = request.cwd.as_deref().ok_or_else(path_error)?;
     let root = Path::new(root).canonicalize().map_err(|_| path_error())?;
     cwd_allowed(policy, &root).map_err(|_| path_error())?;
@@ -452,7 +449,7 @@ fn validate_context(
     if !target.starts_with(&root) {
         return Err(path_error());
     }
-    Ok((root, target, relative.replace('\\', "/")))
+    Ok((root, target))
 }
 
 fn path_error() -> ProviderError {

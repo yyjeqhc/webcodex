@@ -396,7 +396,7 @@ impl ConnectorRuntime {
         )
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) async fn call(
         &self,
         capability: &str,

@@ -138,6 +138,7 @@ impl LedgerWriterGuard {
     /// Must also wait out an in-flight write: the writer clears `dirty` before
     /// serializing, so a flush that only checked `dirty` could return while
     /// the file was still being written.
+    #[cfg(test)]
     fn flush(&self) {
         let mut state = self
             .shared
@@ -371,7 +372,7 @@ impl SessionStore {
     /// Block until every pending ledger mutation has been written to disk.
     /// No-op for in-memory stores. Required before re-opening the ledger file
     /// from another `SessionStore` (background writes are otherwise deferred).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn flush_persistence(&self) {
         if let Some(writer) = &self.writer {
             writer.flush();
@@ -446,7 +447,7 @@ impl SessionStore {
 
     /// Thin convenience wrapper — creation always goes through
     /// [`Self::start_session_with_options`].
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn start_session(
         &self,
         project: Option<String>,
@@ -462,6 +463,7 @@ impl SessionStore {
 
     /// Thin convenience wrapper — creation always goes through
     /// [`Self::start_session_with_options`].
+    #[cfg(test)]
     pub(crate) fn start_session_with_guards(
         &self,
         project: Option<String>,
@@ -1040,7 +1042,7 @@ impl SessionStore {
         None
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn record_tool_call_started(
         &self,
         session_id: Option<&str>,
@@ -1053,7 +1055,6 @@ impl SessionStore {
         )
     }
 
-    #[allow(dead_code)]
     pub(crate) fn record_tool_call_started_with_options(
         &self,
         session_id: Option<&str>,

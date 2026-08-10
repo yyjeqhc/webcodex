@@ -55,7 +55,6 @@ pub(crate) mod tokens;
 // All items that were previously exported from `auth.rs` are re-exported here
 // so that existing `use crate::auth::*` imports continue to work.
 
-#[allow(unused_imports)]
 pub use context::{AuthContext, AuthError, AuthKind};
 pub(crate) use project_credential::{
     read_protected_secret, validate_agent_token as validate_project_agent_token,
@@ -63,43 +62,41 @@ pub(crate) use project_credential::{
     ProjectCredentialVerifier,
 };
 
-#[allow(unused_imports)]
+#[cfg(test)]
+pub use scopes::SCOPE_ACCOUNT_MANAGE;
 pub use scopes::{
-    AGENT_SCOPES, SCOPE_ACCOUNT_MANAGE, SCOPE_ADMIN, SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL,
-    SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+    AGENT_SCOPES, SCOPE_ADMIN, SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER,
+    SCOPE_AGENT_RESULT, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
 };
 
 pub(crate) use scopes::{is_agent_scope, scopes_to_string, validate_agent_scopes, validate_scopes};
 
-#[allow(unused_imports)]
+#[cfg(test)]
 pub(crate) use middleware::{
-    allow_query_token_for_path, bearer_or_allowed_query_token, bearer_token, enforce_token_surface,
-    get_config, get_db, is_account_control_path, is_agent_transport_path, json_error,
-    oauth_insufficient_scope_body, oauth_insufficient_scope_challenge,
-    render_oauth_insufficient_scope, require_json_same_origin, require_same_origin, AuthMiddleware,
-    ACCOUNT_CONTROL_PATHS, AGENT_TRANSPORT_PATHS,
+    allow_query_token_for_path, enforce_token_surface, is_account_control_path,
+    is_agent_transport_path, ACCOUNT_CONTROL_PATHS, AGENT_TRANSPORT_PATHS,
+};
+pub(crate) use middleware::{
+    bearer_token, get_config, get_db, json_error, oauth_insufficient_scope_body,
+    oauth_insufficient_scope_challenge, render_oauth_insufficient_scope, require_json_same_origin,
+    require_same_origin, AuthMiddleware,
 };
 
-#[allow(unused_imports)]
 pub(crate) use pat::{
     clean_token_name, generate_account_credential, generate_agent_token, generate_api_token,
     generate_oauth_access_token, generate_oauth_authorization_code, generate_oauth_client_id,
     generate_oauth_client_secret, generate_oauth_refresh_token, hash_token,
     is_unique_constraint_error, normalize_token_hash, token_prefix, validate_allowed_client_id,
-    validate_role, validate_token_prefix, validate_username, MAX_TOKEN_NAME_LEN,
+    validate_role, validate_token_prefix, validate_username,
 };
-
-#[allow(unused_imports)]
 pub(crate) use shared_key::{
     allow_anonymous_enabled, is_managed_token_prefix, open_anonymous_context, shared_key_context,
     shared_key_enabled, shared_key_hash_of,
 };
 
-#[allow(unused_imports)]
-pub(crate) use tokens::{
-    authenticate, is_oauth2_access_token, OAuth2Verifier, PatVerifier, TokenVerifier,
-};
+pub(crate) use tokens::{authenticate, is_oauth2_access_token};
+#[cfg(test)]
+pub(crate) use tokens::{OAuth2Verifier, PatVerifier, TokenVerifier};
 
 #[cfg(test)]
 pub(crate) struct AuthEnvGuard {

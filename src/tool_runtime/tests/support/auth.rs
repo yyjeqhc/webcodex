@@ -16,7 +16,6 @@ pub(in crate::tool_runtime::tests) fn auth_context(
         user_id: username.map(|u| format!("user-{}", u)),
         username: username.map(str::to_string),
         api_key_id: username.map(|u| format!("key-{}", u)),
-        api_key_name: username.map(|u| format!("{} key", u)),
         role: Some(role),
         scopes,
         is_bootstrap,
@@ -39,7 +38,6 @@ pub(in crate::tool_runtime::tests) fn shared_key_auth_context(
         user_id: None,
         username: None,
         api_key_id: None,
-        api_key_name: None,
         role: Some("shared-key".to_string()),
         scopes: vec![
             crate::auth::SCOPE_RUNTIME_READ.to_string(),
@@ -65,7 +63,6 @@ pub(in crate::tool_runtime::tests) fn oauth_bridge_auth_context(
         user_id: None,
         username: None,
         api_key_id: Some("oauth-access-token".to_string()),
-        api_key_name: None,
         role: Some("shared-key".to_string()),
         scopes: scopes.iter().map(|scope| (*scope).to_string()).collect(),
         is_bootstrap: false,
@@ -85,7 +82,6 @@ pub(in crate::tool_runtime::tests) fn managed_oauth_auth_context(
         user_id: Some(format!("user-{}", username)),
         username: Some(username.to_string()),
         api_key_id: Some("oauth-access-token".to_string()),
-        api_key_name: None,
         role: Some("user".to_string()),
         scopes: vec![
             crate::auth::SCOPE_RUNTIME_READ.to_string(),
@@ -106,7 +102,6 @@ pub(in crate::tool_runtime::tests) fn open_auth_context() -> crate::auth::AuthCo
         user_id: None,
         username: None,
         api_key_id: None,
-        api_key_name: None,
         role: Some("open".to_string()),
         scopes: vec![
             crate::auth::SCOPE_RUNTIME_READ.to_string(),

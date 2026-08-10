@@ -39,13 +39,11 @@ pub(crate) use super::tool_catalog::{
 #[cfg(test)]
 pub use super::tool_policy::is_known_tool_name;
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) use super::tool_policy::{
     is_model_hidden_tool_name, known_tool_names, model_hidden_tool_names,
     runtime_tool_creates_or_binds_session, runtime_tool_is_current_session_control,
     runtime_tool_requires_explicit_business_session,
 };
-#[allow(unused_imports)]
 pub(crate) use super::tool_policy::{
     is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
     model_visible_tool_names_csv, runtime_tool_agent_capability,

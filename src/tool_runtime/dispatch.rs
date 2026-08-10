@@ -70,9 +70,8 @@ impl ToolRuntime {
     /// This no-auth convenience defaults the caller context to `None`, which
     /// means agent-backed tools are rejected (no owner can be proven). HTTP
     /// wrappers should prefer `dispatch_with_auth` so the depot `AuthContext`
-    /// is forwarded. `dispatch` is kept for internal/tests callers that only
-    /// use local-executor projects.
-    #[allow(dead_code)]
+    /// is forwarded. Tests use this wrapper for local-executor projects.
+    #[cfg(test)]
     pub async fn dispatch(&self, call: ToolCall) -> ToolResult {
         self.dispatch_with_auth(call, None).await
     }

@@ -1776,9 +1776,13 @@ fn lsp_command_resolution_uses_explicit_env_then_path_without_shell() {
         )]),
         ..LspSupervisorConfig::default()
     });
+    let explicit_info = explicit
+        .resolve_command_info(LspServerKind::RustAnalyzer)
+        .unwrap();
+    assert!(explicit_info.available);
     assert_eq!(
-        explicit.availability(LspServerKind::RustAnalyzer),
-        LspServerStatus::Available
+        explicit_info.source,
+        crate::lsp_bridge::LspCommandSource::Configured
     );
 
     let supervisor = LspSupervisor::default();

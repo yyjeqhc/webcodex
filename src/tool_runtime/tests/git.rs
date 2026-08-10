@@ -1554,10 +1554,10 @@ fn parse_porcelain_summary_buckets_untracked_files() {
 }
 
 #[test]
-fn parse_porcelain_files_handles_basic_rename_and_quoted_paths() {
+fn parse_porcelain_summary_handles_basic_rename_and_quoted_paths() {
     let porcelain =
         " M src/main.rs\nA  new_file.rs\nR  old_name.rs -> new_name.rs\n?? \"quoted path.rs\"";
-    let files = parse_porcelain_files(porcelain);
+    let files = parse_porcelain_summary(porcelain).changed_files;
     assert_eq!(
         files,
         vec![

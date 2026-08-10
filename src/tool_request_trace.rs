@@ -130,11 +130,6 @@ impl ToolRequestLifecycle {
         self.enabled
     }
 
-    #[allow(dead_code)]
-    pub fn trace_id(&self) -> &str {
-        &self.trace_id
-    }
-
     pub fn set_method(&mut self, method: impl Into<String>) {
         self.method = method.into();
     }

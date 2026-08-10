@@ -35,8 +35,6 @@ pub struct AuthContext {
     pub user_id: Option<String>,
     pub username: Option<String>,
     pub api_key_id: Option<String>,
-    #[allow(dead_code)]
-    pub api_key_name: Option<String>,
     pub role: Option<String>,
     pub scopes: Vec<String>,
     pub is_bootstrap: bool,
@@ -56,7 +54,6 @@ impl AuthContext {
             user_id: None,
             username: None,
             api_key_id: None,
-            api_key_name: None,
             role: None,
             scopes: Vec::new(),
             is_bootstrap: false,

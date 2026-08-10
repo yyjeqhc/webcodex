@@ -106,7 +106,6 @@ impl TokenVerifier for PatVerifier {
                 user_id: Some(user.id.clone()),
                 username: Some(user.username.clone()),
                 api_key_id: Some(api_key.id.clone()),
-                api_key_name: Some(api_key.name.clone()),
                 role: Some(user.role.clone()),
                 scopes: api_key.scopes_vec(),
                 token_kind: Some(api_key.kind().to_string()),

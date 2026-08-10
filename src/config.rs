@@ -389,7 +389,6 @@ pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
 /// The first OAuth2 implementation uses opaque DB-backed tokens. JWT/JWKS/OIDC
 /// can be added later as an extension.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct OAuth2Config {
     /// Public issuer URL for `/.well-known/*` metadata. Defaults to
     /// `WEBCODEX_OAUTH2_ISSUER`, falling back to `WEBCODEX_PUBLIC_URL`.

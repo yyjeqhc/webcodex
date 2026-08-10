@@ -18,7 +18,7 @@
 
 use super::config::SshConfig;
 use super::shutdown::lock_unpoison;
-use super::ssh::{PreparedPersistentShellCommand, SshConnectionKey, SshConnectionPool};
+use super::ssh::{PreparedPersistentShellCommand, SshConnectionPool};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};
@@ -47,9 +47,6 @@ pub(crate) struct RemoteShellTransport {
     child: Mutex<Child>,
     stdin: Mutex<Option<ChildStdin>>,
     process_group_id: u32,
-    /// Pool identity so the Runner can forget the transport after a failure.
-    #[allow(dead_code)]
-    pool_key: SshConnectionKey,
     /// Named SSH resource this shell is bound to, captured at open so the
     /// shared manager can validate it against the current Runner config.
     resource_name: String,
@@ -89,7 +86,6 @@ impl RemoteShellTransport {
             .map_err(|message| ShellError::new("ssh_persistent_shell_spawn_failed", message))?;
         let PreparedPersistentShellCommand {
             mut command,
-            key,
             default_cwd,
         } = prepared;
         command
@@ -153,7 +149,6 @@ impl RemoteShellTransport {
                 child: Mutex::new(child),
                 stdin: Mutex::new(Some(stdin)),
                 process_group_id,
-                pool_key: key,
                 resource_name: resource_name.to_string(),
                 generation,
                 expected_token,
@@ -168,13 +163,6 @@ impl RemoteShellTransport {
             },
             default_cwd,
         ))
-    }
-
-    /// The pool identity this transport reuses. The Runner invalidates it after
-    /// a transport failure so the next open gets a fresh control socket.
-    #[allow(dead_code)]
-    pub(crate) fn pool_key(&self) -> &SshConnectionKey {
-        &self.pool_key
     }
 
     fn set_expected_token(&self, token: &str) {

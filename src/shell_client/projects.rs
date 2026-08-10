@@ -1,4 +1,5 @@
 use super::auth::assert_shell_client_access;
+#[cfg(test)]
 use super::validation::validate_id;
 use super::ShellClientRegistry;
 use crate::shell_protocol::{
@@ -126,9 +127,8 @@ impl ShellClientRegistry {
         Ok(capability_enabled(&client.capabilities, capability))
     }
 
-    /// List the projects registered for a given shell client. Currently only
-    /// exercised by tests; kept as a public accessor of the registry API.
-    #[allow(dead_code)]
+    /// Test-only accessor for projects registered to a shell client.
+    #[cfg(test)]
     pub async fn list_client_projects(
         &self,
         client_id: &str,

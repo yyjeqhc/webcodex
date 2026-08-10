@@ -130,7 +130,6 @@ impl Fixture {
         ToolExecutionContext {
             project_root: &self.root,
             target: self.root.join(path),
-            relative_path: path,
             max_output_bytes: MAX_MCP_OUTPUT_BYTES,
             timeout_secs: self.config.timeout_secs,
         }
@@ -1005,7 +1004,6 @@ fn opt_in_real_claude_mcp_smoke() {
         let search_context = ToolExecutionContext {
             project_root: &root,
             target: root.clone(),
-            relative_path: ".",
             max_output_bytes: MAX_MCP_OUTPUT_BYTES,
             timeout_secs: 30,
         };

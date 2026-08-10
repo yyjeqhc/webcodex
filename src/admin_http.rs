@@ -459,11 +459,9 @@ mod tests {
     use salvo::Service;
 
     fn service(auth: Option<AuthContext>) -> Service {
-        let config = crate::test_support::test_config(None);
         let (_tmp, db) = crate::test_support::test_db();
         let runtime = Arc::new(ToolRuntime::new(
             Arc::new(crate::ShellClientRegistry::default()),
-            Arc::new(config.codex.clone()),
             Arc::new(crate::tool_runtime::RuntimeInfo::default()),
         ));
         let mut router = Router::new()

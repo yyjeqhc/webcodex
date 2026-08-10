@@ -6,7 +6,6 @@ use super::permissions::PermissionEvaluator;
 use super::runtime_info::RuntimeInfo;
 use super::sessions;
 use super::SessionShellRegistry;
-use crate::config::CodexConfig;
 use crate::shell_client::ShellClientRegistry;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,8 +16,6 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ToolRuntime {
     pub shell_clients: Arc<ShellClientRegistry>,
-    #[allow(dead_code)]
-    pub codex: Arc<CodexConfig>,
     pub runtime_info: Arc<RuntimeInfo>,
     model_surface: crate::model_surface::ModelSurface,
     pub(crate) checkpoint_store: checkpoint::CheckpointStore,
@@ -53,14 +50,9 @@ pub struct ToolRuntime {
 }
 
 impl ToolRuntime {
-    pub fn new(
-        shell_clients: Arc<ShellClientRegistry>,
-        codex: Arc<CodexConfig>,
-        runtime_info: Arc<RuntimeInfo>,
-    ) -> Self {
+    pub fn new(shell_clients: Arc<ShellClientRegistry>, runtime_info: Arc<RuntimeInfo>) -> Self {
         Self {
             shell_clients,
-            codex,
             runtime_info,
             model_surface: crate::model_surface::ModelSurface::LocalCoding,
             checkpoint_store: checkpoint::CheckpointStore::default(),
@@ -112,11 +104,7 @@ impl ToolRuntime {
     pub(crate) fn new_for_tests_with_shell_clients(
         shell_clients: Arc<ShellClientRegistry>,
     ) -> Self {
-        Self::new(
-            shell_clients,
-            Arc::new(CodexConfig::default()),
-            Arc::new(RuntimeInfo::default()),
-        )
+        Self::new(shell_clients, Arc::new(RuntimeInfo::default()))
     }
 
     pub fn with_session_ledger(mut self, path: impl Into<PathBuf>) -> Self {

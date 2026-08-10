@@ -167,9 +167,8 @@ fn append_authorize_success_params(
 
 /// Parsed query shape for the future `GET /oauth/authorize` endpoint.
 ///
-/// This is intentionally a pure internal data type for now. Phase 2e-1a does
-/// not mount an authorize route or issue authorization codes.
-#[allow(dead_code)]
+/// Internal parsed form shared by the managed-user and shared-key bridge
+/// authorize flows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OAuthAuthorizeRequest {
     pub response_type: String,
@@ -185,17 +184,11 @@ pub(crate) struct OAuthAuthorizeRequest {
 /// Internal authorization endpoint validation errors.
 ///
 /// `InvalidRequest` is for direct errors before the client/redirect trust
-/// boundary is established. Redirectable variants are for errors that can be
-/// mapped to OAuth redirect errors after the client and redirect URI are
-/// trusted.
-#[allow(dead_code)]
+/// boundary is established.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OAuthAuthorizeError {
     InvalidRequest(&'static str),
-    UnauthorizedClient(&'static str),
-    UnsupportedResponseType,
     InvalidScope(&'static str),
-    InvalidRequestRedirectable(&'static str),
     UnsupportedResource,
 }
 
@@ -204,7 +197,6 @@ pub(crate) enum OAuthAuthorizeError {
 ///
 /// Duplicate known parameters are rejected because they make the OAuth request
 /// ambiguous. Unknown parameters are ignored for forward compatibility.
-#[allow(dead_code)]
 pub(super) fn parse_authorize_query(
     query: &str,
 ) -> Result<OAuthAuthorizeRequest, OAuthAuthorizeError> {
@@ -377,13 +369,8 @@ pub(crate) struct AuthorizeSessionStore {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)] // fields retained for session audit/future consent display
 struct AuthorizeSession {
     user_id: String,
-    username: Option<String>,
-    /// `AuthKind` of the credential used to log in (Bootstrap or ApiToken).
-    auth_kind: AuthKind,
-    created_at: i64,
     expires_at: i64,
 }
 
@@ -395,18 +382,10 @@ impl AuthorizeSessionStore {
     /// Create a new session and return the opaque plaintext session id. Only
     /// the SHA-256 hash of the id is stored in the map. PAT/bootstrap
     /// plaintext is never stored — only the resolved user identity.
-    fn create_session(
-        &self,
-        user_id: String,
-        username: Option<String>,
-        auth_kind: AuthKind,
-    ) -> String {
+    fn create_session(&self, user_id: String) -> String {
         let now = chrono::Utc::now().timestamp();
         let session = AuthorizeSession {
             user_id,
-            username,
-            auth_kind,
-            created_at: now,
             expires_at: now + AUTHORIZE_SESSION_TTL_SECS,
         };
         let id = generate_authorize_session_id();
@@ -646,7 +625,7 @@ pub(crate) async fn oauth_authorize_login(
         return;
     };
 
-    let session_id = session_store.create_session(user_id, ctx.username.clone(), ctx.kind);
+    let session_id = session_store.create_session(user_id);
     let secure = is_secure_authorize(&config);
     res.headers_mut().append(
         salvo::http::header::SET_COOKIE,

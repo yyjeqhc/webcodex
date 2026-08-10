@@ -25,15 +25,13 @@ pub(crate) use self::execution_model::{
     ConnectorExecutionReservation, MAX_ASSERTION_EVIDENCE_BYTES,
 };
 pub use self::oauth::RotateResult;
-#[allow(unused_imports)]
 pub(crate) use self::task_kernel::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate,
-    ConnectorPreservedWorkspace, ConnectorTaskContinuation, ConnectorTaskEvent,
-    ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskStoreError, ConnectorWindowBinding,
-    ConnectorWindowContext, ConnectorWorkspaceTransition, GuidanceReadState, LocalReviewableTask,
-    NewConnectorResult, NewConnectorTask, WindowProjectActivation,
+    ConnectorPreservedWorkspace, ConnectorTaskContinuation, ConnectorTaskResult,
+    ConnectorTaskSnapshot, ConnectorTaskStoreError, ConnectorWindowBinding,
+    ConnectorWorkspaceTransition, GuidanceReadState, NewConnectorResult, NewConnectorTask,
+    WindowProjectActivation,
 };
-
 pub struct Database {
     conn: Mutex<Connection>,
     /// Ephemeral navigation only. Durable work stays in wc_tasks and

@@ -99,7 +99,7 @@ impl PermissionEvaluator {
 ///
 /// Call sites should prefer the runtime-held [`PermissionEvaluator`]; this
 /// remains the thin env-backed helper for unit tests and profile helpers.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn permission_decision_for_tool(
     tool_name: &str,
     project: Option<&str>,

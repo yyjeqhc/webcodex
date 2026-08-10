@@ -139,9 +139,11 @@ pub(crate) enum OAuthBodyAwarePolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum OAuthToolScopePolicy {
     Require(&'static str),
+    /// Reserved fail-closed policy for a runtime tool that may be exposed only
+    /// to first-party credentials; no current tool definition selects it.
+    #[allow(dead_code)]
     FirstPartyOnly,
     Unknown,
 }
@@ -265,7 +267,7 @@ pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolS
         .unwrap_or(OAuthToolScopePolicy::Unknown)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn required_oauth_scope_for_path_method(
     method: &str,
     path: &str,

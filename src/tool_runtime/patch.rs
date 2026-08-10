@@ -458,7 +458,6 @@ impl ToolRuntime {
 mod tests {
     use super::super::{RuntimeInfo, ToolResult};
     use super::*;
-    use crate::config::CodexConfig;
     use crate::shell_client::ShellClientRegistry;
     use crate::shell_protocol::{
         ShellAgentPollRequest, ShellAgentProjectSummary, ShellClientCapabilities,
@@ -478,7 +477,6 @@ mod tests {
         let _ = client_id;
         ToolRuntime::new(
             Arc::new(ShellClientRegistry::default()),
-            Arc::new(CodexConfig::default()),
             Arc::new(RuntimeInfo::default()),
         )
     }

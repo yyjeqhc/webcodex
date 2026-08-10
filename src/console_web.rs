@@ -370,7 +370,6 @@ mod tests {
         let runtime_info = Arc::new(crate::tool_runtime::RuntimeInfo::default());
         let tool_runtime = Arc::new(crate::tool_runtime::ToolRuntime::new(
             shell_registry,
-            Arc::new(config.codex.clone()),
             runtime_info,
         ));
         Router::new()

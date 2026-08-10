@@ -5,8 +5,9 @@ use super::events::{
     session_input_summary_for_tool, SessionToolClassification,
 };
 use super::model::{
-    PersistedSessionLedger, PersistedSessionRecord, SessionLifecycle, MAX_OBSERVED_PATHS_PER_EVENT,
-    MAX_VALIDATION_EXCERPT_CHARS, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    PersistedCurrentBindings, PersistedSessionLedger, PersistedSessionRecord, SessionLifecycle,
+    MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, MESSAGE_ID_PREFIX,
+    SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::persistence::write_ledger_atomic;
 use super::*;
@@ -468,7 +469,13 @@ fn session_store_persists_and_restores_basic_session() {
         Some("persistent work".to_string()),
     );
 
-    let restored = flush_and_restore(&store, ledger);
+    store.flush_persistence();
+    let raw = std::fs::read_to_string(&ledger).unwrap();
+    assert!(
+        !raw.contains('\n'),
+        "production ledger should use compact JSON"
+    );
+    let restored = SessionStore::with_persistence(ledger, 10, 10);
     let status = restored.status();
     assert_eq!(status.persistence, "enabled");
     assert_eq!(status.restored_sessions, 1);
@@ -481,6 +488,36 @@ fn session_store_persists_and_restores_basic_session() {
     assert_eq!(
         summary.execution_context,
         SessionExecutionContext::default()
+    );
+}
+
+#[test]
+fn write_ledger_atomic_cleans_up_temp_file_when_rename_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger_path = tmp.path().join("sessions.json");
+    std::fs::create_dir(&ledger_path).unwrap();
+    let ledger = PersistedSessionLedger {
+        version: SESSION_LEDGER_VERSION,
+        sessions: Vec::new(),
+        durable_current_bindings: PersistedCurrentBindings::default(),
+    };
+
+    let err = write_ledger_atomic(&ledger_path, &ledger).unwrap_err();
+    assert_ne!(err.kind(), std::io::ErrorKind::NotFound);
+
+    let temp_files: Vec<_> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".sessions.json.tmp-")
+        })
+        .collect();
+    assert!(
+        temp_files.is_empty(),
+        "failed write left a temporary ledger"
     );
 }
 

@@ -1,7 +1,7 @@
 //! JSON session ledger load/save, sanitize-on-restore, and atomic writes.
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 use super::events::{
@@ -264,8 +264,15 @@ pub(super) fn write_ledger_atomic(
         ".{file_name}.tmp-{}",
         uuid::Uuid::new_v4().simple()
     ));
-    let data = serde_json::to_vec_pretty(ledger).map_err(io::Error::other)?;
-    if let Err(err) = fs::write(&tmp_path, data).and_then(|_| fs::rename(&tmp_path, path)) {
+    let result = (|| {
+        let file = fs::File::create(&tmp_path)?;
+        let mut writer = io::BufWriter::new(file);
+        serde_json::to_writer(&mut writer, ledger).map_err(io::Error::other)?;
+        writer.flush()?;
+        drop(writer);
+        fs::rename(&tmp_path, path)
+    })();
+    if let Err(err) = result {
         let _ = fs::remove_file(&tmp_path);
         return Err(err);
     }

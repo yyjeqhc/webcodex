@@ -70,7 +70,7 @@ The documented distribution path uses the npm thin installer/wrapper:
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
-The npm wrapper currently supports `linux-x64`, `linux-arm64`, `darwin-arm64`, and `win32-x64`. `darwin-x64`, Windows ARM64, and other targets are not currently published. Release checksums are generated on OE from the exact native artifacts after tagging; the publish-ready `manifest.json` is release metadata and is no longer committed to Git.
+The npm wrapper currently supports `linux-x64`, `linux-arm64`, `darwin-arm64`, and `win32-x64`. `darwin-x64`, Windows ARM64, and other targets are not currently published. Starting with v0.3.5, the native `linux-x64` artifact targets glibc 2.17 or newer. This compatibility floor does not yet apply to `linux-arm64`. The npm wrapper still requires Node.js 18 or newer, so npm-based installation also depends on a Node.js build supported by the host. Release checksums are generated on OE from the exact native artifacts after tagging; the publish-ready `manifest.json` is release metadata and is no longer committed to Git.
 
 ### Windows x64 support scope
 

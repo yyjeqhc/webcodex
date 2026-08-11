@@ -1,6 +1,6 @@
 {
   "name": "@yyjeqhc/webcodex",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Thin npm installer/wrapper for WebCodex native binaries.",
   "license": "Apache-2.0",
   "bin": {

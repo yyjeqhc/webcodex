@@ -70,7 +70,7 @@ binary、npm 命令、systemd unit 与 QUIC ALPN（`webcodex-runner/1`）统一�
 npm install -g @yyjeqhc/webcodex
 ```
 
-npm wrapper 当前支持 `linux-x64`、`linux-arm64`、`darwin-arm64` 和 `win32-x64`；目前不发布 `darwin-x64`、Windows ARM64 和其他 targets。release checksum 在 tag 创建后由 OE 根据四台 native host 生成的 exact artifacts 动态计算；publish-ready `manifest.json` 属于 release metadata，不再提交进 Git。
+npm wrapper 当前支持 `linux-x64`、`linux-arm64`、`darwin-arm64` 和 `win32-x64`；目前不发布 `darwin-x64`、Windows ARM64 和其他 targets。从 v0.3.5 起，native `linux-x64` artifact 以 glibc 2.17 或更新版本为兼容基线；这个兼容性下限暂时不适用于 `linux-arm64`。npm wrapper 仍要求 Node.js 18 或更新版本，因此 npm 安装还取决于宿主机上可用的 Node.js build。release checksum 在 tag 创建后由 OE 根据四台 native host 生成的 exact artifacts 动态计算；publish-ready `manifest.json` 属于 release metadata，不再提交进 Git。
 
 ### Windows x64 支持范围
 

@@ -4,7 +4,12 @@ WebCodex is a remote tool execution system for private code. Deploy it as a perm
 
 ## Supported Versions
 
-WebCodex v0.2.x is an early release. Security fixes are expected to target the latest v0.2.x release unless stated otherwise.
+| Version | Supported |
+| --- | --- |
+| 0.3.x | Yes |
+| 0.2.x and earlier | No |
+
+Security fixes are expected to target the latest v0.3.x release unless stated otherwise.
 
 ## Security Model Summary
 
@@ -136,4 +141,4 @@ Do not publish real tokens, env files, complete agent configs, private repositor
 
 ## Known Limitations
 
-WebCodex v0.2.x is intended for controlled self-hosted environments. It is not a hosted SaaS, not a full identity provider, and not a replacement for normal code review, Git hygiene, endpoint hardening, or least-privilege operating-system policy.
+WebCodex v0.3.x is intended for controlled self-hosted environments. It is not a hosted SaaS, not a full identity provider, and not a replacement for normal code review, Git hygiene, endpoint hardening, or least-privilege operating-system policy.

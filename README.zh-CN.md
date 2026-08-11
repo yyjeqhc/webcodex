@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [下载最新版本](https://github.com/yyjeqhc/webcodex/releases/latest) ·
-[0.3.4 发布说明](docs/RELEASE_NOTES_v0.3.4.zh-CN.md) ·
+[0.3.5 发布说明](docs/RELEASE_NOTES_v0.3.5.zh-CN.md) ·
 [完整文档](docs/INDEX.zh-CN.md)
 
 **让在线 AI 窗口成为连接到你自己电脑和服务器的专属助手。**
@@ -22,8 +22,7 @@ WebCodex 把 ChatGPT、Claude 和其他 MCP 客户端连接到你的本地仓库
 
 ## 快速开始
 
-当前 package 支持 Linux x64、Linux arm64、macOS arm64 和 Windows x64；npm installer 需要
-Node.js 18 或更新版本。
+当前 package 支持 Linux x64、Linux arm64、macOS arm64 和 Windows x64。从 v0.3.5 起，Linux x64 native release artifact 以 glibc 2.17 或更新版本为兼容基线；Linux arm64 暂时还没有相同的 glibc 兼容性承诺。npm installer 仍要求 Node.js 18 或更新版本，因此通过 npm 安装时还取决于宿主机上可用的 Node.js build。
 
 先按实际部署方式选择入口：
 

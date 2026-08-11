@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [Latest release](https://github.com/yyjeqhc/webcodex/releases/latest) ·
-[0.3.4 release notes](docs/RELEASE_NOTES_v0.3.4.md) ·
+[0.3.5 release notes](docs/RELEASE_NOTES_v0.3.5.md) ·
 [Documentation](docs/INDEX.md)
 
 **Turn your online AI chat into a personal assistant connected to your own machines.**
@@ -23,8 +23,7 @@ toolchains installed on the machine that owns the project.
 
 ## Quick start
 
-Supported package platforms are Linux x64, Linux arm64, macOS arm64, and Windows x64. The
-npm installer requires Node.js 18 or newer.
+Supported package platforms are Linux x64, Linux arm64, macOS arm64, and Windows x64. Starting with v0.3.5, the native Linux x64 release artifact targets glibc 2.17 or newer; Linux arm64 does not yet carry the same glibc compatibility guarantee. The npm installer requires Node.js 18 or newer, so npm-based installation also depends on a Node.js build that supports the host.
 
 Pick the path that matches how you want to run WebCodex:
 

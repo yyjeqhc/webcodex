@@ -191,6 +191,7 @@ pub async fn import_conversation_files_to_project(
     }
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let client = match reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
         .build()

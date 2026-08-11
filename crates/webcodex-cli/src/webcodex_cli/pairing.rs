@@ -137,6 +137,7 @@ pub(crate) async fn run_pairing_create(opts: PairingCreateOptions) -> Result<Str
     }
     let value = post_json_authed(ApiCall {
         server_url: &opts.server_url,
+        server_http: &opts.server_http,
         token: &token,
         path: "/api/pairing/create",
         body,
@@ -184,7 +185,13 @@ pub(crate) async fn run_client_enroll(opts: ClientEnrollOptions) -> Result<Strin
             .map(|p| p.to_string_lossy().to_string())
             .collect::<Vec<_>>());
     }
-    let value = post_json_unauthed(&opts.server_url, "/api/pairing/enroll", body).await?;
+    let value = post_json_unauthed(
+        &opts.server_url,
+        &opts.server_http,
+        "/api/pairing/enroll",
+        body,
+    )
+    .await?;
     let user_token = value
         .get("user_token")
         .and_then(Value::as_str)

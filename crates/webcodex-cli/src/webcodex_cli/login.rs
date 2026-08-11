@@ -17,6 +17,7 @@
 //! [`publish_connection`].
 
 use std::path::{Path, PathBuf};
+use webcodex_admin::ServerHttpOptions;
 
 use super::connections::{
     canonical_server_url, connections_for_server, default_base_dir, descriptor_toml,
@@ -287,6 +288,7 @@ pub(crate) fn resolve_device_name(base: &Path, opts: &LoginOptions) -> Result<St
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LoginOptions {
     pub(crate) server_url: String,
+    pub(crate) server_http: ServerHttpOptions,
     pub(crate) code: String,
     pub(crate) device: String,
     pub(crate) device_explicit: bool,
@@ -861,7 +863,9 @@ pub(crate) async fn redeem_pairing_code(
             .collect::<Vec<_>>());
     }
 
-    let value = super::http::post_json_unauthed(server_url, "/api/pairing/enroll", body).await?;
+    let value =
+        super::http::post_json_unauthed(server_url, &opts.server_http, "/api/pairing/enroll", body)
+            .await?;
     let field = |name: &str| -> Result<String, String> {
         value
             .get(name)
@@ -1021,6 +1025,7 @@ mod tests {
     fn login_opts(base: &Path, server_url: &str, overwrite: bool) -> LoginOptions {
         LoginOptions {
             server_url: server_url.to_string(),
+            server_http: ServerHttpOptions::default(),
             code: CODE.to_string(),
             device: "laptop".to_string(),
             device_explicit: false,
@@ -1949,6 +1954,10 @@ mod tests {
         let base = temp.path().join("config root");
         let opts = LoginOptions {
             server_url: format!("http://{address}"),
+            server_http: ServerHttpOptions {
+                proxy: None,
+                no_system_proxy: true,
+            },
             code: CODE.to_string(),
             device: "shared-host".to_string(),
             device_explicit: false,

@@ -42,6 +42,8 @@ Connect a local project to a hosted WebCodex Server with one shared key.\n\
 The command writes a reusable local profile, starts one background Runner,\n\
 and waits until the Runner and project are visible through the Server.\n\n\
 Options:\n\
+  --proxy http://HOST:PORT   Override standard proxy environment for CLI Server requests\n\
+  --no-system-proxy          Ignore proxy environment and connect directly\n\
   --key KEY                  Shared key (use --key-file to avoid shell history)\n\
   --key-file PATH            Read the shared key from a file\n\
   --project PATH             Local project directory [default: .]\n\
@@ -51,7 +53,8 @@ Options:\n\
   -h, --help                 Print help and exit\n\n\
 When neither --key nor --key-file is supplied, a strong key is generated and\n\
 printed once. Hosted shared keys must not start with wc_; managed credentials\n\
-use `webcodex login` instead.\n"
+use `webcodex login` instead. Proxy flags apply only to this command's Server\n\
+HTTP probes; Runner proxy configuration remains independent.\n"
 }
 
 pub(crate) fn pairing_usage() -> &'static str {
@@ -64,6 +67,8 @@ pub(crate) fn pairing_create_usage() -> &'static str {
     "Usage: webcodex pairing create --server-url URL --username USER [--client-id CLIENT_ID] [OPTIONS]\n\n\
      Options:\n\
        --server-url URL          WebCodex server URL\n\
+       --proxy http://HOST:PORT Explicit proxy override for this CLI request\n\
+       --no-system-proxy        Ignore proxy environment and connect directly\n\
        --env-file PATH           Read WEBCODEX_TOKEN from env file\n\
        --token-file PATH         Read bootstrap/admin bearer token from file\n\
        --token TOKEN             Bootstrap/admin bearer token (discouraged in shell history)\n\
@@ -102,6 +107,8 @@ pub(crate) fn client_enroll_usage() -> &'static str {
      and writes the same token files in one step.\n\n\
      Options:\n\
        --server-url URL              WebCodex server URL\n\
+       --proxy http://HOST:PORT     Explicit proxy override for this CLI request\n\
+       --no-system-proxy            Ignore proxy environment and connect directly\n\
        --pairing-code CODE           Temporary one-time pairing code\n\
        --client-id CLIENT_ID         Client id matching the pairing record\n\
        --display-name NAME           Optional agent display name\n\
@@ -131,6 +138,8 @@ pub(crate) fn ops_usage() -> &'static str {
      Common flags:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --url URL               Alias for --server-url\n\
+       --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
+       --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
@@ -146,6 +155,8 @@ pub(crate) fn ops_status_usage() -> &'static str {
      Options:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --url URL               Alias for --server-url\n\
+       --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
+       --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
@@ -160,6 +171,8 @@ pub(crate) fn ops_agents_usage() -> &'static str {
      Options:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --url URL               Alias for --server-url\n\
+       --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
+       --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
@@ -174,6 +187,8 @@ pub(crate) fn ops_projects_usage() -> &'static str {
      Options:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --url URL               Alias for --server-url\n\
+       --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
+       --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
@@ -189,6 +204,8 @@ pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
        --project PROJECT_ID    Runtime project id to check\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --url URL               Alias for --server-url\n\
+       --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
+       --no-system-proxy       Ignore proxy environment and connect directly\n\
        --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
@@ -248,6 +265,8 @@ pub(crate) fn server_status_usage() -> &'static str {
     "Usage: webcodex server status [OPTIONS]\n\n\
      Options:\n\
        --url URL              Runtime URL [default: http://127.0.0.1:8080]\n\
+       --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
+       --no-system-proxy      Ignore proxy environment and connect directly\n\
        --env-file PATH        Read WEBCODEX_TOKEN from env file [default: root /etc/webcodex/webcodex.env; user ~/.config/webcodex/webcodex.env]\n\
        --token-file PATH      Read bearer token from file\n\
        --json                 Print a machine-readable summary\n\
@@ -327,6 +346,8 @@ pub(crate) fn agent_status_usage() -> &'static str {
        --config PATH              Agent config path [default: scope-specific agent.toml]\n\
        --service-file PATH        Override the scope-specific systemd unit path\n\
        --server-url URL           Override server URL for runtime checks\n\
+       --proxy http://HOST:PORT  Explicit proxy override for Server checks\n\
+       --no-system-proxy         Ignore proxy environment and connect directly\n\
        --user-token-file PATH     Read user API token for /api/runtime/status\n\
        --agent-token-file PATH    Read agent token for boundary check\n\
        --json                     Print a machine-readable summary\n\
@@ -347,6 +368,8 @@ pub(crate) fn login_usage() -> &'static str {
      primary way to connect a machine.\n\n\
      Options:\n\
      \x20\x20--code CODE          Pairing code from the server (required)\n\
+     \x20\x20--proxy http://HOST:PORT Explicit proxy override for this CLI request\n\
+     \x20\x20--no-system-proxy   Ignore proxy environment and connect directly\n\
      \x20\x20--device NAME        Name for this device [default: hostname + local suffix]\n\
      \x20\x20--allowed-root PATH  Repeatable project root the agent may touch\n\
      \x20\x20--transport NAME     websocket|polling|quic|auto [default: websocket]\n\

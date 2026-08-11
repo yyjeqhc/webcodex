@@ -424,6 +424,7 @@ fn clean_hygiene_fixture() -> Value {
 fn ops_common_opts(server_url: String) -> OpsCommonOptions {
     OpsCommonOptions {
         server_url,
+        server_http: direct_server_http(),
         env_file: None,
         token_file: None,
         token: None,
@@ -537,6 +538,7 @@ fn smoke_preflight_opts(server_url: String, project: &str) -> OpsSmokePreflightO
     OpsSmokePreflightOptions {
         common: OpsCommonOptions {
             server_url,
+            server_http: direct_server_http(),
             env_file: None,
             token_file: None,
             token: Some("secret-smoke-token".to_string()),

@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use webcodex_admin::ServerHttpOptions;
 
 use super::{
     http_post_json_status, read_env_file_value, read_optional_token, validate_user_api_token,
@@ -10,6 +11,7 @@ const DEFAULT_EXPECTED_TOOL_COUNT: u64 = 66;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OpsCommonOptions {
     pub(crate) server_url: String,
+    pub(crate) server_http: ServerHttpOptions,
     pub(crate) env_file: Option<PathBuf>,
     pub(crate) token_file: Option<PathBuf>,
     pub(crate) token: Option<String>,
@@ -105,6 +107,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
             let token = resolve_ops_token(&opts)?;
             let report = match fetch_ops_json_output(
                 &opts.server_url,
+                &opts.server_http,
                 "/api/runtime/status",
                 token.as_deref(),
                 json!({}),
@@ -125,6 +128,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
             let token = resolve_ops_token(&opts)?;
             let report = match fetch_ops_json_output(
                 &opts.server_url,
+                &opts.server_http,
                 "/api/runtime/status",
                 token.as_deref(),
                 json!({}),
@@ -143,21 +147,23 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
         }
         OpsCommand::Projects(opts) => {
             let token = resolve_ops_token(&opts)?;
-            let report = match fetch_projects(&opts.server_url, token.as_deref()).await {
-                Ok(projects) => ops_projects_report(&opts.server_url, Some(&projects)),
-                Err(failure) => ops_http_failure_report(
-                    &opts.server_url,
-                    "list_projects",
-                    failure,
-                    token.is_some(),
-                ),
-            };
+            let report =
+                match fetch_projects(&opts.server_url, &opts.server_http, token.as_deref()).await {
+                    Ok(projects) => ops_projects_report(&opts.server_url, Some(&projects)),
+                    Err(failure) => ops_http_failure_report(
+                        &opts.server_url,
+                        "list_projects",
+                        failure,
+                        token.is_some(),
+                    ),
+                };
             render_ops_command_output(report, opts.json, render_ops_projects)
         }
         OpsCommand::SmokePreflight(opts) => {
             let token = resolve_ops_token(&opts.common)?;
             let runtime_status = match fetch_ops_json_output(
                 &opts.common.server_url,
+                &opts.common.server_http,
                 "/api/runtime/status",
                 token.as_deref(),
                 json!({}),
@@ -179,7 +185,13 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                     );
                 }
             };
-            let projects = match fetch_projects(&opts.common.server_url, token.as_deref()).await {
+            let projects = match fetch_projects(
+                &opts.common.server_url,
+                &opts.common.server_http,
+                token.as_deref(),
+            )
+            .await
+            {
                 Ok(projects) => projects,
                 Err(failure) => {
                     let report = ops_http_failure_report(
@@ -200,6 +212,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
             let (show_changes, hygiene) = if target_state.ready {
                 let show_changes = match call_runtime_tool(
                     &opts.common.server_url,
+                    &opts.common.server_http,
                     token.as_deref(),
                     "show_changes",
                     json!({"project": opts.project, "include_diff": false}),
@@ -223,6 +236,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                 };
                 let hygiene = match call_runtime_tool(
                     &opts.common.server_url,
+                    &opts.common.server_http,
                     token.as_deref(),
                     "workspace_hygiene_check",
                     json!({"project": opts.project}),
@@ -383,11 +397,12 @@ impl OpsHttpFailure {
 
 async fn fetch_ops_json_output(
     server_url: &str,
+    server_http: &ServerHttpOptions,
     path: &str,
     token: Option<&str>,
     body: Value,
 ) -> Result<Value, OpsHttpFailure> {
-    match http_post_json_status(server_url, path, token, body).await {
+    match http_post_json_status(server_url, server_http, path, token, body).await {
         Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
             Ok(output_payload(value))
         }
@@ -400,8 +415,19 @@ async fn fetch_ops_json_output(
     }
 }
 
-async fn fetch_projects(server_url: &str, token: Option<&str>) -> Result<Value, OpsHttpFailure> {
-    fetch_ops_json_output(server_url, "/api/projects/list", token, json!({})).await
+async fn fetch_projects(
+    server_url: &str,
+    server_http: &ServerHttpOptions,
+    token: Option<&str>,
+) -> Result<Value, OpsHttpFailure> {
+    fetch_ops_json_output(
+        server_url,
+        server_http,
+        "/api/projects/list",
+        token,
+        json!({}),
+    )
+    .await
 }
 
 fn ops_http_failure_report(
@@ -433,12 +459,14 @@ fn ops_http_failure_report(
 
 async fn call_runtime_tool(
     server_url: &str,
+    server_http: &ServerHttpOptions,
     token: Option<&str>,
     tool: &str,
     params: Value,
 ) -> Result<Option<Value>, OpsHttpFailure> {
     fetch_ops_json_output(
         server_url,
+        server_http,
         "/api/tools/call",
         token,
         json!({"tool": tool, "params": params}),

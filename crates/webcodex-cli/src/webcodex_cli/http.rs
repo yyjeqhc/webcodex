@@ -1,11 +1,13 @@
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
+use webcodex_admin::{build_server_http_client, ServerHttpOptions};
 
 /// A single authenticated JSON POST against the server. Reuses
 /// `build_admin_request` to construct the path/body for known admin commands,
 /// but accepts arbitrary `(path, body)` so setup can issue its own calls.
 pub(crate) struct ApiCall<'a> {
     pub(crate) server_url: &'a str,
+    pub(crate) server_http: &'a ServerHttpOptions,
     pub(crate) token: &'a str,
     pub(crate) path: &'a str,
     pub(crate) body: Value,
@@ -13,17 +15,14 @@ pub(crate) struct ApiCall<'a> {
 
 pub(crate) async fn post_json_authed(call: ApiCall<'_>) -> Result<Value, String> {
     let url = format!("{}{}", call.server_url.trim_end_matches('/'), call.path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let client = build_server_http_client(call.server_http)?;
     let resp = client
         .post(url)
         .bearer_auth(call.token)
         .json(&call.body)
         .send()
         .await
-        .map_err(|e| format!("request failed: {}", e))?;
+        .map_err(|e| format!("request failed: {}", e).replace(call.token, "[redacted]"))?;
     let status = resp.status();
     let content_type = resp
         .headers()
@@ -36,7 +35,8 @@ pub(crate) async fn post_json_authed(call: ApiCall<'_>) -> Result<Value, String>
         .await
         .map_err(|e| format!("failed to read response: {}", e))?;
     if !status.is_success() {
-        return Err(format_error_body(status.as_u16(), &content_type, &text));
+        return Err(format_error_body(status.as_u16(), &content_type, &text)
+            .replace(call.token, "[redacted]"));
     }
     serde_json::from_str(&text).map_err(|e| {
         format!(
@@ -48,14 +48,12 @@ pub(crate) async fn post_json_authed(call: ApiCall<'_>) -> Result<Value, String>
 
 pub(crate) async fn post_json_unauthed(
     server_url: &str,
+    server_http: &ServerHttpOptions,
     path: &str,
     body: Value,
 ) -> Result<Value, String> {
     let url = format!("{}{}", server_url.trim_end_matches('/'), path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let client = build_server_http_client(server_http)?;
     let resp = client
         .post(url)
         .json(&body)
@@ -108,23 +106,21 @@ pub(crate) fn format_error_body(status: u16, content_type: &str, body: &str) -> 
 
 pub(crate) async fn http_post_json_status(
     server_url: &str,
+    server_http: &ServerHttpOptions,
     path: &str,
     token: Option<&str>,
     body: Value,
 ) -> Result<(u16, String, Option<Value>), String> {
     let url = format!("{}{}", server_url.trim_end_matches('/'), path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let client = build_server_http_client(server_http)?;
     let mut req = client.post(url).json(&body);
     if let Some(token) = token {
         req = req.bearer_auth(token);
     }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {}", e))?;
+    let resp = req.send().await.map_err(|e| {
+        let error = format!("request failed: {}", e);
+        token.map_or_else(|| error.clone(), |token| error.replace(token, "[redacted]"))
+    })?;
     let status = resp.status().as_u16();
     let content_type = resp
         .headers()
@@ -159,13 +155,11 @@ pub(crate) struct HttpStatusSummary {
 
 pub(crate) async fn fetch_runtime_status(
     url: &str,
+    server_http: &ServerHttpOptions,
     token: Option<&str>,
 ) -> Result<HttpStatusSummary, String> {
     let endpoint = format!("{}/api/runtime/status", url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let client = build_server_http_client(server_http)?;
     let mut req = client.post(endpoint).json(&json!({}));
     if let Some(token) = token {
         req = req.bearer_auth(token);
@@ -173,11 +167,14 @@ pub(crate) async fn fetch_runtime_status(
     let resp = match req.send().await {
         Ok(resp) => resp,
         Err(e) => {
+            let error = format!("request failed: {}", e);
             return Ok(HttpStatusSummary {
                 reachable: false,
                 status_code: None,
                 content_type: None,
-                error: Some(format!("request failed: {}", e)),
+                error: Some(
+                    token.map_or_else(|| error.clone(), |token| error.replace(token, "[redacted]")),
+                ),
                 output: None,
             });
         }

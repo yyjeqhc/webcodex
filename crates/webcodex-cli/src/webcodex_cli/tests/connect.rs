@@ -84,6 +84,7 @@ async fn connect_rejects_invalid_url_and_missing_project_before_network_or_write
     let tmp = tempfile::tempdir().unwrap();
     let base = ConnectOptions {
         server_url: "ssh://example.test".to_string(),
+        server_http: ServerHttpOptions::default(),
         key: Some("shared-key".to_string()),
         key_file: None,
         project: tmp.path().join("missing"),

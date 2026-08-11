@@ -350,6 +350,79 @@ fn non_json_error_reports_status_and_content_type_without_body() {
     assert!(!msg.contains("<html>"));
 }
 
+#[test]
+fn admin_proxy_controls_parse_and_validate() {
+    let req = request(&[
+        "users",
+        "list",
+        "--server-url",
+        "http://server.invalid",
+        "--proxy",
+        "http://proxy.example:80",
+        "--token",
+        "fake-admin",
+    ]);
+    assert_eq!(
+        req.server_http.proxy.as_deref(),
+        Some("http://proxy.example:80")
+    );
+    assert!(!req.server_http.no_system_proxy);
+
+    let error = parse_admin_cli(&args(&[
+        "users",
+        "list",
+        "--server-url",
+        "http://server.invalid",
+        "--proxy",
+        "http://127.0.0.1:7890",
+        "--no-system-proxy",
+        "--token",
+        "fake-admin",
+    ]))
+    .unwrap_err();
+    assert!(error.contains("mutually exclusive"));
+}
+
+#[tokio::test]
+async fn admin_request_routes_through_explicit_proxy() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]);
+        assert!(request.starts_with("POST http://server.invalid:9/api/users/list HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fake-admin"));
+        let body = r#"{"success":true,"users":[]}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let proxy = format!("http://{proxy_addr}");
+    let cmd = parse_admin_cli(&args(&[
+        "users",
+        "list",
+        "--server-url",
+        "http://server.invalid:9",
+        "--proxy",
+        &proxy,
+        "--token",
+        "fake-admin",
+    ]))
+    .unwrap();
+    let output = run_admin_command(cmd).await.unwrap();
+    assert!(output.contains("\"users\": []"));
+    handle.join().unwrap();
+}
+
 #[tokio::test]
 async fn token_create_output_includes_plaintext_once_from_fake_server() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -377,6 +450,7 @@ async fn token_create_output_includes_plaintext_once_from_fake_server() {
         "create",
         "--server-url",
         &format!("http://{}", addr),
+        "--no-system-proxy",
         "--token",
         "fake-admin",
         "--username",

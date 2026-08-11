@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use webcodex_admin::ServerHttpOptions;
 
 use crate::{
     ServerInitOptions, ServerInstallServiceOptions, ServiceActionKind, ServiceActionOptions,
@@ -16,6 +17,7 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ServerStatusOptions {
     pub(crate) url: String,
+    pub(crate) server_http: ServerHttpOptions,
     pub(crate) env_file: Option<PathBuf>,
     pub(crate) env_file_explicit: bool,
     pub(crate) token_file: Option<PathBuf>,
@@ -225,7 +227,7 @@ fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, St
 pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> {
     let systemd = query_systemd_status();
     let token = resolve_status_token(&opts)?;
-    let http = fetch_runtime_status(&opts.url, token.as_deref()).await?;
+    let http = fetch_runtime_status(&opts.url, &opts.server_http, token.as_deref()).await?;
     let output = http.output.as_ref();
     let auth_enabled = output.and_then(|v| v.get("auth_enabled")).cloned();
     let configured_public_url = output

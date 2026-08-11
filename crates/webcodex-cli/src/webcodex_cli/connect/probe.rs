@@ -1,13 +1,19 @@
 use serde_json::{json, Value as JsonValue};
 use std::path::Path;
 use std::time::{Duration, Instant};
+use webcodex_admin::ServerHttpOptions;
 
 use super::super::http::{fetch_runtime_status, post_json_authed, ApiCall};
 use super::process::local_runner_state_summary;
 
-pub(super) async fn preflight_shared_key(server_url: &str, key: &str) -> Result<(), String> {
+pub(super) async fn preflight_shared_key(
+    server_url: &str,
+    server_http: &ServerHttpOptions,
+    key: &str,
+) -> Result<(), String> {
     post_json_authed(ApiCall {
         server_url,
+        server_http,
         token: key,
         path: "/api/projects/list",
         body: json!({}),
@@ -57,6 +63,7 @@ pub(super) fn project_visible(
 
 pub(super) async fn wait_for_connection(
     server_url: &str,
+    server_http: &ServerHttpOptions,
     key: &str,
     client_id: &str,
     runtime_project_id: &str,
@@ -70,9 +77,10 @@ pub(super) async fn wait_for_connection(
         if !summary.running {
             return Err("Runner exited before it registered with the Server".to_string());
         }
-        let runtime = fetch_runtime_status(server_url, Some(key)).await;
+        let runtime = fetch_runtime_status(server_url, server_http, Some(key)).await;
         let projects = post_json_authed(ApiCall {
             server_url,
+            server_http,
             token: key,
             path: "/api/projects/list",
             body: json!({}),

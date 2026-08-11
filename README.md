@@ -194,6 +194,13 @@ webcodex agent status --scope user \
 See [Build and Install](docs/BUILD_INSTALL.md#runner-service-scopes) for system
 services and advanced overrides.
 
+WebCodex CLI requests to a WebCodex Server follow reqwest's standard proxy environment by
+default, including `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` (plus the
+corresponding forms reqwest supports). Use `--proxy http://HOST:PORT` to override that
+selection for the current CLI invocation, or `--no-system-proxy` to ignore proxy environment
+and connect directly. These flags affect CLI HTTP requests only. In particular,
+`webcodex connect` does not persist or inject them into the Runner configuration.
+
 If a Runner host needs an outbound HTTP proxy, make the proxy variables available to the
 Runner process/service. WebSocket honors `HTTPS_PROXY` / `HTTP_PROXY`, `ALL_PROXY`, and
 `NO_PROXY` (including lowercase forms); the supported proxy transport is HTTP `CONNECT`.

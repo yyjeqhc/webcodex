@@ -149,7 +149,12 @@ pub(crate) async fn run_connect(opts: ConnectOptions) -> Result<ConnectResult, S
 
     // Fail before replacing a healthy profile when the destination cannot
     // authenticate this direct shared key at all.
-    preflight_shared_key(&canonical_server.url, &resolved_key.value).await?;
+    preflight_shared_key(
+        &canonical_server.url,
+        &opts.server_http,
+        &resolved_key.value,
+    )
+    .await?;
 
     let project_changed = if already_registered {
         false
@@ -187,6 +192,7 @@ pub(crate) async fn run_connect(opts: ConnectOptions) -> Result<ConnectResult, S
     })?;
     if let Err(error) = wait_for_connection(
         &canonical_server.url,
+        &opts.server_http,
         &resolved_key.value,
         &client_id,
         &runtime_project_id,

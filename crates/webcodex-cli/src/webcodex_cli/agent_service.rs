@@ -340,7 +340,7 @@ pub(crate) async fn run_agent_status(opts: AgentStatusOptions) -> Result<String,
     if let (Some(server_url), Some(token)) =
         (effective_server_url.as_deref(), user_token.as_deref())
     {
-        let http = fetch_runtime_status(server_url, Some(token)).await?;
+        let http = fetch_runtime_status(server_url, &opts.server_http, Some(token)).await?;
         if let Some(output) = http.output.as_ref() {
             if !metadata.client_id.trim().is_empty() {
                 client_online = runtime_client_online(output, &metadata.client_id);
@@ -354,7 +354,14 @@ pub(crate) async fn run_agent_status(opts: AgentStatusOptions) -> Result<String,
     if let (Some(server_url), Some(token)) =
         (effective_server_url.as_deref(), agent_token.as_deref())
     {
-        match http_post_json_status(server_url, "/api/runtime/status", Some(token), json!({})).await
+        match http_post_json_status(
+            server_url,
+            &opts.server_http,
+            "/api/runtime/status",
+            Some(token),
+            json!({}),
+        )
+        .await
         {
             Ok((status, content_type, _)) if status == 401 || status == 403 => {
                 agent_boundary_status = Some("PASS");

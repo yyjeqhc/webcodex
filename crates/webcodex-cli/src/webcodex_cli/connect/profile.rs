@@ -6,6 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use toml::{Table, Value as TomlValue};
+use webcodex_admin::ServerHttpOptions;
 
 use super::super::connections::{canonical_server_url, ensure_real_directory_tree};
 use super::super::profiles::{client_output_dir_for_profile, validate_client_profile};
@@ -16,6 +17,7 @@ const CONNECT_LOCK_FILE: &str = "connect.lock";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectOptions {
     pub(crate) server_url: String,
+    pub(crate) server_http: ServerHttpOptions,
     pub(crate) key: Option<String>,
     pub(crate) key_file: Option<PathBuf>,
     pub(crate) project: PathBuf,
@@ -685,6 +687,7 @@ mod tests {
         let config_base = tmp.path().join("config");
         let options = ConnectOptions {
             server_url: "https://example.test".to_string(),
+            server_http: ServerHttpOptions::default(),
             key: None,
             key_file: None,
             project: project.clone(),

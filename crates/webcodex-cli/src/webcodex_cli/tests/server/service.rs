@@ -684,6 +684,7 @@ transport = "websocket"
         config.to_str().unwrap(),
         "--server-url",
         &format!("http://{}", addr),
+        "--no-system-proxy",
         "--user-token-file",
         user_token_file.to_str().unwrap(),
         "--agent-token-file",

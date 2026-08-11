@@ -1,6 +1,6 @@
 use super::output::{format_error, sanitize};
 use super::{
-    AdminCliCommand, AdminCliRequest, AdminOptions, AgentTokenCreateArgs,
+    build_server_http_client, AdminCliCommand, AdminCliRequest, AdminOptions, AgentTokenCreateArgs,
     AgentTokenRegisterHashArgs, CreateUserArgs, RevokeTokenArgs, TokenCreateArgs,
     TokenRegisterHashArgs, UsernameArgs,
 };
@@ -73,6 +73,8 @@ pub fn usage() -> &'static str {
       webcodex agent-tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex agent-tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\n\
     Token fallback: WEBCODEX_TOKEN\n\
+    Proxy: standard HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY environment by default;\n\
+           --proxy http://HOST:PORT overrides it, --no-system-proxy forces direct.\n\
     Output: JSON\n"
 }
 
@@ -133,6 +135,14 @@ fn parse_common_flag(
             opts.token_file = Some(PathBuf::from(p.value(flag)?));
             Ok(true)
         }
+        "--proxy" => {
+            opts.server_http.proxy = Some(p.value(flag)?);
+            Ok(true)
+        }
+        "--no-system-proxy" => {
+            opts.server_http.no_system_proxy = true;
+            Ok(true)
+        }
         "--json" => {
             opts.json = true;
             Ok(true)
@@ -148,6 +158,7 @@ fn require_common(opts: &AdminOptions) -> Result<(), String> {
     if opts.token.is_some() && opts.token_file.is_some() {
         return Err("use only one of --token/--admin-token or --token-file".to_string());
     }
+    opts.server_http.validate()?;
     Ok(())
 }
 
@@ -463,6 +474,7 @@ pub fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliRequest, Str
     };
     Ok(AdminCliRequest {
         server_url: opts.server_url.trim_end_matches('/').to_string(),
+        server_http: opts.server_http.clone(),
         token: resolve_bearer_token(
             opts,
             matches!(
@@ -543,10 +555,7 @@ fn resolve_token(opts: &AdminOptions, env_key: &str) -> Result<String, String> {
 pub async fn run_admin_command(cmd: AdminCliCommand) -> Result<String, String> {
     let req = build_admin_request(&cmd)?;
     let url = format!("{}{}", req.server_url, req.path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let client = build_server_http_client(&req.server_http)?;
     let resp = client
         .post(url)
         .bearer_auth(&req.token)

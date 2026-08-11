@@ -288,6 +288,7 @@ async fn token_create_local_does_not_send_plaintext_token_to_server() {
     let out = run_token_create_local(TokenCreateLocalOptions {
         server_url: format!("http://{}", addr),
         username: "alice".to_string(),
+        server_http: direct_server_http(),
         credential: Some("wc_acct_fake".to_string()),
         credential_env: None,
         name: Some("gpt-action".to_string()),
@@ -328,6 +329,7 @@ async fn agent_token_create_local_does_not_send_plaintext_token_to_server() {
     let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
         admin: AdminOptions {
             server_url: format!("http://{}", addr),
+            server_http: direct_server_http(),
             credential: Some("wc_acct_fake".to_string()),
             ..AdminOptions::default()
         },
@@ -370,6 +372,7 @@ async fn agent_token_create_local_prefers_admin_token_over_default_account_crede
     let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
         admin: AdminOptions {
             server_url: format!("http://{}", addr),
+            server_http: direct_server_http(),
             token: Some("fake-admin".to_string()),
             ..AdminOptions::default()
         },
@@ -410,6 +413,7 @@ async fn agent_token_create_local_uses_default_account_credential() {
     let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
         admin: AdminOptions {
             server_url: format!("http://{}", addr),
+            server_http: direct_server_http(),
             ..AdminOptions::default()
         },
         username: "alice".to_string(),
@@ -420,6 +424,270 @@ async fn agent_token_create_local_uses_default_account_credential() {
     .await
     .unwrap();
     assert_eq!(out.matches("wc_agent_").count(), 1);
+    handle.join().unwrap();
+}
+
+fn cleared_proxy_env() -> EnvGuard {
+    EnvGuard::new()
+        .remove("HTTP_PROXY")
+        .remove("HTTPS_PROXY")
+        .remove("ALL_PROXY")
+        .remove("NO_PROXY")
+        .remove("http_proxy")
+        .remove("https_proxy")
+        .remove("all_proxy")
+        .remove("no_proxy")
+}
+
+#[test]
+fn server_http_proxy_validation_and_flag_conflict_are_fail_closed() {
+    for proxy in [
+        "http://127.0.0.1:7890",
+        "http://proxy.example:80",
+        "http://[::1]:7890",
+    ] {
+        ServerHttpOptions {
+            proxy: Some(proxy.to_string()),
+            no_system_proxy: false,
+        }
+        .validate()
+        .unwrap();
+    }
+    for proxy in [
+        "",
+        "https://proxy.example:7890",
+        "socks5://proxy.example:7890",
+        "http://proxy.example",
+        "http://@127.0.0.1:7890",
+        "http://user@127.0.0.1:7890",
+        "http://user:password@127.0.0.1:7890",
+        "http://127.0.0.1:notaport",
+        "http://127.0.0.1:7890/path",
+        "http://127.0.0.1:7890?query=1",
+        "http://127.0.0.1:7890#fragment",
+    ] {
+        let error = ServerHttpOptions {
+            proxy: Some(proxy.to_string()),
+            no_system_proxy: false,
+        }
+        .validate()
+        .unwrap_err();
+        if !proxy.is_empty() {
+            assert!(!error.contains(proxy));
+        }
+        assert!(!error.contains("password"));
+    }
+
+    let action = cli_action(args(&[
+        "connect",
+        "http://server.invalid",
+        "--proxy",
+        "http://127.0.0.1:7890",
+        "--no-system-proxy",
+    ]));
+    assert!(matches!(
+        action,
+        CliAction::Exit { code: 2, ref stderr, .. }
+            if stderr.contains("--proxy and --no-system-proxy are mutually exclusive")
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn default_server_http_uses_ambient_http_proxy() {
+    let _guard = env_test_guard();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+    let proxy_url = format!("http://{proxy_addr}");
+    let _env = cleared_proxy_env()
+        .set("HTTP_PROXY", &proxy_url)
+        .set("NO_PROXY", "");
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]);
+        assert!(request.starts_with("POST http://server.invalid:9/api/system-proxy HTTP/1.1"));
+        let body = r#"{"proxied":true}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let value = crate::webcodex_cli::post_json_unauthed(
+        "http://server.invalid:9",
+        &ServerHttpOptions::default(),
+        "/api/system-proxy",
+        json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(value["proxied"], true);
+    handle.join().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ambient_no_proxy_bypasses_system_proxy() {
+    let _guard = env_test_guard();
+    let target = TcpListener::bind("127.0.0.1:0").unwrap();
+    let target_addr = target.local_addr().unwrap();
+    let _env = cleared_proxy_env()
+        .set("HTTP_PROXY", "http://127.0.0.1:1")
+        .set("NO_PROXY", "127.0.0.1");
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = target.accept().unwrap();
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]);
+        assert!(request.starts_with("POST /api/no-proxy-check HTTP/1.1"));
+        let body = r#"{"direct":true}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let value = crate::webcodex_cli::post_json_unauthed(
+        &format!("http://{target_addr}"),
+        &ServerHttpOptions::default(),
+        "/api/no-proxy-check",
+        json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(value["direct"], true);
+    handle.join().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn explicit_proxy_overrides_ambient_system_proxy() {
+    let _guard = env_test_guard();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+    let explicit_proxy = format!("http://{proxy_addr}");
+    let _env = cleared_proxy_env()
+        .set("HTTP_PROXY", "http://127.0.0.1:1")
+        .set("NO_PROXY", "");
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]);
+        assert!(request.starts_with("POST http://server.invalid:9/api/explicit-proxy HTTP/1.1"));
+        let body = r#"{"explicit":true}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let options = ServerHttpOptions {
+        proxy: Some(explicit_proxy),
+        no_system_proxy: false,
+    };
+    let value = crate::webcodex_cli::post_json_unauthed(
+        "http://server.invalid:9",
+        &options,
+        "/api/explicit-proxy",
+        json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(value["explicit"], true);
+    handle.join().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn no_system_proxy_forces_direct_connection() {
+    let _guard = env_test_guard();
+    let target = TcpListener::bind("127.0.0.1:0").unwrap();
+    let target_addr = target.local_addr().unwrap();
+    let _env = cleared_proxy_env()
+        .set("HTTP_PROXY", "http://127.0.0.1:1")
+        .set("NO_PROXY", "");
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = target.accept().unwrap();
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]);
+        assert!(request.starts_with("POST /api/direct-check HTTP/1.1"));
+        let body = r#"{"direct":true}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let options = ServerHttpOptions {
+        proxy: None,
+        no_system_proxy: true,
+    };
+    let value = crate::webcodex_cli::post_json_unauthed(
+        &format!("http://{target_addr}"),
+        &options,
+        "/api/direct-check",
+        json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(value["direct"], true);
+    handle.join().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authenticated_explicit_proxy_request_redacts_bearer_from_error() {
+    let _guard = env_test_guard();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+    let explicit_proxy = format!("http://{proxy_addr}");
+    let _env = cleared_proxy_env().set("HTTP_PROXY", "http://127.0.0.1:1");
+    let secret = "proxy-bearer-secret-do-not-leak";
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]);
+        assert!(request.starts_with("POST http://server.invalid:9/api/auth-check HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer proxy-bearer-secret-do-not-leak"));
+        let body = r#"{"error":"bad proxy-bearer-secret-do-not-leak"}"#;
+        write!(
+            stream,
+            "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+
+    let options = ServerHttpOptions {
+        proxy: Some(explicit_proxy),
+        no_system_proxy: false,
+    };
+    let error = crate::webcodex_cli::post_json_authed(crate::webcodex_cli::ApiCall {
+        server_url: "http://server.invalid:9",
+        server_http: &options,
+        token: secret,
+        path: "/api/auth-check",
+        body: json!({}),
+    })
+    .await
+    .unwrap_err();
+    assert!(!error.contains(secret));
+    assert!(error.contains("[redacted]"));
     handle.join().unwrap();
 }
 

@@ -182,6 +182,12 @@ webcodex agent status --scope user \
 System service 与高级覆盖参数见
 [构建与安装](docs/BUILD_INSTALL.zh-CN.md#runner-service-scope)。
 
+WebCodex CLI 访问 WebCodex Server 时，默认遵循 reqwest 的标准代理环境变量，包括
+`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 和 `NO_PROXY`（以及 reqwest 支持的对应形式）。
+`--proxy http://HOST:PORT` 会仅为本次 CLI invocation 显式覆盖该选择；
+`--no-system-proxy` 则忽略代理环境变量并强制直连。这两个 flag 只影响 CLI HTTP 请求。
+特别是 `webcodex connect` 不会把它们持久化或注入 Runner 配置。
+
 如果 Runner 所在网络需要出站 HTTP proxy，应把代理环境变量传给 Runner process/service。
 WebSocket 会遵循 `HTTPS_PROXY` / `HTTP_PROXY`、`ALL_PROXY` 与 `NO_PROXY`
 （也支持对应小写变量）；当前支持的代理传输是 HTTP `CONNECT`。变量优先级、限制和

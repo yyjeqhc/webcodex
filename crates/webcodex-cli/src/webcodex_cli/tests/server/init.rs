@@ -362,6 +362,7 @@ async fn setup_single_user_runs_expected_calls_and_writes_0600_files() {
     let tmp = tempfile::tempdir().unwrap();
     let opts = SetupSingleUserOptions {
         server_url: format!("http://{}", addr),
+        server_http: direct_server_http(),
         token: Some(bootstrap.clone()),
         token_file: None,
         username: "yyjeqhc".to_string(),
@@ -453,6 +454,7 @@ async fn setup_single_user_handles_user_already_exists() {
     let tmp = tempfile::tempdir().unwrap();
     let opts = SetupSingleUserOptions {
         server_url: format!("http://{}", addr),
+        server_http: direct_server_http(),
         token: Some(bootstrap.clone()),
         token_file: None,
         username: "yyjeqhc".to_string(),

@@ -16,6 +16,7 @@ use super::{post_json_authed, resolve_token, token_prefix, ApiCall};
 pub(crate) async fn run_setup_single_user(opts: SetupSingleUserOptions) -> Result<String, String> {
     let admin_opts = AdminOptions {
         server_url: opts.server_url.clone(),
+        server_http: opts.server_http.clone(),
         token: opts.token.clone(),
         token_env: None,
         credential: None,
@@ -31,6 +32,7 @@ pub(crate) async fn run_setup_single_user(opts: SetupSingleUserOptions) -> Resul
     // bootstrap token (never printed).
     let call_opts = AdminOptions {
         server_url: opts.server_url.clone(),
+        server_http: opts.server_http.clone(),
         token: Some(bootstrap.clone()),
         token_env: None,
         credential: None,
@@ -49,6 +51,7 @@ pub(crate) async fn run_setup_single_user(opts: SetupSingleUserOptions) -> Resul
     }
     let user_result = post_json_authed(ApiCall {
         server_url: &server_url,
+        server_http: &opts.server_http,
         token: &bootstrap,
         path: "/api/users/create",
         body: user_body,
@@ -73,6 +76,7 @@ pub(crate) async fn run_setup_single_user(opts: SetupSingleUserOptions) -> Resul
         .map_err(|e| format!("internal: failed to build tokens create: {}", e))?;
     let gpt_resp = post_json_authed(ApiCall {
         server_url: &server_url,
+        server_http: &opts.server_http,
         token: &bootstrap,
         path: gpt_req.path,
         body: gpt_req.body,
@@ -98,6 +102,7 @@ pub(crate) async fn run_setup_single_user(opts: SetupSingleUserOptions) -> Resul
         .map_err(|e| format!("internal: failed to build agent-tokens create: {}", e))?;
     let agent_resp = post_json_authed(ApiCall {
         server_url: &server_url,
+        server_http: &opts.server_http,
         token: &bootstrap,
         path: agent_req.path,
         body: agent_req.body,

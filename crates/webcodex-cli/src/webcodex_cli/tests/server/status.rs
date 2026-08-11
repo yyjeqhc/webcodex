@@ -120,6 +120,7 @@ async fn server_status_parses_env_token_posts_and_does_not_print_token() {
     let opts = parse_server_status(&args(&[
         "--url",
         &format!("http://{}", addr),
+        "--no-system-proxy",
         "--env-file",
         env_file.to_str().unwrap(),
     ]))
@@ -167,6 +168,7 @@ async fn server_status_token_file_takes_priority_over_env_file() {
     let opts = parse_server_status(&args(&[
         "--url",
         &format!("http://{}", addr),
+        "--no-system-proxy",
         "--env-file",
         env_file.to_str().unwrap(),
         "--token-file",
@@ -200,6 +202,7 @@ async fn server_status_connection_failure_reports_unreachable_without_token() {
     let opts = parse_server_status(&args(&[
         "--url",
         &format!("http://{}", addr),
+        "--no-system-proxy",
         "--env-file",
         env_file.to_str().unwrap(),
     ]))
@@ -227,7 +230,12 @@ async fn server_status_non_json_error_reports_status_and_content_type_only() {
         )
         .unwrap();
     });
-    let opts = parse_server_status(&args(&["--url", &format!("http://{}", addr)])).unwrap();
+    let opts = parse_server_status(&args(&[
+        "--url",
+        &format!("http://{}", addr),
+        "--no-system-proxy",
+    ]))
+    .unwrap();
     let output = run_server_status(opts).await.unwrap();
     handle.join().unwrap();
     assert!(output.contains("HTTP reachable:        no"));

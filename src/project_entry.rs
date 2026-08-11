@@ -490,6 +490,7 @@ async fn collect_readiness_from_remote(
 ) -> ProjectReadiness {
     let url = format!("{}/api/connector/readiness", config.server_url());
     let response = reqwest::Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(1))
         .timeout(Duration::from_secs(3))
         .build()
@@ -946,6 +947,7 @@ async fn wait_for_server(
     key: &str,
 ) -> Result<(), ProductError> {
     let client = reqwest::Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(1))
         .timeout(Duration::from_secs(2))
         .build()

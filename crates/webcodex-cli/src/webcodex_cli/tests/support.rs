@@ -15,3 +15,10 @@ pub(super) use std::io::{Read, Write};
 pub(super) use std::net::TcpListener;
 pub(super) use std::path::{Path, PathBuf};
 pub(super) use std::thread;
+
+pub(super) fn direct_server_http() -> ServerHttpOptions {
+    ServerHttpOptions {
+        proxy: None,
+        no_system_proxy: true,
+    }
+}

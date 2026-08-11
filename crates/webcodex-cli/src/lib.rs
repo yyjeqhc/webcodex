@@ -25,7 +25,9 @@ use webcodex_admin as admin_cli;
 use webcodex_agent_config as agent_init;
 use webcodex_core::build_info;
 
-use admin_cli::{parse_admin_cli, run_admin_command, AdminCliCommand, AdminOptions};
+use admin_cli::{
+    parse_admin_cli, run_admin_command, AdminCliCommand, AdminOptions, ServerHttpOptions,
+};
 use agent_init::{
     run_agent_init, AgentInitOptions, DEFAULT_INIT_PROJECTS_DIR, DEFAULT_POLL_INTERVAL_MS,
     TRANSPORT_WEBSOCKET,
@@ -133,6 +135,7 @@ struct TokenGenerateOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct TokenCreateLocalOptions {
     server_url: String,
+    server_http: ServerHttpOptions,
     username: String,
     credential: Option<String>,
     credential_env: Option<String>,
@@ -152,6 +155,7 @@ struct AgentTokenCreateLocalOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct SetupSingleUserOptions {
     server_url: String,
+    server_http: ServerHttpOptions,
     token: Option<String>,
     token_file: Option<PathBuf>,
     username: String,
@@ -168,6 +172,7 @@ struct SetupSingleUserOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct PairingCreateOptions {
     server_url: String,
+    server_http: ServerHttpOptions,
     env_file: Option<PathBuf>,
     token: Option<String>,
     token_file: Option<PathBuf>,
@@ -183,6 +188,7 @@ struct PairingCreateOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ClientEnrollOptions {
     server_url: String,
+    server_http: ServerHttpOptions,
     pairing_code: String,
     client_id: String,
     display_name: Option<String>,
@@ -281,6 +287,7 @@ struct AgentStatusOptions {
     service_file: PathBuf,
     local_state_dir: Option<PathBuf>,
     server_url: Option<String>,
+    server_http: ServerHttpOptions,
     user_token_file: Option<PathBuf>,
     agent_token_file: Option<PathBuf>,
     json: bool,
@@ -366,6 +373,7 @@ fn parse_connect(args: &[String]) -> CliAction {
         };
     }
     let mut server_url = None;
+    let mut server_http = ServerHttpOptions::default();
     let mut key = None;
     let mut key_file = None;
     let mut project = PathBuf::from(".");
@@ -380,6 +388,11 @@ fn parse_connect(args: &[String]) -> CliAction {
             args.get(*index).cloned()
         };
         match arg.as_str() {
+            "--proxy" => match take(&mut index) {
+                Some(value) => server_http.proxy = Some(value),
+                None => return cli_parse_error("--proxy requires a value".to_string()),
+            },
+            "--no-system-proxy" => server_http.no_system_proxy = true,
             "--key" => match take(&mut index) {
                 Some(value) => key = Some(value),
                 None => return cli_parse_error("--key requires a value".to_string()),
@@ -416,6 +429,9 @@ fn parse_connect(args: &[String]) -> CliAction {
         }
         index += 1;
     }
+    if let Err(error) = server_http.validate() {
+        return cli_parse_error(error);
+    }
     if key.is_some() && key_file.is_some() {
         return cli_parse_error("--key and --key-file are mutually exclusive".to_string());
     }
@@ -432,6 +448,7 @@ fn parse_connect(args: &[String]) -> CliAction {
     }
     CliAction::Connect(ConnectOptions {
         server_url,
+        server_http,
         key,
         key_file,
         project,
@@ -478,6 +495,7 @@ fn parse_login(args: &[String]) -> CliAction {
         };
     }
     let mut server_url: Option<String> = None;
+    let mut server_http = ServerHttpOptions::default();
     let mut code: Option<String> = None;
     let mut device: Option<String> = None;
     let mut device_explicit = false;
@@ -495,6 +513,11 @@ fn parse_login(args: &[String]) -> CliAction {
             args.get(*index).cloned()
         };
         match arg.as_str() {
+            "--proxy" => match take(&mut index) {
+                Some(value) => server_http.proxy = Some(value),
+                None => return cli_parse_error("--proxy requires a value".to_string()),
+            },
+            "--no-system-proxy" => server_http.no_system_proxy = true,
             "--code" | "--pairing-code" => match take(&mut index) {
                 Some(value) => code = Some(value),
                 None => return cli_parse_error(format!("{arg} requires a value")),
@@ -533,6 +556,9 @@ fn parse_login(args: &[String]) -> CliAction {
         }
         index += 1;
     }
+    if let Err(error) = server_http.validate() {
+        return cli_parse_error(error);
+    }
     if json && print_mcp_config {
         return cli_parse_error(
             "--json and --print-mcp-config are mutually exclusive; --print-mcp-config emits a credential"
@@ -554,6 +580,7 @@ fn parse_login(args: &[String]) -> CliAction {
     };
     CliAction::Login(LoginOptions {
         server_url,
+        server_http,
         code,
         device: device.unwrap_or_else(default_device_name),
         device_explicit,
@@ -753,6 +780,8 @@ fn parse_agent_token_create_local(args: &[String]) -> Result<AgentTokenCreateLoc
     while let Some(flag) = p.next() {
         match flag.as_str() {
             "--server" | "--server-url" => opts.admin.server_url = p.value(&flag)?,
+            "--proxy" => opts.admin.server_http.proxy = Some(p.value(&flag)?),
+            "--no-system-proxy" => opts.admin.server_http.no_system_proxy = true,
             "--user" | "--username" => opts.username = p.value(&flag)?,
             "--client-id" => opts.client_id = p.value(&flag)?,
             "--credential" => opts.admin.credential = Some(p.value(&flag)?),
@@ -771,10 +800,11 @@ fn parse_agent_token_create_local(args: &[String]) -> Result<AgentTokenCreateLoc
                         .map(str::to_string),
                 );
             }
-            "-h" | "--help" => return Err("Usage: webcodex agent-token create-local --server URL --user USER --credential CRED --client-id ID [--name NAME] [--scopes S1,S2]".to_string()),
+            "-h" | "--help" => return Err("Usage: webcodex agent-token create-local --server URL --user USER --credential CRED --client-id ID [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string()),
             _ => return Err(format!("unknown agent-token create-local flag: {}", flag)),
         }
     }
+    opts.admin.server_http.validate()?;
     if opts.admin.server_url.trim().is_empty() {
         return Err("--server is required".to_string());
     }
@@ -796,6 +826,8 @@ fn parse_token_create_local(args: &[String]) -> Result<TokenCreateLocalOptions, 
     while let Some(flag) = p.next() {
         match flag.as_str() {
             "--server" | "--server-url" => opts.server_url = p.value(&flag)?,
+            "--proxy" => opts.server_http.proxy = Some(p.value(&flag)?),
+            "--no-system-proxy" => opts.server_http.no_system_proxy = true,
             "--user" | "--username" => opts.username = p.value(&flag)?,
             "--credential" => opts.credential = Some(p.value(&flag)?),
             "--credential-env" => opts.credential_env = Some(p.value(&flag)?),
@@ -811,11 +843,12 @@ fn parse_token_create_local(args: &[String]) -> Result<TokenCreateLocalOptions, 
                 );
             }
             "-h" | "--help" => {
-                return Err("Usage: webcodex token create-local --server URL --user USER --credential CRED [--name NAME] [--scopes S1,S2]".to_string())
+                return Err("Usage: webcodex token create-local --server URL --user USER --credential CRED [--proxy http://HOST:PORT|--no-system-proxy] [--name NAME] [--scopes S1,S2]".to_string())
             }
             _ => return Err(format!("unknown token create-local flag: {}", flag)),
         }
     }
+    opts.server_http.validate()?;
     if opts.server_url.trim().is_empty() {
         return Err("--server is required".to_string());
     }
@@ -1099,6 +1132,7 @@ fn parse_ops_subcommand(args: &[String]) -> CliAction {
 fn default_ops_common_options() -> OpsCommonOptions {
     OpsCommonOptions {
         server_url: "http://127.0.0.1:8080".to_string(),
+        server_http: ServerHttpOptions::default(),
         env_file: None,
         token_file: None,
         token: None,
@@ -1113,6 +1147,8 @@ fn parse_ops_common(args: &[String], command: &str) -> Result<OpsCommonOptions, 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--server-url" | "--url" => opts.server_url = next_value(&mut iter, arg)?,
+            "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => opts.server_http.no_system_proxy = true,
             "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--token" => opts.token = Some(next_value(&mut iter, arg)?),
@@ -1125,6 +1161,7 @@ fn parse_ops_common(args: &[String], command: &str) -> Result<OpsCommonOptions, 
 }
 
 fn validate_ops_common(opts: &OpsCommonOptions) -> Result<OpsCommonOptions, String> {
+    opts.server_http.validate()?;
     if opts.server_url.trim().is_empty() {
         return Err("--server-url cannot be empty".to_string());
     }
@@ -1146,6 +1183,8 @@ fn parse_ops_smoke_preflight(args: &[String]) -> Result<OpsSmokePreflightOptions
         match arg.as_str() {
             "--project" => project = next_value(&mut iter, arg)?,
             "--server-url" | "--url" => common.server_url = next_value(&mut iter, arg)?,
+            "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => common.server_http.no_system_proxy = true,
             "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--token" => common.token = Some(next_value(&mut iter, arg)?),
@@ -1607,6 +1646,7 @@ fn parse_agent_status_with_identity(
         service_file: PathBuf::new(),
         local_state_dir: None,
         server_url: None,
+        server_http: ServerHttpOptions::default(),
         user_token_file: None,
         agent_token_file: None,
         json: false,
@@ -1624,6 +1664,8 @@ fn parse_agent_status_with_identity(
             "--config" => config = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--service-file" => service_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--server-url" => opts.server_url = Some(next_value(&mut iter, arg)?),
+            "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => opts.server_http.no_system_proxy = true,
             "--user-token-file" => {
                 opts.user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
             }
@@ -1634,6 +1676,7 @@ fn parse_agent_status_with_identity(
             _ => return Err(format!("unknown agent status flag: {}", arg)),
         }
     }
+    opts.server_http.validate()?;
     let scope_explicit = scope.is_some();
     let scope = scope.unwrap_or_else(|| default_agent_service_scope(effective_root));
     opts.scope = scope;
@@ -1751,6 +1794,7 @@ fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceO
 fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
     let mut opts = ServerStatusOptions {
         url: "http://127.0.0.1:8080".to_string(),
+        server_http: ServerHttpOptions::default(),
         env_file: Some(default_server_paths()?.env_file),
         env_file_explicit: false,
         token_file: None,
@@ -1760,6 +1804,8 @@ fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--url" => opts.url = next_value(&mut iter, arg)?,
+            "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => opts.server_http.no_system_proxy = true,
             "--env-file" => {
                 opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?));
                 opts.env_file_explicit = true;
@@ -1769,6 +1815,7 @@ fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
             _ => return Err(format!("unknown server status flag: {}", arg)),
         }
     }
+    opts.server_http.validate()?;
     if opts.url.trim().is_empty() {
         return Err("--url cannot be empty".to_string());
     }
@@ -1784,6 +1831,8 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--server-url" => opts.server_url = next_value(&mut iter, arg)?,
+            "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => opts.server_http.no_system_proxy = true,
             "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--token" => opts.token = Some(next_value(&mut iter, arg)?),
             "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
@@ -1801,6 +1850,7 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
             _ => return Err(format!("unknown pairing create flag: {}", arg)),
         }
     }
+    opts.server_http.validate()?;
     if opts.server_url.trim().is_empty() {
         return Err("--server-url is required".to_string());
     }
@@ -1821,6 +1871,7 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
 
 fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     let mut server_url = String::new();
+    let mut server_http = ServerHttpOptions::default();
     let mut pairing_code = String::new();
     let mut client_id = String::new();
     let mut display_name = None;
@@ -1837,6 +1888,8 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--server-url" => server_url = next_value(&mut iter, arg)?,
+            "--proxy" => server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => server_http.no_system_proxy = true,
             "--pairing-code" => pairing_code = next_value(&mut iter, arg)?,
             "--client-id" => client_id = next_value(&mut iter, arg)?,
             "--display-name" => display_name = Some(next_value(&mut iter, arg)?),
@@ -1854,6 +1907,7 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
             _ => return Err(format!("unknown client enroll flag: {}", arg)),
         }
     }
+    server_http.validate()?;
     if server_url.trim().is_empty() {
         return Err("--server-url is required".to_string());
     }
@@ -1897,6 +1951,7 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     }
     Ok(ClientEnrollOptions {
         server_url,
+        server_http,
         pairing_code,
         client_id,
         display_name,
@@ -2027,6 +2082,7 @@ fn parse_setup_subcommand(args: &[String]) -> CliAction {
 fn parse_setup_single_user(args: &[String]) -> Result<SetupSingleUserOptions, String> {
     let mut opts = SetupSingleUserOptions {
         server_url: String::new(),
+        server_http: ServerHttpOptions::default(),
         token: None,
         token_file: None,
         username: String::new(),
@@ -2043,6 +2099,8 @@ fn parse_setup_single_user(args: &[String]) -> Result<SetupSingleUserOptions, St
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--server-url" => opts.server_url = next_value(&mut iter, arg)?,
+            "--proxy" => opts.server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => opts.server_http.no_system_proxy = true,
             "--token" => opts.token = Some(next_value(&mut iter, arg)?),
             "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--username" => opts.username = next_value(&mut iter, arg)?,
@@ -2058,6 +2116,7 @@ fn parse_setup_single_user(args: &[String]) -> Result<SetupSingleUserOptions, St
             _ => return Err(format!("unknown setup single-user flag: {}", arg)),
         }
     }
+    opts.server_http.validate()?;
     if opts.server_url.trim().is_empty() {
         return Err("--server-url is required".to_string());
     }

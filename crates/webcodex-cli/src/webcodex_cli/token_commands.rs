@@ -2,7 +2,7 @@ use reqwest::header::CONTENT_TYPE;
 use serde_json::json;
 
 use crate::{
-    admin_cli::{self, build_admin_request, AdminCliCommand},
+    admin_cli::{self, build_admin_request, build_server_http_client, AdminCliCommand},
     AgentTokenCreateLocalOptions, TokenCreateLocalOptions,
 };
 
@@ -67,10 +67,7 @@ pub(crate) async fn run_token_create_local(
         "{}/api/tokens/register_hash",
         opts.server_url.trim_end_matches('/')
     );
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let client = build_server_http_client(&opts.server_http)?;
     let resp = client
         .post(url)
         .bearer_auth(&credential)
@@ -129,10 +126,7 @@ pub(crate) async fn run_agent_token_create_local(
 
 async fn post_json_with_bearer(req: &admin_cli::AdminCliRequest) -> Result<(), String> {
     let url = format!("{}{}", req.server_url, req.path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let client = build_server_http_client(&req.server_http)?;
     let resp = client
         .post(url)
         .bearer_auth(&req.token)

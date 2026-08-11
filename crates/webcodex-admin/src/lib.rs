@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 mod commands;
+mod http;
 mod output;
 #[cfg(test)]
 mod tests;
@@ -9,6 +10,7 @@ mod tests;
 pub use commands::{
     build_admin_request, is_admin_group, parse_admin_cli, run_admin_command, usage,
 };
+pub use http::{build_server_http_client, ServerHttpOptions};
 
 /// Mutex serializing tests that mutate process-wide environment variables.
 /// It is exported because tests in both consuming packages use the same
@@ -32,6 +34,7 @@ pub enum AdminCliCommand {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AdminOptions {
     pub server_url: String,
+    pub server_http: ServerHttpOptions,
     pub token: Option<String>,
     pub token_env: Option<String>,
     pub credential: Option<String>,
@@ -96,6 +99,7 @@ pub struct AgentTokenRegisterHashArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminCliRequest {
     pub server_url: String,
+    pub server_http: ServerHttpOptions,
     pub token: String,
     pub path: &'static str,
     pub body: Value,

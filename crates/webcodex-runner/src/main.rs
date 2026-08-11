@@ -2280,7 +2280,10 @@ fn append_runner_stream(stream: &mut ShellJobStreamSnapshot, chunk: Option<&str>
         let observed_next = stream
             .first_retained_line
             .saturating_add(runner_retained_line_count(&stream.tail));
-        let minimum_start = stream.tail.len() - JOB_SNAPSHOT_STREAM_MAX_BYTES;
+        let mut minimum_start = stream.tail.len() - JOB_SNAPSHOT_STREAM_MAX_BYTES;
+        while minimum_start < stream.tail.len() && !stream.tail.is_char_boundary(minimum_start) {
+            minimum_start += 1;
+        }
         if let Some(relative_newline) = stream.tail[minimum_start..].find('\n') {
             let drop_end = minimum_start + relative_newline + 1;
             let dropped_lines = stream.tail[..drop_end]
@@ -2290,15 +2293,11 @@ fn append_runner_stream(stream: &mut ShellJobStreamSnapshot, chunk: Option<&str>
             stream.tail.drain(..drop_end);
             stream.first_retained_line = stream.first_retained_line.saturating_add(dropped_lines);
         } else {
-            let mut start = minimum_start;
-            while start < stream.tail.len() && !stream.tail.is_char_boundary(start) {
-                start += 1;
-            }
-            let dropped_lines = stream.tail[..start]
+            let dropped_lines = stream.tail[..minimum_start]
                 .bytes()
                 .filter(|byte| *byte == b'\n')
                 .count();
-            stream.tail.drain(..start);
+            stream.tail.drain(..minimum_start);
             stream.first_retained_line = stream.first_retained_line.saturating_add(dropped_lines);
         }
         if stream.tail.is_empty() {
@@ -2321,7 +2320,10 @@ fn trim_runner_stream_to(stream: &mut ShellJobStreamSnapshot, max_bytes: usize) 
     let observed_next = stream
         .first_retained_line
         .saturating_add(runner_retained_line_count(&stream.tail));
-    let minimum_start = stream.tail.len().saturating_sub(max_bytes);
+    let mut minimum_start = stream.tail.len().saturating_sub(max_bytes);
+    while minimum_start < stream.tail.len() && !stream.tail.is_char_boundary(minimum_start) {
+        minimum_start += 1;
+    }
     if let Some(relative_newline) = stream.tail[minimum_start..].find('\n') {
         let drop_end = minimum_start + relative_newline + 1;
         let dropped_lines = stream.tail[..drop_end]
@@ -2331,15 +2333,11 @@ fn trim_runner_stream_to(stream: &mut ShellJobStreamSnapshot, max_bytes: usize) 
         stream.tail.drain(..drop_end);
         stream.first_retained_line = stream.first_retained_line.saturating_add(dropped_lines);
     } else {
-        let mut start = minimum_start;
-        while start < stream.tail.len() && !stream.tail.is_char_boundary(start) {
-            start += 1;
-        }
-        let dropped_lines = stream.tail[..start]
+        let dropped_lines = stream.tail[..minimum_start]
             .bytes()
             .filter(|byte| *byte == b'\n')
             .count();
-        stream.tail.drain(..start);
+        stream.tail.drain(..minimum_start);
         stream.first_retained_line = stream.first_retained_line.saturating_add(dropped_lines);
     }
     if stream.tail.is_empty() {
@@ -4422,3 +4420,39 @@ fn main() {
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod utf8_truncation_tests {
+    use super::*;
+
+    #[test]
+    fn runner_stream_truncation_keeps_utf8_boundary() {
+        let mut stream = ShellJobStreamSnapshot::default();
+        let chunk = format!(
+            "█{}",
+            "x".repeat(JOB_SNAPSHOT_STREAM_MAX_BYTES - "█".len() + 1)
+        );
+        assert_eq!(chunk.len(), JOB_SNAPSHOT_STREAM_MAX_BYTES + 1);
+
+        append_runner_stream(&mut stream, Some(&chunk));
+
+        assert!(stream.truncated);
+        assert!(stream.tail.len() <= JOB_SNAPSHOT_STREAM_MAX_BYTES);
+        assert!(stream.tail.bytes().all(|byte| byte == b'x'));
+    }
+
+    #[test]
+    fn runner_inventory_trim_keeps_utf8_boundary() {
+        let mut stream = ShellJobStreamSnapshot {
+            tail: format!("█{}", "x".repeat(64)),
+            ..Default::default()
+        };
+        let max_bytes = stream.tail.len() - 1;
+
+        trim_runner_stream_to(&mut stream, max_bytes);
+
+        assert!(stream.truncated);
+        assert!(stream.tail.len() <= max_bytes);
+        assert!(stream.tail.bytes().all(|byte| byte == b'x'));
+    }
+}

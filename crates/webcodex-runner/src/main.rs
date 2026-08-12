@@ -1552,6 +1552,10 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // inferred from `ssh_shell` + `persistent_shell`.
     capabilities.ssh_persistent_shell = SshConnectionPool::is_available() && cfg!(unix);
     capabilities.structured_validation_argv = true;
+    // This binary accepts both legacy Go validation argv from old Servers and
+    // the current machine-readable JSON argv. Do not trust static config or
+    // infer this from generic structured validation support.
+    capabilities.structured_go_test_json = true;
     capabilities.structured_process_argv = true;
     capabilities.structured_script_payload = true;
     capabilities.structured_execution_jobs = true;

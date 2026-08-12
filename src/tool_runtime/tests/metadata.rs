@@ -114,6 +114,7 @@ async fn register_agent_projects_for_auth(
                     persistent_shell: false,
                     ssh_persistent_shell: false,
                     structured_validation_argv: true,
+                    structured_go_test_json: true,
                     structured_process_argv: true,
                     structured_script_payload: false,
                     structured_execution_jobs: false,

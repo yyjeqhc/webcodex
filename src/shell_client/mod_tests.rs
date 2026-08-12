@@ -1406,6 +1406,7 @@ fn protocol_async_capability_defaults_false() {
     assert!(!capabilities.async_jobs);
     assert!(!capabilities.async_shell_jobs);
     assert!(!capabilities.structured_validation_argv);
+    assert!(!capabilities.structured_go_test_json);
 
     let request: ShellClientRegisterRequest = serde_json::from_str(
         r#"{
@@ -1419,6 +1420,7 @@ fn protocol_async_capability_defaults_false() {
     assert!(!capabilities.async_jobs);
     assert!(!capabilities.async_shell_jobs);
     assert!(!capabilities.structured_validation_argv);
+    assert!(!capabilities.structured_go_test_json);
 }
 
 #[test]
@@ -1540,6 +1542,7 @@ async fn client_supports_reflects_registered_capabilities() {
         file_read: true,
         async_shell_jobs: true,
         project_path_registration: true,
+        structured_go_test_json: true,
         ..Default::default()
     };
     registry
@@ -1574,6 +1577,10 @@ async fn client_supports_reflects_registered_capabilities() {
         .unwrap());
     assert!(registry
         .client_supports("oe", SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION)
+        .await
+        .unwrap());
+    assert!(registry
+        .client_supports("oe", SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON)
         .await
         .unwrap());
     assert!(!registry
@@ -1631,6 +1638,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 persistent_shell: true,
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
+                structured_go_test_json: true,
                 structured_process_argv: true,
                 structured_script_payload: true,
                 structured_execution_jobs: true,

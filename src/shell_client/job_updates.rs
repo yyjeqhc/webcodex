@@ -584,6 +584,15 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
+        if validation_steps.iter().any(|step| {
+            step.name == "test" && step.program == "go" && step.args == ["test", "-json", "./..."]
+        }) && !client.capabilities.structured_go_test_json
+        {
+            return Err(format!(
+                "structured_go_test_json_unavailable: agent client {} does not support machine-readable Go test validation",
+                client_id
+            ));
+        }
         if metadata
             .project_id
             .as_deref()

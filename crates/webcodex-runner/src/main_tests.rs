@@ -6040,6 +6040,7 @@ fn register_request_announces_correct_protocol_version() {
     assert!(caps.async_jobs);
     assert!(caps.async_shell_jobs);
     assert!(caps.structured_validation_argv);
+    assert!(caps.structured_go_test_json);
     assert!(caps.structured_process_argv);
     assert!(caps.structured_script_payload);
     assert!(caps.structured_execution_jobs);

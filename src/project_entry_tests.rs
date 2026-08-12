@@ -226,6 +226,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                     async_jobs: true,
                     async_shell_jobs: true,
                     structured_validation_argv: true,
+                    structured_go_test_json: true,
                     ..Default::default()
                 }),
                 projects: Some(vec![ShellAgentProjectSummary {

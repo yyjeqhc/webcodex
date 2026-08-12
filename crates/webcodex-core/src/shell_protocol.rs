@@ -115,6 +115,10 @@ pub const SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL: &str = "persistent_shell";
 /// must reject the request rather than silently opening a local shell.
 pub const SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL: &str = "ssh_persistent_shell";
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_validation_argv";
+/// The Runner accepts the canonical machine-readable Go validation argv
+/// `go test -json ./...`. Missing on older Runners and never inferred from
+/// generic structured validation support.
+pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON: &str = "structured_go_test_json";
 /// General model-facing native process execution with a typed executable and
 /// argv. This is deliberately independent from structured Cargo validation:
 /// older Runners may support validation argv without accepting arbitrary
@@ -156,6 +160,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
@@ -217,6 +222,11 @@ pub struct ShellClientCapabilities {
     /// Missing on older agents and therefore fail-closed.
     #[serde(default)]
     pub structured_validation_argv: bool,
+    /// Machine-readable `go test -json ./...` validation. Missing on older
+    /// Runners and false; never inferred from structured_validation_argv or
+    /// agent_protocol_version.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_go_test_json: bool,
     /// General native executable + argv requests. Missing on older agents and
     /// therefore false; the Server must fail closed without a shell fallback.
     #[serde(default)]
@@ -292,6 +302,7 @@ impl Default for ShellClientCapabilities {
             persistent_shell: false,
             ssh_persistent_shell: false,
             structured_validation_argv: false,
+            structured_go_test_json: false,
             structured_process_argv: false,
             structured_script_payload: false,
             structured_execution_jobs: false,
@@ -1346,7 +1357,7 @@ impl ShellJobValidationStep {
             ("check", "cargo") => is_canonical_cargo_check_args(&args),
             ("test", "cargo") => is_canonical_cargo_test_args(&args),
             ("check", "go") => args == ["vet", "./..."],
-            ("test", "go") => args == ["test", "-json", "./..."],
+            ("test", "go") => args == ["test", "./..."] || args == ["test", "-json", "./..."],
             ("format", "python") => {
                 args == ["-m", "ruff", "format", "--check"] || args == ["-m", "black", "--check"]
             }
@@ -2260,6 +2271,7 @@ mod envelope_tests {
                 persistent_shell: true,
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
+                structured_go_test_json: true,
                 structured_process_argv: true,
                 structured_script_payload: true,
                 structured_execution_jobs: true,
@@ -2687,6 +2699,7 @@ mod envelope_tests {
             )
             .unwrap();
         assert!(capabilities.structured_validation_argv);
+        assert!(!capabilities.structured_go_test_json);
         assert!(capabilities.structured_process_argv);
         assert!(capabilities.structured_script_payload);
         assert!(capabilities.async_jobs);
@@ -2700,6 +2713,7 @@ mod envelope_tests {
         let capabilities: ShellClientCapabilities =
             serde_json::from_str(r#"{"shell":true,"structured_validation_argv":true}"#).unwrap();
         assert!(capabilities.structured_validation_argv);
+        assert!(!capabilities.structured_go_test_json);
         assert!(!capabilities.structured_process_argv);
         assert!(!capabilities.structured_script_payload);
         assert!(!capabilities.structured_execution_jobs);
@@ -3356,16 +3370,19 @@ mod filter_canonical_tests {
     }
 
     #[test]
-    fn canonical_go_test_requires_machine_readable_json_argv() {
+    fn canonical_go_test_accepts_only_legacy_and_json_argv() {
         let step = |args: &[&str]| ShellJobValidationStep {
             name: "test".to_string(),
             program: "go".to_string(),
             args: args.iter().map(|arg| (*arg).to_string()).collect(),
             env: Vec::new(),
         };
+        assert!(step(&["test", "./..."]).is_canonical());
         assert!(step(&["test", "-json", "./..."]).is_canonical());
-        assert!(!step(&["test", "./..."]).is_canonical());
         assert!(!step(&["test", "-json", "./pkg"]).is_canonical());
+        assert!(!step(&["test", "-json", "-run", "TestOne", "./..."]).is_canonical());
+        assert!(!step(&["test", "-v", "./..."]).is_canonical());
+        assert!(!step(&["run", "./..."]).is_canonical());
     }
 
     #[test]

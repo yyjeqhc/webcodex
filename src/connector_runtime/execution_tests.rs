@@ -131,23 +131,28 @@ async fn fixture(yield_ms: u64) -> Fixture {
     fixture_configured(yield_ms, |service| service).await
 }
 
+async fn fixture_with_go_json_capability(yield_ms: u64, structured_go_test_json: bool) -> Fixture {
+    fixture_built(yield_ms, |service| service, false, structured_go_test_json).await
+}
+
 /// Restricted-authority fixture for the lanes that protect the human-approval
 /// machinery; the default fixture runs under trusted_agent like production.
 async fn fixture_restricted(yield_ms: u64) -> Fixture {
-    fixture_built(yield_ms, |service| service, true).await
+    fixture_built(yield_ms, |service| service, true, true).await
 }
 
 async fn fixture_configured(
     yield_ms: u64,
     configure: impl FnOnce(execution::ExecutionService) -> execution::ExecutionService,
 ) -> Fixture {
-    fixture_built(yield_ms, configure, false).await
+    fixture_built(yield_ms, configure, false, true).await
 }
 
 async fn fixture_built(
     yield_ms: u64,
     configure: impl FnOnce(execution::ExecutionService) -> execution::ExecutionService,
     restricted: bool,
+    structured_go_test_json: bool,
 ) -> Fixture {
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().join("project");
@@ -175,6 +180,7 @@ async fn fixture_built(
                     async_jobs: true,
                     async_shell_jobs: true,
                     structured_validation_argv: true,
+                    structured_go_test_json,
                     ..Default::default()
                 }),
                 projects: Some(vec![project_summary("project", &project)]),
@@ -2067,6 +2073,94 @@ async fn old_agent_cannot_receive_a_structured_validation_job() {
         .unwrap()
         .is_none());
     assert!(poll(&fixture.registry).await.is_none());
+}
+
+#[tokio::test]
+async fn old_agent_without_go_json_capability_rejects_go_test_before_reservation_but_allows_go_check(
+) {
+    let fixture = fixture_with_go_json_capability(1_000, false).await;
+    let root = Path::new(&task(&fixture).execution_root).join("go-compat");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(
+        root.join("go.mod"),
+        "module example.test/go-compat\n\ngo 1.22\n",
+    )
+    .unwrap();
+    let go_test = fixture
+        .call(
+            "checks_run",
+            json!({
+                "task_id": fixture.task_id,
+                "operation_id": "old-runner-go-test",
+                "checks": ["test"],
+                "recipe": "go",
+                "cwd": "go-compat",
+                "timeout_secs": 30
+            }),
+        )
+        .await;
+    assert!(!go_test.ok, "{}", go_test.body);
+    assert_eq!(go_test.http_status, 409);
+    assert_eq!(
+        go_test.body["error"]["code"],
+        "structured_go_test_json_unavailable"
+    );
+    assert_eq!(
+        go_test.body["data"]["required_capability"],
+        "structured_go_test_json"
+    );
+    assert!(go_test.body["error"]["suggested_action"]
+        .as_str()
+        .is_some_and(|message| message.contains("Upgrade and reconnect")));
+    assert!(fixture
+        .connector
+        .db
+        .latest_connector_execution(
+            &fixture.task_id,
+            &fixture.connector.context.project_id,
+            tests::PROJECT_SUBJECT_ID,
+            None,
+        )
+        .unwrap()
+        .is_none());
+    assert!(poll(&fixture.registry).await.is_none());
+
+    let go_check = fixture
+        .call(
+            "checks_run",
+            json!({
+                "task_id": fixture.task_id,
+                "operation_id": "old-runner-go-check",
+                "checks": ["check"],
+                "recipe": "go",
+                "cwd": "go-compat",
+                "timeout_secs": 30
+            }),
+        )
+        .await;
+    assert!(go_check.ok, "{}", go_check.body);
+    assert_ne!(
+        go_check.body["data"]["execution"]["execution_status"], "failed",
+        "{}",
+        go_check.body
+    );
+    let request = next_request(&fixture.registry).await;
+    assert_eq!(request.kind, "start_validation_job");
+    let steps: Vec<ShellJobValidationStep> = serde_json::from_str(&request.command).unwrap();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].name, "check");
+    assert_eq!(steps[0].program, "go");
+    assert_eq!(steps[0].args, ["vet", "./..."]);
+    update_validation_job(
+        &fixture.registry,
+        request.job_id.as_deref().unwrap(),
+        "completed",
+        None,
+        Some(0),
+        check_progress(1, None, None),
+    )
+    .await;
+    assert!(go_check.body["data"]["execution"]["execution_id"].is_string());
 }
 
 #[tokio::test]

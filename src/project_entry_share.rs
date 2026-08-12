@@ -18,6 +18,7 @@ use tokio::task::JoinHandle;
 const TUNNEL_START_TIMEOUT: Duration = Duration::from_secs(20);
 const TUNNEL_LOG_LINES: usize = 8;
 const TUNNEL_LOG_LINE_BYTES: usize = 512;
+const TUNNEL_LOG_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TunnelProvider {
@@ -300,8 +301,7 @@ async fn start_cloudflare_quick_with_binary(
 
     loop {
         if let Some(status) = child.try_wait().map_err(|_| tunnel_runtime_error())? {
-            stdout_task.abort();
-            stderr_task.abort();
+            drain_tunnel_readers(stdout_task, stderr_task).await;
             let detail = bounded_tunnel_log_summary(&recent);
             let message = if detail.is_empty() {
                 format!("cloudflared exited before creating a Quick Tunnel ({status})")
@@ -357,6 +357,22 @@ where
             }
         }
     })
+}
+
+// A child can exit before the async readers are scheduled to consume bytes that
+// are already buffered in its pipes. Give them a bounded chance to reach EOF so
+// startup diagnostics are retained, but do not wait forever if a descendant
+// inherited one of the pipe handles.
+async fn drain_tunnel_readers(mut stdout_task: JoinHandle<()>, mut stderr_task: JoinHandle<()>) {
+    let drained = tokio::time::timeout(TUNNEL_LOG_DRAIN_TIMEOUT, async {
+        let _ = tokio::join!(&mut stdout_task, &mut stderr_task);
+    })
+    .await
+    .is_ok();
+    if !drained {
+        stdout_task.abort();
+        stderr_task.abort();
+    }
 }
 
 fn record_tunnel_line(recent: &Arc<Mutex<VecDeque<String>>>, line: &str) {

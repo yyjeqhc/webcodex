@@ -1861,6 +1861,43 @@ async fn code_navigate_requires_project_read_and_rejects_foreign_or_inactive_tas
         .is_none());
 }
 
+#[tokio::test]
+async fn code_navigate_rejects_irrelevant_null_fields_before_dispatch() {
+    let (_temp, connector, registry) = connector_with_lsp(true).await;
+    let task_id = start_read_only_task(&connector, "validate strict navigation input").await;
+    for arguments in [
+        json!({ "task_id": task_id, "operation": "status", "path": null }),
+        json!({
+            "task_id": task_id,
+            "operation": "hover",
+            "path": "src/main.rs",
+            "line": 1,
+            "column": 1,
+            "limit": null
+        }),
+    ] {
+        let outcome = connector
+            .call(
+                "code_navigate",
+                arguments,
+                Some(&auth("u1")),
+                ConnectorTransport::Mcp,
+            )
+            .await;
+        assert_eq!(outcome.http_status, 400);
+        assert_eq!(outcome.body["error"]["code"], "invalid_arguments");
+    }
+    assert!(registry
+        .poll(ShellAgentPollRequest {
+            client_id: "hosted".to_string(),
+            agent_instance_id: "instance".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
 #[test]
 fn code_navigation_operation_parameters_are_strict() {
     let task_id = "wc_task_00000000000000000000000000000000";

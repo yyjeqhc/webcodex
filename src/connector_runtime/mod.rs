@@ -1353,10 +1353,50 @@ impl ConnectorRuntime {
         transport: ConnectorTransport,
         now: i64,
     ) -> ConnectorCallOutcome {
+        // Preserve field presence before serde maps explicit JSON nulls to None.
+        // Operation-specific fields are strict even when an irrelevant field is
+        // supplied as null rather than omitted.
+        let supplied_fields = arguments.as_object().map(|object| {
+            [
+                ("path", object.contains_key("path")),
+                ("query", object.contains_key("query")),
+                ("line", object.contains_key("line")),
+                ("column", object.contains_key("column")),
+                (
+                    "include_declaration",
+                    object.contains_key("include_declaration"),
+                ),
+                ("limit", object.contains_key("limit")),
+            ]
+        });
         let input: CodeNavigateInput = match parse_input("code_navigate", arguments) {
             Ok(input) => input,
             Err(outcome) => return outcome,
         };
+        let allowed_fields: &[&str] = match input.operation {
+            CodeNavigateOperation::Status => &[],
+            CodeNavigateOperation::DocumentSymbols => &["path", "limit"],
+            CodeNavigateOperation::WorkspaceSymbols => &["query", "limit"],
+            CodeNavigateOperation::Definition => &["path", "line", "column", "limit"],
+            CodeNavigateOperation::References => {
+                &["path", "line", "column", "include_declaration", "limit"]
+            }
+            CodeNavigateOperation::Diagnostics => &["path", "limit"],
+            CodeNavigateOperation::Hover => &["path", "line", "column"],
+        };
+        if let Some((field, _)) = supplied_fields
+            .into_iter()
+            .flatten()
+            .find(|(field, present)| *present && !allowed_fields.contains(field))
+        {
+            return invalid_input(
+                "code_navigate",
+                format!(
+                    "{field} is not valid for operation {}",
+                    input.operation.as_str()
+                ),
+            );
+        }
         let operation = input.operation.as_str();
         let (tool_name, mut args) = match code_navigation_tool_call(&input) {
             Ok(call) => call,

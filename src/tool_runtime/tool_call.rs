@@ -1127,14 +1127,14 @@ pub enum ToolCall {
 
     /// List all agent-registered runtime projects.
 
-    /// Probe agent-side rust-analyzer availability without starting it.
+    /// Probe agent-side language-server availability without starting it.
     LspStatus {
         project: String,
         #[serde(default)]
         session_id: Option<String>,
     },
 
-    /// Hierarchical document symbols for a project-relative Rust file.
+    /// Hierarchical document symbols for a project-relative supported source file.
     DocumentSymbols {
         project: String,
         path: String,
@@ -1144,7 +1144,7 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
-    /// Latest bounded rust-analyzer diagnostics for a project-relative file.
+    /// Latest bounded language-server diagnostics for a project-relative supported source file.
     DocumentDiagnostics {
         project: String,
         path: String,

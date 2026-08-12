@@ -75,7 +75,7 @@ conn=$(cat "$state/credentials/connector-key")
 curl -fsS -H "Authorization: Bearer $conn" -H 'Content-Type: application/json' \
   -X POST "http://127.0.0.1:$port/mcp" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-# OpenAPI projection is the same 12 operations:
+# OpenAPI projection is the same 13 operations:
 curl -fsS -H "Authorization: Bearer $conn" "http://127.0.0.1:$port/openapi.json"
 # Boundary: a project credential must be denied operator-only routes (HTTP 403):
 curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $conn" \

@@ -338,7 +338,8 @@ fn parse_diagnostic_header_for_severity(line: &str, severity: &'static str) -> O
     let rest = line.strip_prefix(severity)?;
     let (code, message) = if let Some(message) = rest.strip_prefix(':') {
         (None, message)
-    } else if let Some(rest) = rest.strip_prefix('[') {
+    } else {
+        let rest = rest.strip_prefix('[')?;
         let Some((code, after_code)) = rest.split_once(']') else {
             return Some(HeaderParse::Invalid);
         };
@@ -349,8 +350,6 @@ fn parse_diagnostic_header_for_severity(line: &str, severity: &'static str) -> O
             return Some(HeaderParse::Invalid);
         }
         (Some(code.to_string()), message)
-    } else {
-        return None;
     };
     let message = sanitize_bounded_value(message, MAX_DIAGNOSTIC_MESSAGE_CHARS);
     match message {

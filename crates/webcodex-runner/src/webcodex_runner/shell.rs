@@ -380,7 +380,7 @@ fn resolve_process_program(
         } else {
             program.to_string()
         };
-        return match super::util::resolve_program_in_path(&resolved_input, &path) {
+        match super::util::resolve_program_in_path(&resolved_input, &path) {
             Some(super::util::ResolvedProgram::Native(path)) => Ok(path.into_os_string()),
             Some(super::util::ResolvedProgram::Batch(_)) => Err(
                 "unsupported_executable_type: Windows .cmd/.bat files require shell/script semantics and cannot preserve run_process native argv; use run_shell as the current explicit escape hatch"
@@ -389,7 +389,7 @@ fn resolve_process_program(
             None => Err(format!(
                 "structured process executable is unavailable or has an unsupported Windows extension: {program}"
             )),
-        };
+        }
     }
     #[cfg(not(windows))]
     {
@@ -3587,9 +3587,7 @@ done
         assert_eq!(command.get_program(), native.as_os_str());
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
-            args.iter()
-                .map(|argument| OsStr::new(argument))
-                .collect::<Vec<_>>()
+            args.iter().map(OsStr::new).collect::<Vec<_>>()
         );
 
         let marker = temp.path().join("batch-started");

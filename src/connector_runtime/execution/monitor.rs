@@ -351,6 +351,26 @@ fn workspace_provenance_mismatch_detail(
     )
 }
 
+fn validation_protocol_failure_code(error: &str) -> Option<&'static str> {
+    let code = error
+        .strip_prefix("executor protocol violation: ")?
+        .split(':')
+        .next()?;
+    match code {
+        "validation_progress_missing" => Some("validation_progress_missing"),
+        "validation_progress_unexpected" => Some("validation_progress_unexpected"),
+        "validation_progress_incomplete" => Some("validation_progress_incomplete"),
+        "validation_progress_invalid" => Some("validation_progress_invalid"),
+        "validation_plan_invalid" => Some("validation_plan_invalid"),
+        _ => Some("validation_progress_invalid"),
+    }
+}
+
+fn executor_failure_code(error: &str) -> Option<&'static str> {
+    crate::shell_protocol::validation_infrastructure_failure_code(error)
+        .or_else(|| validation_protocol_failure_code(error))
+}
+
 #[cfg(test)]
 mod provenance_tests {
     use super::workspace_provenance_mismatch_detail;
@@ -373,24 +393,4 @@ mod provenance_tests {
         );
         assert!(!tracked.contains(".gitignore"), "{tracked}");
     }
-}
-
-fn validation_protocol_failure_code(error: &str) -> Option<&'static str> {
-    let code = error
-        .strip_prefix("executor protocol violation: ")?
-        .split(':')
-        .next()?;
-    match code {
-        "validation_progress_missing" => Some("validation_progress_missing"),
-        "validation_progress_unexpected" => Some("validation_progress_unexpected"),
-        "validation_progress_incomplete" => Some("validation_progress_incomplete"),
-        "validation_progress_invalid" => Some("validation_progress_invalid"),
-        "validation_plan_invalid" => Some("validation_plan_invalid"),
-        _ => Some("validation_progress_invalid"),
-    }
-}
-
-fn executor_failure_code(error: &str) -> Option<&'static str> {
-    crate::shell_protocol::validation_infrastructure_failure_code(error)
-        .or_else(|| validation_protocol_failure_code(error))
 }

@@ -2,6 +2,10 @@
 
 These are the always-on rules for ordinary repository work. Read only the linked sections needed for the current task. A deeper `AGENTS.md` governs its directory.
 
+## V1 maintenance mode
+
+The V1 formal product surface is feature-frozen by default: ordinary V1 work should prefer correctness, CI reliability, warning/Clippy hygiene, and test quality over new features. Explicitly experimental surfaces may continue only when the task asks for them. Do not weaken safety, credential, process-tree, transport, durability, or boundedness contracts while cleaning up.
+
 ## 1. Verify and preserve
 
 - Work only in the repository, worktree, and external target authorized by the user.

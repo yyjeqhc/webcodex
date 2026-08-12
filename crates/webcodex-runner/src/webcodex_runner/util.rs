@@ -386,7 +386,7 @@ mod tests {
         let executable = spaced.join("probe.exe");
         std::fs::write(&executable, pe_bytes()).unwrap();
         assert_eq!(
-            resolve_program_in_path(&executable.to_string_lossy(), &OsStr::new("")),
+            resolve_program_in_path(&executable.to_string_lossy(), OsStr::new("")),
             Some(ResolvedProgram::Native(executable))
         );
     }
@@ -397,7 +397,7 @@ mod tests {
         let script = temp.path().join("run.cmd");
         std::fs::write(&script, b"@echo off\r\n").unwrap();
         assert_eq!(
-            resolve_program_in_path(&script.to_string_lossy(), &OsStr::new("")),
+            resolve_program_in_path(&script.to_string_lossy(), OsStr::new("")),
             Some(ResolvedProgram::Batch(script))
         );
     }
@@ -543,7 +543,7 @@ mod tests {
         std::fs::create_dir_all(script.parent().unwrap()).unwrap();
         std::fs::write(&script, b"@echo off\r\n").unwrap();
         assert_eq!(
-            resolve_program_in_path(&script.to_string_lossy(), &OsStr::new("")),
+            resolve_program_in_path(&script.to_string_lossy(), OsStr::new("")),
             Some(ResolvedProgram::Batch(script))
         );
     }

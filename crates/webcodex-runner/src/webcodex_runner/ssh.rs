@@ -637,15 +637,18 @@ fn close_control_socket(connection: &SshConnection) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-    if status.is_ok_and(|status| status.success()) {
-        return;
+    if !status.is_ok_and(|status| status.success()) {
+        release_control_master_after_failed_exit(connection);
     }
-    // `-O exit` is the normal path. Some OpenSSH builds can reject the
-    // control request after a transport-side failure even though the master
-    // is still alive. The socket lives in our private 0700 directory, so a
-    // successful `-O check` identifies only the master that this pool created.
-    // Release it conservatively instead of leaking an orphaned local client.
-    #[cfg(unix)]
+}
+
+/// `-O exit` is the normal path. Some OpenSSH builds can reject the control
+/// request after a transport-side failure even though the master is still
+/// alive. The socket lives in our private 0700 directory, so a successful
+/// `-O check` identifies only the master that this pool created. Release it
+/// conservatively instead of leaking an orphaned local client.
+#[cfg(unix)]
+fn release_control_master_after_failed_exit(connection: &SshConnection) {
     if let Some(pid) = control_master_pid(connection) {
         // SAFETY: `pid` came from the authenticated control socket located in
         // this pool's private directory. SIGTERM affects only that SSH master.
@@ -653,6 +656,11 @@ fn close_control_socket(connection: &SshConnection) {
             let _ = libc::kill(pid, libc::SIGTERM);
         }
     }
+}
+
+#[cfg(not(unix))]
+fn release_control_master_after_failed_exit(_connection: &SshConnection) {
+    // Windows never has an `-O check`-derived master pid to release.
 }
 
 #[cfg(unix)]

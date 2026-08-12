@@ -1178,9 +1178,12 @@ mod tests {
         std::fs::create_dir(&bounded).unwrap();
         write_lines(&local_runner_log_path(&bounded), 100, 120, true);
         let archive = local_runner_log_archive_path(&bounded, 1);
+        // The archive content is replaced wholesale below (set_len to 2x the
+        // read cap, then a fresh log), so truncation is the intended contract.
         let mut large = OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(&archive)
             .unwrap();
         large

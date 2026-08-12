@@ -24,6 +24,20 @@ pub const MAX_TRACKED_DIFF_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_MANIFEST_CANDIDATES: usize = 128;
 pub const MAX_CONTEXT_SCAN_ENTRIES: usize = 100_000;
 pub const MAX_CONTEXT_SCAN_ELAPSED: Duration = Duration::from_secs(3);
+
+/// Compile-time invariants for the bounded-context budgets above: they must
+/// stay positive and ordered, so any future edit that violates the budgets is
+/// caught at build time instead of at runtime.
+const _: () = {
+    assert!(MAX_UNTRACKED_FILE_COUNT > 0);
+    assert!(MAX_BYTES_PER_UNTRACKED_FILE > 0);
+    assert!(MAX_TOTAL_UNTRACKED_BYTES >= MAX_BYTES_PER_UNTRACKED_FILE);
+    assert!(MAX_TRACKED_DIFF_BYTES > 0);
+    assert!(MAX_MANIFEST_CANDIDATES > 0);
+    assert!(MAX_CONTEXT_SCAN_ENTRIES >= MAX_MANIFEST_CANDIDATES);
+    assert!(MAX_CONTEXT_SCAN_ELAPSED.as_nanos() > 0);
+};
+
 const MAX_GIT_STATUS_BYTES: usize = 1024 * 1024;
 const MAX_GIT_LIST_BYTES: usize = 1024 * 1024;
 const MAX_GIT_IDENTITY_BYTES: usize = 4096;
@@ -1552,16 +1566,5 @@ mod tests {
             .manifests
             .iter()
             .all(|file| file.hash_kind == "full"));
-    }
-
-    #[test]
-    fn production_context_budgets_are_positive_and_ordered() {
-        assert!(MAX_UNTRACKED_FILE_COUNT > 0);
-        assert!(MAX_BYTES_PER_UNTRACKED_FILE > 0);
-        assert!(MAX_TOTAL_UNTRACKED_BYTES >= MAX_BYTES_PER_UNTRACKED_FILE);
-        assert!(MAX_TRACKED_DIFF_BYTES > 0);
-        assert!(MAX_MANIFEST_CANDIDATES > 0);
-        assert!(MAX_CONTEXT_SCAN_ENTRIES >= MAX_MANIFEST_CANDIDATES);
-        assert!(!MAX_CONTEXT_SCAN_ELAPSED.is_zero());
     }
 }

@@ -152,7 +152,7 @@ fn hard_security_rules_are_not_bypassed_by_authority_mode() {
         "failure_kind": "policy_rejected",
     });
     assert!(is_hard_denied_output(&hard, None));
-    let filtered = Some(decision).filter(|_| !is_hard_denied_output(&hard, None));
+    let filtered = (!is_hard_denied_output(&hard, None)).then_some(decision);
     assert!(
         filtered.is_none(),
         "hard deny must suppress permission attach even under trusted_agent"

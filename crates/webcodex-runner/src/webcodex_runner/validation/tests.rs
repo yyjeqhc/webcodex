@@ -110,7 +110,7 @@ fn write_fake_pyright(bin_dir: &std::path::Path, spec: &FakePyrightSpec) -> Path
         // classic batch sleep; `timeout.exe` needs stdin in pipelines).
         let mut script = String::from("@echo off\r\nchcp 65001 >nul\r\n");
         if spec.delay_ms > 0 {
-            let seconds = (spec.delay_ms + 999) / 1000;
+            let seconds = spec.delay_ms.div_ceil(1000);
             script.push_str(&format!("ping -n {} 127.0.0.1 >nul\r\n", seconds + 1));
         }
         script.push_str("type \"%~dp0pyright.stdout\"\r\n");

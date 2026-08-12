@@ -74,6 +74,11 @@ fn spawn_grandchild(args: &[String]) {
     cmd.stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    // The grandchild must survive this process: `spawn-grandchild` exits
+    // immediately so tests can verify process-tree termination (Job Object /
+    // process group) reaches the orphaned grandchild. Waiting for it here
+    // would change the test contract.
+    #[allow(clippy::zombie_processes)]
     let child = cmd.spawn().expect("spawn grandchild");
     println!("GRANDCHILD_PID={}", child.id());
     std::io::stdout().flush().expect("flush stdout");

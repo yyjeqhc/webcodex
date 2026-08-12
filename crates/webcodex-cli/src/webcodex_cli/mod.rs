@@ -46,23 +46,6 @@ pub(crate) fn shell_command(args: &[String]) -> String {
         .join(" ")
 }
 
-#[cfg(test)]
-mod shell_command_tests {
-    use super::shell_quote_arg;
-
-    #[test]
-    fn shell_quote_arg_handles_shell_metacharacters() {
-        assert_eq!(shell_quote_arg("webcodex-runner"), "webcodex-runner");
-        assert_eq!(shell_quote_arg("/tmp/agent.toml"), "/tmp/agent.toml");
-        assert_eq!(shell_quote_arg(""), "''");
-        assert_eq!(shell_quote_arg("path with spaces"), "'path with spaces'");
-        assert_eq!(shell_quote_arg("it's"), "'it'\\''s'");
-        assert_eq!(shell_quote_arg("$HOME"), "'$HOME'");
-        assert_eq!(shell_quote_arg("`id`"), "'`id`'");
-        assert_eq!(shell_quote_arg("one;two"), "'one;two'");
-    }
-}
-
 // Only the Unix systemd service tests consume this re-export.
 #[cfg(all(test, unix))]
 pub(crate) use agent_service::render_agent_systemd_unit;
@@ -136,3 +119,20 @@ pub(crate) use usage::{
     pairing_create_usage, pairing_usage, server_init_usage, server_install_service_usage,
     server_status_usage, server_usage, status_usage, usage,
 };
+
+#[cfg(test)]
+mod shell_command_tests {
+    use super::shell_quote_arg;
+
+    #[test]
+    fn shell_quote_arg_handles_shell_metacharacters() {
+        assert_eq!(shell_quote_arg("webcodex-runner"), "webcodex-runner");
+        assert_eq!(shell_quote_arg("/tmp/agent.toml"), "/tmp/agent.toml");
+        assert_eq!(shell_quote_arg(""), "''");
+        assert_eq!(shell_quote_arg("path with spaces"), "'path with spaces'");
+        assert_eq!(shell_quote_arg("it's"), "'it'\\''s'");
+        assert_eq!(shell_quote_arg("$HOME"), "'$HOME'");
+        assert_eq!(shell_quote_arg("`id`"), "'`id`'");
+        assert_eq!(shell_quote_arg("one;two"), "'one;two'");
+    }
+}

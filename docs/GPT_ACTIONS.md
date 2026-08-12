@@ -26,7 +26,7 @@ https://your-domain.example/openapi.json
 ```
 
 Inspect the imported operation names rather than assuming one schema shape. A
-Server with project-bound Connector configuration returns the twelve
+Server with project-bound Connector configuration returns the thirteen
 capabilities documented below; a generic Server returns the standard runtime
 OpenAPI projection instead.
 
@@ -43,7 +43,7 @@ audit endpoints. Use the `webcodex` CLI for those tasks.
 ## The Connector surface
 
 When the Server is running with project-bound Connector configuration,
-OpenAPI is generated from the same twelve capabilities as the canonical MCP
+OpenAPI is generated from the same thirteen capabilities as the canonical MCP
 Connector:
 
 ```text
@@ -53,6 +53,7 @@ task_resume
 files_list
 files_read
 files_search
+code_navigate
 edits_apply
 checks_run
 commands_run
@@ -76,6 +77,8 @@ Use task_list and task_resume only after WebCodex reports that automatic
 transport-window recovery is unavailable.
 Use files_list to see what the project contains before guessing paths.
 Use files_read/files_search before edits_apply.
+Use code_navigate for read-only semantic status, symbols, definitions,
+references, diagnostics, and hover; provide only project-relative paths.
 Use a stable operation_id for exact retry.
 Run checks_run before task_finish.
 Use task_review for execution progress and result review.

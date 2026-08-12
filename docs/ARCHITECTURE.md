@@ -32,7 +32,7 @@ project id `agent:<client_id>:<project_id>`.
 WebCodex exposes the same runtime through several thin adapters:
 
 - **MCP** — a startup-selected model-facing surface. A complete project-first
-  Connector configuration selects the twelve-capability `canonical_connector`
+  Connector configuration selects the thirteen-capability `canonical_connector`
   surface; without Connector configuration, MCP defaults to the broader
   `local_coding` surface. `full_operator_runtime` is an explicit advanced
   surface for management tooling.

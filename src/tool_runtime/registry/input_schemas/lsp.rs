@@ -22,7 +22,7 @@ pub(crate) fn document_symbols_input_schema() -> Value {
         (
             "path",
             "string",
-            "Project-relative UTF-8 path to a .rs file.",
+            "Project-relative UTF-8 path to a supported source file.",
             true,
         ),
         (
@@ -49,7 +49,7 @@ pub(crate) fn document_diagnostics_input_schema() -> Value {
         (
             "path",
             "string",
-            "Project-relative UTF-8 path to a .rs file.",
+            "Project-relative UTF-8 path to a supported source file.",
             true,
         ),
         (
@@ -76,7 +76,7 @@ pub(crate) fn hover_input_schema() -> Value {
         (
             "path",
             "string",
-            "Project-relative UTF-8 path to a .rs file.",
+            "Project-relative UTF-8 path to a supported source file.",
             true,
         ),
         ("line", "integer", "1-based line number.", true),
@@ -132,7 +132,7 @@ pub(crate) fn goto_definition_input_schema() -> Value {
         (
             "path",
             "string",
-            "Project-relative UTF-8 path to a .rs file.",
+            "Project-relative UTF-8 path to a supported source file.",
             true,
         ),
         ("line", "integer", "1-based line number.", true),
@@ -168,7 +168,7 @@ pub(crate) fn find_references_input_schema() -> Value {
         (
             "path",
             "string",
-            "Project-relative UTF-8 path to a .rs file.",
+            "Project-relative UTF-8 path to a supported source file.",
             true,
         ),
         ("line", "integer", "1-based line number.", true),

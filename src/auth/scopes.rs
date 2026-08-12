@@ -185,6 +185,7 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         ("POST", "/api/connector/task/start") => OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ),
         ("POST", "/api/connector/files/read")
         | ("POST", "/api/connector/files/search")
+        | ("POST", "/api/connector/code/navigate")
         | ("POST", "/api/connector/task/review") => {
             OAuthRouteScopePolicy::Require(SCOPE_PROJECT_READ)
         }
@@ -437,6 +438,7 @@ mod tests {
             ("POST", "/api/tools/list", SCOPE_RUNTIME_READ),
             ("POST", "/api/connector/task/start", SCOPE_RUNTIME_READ),
             ("POST", "/api/connector/files/read", SCOPE_PROJECT_READ),
+            ("POST", "/api/connector/code/navigate", SCOPE_PROJECT_READ),
             ("POST", "/api/connector/edits/apply", SCOPE_PROJECT_WRITE),
             ("POST", "/api/connector/checks/run", SCOPE_JOB_RUN),
             ("POST", "/api/connector/task/cancel", SCOPE_JOB_RUN),
@@ -512,6 +514,7 @@ mod tests {
             ("POST", "/api/connector/task/start"),
             ("POST", "/api/connector/files/read"),
             ("POST", "/api/connector/files/search"),
+            ("POST", "/api/connector/code/navigate"),
             ("POST", "/api/connector/edits/apply"),
             ("POST", "/api/connector/checks/run"),
             ("POST", "/api/connector/commands/run"),

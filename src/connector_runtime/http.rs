@@ -15,6 +15,7 @@ pub(crate) fn routes() -> Router {
         .push(Router::with_path("files/list").post(files_list))
         .push(Router::with_path("files/read").post(files_read))
         .push(Router::with_path("files/search").post(files_search))
+        .push(Router::with_path("code/navigate").post(code_navigate))
         .push(Router::with_path("edits/apply").post(edits_apply))
         .push(Router::with_path("checks/run").post(checks_run))
         .push(Router::with_path("commands/run").post(commands_run))
@@ -145,6 +146,7 @@ connector_handlers! {
     files_list,
     files_read,
     files_search,
+    code_navigate,
     edits_apply,
     checks_run,
     commands_run,

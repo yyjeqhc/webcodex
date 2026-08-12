@@ -143,6 +143,51 @@ pub(super) struct FilesSearchInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct CodeNavigateInput {
+    pub(super) task_id: String,
+    pub(super) operation: CodeNavigateOperation,
+    #[serde(default)]
+    pub(super) path: Option<String>,
+    #[serde(default)]
+    pub(super) query: Option<String>,
+    #[serde(default)]
+    pub(super) line: Option<usize>,
+    #[serde(default)]
+    pub(super) column: Option<usize>,
+    #[serde(default)]
+    pub(super) include_declaration: Option<bool>,
+    #[serde(default)]
+    pub(super) limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum CodeNavigateOperation {
+    Status,
+    DocumentSymbols,
+    WorkspaceSymbols,
+    Definition,
+    References,
+    Diagnostics,
+    Hover,
+}
+
+impl CodeNavigateOperation {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::DocumentSymbols => "document_symbols",
+            Self::WorkspaceSymbols => "workspace_symbols",
+            Self::Definition => "definition",
+            Self::References => "references",
+            Self::Diagnostics => "diagnostics",
+            Self::Hover => "hover",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct EditsApplyInput {
     pub(super) task_id: String,
     pub(super) operation_id: String,

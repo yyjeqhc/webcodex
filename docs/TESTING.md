@@ -69,8 +69,8 @@ webcodex setup --root "$repo" --state-dir "$state" --json
 webcodex agent start --root "$repo" --state-dir "$state" &   # boots server+runner+connector
 port=$(grep -oP 'port = \K[0-9]+' "$state/project.toml")
 conn=$(cat "$state/credentials/connector-key")
-# MCP JSON-RPC: initialize, tools/list (exactly 12 canonical, no operator runtime),
-# then task_start → files_read → edits_apply → commands_run → checks_run →
+# MCP JSON-RPC: initialize, tools/list (exactly 13 canonical, no operator runtime),
+# then task_start → files_read → code_navigate → edits_apply → commands_run → checks_run →
 # task_review → task_finish, and task_resume after a fresh initialize:
 curl -fsS -H "Authorization: Bearer $conn" -H 'Content-Type: application/json' \
   -X POST "http://127.0.0.1:$port/mcp" \

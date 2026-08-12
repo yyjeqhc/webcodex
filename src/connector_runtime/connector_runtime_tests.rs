@@ -1,10 +1,15 @@
 use super::projections::{paginate_search_output, parse_search_cursor, search_cursor_signature};
-use super::wire_models::FilesSearchInput;
+use super::wire_models::{CodeNavigateInput, FilesSearchInput};
 use super::*;
 use crate::auth::{AuthKind, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_RUNTIME_READ};
+use crate::lsp_bridge::{
+    AgentLspRequest, AgentLspResultEnvelope, LspAvailabilityStatus, LspServerStatusEntry,
+    LspStatusResult, PublicWorkspaceSymbol, WorkspaceSymbolsResult, AGENT_LSP_REQUEST_KIND,
+};
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
-    ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
+    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
 };
 
 pub(super) const PROJECT_GRANT_ID: &str = "wc_pgrant_1111111111111111";
@@ -17,6 +22,15 @@ pub(super) fn credential() -> ProjectCredentialVerifier {
 }
 
 async fn register_agent(registry: &ShellClientRegistry, project_id: &str, path: &str) {
+    register_agent_with_lsp(registry, project_id, path, false).await;
+}
+
+async fn register_agent_with_lsp(
+    registry: &ShellClientRegistry,
+    project_id: &str,
+    path: &str,
+    lsp_read_only_navigation: bool,
+) {
     registry
         .register_with_auth(
             ShellClientRegisterRequest {
@@ -44,7 +58,7 @@ async fn register_agent(registry: &ShellClientRegistry, project_id: &str, path: 
                     structured_process_argv: true,
                     structured_script_payload: false,
                     structured_execution_jobs: false,
-                    lsp_read_only_navigation: false,
+                    lsp_read_only_navigation,
                     sandbox_inspect_commands: false,
                     project_lifecycle: false,
                     project_path_registration: false,
@@ -71,6 +85,46 @@ async fn register_agent(registry: &ShellClientRegistry, project_id: &str, path: 
             },
             Some(&auth("u1")),
         )
+        .await
+        .unwrap();
+}
+
+async fn next_lsp_request(registry: &ShellClientRegistry) -> ShellAgentShellRequest {
+    for _ in 0..200 {
+        if let Some(request) = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "hosted".to_string(),
+                agent_instance_id: "instance".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+        {
+            assert_eq!(request.kind, AGENT_LSP_REQUEST_KIND);
+            assert!(request.command.is_empty());
+            return request;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+    panic!("connector did not dispatch an LSP request");
+}
+
+async fn complete_lsp_request(
+    registry: &ShellClientRegistry,
+    request: &ShellAgentShellRequest,
+    result: impl serde::Serialize,
+) {
+    registry
+        .complete(ShellAgentResultRequest {
+            client_id: "hosted".to_string(),
+            agent_instance_id: "instance".to_string(),
+            request_id: request.request_id.clone(),
+            exit_code: Some(0),
+            stdout: Some(AgentLspResultEnvelope::ok(result).to_stdout_json()),
+            stderr: Some(String::new()),
+            duration_ms: Some(1),
+            error: None,
+        })
         .await
         .unwrap();
 }
@@ -159,6 +213,66 @@ pub(super) fn connector() -> (tempfile::TempDir, ConnectorRuntime) {
     )
     .unwrap();
     (temp, connector)
+}
+
+async fn connector_with_lsp(
+    lsp_read_only_navigation: bool,
+) -> (
+    tempfile::TempDir,
+    Arc<ConnectorRuntime>,
+    Arc<ShellClientRegistry>,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    init_repo(&project);
+    let registry = Arc::new(ShellClientRegistry::default());
+    register_agent_with_lsp(
+        &registry,
+        "demo",
+        &project.to_string_lossy(),
+        lsp_read_only_navigation,
+    )
+    .await;
+    let connector = Arc::new(
+        ConnectorRuntime::new(
+            Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
+                registry.clone(),
+            )),
+            Arc::new(Database::open(&temp.path().join("connector.db")).unwrap()),
+            ConnectorContext {
+                project_id: "wc_proj_1234567890".to_string(),
+                project_name: "demo".to_string(),
+                workspace_id: "wc_ws_1234567890".to_string(),
+                executor_project: "agent:hosted:demo".to_string(),
+                executor_root: project.to_string_lossy().to_string(),
+                runs_root: temp.path().join("runs").to_string_lossy().to_string(),
+                results_root: temp.path().join("results").to_string_lossy().to_string(),
+                projects_dir: temp
+                    .path()
+                    .join("agent/projects.d")
+                    .to_string_lossy()
+                    .to_string(),
+                profile: "personal".to_string(),
+                project_grant_id: PROJECT_GRANT_ID.to_string(),
+            },
+            credential(),
+        )
+        .unwrap(),
+    );
+    (temp, connector, registry)
+}
+
+async fn start_read_only_task(connector: &ConnectorRuntime, goal: &str) -> String {
+    let started = connector
+        .call(
+            "task_start",
+            json!({ "goal": goal, "mode": "read_only" }),
+            Some(&auth("u1")),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert!(started.ok, "{}", started.body);
+    started.body["task_id"].as_str().unwrap().to_string()
 }
 
 #[tokio::test]
@@ -1400,6 +1514,393 @@ async fn canonical_read_reaches_bound_executor_and_advances_event_cursor() {
     assert!(!serde_json::to_string(&outcome.body)
         .unwrap()
         .contains("agent:hosted:demo"));
+}
+
+#[tokio::test]
+async fn code_navigate_status_holds_the_task_lifecycle_lock() {
+    let (_temp, connector, registry) = connector_with_lsp(true).await;
+    let owner = auth("u1");
+    let task_id = start_read_only_task(&connector, "inspect Python language services").await;
+
+    let navigating_connector = connector.clone();
+    let navigating_owner = owner.clone();
+    let navigating_task = task_id.clone();
+    let navigation = tokio::spawn(async move {
+        navigating_connector
+            .call(
+                "code_navigate",
+                json!({ "task_id": navigating_task, "operation": "status" }),
+                Some(&navigating_owner),
+                ConnectorTransport::Mcp,
+            )
+            .await
+    });
+    let request = next_lsp_request(&registry).await;
+    let payload = request.lsp.as_ref().expect("typed LSP payload");
+    assert_eq!(payload.project_id, "demo");
+    assert_eq!(payload.request, AgentLspRequest::Status);
+    assert!(
+        connector.task_lock(&task_id).try_lock().is_err(),
+        "code_navigate must hold the task lifecycle lock while the LSP read is active"
+    );
+
+    let finishing_connector = connector.clone();
+    let finishing_owner = owner.clone();
+    let finishing_task = task_id.clone();
+    let finish = tokio::spawn(async move {
+        finishing_connector
+            .call(
+                "task_finish",
+                json!({
+                    "task_id": finishing_task,
+                    "summary": "completed semantic inspection"
+                }),
+                Some(&finishing_owner),
+                ConnectorTransport::Mcp,
+            )
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert!(
+        !finish.is_finished(),
+        "task_finish must wait for the in-flight read-only navigation"
+    );
+
+    complete_lsp_request(
+        &registry,
+        &request,
+        LspStatusResult {
+            project: "private-agent-project".to_string(),
+            detected_languages: vec!["python".to_string()],
+            servers: vec![LspServerStatusEntry {
+                language: "python".to_string(),
+                server: "pyright".to_string(),
+                available: true,
+                running: true,
+                status: LspAvailabilityStatus::Running,
+                source: None,
+                position_encoding: Some("utf-16".to_string()),
+            }],
+            warnings: Vec::new(),
+        },
+    )
+    .await;
+    let navigation = navigation.await.unwrap();
+    let finish = finish.await.unwrap();
+    assert!(navigation.ok, "{}", navigation.body);
+    assert_eq!(navigation.body["event_cursor"], 2);
+    assert_eq!(navigation.body["data"]["project"], "wc_proj_1234567890");
+    assert_eq!(
+        navigation.body["data"]["detected_languages"],
+        json!(["python"])
+    );
+    assert_eq!(navigation.body["data"]["servers"][0]["server"], "pyright");
+    assert!(finish.ok, "{}", finish.body);
+}
+
+#[tokio::test]
+async fn code_navigate_preserves_non_rust_navigation_and_bounded_ledger_metadata() {
+    let (_temp, connector, registry) = connector_with_lsp(true).await;
+    let owner = auth("u1");
+    let task_id = start_read_only_task(&connector, "navigate Python and TypeScript code").await;
+    let private_root = connector.context.executor_root.clone();
+
+    let symbols_connector = connector.clone();
+    let symbols_owner = owner.clone();
+    let symbols_task = task_id.clone();
+    let symbols = tokio::spawn(async move {
+        symbols_connector
+            .call(
+                "code_navigate",
+                json!({
+                    "task_id": symbols_task,
+                    "operation": "document_symbols",
+                    "path": "src/main.py",
+                    "limit": 25
+                }),
+                Some(&symbols_owner),
+                ConnectorTransport::Mcp,
+            )
+            .await
+    });
+    let request = next_lsp_request(&registry).await;
+    let payload = request.lsp.as_ref().expect("typed LSP payload");
+    assert_eq!(payload.project_id, "demo");
+    assert_eq!(
+        payload.request,
+        AgentLspRequest::DocumentSymbols {
+            path: "src/main.py".to_string(),
+            limit: 25,
+        }
+    );
+    complete_lsp_request(
+        &registry,
+        &request,
+        json!({
+            "project": "agent:hosted:demo",
+            "path": "src/main.py",
+            "language": "python",
+            "symbols": [{
+                "name": "main",
+                "kind": "function",
+                "kind_code": 12,
+                "range": {
+                    "start": { "line": 1, "column": 1 },
+                    "end": { "line": 2, "column": 1 }
+                },
+                "selection_range": {
+                    "start": { "line": 1, "column": 5 },
+                    "end": { "line": 1, "column": 9 }
+                },
+                "children": []
+            }],
+            "total_count": 1,
+            "returned_count": 1,
+            "truncated": false,
+            "external_results_omitted": 0,
+            "invalid_results_omitted": 0,
+            "client_id": "hosted",
+            "request_id": "req-private",
+            "executor": "private-executor",
+            "root": private_root.clone(),
+            "raw_stderr": "stderr-private"
+        }),
+    )
+    .await;
+    let symbols = symbols.await.unwrap();
+    assert!(symbols.ok, "{}", symbols.body);
+    assert_eq!(symbols.body["data"]["language"], "python");
+    assert_eq!(symbols.body["data"]["path"], "src/main.py");
+    assert_eq!(symbols.body["data"]["symbols"][0]["name"], "main");
+    let serialized = serde_json::to_string(&symbols.body).unwrap();
+    for private in [
+        "agent:hosted:demo",
+        "hosted",
+        private_root.as_str(),
+        "req-private",
+        "private-executor",
+        "stderr-private",
+    ] {
+        assert!(
+            !serialized.contains(private),
+            "private executor metadata leaked: {serialized}"
+        );
+    }
+
+    let workspace_connector = connector.clone();
+    let workspace_owner = owner.clone();
+    let workspace_task = task_id.clone();
+    let workspace = tokio::spawn(async move {
+        workspace_connector
+            .call(
+                "code_navigate",
+                json!({
+                    "task_id": workspace_task,
+                    "operation": "workspace_symbols",
+                    "query": "Widget"
+                }),
+                Some(&workspace_owner),
+                ConnectorTransport::Mcp,
+            )
+            .await
+    });
+    let request = next_lsp_request(&registry).await;
+    let payload = request.lsp.as_ref().expect("typed LSP payload");
+    assert_eq!(payload.project_id, "demo");
+    assert_eq!(
+        payload.request,
+        AgentLspRequest::WorkspaceSymbols {
+            query: "Widget".to_string(),
+            limit: 50,
+        }
+    );
+    complete_lsp_request(
+        &registry,
+        &request,
+        WorkspaceSymbolsResult {
+            project: "private-agent-project".to_string(),
+            query: "Widget".to_string(),
+            symbols: vec![PublicWorkspaceSymbol {
+                name: "Widget".to_string(),
+                kind: "class".to_string(),
+                kind_code: 5,
+                container_name: None,
+                path: "src/widget.ts".to_string(),
+                range: None,
+            }],
+            total_results: 1,
+            returned_count: 1,
+            truncated: false,
+            external_results_omitted: 0,
+            invalid_results_omitted: 0,
+        },
+    )
+    .await;
+    let workspace = workspace.await.unwrap();
+    assert!(workspace.ok, "{}", workspace.body);
+    assert_eq!(workspace.body["data"]["query"], "Widget");
+    assert_eq!(
+        workspace.body["data"]["symbols"][0]["path"],
+        "src/widget.ts"
+    );
+
+    let navigation_events = connector
+        .db
+        .connector_task_events(
+            &task_id,
+            &connector.context.project_id,
+            PROJECT_SUBJECT_ID,
+            20,
+        )
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.kind == "code_navigate")
+        .collect::<Vec<_>>();
+    assert_eq!(navigation_events.len(), 2);
+    assert_eq!(
+        navigation_events[0].payload,
+        json!({ "ok": true, "operation": "document_symbols" })
+    );
+    assert_eq!(
+        navigation_events[1].payload,
+        json!({ "ok": true, "operation": "workspace_symbols" })
+    );
+    let ledger = serde_json::to_string(&navigation_events).unwrap();
+    assert!(!ledger.contains("src/main.py"));
+    assert!(!ledger.contains("Widget"));
+}
+
+#[tokio::test]
+async fn code_navigate_fails_closed_without_runner_capability() {
+    let (_temp, connector, registry) = connector_with_lsp(false).await;
+    let task_id = start_read_only_task(&connector, "inspect semantic status").await;
+    let outcome = connector
+        .call(
+            "code_navigate",
+            json!({ "task_id": task_id, "operation": "status" }),
+            Some(&auth("u1")),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert!(!outcome.ok);
+    assert_eq!(outcome.body["error"]["code"], "capability_failed");
+    assert!(outcome.body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("agent_capability_unavailable"));
+    assert!(registry
+        .poll(ShellAgentPollRequest {
+            client_id: "hosted".to_string(),
+            agent_instance_id: "instance".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn code_navigate_requires_project_read_and_rejects_foreign_or_inactive_tasks() {
+    let (_temp, connector, registry) = connector_with_lsp(true).await;
+    let task_id = start_read_only_task(&connector, "inspect task ownership").await;
+
+    let mut runtime_only = auth("u1");
+    runtime_only.scopes = vec![SCOPE_RUNTIME_READ.to_string()];
+    let denied = connector
+        .call(
+            "code_navigate",
+            json!({ "task_id": task_id, "operation": "status" }),
+            Some(&runtime_only),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert_eq!(denied.http_status, 403);
+    assert_eq!(denied.required_scope, Some(SCOPE_PROJECT_READ));
+    assert_eq!(denied.body["error"]["code"], "insufficient_scope");
+
+    let mut foreign = auth("u1");
+    foreign.user_id = Some("foreign-user".to_string());
+    let foreign_outcome = connector
+        .call(
+            "code_navigate",
+            json!({ "task_id": task_id, "operation": "status" }),
+            Some(&foreign),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert_eq!(foreign_outcome.http_status, 404);
+    assert_eq!(foreign_outcome.body["error"]["code"], "task_not_found");
+
+    let finished = connector
+        .call(
+            "task_finish",
+            json!({ "task_id": task_id, "summary": "inspection complete" }),
+            Some(&auth("u1")),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert!(finished.ok, "{}", finished.body);
+    let inactive = connector
+        .call(
+            "code_navigate",
+            json!({ "task_id": task_id, "operation": "status" }),
+            Some(&auth("u1")),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert_eq!(inactive.http_status, 409);
+    assert_eq!(inactive.body["error"]["code"], "task_not_active");
+    assert!(registry
+        .poll(ShellAgentPollRequest {
+            client_id: "hosted".to_string(),
+            agent_instance_id: "instance".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn code_navigation_operation_parameters_are_strict() {
+    let task_id = "wc_task_00000000000000000000000000000000";
+    let invalid = [
+        json!({ "task_id": task_id, "operation": "status", "path": "src/main.rs" }),
+        json!({ "task_id": task_id, "operation": "document_symbols" }),
+        json!({ "task_id": task_id, "operation": "document_symbols", "path": "/tmp/main.rs" }),
+        json!({ "task_id": task_id, "operation": "workspace_symbols", "query": "  " }),
+        json!({ "task_id": task_id, "operation": "workspace_symbols", "query": "Widget", "path": "src" }),
+        json!({ "task_id": task_id, "operation": "definition", "path": "src/main.rs", "line": 1, "column": 1, "include_declaration": true }),
+        json!({ "task_id": task_id, "operation": "definition", "path": "src/main.rs", "line": 1, "column": 1, "limit": 101 }),
+        json!({ "task_id": task_id, "operation": "references", "path": "src/main.rs", "line": 1, "column": 1, "query": "main" }),
+        json!({ "task_id": task_id, "operation": "diagnostics", "path": "src/main.rs", "line": 1 }),
+        json!({ "task_id": task_id, "operation": "hover", "path": "src/main.rs", "line": 1, "column": 1, "limit": 1 }),
+    ];
+    for arguments in invalid {
+        let input: CodeNavigateInput = serde_json::from_value(arguments.clone()).unwrap();
+        assert!(
+            code_navigation_tool_call(&input).is_err(),
+            "arguments should be rejected: {arguments}"
+        );
+    }
+    assert!(serde_json::from_value::<CodeNavigateInput>(json!({
+        "task_id": task_id,
+        "operation": "status",
+        "project": "agent:hosted:demo"
+    }))
+    .is_err());
+
+    let references: CodeNavigateInput = serde_json::from_value(json!({
+        "task_id": task_id,
+        "operation": "references",
+        "path": "src/main.rs",
+        "line": 2,
+        "column": 3
+    }))
+    .unwrap();
+    let (tool, arguments) = code_navigation_tool_call(&references).unwrap();
+    assert_eq!(tool, "find_references");
+    assert_eq!(arguments["include_declaration"], true);
 }
 
 #[test]

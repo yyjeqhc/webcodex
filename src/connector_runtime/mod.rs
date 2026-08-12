@@ -33,9 +33,9 @@ use projections::{
     DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT,
 };
 use wire_models::{
-    sanitize_value, ChecksRunInput, CommandsRunInput, EditsApplyInput, FilesListInput,
-    FilesReadInput, FilesSearchInput, TaskFinishInput, TaskListInput, TaskResumeInput,
-    TaskStartInput,
+    sanitize_value, ChecksRunInput, CodeNavigateInput, CodeNavigateOperation, CommandsRunInput,
+    EditsApplyInput, FilesListInput, FilesReadInput, FilesSearchInput, TaskFinishInput,
+    TaskListInput, TaskResumeInput, TaskStartInput,
 };
 
 // Crate-visible API re-exported for the HTTP/MCP layers and the CLI. The
@@ -58,6 +58,10 @@ use crate::db::{
     ConnectorExecutionReservation, ConnectorTaskContinuation, ConnectorTaskResult,
     ConnectorTaskSnapshot, ConnectorTaskStoreError, ConnectorWorkspaceTransition,
     NewConnectorResult, NewConnectorTask,
+};
+use crate::lsp_bridge::{
+    redact_absolute_paths, MAX_DOCUMENT_DIAGNOSTICS_LIMIT, MAX_DOCUMENT_SYMBOLS_LIMIT,
+    MAX_FIND_REFERENCES_LIMIT, MAX_GOTO_DEFINITION_LIMIT, MAX_WORKSPACE_SYMBOLS_LIMIT,
 };
 use crate::project_context::{
     capture_project_context, compare_project_context, ContextRefreshSummary,
@@ -491,7 +495,7 @@ impl ConnectorRuntime {
 
         // Read operations coordinate with lifecycle transitions, while every
         // mutation/reservation method owns its narrower task-lock boundary.
-        let task_lock = if matches!(capability, "files_read" | "files_search") {
+        let task_lock = if matches!(capability, "files_read" | "files_search" | "code_navigate") {
             arguments
                 .get("task_id")
                 .and_then(Value::as_str)
@@ -520,6 +524,10 @@ impl ConnectorRuntime {
             }
             "files_search" => {
                 self.files_search(arguments, &subject_id, auth, transport, now)
+                    .await
+            }
+            "code_navigate" => {
+                self.code_navigate(arguments, &subject_id, auth, transport, now)
                     .await
             }
             "edits_apply" => {
@@ -1332,6 +1340,56 @@ impl ConnectorRuntime {
             }
             Err(error) => {
                 let cursor = self.record_event(&task, "files_search", json!({ "ok": false }), now);
+                self.kernel_error_outcome(error, &task, cursor, Value::Null)
+            }
+        }
+    }
+
+    async fn code_navigate(
+        &self,
+        arguments: Value,
+        subject_id: &str,
+        auth: &AuthContext,
+        transport: ConnectorTransport,
+        now: i64,
+    ) -> ConnectorCallOutcome {
+        let input: CodeNavigateInput = match parse_input("code_navigate", arguments) {
+            Ok(input) => input,
+            Err(outcome) => return outcome,
+        };
+        let operation = input.operation.as_str();
+        let (tool_name, mut args) = match code_navigation_tool_call(&input) {
+            Ok(call) => call,
+            Err(message) => return invalid_input("code_navigate", message),
+        };
+        let task = match self.active_task(&input.task_id, subject_id) {
+            Ok(task) => task,
+            Err(outcome) => return outcome,
+        };
+        args["project"] = json!(task.execution_executor_ref);
+        match self
+            .invoke_kernel(tool_name, args, &task, auth, transport)
+            .await
+        {
+            Ok(output) => {
+                let cursor = match self.record_event(
+                    &task,
+                    "code_navigate",
+                    json!({ "ok": true, "operation": operation }),
+                    now,
+                ) {
+                    Ok(cursor) => cursor,
+                    Err(outcome) => return outcome,
+                };
+                ConnectorCallOutcome::success_at(&task, cursor, output)
+            }
+            Err(error) => {
+                let cursor = self.record_event(
+                    &task,
+                    "code_navigate",
+                    json!({ "ok": false, "operation": operation }),
+                    now,
+                );
                 self.kernel_error_outcome(error, &task, cursor, Value::Null)
             }
         }
@@ -3168,6 +3226,192 @@ impl ConnectorRuntime {
             .replace(&self.context.runs_root, "<managed-runs>")
             .replace(&self.context.results_root, "<managed-results>")
             .replace(&self.context.projects_dir, "<managed-projects>")
+    }
+}
+
+fn code_navigation_tool_call(input: &CodeNavigateInput) -> Result<(&'static str, Value), String> {
+    let irrelevant = |fields: &[(&str, bool)]| {
+        fields
+            .iter()
+            .find_map(|(name, present)| present.then_some(*name))
+            .map(|name| {
+                format!(
+                    "{name} is not valid for operation {}",
+                    input.operation.as_str()
+                )
+            })
+    };
+    let require_path = || -> Result<&str, String> {
+        let path = input.path.as_deref().ok_or_else(|| {
+            format!(
+                "path is required for operation {}",
+                input.operation.as_str()
+            )
+        })?;
+        validate_path(path).map_err(str::to_string)?;
+        if redact_absolute_paths(path) != path {
+            return Err("path must be project-relative".to_string());
+        }
+        Ok(path)
+    };
+    let require_position = || -> Result<(usize, usize), String> {
+        let line = input.line.ok_or_else(|| {
+            format!(
+                "line is required for operation {}",
+                input.operation.as_str()
+            )
+        })?;
+        let column = input.column.ok_or_else(|| {
+            format!(
+                "column is required for operation {}",
+                input.operation.as_str()
+            )
+        })?;
+        if line < 1 || column < 1 {
+            return Err("line and column must be >= 1".to_string());
+        }
+        Ok((line, column))
+    };
+    let validate_limit = |maximum: usize| -> Result<(), String> {
+        if input
+            .limit
+            .is_some_and(|limit| !(1..=maximum).contains(&limit))
+        {
+            return Err(format!(
+                "limit for operation {} must be 1..={maximum}",
+                input.operation.as_str()
+            ));
+        }
+        Ok(())
+    };
+
+    match input.operation {
+        CodeNavigateOperation::Status => {
+            if let Some(message) = irrelevant(&[
+                ("path", input.path.is_some()),
+                ("query", input.query.is_some()),
+                ("line", input.line.is_some()),
+                ("column", input.column.is_some()),
+                ("include_declaration", input.include_declaration.is_some()),
+                ("limit", input.limit.is_some()),
+            ]) {
+                return Err(message);
+            }
+            Ok(("lsp_status", json!({})))
+        }
+        CodeNavigateOperation::DocumentSymbols => {
+            if let Some(message) = irrelevant(&[
+                ("query", input.query.is_some()),
+                ("line", input.line.is_some()),
+                ("column", input.column.is_some()),
+                ("include_declaration", input.include_declaration.is_some()),
+            ]) {
+                return Err(message);
+            }
+            let path = require_path()?;
+            validate_limit(MAX_DOCUMENT_SYMBOLS_LIMIT)?;
+            Ok((
+                "document_symbols",
+                json!({ "path": path, "limit": input.limit }),
+            ))
+        }
+        CodeNavigateOperation::WorkspaceSymbols => {
+            if let Some(message) = irrelevant(&[
+                ("path", input.path.is_some()),
+                ("line", input.line.is_some()),
+                ("column", input.column.is_some()),
+                ("include_declaration", input.include_declaration.is_some()),
+            ]) {
+                return Err(message);
+            }
+            let query = input.query.as_deref().unwrap_or_default().trim();
+            if query.is_empty() || query.chars().count() > 200 {
+                return Err(
+                    "query for operation workspace_symbols must contain 1..=200 non-whitespace characters"
+                        .to_string(),
+                );
+            }
+            if redact_absolute_paths(query) != query {
+                return Err(
+                    "query for operation workspace_symbols must not contain absolute path material"
+                        .to_string(),
+                );
+            }
+            validate_limit(MAX_WORKSPACE_SYMBOLS_LIMIT)?;
+            Ok((
+                "workspace_symbols",
+                json!({ "query": query, "limit": input.limit }),
+            ))
+        }
+        CodeNavigateOperation::Definition => {
+            if let Some(message) = irrelevant(&[
+                ("query", input.query.is_some()),
+                ("include_declaration", input.include_declaration.is_some()),
+            ]) {
+                return Err(message);
+            }
+            let path = require_path()?;
+            let (line, column) = require_position()?;
+            validate_limit(MAX_GOTO_DEFINITION_LIMIT)?;
+            Ok((
+                "goto_definition",
+                json!({
+                    "path": path,
+                    "line": line,
+                    "column": column,
+                    "limit": input.limit
+                }),
+            ))
+        }
+        CodeNavigateOperation::References => {
+            if let Some(message) = irrelevant(&[("query", input.query.is_some())]) {
+                return Err(message);
+            }
+            let path = require_path()?;
+            let (line, column) = require_position()?;
+            validate_limit(MAX_FIND_REFERENCES_LIMIT)?;
+            Ok((
+                "find_references",
+                json!({
+                    "path": path,
+                    "line": line,
+                    "column": column,
+                    "include_declaration": input.include_declaration.unwrap_or(true),
+                    "limit": input.limit
+                }),
+            ))
+        }
+        CodeNavigateOperation::Diagnostics => {
+            if let Some(message) = irrelevant(&[
+                ("query", input.query.is_some()),
+                ("line", input.line.is_some()),
+                ("column", input.column.is_some()),
+                ("include_declaration", input.include_declaration.is_some()),
+            ]) {
+                return Err(message);
+            }
+            let path = require_path()?;
+            validate_limit(MAX_DOCUMENT_DIAGNOSTICS_LIMIT)?;
+            Ok((
+                "document_diagnostics",
+                json!({ "path": path, "limit": input.limit }),
+            ))
+        }
+        CodeNavigateOperation::Hover => {
+            if let Some(message) = irrelevant(&[
+                ("query", input.query.is_some()),
+                ("include_declaration", input.include_declaration.is_some()),
+                ("limit", input.limit.is_some()),
+            ]) {
+                return Err(message);
+            }
+            let path = require_path()?;
+            let (line, column) = require_position()?;
+            Ok((
+                "hover",
+                json!({ "path": path, "line": line, "column": column }),
+            ))
+        }
     }
 }
 

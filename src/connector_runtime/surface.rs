@@ -14,6 +14,7 @@ pub(crate) const CAPABILITY_NAMES: &[&str] = &[
     "files_list",
     "files_read",
     "files_search",
+    "code_navigate",
     "edits_apply",
     "checks_run",
     "commands_run",
@@ -152,6 +153,52 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
                     }
                 },
                 "required": ["task_id", "pattern"],
+                "additionalProperties": false
+            }),
+            true,
+            true,
+        ),
+        spec(
+            "code_navigate",
+            "Use the configured project's read-only language-server navigation for an active task. Supports status, document_symbols, workspace_symbols, definition, references, diagnostics, and hover across the Runner's configured language profiles. Paths are project-relative and positions are 1-based Unicode scalar coordinates.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "task_id": task_id_schema(),
+                    "operation": {
+                        "type": "string",
+                        "enum": ["status", "document_symbols", "workspace_symbols", "definition", "references", "diagnostics", "hover"]
+                    },
+                    "path": path_schema(),
+                    "query": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "description": "Workspace symbol query; valid only for workspace_symbols."
+                    },
+                    "line": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based line; valid only for definition, references, and hover."
+                    },
+                    "column": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based Unicode scalar column; valid only for definition, references, and hover."
+                    },
+                    "include_declaration": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Whether references includes the declaration; valid only for references."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Optional operation-specific bound: document_symbols 500; workspace_symbols, references, and diagnostics 200; definition 100."
+                    }
+                },
+                "required": ["task_id", "operation"],
                 "additionalProperties": false
             }),
             true,
@@ -346,6 +393,7 @@ pub(crate) fn route_for(name: &str) -> Option<&'static str> {
         "files_list" => Some("/api/connector/files/list"),
         "files_read" => Some("/api/connector/files/read"),
         "files_search" => Some("/api/connector/files/search"),
+        "code_navigate" => Some("/api/connector/code/navigate"),
         "edits_apply" => Some("/api/connector/edits/apply"),
         "checks_run" => Some("/api/connector/checks/run"),
         "commands_run" => Some("/api/connector/commands/run"),
@@ -533,7 +581,7 @@ mod tests {
             .map(|name| name.to_string())
             .collect::<BTreeSet<_>>();
         assert_eq!(operations, expected);
-        assert_eq!(spec["paths"].as_object().unwrap().len(), 12);
+        assert_eq!(spec["paths"].as_object().unwrap().len(), 13);
         let start = &spec["paths"]["/api/connector/task/start"]["post"]["requestBody"]["content"]
             ["application/json"]["schema"];
         assert_eq!(start["properties"]["target_path"]["type"], "string");
@@ -561,5 +609,33 @@ mod tests {
             checks["properties"]["operation_id"]["pattern"],
             "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$"
         );
+        let navigation = &spec["paths"]["/api/connector/code/navigate"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"];
+        assert_eq!(navigation["required"], json!(["task_id", "operation"]));
+        assert_eq!(navigation["additionalProperties"], false);
+        assert_eq!(
+            navigation["properties"]["operation"]["enum"],
+            json!([
+                "status",
+                "document_symbols",
+                "workspace_symbols",
+                "definition",
+                "references",
+                "diagnostics",
+                "hover"
+            ])
+        );
+        assert!(CAPABILITY_NAMES.contains(&"code_navigate"));
+        for raw_name in [
+            "lsp_status",
+            "document_symbols",
+            "workspace_symbols",
+            "goto_definition",
+            "find_references",
+            "document_diagnostics",
+            "hover",
+        ] {
+            assert!(!CAPABILITY_NAMES.contains(&raw_name));
+        }
     }
 }

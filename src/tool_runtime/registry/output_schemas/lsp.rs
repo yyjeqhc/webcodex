@@ -43,7 +43,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "path",
                 schema_type("string", "Project-relative source path."),
             ),
-            ("language", schema_type("string", "Language id (rust).")),
+            ("language", schema_type("string", "Detected language id.")),
             (
                 "symbols",
                 array_schema(
@@ -84,7 +84,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "path",
                 schema_type("string", "Project-relative source path."),
             ),
-            ("language", schema_type("string", "Language id (rust).")),
+            ("language", schema_type("string", "Detected language id.")),
             (
                 "diagnostics",
                 array_schema(

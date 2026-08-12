@@ -266,7 +266,7 @@ fn recipes_emit_only_canonical_argv_and_never_select_mutating_node_format() {
             checks: &[SemanticCheck::Check, SemanticCheck::Test],
             expected: &[
                 ("check", "go", &["vet", "./..."]),
-                ("test", "go", &["test", "./..."]),
+                ("test", "go", &["test", "-json", "./..."]),
             ],
         },
         Case {
@@ -322,6 +322,47 @@ fn recipes_emit_only_canonical_argv_and_never_select_mutating_node_format() {
             .collect::<Vec<_>>();
         assert_eq!(actual, expected, "{}", plan.recipe_id);
     }
+}
+
+#[test]
+fn go_test_json_argv_is_bound_into_durable_invocation_identity() {
+    use sha2::{Digest, Sha256};
+
+    let temp = tempfile::tempdir().unwrap();
+    write(
+        temp.path(),
+        "go.mod",
+        "module example.test/fixture\n\ngo 1.22\n",
+    );
+    let plan = resolve(
+        temp.path(),
+        None,
+        Some(RecipeId::Go),
+        &[SemanticCheck::Check, SemanticCheck::Test],
+        None,
+    )
+    .unwrap();
+    assert_eq!(plan.steps[0].args, ["vet", "./..."]);
+    assert_eq!(plan.steps[1].args, ["test", "-json", "./..."]);
+    assert_eq!(
+        plan.durable_identity()["tool_identities"],
+        serde_json::json!(["go_check", "go_test"])
+    );
+    assert_eq!(
+        plan.invocation_digest,
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&plan.steps).unwrap())
+        )
+    );
+
+    let mut legacy_steps = plan.steps.clone();
+    legacy_steps[1].args = ["test", "./..."].into_iter().map(str::to_string).collect();
+    let legacy_digest = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&legacy_steps).unwrap())
+    );
+    assert_ne!(plan.invocation_digest, legacy_digest);
 }
 
 #[test]

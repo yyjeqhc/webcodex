@@ -1,6 +1,7 @@
-//! Internal project recipes plus the existing Cargo evidence adapters.
+//! Internal project recipes plus structured Cargo and Go evidence adapters.
 //! This module never adds model-visible runtime tools.
 
+mod go;
 mod recipe;
 #[cfg(test)]
 mod recipe_tests;
@@ -59,4 +60,5 @@ pub(crate) fn validation_adapter_for_tool(
         .iter()
         .copied()
         .find(|adapter| adapter.tool_identity() == tool_identity)
+        .or_else(|| go::validation_adapter(tool_identity))
 }

@@ -115,7 +115,7 @@ validator 返回非零是断言失败。
 | Rust | `Cargo.toml` | `cargo fmt -- --check` | `cargo check --all-targets` | `cargo test` |
 | Node | `package.json` | `format:check`/`format-check`/`check:format` 第一个 | `check`/`typecheck`/`lint` 第一个 | 精确 `test` |
 | Python | `pyproject.toml` | 配置的 Ruff/Black | 配置的 Ruff/Mypy | 配置的 pytest |
-| Go | `go.mod` | 不可用 | `go vet ./...` | `go test ./...` |
+| Go | `go.mod` | 不可用 | `go vet ./...` | `go test -json ./...` |
 
 ### 长校验会持久继续
 

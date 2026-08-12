@@ -1346,7 +1346,7 @@ impl ShellJobValidationStep {
             ("check", "cargo") => is_canonical_cargo_check_args(&args),
             ("test", "cargo") => is_canonical_cargo_test_args(&args),
             ("check", "go") => args == ["vet", "./..."],
-            ("test", "go") => args == ["test", "./..."],
+            ("test", "go") => args == ["test", "-json", "./..."],
             ("format", "python") => {
                 args == ["-m", "ruff", "format", "--check"] || args == ["-m", "black", "--check"]
             }
@@ -3353,6 +3353,19 @@ mod filter_canonical_tests {
             !step.is_canonical(),
             "non-allowlisted env keys must break canonicality"
         );
+    }
+
+    #[test]
+    fn canonical_go_test_requires_machine_readable_json_argv() {
+        let step = |args: &[&str]| ShellJobValidationStep {
+            name: "test".to_string(),
+            program: "go".to_string(),
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            env: Vec::new(),
+        };
+        assert!(step(&["test", "-json", "./..."]).is_canonical());
+        assert!(!step(&["test", "./..."]).is_canonical());
+        assert!(!step(&["test", "-json", "./pkg"]).is_canonical());
     }
 
     #[test]

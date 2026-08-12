@@ -1,7 +1,7 @@
 use crate::tool_runtime::cargo::parse_cargo_test_counts;
 use crate::tool_runtime::validation_parser::{
-    parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, NO_STABLE_DIAGNOSTICS_REASON,
-    PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
+    parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, parse_go_test_diagnostics,
+    NO_STABLE_DIAGNOSTICS_REASON, PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
 };
 
 #[test]
@@ -163,6 +163,174 @@ fn cargo_test_parser_returns_bounded_failure_details_without_payloads() {
             "leaked {forbidden:?}: {encoded}"
         );
     }
+}
+
+#[test]
+fn go_test_parser_counts_single_package_pass_and_skip() {
+    let output = [
+        r#"{"Action":"start","Package":"example.test/one"}"#,
+        r#"{"Action":"pass","Package":"example.test/one","Test":"TestPass"}"#,
+        r#"{"Action":"skip","Package":"example.test/one","Test":"TestSkipped"}"#,
+        r#"{"Action":"pass","Package":"example.test/one"}"#,
+    ]
+    .join("\n");
+
+    let diagnostics = parse_go_test_diagnostics(&output, false);
+
+    assert!(diagnostics.available);
+    let summary = diagnostics.test_summary.as_ref().unwrap();
+    assert_eq!(summary.passed, Some(1));
+    assert_eq!(summary.failed, Some(0));
+    assert_eq!(summary.ignored, Some(1));
+    assert!(diagnostics.failed_test_details.is_empty());
+    assert!(!diagnostics.failed_test_details_truncated);
+}
+
+#[test]
+fn go_test_parser_keeps_package_qualified_mixed_failure_details() {
+    let output = [
+        r#"{"Action":"pass","Package":"example.test/one","Test":"TestPass"}"#,
+        r#"{"Action":"fail","Package":"example.test/two","Test":"TestParent/subtest"}"#,
+        r#"{"Action":"fail","Package":"example.test/three","Test":"TestParent/subtest"}"#,
+        r#"{"Action":"output","Package":"example.test/two","Test":"TestParent/subtest","Output":"panic payload /private/root TOKEN=do-not-persist\n"}"#,
+        r#"{"Action":"fail","Package":"example.test/two"}"#,
+    ]
+    .join("\n");
+
+    let diagnostics = parse_go_test_diagnostics(&output, false);
+
+    let summary = diagnostics.test_summary.as_ref().unwrap();
+    assert_eq!(summary.passed, Some(1));
+    assert_eq!(summary.failed, Some(2));
+    assert_eq!(summary.ignored, Some(0));
+    assert_eq!(
+        diagnostics
+            .failed_test_details
+            .iter()
+            .map(|detail| detail.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "example.test/two::TestParent/subtest",
+            "example.test/three::TestParent/subtest",
+        ]
+    );
+    assert!(diagnostics
+        .failed_test_details
+        .iter()
+        .all(|detail| detail.failure_kind == "unknown"));
+    let encoded = serde_json::to_string(&diagnostics).unwrap();
+    for forbidden in ["panic payload", "/private/root", "TOKEN=", "do-not-persist"] {
+        assert!(
+            !encoded.contains(forbidden),
+            "leaked {forbidden}: {encoded}"
+        );
+    }
+}
+
+#[test]
+fn go_test_parser_dedupes_repeated_terminal_events() {
+    let output = [
+        r#"{"Action":"fail","Package":"example.test/pkg","Test":"TestFailure"}"#,
+        r#"{"Action":"fail","Package":"example.test/pkg","Test":"TestFailure"}"#,
+    ]
+    .join("\n");
+
+    let diagnostics = parse_go_test_diagnostics(&output, false);
+
+    assert_eq!(diagnostics.test_summary.as_ref().unwrap().failed, Some(1));
+    assert_eq!(diagnostics.failed_test_details.len(), 1);
+    assert_eq!(
+        diagnostics.failed_test_details[0].name,
+        "example.test/pkg::TestFailure"
+    );
+}
+
+#[test]
+fn go_test_parser_fails_safe_for_malformed_and_unrelated_input() {
+    for output in [
+        "not json",
+        r#"{"Action":"fail","Package":"example.test/pkg"}"#,
+        r#"{"Action":"unknown","Package":"example.test/pkg","Test":"TestNope"}"#,
+        r#"{"Action":"fail","Package":"example.test/pkg"}\nordinary stderr-looking text"#,
+    ] {
+        let diagnostics = parse_go_test_diagnostics(output, false);
+        assert!(!diagnostics.available, "{output}");
+        assert_eq!(
+            diagnostics.reason,
+            Some(NO_STABLE_DIAGNOSTICS_REASON),
+            "{output}"
+        );
+        assert!(diagnostics.test_summary.is_none(), "{output}");
+        assert!(diagnostics.failed_test_details.is_empty(), "{output}");
+    }
+}
+
+#[test]
+fn go_test_parser_marks_bounded_partial_evidence_incomplete() {
+    let mut output = String::new();
+    for index in 0..22 {
+        output.push_str(
+            &serde_json::json!({
+                "Action": "fail",
+                "Package": "example.test/pkg",
+                "Test": format!("TestFailure{index}")
+            })
+            .to_string(),
+        );
+        output.push('\n');
+    }
+
+    let diagnostics = parse_go_test_diagnostics(&output, true);
+
+    assert_eq!(diagnostics.test_summary.as_ref().unwrap().failed, Some(22));
+    assert_eq!(diagnostics.failed_test_details.len(), 20);
+    assert!(diagnostics.failed_test_details_truncated);
+    assert!(diagnostics.diagnostics_truncated);
+    assert_eq!(diagnostics.truncated, Some(true));
+
+    let unavailable = parse_go_test_diagnostics("partial non-json record", true);
+    assert!(!unavailable.available);
+    assert!(unavailable.diagnostics_truncated);
+    assert!(unavailable.failed_test_details_truncated);
+    assert_eq!(unavailable.truncated, Some(true));
+}
+
+#[test]
+fn go_test_parser_bounds_safe_names_and_omits_unsafe_identities() {
+    let long_package = format!("example.test/{}", "p".repeat(300));
+    let long_test = format!("Test{}", "Case".repeat(100));
+    let output = [
+        serde_json::json!({
+            "Action": "fail",
+            "Package": long_package,
+            "Test": long_test
+        })
+        .to_string(),
+        serde_json::json!({
+            "Action": "fail",
+            "Package": "/private/absolute/package",
+            "Test": "TestPath"
+        })
+        .to_string(),
+        serde_json::json!({
+            "Action": "fail",
+            "Package": "example.test/pkg",
+            "Test": "TestTOKEN_secret"
+        })
+        .to_string(),
+    ]
+    .join("\n");
+
+    let diagnostics = parse_go_test_diagnostics(&output, false);
+
+    assert_eq!(diagnostics.test_summary.as_ref().unwrap().failed, Some(1));
+    assert_eq!(diagnostics.failed_test_details.len(), 1);
+    assert_eq!(diagnostics.failed_test_details[0].name.chars().count(), 240);
+    assert!(diagnostics.failed_test_details[0].name.contains('#'));
+    assert_eq!(diagnostics.invalid_diagnostics_omitted, 2);
+    let encoded = serde_json::to_string(&diagnostics).unwrap();
+    assert!(!encoded.contains("/private/absolute"));
+    assert!(!encoded.contains("TOKEN"));
 }
 
 #[test]

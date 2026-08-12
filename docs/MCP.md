@@ -127,7 +127,7 @@ started validator returning non-zero is an assertion failure.
 | Rust | `Cargo.toml` | `cargo fmt -- --check` | `cargo check --all-targets` | `cargo test` |
 | Node | `package.json` | first of `format:check`, `format-check`, `check:format` | first of `check`, `typecheck`, `lint` | exact `test` |
 | Python | `pyproject.toml` | configured Ruff/Black | configured Ruff/Mypy | configured pytest |
-| Go | `go.mod` | unavailable | `go vet ./...` | `go test ./...` |
+| Go | `go.mod` | unavailable | `go vet ./...` | `go test -json ./...` |
 
 ### Long validation continues durably
 

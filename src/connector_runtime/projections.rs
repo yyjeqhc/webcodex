@@ -756,7 +756,7 @@ pub(super) fn project_brief(
             ],
             "node" => &["npm test"],
             "python" => &["python -m pytest"],
-            "go" => &["go test ./..."],
+            "go" => &["go test -json ./..."],
             "jvm" => &["project test task"],
             "dotnet" => &["dotnet test"],
             "ruby" => &["bundle exec rake test"],

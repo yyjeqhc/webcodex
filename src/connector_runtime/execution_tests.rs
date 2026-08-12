@@ -1684,6 +1684,131 @@ async fn failed_check_has_durable_bounded_sanitized_evidence_without_passed_prov
 }
 
 #[tokio::test]
+async fn go_test_failure_has_durable_structured_assertion_evidence() {
+    let fixture = fixture(1_000).await;
+    let root = Path::new(&task(&fixture).execution_root).join("go-fixture");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(
+        root.join("go.mod"),
+        "module example.test/go-fixture\n\ngo 1.22\n",
+    )
+    .unwrap();
+    let output = [
+        json!({
+            "Action": "pass",
+            "Package": "example.test/go-fixture/ok",
+            "Test": "TestPass"
+        })
+        .to_string(),
+        json!({
+            "Action": "output",
+            "Package": "example.test/go-fixture/failing",
+            "Test": "TestParent/subtest",
+            "Output": "panic payload at /private/workspace/secret.go executor-private-id\n"
+        })
+        .to_string(),
+        json!({
+            "Action": "fail",
+            "Package": "example.test/go-fixture/failing",
+            "Test": "TestParent/subtest"
+        })
+        .to_string(),
+        json!({
+            "Action": "fail",
+            "Package": "example.test/go-fixture/failing"
+        })
+        .to_string(),
+    ]
+    .join("\n");
+    let registry = fixture.registry.clone();
+    let responder = tokio::spawn(async move {
+        let request = next_request(&registry).await;
+        assert_eq!(request.kind, "start_validation_job");
+        let steps: Vec<ShellJobValidationStep> = serde_json::from_str(&request.command).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, "test");
+        assert_eq!(steps[0].program, "go");
+        assert_eq!(steps[0].args, ["test", "-json", "./..."]);
+        assert!(steps[0].is_canonical());
+        update_validation_job(
+            &registry,
+            request.job_id.as_deref().unwrap(),
+            "failed",
+            Some(&output),
+            Some(1),
+            check_progress(0, None, Some("test")),
+        )
+        .await;
+    });
+    let outcome = fixture
+        .call(
+            "checks_run",
+            json!({
+                "task_id": fixture.task_id,
+                "operation_id": "go-structured-failure-1",
+                "checks": ["test"],
+                "recipe": "go",
+                "cwd": "go-fixture",
+                "timeout_secs": 30
+            }),
+        )
+        .await;
+    responder.await.unwrap();
+
+    assert!(outcome.ok, "{}", outcome.body);
+    let execution = &outcome.body["data"]["execution"];
+    assert_eq!(execution["execution_status"], "failed");
+    assert_eq!(execution["failure_source"], "check");
+    assert_eq!(execution["assertion_status"], "failed");
+    assert_eq!(execution["assertion_evidence"]["failed_check"], "test");
+    assert_eq!(
+        execution["assertion_evidence"]["failure_kind"],
+        "test_failure"
+    );
+    assert_eq!(
+        execution["assertion_evidence"]["parser"],
+        "structured_validation_parser"
+    );
+    let diagnostics = &execution["assertion_evidence"]["diagnostics"];
+    assert_eq!(diagnostics["available"], true);
+    assert_eq!(diagnostics["test_summary"]["passed"], 1);
+    assert_eq!(diagnostics["test_summary"]["failed"], 1);
+    assert!(diagnostics["failed_test_details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|detail| { detail["name"] == "example.test/go-fixture/failing::TestParent/subtest" }));
+
+    let execution_id = execution["execution_id"].as_str().unwrap();
+    let durable = fixture
+        .connector
+        .db
+        .connector_execution(execution_id)
+        .unwrap();
+    assert_eq!(durable.failed_check.as_deref(), Some("test"));
+    assert_eq!(
+        durable.assertion_evidence.as_ref().unwrap()["failure_kind"],
+        "test_failure"
+    );
+    let serialized = serde_json::to_string(durable.assertion_evidence.as_ref().unwrap()).unwrap();
+    assert!(
+        serialized.len() <= crate::db::MAX_ASSERTION_EVIDENCE_BYTES,
+        "{serialized}"
+    );
+    for forbidden in [
+        "panic payload",
+        "/private/workspace",
+        "secret.go",
+        "executor-private-id",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "durable evidence leaked {forbidden:?}: {serialized}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn structured_progress_rejects_invalid_order_and_preserves_fail_fast_plan() {
     let fixture = fixture(1_000).await;
     let plan = || ShellJobStartMetadata {

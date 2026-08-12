@@ -414,7 +414,7 @@ fn go_steps(
         let args = match check {
             SemanticCheck::Format => return Err(check_unavailable()),
             SemanticCheck::Check => vec!["vet", "./..."],
-            SemanticCheck::Test => vec!["test", "./..."],
+            SemanticCheck::Test => vec!["test", "-json", "./..."],
         };
         steps.push(step(
             *check,

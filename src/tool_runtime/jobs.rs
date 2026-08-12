@@ -124,6 +124,25 @@ pub(crate) fn structured_validation_evidence(
         errors_count: None,
     };
     match kind {
+        "test" if tool == "go_test" => {
+            let summary = evidence
+                .diagnostics
+                .as_ref()
+                .and_then(|diagnostics| diagnostics.test_summary.as_ref());
+            evidence.tests_detected = Some(summary.is_some());
+            if !truncated {
+                evidence.tests_passed = summary.and_then(|summary| summary.passed);
+                evidence.tests_failed = summary.and_then(|summary| summary.failed);
+                evidence.tests_run_count = summary.map(|summary| {
+                    summary
+                        .passed
+                        .unwrap_or(0)
+                        .saturating_add(summary.failed.unwrap_or(0))
+                        .saturating_add(summary.ignored.unwrap_or(0))
+                });
+                evidence.zero_tests_run = evidence.tests_run_count.map(|count| count == 0);
+            }
+        }
         "test" => {
             let metadata = super::cargo::parse_cargo_test_run_metadata(&combined);
             let (tests_passed, tests_failed) = super::cargo::parse_cargo_test_counts(&combined);
@@ -157,7 +176,7 @@ pub(crate) fn validation_job_projection(
 ) -> Option<Value> {
     let tool = tool?;
     let kind = kind.unwrap_or(match tool {
-        "cargo_test" => "test",
+        "cargo_test" | "go_test" => "test",
         "cargo_fmt" => "format",
         _ => "check",
     });
@@ -2342,6 +2361,61 @@ mod recovery_projection_tests {
         assert_eq!(compile_error["tests_detected"], false);
         assert!(compile_error["tests_run_count"].is_null());
         assert_eq!(compile_error["diagnostics"]["available"], true);
+    }
+
+    #[test]
+    fn validation_projection_reports_terminal_go_test_counts_and_diagnostics() {
+        let output = [
+            r#"{"Action":"pass","Package":"example.test/one","Test":"TestPass"}"#,
+            r#"{"Action":"skip","Package":"example.test/one","Test":"TestSkip"}"#,
+            r#"{"Action":"fail","Package":"example.test/two","Test":"TestFail/subtest"}"#,
+            r#"{"Action":"output","Package":"example.test/two","Test":"TestFail/subtest","Output":"private body"}"#,
+        ]
+        .join("\n");
+        let failure = validation_job_projection(
+            Some("go_test"),
+            None,
+            "failed",
+            Some(1),
+            &output,
+            "ordinary stderr is not structured Go evidence",
+            false,
+        )
+        .unwrap();
+        assert_eq!(failure["kind"], "test");
+        assert_eq!(failure["passed"], false);
+        assert_eq!(failure["tests_detected"], true);
+        assert_eq!(failure["tests_run_count"], 3);
+        assert_eq!(failure["tests_passed"], 1);
+        assert_eq!(failure["tests_failed"], 1);
+        assert_eq!(failure["zero_tests_run"], false);
+        assert_eq!(failure["diagnostics"]["test_summary"]["ignored"], 1);
+        assert_eq!(
+            failure["diagnostics"]["failed_test_details"][0]["name"],
+            "example.test/two::TestFail/subtest"
+        );
+        assert!(!serde_json::to_string(&failure)
+            .unwrap()
+            .contains("private body"));
+
+        let truncated = validation_job_projection(
+            Some("go_test"),
+            Some("test"),
+            "failed",
+            Some(1),
+            &output,
+            "",
+            true,
+        )
+        .unwrap();
+        assert!(truncated["tests_run_count"].is_null());
+        assert!(truncated["tests_passed"].is_null());
+        assert!(truncated["tests_failed"].is_null());
+        assert_eq!(truncated["diagnostics"]["truncated"], true);
+        assert_eq!(
+            truncated["diagnostics"]["failed_test_details_truncated"],
+            true
+        );
     }
 
     #[test]

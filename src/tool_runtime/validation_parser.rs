@@ -1,12 +1,14 @@
 //! Deterministic structured extraction from bounded validation excerpts.
 //!
 //! These helpers consume only already-bounded, validation-tool metadata. They
-//! return stable cargo/rustc facts without retaining output bodies, note/help
-//! stacks, panic payloads, assertion values, backtraces, commands, or inferred
-//! root causes.
+//! return stable Cargo/rustc and Go test facts without retaining output bodies,
+//! note/help stacks, panic payloads, assertion values, backtraces, commands, or
+//! inferred root causes.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 pub(crate) const PARSER_KIND: &str = "structured_validation_parser";
 pub(crate) const PARSER_VERSION: u8 = 3;
@@ -148,6 +150,179 @@ pub(crate) fn parse_cargo_test_diagnostics(
         failed_test_details_truncated,
         truncated: Some(truncated),
     }
+}
+
+/// Parse only the official newline-delimited `go test -json` stream on
+/// stdout. Output event bodies and stderr are deliberately ignored.
+pub(crate) fn parse_go_test_diagnostics(
+    stdout_excerpt: &str,
+    truncated: bool,
+) -> ValidationDiagnostics {
+    let mut results = Vec::<GoTestResult>::new();
+    let mut result_indexes = HashMap::<String, usize>::new();
+    let mut invalid = 0usize;
+
+    for line in stdout_excerpt.lines() {
+        let event = match serde_json::from_str::<GoTestEvent>(line) {
+            Ok(event) => event,
+            Err(_) => {
+                invalid = invalid.saturating_add(1);
+                continue;
+            }
+        };
+        let Some(package) = sanitize_go_identity_component(&event.package) else {
+            invalid = invalid.saturating_add(1);
+            continue;
+        };
+        let action = match event.action.as_str() {
+            "pass" => Some(GoTerminalAction::Pass),
+            "fail" => Some(GoTerminalAction::Fail),
+            "skip" => Some(GoTerminalAction::Skip),
+            "start" | "run" | "pause" | "cont" | "bench" | "output" => None,
+            _ => {
+                invalid = invalid.saturating_add(1);
+                continue;
+            }
+        };
+        let Some(action) = action else {
+            continue;
+        };
+        let Some(test) = event.test.as_deref() else {
+            // Package-level terminal events are valid Go records, but are not
+            // test results and cannot prove a test count or failed-test name.
+            continue;
+        };
+        let Some(test) = sanitize_go_identity_component(test) else {
+            invalid = invalid.saturating_add(1);
+            continue;
+        };
+        let name = bounded_go_test_identity(&package, &test);
+        if let Some(index) = result_indexes.get(&name).copied() {
+            if results[index].action != action {
+                invalid = invalid.saturating_add(1);
+                if action == GoTerminalAction::Fail {
+                    results[index].action = action;
+                }
+            }
+            continue;
+        }
+        result_indexes.insert(name.clone(), results.len());
+        results.push(GoTestResult { name, action });
+    }
+
+    if results.is_empty() {
+        let mut diagnostics = diagnostics_unavailable(invalid);
+        if truncated {
+            diagnostics.diagnostics_truncated = true;
+            diagnostics.failed_test_details_truncated = true;
+            diagnostics.truncated = Some(true);
+        }
+        return diagnostics;
+    }
+
+    let mut passed = 0u64;
+    let mut failed = 0u64;
+    let mut ignored = 0u64;
+    for result in &results {
+        match result.action {
+            GoTerminalAction::Pass => passed = passed.saturating_add(1),
+            GoTerminalAction::Fail => failed = failed.saturating_add(1),
+            GoTerminalAction::Skip => ignored = ignored.saturating_add(1),
+        }
+    }
+    let failed_test_details = results
+        .iter()
+        .filter(|result| result.action == GoTerminalAction::Fail)
+        .take(MAX_FAILED_TESTS)
+        .map(|result| FailedTestDetail {
+            name: result.name.clone(),
+            failure_kind: "unknown",
+            file: None,
+            line: None,
+            column: None,
+        })
+        .collect::<Vec<_>>();
+    let failed_test_details_truncated = truncated || failed > failed_test_details.len() as u64;
+
+    ValidationDiagnostics {
+        available: true,
+        parser: PARSER_KIND,
+        reason: None,
+        diagnostic_count: Some(failed.try_into().unwrap_or(usize::MAX)),
+        diagnostics: Vec::new(),
+        returned_diagnostic_count: 0,
+        diagnostics_truncated: truncated,
+        invalid_diagnostics_omitted: invalid,
+        test_summary: Some(CargoTestSummary {
+            passed: Some(passed),
+            failed: Some(failed),
+            ignored: Some(ignored),
+        }),
+        failed_test_details,
+        failed_test_details_truncated,
+        truncated: Some(truncated),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct GoTestEvent {
+    #[serde(rename = "Action")]
+    action: String,
+    #[serde(rename = "Package")]
+    package: String,
+    #[serde(rename = "Test")]
+    test: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoTerminalAction {
+    Pass,
+    Fail,
+    Skip,
+}
+
+#[derive(Debug)]
+struct GoTestResult {
+    name: String,
+    action: GoTerminalAction,
+}
+
+fn sanitize_go_identity_component(value: &str) -> Option<String> {
+    let value = sanitize_line(value);
+    let value = value.trim();
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.starts_with('\\')
+        || value.contains('\\')
+        || value.contains("://")
+        || value.as_bytes().get(1) == Some(&b':')
+        || value.split('/').any(|part| part.is_empty() || part == "..")
+        || looks_sensitive(value)
+        || !value.chars().all(|ch| {
+            ch.is_alphanumeric()
+                || matches!(
+                    ch,
+                    '_' | ':' | '-' | '<' | '>' | '.' | '/' | '#' | '=' | '+' | ',' | '@' | '~'
+                )
+        })
+    {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn bounded_go_test_identity(package: &str, test: &str) -> String {
+    let identity = format!("{package}::{test}");
+    if identity.chars().count() <= MAX_TEST_NAME_CHARS {
+        return identity;
+    }
+    let digest = format!("{:x}", Sha256::digest(identity.as_bytes()));
+    let suffix = format!("#{}", &digest[..16]);
+    let prefix_chars = MAX_TEST_NAME_CHARS.saturating_sub(suffix.len());
+    format!(
+        "{}{suffix}",
+        identity.chars().take(prefix_chars).collect::<String>()
+    )
 }
 
 /// Aggregate all parseable `test result:` harness summaries from the given

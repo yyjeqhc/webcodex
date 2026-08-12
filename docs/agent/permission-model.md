@@ -16,7 +16,7 @@ runtime facts. **When design text and code disagree, code wins.**
 | [`SECURITY.md`](../../SECURITY.md) | Security model and redaction expectations |
 | [`session-model.md`](session-model.md) | Workflow Session vs Action Audit Session |
 | [`architecture-decisions.md`](architecture-decisions.md) | Standing authority / observation / API-evolution decisions |
-| [`OPERATIONS.md`](../OPERATIONS.md) | Operator-facing authority configuration and smoke checks |
+| [`DEPLOYMENT.md`](../DEPLOYMENT.md) | Operator-facing authority configuration and smoke checks |
 | [`AUTH_MODEL.md`](../AUTH_MODEL.md) | Authn / tokens / scopes (orthogonal to this decision layer) |
 
 ---

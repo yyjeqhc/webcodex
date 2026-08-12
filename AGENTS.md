@@ -25,7 +25,7 @@ The V1 formal product surface is feature-frozen by default: ordinary V1 work sho
 - For model-facing execution, prefer structured process/argv and durable Job/observation primitives over shell-text orchestration. Keep shell as an escape hatch; structured lifecycle state is the source of truth for retry safety.
 - Treat demonstrated host features such as MCP App orchestration as optional adapters. Core execution and Job semantics must remain protocol-, UI-, transport-, and OS-neutral.
 
-Product direction: [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/MODEL_EXECUTION.md`](docs/MODEL_EXECUTION.md).
+Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## 3. Follow intent and make focused changes
 

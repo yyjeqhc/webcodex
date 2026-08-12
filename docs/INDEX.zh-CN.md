@@ -2,61 +2,40 @@
 
 [English](INDEX.md) | [简体中文](INDEX.zh-CN.md)
 
-## Getting Started
+## 入门
 
-- [中文 README](../README.zh-CN.md) / [README](../README.md)
-- [快速开始](QUICK_START.zh-CN.md) / [Quick Start](QUICK_START.md)
-- [构建与安装](BUILD_INSTALL.zh-CN.md) / [Build and Install](BUILD_INSTALL.md)
-- [演示](DEMO.zh-CN.md) / [Demo](DEMO.md)
-- [概念](CONCEPTS.zh-CN.md) / [Concepts](CONCEPTS.md)
-- [MCP](MCP.zh-CN.md) / [English](MCP.md)
-- [GPT Actions](GPT_ACTIONS.zh-CN.md) / [English](GPT_ACTIONS.md)
+- [README](../README.zh-CN.md) —— WebCodex 是什么，以及如何开始
+- [AI 接入指南](AI_ONBOARDING.zh-CN.md) —— 让 AI agent 帮你配置 WebCodex
+- [快速开始](QUICK_START.zh-CN.md) —— 最短的本地设置
+- [CLI](CLI.zh-CN.md) —— 命令、术语与凭据
 
-## Operations
+## 自托管
 
-- [部署](DEPLOYMENT.zh-CN.md) / [Deployment](DEPLOYMENT.md)
-- [Docker 部署](DOCKER_DEPLOYMENT.zh-CN.md) / [Docker Deployment](DOCKER_DEPLOYMENT.md)
-- [Operations](OPERATIONS.md)
-- [故障排查](TROUBLESHOOTING.zh-CN.md) / [Troubleshooting](TROUBLESHOOTING.md)
-- [认证模型](AUTH_MODEL.zh-CN.md) / [Authentication Model](AUTH_MODEL.md)
-- [Agent Projects](AGENT_PROJECTS.zh-CN.md) / [English](AGENT_PROJECTS.md)
-- [Agent Transports](AGENT_TRANSPORTS.zh-CN.md) / [English](AGENT_TRANSPORTS.md)
-- [Agent Protocol](AGENT_PROTOCOL.zh-CN.md) / [English](AGENT_PROTOCOL.md)
-- [Shell Profiles](SHELL_PROFILES.zh-CN.md) / [English](SHELL_PROFILES.md)
+- [部署指南](DEPLOYMENT.zh-CN.md) —— 构建、bootstrap Server、接入 Runner
+- [认证模型](AUTH_MODEL.zh-CN.md) —— 凭据与令牌
+- [Runner](RUNNER.zh-CN.md) —— Runner/agent 是什么，以及如何运维
 
-## Architecture / Contributor
+## 客户端接入
 
-- [Architecture](ARCHITECTURE.md)
-- [Model Execution and Durable Continuation](MODEL_EXECUTION.md)
-- [Testing](TESTING.md)
-- [端到端验证](E2E_VALIDATION.zh-CN.md) / [English](E2E_VALIDATION.md)
-- [Console Development](CONSOLE_DEVELOPMENT.md)
-- [LSP Navigation](LSP_NAVIGATION.md)
-- [Multi-Language Validation](MULTI_LANGUAGE_VALIDATION.md)
-- [只读命令沙箱](READ_ONLY_COMMAND_SANDBOX.zh-CN.md) / [English](READ_ONLY_COMMAND_SANDBOX.md)
-- [Roadmap](ROADMAP.zh-CN.md) / [English](ROADMAP.md)
-- [Contributor Agent Contract](../AGENTS.md)
-- [Architecture Decisions](agent/architecture-decisions.md)
-- [Session Model](agent/session-model.md)
-- [Permission Model](agent/permission-model.md)
-- [OpenAPI Guidelines](agent/openapi-guidelines.md)
-- [Claude Code MCP Provider](agent/claude-code-mcp-provider.md)
+- [MCP](MCP.zh-CN.md) —— 接入 MCP 客户端（ChatGPT、Claude 等）
+- [GPT Actions](GPT_ACTIONS.zh-CN.md) —— 基于 OpenAPI 的 Custom GPT 集成
 
-## Security
+## 理解 WebCodex
 
-- [Security Policy and Model](../SECURITY.md)
-- [OAuth2 Internals](OAUTH2_INTERNALS.md)
-- [OAuth2 Smoke Test](OAUTH2_SMOKE_TEST.md)
-- [OAuth2 Bridge Threat Model](OAUTH2_BRIDGE_THREAT_MODEL.md)
+- [架构](ARCHITECTURE.md) —— 各组件如何协同
+- [安全](../SECURITY.md) —— 安全模型与策略
 
-## Release History
+## 帮助
 
-- [Release Checklist](RELEASE_CHECKLIST.md)
-- [Release Process](agent/release-process.md)
-- [v0.3.5 发布说明](RELEASE_NOTES_v0.3.5.zh-CN.md) / [English](RELEASE_NOTES_v0.3.5.md)
-- [v0.3.4 发布说明](RELEASE_NOTES_v0.3.4.zh-CN.md) / [English](RELEASE_NOTES_v0.3.4.md)
-- [v0.3.3 发布说明](RELEASE_NOTES_v0.3.3.zh-CN.md) / [English](RELEASE_NOTES_v0.3.3.md)
-- [v0.3.2 发布说明](RELEASE_NOTES_v0.3.2.zh-CN.md) / [English](RELEASE_NOTES_v0.3.2.md)
-- [v0.3.1 发布说明](RELEASE_NOTES_v0.3.1.zh-CN.md) / [English](RELEASE_NOTES_v0.3.1.md)
-- [v0.3.0 Release Notes](RELEASE_NOTES_v0.3.0.zh-CN.md) / [English](RELEASE_NOTES_v0.3.0.md)
-- [v0.2.0 Release Notes](RELEASE_NOTES_v0.2.0.md)
+- [故障排查](TROUBLESHOOTING.zh-CN.md)
+
+## 贡献
+
+- [AGENTS.md](../AGENTS.md) —— 面向 coding/AI agent 的仓库指引
+- [测试策略](TESTING.md) —— 测试策略
+- [发布清单](RELEASE_CHECKLIST.md) —— 发布就绪
+- [架构决策](agent/architecture-decisions.md)
+- [权限模型](agent/permission-model.md)
+- [会话模型](agent/session-model.md)
+- [OpenAPI 指南](agent/openapi-guidelines.md)
+- [发布流程](agent/release-process.md)

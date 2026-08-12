@@ -491,7 +491,7 @@ only for local/trusted-network demos."
     // in-memory, holds the registry mutex only for bounded HashMap work, and
     // dies with the process. A server restart resets the in-memory registry;
     // the deadline is re-anchored only when a runner reconnects and submits its
-    // inventory. See docs/AGENT_PROTOCOL.md (recovery deadline sweep).
+    // inventory. See docs/RUNNER.md (reconnect and recovery).
     let sweep_registry = shell_registry.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(

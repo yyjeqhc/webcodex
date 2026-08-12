@@ -5,7 +5,6 @@ live in [`AGENTS.md`](../../AGENTS.md).** This file explains durable product
 structure so agents do not re-litigate settled shape during ordinary tasks.
 
 Related product docs: [`ARCHITECTURE.md`](../ARCHITECTURE.md),
-[`CONCEPTS.md`](../CONCEPTS.md), [`MODEL_EXECUTION.md`](../MODEL_EXECUTION.md),
 [`TESTING.md`](../TESTING.md).
 
 ---
@@ -289,7 +288,7 @@ Runner registration reports `process_started_at` and
 ## 10. Model execution and durable continuation
 
 The standing direction for model-facing execution is defined in
-[`MODEL_EXECUTION.md`](../MODEL_EXECUTION.md). The durable decisions are:
+[`ARCHITECTURE.md`](../ARCHITECTURE.md). The durable decisions are:
 
 1. **Structured lifecycle is execution truth.** Retry safety must not depend on
    interpreting prose. `command_started`, completion state, failure

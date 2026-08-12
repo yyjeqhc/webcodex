@@ -710,6 +710,5 @@ Renaming tables, routes, or serialized field names does.
 - [`architecture-decisions.md`](architecture-decisions.md) — dual-model summary
 - [`openapi-guidelines.md`](openapi-guidelines.md) — `session_id` vs
   `recording_session_id` on GPT Actions
-- [`../CONCEPTS.md`](../CONCEPTS.md) — product vocabulary (Workflow Session in
-  client-facing language)
-- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — module map
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — module map and Workflow Session
+  overview

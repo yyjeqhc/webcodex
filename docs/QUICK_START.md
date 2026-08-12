@@ -2,19 +2,23 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-This is the canonical project-first path. It configures one local Git project
-without asking you for an Agent client ID, runtime project ID, transport,
-workflow session, executor reference, or internal config path.
+This is the shortest path to a working WebCodex setup on one local Git project.
+It uses the project-first flow: `webcodex setup` configures the current
+directory without asking for client IDs, runtime project ids, transports, or
+internal config paths.
+
+For connecting to an existing hosted Server, see
+[Deployment](DEPLOYMENT.md#connect-a-repository-to-an-existing-server). For
+letting an AI agent do the setup, see [AI Onboarding](AI_ONBOARDING.md).
 
 ## Prerequisites
 
-- All three WebCodex binaries installed (`webcodex`, `webcodex-server`,
-  `webcodex-runner`).
+- All three binaries installed: `webcodex`, `webcodex-server`,
+  `webcodex-runner`.
 - Git available on `PATH`.
 - A Git project you can safely inspect and edit.
-- For the default `webcodex share` path only: `cloudflared` installed and available on `PATH`. If it is missing, install it from [Cloudflare's official downloads](https://developers.cloudflare.com/tunnel/downloads/); WebCodex does not silently install system packages.
 
-Install the packaged Linux x64 or macOS arm64 build:
+Install the packaged build:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -27,156 +31,74 @@ cargo build --release --workspace --bins
 export PATH="$PWD/target/release:$PATH"
 ```
 
-## 1. Set Up the Project
-
-Change to the Git project and run:
+## 1. Set up the project
 
 ```bash
+cd /path/to/your/repository
 webcodex setup
 ```
 
-On the first run, setup:
+On first run, `setup` resolves the Git top-level, creates private state outside
+the checkout, creates the minimum project registration and Agent
+configuration, and creates one Project Credential for this project's Connector
+and Agent — without printing it. It leaves the Server and Agent stopped.
 
-- resolves the Git top-level directory;
-- creates private state outside the checkout;
-- creates the minimum project registration and Agent configuration;
-- creates one exact Project Credential for this project's Connector and Agent
-  without printing it;
-- leaves the server and Agent stopped.
+Run it again to verify idempotency; the second result is `already configured`.
+If one generated component is missing, `setup` repairs only that component.
 
-It does not edit project files, modify Git, start a service, change shell
-configuration, open a network port, or upload source.
-
-Run the same command again to verify idempotency:
-
-```bash
-webcodex setup
-```
-
-The second result is `already configured`. If one generated component is
-missing, setup repairs only that component. If an existing field conflicts with
-the current Git root or profile, setup stops and names the conflicting field;
-it never overwrites the existing configuration.
-
-The persistent Connector credential and the Agent Token are separate secrets
-that map to the same stable, non-secret project grant identity. Their files are
-owner-only private state; plaintext is not written to the database. Runtime
-verification hashes credential candidates and compares them in constant time.
-This path is separate from ordinary shared-key quick start: unknown Bearer
-values are rejected in project mode.
-
-Setup never rotates a surviving credential silently. If the credential is
-lost, restore both matching private files. If it is unrecoverable, stop the
-runtime, intentionally retire the entire private project-state profile, and
-run setup again; that explicit recreation also retires its local task and
-execution history. Iteration 8.0 has no in-place rotate subcommand.
-
-## 2. Diagnose the Next Step
+## 2. Check readiness
 
 ```bash
 webcodex doctor
 ```
 
-Doctor is read-only. Before the Agent starts, its expected verdict is `Needs
-action` with:
+`doctor` is read-only. Before the Agent starts, its expected verdict is
+`Needs action` with `Next: webcodex run`. Use `--json` for the structured
+projection.
 
-```text
-Next:
-  webcodex run
-```
-
-Each finding has a stable `name`, `status`, `code`, `summary`, and
-`next_action`. Use `webcodex doctor --json` for the structured projection.
-
-## 3. Start the Local Runtime
+## 3. Start the local runtime
 
 ```bash
 webcodex run
 ```
 
-This canonical foreground action starts the project-bound loopback Server and
-local Agent. It does not install a service. Leave the terminal open; Ctrl-C
-stops both processes. Loopback does not bypass authentication: only the exact
-configured Project Credential can reach this project's Connector.
-
-In another terminal, from the same project:
+This starts the project-bound loopback Server and local Agent in the
+foreground. Leave the terminal open; Ctrl-C stops both. In another terminal,
+from the same project:
 
 ```bash
 webcodex status
 ```
 
 A ready project reports its Project, Connection, Agent, coding readiness, and
-no next action. For full checks, run `webcodex doctor` again.
+no next action.
 
-## 4. Use the Project-Bound Connector
+## 4. Connect a client
 
-The Connector profile created for this project binds one logical project to one
-registered executor deterministically. A local MCP/OpenAPI client using that
-approved connection and exact credential can begin directly with:
+### Temporarily share over HTTPS
 
-```text
-task_start
-```
-
-It does not need to call `list_projects`, `runtime_status`, `tool_manifest`,
-`start_session`, or `current_session`, and it does not put an
-`agent:<client>:<project>` value in the prompt. The same chat window continues
-the current repository automatically. Switching to another configured
-repository switches project context, and returning restores that repository's
-prior work. `task_list` and `task_resume` are only needed for explicit recovery
-when the client can no longer present its transport window identity.
-
-### Install `cloudflared` for temporary sharing
-
-The default `webcodex share` path uses Cloudflare Quick Tunnel. Install
-`cloudflared` with Cloudflare's official package path if it is not already on
-`PATH`:
-
-```bash
-# macOS
-brew install cloudflared
-
-# Debian / Ubuntu: one copy-paste command using Cloudflare's official APT repository
-sudo mkdir -p --mode=0755 /usr/share/keyrings && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null && sudo apt-get update && sudo apt-get install -y cloudflared
-```
-
-See Cloudflare's [official downloads and installation instructions](https://developers.cloudflare.com/tunnel/downloads/) for other platforms.
-WebCodex never silently installs system packages or elevates privileges.
-
-Hosted ChatGPT cannot reach a loopback address. For temporary development or
+Hosted clients cannot reach a loopback address. For temporary development or
 testing access from a hosted MCP client, stop `webcodex run` and run:
 
 ```bash
 webcodex share
 ```
 
-`share` reuses the same project-first setup and local runtime, but starts a
-Cloudflare Quick Tunnel and a separate temporary Connector credential. It
-prints a temporary `https://*.trycloudflare.com/mcp` URL and Bearer token; both
-stop being usable when the command exits.
+`share` reuses the project setup and local runtime but starts a Cloudflare
+Quick Tunnel and a separate temporary Connector credential. It prints a
+temporary `https://*.trycloudflare.com/mcp` URL and Bearer token; both stop
+being usable when the command exits.
 
-For ChatGPT Developer Mode, create a custom app with that `/mcp` URL. If the
-authentication menu offers **Access token/API key**, choose it, paste the
-printed temporary Bearer credential, and run **Scan Tools**. Anyone who has that
-credential can modify this project and run commands allowed by the share runtime
-while the session is active, so keep it private.
+`webcodex share --tunnel none` starts the same runtime without a public tunnel
+for local debugging. Quick Tunnels are not a production deployment mechanism.
 
-`webcodex share --tunnel none` starts the same share runtime without a public
-tunnel for local debugging. Quick Tunnels are not a production deployment
-mechanism.
+### Connect to an existing Server
 
-If Quick Tunnel startup fails and this machine already has a Cloudflare Tunnel
-configuration at `~/.cloudflared/config.yaml`, note that Cloudflare Quick Tunnels
-do not support that configuration file. Use a separate Quick Tunnel environment
-(or temporarily move that config out of the way), or use `--tunnel none` for
-local-only debugging.
+For a stable, long-lived setup against an existing Server, use
+`webcodex connect` (hosted shared-key) or `webcodex login` (managed). See
+[Deployment](DEPLOYMENT.md).
 
-For a stable long-lived endpoint, use a stable HTTPS domain/tunnel, service
-management, and OAuth or another production authentication path. See
-[DEPLOYMENT.md](DEPLOYMENT.md), [MCP.md](MCP.md), or
-[GPT_ACTIONS.md](GPT_ACTIONS.md).
-
-## 5. Run the Golden Coding Path
+## 5. Run a coding task
 
 Ask the client for a small, reversible change. The canonical calls are:
 
@@ -190,69 +112,18 @@ task_start
 → task_review
 ```
 
-Use `operation_id` for edits, commands, and checks. It provides exact retry
-identity: retrying the same payload reuses the operation; a different payload
-under the same ID fails closed.
+Use a stable `operation_id` for edits, commands, and checks: retrying the same
+payload reuses the operation; a different payload under the same ID fails
+closed.
 
-Normal writable tasks cannot finish without a structured check. A check that
-runs and exits non-zero is a project assertion failure. A check that cannot
-spawn is an executor/infrastructure failure and does not create assertion
-evidence or trusted workspace provenance.
+`checks_run` accepts `format`, `check`, and `test` plus an optional `recipe`
+(`rust`, `node`, `python`, `go`). Omit the recipe for automatic resolution
+from the nearest manifest directory.
 
-### Project-aware validation recipes
-
-`checks_run` accepts the existing `format`, `check`, and `test` semantic names
-plus an optional `recipe` enum: `rust`, `node`, `python`, or `go`. Omit
-`recipe` for auto resolution—there is no `auto` alias. Resolution starts at
-the relative `cwd` inside the Task execution workspace, walks only toward that
-workspace root, and picks the nearest manifest directory. Multiple supported
-markers in that directory are ambiguous; an explicit matching recipe resolves
-the ambiguity. As the only markerless exception, explicit `recipe=python`
-with `checks=["test"]` runs `python -B -m unittest discover -v` from `cwd`
-when no `pyproject.toml` is selected. A mismatched marker for any other recipe,
-missing manifest in auto mode, absolute/parent path, or symlink escape is
-rejected before an Execution is reserved.
-
-| Recipe | Marker | `format` | `check` | `test` |
-|---|---|---|---|---|
-| Rust | `Cargo.toml` | `cargo fmt -- --check` | `cargo check --all-targets` | `cargo test` plus one safe argv filter |
-| Node | `package.json` | first of `format:check`, `format-check`, `check:format` | first of `check`, `typecheck`, `lint` | exact `test` |
-| Python | `pyproject.toml`, or explicit markerless test | configured Ruff, otherwise Black | configured Ruff, otherwise Mypy | configured pytest; markerless `unittest discover` |
-| Go | `go.mod` | unavailable | `go vet ./...` | `go test ./...` |
-
-Node selects a package manager from a valid `packageManager` declaration or
-one unambiguous supported lockfile (`pnpm-lock.yaml`, `yarn.lock`,
-`package-lock.json`, `npm-shrinkwrap.json`, `bun.lock`, or `bun.lockb`).
-Conflicting or absent evidence fails closed; a selected script is invoked only
-as `<manager> run --silent <allowlisted-name>`. Script bodies are never copied
-into the plan or error. Python format/check and pytest require evidence in
-`pyproject.toml`; Ruff wins over Black for format and over Mypy for check.
-Manifestless Python supports only the fixed unittest test plan.
-
-Recipes do not install dependencies, run install hooks, generate
-configuration, create environments, modify lockfiles, or use the network.
-Only Rust accepts `test_filter`, as one argv value; every other recipe rejects
-it instead of silently running all tests. Missing executables or Python
-modules produce an executor failure with no failed check or assertion
-evidence. A real process exit with a non-zero validation verdict is an
-assertion failure.
-
-At `task_finish`, untracked interpreter/test caches, coverage output, and
-`node_modules` are omitted from the result patch and reported in bounded
-warnings. A same-named path already tracked by the project is never omitted.
-
-The durable plan records recipe ID/version, relative root, semantic checks,
-tool identities, and invocation/manifest evidence digests. They participate in
-the request hash, so one `operation_id` reuses only the exact resolved plan.
-A recipe binary change conflicts with an old operation ID; use a new ID to
-resolve under the new recipe. Manifest, lockfile, or workspace changes make
-successful provenance stale.
-
-## 6. Review and Accept Locally
+## 6. Review and accept locally
 
 The coding result stays isolated from the target checkout until a human
-decision. That decision is host-local and reachable two ways — the offline CLI
-and the in-browser console — which share one accept/reject authority:
+decision:
 
 ```bash
 webcodex task list
@@ -262,96 +133,31 @@ webcodex task accept <task-id>
 
 Use `webcodex task reject <task-id>` to discard it. Acceptance verifies that
 the target Git state still matches the task baseline before applying the
-result.
+result. The online model can propose work but can never accept it.
 
-In the Browser, open `/console`, enter the project credential (kept in memory
-only, never persisted), and use the work queue to pick a task. The review
-detail shows the goal, states, validation, changed files, a bounded unified
-diff, and a bounded output tail, with **Accept / Reject / Cancel** behind an
-explicit in-page confirm. Accept and Reject call the same authority the CLI
-uses; Cancel stops an active execution. Hosted Chat can propose work but can
-never accept it, and the server re-verifies the checkout and the result before
-applying — a Browser click cannot bypass those preconditions.
-
-## Browser Console
-
-When the local runtime is running, `/console` shows:
-
-- the Project header (current Project, Connection, Agent readiness, coding
-  capability readiness, next action);
-- the actionable work queue (up to the most recent tasks needing attention);
-- the review detail for a selected task, with the bounded diff and output tail.
-
-It consumes the same application readiness facts as doctor/status and drives
-the same host-local decision authority as the CLI. It does not show the Agent
-registry, client IDs, transport implementation, queue IDs, or tokens, and it is
-not a browser editor/terminal — it cannot edit code, run commands, or start
-tasks.
+You can also review in the browser: open `/console` and use the work queue.
+Accept and Reject in the browser call the same authority the CLI uses.
 
 ## Troubleshooting
 
-Always start with:
+Start with:
 
 ```bash
 webcodex status
 webcodex doctor
 ```
 
-Common stable codes:
+Common stable codes and next actions:
 
 | Code | Meaning | Next action |
-|---|---|---|
-| `project_not_configured` | No setup belongs to this Git project/profile | `webcodex setup` |
-| `project_registration_invalid` | Existing state conflicts or is incomplete | Resolve the named field, then rerun setup |
-| `project_credential_invalid` | Private credential state is missing, unreadable, unsafe, malformed, or mismatched | Restore both matching private files or explicitly recreate the profile |
-| `project_credential_rejected` | The server rejected the locally configured credential | Restore the matching credential; do not treat this as Agent offline |
-| `server_unreachable` | The loopback runtime cannot be reached | `webcodex run`, or inspect doctor |
-| `agent_offline` | Server is reachable but the local Agent is unavailable | `webcodex run` |
-| `required_capability_unavailable` | The installed Agent is too old/incomplete | Upgrade all WebCodex binaries |
-| `structured_validation_unavailable` | The Agent lacks structured validation | Upgrade all WebCodex binaries |
-| `workspace_unavailable` | Git or the configured project path is unavailable | Restore the path/Git workspace |
-| `validation_recipe_not_found` | Auto resolution found no supported marker from `cwd` to the Task root | Choose a manifest-bearing `cwd`, or explicitly use the markerless Python unittest test recipe |
-| `validation_recipe_ambiguous` | The nearest root has multiple supported markers | Provide the matching explicit `recipe` |
-| `validation_recipe_mismatch` / `validation_manifest_invalid` | Recipe, marker, safe path, or manifest evidence is invalid | Correct the reported public evidence |
-| `validation_check_unavailable` / `test_filter_unsupported` | The recipe cannot safely map the requested check/filter | Change checks/filter or choose the matching recipe |
-| `package_manager_ambiguous` | Node package-manager evidence is absent or conflicting | Correct `packageManager` or lockfiles |
-| `validation_tool_unavailable` | The selected executable/module is not available on the Agent host | Provide the project's existing tool, then use a new operation ID |
-| `checks_required` | A normal result has not run checks | Run `checks_run`, then finish |
-| `checks_stale` | The workspace changed after the last trusted check | Run a new check operation |
+| --- | --- | --- |
+| `project_not_configured` | No setup for this project/profile | `webcodex setup` |
+| `project_credential_invalid` | Private credential state is missing or mismatched | Restore both matching private files or recreate the profile |
+| `server_unreachable` | Loopback runtime cannot be reached | `webcodex run` |
+| `agent_offline` | Server reachable but the local Agent is unavailable | `webcodex run` |
+| `required_capability_unavailable` | Installed Agent too old | Upgrade all binaries |
+| `workspace_unavailable` | Git or project path unavailable | Restore the path/Git workspace |
+| `checks_required` | Normal result has not run checks | Run `checks_run`, then finish |
+| `checks_stale` | Workspace changed after the last check | Run a new check |
 
-Advanced server, enrollment, OAuth, transport, and fleet diagnostics remain in
-`webcodex` and the operations documentation. They are not onboarding
-steps.
-
-## Local activity and command previews
-
-The console's activity ledger **persists every mutating tool call to the local
-state database**: the tool, the surface that issued it, the paths it named, an
-error summary, and — for shell-like calls — a **command preview** of the first
-120 characters.
-
-Command previews are on by default. They are what makes an approval informed:
-you cannot judge a command you cannot see. That has a consequence:
-
-- **Do not put tokens, passwords, or keys directly on a command line.** They are
-  stored with the command and shown in the console. Pass them through a file or
-  an environment variable instead.
-- To turn previews off entirely:
-
-  ```bash
-  WEBCODEX_ACTIVITY_COMMAND_PREVIEW=0 webcodex run
-  ```
-
-  The tool, paths, and outcome are still recorded; only the command text is
-  stored empty.
-
-The ledger stays in the local state directory and is never sent anywhere. It is
-row-capped and prunes its oldest entries.
-
-Each entry also records which project it belonged to **when it was written**.
-That attribution is fixed and never recalculated, which matters because agent
-names are not unique over time: if a device called `laptop` reconnects later
-under a different project, it gets its own history and cannot read the earlier
-project's commands, paths, or errors. Entries written by an older version, whose
-project cannot be established after the fact, stay in the ledger but are visible
-only to the host operator.
+See [Troubleshooting](TROUBLESHOOTING.md) for the full operational checklist.

@@ -87,7 +87,7 @@ Verify `trusted_agent` auto-authorizes `commands_run` (no approval interruption)
 while `WEBCODEX_AUTHORITY_MODE=restricted agent start` makes the same call return
 `approval_required`. For the deployed-host equivalent (runtime status, authority,
 connection layers, version compatibility, shell dialect, and the finish/handoff
-smoke), see [OPERATIONS.md](OPERATIONS.md) *Post-Deployment Acceptance Smoke*.
+smoke), see [Deployment](DEPLOYMENT.md#smoke-checks).
 
 ## Default Test Principles
 

@@ -2,121 +2,117 @@
 
 [English](AUTH_MODEL.md) | [简体中文](AUTH_MODEL.zh-CN.md)
 
-WebCodex separates bootstrap administration, account onboarding, runtime API access, and agent connectivity. Do not reuse one credential across all surfaces.
+WebCodex separates bootstrap administration, account onboarding, runtime API
+access, and Runner connectivity. Do not reuse one credential across all
+surfaces.
 
 ## Credential summary
 
-| Credential | Used by | Purpose | Do not use for |
-| --- | --- | --- | --- |
-| `WEBCODEX_TOKEN` | server admin | bootstrap/root admin | GPT/MCP/agent daily use |
-| Project Credential | setup-generated Connector + Agent | exact access to one private project grant | other projects/admin/general quick start |
-| shared key | agent + GPT/MCP quick start | shared-key group onboarding | production IAM/admin |
-| `wc_acct_xxx` | user CLI | create local PAT/agent token | GPT/MCP/agent |
-| `wc_pat_xxx` (`webcodex-user-token`) | GPT Action/MCP/API | runtime and project APIs | agent connection |
-| `wc_agent_xxx` (`webcodex-runner-token`) | `webcodex-runner` | Agent transport only | GPT/MCP/runtime/project API |
+| Credential | Prefix | Created by | Used for | Do not use for |
+| --- | --- | --- | --- | --- |
+| Server bootstrap token | `WEBCODEX_TOKEN` (env) | `webcodex server init` | server/admin setup, user creation, pairing | GPT/MCP/agent daily use |
+| Project Credential | (private file) | `webcodex setup` | exact access to one private project grant | other projects/admin/general quick start |
+| Shared key | `wck_...` | `webcodex connect` (generated once) | hosted shared-key MCP + Runner | production IAM |
+| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT/MCP/agent |
+| Personal API token (PAT) | `wc_pat_...` | `webcodex token create-local` | GPT Actions, MCP, runtime API | Runner connectivity |
+| Runner token | `wc_agent_...` | `webcodex agent-token create-local` | Runner transport only | GPT/MCP/runtime/project API |
+| OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
+
+The quick answer for "which token do I need?" is in
+[CLI.md](CLI.md#credentials-which-token-do-i-need). This page explains each
+credential in detail and how to recover or rotate it.
 
 ## `WEBCODEX_TOKEN`
 
-`WEBCODEX_TOKEN` is the server bootstrap/root/admin credential. It is configured in the server environment and is used for first-user creation and emergency administration.
+`WEBCODEX_TOKEN` is the Server bootstrap/root/admin credential. It is created
+by `webcodex server init`, stored in the server env file (normally
+`/etc/webcodex/webcodex.env`) under the variable name `WEBCODEX_TOKEN`, and used
+for first-user creation, pairing, and emergency administration.
 
-Do not put `WEBCODEX_TOKEN` in GPT Actions, MCP clients, or day-to-day agent configs.
+Do not put `WEBCODEX_TOKEN` in GPT Actions, MCP clients, or day-to-day agent
+configs.
+
+**Recovery / rotation:** rotate it if it may have leaked. Regenerate the value
+in the server env file and restart the Server. The env file is server-side only
+and should never be copied to client machines.
 
 ## Project Credential
 
 `webcodex setup` creates one Project Credential for the selected Git root,
-profile, and private state directory. The Connector credential file and
-generated Agent configuration carry the same secret in Iteration 8.0; exact
-verification maps both callers to one stable, non-secret `project_grant_id`.
-Agent registry access, readiness, file operations, jobs, logs, and cancellation
-all require that grant.
+profile, and private state directory. The Connector credential file and the
+generated Agent configuration carry the same secret; exact verification maps
+both callers to one stable, non-secret `project_grant_id`. Agent registry
+access, readiness, file operations, jobs, logs, and cancellation all require
+that grant.
 
 The secret exists only in owner-protected private files. It is not written to
 the database, returned by readiness, or included in Browser JSON, logs, and
-errors. The runtime holds only its SHA-256 verifier value and compares candidate
-hashes in constant time. Agent client IDs also include a non-secret grant
-suffix; a cross-grant registration cannot replace an existing lease.
+errors. The runtime holds only its SHA-256 verifier value and compares
+candidate hashes in constant time.
 
 Project mode is not shared-key quick start. It explicitly disables direct
-unknown-token fallback and accepts only the configured credential before a
-request reaches Connector runtime state. An arbitrary nonempty Bearer token
-therefore receives `401` and cannot create a Task, Execution, binding, or Agent
-request. The same rule applies on loopback; local processes are separate trust
-subjects.
+unknown-token fallback and accepts only the configured credential. An
+arbitrary nonempty Bearer token therefore receives `401` and cannot create a
+Task, Execution, binding, or Agent request. The same rule applies on loopback.
 
-Setup does not silently rotate a surviving Project Credential. Restore the
-matching Connector and Agent private files after recoverable loss. If the
-secret is unrecoverable, stop the runtime and explicitly retire the entire
-private project-state profile before running setup again; this creates a new
-secret and also retires that profile's local task/execution history. There is no
-in-place rotate command in Iteration 8.0.
+**Recovery / rotation:** setup does not silently rotate a surviving Project
+Credential. After a recoverable loss, restore the matching Connector and Agent
+private files. If the secret is unrecoverable, stop the runtime and explicitly
+retire the entire private project-state profile before running setup again;
+this creates a new secret and also retires that profile's local task/execution
+history. There is no in-place rotate command.
 
-## Shared key quick start
+## Shared key (`wck_...`)
 
-A shared key is a quick-start secret supplied to `connect --key <KEY>` and to GPT Actions or MCP only when the host supports static bearer/API-key authentication. It is sent as:
+A shared key is a quick-start secret generated by `webcodex connect` and
+supplied to MCP/Runner as `Authorization: Bearer <KEY>`. The same trimmed key
+may authenticate both the MCP/runtime client and a local Runner. WebCodex
+groups both sides by `shared_key_hash = SHA-256(trimmed key)`: the same value
+sees its own Runners, projects, and Jobs; different values create isolated
+lightweight groups.
 
-```text
-Authorization: Bearer <KEY>
-```
-
-When `WEBCODEX_SHARED_KEY_ENABLED=true`, an unknown non-`wc_` Bearer value is accepted as a shared-key principal. The same trimmed key may authenticate both the MCP/runtime client and a local Runner. The plaintext value is not enrolled as a server-side allowlist entry; WebCodex groups both sides by `shared_key_hash = SHA-256(trimmed key)`. The same value sees its own Runners, projects, and Jobs. Different values create isolated lightweight groups and cannot discover or operate on each other's objects.
-
-This fallback belongs only to an explicitly configured ordinary server
-quick-start. A project-bound setup sets it to false and uses the exact Project
-Credential verifier above; the two paths do not fall back to each other.
-
-A shared key gets runtime read, project read/write, job run, and Agent transport
-inside its own hash group. It does not get user/token/pairing/account
-management, service control, bootstrap, or admin access. A shared-key Runner's
-reported `owner` is ignored; authorization uses only the server-derived hash
-group. A globally colliding `client_id` cannot replace a Runner registered by a
-different group.
+The key is printed in full only when first created, then stored in the
+owner-only profile config under `~/.config/webcodex/clients/<profile>/`. A
+repeat `connect` reuses the profile and does not print it again. To recover it
+as a human, read that owner-only profile config field; status and log commands
+deliberately do not print it. There is no `show-token` command.
 
 A shared key is not an admin credential, not a managed user identity, and not
-production IAM. It has no independent per-device revocation or fine-grained
-identity audit: rotate the shared secret for the whole group, or use managed
-credentials when those properties matter.
+production IAM. It has no independent per-device revocation: rotate the shared
+secret for the whole group, or use managed credentials.
 
-Static bearer/API-key host auth can be used with either a shared key for quick start or a `wc_pat_xxx` token for managed mode. OAuth is a separate flow; blank OAuth client fields do not become no-auth or static bearer.
+`WEBCODEX_SHARED_KEY_ENABLED=true` enables direct Bearer shared-key fallback on
+an ordinary server. Managed `wc_*` values and empty/whitespace Bearer values
+never fall back to shared-key mode. `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE` is a
+separate flag for the OAuth authorize page and does not enable direct Bearer
+fallback.
 
-Direct Bearer shared-key fallback is controlled by
-`WEBCODEX_SHARED_KEY_ENABLED`. In that quick-start mode, Bearer values
-with a WebCodex managed prefix (`wc_`) that fail validation are rejected and
-must not fall back to shared-key mode. Empty or whitespace Bearer values are
-also rejected.
+## `wc_acct_xxx` (account credential)
 
-`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE` is separate from
-`WEBCODEX_SHARED_KEY_ENABLED`. The bridge flag enables shared-key entry on the
-OAuth authorization page for OAuth-only hosts; it does not enable direct Bearer
-shared-key fallback. Enabling direct Bearer shared-key fallback does not enable
-the OAuth bridge. An OAuth shared-key subject does not gain Agent transport;
-Runner pairing in this quick-start path requires the direct Bearer shared key.
-
-## `wc_acct_xxx`
-
-`wc_acct_xxx` is an account credential issued once when an administrator creates a user with `--issue-credential`.
-
-The user uses it locally with:
+`wc_acct_xxx` is issued once when an administrator creates a user with
+`--issue-credential`. The user uses it locally with:
 
 ```bash
 webcodex token create-local
 webcodex agent-token create-local
 ```
 
-Those commands generate plaintext tokens locally and register only token hashes with the server.
+Those commands generate plaintext tokens locally and register only token hashes
+with the server.
 
 `webcodex token generate --kind api|agent` is an offline primitive: it prints a
-token and hash but does not register either with a remote Server. Its output
-cannot authenticate until the hash is registered through the managed
-credential flow. Do not use an offline-generated `wc_pat_*` or `wc_agent_*` as
-an arbitrary shared key. Use `webcodex connect` with a non-`wc_` key for the
-hosted quick start, or use `webcodex login`, pairing, or an account credential
-for managed mode.
+token and hash but registers nothing. Its output cannot authenticate until the
+hash is registered through the managed credential flow. Do not use an
+offline-generated `wc_pat_*` or `wc_agent_*` as a hosted shared key.
 
-Do not use `wc_acct_xxx` as a GPT Action token, MCP token, runtime API token, or agent connection token.
+Do not use `wc_acct_xxx` as a GPT Action token, MCP token, runtime API token,
+or agent connection token.
 
-## `wc_pat_xxx`
+## `wc_pat_xxx` (personal API token)
 
-`wc_pat_xxx` is a personal API token generated locally by the user. The server stores only its hash.
+`wc_pat_xxx` is a personal API token generated locally by the user; the server
+stores only its hash. `webcodex login` writes it to a file named
+`webcodex-user-token` under the login directory for that server/user.
 
 Use `wc_pat_xxx` for:
 
@@ -125,23 +121,53 @@ Use `wc_pat_xxx` for:
 - Runtime API calls
 - Tool calls such as `/api/tools/list` and `/api/tools/call`
 
-Scope the PAT to the workflow. For example, a GPT Action that inspects and edits projects may need runtime, project, and job scopes.
+Supply it to CLI commands with `--token-file <path>` rather than `--token`, so
+the value stays out of shell history and process lists. Scope the PAT to the
+workflow. For example, a GPT Action that inspects and edits projects may need
+`runtime:read`, `project:read`, `project:write`, and `job:run`.
 
-## `wc_agent_xxx`
+## `wc_agent_xxx` (Runner token)
 
-`wc_agent_xxx` is an agent token generated locally by the user. The server stores only its hash and binds the token to `allowed_client_id`.
+`wc_agent_xxx` is a Runner token generated locally by the user; the server
+stores only its hash and binds it to `allowed_client_id`. Use it only for
+`webcodex-runner` connectivity. It cannot call runtime, project, tool, MCP, or
+account endpoints.
 
-Use `wc_agent_xxx` only for `webcodex-runner` connectivity. It cannot call runtime, project, tool, MCP, or account endpoints.
+`webcodex login` / enrollment stores it inside the generated `agent.toml` (with
+a companion `webcodex-runner-token` file). Selecting a `wc_agent_*` value for a
+user/runtime CLI token is diagnosed locally where possible and remains a
+server-side 403.
 
-The managed login writes the user credential to `webcodex-user-token` and the
-Runner credential into `agent.toml` (with a companion
-`webcodex-runner-token`). Selecting a `wc_agent_*` value for a user/runtime CLI
-token is diagnosed locally where possible and remains a server-side 403. The
-diagnostic never grants broader authority or prints the complete token.
+## `wc_pair_xxx` (pairing code)
+
+`wc_pair_xxx` is a short-lived, one-time pairing code created server-side by
+`webcodex pairing create`. Copy only this code to the enrolling client; the
+client redeems it with `webcodex login <server-url> --code <code>`. It is not a
+long-lived API token and expires.
+
+## OAuth2
+
+When OAuth2 is enabled (`WEBCODEX_OAUTH2_ENABLED=true`), GPT Actions / MCP
+clients can use the authorization-code flow and receive delegated `wc_oat_*`
+access tokens. OAuth credentials have their own roles:
+
+- **client id** — identifies the OAuth client (`wc_client_...`).
+- **client secret** — returned once at client creation; only its hash is
+  stored.
+- **access token** (`wc_oat_*`) — issued after consent, delegated from the
+  authorizing user's scopes.
+- **refresh token** — `offline_access` is advertised as a protocol-level
+  refresh-token scope; it grants no extra WebCodex permission and should not be
+  added to the client's `allowed_scopes`.
+
+The server supports the authorization-code grant, token revocation, and OAuth
+metadata. Dynamic client registration, OIDC, JWKS/JWT ID tokens, and the
+device-code flow are not implemented. OAuth setup steps are in
+[Deployment](DEPLOYMENT.md#oauth2).
 
 ## `client_id`
 
-`client_id` identifies one agent client instance, such as:
+`client_id` identifies one Runner instance, such as:
 
 ```text
 ubuntu-client
@@ -149,11 +175,12 @@ alice-macbook
 ci-runner-1
 ```
 
-An agent token is bound to an allowed `client_id`. This prevents an agent token minted for one client from registering as a different client.
+A Runner token is bound to an allowed `client_id`, preventing a token minted
+for one client from registering as a different client.
 
 ## Runtime project ids
 
-Agent-backed runtime project ids use this shape:
+Agent-backed runtime project ids use the shape:
 
 ```text
 agent:<client_id>:<project_id>
@@ -166,15 +193,47 @@ agent:ubuntu-client:webcodex
 agent:alice-macbook:my-repo
 ```
 
-The `<project_id>` comes from a top-level `id` field in an agent `projects.d/*.toml` file:
+The `<project_id>` comes from a top-level `id` field in an agent
+`projects.d/*.toml` file:
 
 ```toml
 id = "webcodex"
 path = "/srv/webcodex/projects/webcodex"
 ```
 
-Do not use server-side `[projects.<id>]` syntax in agent `projects.d/*.toml` files.
+Do not use server-side `[projects.<id>]` syntax in agent `projects.d/*.toml`
+files.
 
 ## Hash storage
 
-For user-created PATs and agent tokens, the server stores token hashes, not plaintext `wc_pat_xxx` or `wc_agent_xxx` values. Plaintext tokens are shown once at creation time and must be stored by the user or agent host.
+For user-created PATs and Runner tokens, the server stores token hashes, not
+plaintext `wc_pat_xxx` or `wc_agent_xxx` values. Plaintext tokens are shown
+once at creation time and must be stored by the user or agent host.
+
+## Where each credential lives
+
+| Credential | Location (default) |
+| --- | --- |
+| `WEBCODEX_TOKEN` | server env file (`/etc/webcodex/webcodex.env`) |
+| Shared key `wck_...` | `~/.config/webcodex/clients/<profile>/` (owner-only) |
+| Project Credential | project private state dir (owner-only files) |
+| `wc_acct_...` | given once by `users create --issue-credential` |
+| `wc_pat_...` (`webcodex-user-token`) | `~/.config/webcodex/<server-slug>/<user>/webcodex-user-token` |
+| `wc_agent_...` | inline inside `~/.config/webcodex/<server-slug>/<user>/agent.toml` |
+
+The per-(server, user) directory layout under `~/.config/webcodex/` is:
+
+```text
+~/.config/webcodex/
+  <server-slug>/
+    <user>/
+      server.toml               canonical server URL, username, device
+      agent.toml                the agent token lives here, inline
+      webcodex-user-token
+      projects.d/
+```
+
+Server identity is the canonical URL, not the directory name; the slug is a
+lossy index for humans only. When an AI agent needs a credential value, have it
+tell the human exactly which file to copy rather than echoing the file's
+contents into chat.

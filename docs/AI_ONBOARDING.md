@@ -2,8 +2,13 @@
 
 [English](AI_ONBOARDING.md) | [简体中文](AI_ONBOARDING.zh-CN.md)
 
-This guide is for an AI coding agent helping a user connect a local repository
-to WebCodex. Choose one path before running commands.
+This guide is for an AI coding agent helping a **user** connect a local
+repository to WebCodex or deploy a WebCodex Server. It is not the same as
+[`AGENTS.md`](../AGENTS.md), which is for an AI coding agent **developing
+WebCodex itself**.
+
+Choose one path before running commands, and verify the current machine and
+existing configuration before changing anything.
 
 ## Decision tree
 
@@ -15,7 +20,8 @@ to WebCodex. Choose one path before running commands.
    - Yes: use the **Managed flow** and `webcodex login`.
 3. Does the user need full infrastructure control, an internal network, their
    own HTTPS or identity system, or no dependency on the official Server?
-   - Yes: use **Full self-hosting** and read [DEPLOYMENT.md](DEPLOYMENT.md).
+   - Yes: use **Full self-hosting** and read
+     [Deployment](DEPLOYMENT.md).
 
 Do not deploy a WebCodex Server for the hosted path.
 
@@ -26,7 +32,7 @@ Run on the machine that owns the repository:
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex connect https://sg4.yyjeqhc.cn
+webcodex connect https://your-server.example
 ```
 
 The current directory is the default project. The command generates the shared
@@ -34,93 +40,97 @@ key unless the user explicitly supplies `--key-file` or `--key`. Configure the
 MCP client from the values printed after the connection check succeeds:
 
 ```text
-MCP URL: https://sg4.yyjeqhc.cn/mcp
+MCP URL: https://your-server.example/mcp
 Authentication: Bearer token
-Bearer token: the generated MCP key
+Bearer token: the generated key
 ```
 
-The key must be identical on the MCP and Runner sides after surrounding
-whitespace is trimmed. Do not commit it or the generated `agent.toml` to Git.
+`connect` performs the complete local setup: it creates or reuses a profile
+scoped to that origin and key, generates a unique client ID, registers the
+local project, writes a `0600` Runner config, starts one detached Runner, and
+waits until the same key can see the Runner and target project. Running the
+same command again reuses the profile and live Runner.
 
-`connect` performs the complete local setup:
-
-- normalizes the Server origin;
-- creates or reuses a profile scoped to that origin and key;
-- generates and persists a unique client ID;
-- canonicalizes and registers the local project outside the checkout;
-- writes a `0600` Runner config with a project-bounded policy;
-- starts one detached Runner without sudo or systemd;
-- waits until the same key can see the Runner and target project;
-- prints the MCP URL, runtime project ID, safe config path, and log path.
-
-Running the same command again reuses the profile, client ID, project record,
-and live Runner. Adding another project to the same profile preserves existing
-projects and expands the allowed roots.
-
-The public shared-key registration path has simple in-memory safety bounds:
-16 Runners per shared-key group and 1,024 shared-key Runners across one Server
-process. Offline shared-key Runner records expire after 24 hours. Those
-shared-key count and retention limits do not apply to managed `wc_agent_*`
-Agent Tokens. Every Runner registration has a 64-project input safety limit.
-
-For automation, prefer `--key-file <path>` over putting a key in shell history.
-Do not pass `--key` and `--key-file` together.
+For automation, prefer `--key-file <path>` over passing a key in shell
+history. Do not pass `--key` and `--key-file` together.
 
 ## Automatic key
 
-The default command omits the key and project flags:
-
-```bash
-webcodex connect https://sg4.yyjeqhc.cn
-```
-
-It generates a `wck_...` URL-safe key with more than 256 bits of randomness,
-stores it in the protected profile, and prints the complete value only when
-first created. Tell the user to copy it immediately into the MCP client. A
-repeat connection recovers the matching local profile and does not print the
-key again. The output names the owner-only `agent.toml` path for explicit local
-recovery, while status and log commands never disclose the key.
+When `--key`/`--key-file` is omitted, `connect` generates a `wck_...` key with
+more than 256 bits of randomness, stores it in the protected profile, and
+prints the complete value only when first created. Tell the user to copy it
+immediately into the MCP client. A repeat connection recovers the local
+profile and does not print the key again.
 
 The detached Runner survives terminal closure but not a machine reboot. After
-reboot, rerun the same `connect` command or use
-`webcodex agent start --profile <profile>`. `wck_` is deliberately different
-from the reserved managed prefix `wc_`.
+reboot, rerun the same `connect` or use `webcodex agent start --profile
+<profile>`.
 
 ## Managed flow
 
-Use the managed flow when the user needs:
+Use the managed flow when the user needs a separate user identity, token
+revocation, device-level authorization, identity audit, or organization
+administration:
 
-- a separate user identity;
-- token revocation;
-- device-level authorization;
-- identity audit;
-- organization administration.
-
-Start with:
-
-```text
-webcodex login
+```bash
+webcodex login https://your-server.example --code <wc_pair_...> \
+  --allowed-root "$HOME/git"
 ```
 
-The managed Server flow uses pairing/account credentials, a PAT for MCP/API,
-and a separately bound Agent token. Do not replace that split with a shared
-key.
+The managed flow uses a pairing/account credential, a PAT for MCP/API, and a
+separately bound Runner token. Do not replace that split with a shared key.
 
 ## Full self-hosting
 
-Use [DEPLOYMENT.md](DEPLOYMENT.md) when the user needs:
+Use [Deployment](DEPLOYMENT.md) when the user needs complete Server and data
+control, an internal-network deployment, their own HTTPS endpoint, their own
+identity system, or no dependency on the official Server. That path includes
+Server, database/state, reverse proxy, TLS, service, and credential operations;
+none of those are prerequisites for hosted `webcodex connect`.
 
-- complete Server and data control;
-- enterprise/internal-network deployment;
-- their own HTTPS endpoint;
-- their own identity system;
-- no dependency on the official Server.
+## What the AI agent may inspect
 
-That path includes Server, database/state, reverse proxy, TLS, service, and
-credential operations. None of those are prerequisites for hosted
-`webcodex connect`.
+You may safely locate and read **non-secret** configuration:
 
-## Credential rules for AI agents
+- profile path: `~/.config/webcodex/clients/<profile>/` (or
+  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/`)
+- Runner state and log path:
+  `~/.local/state/webcodex/clients/<profile>/` (or
+  `$XDG_STATE_HOME/webcodex/clients/<profile>/`)
+- token **file** path (not its contents): e.g. `webcodex-user-token`
+- env file **path** and variable **name** (e.g. `WEBCODEX_TOKEN` in the server
+  env file) — not the value
+- server URL
+- service status via `webcodex agent status` / `webcodex server status`
+- `webcodex doctor` output
+
+Useful non-secret commands:
+
+```bash
+webcodex agent status --profile <profile>
+webcodex agent logs --profile <profile> --lines 100
+webcodex status
+webcodex doctor
+webcodex ops status --server-url <url> --token-file <path> --strict
+```
+
+## What the human must copy or paste
+
+Do **not** read back, print, log, commit, or echo into chat:
+
+- full token values (shared key, PAT, Runner token, account credential,
+  bootstrap token, OAuth secrets)
+- full `agent.toml` contents
+- server env files
+- `Authorization` headers
+- OAuth client secrets
+
+When a secret must be entered into ChatGPT/Claude or another client, tell the
+**human** exactly which local file/value to copy. For example: "Copy the value
+from `~/.config/webcodex/<server>/<user>/webcodex-user-token` into the Bearer
+field." Do not read the file yourself and paste its contents into the chat.
+
+### Credential rules for AI agents
 
 - Never run `webcodex token generate` and assume a remote Server will accept
   its output. It creates offline material only; it does not register it.
@@ -135,28 +145,14 @@ credential operations. None of those are prerequisites for hosted
 ## Local state and troubleshooting
 
 For a normal non-root user, profile configuration defaults below
-`~/.config/webcodex/clients/<profile>/` (or
-`$XDG_CONFIG_HOME/webcodex/clients/<profile>/`). Runner state and logs default
-below `~/.local/state/webcodex/clients/<profile>/` (or
-`$XDG_STATE_HOME/webcodex/clients/<profile>/`).
-
-The hosted Runner writes `runner.log` in that profile state directory and
-rotates it while running at approximately 10 MiB. It keeps only
-`runner.log`, `runner.log.1`, and `runner.log.2`, all mode `0600` on Unix.
-`agent logs --lines` reads bounded tails from those files instead of loading
-complete archives; `--follow` reopens `runner.log` after rotation.
-
-Useful commands:
-
-```bash
-webcodex agent status --profile <profile>
-webcodex agent start --profile <profile>
-webcodex agent restart --profile <profile>
-webcodex agent logs --profile <profile> --lines 100
-webcodex agent stop --profile <profile>
-```
+`~/.config/webcodex/clients/<profile>/`; Runner state and logs below
+`~/.local/state/webcodex/clients/<profile>/`. The hosted Runner writes
+`runner.log` in that profile state directory and rotates it while running at
+approximately 10 MiB, keeping `runner.log`, `runner.log.1`, and
+`runner.log.2` (all `0600` on Unix). `agent logs --lines` reads bounded tails;
+`--follow` reopens `runner.log` after rotation.
 
 On connection failure, use the profile and log path printed by `connect`.
 Check Server reachability, shared-key enablement, exact key equality, client ID
-collision, and project-path validity. Status and logs do not print the key.
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for stable failure guidance.
+collision, and project-path validity. Status and logs do not print the key. See
+[Troubleshooting](TROUBLESHOOTING.md) for stable failure guidance.

@@ -1,0 +1,312 @@
+# Runner
+
+The Runner is the component that executes the actual work. The executable is
+`webcodex-runner`; the CLI namespace that manages it is `webcodex agent ...`.
+They are the same program — "agent" is the historical CLI name. This page
+explains what the Runner does, how it connects, how it registers projects, how
+to operate it as a service, and its main runtime concepts.
+
+For installation and service setup, see [Deployment](DEPLOYMENT.md). For the
+commands that manage the Runner, see [CLI](CLI.md#runner-the-agent-namespace).
+
+## What the Runner does
+
+The Runner runs on the machine that owns the repositories. It connects out to
+a WebCodex Server, registers the projects it is allowed to serve, and executes
+bounded operations — file reads and edits, Git inspection, structured
+validation, shell commands, and long-running Jobs — inside those project
+boundaries.
+
+The Runner is the trust boundary closest to your repository. Configure it with
+narrow allowed roots and explicit shell profiles rather than broad interactive
+shell state.
+
+## Server, CLI, Runner, Agent
+
+| Term | Meaning |
+| --- | --- |
+| **Server** | The `webcodex-server` process: authentication, routing, persistence. |
+| **CLI** | The `webcodex` command used by operators and developers. |
+| **Runner** | The `webcodex-runner` process that executes work on the repository machine. |
+| **Agent / agent CLI namespace** | The CLI namespace `webcodex agent ...` that manages the Runner. Same program as the Runner. |
+| **profile** | A named local client configuration (`agent.toml`, tokens, paths). |
+| **client_id** | A stable identifier for one Runner instance. |
+| **project_id** | A project id registered by a Runner in its project registry. |
+| **runtime project id** | `agent:<client_id>:<project_id>` — how the Server addresses a registered project. |
+| **Connector** | The project-bound coding surface of a configured local project; it binds one project to its executor. |
+
+## Connecting to the Server
+
+The Runner connects out to the Server using one of four transports, selected by
+the `transport` setting in `agent.toml`:
+
+| Transport | Config value | Use |
+| --- | --- | --- |
+| Auto | `auto` | Recommended for production when `[quic]` is configured: QUIC first, then WebSocket, then polling. |
+| QUIC | `quic` | Strict QUIC only. Separate UDP listener on the Server. |
+| WebSocket | `websocket` | Stable fallback for simple deployments without UDP. |
+| Polling | `polling` | Last-resort fallback for constrained networks. |
+
+The Runner authenticates with its agent token (or the direct shared key in
+hosted quick-start mode). The token is a Runner transport credential only; it
+is not used for MCP, REST, or GPT Actions.
+
+For WebSocket, the connection uses `Authorization: Bearer <token>` (with
+`?token=` accepted only for `/api/agents/ws` handshake compatibility). For
+polling, every request carries the bearer header. QUIC sends the token inside
+the registration envelope.
+
+## Registering projects
+
+Projects live on the Runner machine. The Runner registers allowed directories
+with the Server; the Server does not scan the filesystem and does not invent
+project paths.
+
+Each registered project is a one-file-per-project TOML file in the Runner's
+`projects_dir` (default `projects.d`). The format:
+
+```toml
+id = "webcodex"
+path = "/srv/webcodex/projects/webcodex"
+name = "WebCodex"
+kind = "repo"
+allow_patch = true
+```
+
+The top-level `id` and `path` are required. The old nested
+`[projects.<id>]` server-side format is not used in `projects.d`.
+
+Runtime project ids take the shape `agent:<client_id>:<project_id>`, for
+example `agent:workstation:my-repo`. A project-bound Connector resolves this
+internally; ordinary users do not type it.
+
+### Allowed roots
+
+`allowed_roots` in the Runner policy controls where projects may be registered
+or created:
+
+- Missing or empty `allowed_roots` defaults to `$HOME`.
+- An explicit `allowed_roots` overrides that default.
+- Use explicit roots to narrow a Runner to one workspace tree, for example:
+
+```toml
+[policy]
+allow_cwd_anywhere = false
+allowed_roots = ["/root/git"]
+```
+
+### Temporary projects
+
+Set `temporary_projects_root` in `agent.toml` to let `start_coding_task`
+create a project from a `client_id` instead of an existing `project`. The
+Runner creates only a new direct child of that root and persists a normal
+`projects.d` record with `kind = "managed_temporary"`. The root must already
+exist and must be allowed by the policy. There is no automatic expiration.
+
+### Registering projects at runtime
+
+The runtime tools `register_project` and `create_project` let a client register
+an existing directory or create a new one on an online Runner, subject to the
+Runner's `allowed_roots` policy.
+
+## Shell profiles
+
+By default, `run_shell` and `run_job` do not keep a persistent shell session.
+They prepare an environment snapshot once per project/profile and then run each
+command as an independent process with that snapshot. The snapshot is captured
+by starting the profile program with a cleared environment, applying the
+profile `env`, running the profile `init_script` (if any), and capturing the
+resulting environment.
+
+WebCodex does **not** source `~/.bashrc` or `~/.profile` by default: they can
+be slow, interactive-only, environment-polluting, and non-reproducible. Use an
+explicit profile instead.
+
+Example Rust/Cargo profile in `agent.toml`:
+
+```toml
+[shell]
+default_profile = "rust"
+
+[shell.profiles.rust]
+program = "sh"
+args = ["-c"]
+
+[shell.profiles.rust.env]
+PATH = "/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+CARGO_HOME = "/root/.cargo"
+RUSTUP_HOME = "/root/.rustup"
+```
+
+Example Python venv profile:
+
+```toml
+[shell.profiles.py-venv]
+program = "bash"
+args = ["-lc"]
+init_script = '''
+source .venv/bin/activate
+'''
+```
+
+The `init_script` is project-relative: it is resolved from the project root,
+so each project activates its own venv. A project can pin a profile:
+
+```toml
+id = "paper-exp"
+path = "/root/git/paper-exp"
+shell_profile = "conda-ml"
+```
+
+Resolution order: `project.shell_profile`, then `shell.default_profile`, then
+the plain shell config (no snapshot).
+
+Security notes for profiles:
+
+- Never put tokens in `init_script`, and never `echo` secrets into it — the
+  script's stdout is parsed as part of the snapshot.
+- Status and runtime APIs expose only sanitized profile metadata (name,
+  `has_init_script`, env key count, program, dialect) — never `init_script`
+  bodies or environment values.
+- Profiles run with a cleared environment plus an explicit allowlist; declare
+  the env they need.
+
+## Jobs and concurrency
+
+A Job is a long-running command or validation that continues after the
+initiating call returns. Jobs have a stable `job_id`, bounded stdout/stderr
+tails, and can be stopped. Structured execution (`run_process`,
+`run_script`) and validation Jobs hand off a single execution to a Job when it
+outlives the synchronous grace period; the same process continues — it is never
+restarted.
+
+The Runner executes up to `max_concurrent_jobs` Jobs at once (default 4,
+effective range 1..64). This is an operational tuning control, not a security
+boundary, and requires a Runner restart to change:
+
+```toml
+max_concurrent_jobs = 4
+```
+
+When all slots are occupied, an accepted Job remains the same queryable Job
+with the same `job_id` and reports `agent_queued`.
+
+## Transports in more detail
+
+### Server requirements for QUIC
+
+Enable the QUIC listener on the Server and open the chosen UDP port:
+
+```sh
+WEBCODEX_QUIC_ENABLED=true
+WEBCODEX_QUIC_LISTEN=0.0.0.0:8443
+WEBCODEX_QUIC_CERT=/etc/letsencrypt/live/<host>/fullchain.pem
+WEBCODEX_QUIC_KEY=/etc/letsencrypt/live/<host>/privkey.pem
+WEBCODEX_QUIC_ALPN=webcodex-runner/1
+```
+
+The certificate SAN must match the `server_name` configured on the Runner.
+`auto` tries QUIC first when `[quic]` is present, then WebSocket, then polling.
+
+### Outbound proxy for the Runner
+
+If the Runner host needs an outbound HTTP proxy, set the proxy variables in
+the Runner's service environment, not only in an interactive shell. WebSocket
+honors `HTTPS_PROXY`/`http_proxy`, `HTTP_PROXY`/`http_proxy`, then
+`ALL_PROXY`/`all_proxy`; `NO_PROXY`/`no_proxy` bypasses matching hosts. The
+supported proxy transport is `http://host:port` via HTTP `CONNECT`. QUIC does
+not use proxy settings.
+
+## Reconnect and recovery
+
+A Runner disconnect is a liveness fact, not a lost-work fact. Accepted active
+Jobs enter a bounded `recovering` state (default grace 120 seconds) and are
+restored from the Runner's inventory when the same Runner instance reconnects.
+A replacement Runner instance does not inherit the old instance's jobs; they
+become `lost`. A Runner process restart cannot recover its old child processes.
+
+Reconnect happens automatically with a short delay. Authentication failure and
+other fatal errors stop the Runner rather than looping forever.
+
+## Shutting down and restarting
+
+`webcodex-runner` stops cleanly on `SIGINT`/`SIGTERM`. For a supervised
+deployment, run it under a service manager (user or system scope) and keep the
+token in the service environment. There is no built-in daemon installer; use
+`webcodex agent install --scope user|system`.
+
+After a machine reboot, a hosted `connect` profile is restarted by rerunning
+`webcodex connect` or `webcodex agent start --profile <profile>`. Automatic
+startup at logon is not implemented for hosted profiles.
+
+## SSH session resources (advanced)
+
+A Runner that can invoke the local OpenSSH client advertises the `ssh_shell`
+capability. A Workflow Session may select a named SSH resource so `run_shell`
+and `run_job` execute on a remote host through the Runner's own OpenSSH client:
+
+```toml
+[ssh.resources.tmp]
+host = "tmp"
+default_cwd = "/opt/webcodex-edge"
+```
+
+The `host` value is passed to the Runner machine's OpenSSH client, so normal
+`~/.ssh/config`, keys, `ssh-agent`, and `ProxyJump` configuration remain on
+that machine. Do not put credentials, private keys, or complete SSH
+configuration into session data, Server storage, or tool input. A Session's
+`execution_context.resource` changes only `run_shell` and `run_job`; file,
+Git, and LSP tools remain local.
+
+## LSP navigation (read-only)
+
+The Runner can serve read-only semantic navigation through language servers
+run on the repository machine:
+
+| Language | Server | Markers |
+| --- | --- | --- |
+| Rust | `rust-analyzer` | `Cargo.toml` |
+| Python | `pyright` | `pyproject.toml`, `setup.py`, `requirements.txt`, … |
+| TypeScript / JavaScript | `typescript-language-server` | `tsconfig.json`, `package.json`, … |
+
+The tools are `lsp_status`, `document_symbols`, `goto_definition`,
+`find_references`, `document_diagnostics`, `hover`, and `workspace_symbols`.
+They are read-only, project-bound, and constrained so that starting a language
+server never executes repository code or fetches dependencies. Paths are
+project-relative; external/dependency locations are omitted. Servers must be
+installed on the Runner machine or pointed to by env overrides such as
+`WEBCODEX_RUST_ANALYZER`.
+
+## Operating the Runner
+
+Minimal commands:
+
+```bash
+webcodex agent status --profile <profile>
+webcodex agent logs --profile <profile> --lines 100
+webcodex agent restart --profile <profile>
+```
+
+For a user service:
+
+```bash
+webcodex agent install --scope user --config <login-reported-agent-config>
+webcodex agent status --scope user --config <login-reported-agent-config>
+```
+
+For an administrator-managed system service:
+
+```bash
+sudo webcodex agent install --scope system --profile <profile> \
+  --user <runner-user> --working-directory /home/<runner-user>
+sudo webcodex agent status --scope system --profile <profile>
+```
+
+Use the same `--scope` for install, status, start, stop, restart, logs, and
+uninstall. User scope uses `systemctl --user`; system scope uses
+`/etc/systemd/system`.
+
+After editing `agent.toml`, reload the matching service to apply policy,
+shell, and SSH-resource changes. Identity, server/auth, transport, and
+concurrency changes still require a restart. Invalid reloads keep the active
+generation.

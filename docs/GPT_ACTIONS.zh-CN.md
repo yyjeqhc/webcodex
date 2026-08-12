@@ -2,40 +2,35 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-Custom GPT 需要调用 project-bound WebCodex Connector 时使用 GPT Actions；
-client 直接支持 MCP 时优先 MCP。
+Custom GPT 需要调用 project-bound WebCodex Connector 时使用 GPT Actions；客户端
+直接支持 MCP 时请用 [MCP](MCP.zh-CN.md)——底层 surface 是同一个。
 
-## 产品术语
+## 什么是 GPT Action
 
-WebCodex 当前提供的是基于 OpenAPI 的 **Custom GPT Action** 接入。本文不把它
-描述为已经发布到 ChatGPT 插件目录的正式插件。按 OpenAI 当前术语，plugin 是
-ChatGPT/Codex 插件目录中的可安装 bundle，可以包含 app、skill、connector 或 MCP
-server；app、Custom GPT 和 Action 则是不同层次。参见 OpenAI 的
-[GPT Actions 介绍](https://developers.openai.com/api/docs/actions/introduction)和
-[插件文档](https://learn.chatgpt.com/docs/plugins)。
+WebCodex 提供基于 OpenAPI 的 **Custom GPT Action** 集成。它不是已发布的
+ChatGPT plugin。在当前的 OpenAI 术语里，app、Custom GPT 与 Action 是不同层；
+plugin 是 ChatGPT/Codex plugin 目录中可安装的包。参见 OpenAI 的
+[GPT Actions 介绍](https://developers.openai.com/api/docs/actions/introduction)。
 
-## Schema
+## 导入 schema
 
-导入：
+把 OpenAPI schema 导入你的 Custom GPT：
 
 ```text
 https://your-domain.example/openapi.json
 ```
 
-ChatGPT 要求公网 HTTPS。`webcodex setup` 有意只创建 loopback project runtime；
-ingress 和 production authentication 由 operator 负责，见
-[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)。
+ChatGPT 需要公网 HTTPS。把 API-key 认证配置为 HTTP Bearer。使用生成的
+`webcodex-user-token`（`wc_pat_*`）——它用于 GPT Actions、MCP 与普通 REST/项目
+API。Runner token（`wc_agent_*`）只被 Runner 传输 endpoint 接受；不要把
+bootstrap/admin token 或 account credential 粘贴到 GPT 中。
 
-API-key 认证配置为 HTTP Bearer credential。Managed login 应选择生成的
-`webcodex-user-token`（`wc_pat_*`）；它用于 GPT Actions、MCP 和普通
-REST/project API。`webcodex-runner-token`（`wc_agent_*`）是 Agent transport
-credential，只能访问 Agent transport endpoints。不要把它、bootstrap/admin
-token 或 account credential 粘贴进 GPT。Agent token 调用 project/runtime
-endpoint 时，server 仍会返回 403。
+OpenAPI 管理 surface 有意排除 users、API token、agent token、pairing/enrollment、
+setup、doctor、npm、server 管理与 audit endpoint。这些请用 `webcodex` CLI 完成。
 
-## Canonical hosted operations
+## Connector surface
 
-project-bound Connector 的 OpenAPI 与 MCP 来自同一份十二项 capability registry：
+对于 project-bound Connector，OpenAPI 从与 MCP 相同的十二个能力生成：
 
 ```text
 task_start
@@ -52,85 +47,38 @@ task_cancel
 task_finish
 ```
 
-operation count 由 generation/tests 验证；setup、pairing、token management、Agent
-management、audit endpoint 和 legacy `/api/codex` route 不进入 Action schema。
+Connector 已经拥有确定性的项目绑定。Custom GPT 在普通 coding 前不得调用
+`listProjects`、`runtime_status`、`tool_manifest`、`start_session` 或 Agent
+listing，prompt 中也不得包含 Agent client ID 或 runtime project ID。
 
-Connector 已拥有确定性 project binding。Custom GPT 普通 coding 前不得调用
-`listProjects`、`runtime_status`、`tool_manifest`、`start_session` 或 Agent listing，
-prompt 也不包含 Agent client ID 或 runtime project ID。
-
-若部署同时开放高级 generic `callRuntimeTool` 兼容路径，成功的
-`start_coding_task` Action 只包装 MCP/REST 共用的 startup core，不会重建
-continuation 数据。该 core 的 attempt-scoped exploration workset 只包含由成功
-定向读取、结构化搜索和 typed LSP 导航产生的、有界且已验证的项目相对路径；它
-排除搜索/文件/LSP 正文、命令/输出和绝对根路径，attempt boundary 被淘汰时标记
-`complete=false`，并可在 continuation、显式 resume、mode upgrade 和重启后复用，
-但不会自动执行工具。standard/full core 最多返回 12 条路径（`minimal` 为 3），
-完整 Action response 仍保持在 32 KiB 以下。
-
-同一 generic runtime schema 还公开 strict `execution_context` 对象，只包含
-已注册项目内的 project-relative `default_cwd` 和 `default_shell`
-（`sh`/`bash`）。`start_coding_task` 可设置或替换它，
-`update_session_context` 可针对显式 active Workflow Session 完整替换或以 `{}`
-清空，但必填 `project` 必须解析为该 Session 的精确项目，且调用者必须有权访问；
-跨项目逃逸会被拒绝。成功仅表示内存 context/event 已提交，JSON ledger 仍由后台
-writer 异步持久化。`run_shell`/`run_job` 的单次 `cwd`/`shell` 始终优先；上下文不保存 env、
-凭据或持久 shell 状态。每条命令仍是 fresh process，`cd`/`export` 不会写回
-Session；SSH 与 persistent shell 不在本轮范围内。
-
-该 generic runtime schema 还公开 strict `HandoffBrief` component。
-`session_handoff_summary` 与 `finish_coding_task` 复用它，返回同一语义、
-确定性只读且不超过 8 KiB 的 `handoff_brief`。这个紧凑投影面向新窗口、新 Agent
-或人工接班；详细证据仍由 `continuation_feedback` 提供。它不是 Session replay，
-不会恢复模型隐藏上下文；builder 本身不保存新的 Session 数据，也不执行额外工具。
-但公开 generic-runtime 调用仍会按统一 dispatch recorder 正常写入
-`tool_call_started` / `tool_call_finished` Session telemetry；这不属于 handoff
-投影的业务副作用。新窗口可以新建 Session 后显式读取旧 Session 的 handoff；
-显式 resume 继续遵守原有安全检查。
-
-在同一个可保留的聊天窗口身份内，`task_start` 会自动继续该仓库的持久上下文并
-追加新指令。切换到另一份已配置仓库时两边历史严格隔离，切回时恢复原仓库。
-WebCodex 只刷新发生变化的 Git、工作区、仓库规则、目标目录和 manifest 状态。
-
-## 建议 GPT Instructions
+## 建议的 GPT 指令
 
 ```text
-Use the configured WebCodex project.
-Start or continue each user instruction with task_start.
-Let task_start reuse the current project context; do not ask the user for IDs.
-Use task_list and task_resume only after WebCodex reports that automatic
-transport-window recovery is unavailable.
-Use files_list to see what the project contains before guessing paths.
-Use files_read/files_search before edits_apply.
-Use a stable operation_id for exact retry.
-Run checks_run before task_finish.
-Use task_review for execution progress and result review.
-Use commands_run only when structured capabilities are insufficient and
-approval is available.
-Never ask the user for task, session, current-binding, Agent, transport, queue,
-or workflow identifiers.
+使用配置好的 WebCodex 项目。
+每次用户指令用 task_start 开始或延续。
+让 task_start 复用当前项目上下文；不要向用户询问 ID。
+只有在 WebCodex 报告自动传输窗口恢复不可用时才使用 task_list 与 task_resume。
+猜测路径前先用 files_list 查看项目内容。
+在 edits_apply 前使用 files_read/files_search。
+用稳定的 operation_id 做精确重试。
+在 task_finish 前运行 checks_run。
+用 task_review 查看执行进度与结果审查。
+仅当结构化能力不足且有人工审批时使用 commands_run。
+永远不要向用户询问 task、session、current-binding、Agent、transport、queue
+或 workflow 标识符。
 ```
 
-## Validation recipe contract
+## 校验
 
-`checks_run` 仍是唯一 structured validation Action。它接受可选 enum `recipe`
-（`rust`、`node`、`python`、`go`）；省略时从 Task workspace 和相对 `cwd`
-确定性解析最近 manifest。`validation_recipe_ambiguous` 报告同一最近 root 有多个
-marker 时提供匹配的显式 recipe。唯一的 markerless 例外是显式
-`recipe=python` 加 `checks=["test"]`，它从 `cwd` 选择固定的 unittest discovery
-plan。模型不能通过该 Action 提供 program、argv、script body 或 shell command。
+`checks_run` 是唯一的结构化校验 Action。它接受可选 `recipe` 枚举（`rust`、
+`node`、`python`、`go`）；省略时做确定性的最近 manifest 解析。Recipe 不安装
+依赖、不修改 lockfile、不使用网络。缺少工具是 executor 失败；已启动 validator
+的非零判定是断言失败。recipe 表格见 [MCP](MCP.zh-CN.md#校验-recipe)。
 
-Rust 支持 `format/check/test`；Node 使用有证据的 package manager 和固定非修改型
-script-name 顺序；Python 使用已配置的 Ruff/Black、Ruff/Mypy 和 pytest，或固定的
-manifestless `python -B -m unittest discover -v` test plan；Go 支持
-`check/test`，`format` unavailable。recipe 不安装依赖、不修改 lockfile、不联网。
-tool 缺失属于 executor failure，validator 启动后的 non-zero verdict 才是 assertion
-failure。resolved recipe version、相对 root、invocation 和 manifest/lock
-evidence 都绑定 `operation_id`；recipe 或 workspace 变化后使用新 ID。
+## 人工决策
 
-## 人类决定
-
-`task_finish` 创建 stable result，不会静默应用到 target checkout。host 用户执行：
+`task_finish` 生成稳定结果；它不会静默地把变更应用到目标 checkout。由宿主用户
+在本地审查并决策：
 
 ```bash
 webcodex task show <task-id>
@@ -138,43 +86,29 @@ webcodex task accept <task-id>
 # 或：webcodex task reject <task-id>
 ```
 
-即使模型托管在远端，accept authority 仍留在本机。
+即使模型是 hosted 的，接受权也保留在本地。
 
 ## 常见错误
 
-- 复制 `wc_agent_*` 后出现认证错误，说明选错了 credential type。请改用生成的
-  `webcodex-user-token`；日志和 issue 中都不要粘贴完整 token。
-
+- 复制 `wc_agent_*` 后出现认证错误，说明选错了凭据类型。请改用生成的
+  `webcodex-user-token`；不要把完整令牌值粘贴到日志或 bug 报告。
 - `project_not_configured`：运行 `webcodex setup`。
-- `project_registration_invalid` / `project_credential_invalid`：解决报告的
-  private-state 问题；setup 不会覆盖或静默轮换它。
-- `project_credential_rejected`：恢复与可达 server 匹配的 credential；这不是
-  `agent_offline`。
-- `server_unreachable` / `agent_offline`：运行 `webcodex doctor`，再执行其 next
-  action。
-- `required_capability_unavailable` /
-  `structured_validation_unavailable`：升级全部 WebCodex binaries。
-- `task_not_active`：开始新 task。
-- `execution_not_terminal`：review、wait 或 cancel execution。
-- `validation_recipe_not_found` / `validation_recipe_ambiguous`：修改 `cwd` 或
-  提供匹配的显式 recipe。
-- `validation_recipe_mismatch` / `validation_manifest_invalid` /
-  `package_manager_ambiguous`：修复报告的公开 project evidence。
-- `validation_check_unavailable` / `test_filter_unsupported`：只请求 resolved
-  recipe 支持的 semantic input。
-- `validation_tool_unavailable`：在 Agent host 提供项目已有工具，再使用新
-  operation ID。
+- `project_credential_invalid` / `project_credential_rejected`：解决报告的
+  私有状态问题，然后恢复匹配的凭据。
+- `server_unreachable` / `agent_offline`：运行 `webcodex doctor`，再执行报告的
+  next action。
+- `required_capability_unavailable` / `structured_validation_unavailable`：
+  升级所有 WebCodex 二进制。
 - `checks_required`：调用 `checks_run`。
-- `checks_stale`：使用新 operation ID 运行 fresh check。
+- `checks_stale`：用新的 operation ID 运行一次新检查。
 
-每个错误都携带 stable code、human message、retryability、
-`user_action_required` 和 suggested next action。控制流必须使用 code，不得匹配任意
-英文 message。
+每个错误都带稳定 code、人类可读消息、可重试性与建议的下一步。控制流应使用
+code，而不是匹配任意英文消息。
 
 ## 相关文档
 
-- [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md)
-- [MCP.zh-CN.md](MCP.zh-CN.md)
-- [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)
-- [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)
-- [../SECURITY.md](../SECURITY.md)
+- [快速开始](QUICK_START.zh-CN.md)
+- [MCP](MCP.zh-CN.md)
+- [认证模型](AUTH_MODEL.zh-CN.md)
+- [部署指南](DEPLOYMENT.zh-CN.md)
+- [SECURITY.md](../SECURITY.md)

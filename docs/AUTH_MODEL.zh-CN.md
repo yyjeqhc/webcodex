@@ -2,126 +2,146 @@
 
 [English](AUTH_MODEL.md) | [简体中文](AUTH_MODEL.zh-CN.md)
 
-WebCodex 把 bootstrap administration、account onboarding、runtime API access 和 agent connectivity 分开。不要在所有 surface 上复用同一种凭据。
+WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连接分开。不要
+在所有 surface 上复用同一种凭据。
 
-## 凭据摘要
+## 凭据总览
 
-| Credential | 使用方 | 用途 | 不要用于 |
-| --- | --- | --- | --- |
-| `WEBCODEX_TOKEN` | server admin | bootstrap/root admin | GPT/MCP/agent 日常使用 |
-| Project Credential | setup 生成的 Connector + Agent | 精确访问一个 private project grant | 其他项目/admin/普通 quick start |
-| shared key | agent + GPT/MCP quick start | shared-key group onboarding | production IAM/admin |
-| `wc_acct_xxx` | user CLI | 创建本地 PAT/agent token | GPT/MCP/agent |
-| `wc_pat_xxx`（`webcodex-user-token`） | GPT Action/MCP/API | runtime 和 project API | agent connection |
-| `wc_agent_xxx`（`webcodex-runner-token`） | `webcodex-runner` | 仅 Agent transport | GPT/MCP/runtime/project API |
+| 凭据 | 前缀 | 由谁创建 | 用途 | 不要用于 |
+| --- | --- | --- | --- | --- |
+| Server bootstrap token | `WEBCODEX_TOKEN`（env） | `webcodex server init` | server/admin 设置、建用户、pairing | GPT/MCP/agent 日常使用 |
+| Project Credential | （私有文件） | `webcodex setup` | 精确访问单个私有项目授权 | 其他项目/admin/通用 quick start |
+| 共享 key | `wck_...` | `webcodex connect`（一次性生成） | hosted shared-key 的 MCP + Runner | 生产 IAM |
+| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | GPT/MCP/agent |
+| 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex token create-local` | GPT Actions、MCP、runtime API | Runner 连接 |
+| Runner 令牌 | `wc_agent_...` | `webcodex agent-token create-local` | 仅 Runner 传输 | GPT/MCP/runtime/project API |
+| OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 GPT Actions / MCP | — |
+
+"我需要哪个令牌？"的快速答案见 [CLI.md](CLI.zh-CN.md#凭据我到底需要哪个令牌)。
+本页详细介绍每种凭据以及如何恢复或轮换。
 
 ## `WEBCODEX_TOKEN`
 
-`WEBCODEX_TOKEN` 是 server bootstrap/root/admin credential。它配置在 server environment 中，用于 first-user creation 和 emergency administration。
+`WEBCODEX_TOKEN` 是 Server bootstrap/root/admin 凭据。它由 `webcodex server init`
+创建，存储在 server env 文件（通常 `/etc/webcodex/webcodex.env`）的
+`WEBCODEX_TOKEN` 变量中，用于首次建用户、pairing 与紧急管理。
 
-不要把 `WEBCODEX_TOKEN` 放进 GPT Actions、MCP clients 或日常 agent configs。
+不要把它放进 GPT Actions、MCP 客户端或日常 agent 配置。
+
+**恢复 / 轮换：** 若可能泄露请轮换：在 server env 文件中重新生成该值并重启
+Server。env 文件只在 server 侧，不应复制到客户端机器。
 
 ## Project Credential
 
-`webcodex setup` 会为选定 Git root、profile 和 private state directory 创建一个
-Project Credential。Iteration 8.0 中，Connector credential file 与生成的 Agent
-config 携带同一个 secret；精确 verifier 会把两类 caller 映射到同一个稳定、非秘密
-的 `project_grant_id`。Agent registry access、readiness、file operation、job、log
-与 cancel 都要求该 grant。
+`webcodex setup` 为选定的 Git root、profile 与私有状态目录创建一把 Project
+Credential。Connector credential 文件与生成的 Agent 配置携带同一 secret；精确
+校验会把两个调用方映射到同一个稳定、非 secret 的 `project_grant_id`。Agent
+registry 访问、就绪、文件操作、jobs、日志与取消都需要该 grant。
 
-secret 只存在于 owner-protected private file；不会写入数据库，也不会出现在
-readiness、Browser JSON、日志或错误中。runtime 只保留 SHA-256 verifier value，
-candidate hash 使用 constant-time comparison。Agent client ID 还包含非秘密 grant
-suffix；跨 grant registration 不能替换已有 lease。
+该 secret 只存在于 owner 保护的私有文件中。它不会写入数据库、不通过就绪接口
+返回、不出现在 Browser JSON、日志与错误中。runtime 只持有其 SHA-256 校验值，
+并以常数时间比较候选 hash。
 
-Project mode 不是 shared-key quick start。它显式关闭 direct unknown-token fallback，
-请求只有通过精确 credential verifier 才能进入 Connector runtime state。因此任意
-非空 Bearer token 会得到 `401`，不能创建 Task、Execution、binding 或 Agent
-request。Loopback 同样不免除认证，本机进程仍是不同 trust subject。
+Project 模式不是 shared-key quick start。它显式禁用直接 unknown-token fallback，
+只接受配置好的凭据。因此任意非空 Bearer token 会收到 `401`，无法创建 Task、
+Execution、binding 或 Agent 请求。loopback 上也同样如此。
 
-Setup 不会静默轮换仍存在的 Project Credential。可恢复的丢失应恢复 Connector 与
-Agent 两份匹配 private file。若 secret 无法恢复，停止 runtime，并明确退役整个
-private project-state profile 后重新 setup；这会生成新 secret，也会退役该 profile
-中的本地 Task/Execution history。Iteration 8.0 没有 in-place rotate command。
+**恢复 / 轮换：** setup 不会静默轮换存活的 Project Credential。可恢复丢失时，
+请恢复匹配的 Connector 与 Agent 私有文件。若 secret 无法恢复，先停止 runtime，
+再显式作废整个私有 project-state profile，然后重新运行 setup；这会创建新 secret，
+同时作废该 profile 的本地 task/execution 历史。不存在就地 rotate 命令。
 
-## Shared key quick start
+## 共享 key（`wck_...`）
 
-shared key 是 quick-start secret：agent 通过 `connect --key <KEY>` 使用它；GPT Actions 或 MCP 只有在 Host 支持静态 Bearer/API-key 认证时才使用它。请求形态是：
+共享 key 是 `webcodex connect` 生成的 quick-start secret，以
+`Authorization: Bearer <KEY>` 提供给 MCP/Runner。同一把去空格后的 key 可以同时
+认证 MCP/runtime 客户端与本地 Runner。WebCodex 以 `shared_key_hash =
+SHA-256(trimmed key)` 对两端分组：相同的值看到自己的 Runners、项目与 Jobs；
+不同的值形成隔离的轻量组。
 
-```text
-Authorization: Bearer <KEY>
-```
+key 只在首次创建时完整打印，然后保存在 owner-only profile 配置下：
+`~/.config/webcodex/clients/<profile>/`。重复 `connect` 复用 profile 且不再打印。
+如需人工恢复该值，请读取该 owner-only profile 配置字段；status 与 log 命令故意
+不打印它。不存在 `show-token` 命令。
 
-当 `WEBCODEX_SHARED_KEY_ENABLED=true` 时，未知且非 `wc_` 开头的 Bearer 值会被接受为 shared-key principal。同一个 trim 后的 key 可以同时认证 MCP/runtime client 和本地 Runner。该明文值不会作为 server-side allowlist entry 预先登记；两侧统一按 `shared_key_hash = SHA-256(trimmed key)` 分组。同 key 可以看到自己 group 内的 Runner、project 和 Job；不同 key 的轻量 group 相互隔离，不能发现或操作对方对象。
+共享 key 不是 admin 凭据、不是 managed user identity，也不是生产 IAM。它没有
+独立的按设备撤销能力：请轮换整个组的共享 secret，或改用 managed 凭据。
 
-这个 fallback 只属于显式配置的普通 server quick-start。project-bound setup 会把
-它设为 false，并使用上面的精确 Project Credential verifier；两条路径不会互相
-fallback。
+`WEBCODEX_SHARED_KEY_ENABLED=true` 在普通 server 上启用直接 Bearer shared-key
+fallback。managed `wc_*` 值与空/空白 Bearer 值永远不会回退到 shared-key 模式。
+`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE` 是 OAuth authorize 页面的独立 flag，不启用
+直接 Bearer fallback。
 
-shared key 在自身 hash group 内获得 runtime read、project read/write、job run 和 Agent
-transport，但不获得用户/token/pairing/account 管理、service control、bootstrap 或
-admin 权限。shared-key Runner 上报的 `owner` 会被忽略，授权只依据 server 派生的
-hash group。不同 group 即使碰撞到同一个全局 `client_id`，也不能替换已有 Runner。
+## `wc_acct_xxx`（account credential）
 
-shared key 不是 admin credential，不是 managed user identity，也不是 production
-IAM。它不支持独立设备撤销或精细身份审计；需要这些能力时应使用 managed
-credential，而不是继续共享同一个 secret。
-
-静态 Bearer/API-key 认证既可以承载 shared key，也可以承载 managed mode 的 `wc_pat_xxx`。OAuth 是独立 flow；OAuth client 字段留空不会变成 no-auth，也不会变成静态 Bearer。
-
-Direct Bearer fallback 由 `WEBCODEX_SHARED_KEY_ENABLED` 控制。未知、撤销或拼错的
-`wc_*` managed token 永远不会降级成 shared key。OAuth shared-key bridge 是独立
-入口，也不会隐式获得 Agent transport；quick-start Runner pairing 必须使用 direct
-Bearer shared key。
-
-## `wc_acct_xxx`
-
-`wc_acct_xxx` 是管理员使用 `--issue-credential` 创建用户时签发的一次性 account credential。
-
-用户在本地用它执行：
+`wc_acct_xxx` 在管理员用 `--issue-credential` 创建用户时一次性签发。用户用它
+本地执行：
 
 ```bash
 webcodex token create-local
 webcodex agent-token create-local
 ```
 
-这些命令在本地生成 plaintext tokens，并只把 token hashes 注册到 server。
+这两个命令本地生成明文令牌，并只向 server 注册令牌 hash。
 
-`webcodex token generate --kind api|agent` 只是离线 primitive：它会打印 token 与
-hash，但不会向任何远程 Server 注册。只有通过 managed credential flow 注册 hash
-后，输出才可用于认证。不要把离线生成的 `wc_pat_*` 或 `wc_agent_*` 当成任意 shared
-key。Hosted quick-start 应通过 `webcodex connect` 使用非 `wc_` key；managed mode
-则使用 `webcodex login`、pairing 或 account credential。
+`webcodex token generate --kind api|agent` 是离线原语：打印令牌与 hash，但不会
+注册任何东西。其输出在通过 managed credential flow 注册 hash 前无法认证。不要把
+离线生成的 `wc_pat_*` 或 `wc_agent_*` 当作 hosted 共享 key。
 
-不要把 `wc_acct_xxx` 用作 GPT Action token、MCP token、runtime API token 或 agent connection token。
+不要把 `wc_acct_xxx` 用作 GPT Action token、MCP token、runtime API token 或
+agent 连接 token。
 
-## `wc_pat_xxx`
+## `wc_pat_xxx`（个人 API 令牌）
 
-`wc_pat_xxx` 是用户本地生成的 personal API token。server 只保存它的 hash。
+`wc_pat_xxx` 是用户本地生成的个人 API 令牌；server 只存其 hash。`webcodex login`
+会把它写入该 server/user 登录目录下名为 `webcodex-user-token` 的文件。
 
 `wc_pat_xxx` 用于：
 
 - GPT Actions
 - MCP
-- Runtime API calls
-- `/api/tools/list` 和 `/api/tools/call` 等 tool calls
+- Runtime API 调用
+- 工具调用如 `/api/tools/list` 与 `/api/tools/call`
 
-应按 workflow 收窄 PAT scope。例如，一个会检查和编辑项目的 GPT Action 可能需要 runtime、project 和 job scopes。
+用 `--token-file <path>` 提供给 CLI 命令，而不是 `--token`，以免进入 shell 历史。
+按工作流限制 PAT scope。例如，一个要检查和编辑项目的 GPT Action 可能需要
+`runtime:read`、`project:read`、`project:write`、`job:run`。
 
-## `wc_agent_xxx`
+## `wc_agent_xxx`（Runner 令牌）
 
-`wc_agent_xxx` 是用户本地生成的 agent token。server 只保存它的 hash，并把 token 绑定到 `allowed_client_id`。
+`wc_agent_xxx` 是用户本地生成的 Runner 令牌；server 只存其 hash，并绑定
+`allowed_client_id`。只用于 `webcodex-runner` 连接。它不能调用 runtime、project、
+tool、MCP 或 account endpoint。
 
-`wc_agent_xxx` 只能用于 `webcodex-runner` connectivity。它不能调用 runtime、project、tool、MCP 或 account endpoints。
+`webcodex login` / enrollment 会把它写进生成的 `agent.toml`（伴随
+`webcodex-runner-token` 文件）。本地能诊断时会把 `wc_agent_*` 用于
+user/runtime CLI 令牌标记为错误，且服务端仍返回 403。
 
-managed login 会把 user credential 写入 `webcodex-user-token`，把 Runner
-credential 写入 `agent.toml`（并带 companion `webcodex-runner-token`）。在
-user/runtime CLI token 位置选择 `wc_agent_*` 时，CLI 会尽可能先给出本地诊断，
-server 端仍保持 403。该诊断不会扩大权限，也不会打印完整 token。
+## `wc_pair_xxx`（pairing code）
+
+`wc_pair_xxx` 是由 `webcodex pairing create` 在服务端创建的短期一次性 pairing
+code。只把该 code 传给要接入的客户端；客户端用 `webcodex login <server-url> --code <code>`
+兑换。它不是长期 API 令牌，会过期。
+
+## OAuth2
+
+启用 OAuth2（`WEBCODEX_OAUTH2_ENABLED=true`）后，GPT Actions / MCP 客户端可以
+使用 authorization-code 流程并获得委派的 `wc_oat_*` 访问令牌。OAuth 凭据有各自
+的角色：
+
+- **client id** —— 标识 OAuth client（`wc_client_...`）。
+- **client secret** —— client 创建时只返回一次；服务端只存其 hash。
+- **access token**（`wc_oat_*`）—— 同意后签发，委派自授权用户的 scopes。
+- **refresh token** —— `offline_access` 作为协议级 refresh-token scope 发布；
+  它不授予额外 WebCodex 权限，不应写进 client 的 `allowed_scopes`。
+
+Server 支持 authorization-code grant、token 撤销与 OAuth metadata。动态 client
+注册、OIDC、JWKS/JWT ID token 与 device-code 流程未实现。OAuth 设置步骤见
+[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
 ## `client_id`
 
-`client_id` 标识一个 agent client instance，例如：
+`client_id` 标识一个 Runner 实例，例如：
 
 ```text
 ubuntu-client
@@ -129,11 +149,12 @@ alice-macbook
 ci-runner-1
 ```
 
-Agent token 绑定到允许的 `client_id`，防止为一个 client 创建的 agent token 被拿去注册成另一个 client。
+Runner 令牌绑定 `allowed_client_id`，防止为某 client 签发的令牌以不同 client
+注册。
 
-## Runtime project ids
+## Runtime project id
 
-Agent-backed runtime project ids 使用这种格式：
+Agent-backed runtime project id 形如：
 
 ```text
 agent:<client_id>:<project_id>
@@ -146,15 +167,43 @@ agent:ubuntu-client:webcodex
 agent:alice-macbook:my-repo
 ```
 
-`<project_id>` 来自 agent `projects.d/*.toml` 文件中的顶层 `id` 字段：
+`<project_id>` 来自 agent `projects.d/*.toml` 文件的顶层 `id` 字段：
 
 ```toml
 id = "webcodex"
 path = "/srv/webcodex/projects/webcodex"
 ```
 
-不要在 agent `projects.d/*.toml` 文件中使用 server-side `[projects.<id>]` 语法。
+不要在 agent `projects.d/*.toml` 文件中使用服务端 `[projects.<id>]` 语法。
 
-## Hash storage
+## Hash 存储
 
-对于用户创建的 PAT 和 agent token，server 保存 token hash，不保存 plaintext `wc_pat_xxx` 或 `wc_agent_xxx`。明文 token 只在创建时显示一次，必须由用户或 agent host 自行保存。
+对用户创建的 PAT 与 Runner 令牌，server 存令牌 hash，而不是明文 `wc_pat_xxx`
+或 `wc_agent_xxx`。明文令牌只在创建时显示一次，需要由用户或 agent 主机保存。
+
+## 每种凭据存放位置
+
+| 凭据 | 默认位置 |
+| --- | --- |
+| `WEBCODEX_TOKEN` | server env 文件（`/etc/webcodex/webcodex.env`） |
+| 共享 key `wck_...` | `~/.config/webcodex/clients/<profile>/`（owner-only） |
+| Project Credential | 项目私有状态目录（owner-only 文件） |
+| `wc_acct_...` | `users create --issue-credential` 一次性提供 |
+| `wc_pat_...`（`webcodex-user-token`） | `~/.config/webcodex/<server-slug>/<user>/webcodex-user-token` |
+| `wc_agent_...` | 内联在 `~/.config/webcodex/<server-slug>/<user>/agent.toml` |
+
+`~/.config/webcodex/` 下每个 (server, user) 的目录布局：
+
+```text
+~/.config/webcodex/
+  <server-slug>/
+    <user>/
+      server.toml               规范 server URL、用户名、设备
+      agent.toml                agent token 内联在此
+      webcodex-user-token
+      projects.d/
+```
+
+Server 身份是规范 URL，不是目录名；slug 只是给人类看的、可能有损的索引。当 AI
+agent 需要凭据值时，请让它告诉人类具体该复制哪个文件，而不是把文件内容回显到
+聊天里。

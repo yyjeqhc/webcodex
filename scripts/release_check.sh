@@ -170,7 +170,6 @@ else
 fi
 if grep -En -- 'binding loss|lost process-local binding|lost_after_restart=true|binding_is_process_local_and_principal_scoped' \
     scripts/e2e_reconnect_ws.sh \
-    docs/OPERATIONS.md \
     docs/TESTING.md \
     docs/agent/architecture-decisions.md; then
     die "stale current-session binding durability guidance"

@@ -3,39 +3,36 @@
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
 Use GPT Actions when a Custom GPT should call the project-bound WebCodex
-Connector. Use MCP when the client supports MCP directly.
+Connector. Use [MCP](MCP.md) when the client supports MCP directly — the
+underlying surface is the same.
 
-## Product terminology
+## What a GPT Action is
 
-WebCodex currently provides an OpenAPI-based **Custom GPT Action** integration.
-It is not described here as a published ChatGPT plugin. In current OpenAI
-terminology, a plugin is an installable bundle in the ChatGPT/Codex plugin
-directory and can contain apps, skills, connectors, or MCP servers; an app, a
-Custom GPT, and an Action are distinct layers. See OpenAI's
-[GPT Actions introduction](https://developers.openai.com/api/docs/actions/introduction)
-and [plugin documentation](https://learn.chatgpt.com/docs/plugins).
+WebCodex provides an OpenAPI-based **Custom GPT Action** integration. This is
+not a published ChatGPT plugin. In current OpenAI terminology, an app, a
+Custom GPT, and an Action are distinct layers; a plugin is an installable
+bundle in the ChatGPT/Codex plugin directory. See OpenAI's
+[GPT Actions introduction](https://developers.openai.com/api/docs/actions/introduction).
 
-## Schema
+## Import the schema
 
-Import:
+Import the OpenAPI schema into your Custom GPT:
 
 ```text
 https://your-domain.example/openapi.json
 ```
 
-ChatGPT requires public HTTPS. `webcodex setup` intentionally creates only a
-loopback project runtime; ingress and production authentication are operator
-responsibilities described in [DEPLOYMENT.md](DEPLOYMENT.md).
+ChatGPT requires public HTTPS. Configure API-key authentication as an HTTP
+Bearer credential. Use a generated `webcodex-user-token` (`wc_pat_*`) — it is
+for GPT Actions, MCP, and ordinary REST/project APIs. The Runner token
+(`wc_agent_*`) is accepted only by Runner transport endpoints; do not paste
+it, a bootstrap/admin token, or an account credential into a GPT.
 
-Configure API-key authentication as an HTTP Bearer credential. In a managed
-login, select the generated `webcodex-user-token` (`wc_pat_*`); it is for GPT
-Actions, MCP, and ordinary REST/project APIs. `webcodex-runner-token`
-(`wc_agent_*`) is an Agent transport credential and is accepted only by Agent
-transport endpoints. Do not paste it, a bootstrap/admin token, or an account
-credential into a GPT. The server continues to return 403 when an Agent token
-is used on a project/runtime endpoint.
+The OpenAPI management surface intentionally excludes users, API tokens,
+agent tokens, pairing/enrollment, setup, doctor, npm, server management, and
+audit endpoints. Use the `webcodex` CLI for those tasks.
 
-## Canonical Hosted Operations
+## The Connector surface
 
 For a project-bound Connector, OpenAPI is generated from the same twelve
 capabilities as MCP:
@@ -55,69 +52,12 @@ task_cancel
 task_finish
 ```
 
-The operation count is generated and tested; setup, pairing, token management,
-Agent management, audit endpoints, and legacy `/api/codex` routes are not in
-the Action schema.
-
 The Connector already owns a deterministic project binding. A Custom GPT must
-not call `listProjects`, `runtime_status`, `tool_manifest`, `start_session`, or
-Agent listing before normal coding, and the prompt must not contain an Agent
-client ID or runtime project ID.
+not call `listProjects`, `runtime_status`, `tool_manifest`, `start_session`,
+or Agent listing before normal coding, and the prompt must not contain an
+Agent client ID or runtime project ID.
 
-On deployments that also expose the advanced generic `callRuntimeTool`
-compatibility path, a successful `start_coding_task` Action only wraps the
-shared MCP/REST startup core; it does not rebuild continuation data. That core's
-attempt-scoped exploration workset contains only bounded, validated
-project-relative paths from successful focused reads, structured searches, and
-typed LSP navigation. It excludes search/file/LSP content, commands/output, and
-absolute roots, marks an evicted attempt boundary `complete=false`, and is
-reused across continuation, explicit resume, mode upgrade, and restart without
-automatically executing tools. The standard/full core returns at most 12 paths
-(`minimal`: 3), and the complete Action response remains below 32 KiB.
-The advanced `start_coding_task(detail=standard|full)` contract continues to
-include the bounded repository overview; `project_overview` remains available
-as an explicit generic runtime call.
-
-The flattened generic request accepts exactly one ordinary project source:
-`project`, or `client_id` plus an existing absolute `path`. The latter invokes
-the owning Runner's internal canonical-path resolve-or-register operation
-before Workflow Session matching; it does not add an Action operation or MCP
-tool. Conditional registration requires `project:write`, respects Runner path
-policy, persists atomically under `projects.d`, and returns only bounded
-path-free `project_resolution` metadata. The existing `client_id` managed
-temporary-project form for `start_coding_task` remains available and distinct.
-
-The same generic path exposes a strict flattened `execution_context` object
-with only `default_cwd` (project-relative) and `default_shell` (`sh` or
-`bash`). `start_coding_task` can set or replace it and
-`update_session_context` can replace or clear it for an explicit active
-Workflow Session only when its required `project` resolves to the exact Session
-project and the caller is authorized for it. Cross-project escape is rejected.
-Success reports the in-memory context/event commit; JSON ledger persistence is
-queued to the background writer and may still be pending. It affects only
-`run_shell`/`run_job`; per-call arguments
-remain authoritative, and no environment, credential, or persistent shell
-state is accepted.
-
-That generic runtime schema also publishes the strict `HandoffBrief` component.
-`session_handoff_summary` and `finish_coding_task` reuse it for the same
-deterministic, read-only, at-most-8-KiB `handoff_brief`. This compact projection
-is for a new window, new Agent, or human receiver; detailed evidence remains in
-`continuation_feedback`. It is not Session replay, does not recover hidden
-model context, and its builder stores no new Session data or executes additional
-tools. A public generic-runtime call still records the standard
-`tool_call_started` / `tool_call_finished` Session telemetry; this is uniform
-dispatch recording, not a business side effect of the handoff projection. A new
-window may create a new Session and explicitly read the old Session's handoff;
-explicit resume keeps its existing safety checks.
-
-Within one retained chat-window identity, `task_start` automatically continues
-the repository's active durable context and appends the new instruction.
-Changing to another configured repository keeps the two histories isolated;
-returning restores the first repository. WebCodex refreshes only Git, worktree,
-repository-rule, target-directory, and manifest state that changed.
-
-## Suggested GPT Instructions
+## Suggested GPT instructions
 
 ```text
 Use the configured WebCodex project.
@@ -136,31 +76,19 @@ Never ask the user for task, session, current-binding, Agent, transport, queue,
 or workflow identifiers.
 ```
 
-## Validation recipe contract
+## Validation
 
-`checks_run` remains the only structured validation Action. It accepts an
-optional `recipe` enum (`rust`, `node`, `python`, `go`); omit it for
-deterministic nearest-manifest resolution from the Task workspace and relative
-`cwd`. Supply a matching recipe when `validation_recipe_ambiguous` identifies
-multiple markers at the same nearest root. Explicit `recipe=python` with
-`checks=["test"]` is the only markerless exception and selects a fixed unittest
-discovery plan from `cwd`. The model cannot provide a program, argv, script
-body, or shell command through this Action.
+`checks_run` is the only structured validation Action. It accepts an optional
+`recipe` enum (`rust`, `node`, `python`, `go`); omit it for deterministic
+nearest-manifest resolution. Recipes do not install dependencies, mutate
+lockfiles, or use the network. A missing tool is an executor failure; a started
+validator's non-zero verdict is an assertion failure. See
+[MCP](MCP.md#validation-recipes) for the recipe table.
 
-Rust supports `format/check/test`; Node uses an evidenced package manager and
-fixed non-mutating script-name order; Python uses configured Ruff/Black,
-Ruff/Mypy, and pytest, or the fixed manifestless
-`python -B -m unittest discover -v` test plan; Go supports `check/test` and
-reports `format` unavailable. Recipes do not install dependencies, mutate
-lockfiles, or use the network. A missing tool is an executor failure, while a
-started validator's non-zero verdict is an assertion failure. Resolved recipe
-version, relative root, invocation, and manifest/lock evidence bind
-`operation_id`, so use a new ID after a recipe or workspace change.
+## Human decision
 
-## Human Decision
-
-`task_finish` creates a stable result; it does not silently apply changes to the
-target checkout. The host user reviews and decides:
+`task_finish` creates a stable result; it does not silently apply changes to
+the target checkout. The host user reviews and decides locally:
 
 ```bash
 webcodex task show <task-id>
@@ -170,43 +98,29 @@ webcodex task accept <task-id>
 
 This keeps the acceptance authority local even when the model is hosted.
 
-## Common Errors
+## Common errors
 
 - An authentication error after copying a `wc_agent_*` value means the wrong
   credential type was selected. Use the generated `webcodex-user-token`
   instead; never paste complete token values into logs or bug reports.
-
 - `project_not_configured`: run `webcodex setup`.
-- `project_registration_invalid` / `project_credential_invalid`: resolve the
-  reported private-state problem; setup will not overwrite or silently rotate
-  it.
-- `project_credential_rejected`: restore the credential matching the reachable
-  server; this is not `agent_offline`.
+- `project_credential_invalid` / `project_credential_rejected`: resolve the
+  reported private-state problem, then restore the matching credential.
 - `server_unreachable` / `agent_offline`: run `webcodex doctor`, then the
   reported next action.
-- `required_capability_unavailable` /
-  `structured_validation_unavailable`: upgrade all WebCodex binaries.
-- `task_not_active`: start a new task.
-- `execution_not_terminal`: review, wait, or cancel the execution.
-- `validation_recipe_not_found` / `validation_recipe_ambiguous`: change `cwd`
-  or provide the matching explicit recipe.
-- `validation_recipe_mismatch` / `validation_manifest_invalid` /
-  `package_manager_ambiguous`: correct the reported public project evidence.
-- `validation_check_unavailable` / `test_filter_unsupported`: request only a
-  semantic input the resolved recipe supports.
-- `validation_tool_unavailable`: provide the project's existing tool on the
-  Agent host, then use a new operation ID.
+- `required_capability_unavailable` / `structured_validation_unavailable`:
+  upgrade all WebCodex binaries.
 - `checks_required`: call `checks_run`.
 - `checks_stale`: run a fresh check with a new operation ID.
 
-Every error carries a stable code, human message, retryability,
-`user_action_required`, and a suggested next action. Control flow must use the
-code, never arbitrary English message matching.
+Every error carries a stable code, human message, retryability, and a suggested
+next action. Control flow should use the code, never arbitrary English message
+matching.
 
-## Related Documentation
+## Related
 
-- [QUICK_START.md](QUICK_START.md)
-- [MCP.md](MCP.md)
-- [AUTH_MODEL.md](AUTH_MODEL.md)
-- [DEPLOYMENT.md](DEPLOYMENT.md)
-- [../SECURITY.md](../SECURITY.md)
+- [Quick Start](QUICK_START.md)
+- [MCP](MCP.md)
+- [Authentication](AUTH_MODEL.md)
+- [Deployment](DEPLOYMENT.md)
+- [SECURITY.md](../SECURITY.md)

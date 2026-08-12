@@ -11,13 +11,13 @@ set -euo pipefail
 #   WEBCODEX_SMOKE_RUN=1 \
 #   WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
 #   WEBCODEX_TOKEN="<wc_pat_or_allowed_shared_key>" \
+#   WEBCODEX_SMOKE_PROJECT_ID="agent:<client_id>:<smoke-project>" \
 #   bash scripts/smoke_artifact_transfer.sh
 #
 # This script never prints the token. It uses a pre-registered smoke project
 # and writes only fixed smoke artifact paths before deleting them again.
 # ============================================================================
 
-DEFAULT_PROJECT_ID="agent:workstation:webcodex-smoke"
 DEFAULT_ARTIFACT_PATH="artifacts/smoke/webcodex-artifact-transfer.txt"
 DEFAULT_ABORT_PATH="artifacts/smoke/webcodex-artifact-transfer-abort.txt"
 DEFAULT_EXPECTED_OPERATION_COUNT="25"
@@ -35,11 +35,13 @@ To run the HTTP smoke explicitly:
   WEBCODEX_SMOKE_RUN=1 \\
   WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \\
   WEBCODEX_TOKEN="<wc_pat_or_allowed_shared_key>" \\
+  WEBCODEX_SMOKE_PROJECT_ID="agent:<client_id>:<smoke-project>" \\
   bash scripts/smoke_artifact_transfer.sh
 
-Optional environment:
+`WEBCODEX_SMOKE_PROJECT_ID` is required in active mode and must name an
+explicitly registered smoke project.
 
-  WEBCODEX_SMOKE_PROJECT_ID      default: $DEFAULT_PROJECT_ID
+Optional environment:
   WEBCODEX_SMOKE_ARTIFACT_PATH   default: $DEFAULT_ARTIFACT_PATH
   WEBCODEX_SMOKE_ABORT_PATH      default: $DEFAULT_ABORT_PATH
   WEBCODEX_EXPECTED_OPERATION_COUNT default: $DEFAULT_EXPECTED_OPERATION_COUNT
@@ -78,7 +80,7 @@ fi
 
 BASE_URL="${WEBCODEX_PUBLIC_URL:-${BASE_URL:-}}"
 TOKEN="${WEBCODEX_TOKEN:-${TOKEN:-}}"
-PROJECT_ID="${WEBCODEX_SMOKE_PROJECT_ID:-${PROJECT_ID:-$DEFAULT_PROJECT_ID}}"
+PROJECT_ID="${WEBCODEX_SMOKE_PROJECT_ID:-${PROJECT_ID:-}}"
 ARTIFACT_PATH="${WEBCODEX_SMOKE_ARTIFACT_PATH:-$DEFAULT_ARTIFACT_PATH}"
 ABORT_PATH="${WEBCODEX_SMOKE_ABORT_PATH:-$DEFAULT_ABORT_PATH}"
 EXPECTED_OPERATION_COUNT="${WEBCODEX_EXPECTED_OPERATION_COUNT:-$DEFAULT_EXPECTED_OPERATION_COUNT}"
@@ -91,6 +93,10 @@ if [ -z "$BASE_URL" ]; then
 fi
 if [ -z "$TOKEN" ]; then
     echo "[smoke] WEBCODEX_TOKEN (or TOKEN) is required" >&2
+    exit 2
+fi
+if [ -z "$PROJECT_ID" ]; then
+    echo "[smoke] WEBCODEX_SMOKE_PROJECT_ID (or PROJECT_ID) is required in active mode" >&2
     exit 2
 fi
 

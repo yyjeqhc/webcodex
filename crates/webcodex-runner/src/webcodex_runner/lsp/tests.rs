@@ -249,6 +249,15 @@ fn concurrent_document_refresh_uses_one_monotonic_version() {
         handle.join().unwrap().unwrap();
     }
 
+    assert!(
+        wait_until(Duration::from_secs(5), || {
+            fs::read_to_string(&fixture.marker)
+                .unwrap_or_default()
+                .lines()
+                .any(|line| line.starts_with("didChange:"))
+        }),
+        "fake LSP server never observed the document change"
+    );
     let marker = fs::read_to_string(&fixture.marker).unwrap();
     assert_eq!(
         marker

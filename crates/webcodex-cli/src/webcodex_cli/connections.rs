@@ -158,20 +158,26 @@ fn ensure_component(path: &Path) -> Result<(), String> {
 /// Compare the canonical path returned by the OS with the exact directory
 /// chain that was verified component-by-component above.
 ///
-/// Windows `std::fs::canonicalize` returns an extended-length path (`\\?\C:\...`
-/// or `\\?\UNC\server\share\...`) even when no component was redirected. That
-/// spelling-only prefix must not make every ordinary Windows login fail. Ignore
-/// exactly that prefix transformation and nothing else: case changes, junction
-/// redirects, symlinks, or a different path still fail the comparison.
+/// Windows `std::fs::canonicalize` returns an extended-length path and can also
+/// expand a DOS 8.3 component such as `RUNNER~1` to its long directory name.
+/// Both spellings name the same directory and must not make an ordinary login
+/// fail. Expand only short-name aliases, then ignore exactly the verbatim-prefix
+/// spelling transformation. Case changes, junction redirects, symlinks, or a
+/// different path still fail the comparison.
 #[cfg(windows)]
 fn canonical_matches_verified_path(canonical: &Path, verified: &Path) -> bool {
     if canonical == verified {
         return true;
     }
 
+    let long_verified = windows_long_path(verified).unwrap_or_else(|| verified.to_path_buf());
+    if canonical == long_verified {
+        return true;
+    }
+
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
-    let verified_wide: Vec<u16> = verified.as_os_str().encode_wide().collect();
+    let verified_wide: Vec<u16> = long_verified.as_os_str().encode_wide().collect();
     let mut extended = Vec::with_capacity(verified_wide.len() + 8);
     if verified_wide.starts_with(&[b'\\' as u16, b'\\' as u16]) {
         extended.extend("\\\\?\\UNC\\".encode_utf16());
@@ -181,6 +187,30 @@ fn canonical_matches_verified_path(canonical: &Path, verified: &Path) -> bool {
         extended.extend_from_slice(&verified_wide);
     }
     canonical.as_os_str() == std::ffi::OsString::from_wide(&extended).as_os_str()
+}
+
+#[cfg(windows)]
+fn windows_long_path(path: &Path) -> Option<PathBuf> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::Storage::FileSystem::GetLongPathNameW;
+
+    let input = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let required = unsafe { GetLongPathNameW(input.as_ptr(), std::ptr::null_mut(), 0) };
+    if required == 0 {
+        return None;
+    }
+
+    let mut output = vec![0u16; required as usize];
+    let written = unsafe { GetLongPathNameW(input.as_ptr(), output.as_mut_ptr(), required) };
+    if written == 0 || written >= required {
+        return None;
+    }
+    output.truncate(written as usize);
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&output)))
 }
 
 #[cfg(not(windows))]
@@ -515,10 +545,14 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_verbatim_prefix_is_the_only_ignored_canonical_difference() {
+    fn windows_verbatim_prefix_is_the_only_ignored_spelling_difference() {
         assert!(canonical_matches_verified_path(
             Path::new(r"\\?\C:\safe\config"),
             Path::new(r"C:\safe\config")
+        ));
+        assert!(!canonical_matches_verified_path(
+            Path::new(r"\\?\C:\SAFE\Config"),
+            Path::new(r"c:\safe\config")
         ));
         assert!(canonical_matches_verified_path(
             Path::new(r"\\?\UNC\server\share\safe"),
@@ -537,6 +571,48 @@ mod tests {
         let canonical = ensure_real_directory_tree(temp.path()).unwrap();
         assert!(canonical.is_absolute());
         assert!(canonical.to_string_lossy().starts_with(r"\\?\"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn real_windows_directory_tree_accepts_dos_short_name_alias() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let long = temp
+            .path()
+            .join("webcodex-long-directory-name-for-short-alias");
+        std::fs::create_dir(&long).unwrap();
+        let input = long
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let required = unsafe { GetShortPathNameW(input.as_ptr(), std::ptr::null_mut(), 0) };
+        assert!(
+            required > 0,
+            "GetShortPathNameW failed for {}",
+            long.display()
+        );
+        let mut output = vec![0u16; required as usize];
+        let written = unsafe { GetShortPathNameW(input.as_ptr(), output.as_mut_ptr(), required) };
+        assert!(written > 0 && written < required);
+        output.truncate(written as usize);
+        let short = PathBuf::from(std::ffi::OsString::from_wide(&output));
+
+        // 8.3 aliases may be disabled per volume. In that case this machine
+        // cannot exercise the alias-specific branch, so the ordinary verbatim
+        // path test above remains the applicable Windows coverage.
+        if !short.to_string_lossy().contains('~') {
+            return;
+        }
+
+        let canonical = ensure_real_directory_tree(&short).unwrap();
+        assert!(paths::paths_equal(
+            &canonical,
+            &long.canonicalize().unwrap()
+        ));
     }
 
     #[test]

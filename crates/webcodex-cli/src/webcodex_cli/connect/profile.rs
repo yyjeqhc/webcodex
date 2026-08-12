@@ -684,6 +684,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("project");
         std::fs::create_dir(&project).unwrap();
+        let project = project.canonicalize().unwrap();
         let config_base = tmp.path().join("config");
         let options = ConnectOptions {
             server_url: "https://example.test".to_string(),

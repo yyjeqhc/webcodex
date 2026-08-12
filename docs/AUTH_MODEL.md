@@ -140,7 +140,7 @@ account endpoints.
 `webcodex login` stores it **only** inline in the generated `agent.toml`
 (`~/.config/webcodex/<server-slug>/<user>/agent.toml`); it does not create a
 `webcodex-runner-token` file. The advanced `webcodex client enroll` flow (and
-the legacy `setup` flow) additionally writes a `webcodex-runner-token` file
+the legacy `webcodex setup single-user` flow) additionally writes a `webcodex-runner-token` file
 next to `webcodex-user-token`. Selecting a `wc_agent_*` value for a
 user/runtime CLI token is diagnosed locally where possible and remains a
 server-side 403.

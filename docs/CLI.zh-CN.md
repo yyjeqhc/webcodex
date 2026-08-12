@@ -37,7 +37,7 @@ Server API 完成。
 | --- | --- | --- |
 | `webcodex login <server-url> --code <wc_pair_...>` | 用 pairing code 把本机接入 Server | 主要客户端入口，写入 user token 与 `agent.toml`。 |
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
-| `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 高级入口；普通用户应使用 `login`，它会自动派生 client id 并一步写入同样的令牌文件。 |
+| `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 高级入口；普通用户应使用 `login`，它会自动派生 client id 并一步写入规范的 server/user 本地连接布局。 |
 | `webcodex logout <server-url>` | 移除本机对某 Server 的凭据 | |
 
 ### Runner（`agent` 命名空间）
@@ -108,7 +108,8 @@ detached-process 行为。
 
 ### 凭据与账号
 
-以下命名空间管理用户与令牌，同样可通过 Server API 完成。
+Admin 用户/令牌操作由 Server API 支撑；`auth status` 读取本机连接状态，而
+`create-local` 命令在本地生成凭据，只向 Server 注册其 hash。
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
@@ -132,7 +133,7 @@ detached-process 行为。
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
-| `webcodex client enroll` | 显式指定 `--client-id` 的高级接入 | 其 help 说明：高级用法；优先用 `webcodex login`，它会派生 client id 并一步写入同样的令牌文件。 |
+| `webcodex client enroll` | 显式指定 `--client-id` 的高级接入 | 其 help 说明：高级用法；优先用 `webcodex login`，它会派生 client id 并一步写入规范的 server/user 本地连接布局。 |
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
 | `webcodex token generate` | 离线生成令牌素材 | 不注册任何东西；若需要服务端注册 hash，把输出配 `tokens register-hash` 使用。 |
 | `webcodex tokens register-hash` | Admin：注册外部计算的 PAT hash | 使用 `--server-url`；用于离线生成的素材。 |
@@ -241,7 +242,7 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 - `webcodex login` 只会把它**内联**写进生成的 `agent.toml`（位于
   `~/.config/webcodex/<server-slug>/<user>/`）——不会创建单独的
   `webcodex-runner-token` 文件。高级的 `webcodex client enroll` 流程（以及遗留的
-  `setup` 流程）会额外在 `webcodex-user-token` 旁边写入一个
+  `webcodex setup single-user` 流程）会额外在 `webcodex-user-token` 旁边写入一个
   `webcodex-runner-token` 文件。
 - 只被 Runner 传输 endpoint 接受；用在 MCP/REST 上会返回 403。不要当作
   MCP/API 令牌。

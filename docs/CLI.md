@@ -41,7 +41,7 @@ These commands work on the current Git project.
 | --- | --- | --- |
 | `webcodex login <server-url> --code <wc_pair_...>` | Log this device into a Server with a pairing code | Primary client entry. Writes the user token and `agent.toml`. |
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
-| `webcodex client enroll` | Advanced client enrollment with explicit `--client-id` | Advanced; ordinary users should use `login`, which derives the client id and writes the same token files in one step. |
+| `webcodex client enroll` | Advanced client enrollment with explicit `--client-id` | Advanced; ordinary users should use `login`, which derives the client id and publishes the canonical per-server/user connection layout in one step. |
 | `webcodex logout <server-url>` | Remove this device's credentials for a Server | |
 
 ### Runner (the `agent` namespace)
@@ -116,8 +116,9 @@ the online model can never accept its own work.
 
 ### Credentials and accounts
 
-These namespaces manage users and tokens. The same behavior is available over
-the Server API.
+Admin user/token operations are Server-API-backed. `auth status` reads local
+device connection state, while the `create-local` commands generate credentials
+locally and register only their hashes with the Server.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
@@ -142,7 +143,7 @@ normal entry points.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
-| `webcodex client enroll` | Advanced enrollment with explicit `--client-id` | Its help says: advanced; prefer `webcodex login`, which derives the client id and writes the same token files in one step. |
+| `webcodex client enroll` | Advanced enrollment with explicit `--client-id` | Its help says: advanced; prefer `webcodex login`, which derives the client id and publishes the canonical per-server/user connection layout in one step. |
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
 | `webcodex token generate` | Offline token material generation | Registers nothing; pair the output with `tokens register-hash` if the hash must be registered server-side. |
 | `webcodex tokens register-hash` | Admin: register an externally computed PAT hash | Uses `--server-url`; for offline-generated material. |
@@ -272,7 +273,7 @@ quick answer.
 - `webcodex login` stores it **only** inline in the generated `agent.toml`
   under `~/.config/webcodex/<server-slug>/<user>/` — no separate
   `webcodex-runner-token` file is created. The advanced `webcodex client
-  enroll` flow (and the legacy `setup` flow) additionally writes a
+  enroll` flow (and the legacy `webcodex setup single-user` flow) additionally writes a
   `webcodex-runner-token` file next to `webcodex-user-token`.
 - It is accepted only by Runner transport endpoints; using it on MCP/REST
   returns 403. Never use it as an MCP/API token.

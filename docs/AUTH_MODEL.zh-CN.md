@@ -118,7 +118,7 @@ tool、MCP 或 account endpoint。
 `webcodex login` 只会把它**内联**写进生成的 `agent.toml`
 （`~/.config/webcodex/<server-slug>/<user>/agent.toml`），不会创建
 `webcodex-runner-token` 文件。高级的 `webcodex client enroll` 流程（以及遗留的
-`setup` 流程）会额外在 `webcodex-user-token` 旁边写入一个
+`webcodex setup single-user` 流程）会额外在 `webcodex-user-token` 旁边写入一个
 `webcodex-runner-token` 文件。本地能诊断时会把 `wc_agent_*` 用于
 user/runtime CLI 令牌标记为错误，且服务端仍返回 403。
 

@@ -1268,6 +1268,11 @@ impl PersistentShellManager {
         let mut closed = 0;
         for entry in entries {
             self.refresh_exit(&entry);
+            let should_attempt_close = lock_unpoison(&entry.state).is_active()
+                && lock_unpoison(&entry.last_activity_instant).elapsed() >= idle;
+            if !should_attempt_close {
+                continue;
+            }
             if entry
                 .busy
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)

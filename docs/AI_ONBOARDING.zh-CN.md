@@ -52,6 +52,11 @@ Runner 与目标项目。再次运行同一命令会复用 profile 与存活 Run
 key，保存在受保护 profile 中，只在首次创建时完整打印。请让用户立刻把它复制到
 MCP client。重复连接会恢复本地 profile 且不再打印 key。
 
+key 存放在 `~/.config/webcodex/clients/<profile>/agent.toml`（或
+`$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`）的顶层 `token`
+字段中。如果用户丢失了打印出来的值，请让人类从该字段复制；作为 AI agent，
+请定位文件并把位置告诉用户——不要把值回显到聊天里。
+
 detached Runner 能存活到终端关闭，但不能跨越机器重启。重启后，重新运行同一条
 `connect` 或使用 `webcodex agent start --profile <profile>`。
 

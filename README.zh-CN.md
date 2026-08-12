@@ -16,7 +16,7 @@ WebCodex 把 ChatGPT、Claude 等在线 AI 客户端，连接到运行在你自�
 - **受保护的编辑** —— 在项目边界内执行结构化文件编辑和受校验的补丁。
 - **Git** —— 状态、diff 与聚焦提交的准备。
 - **命令与测试** —— 有界的 shell 命令与结构化校验（Rust、Node、Python、Go）。
-- **长任务 Job** —— 超出单轮聊天的任务会以持久、可观察的 Job 继续运行。
+- **长任务 Job** —— 超出单轮聊天的任务会以可观察、可查询的 Job 继续运行。
 - **多台 Runner 机器与多项目** —— 一个 Server 可以把工作路由到多台持有仓库的机器。
 - **MCP** —— 从 ChatGPT、Claude 或任意 MCP 客户端接入。
 - **可选的 GPT Actions** —— 面向 Custom GPT 的 OpenAPI 集成。

@@ -2,9 +2,12 @@
 
 The `webcodex` command is the unified operator and developer interface. It
 covers project setup, Server and Runner lifecycle, device enrollment, token
-management, and read-only operator checks. Everything the CLI does can also be
-done through the Server HTTP API; the CLI exists to make those operations
-scriptable and human-friendly.
+management, and read-only operator checks.
+
+Remote operations (users, tokens, pairing, operator checks) go through the
+Server HTTP API, and the CLI is a convenient client for them. Local operations
+(project setup, service management, task review decisions) run directly on the
+host machine and are not available through the Server API.
 
 The CLI produces three binaries when built from source:
 
@@ -38,14 +41,17 @@ These commands work on the current Git project.
 | --- | --- | --- |
 | `webcodex login <server-url> --code <wc_pair_...>` | Log this device into a Server with a pairing code | Primary client entry. Writes the user token and `agent.toml`. |
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
-| `webcodex client enroll` | Advanced client enrollment with explicit `--client-id` | Compatibility entry; prefer `login`. |
+| `webcodex client enroll` | Advanced client enrollment with explicit `--client-id` | Advanced; ordinary users should use `login`, which derives the client id and writes the same token files in one step. |
 | `webcodex logout <server-url>` | Remove this device's credentials for a Server | |
 
 ### Runner (the `agent` namespace)
 
 The Runner executable is `webcodex-runner`. The CLI namespace for it is called
 `agent` (for historical reasons): `webcodex agent ...` manages the
-`webcodex-runner` process and service. They are the same program.
+`webcodex-runner` process and service. "Agent" and "Runner" refer to the same
+execution component, but they are not the same program: `webcodex` (which
+contains the `agent` namespace) and `webcodex-runner` are separate
+executables.
 
 | Command | Purpose |
 | --- | --- |
@@ -115,21 +121,33 @@ the Server API.
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
+| `webcodex auth status` | Show which servers this device is logged in to | Read-only; supports `--dir` and `--json`. |
 | `webcodex users create` | Create a user; `--issue-credential` returns a one-time account credential | Server/admin side; uses `--server-url`. |
 | `webcodex users list` | List users | |
 | `webcodex token create-local` | Locally generate a `wc_pat_*` personal API token and register its hash | Uses `--server` and an account credential. |
 | `webcodex tokens create` | Admin: create a PAT server-side | Uses `--server-url`. |
 | `webcodex token generate` | Offline token material generation | Does **not** register with any Server. |
-| `webcodex tokens list` / `revoke` | List or revoke PATs | |
+| `webcodex tokens list` / `revoke` / `register-hash` | List or revoke PATs; register an externally computed hash | Admin side; uses `--server-url`. |
 | `webcodex agent-token create-local` | Locally generate a `wc_agent_*` Runner token and register its hash | Binds to `--client-id`. |
-| `webcodex agent-tokens create` / `list` / `revoke` | Admin variants | |
+| `webcodex agent-tokens create` / `list` / `revoke` / `register-hash` | Admin variants | |
 
 Note the flag difference: `users create` and the admin `tokens`/`agent-tokens`
 commands use `--server-url`; the local `token create-local` and
 `agent-token create-local` commands use `--server`.
 
-`webcodex setup single-user` is a legacy single-user bootstrap flow and is not
-the normal path.
+### Advanced and compatibility commands
+
+These commands cover unusual setups; the recommended paths above are the
+normal entry points.
+
+| Command | Purpose | Notes |
+| --- | --- | --- |
+| `webcodex client enroll` | Advanced enrollment with explicit `--client-id` | Its help says: advanced; prefer `webcodex login`, which derives the client id and writes the same token files in one step. |
+| `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
+| `webcodex token generate` | Offline token material generation | Registers nothing; pair the output with `tokens register-hash` if the hash must be registered server-side. |
+| `webcodex tokens register-hash` | Admin: register an externally computed PAT hash | Uses `--server-url`; for offline-generated material. |
+| `webcodex agent-tokens register-hash` | Admin: register an externally computed Runner-token hash | Uses `--server-url`; for offline-generated material. |
+| `webcodex setup single-user` | Legacy single-user bootstrap flow | Not the normal path. |
 
 ## Terminology
 
@@ -141,14 +159,23 @@ the normal path.
 - **Runner** — the `webcodex-runner` process on the machine that owns the
   repositories. It executes the actual work.
 - **Agent / agent CLI namespace** — the CLI namespace `webcodex agent ...`
-  manages the Runner. "Agent" and "Runner" refer to the same program; the term
-  "agent" survives from the older `webcodex-agent` name.
+  manages the Runner. "Agent" and "Runner" refer to the same execution
+  component, not the same program: `webcodex` and `webcodex-runner` are
+  separate executables. The term "agent" survives from the older
+  `webcodex-agent` name.
 - **profile** — a named local client configuration (paths, `agent.toml`,
   tokens) under the user's WebCodex config directory. `webcodex connect`
   creates one; `webcodex agent ... --profile <name>` targets it.
-- **client_id** — a stable identifier for one Runner instance (for example
-  `workstation` or `alice-macbook`). A Runner's `client_id` is part of its
-  runtime project ids.
+- **client_id** — a stable logical identifier for one Runner/device (for
+  example `workstation` or `alice-macbook`). A Runner's `client_id` is part of
+  its runtime project ids and is what Runner tokens are bound to.
+- **agent_instance_id** — a per-process identity generated by
+  `webcodex-runner` at startup and reused for the whole process lifetime
+  (including WebSocket reconnects). The Server treats it as the active lease
+  identity: a second process with the same `client_id` but a different
+  `agent_instance_id` is rejected while the first is online, and a
+  stale/replaced instance can no longer poll or submit results. It is not a
+  secret.
 - **Connector** — the project-bound coding surface exposed by a configured
   local project. A Connector binds one logical project to its registered
   executor, so the model does not manage project ids.
@@ -193,12 +220,14 @@ quick answer.
 - Generated by `webcodex connect` when no `--key` or `--key-file` is supplied.
 - Printed in full only when first created; the profile stores it so a repeat
   `connect` reuses it without printing it again.
-- Stored in the owner-only profile config under
-  `~/.config/webcodex/clients/<profile>/` (or
-  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/`).
-- To recover the value as a human, read that owner-only profile config field.
-  Status and log commands deliberately do not print it. There is no
-  `show-token` command.
+- Stored in the owner-only profile config at
+  `~/.config/webcodex/clients/<profile>/agent.toml` (or
+  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`) as the top-level
+  `token = "wck_..."` field.
+- To recover the value as a human, copy that `token` field. Status and log
+  commands deliberately do not print it. There is no `show-token` command. An
+  AI agent should locate the profile and point the human at the file rather
+  than echoing the value.
 - A repeat `connect` reuses the profile and does not print the key again.
 - Never put `wck_` into a managed `wc_*` context; shared-key auth never falls
   back to managed identity.
@@ -240,8 +269,11 @@ quick answer.
 
 - A Runner transport token generated locally by
   `webcodex agent-token create-local` and bound to a `client_id`.
-- Stored by `login`/enrollment inside the generated `agent.toml` (with a
-  companion `webcodex-runner-token` file).
+- `webcodex login` stores it **only** inline in the generated `agent.toml`
+  under `~/.config/webcodex/<server-slug>/<user>/` — no separate
+  `webcodex-runner-token` file is created. The advanced `webcodex client
+  enroll` flow (and the legacy `setup` flow) additionally writes a
+  `webcodex-runner-token` file next to `webcodex-user-token`.
 - It is accepted only by Runner transport endpoints; using it on MCP/REST
   returns 403. Never use it as an MCP/API token.
 

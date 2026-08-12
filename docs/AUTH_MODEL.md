@@ -72,10 +72,14 @@ sees its own Runners, projects, and Jobs; different values create isolated
 lightweight groups.
 
 The key is printed in full only when first created, then stored in the
-owner-only profile config under `~/.config/webcodex/clients/<profile>/`. A
-repeat `connect` reuses the profile and does not print it again. To recover it
-as a human, read that owner-only profile config field; status and log commands
-deliberately do not print it. There is no `show-token` command.
+owner-only profile config at
+`~/.config/webcodex/clients/<profile>/agent.toml` (or
+`$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`) as the top-level
+`token = "wck_..."` field. A repeat `connect` reuses the profile and does not
+print it again. To recover it as a human, copy that `token` field; status and
+log commands deliberately do not print it. There is no `show-token` command.
+An AI agent should locate the file and point the human at it without echoing
+the value.
 
 A shared key is not an admin credential, not a managed user identity, and not
 production IAM. It has no independent per-device revocation: rotate the shared
@@ -133,8 +137,11 @@ stores only its hash and binds it to `allowed_client_id`. Use it only for
 `webcodex-runner` connectivity. It cannot call runtime, project, tool, MCP, or
 account endpoints.
 
-`webcodex login` / enrollment stores it inside the generated `agent.toml` (with
-a companion `webcodex-runner-token` file). Selecting a `wc_agent_*` value for a
+`webcodex login` stores it **only** inline in the generated `agent.toml`
+(`~/.config/webcodex/<server-slug>/<user>/agent.toml`); it does not create a
+`webcodex-runner-token` file. The advanced `webcodex client enroll` flow (and
+the legacy `setup` flow) additionally writes a `webcodex-runner-token` file
+next to `webcodex-user-token`. Selecting a `wc_agent_*` value for a
 user/runtime CLI token is diagnosed locally where possible and remains a
 server-side 403.
 
@@ -178,6 +185,20 @@ ci-runner-1
 A Runner token is bound to an allowed `client_id`, preventing a token minted
 for one client from registering as a different client.
 
+## `agent_instance_id`
+
+`agent_instance_id` identifies one live Runner **process** — one incarnation
+of a `client_id`. `webcodex-runner` generates it at startup and reuses it for
+the whole process lifetime, including WebSocket reconnects. The Server treats
+it as the active lease identity: a second process with the same `client_id`
+but a different `agent_instance_id` is rejected while the first is online, and
+a stale/replaced instance can no longer poll or submit results. It is not a
+secret.
+
+In short: `client_id` is the stable logical Runner/device identity (runtime
+project ids, token binding); `agent_instance_id` is the per-process
+incarnation used for transport, recovery, and fencing.
+
 ## Runtime project ids
 
 Agent-backed runtime project ids use the shape:
@@ -215,7 +236,7 @@ once at creation time and must be stored by the user or agent host.
 | Credential | Location (default) |
 | --- | --- |
 | `WEBCODEX_TOKEN` | server env file (`/etc/webcodex/webcodex.env`) |
-| Shared key `wck_...` | `~/.config/webcodex/clients/<profile>/` (owner-only) |
+| Shared key `wck_...` | top-level `token` field in `~/.config/webcodex/clients/<profile>/agent.toml` (owner-only) |
 | Project Credential | project private state dir (owner-only files) |
 | `wc_acct_...` | given once by `users create --issue-credential` |
 | `wc_pat_...` (`webcodex-user-token`) | `~/.config/webcodex/<server-slug>/<user>/webcodex-user-token` |

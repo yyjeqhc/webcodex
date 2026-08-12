@@ -123,6 +123,13 @@ Runner Job state is reconciled from the Runner's inventory on reconnect. A
 Runner process restart cannot recover its old child processes; those Jobs
 become `lost`.
 
+`client_id` is the stable logical identity of a Runner/device; each live
+process additionally carries an `agent_instance_id` (generated at startup)
+that the Server uses as the active lease identity: a second process with the
+same `client_id` but a different `agent_instance_id` is rejected while the
+first is online, and a stale/replaced instance can no longer poll or submit
+results.
+
 ## Module map
 
 ```text

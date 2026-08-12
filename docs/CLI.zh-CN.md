@@ -1,8 +1,11 @@
 # WebCodex CLI
 
 `webcodex` 是统一的操作与开发命令行。它覆盖项目设置、Server 与 Runner 生命周期、
-设备接入、令牌管理和只读运维检查。CLI 能做的所有事情也可以直接通过 Server HTTP API
-完成；CLI 的存在是为了让这些操作可脚本化、更易用。
+设备接入、令牌管理和只读运维检查。
+
+远程操作（用户、令牌、pairing、运维检查）走 Server HTTP API，CLI 是它们的便捷
+客户端；本地操作（项目设置、服务管理、task 审查决策）直接运行在主机上，无法通过
+Server API 完成。
 
 从源码构建会产生三个二进制：
 
@@ -34,13 +37,15 @@
 | --- | --- | --- |
 | `webcodex login <server-url> --code <wc_pair_...>` | 用 pairing code 把本机接入 Server | 主要客户端入口，写入 user token 与 `agent.toml`。 |
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
-| `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 兼容入口；优先用 `login`。 |
+| `webcodex client enroll` | 高级客户端接入，可显式指定 `--client-id` | 高级入口；普通用户应使用 `login`，它会自动派生 client id 并一步写入同样的令牌文件。 |
 | `webcodex logout <server-url>` | 移除本机对某 Server 的凭据 | |
 
 ### Runner（`agent` 命名空间）
 
 Runner 可执行文件是 `webcodex-runner`。对应 CLI 命名空间叫 `agent`（历史原因）：
-`webcodex agent ...` 管理的就是 `webcodex-runner` 进程与服务。两者是同一个程序。
+`webcodex agent ...` 管理的就是 `webcodex-runner` 进程与服务。"Agent" 与 "Runner"
+指同一个执行组件，但它们不是同一个程序：`webcodex`（包含 `agent` 命名空间）与
+`webcodex-runner` 是两个独立可执行文件。
 
 | 命令 | 用途 |
 | --- | --- |
@@ -107,20 +112,32 @@ detached-process 行为。
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
+| `webcodex auth status` | 显示本机已登录哪些 Server | 只读；支持 `--dir` 与 `--json`。 |
 | `webcodex users create` | 创建用户；`--issue-credential` 返回一次性 account credential | Server/admin 侧；使用 `--server-url`。 |
 | `webcodex users list` | 列出用户 | |
 | `webcodex token create-local` | 本地生成 `wc_pat_*` 个人 API 令牌并注册其 hash | 使用 `--server` 与 account credential。 |
 | `webcodex tokens create` | Admin：在服务端创建 PAT | 使用 `--server-url`。 |
 | `webcodex token generate` | 离线生成令牌素材 | **不会**在 Server 注册。 |
-| `webcodex tokens list` / `revoke` | 列出或撤销 PAT | |
+| `webcodex tokens list` / `revoke` / `register-hash` | 列出或撤销 PAT；注册外部计算的 hash | Admin 侧；使用 `--server-url`。 |
 | `webcodex agent-token create-local` | 本地生成 `wc_agent_*` Runner 令牌并注册其 hash | 绑定 `--client-id`。 |
-| `webcodex agent-tokens create` / `list` / `revoke` | Admin 变体 | |
+| `webcodex agent-tokens create` / `list` / `revoke` / `register-hash` | Admin 变体 | |
 
 注意 flag 差异：`users create` 以及 admin 的 `tokens`/`agent-tokens` 命令使用
 `--server-url`；本地的 `token create-local` 与 `agent-token create-local`
 使用 `--server`。
 
-`webcodex setup single-user` 是遗留的单用户 bootstrap 流程，不是常规路径。
+### 高级与兼容命令
+
+以下命令覆盖不常见场景；上面的推荐路径才是常规入口。
+
+| 命令 | 用途 | 说明 |
+| --- | --- | --- |
+| `webcodex client enroll` | 显式指定 `--client-id` 的高级接入 | 其 help 说明：高级用法；优先用 `webcodex login`，它会派生 client id 并一步写入同样的令牌文件。 |
+| `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
+| `webcodex token generate` | 离线生成令牌素材 | 不注册任何东西；若需要服务端注册 hash，把输出配 `tokens register-hash` 使用。 |
+| `webcodex tokens register-hash` | Admin：注册外部计算的 PAT hash | 使用 `--server-url`；用于离线生成的素材。 |
+| `webcodex agent-tokens register-hash` | Admin：注册外部计算的 Runner 令牌 hash | 使用 `--server-url`；用于离线生成的素材。 |
+| `webcodex setup single-user` | 遗留的单用户 bootstrap 流程 | 不是常规路径。 |
 
 ## 术语
 
@@ -130,12 +147,19 @@ detached-process 行为。
 - **CLI** —— 本文档介绍的 `webcodex` 命令。
 - **Runner** —— 运行在持有仓库机器上的 `webcodex-runner` 进程，执行实际工作。
 - **Agent / agent CLI 命名空间** —— `webcodex agent ...` 管理的就是 Runner。
-  "Agent" 与 "Runner" 指同一个程序；"agent" 一词来自旧的 `webcodex-agent` 名称。
+  "Agent" 与 "Runner" 指同一个执行组件，而不是同一个程序：`webcodex` 与
+  `webcodex-runner` 是两个独立可执行文件。"agent" 一词来自旧的 `webcodex-agent`
+  名称。
 - **profile** —— 用户 WebCodex 配置目录下的一个命名客户端配置（路径、
   `agent.toml`、令牌）。`webcodex connect` 会创建一个；
   `webcodex agent ... --profile <name>` 指向它。
-- **client_id** —— 一个 Runner 实例的稳定标识（如 `workstation` 或
-  `alice-macbook`）。它是 runtime project id 的一部分。
+- **client_id** —— 一个 Runner/设备的稳定逻辑标识（如 `workstation` 或
+  `alice-macbook`）。它是 runtime project id 的一部分，也是 Runner 令牌所绑定
+  的对象。
+- **agent_instance_id** —— `webcodex-runner` 启动时生成的进程级身份，整个进程
+  生命周期（包括 WebSocket 重连）复用。Server 把它当作活跃租约身份：同
+  `client_id` 但不同 `agent_instance_id` 的第二个进程在第一个在线时会被拒绝，
+  过期/被替换的实例不能再 poll 或提交结果。它不是 secret。
 - **Connector** —— 已配置本地项目暴露出的 project-bound coding surface。
   Connector 把一个逻辑项目绑定到其注册的执行器，因此模型无需管理 project id。
 
@@ -174,9 +198,12 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 - 未提供 `--key` 或 `--key-file` 时由 `webcodex connect` 生成。
 - 仅在首次创建时完整显示；profile 保存后，重复 `connect` 会复用而不再次打印。
 - 保存在 owner-only profile 配置下：
-  `~/.config/webcodex/clients/<profile>/`（或 `$XDG_CONFIG_HOME/webcodex/clients/<profile>/`）。
-- 如需人工恢复该值，请阅读该 owner-only profile 配置字段。status 与 log 命令
-  故意不打印它。不存在 `show-token` 命令。
+  `~/.config/webcodex/clients/<profile>/agent.toml`（或
+  `$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`），即顶层
+  `token = "wck_..."` 字段。
+- 如需人工恢复该值，请复制那个 `token` 字段。status 与 log 命令故意不打印它。
+  不存在 `show-token` 命令。AI agent 应定位 profile 并把文件位置告诉人类，而不是
+  回显该值。
 - 重复 `connect` 复用 profile 且不再次打印 key。
 - 不要把 `wck_` 当作 managed `wc_*` 使用；shared-key 认证永远不会回退到
   managed identity。
@@ -211,8 +238,11 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 
 - 由 `webcodex agent-token create-local` 本地生成并绑定 `client_id` 的 Runner
   传输令牌。
-- `login`/enrollment 会把它写进生成的 `agent.toml`（伴随
-  `webcodex-runner-token` 文件）。
+- `webcodex login` 只会把它**内联**写进生成的 `agent.toml`（位于
+  `~/.config/webcodex/<server-slug>/<user>/`）——不会创建单独的
+  `webcodex-runner-token` 文件。高级的 `webcodex client enroll` 流程（以及遗留的
+  `setup` 流程）会额外在 `webcodex-user-token` 旁边写入一个
+  `webcodex-runner-token` 文件。
 - 只被 Runner 传输 endpoint 接受；用在 MCP/REST 上会返回 403。不要当作
   MCP/API 令牌。
 

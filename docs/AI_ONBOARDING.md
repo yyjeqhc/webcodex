@@ -62,6 +62,12 @@ prints the complete value only when first created. Tell the user to copy it
 immediately into the MCP client. A repeat connection recovers the local
 profile and does not print the key again.
 
+The key is stored as the top-level `token` field in
+`~/.config/webcodex/clients/<profile>/agent.toml` (or
+`$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`). If the user lost
+the printed value, have the human copy it from that field; as an AI agent,
+locate the file and point the user at it — do not echo the value into chat.
+
 The detached Runner survives terminal closure but not a machine reboot. After
 reboot, rerun the same `connect` or use `webcodex agent start --profile
 <profile>`.

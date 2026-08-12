@@ -17,7 +17,7 @@ set -euo pipefail
 # and writes only fixed smoke artifact paths before deleting them again.
 # ============================================================================
 
-DEFAULT_PROJECT_ID="agent:special:webcodex-smoke"
+DEFAULT_PROJECT_ID="agent:workstation:webcodex-smoke"
 DEFAULT_ARTIFACT_PATH="artifacts/smoke/webcodex-artifact-transfer.txt"
 DEFAULT_ABORT_PATH="artifacts/smoke/webcodex-artifact-transfer-abort.txt"
 DEFAULT_EXPECTED_OPERATION_COUNT="25"

@@ -60,9 +60,11 @@ SHA-256(trimmed key)` 对两端分组：相同的值看到自己的 Runners、�
 不同的值形成隔离的轻量组。
 
 key 只在首次创建时完整打印，然后保存在 owner-only profile 配置下：
-`~/.config/webcodex/clients/<profile>/`。重复 `connect` 复用 profile 且不再打印。
-如需人工恢复该值，请读取该 owner-only profile 配置字段；status 与 log 命令故意
-不打印它。不存在 `show-token` 命令。
+`~/.config/webcodex/clients/<profile>/agent.toml`（或
+`$XDG_CONFIG_HOME/webcodex/clients/<profile>/agent.toml`）的顶层
+`token = "wck_..."` 字段中。重复 `connect` 复用 profile 且不再打印。如需人工
+恢复该值，请复制那个 `token` 字段；status 与 log 命令故意不打印它。不存在
+`show-token` 命令。AI agent 应定位该文件并把位置告诉人类，而不是回显该值。
 
 共享 key 不是 admin 凭据、不是 managed user identity，也不是生产 IAM。它没有
 独立的按设备撤销能力：请轮换整个组的共享 secret，或改用 managed 凭据。
@@ -113,8 +115,11 @@ agent 连接 token。
 `allowed_client_id`。只用于 `webcodex-runner` 连接。它不能调用 runtime、project、
 tool、MCP 或 account endpoint。
 
-`webcodex login` / enrollment 会把它写进生成的 `agent.toml`（伴随
-`webcodex-runner-token` 文件）。本地能诊断时会把 `wc_agent_*` 用于
+`webcodex login` 只会把它**内联**写进生成的 `agent.toml`
+（`~/.config/webcodex/<server-slug>/<user>/agent.toml`），不会创建
+`webcodex-runner-token` 文件。高级的 `webcodex client enroll` 流程（以及遗留的
+`setup` 流程）会额外在 `webcodex-user-token` 旁边写入一个
+`webcodex-runner-token` 文件。本地能诊断时会把 `wc_agent_*` 用于
 user/runtime CLI 令牌标记为错误，且服务端仍返回 403。
 
 ## `wc_pair_xxx`（pairing code）
@@ -152,6 +157,17 @@ ci-runner-1
 Runner 令牌绑定 `allowed_client_id`，防止为某 client 签发的令牌以不同 client
 注册。
 
+## `agent_instance_id`
+
+`agent_instance_id` 标识一个存活的 Runner **进程**——`client_id` 的一次具体
+化身。`webcodex-runner` 启动时生成它，并在整个进程生命周期（包括 WebSocket
+重连）中复用。Server 把它当作活跃租约身份：同 `client_id` 但不同
+`agent_instance_id` 的第二个进程在第一个在线时会被拒绝，过期/被替换的实例
+不能再 poll 或提交结果。它不是 secret。
+
+简言之：`client_id` 是稳定的逻辑 Runner/设备身份（runtime project id、令牌
+绑定）；`agent_instance_id` 是用于传输、恢复与 fencing 的进程级化身。
+
 ## Runtime project id
 
 Agent-backed runtime project id 形如：
@@ -186,7 +202,7 @@ path = "/srv/webcodex/projects/webcodex"
 | 凭据 | 默认位置 |
 | --- | --- |
 | `WEBCODEX_TOKEN` | server env 文件（`/etc/webcodex/webcodex.env`） |
-| 共享 key `wck_...` | `~/.config/webcodex/clients/<profile>/`（owner-only） |
+| 共享 key `wck_...` | `~/.config/webcodex/clients/<profile>/agent.toml` 顶层 `token` 字段（owner-only） |
 | Project Credential | 项目私有状态目录（owner-only 文件） |
 | `wc_acct_...` | `users create --issue-credential` 一次性提供 |
 | `wc_pat_...`（`webcodex-user-token`） | `~/.config/webcodex/<server-slug>/<user>/webcodex-user-token` |

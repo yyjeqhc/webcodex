@@ -1,9 +1,10 @@
 # Runner
 
 Runner 是真正执行工作的组件。可执行文件是 `webcodex-runner`；管理它的 CLI 命名
-空间是 `webcodex agent ...`。两者是同一个程序——"agent" 是历史遗留的 CLI 名称。
-本页说明 Runner 做什么、如何连接、如何注册项目、如何以服务方式运维，以及它的
-主要运行时概念。
+空间是 `webcodex agent ...`。"Agent" 与 "Runner" 指同一个执行组件，但它们不是
+同一个程序：`webcodex`（包含 `agent` 命名空间）与 `webcodex-runner` 是两个独立
+可执行文件——"agent" 是历史遗留的 CLI 名称。本页说明 Runner 做什么、如何连接、
+如何注册项目、如何以服务方式运维，以及它的主要运行时概念。
 
 安装与服务设置见[部署指南](DEPLOYMENT.zh-CN.md)；管理 Runner 的命令见
 [CLI](CLI.zh-CN.md#runneragent-命名空间)。
@@ -24,9 +25,10 @@ Runner 是最接近你仓库的信任边界。请用窄的 allowed roots 与显�
 | **Server** | `webcodex-server` 进程：认证、路由、持久化。 |
 | **CLI** | 运维与开发者使用的 `webcodex` 命令。 |
 | **Runner** | 在仓库机器上执行工作的 `webcodex-runner` 进程。 |
-| **Agent / agent CLI 命名空间** | 管理 Runner 的 CLI 命名空间 `webcodex agent ...`。与 Runner 是同一程序。 |
+| **Agent / agent CLI 命名空间** | 管理 Runner 的 CLI 命名空间 `webcodex agent ...`。与 Runner 是同一执行组件，但是独立的可执行文件。 |
 | **profile** | 一个命名的本地客户端配置（`agent.toml`、令牌、路径）。 |
-| **client_id** | 一个 Runner 实例的稳定标识。 |
+| **client_id** | 一个 Runner/设备的稳定逻辑标识。 |
+| **agent_instance_id** | `webcodex-runner` 启动时生成的进程级身份；Server 把它当作活跃租约身份（见「重连与恢复」）。 |
 | **project_id** | Runner 在其项目注册表中注册的项目 id。 |
 | **runtime project id** | `agent:<client_id>:<project_id>` —— Server 定位已注册项目的方式。 |
 | **Connector** | 已配置本地项目的 project-bound coding surface；把一个项目绑定到其执行器。 |
@@ -193,9 +195,10 @@ QUIC，再 WebSocket，最后 polling。
 ### Runner 的出站代理
 
 如果 Runner 主机需要出站 HTTP 代理，请把代理变量放进 Runner 的服务环境，而不仅
-是交互 shell。WebSocket 遵循 `HTTPS_PROXY`/`http_proxy`、`HTTP_PROXY`/`http_proxy`
-再 `ALL_PROXY`/`all_proxy`；`NO_PROXY`/`no_proxy` 可绕过匹配主机。当前支持的代理
-传输是 `http://host:port` 的 HTTP `CONNECT`。QUIC 不使用代理设置。
+是交互 shell。WebSocket 遵循 `HTTPS_PROXY`/`https_proxy`、再
+`HTTP_PROXY`/`http_proxy`、再 `ALL_PROXY`/`all_proxy`；`NO_PROXY`/`no_proxy`
+可绕过匹配主机。当前支持的代理传输是 `http://host:port` 的 HTTP `CONNECT`。
+QUIC 不使用代理设置。
 
 ## 重连与恢复
 
@@ -204,13 +207,18 @@ Runner 断连是 liveness 事实，不等于工作丢失。已接受的活跃 Jo
 恢复。替换的 Runner 实例不会继承旧实例的 Job；它们会变成 `lost`。Runner 进程重启
 无法恢复其旧的子进程。
 
+每个 Runner 进程携带自己的 `agent_instance_id`（启动时生成），把它与设备跨重启
+保留的稳定 `client_id` 区分开。Server 把 `agent_instance_id` 当作活跃租约身份：
+同 `client_id` 但不同 `agent_instance_id` 的第二个进程在第一个在线时会被拒绝，
+过期/被替换的实例不能再 poll 或提交结果。
+
 重连以短延迟自动进行。认证失败等致命错误会停止 Runner，而不是无限重试。
 
 ## 关停与重启
 
-`webcodex-runner` 在 `SIGINT`/`SIGTERM` 时干净关停。托管部署请在服务管理器下
-运行（user 或 system scope），并把令牌放进服务环境。没有内置 daemon installer；
-请使用 `webcodex agent install --scope user|system`。
+`webcodex-runner` 在 `SIGINT`/`SIGTERM` 时干净关停。它不会自行 daemonize。
+托管部署请用 `webcodex agent install --scope user|system` 把它安装并托管为
+user 或 system 服务，并把令牌放进服务环境。
 
 机器重启后，hosted `connect` profile 通过重新运行 `webcodex connect` 或
 `webcodex agent start --profile <profile>` 来恢复。hosted profile 暂不支持开机自动

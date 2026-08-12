@@ -11,10 +11,11 @@ usage() {
     cat <<'EOF'
 Usage: scripts/stage_npm_release.sh --manifest <manifest.json> --output-dir <empty-dir> [--allow-development]
 
-Create an npm publication staging tree from WebCodex source plus an OE-generated
-publish-ready manifest. By default the source worktree must be clean and HEAD
-must be the exact immutable v<VERSION> tag. --allow-development is only for
-local/CI smoke and must never be used for npm publication.
+Create an npm publication staging tree from WebCodex source plus a
+publish-ready manifest generated on the release control host. By default the
+source worktree must be clean and HEAD must be the exact immutable v<VERSION>
+tag. --allow-development is only for local/CI smoke and must never be used for
+npm publication.
 EOF
 }
 

@@ -186,13 +186,15 @@ Confirm the agent server URL, token file, service user, and `allowed_roots`.
 
 In the hosted quick-start, MCP and Runner use the same non-`wc_` shared key.
 In managed mode, GPT Actions, MCP, and ordinary REST/project APIs use
-`webcodex-user-token` (`wc_pat_*`), while `webcodex-runner-token`
-(`wc_agent_*`) is only for Runner/Agent transport. A 403 after putting a
-`wc_agent_*` value in `--token` or `--token-file` is the expected security
-boundary: select the generated `webcodex-user-token` instead. Recent CLI
-commands also diagnose this mismatch without printing the complete token.
-`WEBCODEX_TOKEN` is bootstrap/admin-oriented and should not be copied into GPT
-Actions, MCP, or agent config.
+`webcodex-user-token` (`wc_pat_*`), while the Runner token (`wc_agent_*`) is
+only for Runner/Agent transport — after `webcodex login` it lives inline in
+`agent.toml`, with no separate `webcodex-runner-token` file (the advanced
+`webcodex client enroll` flow writes one). A 403 after putting a `wc_agent_*`
+value in `--token` or `--token-file` is the expected security boundary: select
+the generated `webcodex-user-token` instead. Recent CLI commands also diagnose
+this mismatch without printing the complete token. `WEBCODEX_TOKEN` is
+bootstrap/admin-oriented and should not be copied into GPT Actions, MCP, or
+agent config.
 
 ### Runner service is visible in one command but missing in another
 

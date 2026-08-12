@@ -7,7 +7,7 @@ PROFILE="${WEBCODEX_NPM_SMOKE_PROFILE:-release}"
 
 if [[ ! -f "$PACKAGE_DIR/manifest.json" ]]; then
     echo "[npm-smoke] publish-ready manifest missing from package staging: $PACKAGE_DIR/manifest.json" >&2
-    echo "[npm-smoke] run scripts/stage_npm_release.sh with OE-generated release metadata first" >&2
+    echo "[npm-smoke] run scripts/stage_npm_release.sh with release metadata generated on the release control host first" >&2
     exit 2
 fi
 

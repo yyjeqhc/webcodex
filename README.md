@@ -20,8 +20,8 @@ and the [documentation index](docs/INDEX.md).
 - **Git** — status, diffs, and focused commit preparation.
 - **Commands and tests** — bounded shell commands and structured validation
   (Rust, Node, Python, Go).
-- **Long-running Jobs** — work that outlives a single chat turn continues as a
-  durable, observable Job.
+- **Long-running Jobs** — work that outlives a single chat turn continues as an
+  observable, queryable Job.
 - **Multiple Runner machines and projects** — one Server can route work to many
   machines that own repositories.
 - **MCP** — connect from ChatGPT, Claude, or any MCP client.

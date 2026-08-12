@@ -176,8 +176,10 @@ webcodex agent logs --scope user --lines 100
 
 Hosted quick-start 中，MCP 与 Runner 使用同一个非 `wc_` shared key。Managed
 mode 中，GPT Actions、MCP 和普通 REST/project API 使用
-`webcodex-user-token`（`wc_pat_*`）；`webcodex-runner-token`
-（`wc_agent_*`）只给 Runner/Agent transport 使用。把 `wc_agent_*` 放入
+`webcodex-user-token`（`wc_pat_*`）；Runner 令牌（`wc_agent_*`）只给
+Runner/Agent transport 使用——`webcodex login` 之后它内联在 `agent.toml` 中，
+没有单独的 `webcodex-runner-token` 文件（高级的 `webcodex client enroll`
+流程会写入一个）。把 `wc_agent_*` 放入
 `--token` 或 `--token-file` 后得到 403，正是预期安全边界；应改用生成的
 `webcodex-user-token`。新版 CLI 也会在不打印完整 token 的前提下诊断这个错误。
 `WEBCODEX_TOKEN` 面向 bootstrap/admin，

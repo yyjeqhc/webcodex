@@ -67,7 +67,6 @@ Tool metadata, registry, OAuth scope policy, MCP `tools/list`, and OpenAPI
 - `list_projects` project entries expose `capabilities`.
 - Smoke selection should prefer `capabilities.recommended_for_smoke=true`.
 - Git smoke must require `capabilities.git_available=true`.
-- `agent:special:test-mcp` may be safe but not git-backed.
 
 ---
 

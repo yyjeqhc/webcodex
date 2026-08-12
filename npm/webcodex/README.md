@@ -103,7 +103,7 @@ Source-level npm tests do not require publish checksums:
 npm --prefix npm/webcodex test
 ```
 
-Release smoke runs against the OE-staged package that contains the generated publish-ready manifest:
+Release smoke runs against the release-control-host-staged package that contains the generated publish-ready manifest:
 
 ```bash
 WEBCODEX_NPM_PACKAGE_DIR=<STAGE_DIR>/npm-package bash scripts/npm_package_smoke.sh

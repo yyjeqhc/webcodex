@@ -51,7 +51,7 @@ function main() {
   if (!fs.existsSync(manifestPath)) {
     throw new Error(
       `publish-ready release manifest not found at ${manifestPath}; ` +
-      "generate it on OE from the native release artifacts and stage the npm package before publishing"
+      "generate it on the release control host from the native release artifacts and stage the npm package before publishing"
     );
   }
   validateReleaseManifest(loadManifest(manifestPath));

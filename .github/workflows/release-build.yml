@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing immutable annotated release tag (for example v0.3.6)
+        description: Existing annotated release tag (v0.3.6) or verification tag (release-build-test-*)
         required: true
         type: string
 
@@ -31,17 +31,26 @@ jobs:
       version: ${{ steps.metadata.outputs.version }}
       source_sha: ${{ steps.metadata.outputs.source_sha }}
       built_at: ${{ steps.metadata.outputs.built_at }}
+      build_kind: ${{ steps.metadata.outputs.build_kind }}
+      archive_stem: ${{ steps.metadata.outputs.archive_stem }}
     steps:
       - name: Require the reviewed workflow from main
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "Release candidate builds must be dispatched from the main workflow definition." >&2
             exit 1
           fi
-          if [[ ! "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release tag: ${{ inputs.tag }}" >&2
+          tag="$INPUT_TAG"
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            :
+          elif [[ "$tag" =~ ^release-build-test-[0-9A-Za-z][0-9A-Za-z._-]*$ ]] && [ "${#tag}" -le 80 ]; then
+            :
+          else
+            echo "Invalid release or verification tag: $tag" >&2
             exit 1
           fi
 
@@ -55,10 +64,18 @@ jobs:
       - name: Resolve immutable release metadata
         id: metadata
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          tag='${{ inputs.tag }}'
-          version="${tag#v}"
+          tag="$INPUT_TAG"
+          if [[ "$tag" =~ ^v[0-9] ]]; then
+            build_kind=release
+            version="${tag#v}"
+          else
+            build_kind=verification
+            version=""
+          fi
 
           if [ "$(git cat-file -t "$tag")" != "tag" ]; then
             echo "$tag must be an annotated tag." >&2
@@ -76,9 +93,19 @@ jobs:
           fi
 
           package_version="$(python3 -c 'import json; print(json.load(open("npm/webcodex/package.json", encoding="utf-8"))["version"])')"
-          if [ "$package_version" != "$version" ]; then
+          if [ "$build_kind" = release ] && [ "$package_version" != "$version" ]; then
             echo "Tag/package version mismatch: tag=$version package=$package_version" >&2
             exit 1
+          fi
+          if [ "$build_kind" = verification ]; then
+            version="$package_version"
+          fi
+
+          short_source="${source_sha:0:12}"
+          if [ "$build_kind" = release ]; then
+            archive_stem="webcodex-v$version"
+          else
+            archive_stem="webcodex-$tag-$short_source-v$version"
           fi
 
           # An annotated tag has a stable tagger timestamp. Reusing it makes a
@@ -93,11 +120,15 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "built_at=$built_at" >> "$GITHUB_OUTPUT"
+          echo "build_kind=$build_kind" >> "$GITHUB_OUTPUT"
+          echo "archive_stem=$archive_stem" >> "$GITHUB_OUTPUT"
           {
-            echo "### Release candidate source"
+            echo "### Release build source"
+            echo "- kind: \`$build_kind\`"
             echo "- tag: \`$tag\`"
             echo "- commit: \`$source_sha\`"
             echo "- built_at: \`$built_at\`"
+            echo "- archive stem: \`$archive_stem\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   linux:
@@ -123,6 +154,8 @@ jobs:
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
       WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
       MANYLINUX_IMAGE: ${{ matrix.image }}
       CARGO_CACHE_DIR: /tmp/webcodex-release-cargo-${{ matrix.platform }}
@@ -163,6 +196,8 @@ jobs:
             -e SOURCE_SHA \
             -e WEBCODEX_BUILT_AT \
             -e WEBCODEX_RELEASE_VERSION \
+            -e BUILD_KIND \
+            -e ARCHIVE_STEM \
             -e WEBCODEX_RELEASE_PLATFORM \
             "$MANYLINUX_IMAGE" \
             bash -lc '
@@ -249,7 +284,11 @@ jobs:
               done
 
               scripts/package_release_artifact.sh dist
-              archive="dist/webcodex-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
+              canonical_archive="dist/webcodex-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
+              archive="dist/$ARCHIVE_STEM-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
+              if [ "$canonical_archive" != "$archive" ]; then
+                mv "$canonical_archive" "$archive"
+              fi
               digest="$(sha256sum "$archive" | awk "{print \$1}")"
               printf "%s  %s\n" "$digest" "$(basename "$archive")" > "$archive.sha256"
             '
@@ -257,10 +296,10 @@ jobs:
       - name: Upload Linux candidate
         uses: actions/upload-artifact@v4
         with:
-          name: webcodex-${{ inputs.tag }}-${{ matrix.platform }}
+          name: ${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}
           path: |
-            dist/webcodex-v${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz
-            dist/webcodex-v${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz.sha256
+            dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz
+            dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz.sha256
             dist/${{ matrix.platform }}-elf.txt
           if-no-files-found: error
           retention-days: 7
@@ -275,6 +314,8 @@ jobs:
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
       WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: darwin-arm64
     steps:
       - uses: actions/checkout@v4
@@ -325,29 +366,53 @@ jobs:
 
           mkdir -p dist
           scripts/package_release_artifact.sh dist
-          archive="dist/webcodex-v$VERSION-darwin-arm64.tar.gz"
+          canonical_archive="dist/webcodex-v$VERSION-darwin-arm64.tar.gz"
+          archive="dist/$ARCHIVE_STEM-darwin-arm64.tar.gz"
+          if [ "$canonical_archive" != "$archive" ]; then
+            mv "$canonical_archive" "$archive"
+          fi
           digest="$(shasum -a 256 "$archive" | awk '{print $1}')"
           printf '%s  %s\n' "$digest" "$(basename "$archive")" > "$archive.sha256"
 
       - name: Upload macOS ARM64 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: webcodex-${{ inputs.tag }}-darwin-arm64
+          name: ${{ needs.prepare.outputs.archive_stem }}-darwin-arm64
           path: |
-            dist/webcodex-v${{ needs.prepare.outputs.version }}-darwin-arm64.tar.gz
-            dist/webcodex-v${{ needs.prepare.outputs.version }}-darwin-arm64.tar.gz.sha256
+            dist/${{ needs.prepare.outputs.archive_stem }}-darwin-arm64.tar.gz
+            dist/${{ needs.prepare.outputs.archive_stem }}-darwin-arm64.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
-  windows-x64:
+  windows:
     needs: prepare
-    runs-on: windows-latest
-    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win32-x64
+            runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            processor_architecture: AMD64
+            pe_machine: "8664"
+          - platform: win32-arm64
+            runner: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+            processor_architecture: ARM64
+            pe_machine: "AA64"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
       WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+      BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
+      WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
+      RUST_TARGET: ${{ matrix.rust_target }}
+      EXPECTED_PROCESSOR_ARCHITECTURE: ${{ matrix.processor_architecture }}
+      EXPECTED_PE_MACHINE: ${{ matrix.pe_machine }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -356,14 +421,23 @@ jobs:
           persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-win32-x64
+          shared-key: release-${{ matrix.platform }}
 
-      - name: Build and verify native Windows x64 candidate
+      - name: Build and verify native Windows candidate
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          if ($env:PROCESSOR_ARCHITECTURE -ne $env:EXPECTED_PROCESSOR_ARCHITECTURE) {
+            throw "Unexpected Windows host architecture: $env:PROCESSOR_ARCHITECTURE (expected $env:EXPECTED_PROCESSOR_ARCHITECTURE)"
+          }
+          $hostLine = rustc -vV | Select-String '^host: '
+          if ($hostLine.Line -ne "host: $env:RUST_TARGET") {
+            throw "Expected native Rust host $env:RUST_TARGET; got $($hostLine.Line)"
+          }
           if ((git rev-parse HEAD).Trim() -ne $env:SOURCE_SHA) {
             throw "Build checkout does not match prepared release commit."
           }
@@ -372,12 +446,14 @@ jobs:
           }
 
           rustc --version --verbose
-          cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+          cargo build --locked --release --target $env:RUST_TARGET -p webcodex -p webcodex-cli -p webcodex-runner
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
 
           $shortCommit = (git rev-parse --short=12 HEAD).Trim()
+          $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
+          $expectedMachine = [Convert]::ToUInt16($env:EXPECTED_PE_MACHINE, 16)
           foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
-            $binary = Join-Path "target\release" "$name.exe"
+            $binary = Join-Path $binDir "$name.exe"
             $output = @(& $binary --version | Select-Object -First 1)[0].TrimEnd()
             $expected = "$name $env:VERSION (commit $shortCommit, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"
             if ($output -ne $expected) {
@@ -388,27 +464,40 @@ jobs:
             if ($bytes.Length -lt 64) { throw "$binary is too small to be a PE image" }
             $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
             $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-            if ($machine -ne 0x8664) {
+            if ($machine -ne $expectedMachine) {
               throw ("Unexpected PE machine for {0}: 0x{1:x4}" -f $binary, $machine)
             }
           }
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_release_artifact.ps1 `
-            -BinDir target\release -OutDir dist -Version $env:VERSION
+          $packArgs = @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\package_release_artifact.ps1",
+            "-BinDir", $binDir,
+            "-OutDir", "dist",
+            "-Version", $env:VERSION,
+            "-Platform", $env:WEBCODEX_RELEASE_PLATFORM
+          )
+          if ($env:BUILD_KIND -eq "verification") {
+            $packArgs += "-AllowDevelopmentBuild"
+          }
+          & powershell @packArgs
           if ($LASTEXITCODE -ne 0) { throw "Windows release packaging failed with exit code $LASTEXITCODE" }
 
-          $archive = Join-Path "dist" "webcodex-v$env:VERSION-win32-x64.tar.gz"
+          $canonicalArchive = Join-Path "dist" "webcodex-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM.tar.gz"
+          $archive = Join-Path "dist" "$env:ARCHIVE_STEM-$env:WEBCODEX_RELEASE_PLATFORM.tar.gz"
+          if ($canonicalArchive -ne $archive) {
+            Move-Item -LiteralPath $canonicalArchive -Destination $archive
+          }
           $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $(Split-Path -Leaf $archive)" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
 
-      - name: Upload Windows x64 candidate
+      - name: Upload Windows candidate
         uses: actions/upload-artifact@v4
         with:
-          name: webcodex-${{ inputs.tag }}-win32-x64
+          name: ${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}
           path: |
-            dist/webcodex-v${{ needs.prepare.outputs.version }}-win32-x64.tar.gz
-            dist/webcodex-v${{ needs.prepare.outputs.version }}-win32-x64.tar.gz.sha256
+            dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz
+            dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
           compression-level: 0

@@ -1,8 +1,8 @@
 # Windows-native release artifact packaging for WebCodex.
 #
-# Produces `webcodex-v<VERSION>-win32-x64.tar.gz` from three Windows release
-# binaries. This is the Windows release path: it must run on a Windows host
-# with nothing but PowerShell and the built-in Windows tooling. It never
+# Produces `webcodex-v<VERSION>-win32-<ARCH>.tar.gz` from three Windows release
+# binaries. This is the Windows release path: it must run on the matching native
+# Windows host with nothing but PowerShell and the built-in Windows tooling. It never
 # requires Git Bash, WSL, or Unix chmod/install/sha256sum.
 #
 # The archive keeps the current three-binary npm contract:
@@ -34,6 +34,7 @@ param(
     [string]$BinDir,
     [string]$OutDir,
     [string]$Version,
+    [string]$Platform,
     [switch]$AllowDevelopmentBuild
 )
 
@@ -66,11 +67,22 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za
     throw "invalid package version '$Version'"
 }
 
+if (-not $Platform) {
+    $Platform = if ($env:WEBCODEX_RELEASE_PLATFORM) {
+        $env:WEBCODEX_RELEASE_PLATFORM
+    } else {
+        "win32-x64"
+    }
+}
+if ($Platform -notin @("win32-x64", "win32-arm64")) {
+    throw "invalid Windows release platform '$Platform'"
+}
+
 $BinDir = [System.IO.Path]::GetFullPath($BinDir)
 $OutDir = [System.IO.Path]::GetFullPath($OutDir)
 
 $BinaryNames = @("webcodex", "webcodex-server", "webcodex-runner")
-$ArchiveName = "webcodex-v$Version-win32-x64.tar.gz"
+$ArchiveName = "webcodex-v$Version-$Platform.tar.gz"
 $Archive = Join-Path $OutDir $ArchiveName
 $ArchiveTmp = "$Archive.tmp"
 if ((Test-Path -LiteralPath $Archive) -and -not $AllowDevelopmentBuild) {

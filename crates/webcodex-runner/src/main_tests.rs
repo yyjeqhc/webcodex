@@ -6340,12 +6340,14 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
 
     jobs.enqueue(
         sink,
-        1,
-        cfg.policy.clone(),
-        cfg.shell.clone(),
-        cfg.ssh.clone(),
-        projects_dir(&cfg).unwrap(),
-        request,
+        PendingJobStart {
+            generation: 1,
+            policy: cfg.policy.clone(),
+            shell: cfg.shell.clone(),
+            ssh: cfg.ssh.clone(),
+            projects_dir: projects_dir(&cfg).unwrap(),
+            request,
+        },
     );
     match rx.try_recv().expect("queued status was sent") {
         AgentEnvelope::JobUpdate { payload } => {
@@ -6370,12 +6372,14 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
     let (rejected_sink, mut rejected_rx) = ws_sink("ws-client");
     jobs.enqueue(
         rejected_sink,
-        1,
-        cfg.policy.clone(),
-        cfg.shell.clone(),
-        cfg.ssh.clone(),
-        projects_dir(&cfg).unwrap(),
-        rejected_request,
+        PendingJobStart {
+            generation: 1,
+            policy: cfg.policy.clone(),
+            shell: cfg.shell.clone(),
+            ssh: cfg.ssh.clone(),
+            projects_dir: projects_dir(&cfg).unwrap(),
+            request: rejected_request,
+        },
     );
     assert!(jobs.queued.lock().unwrap().is_empty());
     let rejected = (0..2)

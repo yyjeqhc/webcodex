@@ -1438,12 +1438,14 @@ mod tests {
         };
         manager.enqueue(
             sink.clone(),
-            11,
-            AgentPolicy::default(),
-            crate::webcodex_runner::ShellConfig::default(),
-            config.clone(),
-            PathBuf::new(),
-            ssh_job_request("ssh-job-complete", "tmp", "printf job-ok"),
+            crate::PendingJobStart {
+                generation: 11,
+                policy: AgentPolicy::default(),
+                shell: crate::webcodex_runner::ShellConfig::default(),
+                ssh: config.clone(),
+                projects_dir: PathBuf::new(),
+                request: ssh_job_request("ssh-job-complete", "tmp", "printf job-ok"),
+            },
         );
         let completed = wait_for_job_update(&mut rx, "ssh-job-complete", |update| update.finished);
         assert_eq!(completed.status, "completed", "{completed:?}");
@@ -1458,12 +1460,14 @@ mod tests {
 
         manager.enqueue(
             sink.clone(),
-            11,
-            AgentPolicy::default(),
-            crate::webcodex_runner::ShellConfig::default(),
-            config.clone(),
-            PathBuf::new(),
-            ssh_job_request("ssh-job-stop", "tmp", "sleep 30"),
+            crate::PendingJobStart {
+                generation: 11,
+                policy: AgentPolicy::default(),
+                shell: crate::webcodex_runner::ShellConfig::default(),
+                ssh: config.clone(),
+                projects_dir: PathBuf::new(),
+                request: ssh_job_request("ssh-job-stop", "tmp", "sleep 30"),
+            },
         );
         let running =
             wait_for_job_update(&mut rx, "ssh-job-stop", |update| update.status == "running");
@@ -1475,12 +1479,14 @@ mod tests {
 
         manager.enqueue(
             sink,
-            11,
-            AgentPolicy::default(),
-            crate::webcodex_runner::ShellConfig::default(),
-            config,
-            PathBuf::new(),
-            ssh_job_request("ssh-job-missing", "missing", "printf never-started"),
+            crate::PendingJobStart {
+                generation: 11,
+                policy: AgentPolicy::default(),
+                shell: crate::webcodex_runner::ShellConfig::default(),
+                ssh: config,
+                projects_dir: PathBuf::new(),
+                request: ssh_job_request("ssh-job-missing", "missing", "printf never-started"),
+            },
         );
         let missing = wait_for_job_update(&mut rx, "ssh-job-missing", |update| update.finished);
         assert_eq!(missing.status, "failed", "{missing:?}");

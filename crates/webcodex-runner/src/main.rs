@@ -124,23 +124,29 @@ impl Drop for JobManagerOwnerLifetime {
     }
 }
 
+/// A Job start accepted by `enqueue` and waiting for a slot: the immutable
+/// inputs the start pipeline consumes once capacity is available.
+///
+/// The sink is deliberately not part of this unit. `enqueue` installs it on
+/// the manager and reports admission failures through it, but the queued
+/// entry and every downstream start path communicate through the installed
+/// sink (`current_sink`); a sink carried here would be dead weight for every
+/// consumer of the queue.
+#[derive(Debug, Clone)]
+struct PendingJobStart {
+    generation: u64,
+    policy: AgentPolicy,
+    shell: ShellConfig,
+    ssh: SshConfig,
+    projects_dir: PathBuf,
+    request: ShellAgentShellRequest,
+}
+
 #[derive(Debug, Clone)]
 struct JobManager {
     max_concurrent: usize,
     jobs: Arc<Mutex<HashMap<String, RunningJob>>>,
-    queued: Arc<
-        Mutex<
-            VecDeque<(
-                AgentSink,
-                u64,
-                AgentPolicy,
-                ShellConfig,
-                SshConfig,
-                PathBuf,
-                ShellAgentShellRequest,
-            )>,
-        >,
-    >,
+    queued: Arc<Mutex<VecDeque<PendingJobStart>>>,
     prepared_profiles: PreparedShellProfileCache,
     ssh_pool: SshConnectionPool,
     lifecycle: Arc<Mutex<()>>,
@@ -2933,26 +2939,17 @@ impl JobManager {
         self.fail_job(request, "runner is shutting down".to_string(), None);
     }
 
-    fn enqueue(
-        &self,
-        sink: AgentSink,
-        generation: u64,
-        policy: AgentPolicy,
-        shell: ShellConfig,
-        ssh: SshConfig,
-        projects_dir: PathBuf,
-        request: ShellAgentShellRequest,
-    ) {
-        let Some(job_id) = request.job_id.clone() else {
+    fn enqueue(&self, sink: AgentSink, start: PendingJobStart) {
+        let Some(job_id) = start.request.job_id.clone() else {
             return;
         };
-        let Some(context) = request.job_context.clone() else {
-            let command_execution_state = structured_prestart_lifecycle(&request);
+        let Some(context) = start.request.job_context.clone() else {
+            let command_execution_state = structured_prestart_lifecycle(&start.request);
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
                 agent_instance_id: sink.agent_instance_id().to_string(),
                 job_id,
-                request_id: Some(request.request_id),
+                request_id: Some(start.request.request_id),
                 update_seq: Some(1),
                 status: "failed".to_string(),
                 stdout_chunk: None,
@@ -2969,13 +2966,14 @@ impl JobManager {
             });
             return;
         };
-        if let Err(error) = validate_runner_job_context(&context, &request, sink.client_id()) {
-            let command_execution_state = structured_prestart_lifecycle(&request);
+        if let Err(error) = validate_runner_job_context(&context, &start.request, sink.client_id())
+        {
+            let command_execution_state = structured_prestart_lifecycle(&start.request);
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
                 agent_instance_id: sink.agent_instance_id().to_string(),
                 job_id,
-                request_id: Some(request.request_id),
+                request_id: Some(start.request.request_id),
                 update_seq: Some(1),
                 status: "failed".to_string(),
                 stdout_chunk: None,
@@ -3036,21 +3034,21 @@ impl JobManager {
                     agent_instance_id,
                     snapshot: ShellJobSnapshot {
                         job_id: job_id.clone(),
-                        request_id: request.request_id.clone(),
+                        request_id: start.request.request_id.clone(),
                         status: if terminal {
                             "failed".to_string()
                         } else {
                             "agent_queued".to_string()
                         },
                         update_seq: u64::from(terminal),
-                        created_at: request.created_at,
+                        created_at: start.request.created_at,
                         started_at: None,
                         ended_at: terminal.then_some(now),
                         exit_code: None,
                         duration_ms: terminal.then_some(0),
                         error: immediate_failure.clone(),
                         command_execution_state: terminal
-                            .then(|| structured_prestart_lifecycle(&request))
+                            .then(|| structured_prestart_lifecycle(&start.request))
                             .flatten(),
                         context,
                         stdout: ShellJobStreamSnapshot::default(),
@@ -3064,15 +3062,7 @@ impl JobManager {
             );
             drop(jobs);
             if queue_locally {
-                lock_unpoison(&self.queued).push_back((
-                    sink.clone(),
-                    generation,
-                    policy.clone(),
-                    shell.clone(),
-                    ssh.clone(),
-                    projects_dir.clone(),
-                    request.clone(),
-                ));
+                lock_unpoison(&self.queued).push_back(start.clone());
             }
             (queue_locally, immediate_failure)
         };
@@ -3092,30 +3082,29 @@ impl JobManager {
         if queue_locally {
             return;
         }
-        self.start_now(sink, generation, policy, shell, ssh, projects_dir, request);
+        self.start_now(start);
     }
 
-    fn start_now(
-        &self,
-        sink: AgentSink,
-        generation: u64,
-        policy: AgentPolicy,
-        shell: ShellConfig,
-        ssh: SshConfig,
-        projects_dir: PathBuf,
-        request: ShellAgentShellRequest,
-    ) {
+    fn start_now(&self, start: PendingJobStart) {
         if self.shutting_down.load(Ordering::SeqCst) {
-            self.shutdown_rejection(&request);
+            self.shutdown_rejection(&start.request);
             return;
         }
         if matches!(
-            request.kind.as_str(),
+            start.request.kind.as_str(),
             "start_process_job" | "start_script_job"
         ) {
+            let PendingJobStart {
+                generation,
+                policy,
+                shell,
+                projects_dir,
+                request,
+                ..
+            } = start;
             self.start_structured_job(generation, policy, shell, projects_dir, request);
         } else {
-            self.start_shell_job(sink, generation, policy, shell, ssh, projects_dir, request);
+            self.start_shell_job(start);
         }
     }
 
@@ -3134,13 +3123,11 @@ impl JobManager {
                 let mut jobs = lock_unpoison(&self.jobs);
                 let mut queued = lock_unpoison(&self.queued);
                 let mut selected = None;
-                for (idx, (_, _, _policy, _shell, _ssh, _projects_dir, request)) in
-                    queued.iter().enumerate()
-                {
+                for (idx, queued_start) in queued.iter().enumerate() {
                     let reserved = jobs
                         .values()
                         .filter(|job| {
-                            job.client_id == request.client_id
+                            job.client_id == queued_start.request.client_id
                                 && job.slot_reserved
                                 && runner_job_is_active(&job.snapshot.status)
                         })
@@ -3151,7 +3138,7 @@ impl JobManager {
                     }
                 }
                 if let Some(idx) = selected {
-                    if let Some(job_id) = queued[idx].6.job_id.as_deref() {
+                    if let Some(job_id) = queued[idx].request.job_id.as_deref() {
                         if let Some(job) = jobs.get_mut(job_id) {
                             job.slot_reserved = true;
                         }
@@ -3161,10 +3148,10 @@ impl JobManager {
                     None
                 }
             };
-            let Some((sink, generation, policy, shell, ssh, projects_dir, request)) = next else {
+            let Some(start) = next else {
                 return;
             };
-            self.start_now(sink, generation, policy, shell, ssh, projects_dir, request);
+            self.start_now(start);
         }
     }
 
@@ -3292,16 +3279,15 @@ impl JobManager {
         });
     }
 
-    fn start_shell_job(
-        &self,
-        _sink: AgentSink,
-        generation: u64,
-        policy: AgentPolicy,
-        shell: ShellConfig,
-        ssh: SshConfig,
-        projects_dir: PathBuf,
-        request: ShellAgentShellRequest,
-    ) {
+    fn start_shell_job(&self, start: PendingJobStart) {
+        let PendingJobStart {
+            generation,
+            policy,
+            shell,
+            ssh,
+            projects_dir,
+            request,
+        } = start;
         let Some(job_id) = request.job_id.clone() else {
             return;
         };
@@ -4136,16 +4122,15 @@ impl JobManager {
             let mut queued = lock_unpoison(&self.queued);
             if let Some(pos) = queued
                 .iter()
-                .position(|(_, _, _, _, _, _, request)| request.job_id.as_deref() == Some(job_id))
+                .position(|queued_start| queued_start.request.job_id.as_deref() == Some(job_id))
             {
                 queued.remove(pos)
             } else {
                 None
             }
         };
-        if let Some((_sink, _generation, _policy, _shell, _ssh, _projects_dir, request)) =
-            queued_job
-        {
+        if let Some(queued_start) = queued_job {
+            let PendingJobStart { request, .. } = queued_start;
             self.update_and_send(
                 job_id,
                 RunnerJobDelta {

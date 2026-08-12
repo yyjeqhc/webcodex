@@ -663,33 +663,35 @@ fn enqueue_structured_process_job(
     let context = structured_process_context(cwd, args.len(), stdin.is_some());
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
-        },
-        ShellConfig::default(),
-        SshConfig::default(),
-        cwd.join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": format!("request-{job_id}"),
-            "client_id": "structured-agent",
-            "kind": "start_process_job",
-            "job_id": job_id,
-            "cwd": cwd,
-            "command": "",
-            "process": {
-                "executable": executable,
-                "args": args,
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
             },
-            "stdin": stdin,
-            "timeout_secs": timeout_secs,
-            "requested_by": "test",
-            "created_at": chrono::Utc::now().timestamp(),
-            "sandbox": sandbox,
-            "job_context": context,
-        }))
-        .unwrap(),
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: cwd.join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": format!("request-{job_id}"),
+                "client_id": "structured-agent",
+                "kind": "start_process_job",
+                "job_id": job_id,
+                "cwd": cwd,
+                "command": "",
+                "process": {
+                    "executable": executable,
+                    "args": args,
+                },
+                "stdin": stdin,
+                "timeout_secs": timeout_secs,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "sandbox": sandbox,
+                "job_context": context,
+            }))
+            .unwrap(),
+        },
     );
 }
 
@@ -1061,7 +1063,7 @@ fn phase_e2_stopped_queued_job_never_executes_after_slot_release() {
     assert!(!stopped.active.exists());
     assert!(lock_unpoison(&manager.queued)
         .iter()
-        .all(|entry| entry.6.job_id.as_deref() != Some(stopped.job_id.as_str())));
+        .all(|entry| entry.request.job_id.as_deref() != Some(stopped.job_id.as_str())));
 }
 
 #[cfg(unix)]
@@ -1100,27 +1102,29 @@ fn phase_e2_validation_job_shares_the_same_job_manager_slot_limit() {
     shell.path_prepend.push(bin);
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell,
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": "request-validation-shared-slot",
+                "client_id": "structured-agent",
+                "kind": "start_validation_job",
+                "job_id": "validation-shared-slot",
+                "cwd": temp.path(),
+                "command": serde_json::to_string(&steps).unwrap(),
+                "timeout_secs": 20,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "job_context": test_job_context(temp.path(), vec!["check".to_string()]),
+            }))
+            .unwrap(),
         },
-        shell,
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": "request-validation-shared-slot",
-            "client_id": "structured-agent",
-            "kind": "start_validation_job",
-            "job_id": "validation-shared-slot",
-            "cwd": temp.path(),
-            "command": serde_json::to_string(&steps).unwrap(),
-            "timeout_secs": 20,
-            "requested_by": "test",
-            "created_at": chrono::Utc::now().timestamp(),
-            "job_context": test_job_context(temp.path(), vec!["check".to_string()]),
-        }))
-        .unwrap(),
     );
     assert!(!validation_marker.exists());
     assert_eq!(
@@ -1527,27 +1531,29 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
     let marker_arg = marker.to_string_lossy().replace('\'', "''");
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": "request-phase-f-stream",
+                "client_id": "structured-agent",
+                "kind": "start_job",
+                "job_id": "phase-f-stream",
+                "cwd": temp.path(),
+                "command": format!("& '{helper}' windows-utf8-split-output '{marker_arg}'"),
+                "timeout_secs": 10,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "job_context": test_job_context(temp.path(), Vec::new()),
+            }))
+            .unwrap(),
         },
-        ShellConfig::default(),
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": "request-phase-f-stream",
-            "client_id": "structured-agent",
-            "kind": "start_job",
-            "job_id": "phase-f-stream",
-            "cwd": temp.path(),
-            "command": format!("& '{helper}' windows-utf8-split-output '{marker_arg}'"),
-            "timeout_secs": 10,
-            "requested_by": "test",
-            "created_at": chrono::Utc::now().timestamp(),
-            "job_context": test_job_context(temp.path(), Vec::new()),
-        }))
-        .unwrap(),
     );
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
     let final_update = updates.last().expect("stream Job terminal update");
@@ -1566,29 +1572,31 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
     let marker_arg = oem_marker.to_string_lossy().replace('\'', "''");
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": "request-phase-f-oem-stream",
+                "client_id": "structured-agent",
+                "kind": "start_job",
+                "job_id": "phase-f-oem-stream",
+                "cwd": temp.path(),
+                "command": format!(
+                    "& '{helper}' windows-oem-split-output '{expected_arg}' '{marker_arg}'"
+                ),
+                "timeout_secs": 10,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "job_context": test_job_context(temp.path(), Vec::new()),
+            }))
+            .unwrap(),
         },
-        ShellConfig::default(),
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": "request-phase-f-oem-stream",
-            "client_id": "structured-agent",
-            "kind": "start_job",
-            "job_id": "phase-f-oem-stream",
-            "cwd": temp.path(),
-            "command": format!(
-                "& '{helper}' windows-oem-split-output '{expected_arg}' '{marker_arg}'"
-            ),
-            "timeout_secs": 10,
-            "requested_by": "test",
-            "created_at": chrono::Utc::now().timestamp(),
-            "job_context": test_job_context(temp.path(), Vec::new()),
-        }))
-        .unwrap(),
     );
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
     let final_update = updates.last().expect("OEM stream Job terminal update");
@@ -1682,15 +1690,17 @@ fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it
     assert_eq!(request.script.as_ref().unwrap().script, script);
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request,
         },
-        ShellConfig::default(),
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        request,
     );
 
     assert!(wait_until(Duration::from_secs(30), || {
@@ -1783,33 +1793,35 @@ fn structured_process_and_script_jobs_preserve_the_inspect_sandbox() {
     let script_manager = JobManager::new(1);
     script_manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
-        },
-        ShellConfig::default(),
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": "request-inspect-structured-script",
-            "client_id": "structured-agent",
-            "kind": "start_script_job",
-            "job_id": "inspect-structured-script",
-            "cwd": project,
-            "command": "",
-            "script": {
-                "language": "sh",
-                "script": script,
-                "args": [],
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
             },
-            "timeout_secs": 5,
-            "requested_by": "test",
-            "created_at": chrono::Utc::now().timestamp(),
-            "sandbox": crate::command_sandbox::INSPECT_SANDBOX_MODE,
-            "job_context": context,
-        }))
-        .unwrap(),
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": "request-inspect-structured-script",
+                "client_id": "structured-agent",
+                "kind": "start_script_job",
+                "job_id": "inspect-structured-script",
+                "cwd": project,
+                "command": "",
+                "script": {
+                    "language": "sh",
+                    "script": script,
+                    "args": [],
+                },
+                "timeout_secs": 5,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "sandbox": crate::command_sandbox::INSPECT_SANDBOX_MODE,
+                "job_context": context,
+            }))
+            .unwrap(),
+        },
     );
     let script_updates = collect_job_updates(&mut script_rx, Duration::from_secs(10));
     let script_final = script_updates.last().unwrap();
@@ -1890,28 +1902,30 @@ fn inspect_job_manager_path_landlocks_commands_and_descendants() {
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": "inspect-job-request",
+                "client_id": "inspect-agent",
+                "kind": "start_job",
+                "job_id": "inspect-job",
+                "cwd": project,
+                "command": "set -eu; cat tracked.txt; printf ok > \"$TMPDIR/proof\"; test \"$(cat \"$TMPDIR/proof\")\" = ok; ! touch created.txt; ! truncate -s 0 tracked.txt; ! sh -c 'printf child > child.txt'",
+                "timeout_secs": 30,
+                "requested_by": "test",
+                "created_at": 1,
+                "sandbox": crate::command_sandbox::INSPECT_SANDBOX_MODE,
+                "job_context": test_job_context(&project, Vec::new())
+            }))
+            .unwrap(),
         },
-        ShellConfig::default(),
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": "inspect-job-request",
-            "client_id": "inspect-agent",
-            "kind": "start_job",
-            "job_id": "inspect-job",
-            "cwd": project,
-            "command": "set -eu; cat tracked.txt; printf ok > \"$TMPDIR/proof\"; test \"$(cat \"$TMPDIR/proof\")\" = ok; ! touch created.txt; ! truncate -s 0 tracked.txt; ! sh -c 'printf child > child.txt'",
-            "timeout_secs": 30,
-            "requested_by": "test",
-            "created_at": 1,
-            "sandbox": crate::command_sandbox::INSPECT_SANDBOX_MODE,
-            "job_context": test_job_context(&project, Vec::new())
-        }))
-        .unwrap(),
     );
 
     let updates = collect_job_updates(&mut rx, Duration::from_secs(30));
@@ -1992,35 +2006,37 @@ fn run_fail_fast_validation_job(attempt: usize) -> FailFastAttempt {
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            // These tests run jobs in a temp dir; the boundary itself is
-            // covered separately, and AgentPolicy::default() is fail-closed.
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                // These tests run jobs in a temp dir; the boundary itself is
+                // covered separately, and AgentPolicy::default() is fail-closed.
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell,
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": format!("validation-request-{attempt}"),
+                "client_id": "validation-agent",
+                "kind": "start_validation_job",
+                "job_id": format!("validation-job-{attempt}"),
+                "cwd": temp.path(),
+                "command": serde_json::to_string(&steps).unwrap(),
+                // Two `sh` one-liners. A timeout here would mean a hang, not a busy
+                // machine, which is the point of the gap between this and the
+                // collector deadline below.
+                "timeout_secs": 60,
+                "requested_by": "test",
+                "created_at": 1,
+                "job_context": test_job_context(
+                    temp.path(),
+                    steps.iter().map(|step| step.name.clone()).collect(),
+                )
+            }))
+            .unwrap(),
         },
-        shell,
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": format!("validation-request-{attempt}"),
-            "client_id": "validation-agent",
-            "kind": "start_validation_job",
-            "job_id": format!("validation-job-{attempt}"),
-            "cwd": temp.path(),
-            "command": serde_json::to_string(&steps).unwrap(),
-            // Two `sh` one-liners. A timeout here would mean a hang, not a busy
-            // machine, which is the point of the gap between this and the
-            // collector deadline below.
-            "timeout_secs": 60,
-            "requested_by": "test",
-            "created_at": 1,
-            "job_context": test_job_context(
-                temp.path(),
-                steps.iter().map(|step| step.name.clone()).collect(),
-            )
-        }))
-        .unwrap(),
     );
     let updates = collect_job_updates(&mut rx, Duration::from_secs(120));
     FailFastAttempt {
@@ -2129,34 +2145,36 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            // These tests run jobs in a temp dir; the boundary itself is
-            // covered separately, and AgentPolicy::default() is fail-closed.
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                // These tests run jobs in a temp dir; the boundary itself is
+                // covered separately, and AgentPolicy::default() is fail-closed.
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell,
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": "spawn-failure-request",
+                "client_id": "validation-agent",
+                "kind": "start_validation_job",
+                "job_id": "spawn-failure-job",
+                "cwd": temp.path(),
+                "command": serde_json::to_string(&[ShellJobValidationStep {
+                    name: "check".into(),
+                    program: "cargo".into(),
+                    args: vec!["check".into(), "--all-targets".into()],
+                env: Vec::new(),
+                }]).unwrap(),
+                "timeout_secs": 10,
+                "requested_by": "test",
+                "created_at": 1,
+                "job_context": test_job_context(temp.path(), vec!["check".to_string()])
+            }))
+            .unwrap(),
         },
-        shell,
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": "spawn-failure-request",
-            "client_id": "validation-agent",
-            "kind": "start_validation_job",
-            "job_id": "spawn-failure-job",
-            "cwd": temp.path(),
-            "command": serde_json::to_string(&[ShellJobValidationStep {
-                name: "check".into(),
-                program: "cargo".into(),
-                args: vec!["check".into(), "--all-targets".into()],
-            env: Vec::new(),
-            }]).unwrap(),
-            "timeout_secs": 10,
-            "requested_by": "test",
-            "created_at": 1,
-            "job_context": test_job_context(temp.path(), vec!["check".to_string()])
-        }))
-        .unwrap(),
     );
     let update = (0..100)
         .find_map(|_| {
@@ -2862,27 +2880,29 @@ fn job_timeout_terminates_the_whole_tree() {
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        1,
-        AgentPolicy {
-            allow_cwd_anywhere: true,
-            ..AgentPolicy::default()
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": "timeout-request",
+                "client_id": "timeout-agent",
+                "kind": "start_job",
+                "job_id": "timeout-job",
+                "cwd": temp.path(),
+                "command": command,
+                "timeout_secs": 1,
+                "requested_by": "test",
+                "created_at": 1,
+                "job_context": test_job_context(temp.path(), Vec::new())
+            }))
+            .unwrap(),
         },
-        ShellConfig::default(),
-        SshConfig::default(),
-        temp.path().join("projects.d"),
-        serde_json::from_value(json!({
-            "request_id": "timeout-request",
-            "client_id": "timeout-agent",
-            "kind": "start_job",
-            "job_id": "timeout-job",
-            "cwd": temp.path(),
-            "command": command,
-            "timeout_secs": 1,
-            "requested_by": "test",
-            "created_at": 1,
-            "job_context": test_job_context(temp.path(), Vec::new())
-        }))
-        .unwrap(),
     );
 
     let updates = collect_job_updates(&mut rx, Duration::from_secs(20));

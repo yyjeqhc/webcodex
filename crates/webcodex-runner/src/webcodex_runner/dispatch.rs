@@ -15,7 +15,7 @@ use crate::shell_protocol::{
     ShellScriptPayload, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
     STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
 };
-use crate::{handle_file_request, is_file_request_kind, JobManager};
+use crate::{handle_file_request, is_file_request_kind, JobManager, PendingJobStart};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
@@ -245,12 +245,14 @@ pub(crate) fn dispatch_request(
         "start_job" | "start_validation_job" | "start_process_job" | "start_script_job" => {
             jobs.enqueue(
                 sink.clone(),
-                config.generation,
-                policy.clone(),
-                shell.clone(),
-                config.ssh.clone(),
-                projects_dir.to_path_buf(),
-                request,
+                PendingJobStart {
+                    generation: config.generation,
+                    policy: policy.clone(),
+                    shell: shell.clone(),
+                    ssh: config.ssh.clone(),
+                    projects_dir: projects_dir.to_path_buf(),
+                    request,
+                },
             );
             Ok(true)
         }

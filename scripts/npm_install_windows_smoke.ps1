@@ -139,7 +139,11 @@ try {
     $PackageDir = Join-Path $Root "npm\webcodex"
     Push-Location $PackageDir
     try {
-        & npm pack --pack-destination $TempRoot --silent
+        # This smoke intentionally installs from the local development manifest
+        # above, so it must not impersonate a publish-ready package. Keep the
+        # package's prepack release guard intact and bypass lifecycle scripts only
+        # for this local tgz creation; npm install below still runs postinstall.
+        & npm pack --ignore-scripts --pack-destination $TempRoot --silent
         if ($LASTEXITCODE -ne 0) {
             throw "npm pack failed with exit code $LASTEXITCODE"
         }

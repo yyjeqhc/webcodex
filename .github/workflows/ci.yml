@@ -4,12 +4,28 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+# Keep only the newest run for a PR. Main pushes use the commit SHA as the
+# group key, so every merged main commit still receives its own full CI run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   test:
+    # External PRs run automatically (subject to GitHub's normal fork approval
+    # protections). PRs authored by the repository owner are intentionally
+    # opt-in: adding the `run-ci` label triggers this workflow again and enables
+    # the heavy jobs. Removing the label also cancels an in-progress PR run via
+    # the concurrency group above. Pushes to main always run.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.user.login != github.repository_owner ||
+      contains(github.event.pull_request.labels.*.name, 'run-ci')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -41,6 +57,10 @@ jobs:
         run: cargo test --locked --workspace
 
   test-windows:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.user.login != github.repository_owner ||
+      contains(github.event.pull_request.labels.*.name, 'run-ci')
     # Windows release gate: the crates that must run natively on Windows 11
     # (CLI, Runner, persistent-shell's fail-closed gate, and the
     # cross-platform libraries they depend on), the npm distribution checks,

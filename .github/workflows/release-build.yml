@@ -1,0 +1,414 @@
+name: Release build candidates
+
+run-name: Release build ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable annotated release tag (for example v0.3.6)
+        required: true
+        type: string
+
+# This workflow only produces candidate bytes. It has no release, package,
+# deployment, or repository-write permission. OE remains the publication and
+# final verification control plane.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-build-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      source_sha: ${{ steps.metadata.outputs.source_sha }}
+      built_at: ${{ steps.metadata.outputs.built_at }}
+    steps:
+      - name: Require the reviewed workflow from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release candidate builds must be dispatched from the main workflow definition." >&2
+            exit 1
+          fi
+          if [[ ! "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: ${{ inputs.tag }}" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Resolve immutable release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.tag }}'
+          version="${tag#v}"
+
+          if [ "$(git cat-file -t "$tag")" != "tag" ]; then
+            echo "$tag must be an annotated tag." >&2
+            exit 1
+          fi
+
+          source_sha="$(git rev-list -n 1 "$tag")"
+          if [ "$(git rev-parse HEAD)" != "$source_sha" ]; then
+            echo "Checked-out HEAD does not match $tag." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "Release candidate checkout is not clean." >&2
+            exit 1
+          fi
+
+          package_version="$(python3 -c 'import json; print(json.load(open("npm/webcodex/package.json", encoding="utf-8"))["version"])')"
+          if [ "$package_version" != "$version" ]; then
+            echo "Tag/package version mismatch: tag=$version package=$package_version" >&2
+            exit 1
+          fi
+
+          # An annotated tag has a stable tagger timestamp. Reusing it makes a
+          # rerun of the same immutable tag produce one shared built_at value
+          # across every platform and every workflow attempt.
+          built_at="$(git for-each-ref --format='%(taggerdate:unix)' "refs/tags/$tag")"
+          if [[ ! "$built_at" =~ ^[0-9]+$ ]]; then
+            echo "Could not resolve an annotated tagger timestamp for $tag." >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "built_at=$built_at" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release candidate source"
+            echo "- tag: \`$tag\`"
+            echo "- commit: \`$source_sha\`"
+            echo "- built_at: \`$built_at\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  linux:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-latest
+            image: quay.io/pypa/manylinux2014_x86_64
+            machine: x86_64
+            elf_machine: Advanced Micro Devices X86-64
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            image: quay.io/pypa/manylinux2014_aarch64
+            machine: aarch64
+            elf_machine: AArch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+      WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
+      MANYLINUX_IMAGE: ${{ matrix.image }}
+      CARGO_CACHE_DIR: /tmp/webcodex-release-cargo-${{ matrix.platform }}
+      RUSTUP_CACHE_DIR: /tmp/webcodex-release-rustup-${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Restore Rust build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.CARGO_CACHE_DIR }}
+            ${{ env.RUSTUP_CACHE_DIR }}
+            target
+          key: release-${{ matrix.platform }}-${{ hashFiles('Cargo.lock') }}-v1
+          restore-keys: |
+            release-${{ matrix.platform }}-
+
+      - name: Build and verify inside glibc 2.17 userspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_CACHE_DIR" "$RUSTUP_CACHE_DIR" dist
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -v "$CARGO_CACHE_DIR:/cargo" \
+            -v "$RUSTUP_CACHE_DIR:/rustup" \
+            -w /work \
+            -e CARGO_HOME=/cargo \
+            -e RUSTUP_HOME=/rustup \
+            -e VERSION \
+            -e SOURCE_SHA \
+            -e WEBCODEX_BUILT_AT \
+            -e WEBCODEX_RELEASE_VERSION \
+            -e WEBCODEX_RELEASE_PLATFORM \
+            "$MANYLINUX_IMAGE" \
+            bash -lc '
+              set -euo pipefail
+              export PATH="/cargo/bin:$PATH"
+              git config --global --add safe.directory /work
+
+              if [ "$(uname -m)" != "${{ matrix.machine }}" ]; then
+                echo "Unexpected native architecture: $(uname -m)" >&2
+                exit 1
+              fi
+              if [ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]; then
+                echo "Build checkout does not match prepared release commit." >&2
+                exit 1
+              fi
+              if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+                echo "Build checkout is not clean before compilation." >&2
+                exit 1
+              fi
+
+              if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+                yum install -y git curl
+              fi
+
+              if [ ! -x /cargo/bin/rustup ]; then
+                curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                  | sh -s -- -y --profile minimal --default-toolchain stable
+              fi
+              rustup toolchain install stable --profile minimal
+              rustup default stable
+              rustc --version --verbose
+              cargo --version --verbose
+
+              cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+
+              short_commit="$(git rev-parse --short=12 HEAD)"
+              for name in webcodex webcodex-server webcodex-runner; do
+                binary="target/release/$name"
+                output="$($binary --version)"
+                expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+                if [ "$output" != "$expected" ]; then
+                  echo "Unexpected $name release identity: $output" >&2
+                  echo "Expected: $expected" >&2
+                  exit 1
+                fi
+                if ! readelf -h "$binary" | grep -F "Machine:" | grep -Fq "${{ matrix.elf_machine }}"; then
+                  echo "Unexpected ELF architecture for $binary" >&2
+                  readelf -h "$binary" >&2
+                  exit 1
+                fi
+              done
+
+              report="dist/${WEBCODEX_RELEASE_PLATFORM}-elf.txt"
+              : > "$report"
+              allowed_needed="libc.so.6 libm.so.6 libgcc_s.so.1 libpthread.so.0 libdl.so.2 librt.so.1 libresolv.so.2 ld-linux-x86-64.so.2 ld-linux-aarch64.so.1"
+              for name in webcodex webcodex-server webcodex-runner; do
+                binary="target/release/$name"
+                {
+                  echo "== $name: ELF header =="
+                  readelf -h "$binary"
+                  echo "== $name: dynamic dependencies =="
+                  readelf -d "$binary"
+                  echo "== $name: version requirements =="
+                  readelf --version-info "$binary"
+                  echo
+                } >> "$report"
+
+                max_glibc="$(readelf --version-info "$binary" \
+                  | grep -oE "GLIBC_[0-9]+(\.[0-9]+)*" \
+                  | sed "s/^GLIBC_//" \
+                  | sort -Vu \
+                  | tail -n 1 || true)"
+                if [ -n "$max_glibc" ] && [ "$(printf "%s\n" 2.17 "$max_glibc" | sort -V | tail -n 1)" != "2.17" ]; then
+                  echo "$binary requires GLIBC_$max_glibc, exceeding the 2.17 release floor." >&2
+                  exit 1
+                fi
+
+                while IFS= read -r needed; do
+                  case " $allowed_needed " in
+                    *" $needed "*) ;;
+                    *) echo "$binary has unexpected DT_NEEDED dependency: $needed" >&2; exit 1 ;;
+                  esac
+                done < <(readelf -d "$binary" | sed -n "s/.*Shared library: \[\([^]]*\)\].*/\1/p")
+              done
+
+              scripts/package_release_artifact.sh dist
+              archive="dist/webcodex-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
+              digest="$(sha256sum "$archive" | awk "{print \$1}")"
+              printf "%s  %s\n" "$digest" "$(basename "$archive")" > "$archive.sha256"
+            '
+
+      - name: Upload Linux candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: webcodex-${{ inputs.tag }}-${{ matrix.platform }}
+          path: |
+            dist/webcodex-v${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz
+            dist/webcodex-v${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz.sha256
+            dist/${{ matrix.platform }}-elf.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  macos-arm64:
+    needs: prepare
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+      WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      WEBCODEX_RELEASE_PLATFORM: darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-darwin-arm64
+
+      - name: Build and verify native macOS ARM64 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(uname -m)" != "arm64" ]; then
+            echo "Expected a native macOS ARM64 runner, got $(uname -m)." >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]; then
+            echo "Build checkout does not match prepared release commit." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "Build checkout is not clean before compilation." >&2
+            exit 1
+          fi
+
+          rustc --version --verbose
+          cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+          short_commit="$(git rev-parse --short=12 HEAD)"
+          for name in webcodex webcodex-server webcodex-runner; do
+            binary="target/release/$name"
+            output="$($binary --version)"
+            expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+            if [ "$output" != "$expected" ]; then
+              echo "Unexpected $name release identity: $output" >&2
+              exit 1
+            fi
+            if ! file "$binary" | grep -Fq "arm64"; then
+              echo "Unexpected Mach-O architecture for $binary" >&2
+              file "$binary" >&2
+              exit 1
+            fi
+          done
+
+          mkdir -p dist
+          scripts/package_release_artifact.sh dist
+          archive="dist/webcodex-v$VERSION-darwin-arm64.tar.gz"
+          digest="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          printf '%s  %s\n' "$digest" "$(basename "$archive")" > "$archive.sha256"
+
+      - name: Upload macOS ARM64 candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: webcodex-${{ inputs.tag }}-darwin-arm64
+          path: |
+            dist/webcodex-v${{ needs.prepare.outputs.version }}-darwin-arm64.tar.gz
+            dist/webcodex-v${{ needs.prepare.outputs.version }}-darwin-arm64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  windows-x64:
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-win32-x64
+
+      - name: Build and verify native Windows x64 candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ((git rev-parse HEAD).Trim() -ne $env:SOURCE_SHA) {
+            throw "Build checkout does not match prepared release commit."
+          }
+          if (@(git status --porcelain --untracked-files=all).Count -ne 0) {
+            throw "Build checkout is not clean before compilation."
+          }
+
+          rustc --version --verbose
+          cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
+
+          $shortCommit = (git rev-parse --short=12 HEAD).Trim()
+          foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
+            $binary = Join-Path "target\release" "$name.exe"
+            $output = @(& $binary --version | Select-Object -First 1)[0].TrimEnd()
+            $expected = "$name $env:VERSION (commit $shortCommit, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"
+            if ($output -ne $expected) {
+              throw "Unexpected $name release identity: $output (expected $expected)"
+            }
+
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $binary))
+            if ($bytes.Length -lt 64) { throw "$binary is too small to be a PE image" }
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0x8664) {
+              throw ("Unexpected PE machine for {0}: 0x{1:x4}" -f $binary, $machine)
+            }
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package_release_artifact.ps1 `
+            -BinDir target\release -OutDir dist -Version $env:VERSION
+          if ($LASTEXITCODE -ne 0) { throw "Windows release packaging failed with exit code $LASTEXITCODE" }
+
+          $archive = Join-Path "dist" "webcodex-v$env:VERSION-win32-x64.tar.gz"
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path -Leaf $archive)" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
+
+      - name: Upload Windows x64 candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: webcodex-${{ inputs.tag }}-win32-x64
+          path: |
+            dist/webcodex-v${{ needs.prepare.outputs.version }}-win32-x64.tar.gz
+            dist/webcodex-v${{ needs.prepare.outputs.version }}-win32-x64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

@@ -2,7 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="$(node -e "process.stdout.write(require('$ROOT/npm/webcodex/package.json').version)")"
+if [ -n "${WEBCODEX_RELEASE_VERSION:-}" ]; then
+    VERSION="$WEBCODEX_RELEASE_VERSION"
+else
+    VERSION="$(node -e "process.stdout.write(require('$ROOT/npm/webcodex/package.json').version)")"
+fi
 PLATFORM="${WEBCODEX_RELEASE_PLATFORM:-linux-x64}"
 BIN_DIR="${WEBCODEX_RELEASE_BIN_DIR:-$ROOT/target/release}"
 OUT_DIR="${1:-$ROOT/dist}"
@@ -37,5 +41,9 @@ done
 
 tar -czf "$ARCHIVE.tmp" -C "$TMP/package" webcodex webcodex-server webcodex-runner
 mv -f "$ARCHIVE.tmp" "$ARCHIVE"
-sha256sum "$ARCHIVE"
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$ARCHIVE"
+else
+    shasum -a 256 "$ARCHIVE"
+fi
 printf '%s\n' "$ARCHIVE"

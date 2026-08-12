@@ -489,7 +489,8 @@ jobs:
             Move-Item -LiteralPath $canonicalArchive -Destination $archive
           }
           $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $(Split-Path -Leaf $archive)" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
+          $checksumLine = "$hash  $(Split-Path -Leaf $archive)`n"
+          [System.IO.File]::WriteAllText("$archive.sha256", $checksumLine, [System.Text.Encoding]::ASCII)
 
       - name: Upload Windows candidate
         uses: actions/upload-artifact@v4

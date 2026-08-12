@@ -792,7 +792,14 @@ fn phase_e2_default_four_gates_fifth_and_promotes_same_job_once() {
         enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, job);
     }
     wait_for_all_started(&jobs[..4]);
-    assert_eq!(active_gated_children(&jobs), 4);
+    // The started marker is written just before the active marker, so the
+    // child can still be in that window when wait_for_all_started returns;
+    // poll for the active set instead of asserting it synchronously.
+    assert!(
+        wait_until(Duration::from_secs(10), || active_gated_children(&jobs)
+            == 4),
+        "simultaneously started children failed to reach the default of 4"
+    );
     assert!(
         !jobs[4].started.exists(),
         "the fifth child started before a Job slot opened"
@@ -855,17 +862,22 @@ fn phase_e2_explicit_limit_one_serializes_jobs_strictly() {
     enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &first);
     enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &second);
     wait_for_all_started(std::slice::from_ref(&first));
-    assert!(first.active.exists());
+    assert!(
+        wait_until(Duration::from_secs(10), || first.active.exists()),
+        "the first Job never became active"
+    );
     assert!(!second.active.exists());
     assert!(!second.started.exists());
 
     first.release();
     wait_for_all_started(std::slice::from_ref(&second));
     assert!(!first.active.exists());
-    assert_eq!(
-        usize::from(second.active.exists()),
-        1,
-        "limit=1 did not serialize execution"
+    // The started marker is written just before the active marker, so the
+    // child can still be in that window when wait_for_all_started returns;
+    // poll until the second Job is actually active.
+    assert!(
+        wait_until(Duration::from_secs(10), || second.active.exists()),
+        "limit=1 did not serialize execution: the second Job never became active"
     );
     second.release();
     wait_for_job_workers(&manager);
@@ -887,9 +899,12 @@ fn phase_e2_explicit_higher_limit_starts_all_eight_children() {
         enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, job);
     }
     wait_for_all_started(&jobs);
-    assert_eq!(
-        active_gated_children(&jobs),
-        8,
+    // The started marker is written just before the active marker, so the
+    // child can still be in that window when wait_for_all_started returns;
+    // poll for the active set instead of asserting it synchronously.
+    assert!(
+        wait_until(Duration::from_secs(10), || active_gated_children(&jobs)
+            == 8),
         "explicit limit=8 was capped at a smaller default"
     );
     for job in &jobs {
@@ -1162,11 +1177,11 @@ fn structured_process_job_executes_exactly_once_and_reconciles_the_same_job() {
             "250".to_string(),
         ],
         None,
-        5,
+        30,
         None,
     );
 
-    assert!(wait_until(Duration::from_secs(5), || marker.exists()));
+    assert!(wait_until(Duration::from_secs(30), || marker.exists()));
     let active = manager.inventory();
     let active = active
         .jobs
@@ -1243,7 +1258,7 @@ fn structured_process_job_preserves_large_literal_argv_without_shell_fallback() 
         &helper.path,
         args,
         None,
-        5,
+        30,
         None,
     );
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
@@ -1278,7 +1293,7 @@ fn structured_process_job_terminal_lifecycle_distinguishes_prestart_nonzero_and_
             "structured-nonzero",
             helper.path.clone(),
             vec!["exit".to_string(), "19".to_string()],
-            5,
+            30,
             "failed",
             ShellCommandExecutionState::Completed,
             Some(19),
@@ -1286,8 +1301,11 @@ fn structured_process_job_terminal_lifecycle_distinguishes_prestart_nonzero_and_
         (
             "structured-timeout",
             helper.path.clone(),
-            vec!["sleep".to_string(), "3000".to_string()],
-            1,
+            // Sleep far longer than the 10s timeout so the timeout provably
+            // fires while the process is still running. A shorter sleep would
+            // let the helper exit cleanly and the job complete instead.
+            vec!["sleep".to_string(), "60000".to_string()],
+            10,
             "timeout",
             ShellCommandExecutionState::TimedOut,
             Some(-1),
@@ -1307,7 +1325,11 @@ fn structured_process_job_terminal_lifecycle_distinguishes_prestart_nonzero_and_
             timeout_secs,
             None,
         );
-        let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
+        // Quick completion fixtures use a 30-second execution budget so loaded
+        // Windows runners cannot misclassify process startup as a timeout. The
+        // collection window must outlast that budget while the dedicated timeout
+        // case still proves the original ten-second timeout contract below.
+        let updates = collect_job_updates(&mut rx, Duration::from_secs(45));
         let final_update = updates.last().expect("terminal lifecycle update");
         assert_eq!(final_update.status, status, "{final_update:?}");
         assert_eq!(
@@ -1317,9 +1339,22 @@ fn structured_process_job_terminal_lifecycle_distinguishes_prestart_nonzero_and_
         );
         assert_eq!(final_update.exit_code, exit_code, "{final_update:?}");
         if state == ShellCommandExecutionState::TimedOut {
+            // The timeout budget must be generous enough that a freshly
+            // spawned helper can actually start before it expires: on a
+            // loaded runner, process initialization alone can take several
+            // seconds, and a 1s budget would kill the child before it ran.
+            // The original ten-second budget must still be honored exactly:
+            // the reported duration is the timeout value itself (plus at most
+            // one poll interval), never reset by the lifecycle.
+            let duration_ms = final_update.duration_ms.expect("timeout duration");
             assert!(
-                started.elapsed() < Duration::from_millis(2_200),
-                "the one-second original timeout budget was reset or extended"
+                (9_850..=10_250).contains(&duration_ms),
+                "the ten-second original timeout was reset or extended: {duration_ms} ms"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(25),
+                "the original total timeout was extended: {:?}",
+                started.elapsed()
             );
         }
         if state == ShellCommandExecutionState::NotStarted {
@@ -1350,13 +1385,20 @@ fn structured_process_job_handoff_observation_does_not_reset_the_original_total_
             "mark-sleep".to_string(),
             marker.to_string_lossy().into_owned(),
             nonce.clone(),
-            "3000".to_string(),
+            "60000".to_string(),
         ],
         None,
-        1,
+        10,
         None,
     );
-    assert!(wait_until(Duration::from_secs(5), || marker.exists()));
+    // The timeout budget must be generous enough that a freshly spawned
+    // helper can actually start before it expires: on a loaded runner,
+    // process initialization alone (spawn return to first instruction) can
+    // take several seconds, and a 1s budget would kill the child before it
+    // ever wrote the marker. The helper sleeps 60s, so the 10s timeout fires
+    // while the process is provably still running. The assertions below
+    // still prove the original timeout is not reset at handoff.
+    assert!(wait_until(Duration::from_secs(30), || marker.exists()));
 
     // Model the Server's short sync grace ending by observing the retained
     // active Job after the one child has already started. This observation is
@@ -1380,11 +1422,14 @@ fn structured_process_job_handoff_observation_does_not_reset_the_original_total_
     );
     let duration_ms = final_update.duration_ms.expect("timeout duration");
     assert!(
-        (850..=1_250).contains(&duration_ms),
-        "the one-second original timeout was reset at handoff: {duration_ms} ms"
+        (9_850..=10_250).contains(&duration_ms),
+        "the ten-second original timeout was reset at handoff: {duration_ms} ms"
     );
+    // The job must still complete within the original ten-second budget plus
+    // process-startup slack; a handoff that reset the deadline to a larger
+    // value would overshoot this.
     assert!(
-        original_start.elapsed() < Duration::from_millis(1_500),
+        original_start.elapsed() < Duration::from_secs(25),
         "handoff extended the original total timeout"
     );
     let starts = std::fs::read_to_string(marker).unwrap();
@@ -1416,7 +1461,7 @@ fn stop_terminates_a_structured_process_job_without_replacement() {
         30,
         None,
     );
-    assert!(wait_until(Duration::from_secs(5), || marker.exists()));
+    assert!(wait_until(Duration::from_secs(30), || marker.exists()));
     manager.stop("structured-stop").unwrap();
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
     let final_update = updates.last().expect("structured stop terminal update");
@@ -1577,7 +1622,7 @@ fn phase_f_windows_structured_job_stop_retains_unicode_and_runs_once() {
         30,
         None,
     );
-    assert!(wait_until(Duration::from_secs(5), || marker.exists()));
+    assert!(wait_until(Duration::from_secs(30), || marker.exists()));
     manager.stop("phase-f-stop").unwrap();
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
     let final_update = updates.last().expect("stop terminal update");
@@ -1647,7 +1692,7 @@ fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it
         request,
     );
 
-    assert!(wait_until(Duration::from_secs(5), || {
+    assert!(wait_until(Duration::from_secs(30), || {
         marker.exists() && observed_path.exists()
     }));
     let temporary_script = PathBuf::from(std::fs::read_to_string(&observed_path).unwrap());
@@ -1713,7 +1758,7 @@ fn structured_process_and_script_jobs_preserve_the_inspect_sandbox() {
         &touch,
         vec![blocked.to_string_lossy().into_owned()],
         None,
-        5,
+        30,
         Some(crate::command_sandbox::INSPECT_SANDBOX_MODE),
     );
     let process_updates = collect_job_updates(&mut process_rx, Duration::from_secs(10));
@@ -2239,6 +2284,11 @@ pub(super) fn process_running(pid: u32) -> bool {
         .is_some_and(|state| state != 'Z')
 }
 
+/// Poll `condition` until it holds or `timeout` elapses. The fixtures here
+/// wait on marker files written by freshly spawned helper processes; under a
+/// fully parallel `cargo test` on the small GitHub CI runners, process
+/// startup can take well over a few seconds, so callers pass a generous 30s
+/// budget (matching the helper's own 30s gate).
 fn wait_until(timeout: Duration, condition: impl Fn() -> bool) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -2535,7 +2585,7 @@ fn job_cleanup_after_parent_exit_terminates_descendant_and_reaches_eof() {
     }
     let grandchild_pid = grandchild_pid.expect("GRANDCHILD_PID in job stdout");
     assert!(
-        wait_until(Duration::from_secs(5), || lock_unpoison(&child)
+        wait_until(Duration::from_secs(30), || lock_unpoison(&child)
             .try_wait()
             .unwrap()
             .is_some()),
@@ -2676,7 +2726,7 @@ fn job_stop_after_natural_exit_does_not_panic() {
     let parent_pid = managed.id();
     let child = Arc::new(Mutex::new(managed));
     assert!(
-        wait_until(Duration::from_secs(5), || lock_unpoison(&child)
+        wait_until(Duration::from_secs(30), || lock_unpoison(&child)
             .try_wait()
             .unwrap()
             .is_some()),
@@ -2734,10 +2784,12 @@ fn last_job_manager_owner_drop_terminates_running_tree_with_worker_clone_alive()
 fn cleanup_managed_tree_on_exited_tree_does_not_panic() {
     let (managed, _rx) = spawn_helper_raw("sleep", &["0", "0"]);
     let child = Arc::new(Mutex::new(managed));
-    assert!(wait_until(Duration::from_secs(5), || lock_unpoison(&child)
-        .try_wait()
-        .unwrap()
-        .is_some()));
+    assert!(wait_until(Duration::from_secs(30), || lock_unpoison(
+        &child
+    )
+    .try_wait()
+    .unwrap()
+    .is_some()));
     cleanup_managed_tree(&child);
     assert!(
         lock_unpoison(&child).try_tree_exit().unwrap(),

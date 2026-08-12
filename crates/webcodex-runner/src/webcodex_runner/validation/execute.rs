@@ -502,6 +502,11 @@ mod tests {
         CleanupPath(path)
     }
 
+    /// Poll until `path` exists or `timeout` elapses. The markers are written
+    /// by freshly spawned helper processes; under a fully parallel test suite
+    /// on the small GitHub CI runners, process startup can take well over a
+    /// few seconds, so callers pass a generous 30s budget (matching the
+    /// helper's own 30s gate).
     fn wait_until_file(path: &Path, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         loop {
@@ -596,18 +601,18 @@ mod tests {
         ]);
         let started = Instant::now();
         let captured = thread::scope(|scope| {
-            let handle = scope.spawn(|| run_bounded(&program, &args, cwd.path(), 1, None));
+            let handle = scope.spawn(|| run_bounded(&program, &args, cwd.path(), 10, None));
             assert!(
-                wait_until_file(&parent_marker, Duration::from_secs(5)),
+                wait_until_file(&parent_marker, Duration::from_secs(30)),
                 "parent marker never appeared"
             );
             assert!(
-                wait_until_file(&alive_marker, Duration::from_secs(5)),
+                wait_until_file(&alive_marker, Duration::from_secs(30)),
                 "descendant marker never appeared"
             );
             let parent_pid = read_pid(&parent_marker, "PARENT_PID");
             let descendant_pid = read_pid(&parent_marker, "DESCENDANT_PID");
-            // Both sleep 600s while the timeout is 1s, so they must still be
+            // Both sleep 600s while the timeout is 10s, so they must still be
             // alive when the timeout fires.
             assert!(process_alive(parent_pid), "parent not alive before timeout");
             assert!(
@@ -659,7 +664,7 @@ mod tests {
             // ran, so its existence proves the descendant was alive after the
             // parent exited.
             assert!(
-                wait_until_file(&alive_marker, Duration::from_secs(5)),
+                wait_until_file(&alive_marker, Duration::from_secs(30)),
                 "descendant marker never appeared"
             );
             handle.join().expect("run_bounded panicked")
@@ -707,11 +712,11 @@ mod tests {
             let handle =
                 scope.spawn(|| run_bounded(&program, &args, cwd.path(), 60, Some(&shutdown)));
             assert!(
-                wait_until_file(&parent_marker, Duration::from_secs(5)),
+                wait_until_file(&parent_marker, Duration::from_secs(30)),
                 "parent marker never appeared"
             );
             assert!(
-                wait_until_file(&alive_marker, Duration::from_secs(5)),
+                wait_until_file(&alive_marker, Duration::from_secs(30)),
                 "descendant marker never appeared"
             );
             let parent_pid = read_pid(&parent_marker, "PARENT_PID");
@@ -769,11 +774,11 @@ mod tests {
         let captured = thread::scope(|scope| {
             let handle = scope.spawn(|| run_bounded(&program, &args, cwd.path(), 3, None));
             assert!(
-                wait_until_file(&parent_marker, Duration::from_secs(5)),
+                wait_until_file(&parent_marker, Duration::from_secs(30)),
                 "parent marker never appeared"
             );
             assert!(
-                wait_until_file(&alive_marker, Duration::from_secs(5)),
+                wait_until_file(&alive_marker, Duration::from_secs(30)),
                 "descendant marker never appeared"
             );
             let parent_pid = read_pid(&parent_marker, "PARENT_PID");

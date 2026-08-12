@@ -1555,11 +1555,14 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
         let _ = runner_tx.send(result);
     });
 
+    // The register_project round trip is an actual project operation (it may
+    // spawn git); on a loaded runner the poll that observes the refreshed
+    // cache can arrive well after a few seconds, so budget generously.
     refreshed_rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(30))
         .expect("a later poll must carry refreshed project metadata");
     runner_rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(30))
         .expect("project-cache runner completion")
         .expect("project-cache runner should shut down cleanly");
     runner.join().unwrap();

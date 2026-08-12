@@ -1569,7 +1569,7 @@ fn inspect_shell_real_smoke_reads_checks_and_blocks_project_writes() {
     };
 
     let inspection = run_inspect(
-        "rg 'inspect-runner-smoke' Cargo.toml \
+        "if command -v rg >/dev/null 2>&1; then rg 'inspect-runner-smoke' Cargo.toml; fi \
              && git status --short \
              && cargo check --offline \
              && printf scratch-ok > \"$TMPDIR/proof\" \

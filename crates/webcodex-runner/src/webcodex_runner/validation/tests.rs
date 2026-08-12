@@ -359,8 +359,11 @@ fn invalid_cwd_reports_available_tool_without_starting_command() {
 fn spawn_failure_does_not_report_command_started() {
     let project = tempfile::tempdir().unwrap();
     let bin = tempfile::tempdir().unwrap();
-    // A file that resolves as a program but cannot be executed: on Unix a
-    // non-shebang script, on Windows a non-PE `pyright.exe`.
+    // A file that resolves as a program but cannot be executed. Unix can use
+    // an executable non-shebang file. On Windows, executing a corrupt PE can
+    // trigger an interactive compatibility dialog, so use a real PE held with
+    // an exclusive share mode instead; CreateProcess then fails cleanly while
+    // the resolver still sees an available tool.
     #[cfg(unix)]
     {
         let path = bin.path().join("pyright");
@@ -369,7 +372,17 @@ fn spawn_failure_does_not_report_command_started() {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     }
     #[cfg(windows)]
-    fs::write(bin.path().join("pyright.exe"), b"not a valid PE image\n").unwrap();
+    let _locked_executable = {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let path = bin.path().join("pyright.exe");
+        fs::copy(std::env::current_exe().unwrap(), &path).unwrap();
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(path)
+            .unwrap()
+    };
 
     let response = with_path(bin.path(), || {
         execute_validation_at_root(project.path(), &typecheck_request("demo"), 120).unwrap()

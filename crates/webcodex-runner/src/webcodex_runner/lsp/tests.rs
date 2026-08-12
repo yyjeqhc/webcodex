@@ -807,6 +807,10 @@ fn lsp_initialize_pre_exit_with_stderr_surfaces_component_missing_diagnostic() {
     assert_eq!(fixture.starts(), 2);
 }
 
+/// The rustup proxy shim and toolchain layout are Unix-only; the whole test
+/// is skipped on Windows rather than exiting early from a `#[cfg(not(unix))]`
+/// block (which left the remainder of the body unreachable there).
+#[cfg(unix)]
 #[test]
 fn lsp_rustup_proxy_without_component_is_not_available() {
     let _serial = super::super::serialize_fake_lsp_test();
@@ -824,18 +828,12 @@ fn lsp_rustup_proxy_without_component_is_not_available() {
     // Mimic cargo-bin rustup shims: rust-analyzer -> rustup.
     let rustup_bin = bin.join("rustup");
     fs::write(&rustup_bin, b"#!/bin/sh\nexit 1\n").unwrap();
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = fs::metadata(&rustup_bin).unwrap().permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&rustup_bin, perms).unwrap();
         std::os::unix::fs::symlink("rustup", bin.join("rust-analyzer")).unwrap();
-    }
-    #[cfg(not(unix))]
-    {
-        // Non-unix CI: skip symlink-specific assertion.
-        return;
     }
 
     let command = LspCommand::new(bin.join("rust-analyzer"));

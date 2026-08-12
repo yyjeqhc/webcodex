@@ -1,5 +1,7 @@
 use super::*;
 use crate::webcodex_runner::config::validate_shell_config;
+#[cfg(target_os = "linux")]
+use crate::webcodex_runner::run_shell_with_profiles_in_sandbox;
 use crate::webcodex_runner::{
     handle_project_lifecycle_op, handle_project_op_with_temporary_projects_root,
     handle_resolve_or_register_project,

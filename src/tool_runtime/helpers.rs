@@ -1152,6 +1152,9 @@ pub(crate) fn read_lines_from_text(
 
 #[cfg(test)]
 mod tests {
+    // Every test in this module is Unix-only, so the glob import is only
+    // needed there.
+    #[cfg(unix)]
     use super::*;
 
     /// Regression guard for the local-command infinite hang: a shell that exits

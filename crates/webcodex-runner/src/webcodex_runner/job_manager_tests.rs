@@ -610,6 +610,7 @@ fn structured_process_context(
     context
 }
 
+#[cfg(unix)]
 fn structured_script_context(
     cwd: &Path,
     language: shell_protocol::ShellScriptLanguage,

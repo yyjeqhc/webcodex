@@ -17,16 +17,20 @@ pub(crate) enum ResolvedProgram {
     /// Native executable (`.exe`, `.com`, or an extensionless PE image).
     Native(PathBuf),
     /// Batch script (`.cmd` / `.bat`), which requires shell/script semantics.
+    /// Only Windows resolution can produce batch scripts.
+    #[cfg(windows)]
     Batch(PathBuf),
 }
 
 impl ResolvedProgram {
+    #[cfg(windows)]
     pub(crate) fn path(&self) -> &Path {
         match self {
             ResolvedProgram::Native(path) | ResolvedProgram::Batch(path) => path,
         }
     }
 
+    #[cfg(all(test, windows))]
     pub(crate) fn is_batch(&self) -> bool {
         matches!(self, ResolvedProgram::Batch(_))
     }

@@ -4,12 +4,16 @@ pub(super) use crate::webcodex_cli::test_support::{
 };
 pub(super) use crate::webcodex_cli::{
     client_output_dir_for_profile, compare_build_commits, format_error_body, is_effective_root,
-    parse_env_content_value, render_agent_systemd_unit, render_build_metadata_block,
-    resolve_account_credential, runtime_build_metadata, server_status_revision_check, token_prefix,
-    RevisionComparison, CLIENT_PROFILE_ERROR,
+    parse_env_content_value, render_build_metadata_block, resolve_account_credential,
+    runtime_build_metadata, server_status_revision_check, token_prefix, RevisionComparison,
+    CLIENT_PROFILE_ERROR,
 };
+// Only the Unix systemd service tests consume these re-exports.
+#[cfg(unix)]
+pub(super) use crate::webcodex_cli::render_agent_systemd_unit;
 pub(super) use crate::*;
 pub(super) use serde_json::{json, Value};
+#[cfg(unix)]
 pub(super) use std::ffi::OsString;
 pub(super) use std::io::{Read, Write};
 pub(super) use std::net::TcpListener;

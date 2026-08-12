@@ -219,6 +219,7 @@ impl AgentRuntimeState {
         }
     }
 
+    #[cfg(any(unix, test))]
     fn register_reload_thread(&self, handle: std::thread::JoinHandle<()>) {
         self.reload_threads.register(handle);
     }

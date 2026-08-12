@@ -465,6 +465,8 @@ pub(super) fn atomic_write(path: &Path, content: &[u8], secret: bool) -> Result<
     result
 }
 
+// On non-Unix the body is a no-op, so the `path` parameter is unused there.
+#[cfg_attr(not(unix), allow(unused_variables))]
 pub(super) fn protect_secret_file(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {

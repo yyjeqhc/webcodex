@@ -2509,10 +2509,13 @@ async fn job_log_wait_rejects_invalid_wait_secs_before_execution() {
 #[test]
 fn local_noop_observation_does_not_rewrite_file() {
     let (_temp, record, initial) = make_local_record("job-noop");
+    #[cfg(unix)]
     let path = record.dir.join("observation.json");
+    #[cfg(unix)]
     let before = fs::metadata(&path).unwrap();
     let first = record.observe().unwrap();
     let second = record.observe().unwrap();
+    #[cfg(unix)]
     let after = fs::metadata(&path).unwrap();
     assert_eq!(initial, first);
     assert_eq!(first, second);

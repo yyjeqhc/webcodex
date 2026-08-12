@@ -337,7 +337,12 @@ async function main() {
         () => install.installFromManifest(manifestPath, testOptions({
           destinationDir: downloaded,
           tempDir: tmp,
-          artifactDownload: { firstByteTimeoutMs: 40, inactivityTimeoutMs: 40, totalTimeoutMs: 150 }
+          // This case exercises the inactivity (stall) path specifically: the
+          // server sends one byte and then never finishes. The first-byte
+          // budget must be comfortably larger than the loopback response
+          // latency, otherwise a loaded CI can trip the first-byte timer
+          // ("timed out waiting for a response") before the stall is observed.
+          artifactDownload: { firstByteTimeoutMs: 5000, inactivityTimeoutMs: 40, totalTimeoutMs: 10000 }
         })),
         downloaded, tmp, /Artifact download stalled before completion/
       );

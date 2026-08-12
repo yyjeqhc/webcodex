@@ -291,19 +291,19 @@ impl SshConnectionPool {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn connection_count(&self) -> usize {
         lock_unpoison(&self.state).entries.len()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn with_test_config(config_path: PathBuf) -> Self {
         let pool = Self::default();
         lock_unpoison(&pool.state).test_config_path = Some(config_path);
         pool
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn control_path_for(
         &self,
         generation: u64,
@@ -406,7 +406,7 @@ impl Drop for SshConnectionPool {
 }
 
 /// Execute a short remote shell command through a Session-bound SSH resource.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn run_ssh_shell(
     pool: &SshConnectionPool,
     generation: u64,
@@ -747,6 +747,8 @@ fn is_safe_session_id(value: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
+// On non-Unix the body is a no-op, so the `command` parameter is unused there.
+#[cfg_attr(not(unix), allow(unused_variables))]
 fn configure_private_process_group(command: &mut Command) {
     #[cfg(unix)]
     {

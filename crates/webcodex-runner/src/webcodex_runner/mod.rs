@@ -73,7 +73,11 @@ pub(crate) use shell::{
     PreparedShellProfileCache,
 };
 #[cfg(test)]
-pub(crate) use shell::{run_shell, run_shell_with_profiles, run_shell_with_profiles_in_sandbox};
+pub(crate) use shell::{run_shell, run_shell_with_profiles};
+// Only the Linux inspect-sandbox smoke test consumes the sandboxed profile
+// runner directly; keep the re-export gated to its consumer.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) use shell::run_shell_with_profiles_in_sandbox;
 pub(crate) use ssh::{is_transport_failure, run_ssh_shell_with_execution_state, SshConnectionPool};
 #[cfg(test)]
 pub(crate) use transport::{

@@ -57,9 +57,9 @@ use webcodex_runner::{
     default_websocket_connect_timeout_secs, effective_transport, handle_project_op,
     load_agent_project_summaries_from_dir, non_empty_token, parse_agent_project_toml,
     quic_client_bind_addr_for, resolve_quic_config, resolve_quic_server_addrs, run_shell,
-    run_shell_with_profiles, run_shell_with_profiles_in_sandbox, server_url_to_ws,
-    sha256_hex_bytes, validate_project_path_policy, websocket_session, AgentRuntimeState,
-    ShellProfileConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
+    run_shell_with_profiles, server_url_to_ws, sha256_hex_bytes, validate_project_path_policy,
+    websocket_session, AgentRuntimeState, ShellProfileConfig, CLIENT_PROFILE_ERROR,
+    DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
 };
 use webcodex_runner::{
     client_profile_agent_config, configured_prepared_shell_job_command,

@@ -3,6 +3,7 @@ use super::*;
 use crate::shell_protocol::{
     ShellAgentShellRequest, ShellClientCapabilities, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
+#[cfg(unix)]
 use crate::POLLING_DISPATCH_MAX_IN_FLIGHT;
 use futures_util::{SinkExt, StreamExt};
 use std::io::{Read, Write};
@@ -416,6 +417,7 @@ enum ScriptStep {
         body: &'static str,
     },
     PollDeliver(&'static str),
+    #[cfg(unix)]
     PollDeliverRequest(ShellAgentShellRequest),
     PollEmpty,
     PollResponse {
@@ -444,12 +446,13 @@ impl ScriptStep {
                 "/api/shell/agent/register"
             }
             Self::PollDeliver(_)
-            | Self::PollDeliverRequest(_)
             | Self::PollEmpty
             | Self::PollResponse { .. }
             | Self::PollTypedResponse { .. }
             | Self::PollOversized { .. }
             | Self::PollClose => "/api/shell/agent/poll",
+            #[cfg(unix)]
+            Self::PollDeliverRequest(_) => "/api/shell/agent/poll",
             Self::Result { .. } => "/api/shell/agent/result",
         }
     }
@@ -568,6 +571,7 @@ fn sync_file_request(request_id: &str) -> ShellAgentShellRequest {
     }
 }
 
+#[cfg(unix)]
 fn polling_shell_request(request_id: &str, cwd: &Path, command: String) -> ShellAgentShellRequest {
     ShellAgentShellRequest {
         request_id: request_id.to_string(),
@@ -598,6 +602,7 @@ fn polling_shell_request(request_id: &str, cwd: &Path, command: String) -> Shell
     }
 }
 
+#[cfg(unix)]
 fn polling_job_request(
     request_id: &str,
     job_id: &str,
@@ -611,6 +616,7 @@ fn polling_job_request(
     request
 }
 
+#[cfg(unix)]
 fn polling_persistent_shell_request(
     request_id: &str,
     action: &str,
@@ -671,6 +677,7 @@ fn result_success_response() -> ConcurrentHttpResponse {
     ConcurrentHttpResponse::json(r#"{"success":true}"#)
 }
 
+#[cfg(unix)]
 fn job_update_success_response() -> ConcurrentHttpResponse {
     ConcurrentHttpResponse::json(r#"{"success":true,"job":null,"error":null}"#)
 }
@@ -775,6 +782,7 @@ fn start_scripted_agent_server(steps: Vec<ScriptStep>) -> ScriptedServer {
                     );
                     write_http_response(&mut stream, "200 OK", "application/json", &body);
                 }
+                #[cfg(unix)]
                 ScriptStep::PollDeliverRequest(request) => {
                     assert_eq!(path, "/api/shell/agent/poll", "expected poll, got {path}");
                     let request_json = serde_json::to_string(&request).unwrap();

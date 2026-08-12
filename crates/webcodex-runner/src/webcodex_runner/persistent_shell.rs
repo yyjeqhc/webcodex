@@ -617,7 +617,7 @@ impl PersistentShellManager {
         self.processes.close_all(reason)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn active_count(&self) -> usize {
         self.processes.active_count()
     }

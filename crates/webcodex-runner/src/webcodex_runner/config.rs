@@ -329,6 +329,10 @@ impl HotAgentConfig {
 
 pub(crate) struct ReloadableAgentConfig {
     startup: AgentConfig,
+    /// Config file path used by `reload()`. Config reload is a Unix feature
+    /// (Windows marks reload as unsupported and never stores the path), but
+    /// the reload logic is exercised by cross-platform tests.
+    #[cfg(any(unix, test))]
     path: PathBuf,
     current: RwLock<Arc<HotAgentConfig>>,
     external_routers: Mutex<Vec<Weak<ExternalToolRouter>>>,
@@ -342,10 +346,13 @@ impl ReloadableAgentConfig {
             status.last_reload_result = "unsupported".to_string();
             status.last_reload_error_code = Some("reload_unsupported".to_string());
         }
+        #[cfg(not(any(unix, test)))]
+        let _ = &path;
         let current = Arc::new(HotAgentConfig::new(1, &startup, status));
         let external_routers = vec![Arc::downgrade(&current.external_tools)];
         Self {
             startup,
+            #[cfg(any(unix, test))]
             path,
             current: RwLock::new(current),
             external_routers: Mutex::new(external_routers),
@@ -376,6 +383,7 @@ impl ReloadableAgentConfig {
         self.startup.temporary_projects_root.as_deref()
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn is_stopping(&self) -> bool {
         self.stopping.load(Ordering::SeqCst)
     }
@@ -387,6 +395,7 @@ impl ReloadableAgentConfig {
         live
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn reload(&self) -> AgentConfigReloadStatus {
         if self.is_stopping() {
             return self.snapshot().reload_status();
@@ -441,6 +450,7 @@ impl ReloadableAgentConfig {
     }
 }
 
+#[cfg(any(unix, test))]
 fn reload_error_code(error: &str) -> &'static str {
     if error.starts_with("failed to read config") {
         "config_read_failed"
@@ -453,6 +463,7 @@ fn reload_error_code(error: &str) -> &'static str {
     }
 }
 
+#[cfg(any(unix, test))]
 pub(crate) fn restart_required_fields(
     startup: &AgentConfig,
     candidate: &AgentConfig,

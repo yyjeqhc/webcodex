@@ -63,7 +63,8 @@ mod shell_command_tests {
     }
 }
 
-#[cfg(test)]
+// Only the Unix systemd service tests consume this re-export.
+#[cfg(all(test, unix))]
 pub(crate) use agent_service::render_agent_systemd_unit;
 pub(crate) use agent_service::{run_agent_install_service, run_agent_service, run_agent_status};
 pub(crate) use connect::{

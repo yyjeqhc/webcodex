@@ -169,6 +169,7 @@ impl ExternalToolRouter {
         )
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn configuration_status_changed(&self) {
         self.metadata_revision.fetch_add(1, Ordering::SeqCst);
     }
@@ -1140,7 +1141,7 @@ impl McpConnection {
         self.alive.load(Ordering::SeqCst)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn request(
         &self,
         method: &str,

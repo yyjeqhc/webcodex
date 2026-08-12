@@ -1,3 +1,5 @@
+// Every test in this module is Unix-only; the glob import is only needed there.
+#[cfg(unix)]
 use super::super::support::*;
 
 /// Unix-only: systemd service unit semantics with Unix absolute-path

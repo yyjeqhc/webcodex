@@ -1518,6 +1518,7 @@ mod tests {
     // --- verified parent directory -------------------------------------------
 
     /// Nothing a login writes may appear in a directory outside the base.
+    #[cfg(unix)]
     fn assert_no_credentials_in(dir: &Path) {
         let mut offenders = Vec::new();
         for entry in std::fs::read_dir(dir).unwrap() {

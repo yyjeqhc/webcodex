@@ -174,7 +174,7 @@ device-code flow are not implemented. OAuth setup steps are in
 
 ## `client_id`
 
-`client_id` identifies one Runner instance, such as:
+`client_id` is the stable logical identifier of one Runner/device, such as:
 
 ```text
 ubuntu-client

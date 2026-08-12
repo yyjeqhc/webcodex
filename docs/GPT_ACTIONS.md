@@ -2,9 +2,12 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-Use GPT Actions when a Custom GPT should call the project-bound WebCodex
-Connector. Use [MCP](MCP.md) when the client supports MCP directly — the
-underlying surface is the same.
+Use GPT Actions when a Custom GPT should call WebCodex through the Server's
+OpenAPI surface. Use [MCP](MCP.md) when the client supports MCP directly.
+Both are adapters over the same runtime, but the exposed schema depends on the
+Server mode: a Connector-configured project-first Server exposes the
+project-bound Connector schema, while a generic hosted/self-hosted Server
+exposes the standard runtime OpenAPI schema.
 
 ## What a GPT Action is
 
@@ -22,6 +25,11 @@ Import the OpenAPI schema into your Custom GPT:
 https://your-domain.example/openapi.json
 ```
 
+Inspect the imported operation names rather than assuming one schema shape. A
+Server with project-bound Connector configuration returns the twelve
+capabilities documented below; a generic Server returns the standard runtime
+OpenAPI projection instead.
+
 ChatGPT requires public HTTPS. Configure API-key authentication as an HTTP
 Bearer credential. Use a generated `webcodex-user-token` (`wc_pat_*`) — it is
 for GPT Actions, MCP, and ordinary REST/project APIs. The Runner token
@@ -34,8 +42,9 @@ audit endpoints. Use the `webcodex` CLI for those tasks.
 
 ## The Connector surface
 
-For a project-bound Connector, OpenAPI is generated from the same twelve
-capabilities as MCP:
+When the Server is running with project-bound Connector configuration,
+OpenAPI is generated from the same twelve capabilities as the canonical MCP
+Connector:
 
 ```text
 task_start

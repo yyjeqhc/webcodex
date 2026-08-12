@@ -2,8 +2,11 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-Custom GPT 需要调用 project-bound WebCodex Connector 时使用 GPT Actions；客户端
-直接支持 MCP 时请用 [MCP](MCP.zh-CN.md)——底层 surface 是同一个。
+Custom GPT 需要通过 Server 的 OpenAPI surface 调用 WebCodex 时使用 GPT Actions；
+客户端直接支持 MCP 时请用 [MCP](MCP.zh-CN.md)。两者都适配同一个 runtime，但
+实际暴露的 schema 取决于 Server mode：带 Connector 配置的 project-first Server
+暴露 project-bound Connector schema；普通 hosted/self-hosted Server 暴露标准
+runtime OpenAPI schema。
 
 ## 什么是 GPT Action
 
@@ -20,6 +23,9 @@ plugin 是 ChatGPT/Codex plugin 目录中可安装的包。参见 OpenAI 的
 https://your-domain.example/openapi.json
 ```
 
+不要预设导入后的 operation 集合。带 project-bound Connector 配置的 Server 返回
+下文十二个 capability；普通 Server 则返回标准 runtime OpenAPI projection。
+
 ChatGPT 需要公网 HTTPS。把 API-key 认证配置为 HTTP Bearer。使用生成的
 `webcodex-user-token`（`wc_pat_*`）——它用于 GPT Actions、MCP 与普通 REST/项目
 API。Runner token（`wc_agent_*`）只被 Runner 传输 endpoint 接受；不要把
@@ -30,7 +36,8 @@ setup、doctor、npm、server 管理与 audit endpoint。这些请用 `webcodex`
 
 ## Connector surface
 
-对于 project-bound Connector，OpenAPI 从与 MCP 相同的十二个能力生成：
+Server 以 project-bound Connector 配置运行时，OpenAPI 从与 canonical MCP
+Connector 相同的十二个 capability 生成：
 
 ```text
 task_start

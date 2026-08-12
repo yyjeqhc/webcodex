@@ -2,9 +2,12 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-Use MCP when the client can connect to the project-bound WebCodex endpoint.
-Complete [Quick Start](QUICK_START.md) first. WebCodex serves MCP over the
-same Server and the same project/authentication model as the CLI and REST.
+WebCodex can expose more than one MCP model surface. The project-first
+`webcodex run` / `webcodex share` path starts a Server with the project-bound
+`canonical_connector` surface. `webcodex connect <server>` connects to an
+existing hosted Server and uses the MCP surface selected by that Server;
+without Connector configuration, the default is the broader `local_coding`
+surface. Complete [Quick Start](QUICK_START.md) for the project-first flow.
 
 ## Endpoint and authentication
 
@@ -18,7 +21,9 @@ Hosted clients need HTTPS. There are three paths:
 
 - **Hosted:** `webcodex connect <server>` uses an existing hosted Server; only
   the Runner runs locally. The MCP URL is `https://your-server.example/mcp`
-  and the bearer credential is the generated shared key.
+  and the bearer credential is the generated shared key. The exposed tool set
+  comes from that Server's configured MCP model surface; `connect` does not
+  turn the remote Server into a project-bound Connector.
 - **Local Share:** `webcodex share` starts the local Server + Agent and a
   Cloudflare Quick Tunnel, then prints a temporary HTTPS `/mcp` URL and a
   separate temporary Bearer credential. Ctrl-C revokes that access by stopping
@@ -49,8 +54,11 @@ extra permission). Server-side OAuth setup is in
 
 ## The project-bound surface
 
-A configured local project exposes the Connector surface. MCP `tools/list`
-then contains exactly these twelve operations:
+When the Server is started with project-first Connector configuration
+(`canonical_connector`), MCP `tools/list` contains exactly these twelve
+operations. This is the surface used by `webcodex run` and `webcodex share`;
+a generic hosted/self-hosted Server without Connector context exposes
+`local_coding` by default (or explicit `full_operator_runtime`) instead:
 
 ```text
 task_start
@@ -112,12 +120,18 @@ started validator returning non-zero is an assertion failure.
 | Python | `pyproject.toml` | configured Ruff/Black | configured Ruff/Mypy | configured pytest |
 | Go | `go.mod` | unavailable | `go vet ./...` | `go test ./...` |
 
-### Long validation continues as a Job
+### Long validation continues durably
 
-A long `checks_run` (or `cargo_*`) that outlives the synchronous grace period
-continues as a queryable Job with the same `job_id`. Poll `job_status` /
-`job_log`, or read `validation_summary`; do not re-run the command to find the
-answer. `stop_job(confirm=true)` stops a promoted job.
+`checks_run` and `commands_run` use durable executions and may quick-yield
+after about 8 seconds while work continues. On the twelve-tool Connector
+surface, call `task_review` with `after_cursor` / `wait_ms` (and
+`include_output_tail=true` when output is needed) until the execution becomes
+terminal; use `task_cancel` to stop it. Do not re-run an operation merely to
+poll it.
+
+The broader `local_coding` and `full_operator_runtime` MCP surfaces expose raw
+Job tools such as `job_status`, `job_log`, `validation_summary`, and
+`stop_job`; those tools are not part of the twelve Connector capabilities.
 
 ## First safe prompt
 

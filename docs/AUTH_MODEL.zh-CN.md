@@ -146,7 +146,7 @@ Server 支持 authorization-code grant、token 撤销与 OAuth metadata。动态
 
 ## `client_id`
 
-`client_id` 标识一个 Runner 实例，例如：
+`client_id` 是一个 Runner/设备的稳定逻辑标识，例如：
 
 ```text
 ubuntu-client

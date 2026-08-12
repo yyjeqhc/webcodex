@@ -31,17 +31,21 @@ project id `agent:<client_id>:<project_id>`.
 
 WebCodex exposes the same runtime through several thin adapters:
 
-- **MCP** — a project-bound model-facing surface (the Connector) with a small
-  canonical operation set, plus optional advanced operator surfaces.
-- **GPT Actions** — an OpenAPI projection of the same project-bound surface
-  for Custom GPTs.
+- **MCP** — a startup-selected model-facing surface. A complete project-first
+  Connector configuration selects the twelve-capability `canonical_connector`
+  surface; without Connector configuration, MCP defaults to the broader
+  `local_coding` surface. `full_operator_runtime` is an explicit advanced
+  surface for management tooling.
+- **GPT Actions** — `/openapi.json` follows the Server mode: a configured
+  Connector returns the project-bound Connector schema, while a generic Server
+  returns the standard runtime OpenAPI schema.
 - **REST** — the Server's HTTP runtime API.
 - **CLI** — the operator/developer command-line interface.
 - **Console** — a read-only browser view of project readiness and review.
 
 All adapters share the same Server, project registration, authentication, and
-policy boundaries. The project-bound Connector is the ordinary model-facing
-path; the full operator runtime is an advanced surface for management tooling.
+policy boundaries. The project-bound Connector is the canonical project-first
+path; generic Servers expose their configured runtime surfaces instead.
 
 ## Project registration
 
@@ -53,10 +57,10 @@ runtime project id addresses one registered project:
 agent:<client_id>:<project_id>
 ```
 
-`client_id` identifies the Runner instance; `project_id` is the id registered
-by that Runner in its `projects.d` registry. `allowed_roots` controls where
-projects may be registered or created (default `$HOME`; an explicit list
-narrows it).
+`client_id` is the stable logical identifier of a Runner/device; `project_id`
+is the id registered by that Runner in its `projects.d` registry.
+`allowed_roots` controls where projects may be registered or created (default
+`$HOME`; an explicit list narrows it).
 
 ## Task / Job / session continuity
 

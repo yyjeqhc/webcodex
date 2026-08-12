@@ -2,9 +2,12 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-client 能连接 project-bound WebCodex endpoint 时使用 MCP。先完成
-[快速开始](QUICK_START.zh-CN.md)。WebCodex 通过同一个 Server 与同一套
-项目/认证模型提供 MCP，与 CLI 和 REST 一致。
+WebCodex 可以暴露不止一种 MCP model surface。project-first 的
+`webcodex run` / `webcodex share` 会启动带 project-bound
+`canonical_connector` surface 的 Server。`webcodex connect <server>` 则连接
+已有 hosted Server，并使用该 Server 选择的 MCP surface；没有 Connector 配置时，
+默认是更宽的 `local_coding` surface。project-first 流程先看
+[快速开始](QUICK_START.zh-CN.md)。
 
 ## Endpoint 与认证
 
@@ -18,7 +21,8 @@ Hosted 客户端需要 HTTPS。有三种路径：
 
 - **Hosted：** `webcodex connect <server>` 使用已有 hosted Server；本地只运行
   Runner。MCP URL 为 `https://your-server.example/mcp`，bearer 凭据为生成的共享
-  key。
+  key。暴露的工具集合由该 Server 配置的 MCP model surface 决定；`connect` 不会
+  把远端 Server 变成 project-bound Connector。
 - **本地分享：** `webcodex share` 启动本地 Server + Agent 与 Cloudflare Quick
   Tunnel，并输出临时 HTTPS `/mcp` URL 与独立的临时 Bearer credential。Ctrl-C
   通过停止 runtime/tunnel 并删除临时分享状态来撤销访问。`--tunnel none` 只用于
@@ -45,8 +49,10 @@ URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-to
 
 ## project-bound surface
 
-已配置的本地项目暴露 Connector surface。此时 MCP `tools/list` 恰好包含以下十二个
-操作：
+Server 以 project-first Connector 配置（`canonical_connector`）启动时，MCP
+`tools/list` 恰好包含以下十二个操作。这是 `webcodex run` 与 `webcodex share`
+使用的 surface；没有 Connector context 的普通 hosted/self-hosted Server 默认暴露
+`local_coding`（或显式的 `full_operator_runtime`）而不是这十二个操作：
 
 ```text
 task_start
@@ -103,11 +109,17 @@ validator 返回非零是断言失败。
 | Python | `pyproject.toml` | 配置的 Ruff/Black | 配置的 Ruff/Mypy | 配置的 pytest |
 | Go | `go.mod` | 不可用 | `go vet ./...` | `go test ./...` |
 
-### 长校验延续为 Job
+### 长校验会持久继续
 
-超出同步宽限期的长 `checks_run`（或 `cargo_*`）会以同一个 `job_id` 延续为可查询
-Job。轮询 `job_status` / `job_log`，或读取 `validation_summary`；不要重新运行
-命令来寻找答案。`stop_job(confirm=true)` 会停止已提升的 job。
+`checks_run` 与 `commands_run` 使用 durable execution；工作仍在继续时，调用大约
+8 秒后可能 quick-yield。在十二工具 Connector surface 上，用 `task_review` 的
+`after_cursor` / `wait_ms`（需要输出时再加 `include_output_tail=true`）观察进度，
+直到 execution 进入 terminal；需要停止时调用 `task_cancel`。不要为了轮询而重新
+执行同一个操作。
+
+更宽的 `local_coding` 与 `full_operator_runtime` MCP surface 才暴露
+`job_status`、`job_log`、`validation_summary`、`stop_job` 等原始 Job 工具；这些
+工具不属于十二个 Connector capability。
 
 ## 第一个安全 prompt
 

@@ -17,7 +17,7 @@ newer is required by the installer wrapper.
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex connect https://sg4.yyjeqhc.cn
+webcodex connect https://your-server.example
 ```
 
 `connect` uses the current directory, creates a local profile, starts a detached
@@ -65,7 +65,7 @@ WebCodex 让 ChatGPT、Claude 和其他 MCP client 成为连接到你自己仓�
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex connect https://sg4.yyjeqhc.cn
+webcodex connect https://your-server.example
 ```
 
 `connect` 默认使用当前目录，创建本地 profile，启动 detached Runner，并输出 MCP

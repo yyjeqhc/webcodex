@@ -248,6 +248,7 @@ Runner 可以通过在仓库机器上运行的语言服务器提供只读语义�
 | 语言 | 服务器 | 标记 |
 | --- | --- | --- |
 | Rust | `rust-analyzer` | `Cargo.toml` |
+| Go | `gopls` | `go.mod`、`go.work` |
 | Python | `pyright` | `pyproject.toml`、`setup.py`、`requirements.txt`、… |
 | TypeScript / JavaScript | `typescript-language-server` | `tsconfig.json`、`package.json`、… |
 
@@ -258,7 +259,9 @@ incoming/outgoing 广度优先遍历；canonical Connector 将其投影为 `code
 不会暴露原始协议方法或不透明 LSP item data。
 它们只读、project-bound，并且被约束为启动语言服务器绝不执行仓库代码或拉取依赖。
 路径是项目相对路径；外部/依赖位置会被省略。语言服务器必须安装在 Runner 机器上，
-或通过 `WEBCODEX_RUST_ANALYZER` 等 env override 指定。
+或通过 `WEBCODEX_RUST_ANALYZER`、`WEBCODEX_GOPLS` 等 env override 指定。gopls
+profile 还会关闭 module/toolchain 网络访问并使用 `-mod=readonly`；WebCodex 不会为语义
+导航自动安装 gopls，也不会拉取缺失的 Go 依赖。
 
 Call hierarchy 必须由独立的 `lsp_call_hierarchy` capability 声明，且所选语言服务器
 必须提供 `callHierarchyProvider`。缺少支持会显式失败，不回退到 grep、AST、shell

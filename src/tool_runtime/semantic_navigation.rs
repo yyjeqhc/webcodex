@@ -20,6 +20,8 @@ pub(crate) const DEFAULT_SEMANTIC_NAVIGATION_PROBE_TIMEOUT: Duration = Duration:
 
 const RUST_LANGUAGE: &str = "rust";
 const RUST_ANALYZER_SERVER: &str = "rust-analyzer";
+const GO_LANGUAGE: &str = "go";
+const GOPLS_SERVER: &str = "gopls";
 const SEMANTIC_NAVIGATION_TOOLS: [&str; 7] = [
     "lsp_status",
     "document_symbols",
@@ -37,8 +39,15 @@ const SEMANTIC_NAVIGATION_PREFERRED_FLOW: [&str; 6] = [
     "read_file",
     "search_project_text",
 ];
-const SEMANTIC_NAVIGATION_LIMITATIONS: [&str; 5] = [
+const RUST_SEMANTIC_NAVIGATION_LIMITATIONS: [&str; 5] = [
     "rust_only",
+    "read_only",
+    "workspace_only",
+    "no_dependency_navigation",
+    "full_text_sync_only",
+];
+const GO_SEMANTIC_NAVIGATION_LIMITATIONS: [&str; 5] = [
+    "go_only",
     "read_only",
     "workspace_only",
     "no_dependency_navigation",
@@ -119,11 +128,13 @@ impl SemanticNavigationStartupSummary {
             recommended: false,
             status,
             language: None,
+            // The status probe did not yield a usable language selection. Keep
+            // the legacy Rust provider projection unchanged for compatibility.
             server: Some(RUST_ANALYZER_SERVER),
             position_encoding: None,
             tools: SEMANTIC_NAVIGATION_TOOLS.to_vec(),
             preferred_flow: Vec::new(),
-            limitations: SEMANTIC_NAVIGATION_LIMITATIONS.to_vec(),
+            limitations: RUST_SEMANTIC_NAVIGATION_LIMITATIONS.to_vec(),
             reason_code: Some(reason_code),
         }
     }
@@ -139,7 +150,7 @@ impl SemanticNavigationStartupSummary {
             position_encoding: None,
             tools: Vec::new(),
             preferred_flow: Vec::new(),
-            limitations: SEMANTIC_NAVIGATION_LIMITATIONS.to_vec(),
+            limitations: RUST_SEMANTIC_NAVIGATION_LIMITATIONS.to_vec(),
             reason_code: Some(SemanticNavigationReasonCode::RustNotDetected),
         }
     }
@@ -172,17 +183,36 @@ impl SemanticNavigationStartupSummary {
         if result.project != expected_project_id {
             return Err(SemanticNavigationReasonCode::MalformedAgentResult);
         }
-        if !result
+        // Preserve the pre-existing Rust-first behavior in mixed workspaces.
+        // Go is additive: a Go-only workspace selects gopls, while existing
+        // Python/TypeScript-only startup behavior remains unchanged.
+        let (language, server_name, limitations) = if result
             .detected_languages
             .iter()
             .any(|language| language == RUST_LANGUAGE)
         {
+            (
+                RUST_LANGUAGE,
+                RUST_ANALYZER_SERVER,
+                RUST_SEMANTIC_NAVIGATION_LIMITATIONS.as_slice(),
+            )
+        } else if result
+            .detected_languages
+            .iter()
+            .any(|language| language == GO_LANGUAGE)
+        {
+            (
+                GO_LANGUAGE,
+                GOPLS_SERVER,
+                GO_SEMANTIC_NAVIGATION_LIMITATIONS.as_slice(),
+            )
+        } else {
             return Ok(Self::rust_not_detected());
-        }
+        };
         let Some(server) = result
             .servers
             .iter()
-            .find(|entry| entry.language == RUST_LANGUAGE && entry.server == RUST_ANALYZER_SERVER)
+            .find(|entry| entry.language == language && entry.server == server_name)
         else {
             return Err(SemanticNavigationReasonCode::MalformedAgentResult);
         };
@@ -241,8 +271,8 @@ impl SemanticNavigationStartupSummary {
             available,
             recommended,
             status,
-            language: Some(RUST_LANGUAGE),
-            server: Some(RUST_ANALYZER_SERVER),
+            language: Some(language),
+            server: Some(server_name),
             position_encoding,
             tools: SEMANTIC_NAVIGATION_TOOLS.to_vec(),
             preferred_flow: if recommended {
@@ -250,7 +280,7 @@ impl SemanticNavigationStartupSummary {
             } else {
                 Vec::new()
             },
-            limitations: SEMANTIC_NAVIGATION_LIMITATIONS.to_vec(),
+            limitations: limitations.to_vec(),
             reason_code,
         })
     }
@@ -439,6 +469,64 @@ mod tests {
         assert_eq!(value["status"], "crashed");
         assert_eq!(value["available"], false);
         assert_eq!(value["reason_code"], "server_crashed");
+    }
+
+    #[test]
+    fn go_status_selects_gopls_without_changing_rust_first_precedence() {
+        let go = LspStatusResult {
+            project: "demo".to_string(),
+            detected_languages: vec!["go".to_string()],
+            servers: vec![LspServerStatusEntry {
+                language: "go".to_string(),
+                server: "gopls".to_string(),
+                available: true,
+                running: false,
+                status: LspAvailabilityStatus::Available,
+                source: None,
+                position_encoding: None,
+            }],
+            warnings: Vec::new(),
+        };
+        let summary = SemanticNavigationStartupSummary::from_lsp_status(go, "demo").unwrap();
+        let value = serde_json::to_value(summary).unwrap();
+        assert_eq!(value["language"], "go");
+        assert_eq!(value["server"], "gopls");
+        assert_eq!(value["available"], true);
+        assert!(value["limitations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "go_only"));
+
+        let mixed = LspStatusResult {
+            project: "demo".to_string(),
+            detected_languages: vec!["rust".to_string(), "go".to_string()],
+            servers: vec![
+                LspServerStatusEntry {
+                    language: "go".to_string(),
+                    server: "gopls".to_string(),
+                    available: true,
+                    running: false,
+                    status: LspAvailabilityStatus::Available,
+                    source: None,
+                    position_encoding: None,
+                },
+                LspServerStatusEntry {
+                    language: "rust".to_string(),
+                    server: "rust-analyzer".to_string(),
+                    available: true,
+                    running: false,
+                    status: LspAvailabilityStatus::Available,
+                    source: None,
+                    position_encoding: None,
+                },
+            ],
+            warnings: Vec::new(),
+        };
+        let summary = SemanticNavigationStartupSummary::from_lsp_status(mixed, "demo").unwrap();
+        let value = serde_json::to_value(summary).unwrap();
+        assert_eq!(value["language"], "rust");
+        assert_eq!(value["server"], "rust-analyzer");
     }
 
     #[test]

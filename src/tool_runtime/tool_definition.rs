@@ -90,7 +90,7 @@ pub(crate) enum AgentCapability {
     AsyncJobs,
     /// Explicit process-local Workflow Session persistent shells.
     PersistentShell,
-    /// Read-only agent-side rust-analyzer navigation tools.
+    /// Read-only agent-side semantic navigation through constrained LSP profiles.
     LspReadOnlyNavigation,
     /// Bounded typed call-hierarchy traversal; never inferred from navigation.
     LspCallHierarchy,

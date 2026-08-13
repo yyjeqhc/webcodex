@@ -41,6 +41,9 @@ pub(crate) struct LanguageProfile {
     /// a per-language security boundary: starting the server must not execute
     /// repository code or fetch dependencies.
     pub(crate) initialization_options: fn() -> Value,
+    /// Profile-owned environment overrides applied to the language-server
+    /// process itself. These are fixed safety settings, never caller input.
+    pub(crate) process_env: &'static [(&'static str, &'static str)],
     /// Extra probe marking a resolved executable as unusable even though it
     /// is present and executable (e.g. rustup PATH shims without the
     /// component installed).
@@ -75,6 +78,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         // rust-analyzer speaks LSP over stdio with no arguments.
         default_args: &[],
         initialization_options: rust_analyzer_read_only_initialization_options,
+        process_env: &[],
         unusable_command_probe: Some(is_unusable_rustup_proxy),
         startup_stderr_classifier: Some(rust_analyzer_startup_stderr_classifier),
     },
@@ -97,6 +101,7 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         executable: "pyright-langserver",
         default_args: &["--stdio"],
         initialization_options: pyright_read_only_initialization_options,
+        process_env: &[],
         // Pyright is a Node script on PATH; no rustup-style shim to detect.
         unusable_command_probe: None,
         startup_stderr_classifier: None,
@@ -122,6 +127,42 @@ pub(crate) static LANGUAGES: &[LanguageProfile] = &[
         executable: "typescript-language-server",
         default_args: &["--stdio"],
         initialization_options: typescript_read_only_initialization_options,
+        process_env: &[],
+        unusable_command_probe: None,
+        startup_stderr_classifier: None,
+    },
+    LanguageProfile {
+        kind: LspServerKind::Gopls,
+        language_id: "go",
+        server_name: "gopls",
+        extensions: &[("go", "go")],
+        manifest_markers: &["go.mod", "go.work"],
+        env_override: "WEBCODEX_GOPLS",
+        // gopls speaks LSP over stdio when launched without a subcommand.
+        executable: "gopls",
+        default_args: &[],
+        initialization_options: gopls_read_only_initialization_options,
+        // gopls invokes the Go command during workspace loading and current
+        // gopls builds may also start the Go telemetry sidecar. Apply a closed
+        // network environment to the server process itself, in addition to the
+        // configured Go subprocess env below. This does not mutate the user's
+        // global Go or telemetry configuration.
+        process_env: &[
+            ("GOPROXY", "off"),
+            ("GOSUMDB", "off"),
+            ("GOTOOLCHAIN", "local"),
+            ("GOPRIVATE", ""),
+            ("GONOPROXY", "none"),
+            ("GOVCS", "*:off"),
+            ("HTTP_PROXY", "http://127.0.0.1:0"),
+            ("HTTPS_PROXY", "http://127.0.0.1:0"),
+            ("ALL_PROXY", "http://127.0.0.1:0"),
+            ("NO_PROXY", "localhost,127.0.0.1,::1"),
+            ("http_proxy", "http://127.0.0.1:0"),
+            ("https_proxy", "http://127.0.0.1:0"),
+            ("all_proxy", "http://127.0.0.1:0"),
+            ("no_proxy", "localhost,127.0.0.1,::1"),
+        ],
         unusable_command_probe: None,
         startup_stderr_classifier: None,
     },
@@ -274,6 +315,49 @@ fn typescript_read_only_initialization_options() -> Value {
     })
 }
 
+/// Constrained read-only gopls profile.
+///
+/// gopls discovers packages by invoking the Go command (notably `go list`).
+/// The profile therefore has two independent safety layers:
+/// - `buildFlags=["-mod=readonly"]` prevents module metadata updates.
+/// - the fixed Go environment disables module proxy/sumdb access, private-module
+///   direct VCS fallback, and automatic toolchain downloads. The process-level
+///   proxy/VCS overrides above additionally deny gopls/telemetry outbound HTTP.
+/// - WebCodex never changes the user's global Go telemetry mode; server-to-client
+///   prompts/commands are not executed, and process-level proxy overrides keep
+///   telemetry upload traffic inside the same no-network boundary.
+/// - `vulncheck=Off` disables vulnerability-database activity.
+/// - effectful module/generate code lenses are disabled even though WebCodex
+///   never exposes code-lens commands.
+/// - `symbolScope=workspace` avoids dependency/stdlib workspace-symbol fanout;
+///   path normalization still independently omits all external locations.
+///
+/// When changing these options, update `lsp_initialize_uses_constrained_gopls_profile`
+/// and the process-environment regression test in lockstep.
+fn gopls_read_only_initialization_options() -> Value {
+    json!({
+        "buildFlags": ["-mod=readonly"],
+        "env": {
+            "GOPROXY": "off",
+            "GOSUMDB": "off",
+            "GOTOOLCHAIN": "local",
+            "GOPRIVATE": "",
+            "GONOPROXY": "none",
+            "GOVCS": "*:off"
+        },
+        "vulncheck": "Off",
+        "symbolScope": "workspace",
+        "codelenses": {
+            "generate": false,
+            "regenerate_cgo": false,
+            "run_govulncheck": false,
+            "tidy": false,
+            "upgrade_dependency": false,
+            "vendor": false
+        }
+    })
+}
+
 /// Stable classification of known rust-analyzer startup failures so operators
 /// do not need raw process stderr. Today: the rustup component being absent
 /// for the active toolchain. Returns `None` for anything else, deferring to
@@ -319,6 +403,7 @@ mod tests {
             LspServerKind::RustAnalyzer,
             LspServerKind::Pyright,
             LspServerKind::TypeScriptLanguageServer,
+            LspServerKind::Gopls,
         ];
         for kind in ALL_KINDS {
             let matching = LANGUAGES
@@ -373,6 +458,8 @@ mod tests {
         assert_eq!(route_extension("tsx").unwrap().1, "typescriptreact");
         assert_eq!(route_extension("jsx").unwrap().1, "javascriptreact");
         assert_eq!(route_extension("js").unwrap().1, "javascript");
+        assert_eq!(route_extension("go").unwrap().1, "go");
+        assert_eq!(route_extension("GO").unwrap().1, "go");
         assert!(route_extension("toml").is_none());
         assert!(route_extension("").is_none());
     }
@@ -391,13 +478,14 @@ mod tests {
             route_extension("rs").unwrap().0.kind,
             LspServerKind::RustAnalyzer
         );
+        assert_eq!(route_extension("go").unwrap().0.kind, LspServerKind::Gopls);
     }
 
     #[test]
     fn supported_extensions_label_lists_all_registered_extensions() {
         assert_eq!(
             supported_extensions_label(),
-            ".cjs, .cts, .js, .jsx, .mjs, .mts, .py, .pyi, .rs, .ts, .tsx"
+            ".cjs, .cts, .go, .js, .jsx, .mjs, .mts, .py, .pyi, .rs, .ts, .tsx"
         );
     }
 
@@ -408,6 +496,25 @@ mod tests {
         let detected = detected_profiles(dir.path());
         assert_eq!(detected.len(), 1);
         assert_eq!(detected[0].kind, LspServerKind::Pyright);
+        assert_eq!(primary_profile(dir.path()).kind, LspServerKind::Pyright);
+    }
+
+    #[test]
+    fn go_module_and_workspace_markers_detect_gopls_without_changing_existing_priority() {
+        for marker in ["go.mod", "go.work"] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join(marker), "module example.com/demo\n").unwrap();
+            let detected = detected_profiles(dir.path());
+            assert_eq!(detected.len(), 1, "{marker}");
+            assert_eq!(detected[0].kind, LspServerKind::Gopls);
+            assert_eq!(primary_profile(dir.path()).kind, LspServerKind::Gopls);
+        }
+
+        // Go is appended after the existing profiles so mixed-language project
+        // primary routing for Rust/Python/TypeScript remains unchanged.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pyproject.toml"), "[project]\n").unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module example.com/demo\n").unwrap();
         assert_eq!(primary_profile(dir.path()).kind, LspServerKind::Pyright);
     }
 }

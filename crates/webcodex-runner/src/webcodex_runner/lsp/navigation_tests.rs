@@ -247,6 +247,21 @@ impl NavFixture {
     }
 }
 
+fn go_fixture(scenario: &str) -> NavFixture {
+    NavFixture::with_language(
+        scenario,
+        LspServerKind::Gopls,
+        &[
+            ("go.mod", "module example.com/demo\n\ngo 1.20\n"),
+            (
+                "src/main.go",
+                "package main\n\nfunc Root() { Callee() }\nfunc Callee() {}\nfunc Caller() { Root() }\nfunc Caller2() { Caller() }\nfunc Callee2() { Callee() }\n",
+            ),
+            ("src/other.go", "package main\n\nfunc Other() {}\n"),
+        ],
+    )
+}
+
 #[test]
 fn lsp_kind_never_matches_shell() {
     let _serial = super::serialize_fake_lsp_test();
@@ -304,6 +319,53 @@ fn call_hierarchy_supports_each_direction_and_bounded_depth_two_bfs() {
         2
     );
     assert_eq!(both["result"]["truncated"], false);
+}
+
+#[test]
+fn go_call_hierarchy_uses_existing_bounded_incoming_outgoing_path() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = go_fixture("go_call_hierarchy");
+
+    for (direction, first, second) in [
+        (CallHierarchyDirection::Incoming, "Caller", "Caller2"),
+        (CallHierarchyDirection::Outgoing, "Callee", "Callee2"),
+    ] {
+        let value = fixture.call_hierarchy("src/main.go", 3, 6, direction, 2, 2);
+        assert_eq!(value["success"], true, "{value}");
+        assert_eq!(value["result"]["language"], "go");
+        assert_eq!(value["result"]["returned_count"], 2, "{value}");
+        let edges = value["result"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2, "{value}");
+        assert!(edges.iter().any(|edge| {
+            edge["depth"] == 1 && (edge["from"]["name"] == first || edge["to"]["name"] == first)
+        }));
+        assert!(edges.iter().any(|edge| {
+            edge["depth"] == 2 && (edge["from"]["name"] == second || edge["to"]["name"] == second)
+        }));
+        let serialized = serde_json::to_string(&value["result"]).unwrap();
+        assert!(!serialized.contains(fixture.root.to_string_lossy().as_ref()));
+        assert!(!serialized.contains("file://"));
+        assert!(!serialized.contains("opaque"));
+        assert!(serialized.contains("src/main.go"));
+    }
+}
+
+#[test]
+fn go_call_hierarchy_fails_explicitly_when_provider_is_unsupported() {
+    let _serial = super::serialize_fake_lsp_test();
+    let value = go_fixture("go_call_hierarchy_provider_unsupported").call_hierarchy(
+        "src/main.go",
+        3,
+        6,
+        CallHierarchyDirection::Both,
+        2,
+        20,
+    );
+    assert_eq!(value["success"], false, "{value}");
+    assert_eq!(value["error"]["code"], "call_hierarchy_unsupported");
+    let serialized = serde_json::to_string(&value).unwrap();
+    assert!(!serialized.contains("secret"));
+    assert!(!serialized.contains("file://"));
 }
 
 #[test]
@@ -1606,6 +1668,145 @@ fn recorded_did_open_language_id(marker: &Path) -> String {
 }
 
 #[test]
+fn go_navigation_routes_and_normalizes_existing_operations() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = go_fixture("go_workspace_symbol_information");
+
+    let status = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::Status,
+    });
+    assert_eq!(status["success"], true, "{status}");
+    assert_eq!(
+        status["result"]["detected_languages"],
+        serde_json::json!(["go"])
+    );
+    let servers = status["result"]["servers"].as_array().unwrap();
+    let gopls = servers
+        .iter()
+        .find(|entry| entry["server"] == "gopls")
+        .unwrap();
+    assert_eq!(gopls["language"], "go");
+    assert_eq!(gopls["available"], true);
+    assert!(!fixture.marker.exists(), "status must not start gopls");
+
+    let symbols = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentSymbols {
+            path: "src/main.go".into(),
+            limit: 20,
+        },
+    });
+    assert_eq!(symbols["success"], true, "{symbols}");
+    assert_eq!(symbols["result"]["language"], "go");
+    assert_eq!(symbols["result"]["path"], "src/main.go");
+    assert_eq!(recorded_did_open_language_id(&fixture.marker), "go");
+
+    let goto = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::GotoDefinition {
+            path: "src/main.go".into(),
+            line: 3,
+            column: 15,
+            limit: 10,
+        },
+    });
+    assert_eq!(goto["success"], true, "{goto}");
+    assert_eq!(goto["result"]["locations"][0]["path"], "src/main.go");
+
+    let references = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::FindReferences {
+            path: "src/main.go".into(),
+            line: 3,
+            column: 6,
+            include_declaration: true,
+            limit: 10,
+        },
+    });
+    assert_eq!(references["success"], true, "{references}");
+    assert!(references["result"]["locations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|location| location["path"] == "src/main.go"));
+
+    let hover = fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::Hover {
+            path: "src/main.go".into(),
+            line: 3,
+            column: 6,
+        },
+    });
+    assert_eq!(hover["success"], true, "{hover}");
+    assert_eq!(hover["result"]["path"], "src/main.go");
+
+    let workspace = fixture.workspace_symbols("Tool", 20);
+    assert_eq!(workspace["success"], true, "{workspace}");
+    assert_eq!(workspace["result"]["symbols"][0]["path"], "src/main.go");
+
+    let serialized = serde_json::to_string(&fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::Status,
+    }))
+    .unwrap();
+    assert!(!serialized.contains(fixture.root.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn go_diagnostics_external_locations_and_malformed_results_are_sanitized() {
+    let _serial = super::serialize_fake_lsp_test();
+
+    let diagnostics = go_fixture("go_diagnostics_one").request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::DocumentDiagnostics {
+            path: "src/main.go".into(),
+            limit: 20,
+        },
+    });
+    assert_eq!(diagnostics["success"], true, "{diagnostics}");
+    assert_eq!(diagnostics["result"]["language"], "go");
+    assert_eq!(diagnostics["result"]["path"], "src/main.go");
+    assert_eq!(diagnostics["result"]["diagnostics"][0]["source"], "gopls");
+
+    let external_fixture = go_fixture("go_definition_external");
+    let external = external_fixture.request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::GotoDefinition {
+            path: "src/main.go".into(),
+            line: 3,
+            column: 6,
+            limit: 20,
+        },
+    });
+    assert_eq!(external["success"], true, "{external}");
+    assert_eq!(external["result"]["returned_count"], 0);
+    assert_eq!(external["result"]["external_results_omitted"], 1);
+    let external_text = serde_json::to_string(&external).unwrap();
+    assert!(!external_text.contains("/usr/lib"));
+    assert!(!external_text.contains("file://"));
+
+    let malformed = go_fixture("go_definition_malformed").request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::GotoDefinition {
+            path: "src/main.go".into(),
+            line: 3,
+            column: 6,
+            limit: 20,
+        },
+    });
+    assert_eq!(malformed["success"], true, "{malformed}");
+    assert!(
+        malformed["result"]["invalid_results_omitted"]
+            .as_u64()
+            .unwrap()
+            >= 1
+    );
+    assert_eq!(malformed["result"]["returned_count"], 0);
+}
+
+#[test]
 fn navigation_routes_python_file_to_pyright_with_python_language_id() {
     let _serial = super::serialize_fake_lsp_test();
     let fixture = NavFixture::with_language(
@@ -1706,6 +1907,7 @@ fn lsp_status_reports_every_registered_language_server() {
     assert!(names.contains(&"rust-analyzer"), "{names:?}");
     assert!(names.contains(&"pyright"), "{names:?}");
     assert!(names.contains(&"typescript-language-server"), "{names:?}");
+    assert!(names.contains(&"gopls"), "{names:?}");
     // The pyright server is configured (fake) here, so it resolves available.
     let pyright = servers
         .iter()
@@ -1958,4 +2160,104 @@ fn real_typescript_document_symbols_end_to_end() {
         names.iter().any(|name| name == "App"),
         "expected `App` in {names:?}"
     );
+}
+
+/// Opt-in real gopls smoke. It never installs gopls or dependencies; the test
+/// only runs when a preinstalled binary is selected via WEBCODEX_GOPLS/PATH.
+/// Run with:
+/// `cargo test -p webcodex-runner --bin webcodex-runner real_gopls -- --ignored --nocapture`
+#[test]
+#[ignore = "requires a preinstalled gopls; WebCodex never installs it automatically"]
+fn real_gopls_navigation_and_call_hierarchy_end_to_end() {
+    let Some(gopls) = real_language_server("WEBCODEX_GOPLS", "gopls") else {
+        panic!("gopls not found; set WEBCODEX_GOPLS or preinstall gopls manually");
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/demo\n\ngo 1.20\n").unwrap();
+    fs::write(
+        root.join("main.go"),
+        "package main\n\nfunc greet(name string) string {\n    return \"hi \" + name\n}\n\nfunc render() string {\n    return greet(\"world\")\n}\n",
+    )
+    .unwrap();
+
+    let projects_dir = temp.path().join("projects.d");
+    fs::create_dir_all(&projects_dir).unwrap();
+    fs::write(
+        projects_dir.join("demo.toml"),
+        format!("id = \"demo\"\npath = {:?}\n", root.to_string_lossy()),
+    )
+    .unwrap();
+    let supervisor = LspSupervisor::new(LspSupervisorConfig {
+        commands: HashMap::from([(LspServerKind::Gopls, LspCommand::new(gopls))]),
+        request_timeout: Duration::from_secs(30),
+        initialize_timeout: Duration::from_secs(30),
+        shutdown_timeout: Duration::from_secs(3),
+        ..LspSupervisorConfig::default()
+    });
+    let policy = AgentPolicy {
+        allow_cwd_anywhere: true,
+        allowed_roots: vec![temp.path().to_path_buf()],
+        ..AgentPolicy::default()
+    };
+
+    let request = |request| {
+        let result = handle_lsp_request(
+            &policy,
+            &projects_dir,
+            &supervisor,
+            &shell_lsp_request(AgentLspPayload {
+                project_id: "demo".into(),
+                request,
+            }),
+        );
+        assert!(result.error.is_none(), "{result:?}");
+        serde_json::to_value(
+            parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap(),
+        )
+        .unwrap()
+    };
+
+    let symbols = request(AgentLspRequest::DocumentSymbols {
+        path: "main.go".into(),
+        limit: 50,
+    });
+    assert_eq!(symbols["success"], true, "{symbols}");
+    assert_eq!(symbols["result"]["language"], "go");
+    let symbol_text = serde_json::to_string(&symbols["result"]["symbols"]).unwrap();
+    assert!(symbol_text.contains("greet"), "{symbols}");
+    assert!(symbol_text.contains("render"), "{symbols}");
+
+    let goto = request(AgentLspRequest::GotoDefinition {
+        path: "main.go".into(),
+        line: 8,
+        column: 12,
+        limit: 10,
+    });
+    assert_eq!(goto["success"], true, "{goto}");
+    assert!(goto["result"]["locations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|location| location["path"] == "main.go"));
+
+    let impact = request(AgentLspRequest::CallHierarchy {
+        path: "main.go".into(),
+        line: 7,
+        column: 6,
+        direction: CallHierarchyDirection::Outgoing,
+        depth: 1,
+        limit: 20,
+    });
+    assert_eq!(impact["success"], true, "{impact}");
+    assert_eq!(impact["result"]["language"], "go");
+    assert!(impact["result"]["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|edge| edge["to"]["name"] == "greet"));
+    let serialized = serde_json::to_string(&impact).unwrap();
+    assert!(!serialized.contains(root.to_string_lossy().as_ref()));
 }

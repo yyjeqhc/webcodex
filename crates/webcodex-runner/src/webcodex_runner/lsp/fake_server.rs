@@ -37,6 +37,31 @@ fn run() -> io::Result<()> {
             ),
         )?;
     }
+    if scenario == "capture_safety_env" {
+        if let Some(marker) = &marker {
+            for key in [
+                "GOPROXY",
+                "GOSUMDB",
+                "GOTOOLCHAIN",
+                "GOPRIVATE",
+                "GONOPROXY",
+                "GOVCS",
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "ALL_PROXY",
+                "NO_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "all_proxy",
+                "no_proxy",
+            ] {
+                append_marker(
+                    marker,
+                    &format!("env:{key}={}\n", env::var(key).unwrap_or_default()),
+                )?;
+            }
+        }
+    }
     if scenario == "shutdown_descendant" {
         let descendant = spawn_sleep_descendant()?;
         if let Some(marker) = &marker {
@@ -105,8 +130,8 @@ fn run() -> io::Result<()> {
                 if let Some(encoding) = encoding {
                     capability_fields.push(format!(r#""positionEncoding":"{encoding}""#));
                 }
-                if scenario.starts_with("call_hierarchy")
-                    && scenario != "call_hierarchy_provider_unsupported"
+                if scenario_behavior(&scenario).starts_with("call_hierarchy")
+                    && scenario_behavior(&scenario) != "call_hierarchy_provider_unsupported"
                 {
                     capability_fields.push(r#""callHierarchyProvider":true"#.to_string());
                 }
@@ -179,7 +204,7 @@ fn run() -> io::Result<()> {
                 }
             }
             Some(method) => {
-                if scenario.starts_with("call_hierarchy")
+                if scenario_behavior(&scenario).starts_with("call_hierarchy")
                     && matches!(
                         method,
                         "textDocument/prepareCallHierarchy"
@@ -191,7 +216,7 @@ fn run() -> io::Result<()> {
                         append_marker(marker, &format!("hierarchy:{method}\n"))?;
                     }
                 }
-                match scenario.as_str() {
+                match scenario_behavior(&scenario) {
                 // Never answer business requests; keep the process alive.
                 "timeout" | "timeout_cancel" | "shutdown_hang" => {}
                 "malformed_json" => write_frame(&mut writer, "{not-json")?,
@@ -291,28 +316,34 @@ fn maybe_publish_diagnostics(
     document_notification: &str,
     marker: Option<&Path>,
 ) -> io::Result<()> {
-    if !scenario.starts_with("diagnostics_") || scenario == "diagnostics_timeout" {
+    let behavior = scenario_behavior(scenario);
+    if !behavior.starts_with("diagnostics_") || behavior == "diagnostics_timeout" {
         return Ok(());
     }
     let Some(mut uri) = json_string_field(document_notification, "uri") else {
         return Ok(());
     };
     let mut version = json_u64_field(document_notification, "version").unwrap_or(1);
-    if scenario == "diagnostics_wrong_uri" {
-        uri = path_to_file_uri(&env::current_dir()?.join("src/other.rs"));
-    } else if scenario == "diagnostics_external_uri" {
+    if behavior == "diagnostics_wrong_uri" {
+        let other = if scenario.starts_with("go_") {
+            "src/other.go"
+        } else {
+            "src/other.rs"
+        };
+        uri = path_to_file_uri(&env::current_dir()?.join(other));
+    } else if behavior == "diagnostics_external_uri" {
         uri = "file:///usr/lib/rustlib/src/rust/library/core/src/lib.rs".to_string();
     }
-    if scenario == "diagnostics_delayed" {
+    if behavior == "diagnostics_delayed" {
         thread::sleep(Duration::from_millis(50));
     }
-    if scenario == "diagnostics_malformed_notification" {
+    if behavior == "diagnostics_malformed_notification" {
         write_frame(
             writer,
             r#"{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":7,"diagnostics":"bad"}}"#,
         )?;
     }
-    if scenario == "diagnostics_stale_then_timeout" {
+    if behavior == "diagnostics_stale_then_timeout" {
         let already_published = marker
             .and_then(|path| fs::read_to_string(path).ok())
             .is_some_and(|contents| contents.contains("diagnostics-publication"));
@@ -321,14 +352,21 @@ fn maybe_publish_diagnostics(
         }
         version = 0;
     }
-    let diagnostics = match scenario {
+    let diagnostics = match behavior {
         "diagnostics_empty"
         | "diagnostics_delayed"
         | "diagnostics_wrong_uri"
         | "diagnostics_external_uri"
         | "diagnostics_stale_then_timeout"
         | "diagnostics_malformed_notification" => "[]".to_string(),
-        "diagnostics_one" => r#"[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"severity":1,"code":"E0308","source":"rust-analyzer","message":"type mismatch","tags":[]}]"#.to_string(),
+        "diagnostics_one" => {
+            let source = if scenario.starts_with("go_") {
+                "gopls"
+            } else {
+                "rust-analyzer"
+            };
+            format!(r#"[{{"range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}},"severity":1,"code":"E0308","source":"{source}","message":"type mismatch","tags":[]}}]"#)
+        }
         "diagnostics_mixed" => r#"[{"range":{"start":{"line":3,"character":0},"end":{"line":3,"character":2}},"severity":4,"message":"hint","tags":[2,9]},{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},"severity":2,"code":7,"source":"rust-analyzer","message":"warning at file:///secret/source.rs\nnext","tags":[1],"data":{"private":"file:///secret/data"},"relatedInformation":[{"location":{"uri":"file:///secret/related.rs"},"message":"hidden"}]},{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}},"severity":3,"message":"information","tags":[]},{"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":1}},"severity":9,"message":"unknown","tags":[]},{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"message":"error","tags":[]}]"#.to_string(),
         "diagnostics_duplicates" => r#"[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"message":"same","tags":[]},{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"message":"same","tags":[]}]"#.to_string(),
         "diagnostics_malformed_range" => r#"[{"range":{"start":{"line":999,"character":0},"end":{"line":999,"character":1}},"severity":1,"message":"bad range"},{"range":{"start":{"line":1,"character":1},"end":{"line":1,"character":0}},"severity":2,"message":"reversed"},{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":2,"message":"valid"},7]"#.to_string(),
@@ -384,24 +422,34 @@ fn write_result(
     request_body: &str,
 ) -> io::Result<()> {
     let cwd = env::current_dir()?.display().to_string();
+    // Scenario is argv[1]; navigation scenarios encode response shape without
+    // process-global env vars (which race under parallel tests). `go_` is a
+    // routing prefix: it preserves the existing response shape while pointing
+    // normalized locations at Go fixture files.
+    let scenario = env::args().nth(1).unwrap_or_else(|| "normal".to_string());
+    let behavior = scenario_behavior(&scenario);
     // The `space_unicode` scenario points responses at a file whose name
     // needs URI percent-encoding (space + non-ASCII), exercising the full
     // didOpen → response → classification round-trip on every platform.
     let main_relative = if scenario_is_space_unicode() {
         "src/ünïcode file.rs"
+    } else if scenario.starts_with("go_") {
+        "src/main.go"
     } else {
         "src/main.rs"
     };
+    let other_relative = if scenario.starts_with("go_") {
+        "src/other.go"
+    } else {
+        "src/other.rs"
+    };
     let main_uri = path_to_file_uri(&Path::new(&cwd).join(main_relative));
-    let other_uri = path_to_file_uri(&Path::new(&cwd).join("src/other.rs"));
+    let other_uri = path_to_file_uri(&Path::new(&cwd).join(other_relative));
     let request_uri =
         json_string_field(request_body, "uri").unwrap_or_else(|| main_uri.clone());
     let external_uri = "file:///usr/lib/rustlib/src/rust/library/core/src/lib.rs";
-    // Scenario is argv[1]; navigation scenarios encode response shape without
-    // process-global env vars (which race under parallel tests).
-    let scenario = env::args().nth(1).unwrap_or_else(|| "normal".to_string());
     let body = match method {
-        "textDocument/documentSymbol" => match scenario.as_str() {
+        "textDocument/documentSymbol" => match behavior {
             "symbol_information" => format!(
                 r#"[{{"name":"main","kind":12,"location":{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}}}]"#
             ),
@@ -412,7 +460,7 @@ fn write_result(
                 r#"[{{"name":"outer","kind":5,"range":{{"start":{{"line":0,"character":0}},"end":{{"line":3,"character":1}}}},"selectionRange":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":5}}}},"children":[{{"name":"inner","kind":12,"range":{{"start":{{"line":2,"character":0}},"end":{{"line":2,"character":5}}}},"selectionRange":{{"start":{{"line":2,"character":0}},"end":{{"line":2,"character":2}}}},"children":[]}}]}}]"#
             ),
         },
-        "textDocument/definition" => match scenario.as_str() {
+        "textDocument/definition" => match behavior {
             "definition_null" => "null".to_string(),
             "definition_array" => format!(
                 r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{other_uri}","range":{{"start":{{"line":1,"character":0}},"end":{{"line":1,"character":3}}}}}}]"#
@@ -430,7 +478,7 @@ fn write_result(
                 r#"{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}"#
             ),
         },
-        "textDocument/references" => match scenario.as_str() {
+        "textDocument/references" => match behavior {
             "references_empty" => "null".to_string(),
             "references_duplicates" => format!(
                 r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{other_uri}","range":{{"start":{{"line":2,"character":0}},"end":{{"line":2,"character":3}}}}}}]"#
@@ -451,7 +499,7 @@ fn write_result(
                 r#"[{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}},{{"uri":"{main_uri}","range":{{"start":{{"line":3,"character":0}},"end":{{"line":3,"character":4}}}}}}]"#
             ),
         },
-        "textDocument/hover" => match scenario.as_str() {
+        "textDocument/hover" => match behavior {
             "hover_markup_markdown" => r#"{"contents":{"kind":"markdown","value":"**main** docs"},"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}}}"#.to_string(),
             "hover_markup_plaintext" => r#"{"contents":{"kind":"plaintext","value":"plain docs"}}"#.to_string(),
             "hover_string" => r#"{"contents":"string docs"}"#.to_string(),
@@ -468,7 +516,7 @@ fn write_result(
             "hover_malformed" => r#"{"contents":{"kind":"html","value":"bad"}}"#.to_string(),
             _ => r#"{"contents":{"kind":"markdown","value":"hover"}}"#.to_string(),
         },
-        "workspace/symbol" => match scenario.as_str() {
+        "workspace/symbol" => match behavior {
             "workspace_symbol_information" => format!(
                 r#"[{{"name":"ToolRuntime","kind":23,"containerName":"runtime","location":{{"uri":"{main_uri}","range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":4}}}}}}}}]"#
             ),
@@ -499,7 +547,7 @@ fn write_result(
             ),
             _ => "[]".to_string(),
         },
-        "textDocument/prepareCallHierarchy" => match scenario.as_str() {
+        "textDocument/prepareCallHierarchy" => match behavior {
             "call_hierarchy_prepare_empty" => "null".to_string(),
             "call_hierarchy_raw_prepare_fanout" => {
                 let mut items = vec!["7".to_string(); 64];
@@ -522,7 +570,7 @@ fn write_result(
                 r#"[{{"name":"Root","kind":12,"uri":"{}","range":{{"start":{{"line":2,"character":3}},"end":{{"line":2,"character":5}}}},"selectionRange":{{"start":{{"line":2,"character":3}},"end":{{"line":2,"character":5}}}},"data":{{"opaque":"private"}}}}]"#,
                 json_escape(&request_uri)
             ),
-            _ if scenario.starts_with("call_hierarchy") => format!(
+            _ if behavior.starts_with("call_hierarchy") => format!(
                 "[{}]",
                 call_hierarchy_item("Root", &request_uri, 0, "root-private")
             ),
@@ -531,13 +579,13 @@ fn write_result(
         "callHierarchy/incomingCalls" => {
             let current =
                 json_string_field_from_last_item(request_body, "name").unwrap_or_default();
-            match scenario.as_str() {
+            match behavior {
                 "call_hierarchy_external_invalid" => "[]".to_string(),
-                _ if scenario.starts_with("call_hierarchy") && current == "Root" => format!(
+                _ if behavior.starts_with("call_hierarchy") && current == "Root" => format!(
                     r#"[{{"from":{},"fromRanges":[{{"start":{{"line":0,"character":3}},"end":{{"line":0,"character":7}}}}]}}]"#,
                     call_hierarchy_item("Caller", &request_uri, 0, "caller-private")
                 ),
-                _ if scenario.starts_with("call_hierarchy") && current == "Caller" => format!(
+                _ if behavior.starts_with("call_hierarchy") && current == "Caller" => format!(
                     r#"[{{"from":{},"fromRanges":[{{"start":{{"line":3,"character":0}},"end":{{"line":3,"character":4}}}}]}}]"#,
                     call_hierarchy_item("Caller2", &request_uri, 3, "caller2-private")
                 ),
@@ -547,7 +595,7 @@ fn write_result(
         "callHierarchy/outgoingCalls" => {
             let current =
                 json_string_field_from_last_item(request_body, "name").unwrap_or_default();
-            match scenario.as_str() {
+            match behavior {
                 "call_hierarchy_external_invalid" => format!(
                     r#"[{{"to":{},"fromRanges":[{{"start":{{"line":0,"character":3}},"end":{{"line":0,"character":7}}}}]}},{{"to":{},"fromRanges":[]}},{{"to":{{"name":"Bad","kind":12,"uri":7}},"fromRanges":[]}}]"#,
                     call_hierarchy_item("Local", &request_uri, 1, "file:///secret/private-data"),
@@ -613,11 +661,11 @@ fn write_result(
                         .collect::<Vec<_>>();
                     format!("[{}]", calls.join(","))
                 }
-                _ if scenario.starts_with("call_hierarchy") && current == "Root" => format!(
+                _ if behavior.starts_with("call_hierarchy") && current == "Root" => format!(
                     r#"[{{"to":{},"fromRanges":[{{"start":{{"line":0,"character":3}},"end":{{"line":0,"character":7}}}}]}}]"#,
                     call_hierarchy_item("Callee", &request_uri, 1, "callee-private")
                 ),
-                _ if scenario.starts_with("call_hierarchy") && current == "Callee" => format!(
+                _ if behavior.starts_with("call_hierarchy") && current == "Callee" => format!(
                     r#"[{{"to":{},"fromRanges":[{{"start":{{"line":1,"character":0}},"end":{{"line":1,"character":3}}}}]}}]"#,
                     call_hierarchy_item("Callee2", &request_uri, 3, "callee2-private")
                 ),
@@ -640,6 +688,18 @@ fn write_result(
 }
 
 fn call_hierarchy_item(name: &str, uri: &str, line: usize, data: &str) -> String {
+    let line = if env::args().nth(1).as_deref().is_some_and(|scenario| scenario.starts_with("go_")) {
+        match name {
+            "Root" => 2,
+            "Callee" => 3,
+            "Caller" => 4,
+            "Caller2" => 5,
+            "Callee2" => 6,
+            _ => line,
+        }
+    } else {
+        line
+    };
     format!(
         r#"{{"name":"{}","kind":12,"uri":"{}","range":{{"start":{{"line":{line},"character":0}},"end":{{"line":{line},"character":4}}}},"selectionRange":{{"start":{{"line":{line},"character":0}},"end":{{"line":{line},"character":4}}}},"data":{{"opaque":"{}"}}}}"#,
         json_escape(name),
@@ -655,6 +715,10 @@ fn json_string_field_from_last_item(body: &str, field: &str) -> Option<String> {
     let quoted = after_colon.strip_prefix('"')?;
     let end = quoted.find('"')?;
     Some(quoted[..end].to_string())
+}
+
+fn scenario_behavior(scenario: &str) -> &str {
+    scenario.strip_prefix("go_").unwrap_or(scenario)
 }
 
 fn scenario_is_space_unicode() -> bool {

@@ -1154,6 +1154,110 @@ fn lsp_initialize_uses_constrained_typescript_profile() {
 }
 
 #[test]
+fn lsp_initialize_uses_constrained_gopls_profile() {
+    let _serial = super::super::serialize_fake_lsp_test();
+    let options = captured_initialize_options(LspServerKind::Gopls);
+    assert_eq!(
+        options.pointer("/buildFlags"),
+        Some(&json!(["-mod=readonly"])),
+        "{options}"
+    );
+    for (key, expected) in [
+        ("GOPROXY", "off"),
+        ("GOSUMDB", "off"),
+        ("GOTOOLCHAIN", "local"),
+        ("GOPRIVATE", ""),
+        ("GONOPROXY", "none"),
+        ("GOVCS", "*:off"),
+    ] {
+        assert_eq!(
+            options.pointer(&format!("/env/{key}")),
+            Some(&json!(expected)),
+            "{key}: {options}"
+        );
+    }
+    assert_eq!(
+        options.pointer("/vulncheck"),
+        Some(&json!("Off")),
+        "{options}"
+    );
+    assert_eq!(
+        options.pointer("/symbolScope"),
+        Some(&json!("workspace")),
+        "{options}"
+    );
+    for lens in [
+        "generate",
+        "regenerate_cgo",
+        "run_govulncheck",
+        "tidy",
+        "upgrade_dependency",
+        "vendor",
+    ] {
+        assert_eq!(
+            options.pointer(&format!("/codelenses/{lens}")),
+            Some(&json!(false)),
+            "{lens}: {options}"
+        );
+    }
+}
+
+#[test]
+fn gopls_process_environment_overrides_ambient_network_settings() {
+    let _serial = super::super::serialize_fake_lsp_test();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir(&root).unwrap();
+    let marker = temp.path().join("starts.marker");
+    let exit_marker = temp.path().join("exit.marker");
+    let fake = fake_server_binary();
+    let command = LspCommand::new(fake.path.clone())
+        .arg("capture_safety_env")
+        .arg(marker.as_os_str())
+        .arg(exit_marker.as_os_str())
+        .env("GOPROXY", "https://proxy.invalid")
+        .env("GOSUMDB", "sum.invalid")
+        .env("GOTOOLCHAIN", "auto")
+        .env("GOPRIVATE", "corp.invalid")
+        .env("GONOPROXY", "corp.invalid")
+        .env("GOVCS", "*:all")
+        .env("HTTPS_PROXY", "https://proxy.invalid")
+        .env("https_proxy", "https://proxy.invalid");
+    let supervisor = LspSupervisor::new(LspSupervisorConfig {
+        commands: HashMap::from([(LspServerKind::Gopls, command)]),
+        request_timeout: Duration::from_millis(300),
+        initialize_timeout: Duration::from_secs(2),
+        shutdown_timeout: Duration::from_millis(300),
+        ..LspSupervisorConfig::default()
+    });
+    let _server = supervisor
+        .server_for_test(&root, LspServerKind::Gopls)
+        .unwrap();
+    let marker_text = fs::read_to_string(marker).unwrap();
+    for expected in [
+        "env:GOPROXY=off",
+        "env:GOSUMDB=off",
+        "env:GOTOOLCHAIN=local",
+        "env:GOPRIVATE=",
+        "env:GONOPROXY=none",
+        "env:GOVCS=*:off",
+        "env:HTTP_PROXY=http://127.0.0.1:0",
+        "env:HTTPS_PROXY=http://127.0.0.1:0",
+        "env:ALL_PROXY=http://127.0.0.1:0",
+        "env:NO_PROXY=localhost,127.0.0.1,::1",
+        "env:http_proxy=http://127.0.0.1:0",
+        "env:https_proxy=http://127.0.0.1:0",
+        "env:all_proxy=http://127.0.0.1:0",
+        "env:no_proxy=localhost,127.0.0.1,::1",
+    ] {
+        assert!(
+            marker_text.lines().any(|line| line == expected),
+            "{marker_text}"
+        );
+    }
+}
+
+#[test]
 fn lsp_default_args_apply_to_env_and_path_but_not_configured() {
     let _serial = super::super::serialize_fake_lsp_test();
     let supervisor = LspSupervisor::default();
@@ -1186,6 +1290,18 @@ fn lsp_default_args_apply_to_env_and_path_but_not_configured() {
         )
         .unwrap();
     assert!(rust.args.is_empty(), "{:?}", rust.args);
+
+    // gopls also speaks stdio with no default arguments.
+    let gopls_program = bin.path().join("gopls");
+    std::fs::write(&gopls_program, b"x").unwrap();
+    let (gopls, _) = supervisor
+        .resolve_command_from_sources(
+            LspServerKind::Gopls,
+            Some(OsString::from(&gopls_program)),
+            Some(OsStr::new("")),
+        )
+        .unwrap();
+    assert!(gopls.args.is_empty(), "{:?}", gopls.args);
 
     // An explicitly configured command is used verbatim — no default args.
     let configured = LspSupervisor::new(LspSupervisorConfig {

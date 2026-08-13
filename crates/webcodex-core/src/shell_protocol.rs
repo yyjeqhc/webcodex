@@ -245,8 +245,8 @@ pub struct ShellClientCapabilities {
     /// any synchronous structured-execution or async-shell capability.
     #[serde(default)]
     pub structured_execution_jobs: bool,
-    /// Read-only semantic navigation via agent-side rust-analyzer. Defaults to
-    /// false for wire compatibility with older agents.
+    /// Read-only semantic navigation via constrained Runner language-server
+    /// profiles. Defaults to false for wire compatibility with older agents.
     #[serde(default)]
     pub lsp_read_only_navigation: bool,
     /// The Runner implements the bounded typed call-hierarchy operation.

@@ -277,6 +277,7 @@ run on the repository machine:
 | Language | Server | Markers |
 | --- | --- | --- |
 | Rust | `rust-analyzer` | `Cargo.toml` |
+| Go | `gopls` | `go.mod`, `go.work` |
 | Python | `pyright` | `pyproject.toml`, `setup.py`, `requirements.txt`, … |
 | TypeScript / JavaScript | `typescript-language-server` | `tsconfig.json`, `package.json`, … |
 
@@ -290,7 +291,9 @@ They are read-only, project-bound, and constrained so that starting a language
 server never executes repository code or fetches dependencies. Paths are
 project-relative; external/dependency locations are omitted. Servers must be
 installed on the Runner machine or pointed to by env overrides such as
-`WEBCODEX_RUST_ANALYZER`.
+`WEBCODEX_RUST_ANALYZER` and `WEBCODEX_GOPLS`. The gopls profile also forces
+module/toolchain network access off and uses `-mod=readonly`; WebCodex never
+installs gopls or fetches missing Go dependencies for semantic navigation.
 
 Call hierarchy requires the separately advertised `lsp_call_hierarchy`
 capability and the selected server's `callHierarchyProvider`. Missing support

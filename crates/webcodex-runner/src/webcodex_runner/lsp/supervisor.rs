@@ -39,6 +39,7 @@ pub(crate) enum LspServerKind {
     RustAnalyzer,
     Pyright,
     TypeScriptLanguageServer,
+    Gopls,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,11 +188,18 @@ impl LspCommand {
         self
     }
 
-    fn spawn(&self, project_root: &Path) -> Result<webcodex_process::ManagedChild, LspError> {
+    fn spawn(
+        &self,
+        project_root: &Path,
+        kind: LspServerKind,
+    ) -> Result<webcodex_process::ManagedChild, LspError> {
         let mut command = Command::new(&self.program);
         command
             .args(&self.args)
             .envs(self.env.iter().cloned())
+            // Profile-owned process environment is part of the semantic-navigation
+            // trust boundary and wins over any explicitly configured test env.
+            .envs(profile_for_kind(kind).process_env.iter().copied())
             .current_dir(project_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1815,7 +1823,7 @@ impl ServerInstance {
                 .map(|deadline| deadline.min(ordinary_deadline))
                 .unwrap_or(ordinary_deadline)
         };
-        let mut managed = command.spawn(&key.project_root)?;
+        let mut managed = command.spawn(&key.project_root, key.kind)?;
         let Some(stdin) = managed.child_mut().stdin.take() else {
             cleanup_failed_lsp_child(&mut managed, cleanup_deadline());
             return Err(LspError::SpawnFailed(

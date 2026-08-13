@@ -137,6 +137,10 @@ cargo build --release --workspace --bins
 export PATH="$PWD/target/release:$PATH"
 ```
 
+## 鸣谢
+
+感谢 [LINUX DO](https://linux.do/) 社区提供的交流氛围与开源推广支持。
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

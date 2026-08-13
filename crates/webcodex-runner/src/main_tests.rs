@@ -1719,6 +1719,9 @@ server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
 
+[policy]
+allow_cwd_anywhere = true
+
 [shell]
 dialect = "powershell"
 
@@ -1743,6 +1746,9 @@ args = ["-c"]
 server_url = "http://127.0.0.1:8000"
 token = "test-token"
 client_id = "agent-1"
+
+[policy]
+allow_cwd_anywhere = true
 
 [shell]
 dialect = "cmd"

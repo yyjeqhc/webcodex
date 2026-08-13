@@ -33,6 +33,11 @@ Product direction: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - If guidance conflicts with current code or repository conventions, make the smallest adjustment that still satisfies the task.
 - Do not knowingly create a bug, inconsistent state, resource leak, compatibility hazard, or false validation result.
 - Prefer the smallest coherent change. Follow existing architecture and naming; avoid speculative compatibility, duplicate representations, unrelated cleanup, and broad refactors without a named current need.
+- For explicit cross-layer feature work, map the complete authoritative vertical slice before editing and close the existing architecture end to end before local hardening.
+- Minimize new concepts rather than the number of touched files. A coherent vertical slice may update several existing layers when each is part of the same current capability.
+- Use compiler, type, schema, and exhaustiveness failures to find missing enum, registry, adapter, and projection closure before broadening validation.
+- After focused tests pass, perform a separate completeness audit and then a trust/bounds/privacy/replay audit before considering the implementation finished.
+- Implementation ownership and independent adversarial review are separate passes. In an implementation-owner pass, prioritize a complete authoritative vertical slice and strong first delivery within the current contract; resolve known correctness issues, but do not fragment the implementation around speculative reviewer concerns. A later review pass independently challenges the resulting design and implementation.
 - Keep only the interfaces actually affected by the change consistent. Do not touch or revalidate unrelated projections merely because they exist.
 - Add focused tests for changed behavior when practical. Update documentation when public behavior or operations change.
 - Ask only when required information cannot be discovered, instructions materially conflict, or proceeding could destroy work. Otherwise continue and report any material deviation.

@@ -1703,67 +1703,9 @@ impl ConnectorRuntime {
             .strip_prefix("agent:")
             .and_then(|rest| rest.split_once(':'))
             .map(|(client_id, _)| client_id);
-        let supports_structured_validation = match client_id {
-            Some(client_id) => self
-                .tools
-                .shell_clients
-                .client_supports_for_auth(
-                    client_id,
-                    SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
-                    Some(auth),
-                )
-                .await
-                .unwrap_or(false),
-            None => false,
-        };
-        if !supports_structured_validation {
-            return ConnectorCallOutcome::error_for_task(
-                409,
-                "structured_validation_unavailable",
-                "the selected local Agent does not support structured validation jobs",
-                false,
-                true,
-                Some("Upgrade and reconnect the WebCodex Agent, then retry checks_run."),
-                &task,
-                json!({
-                    "required_capability":
-                        SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV
-                }),
-            );
-        }
         let requires_go_test_json = resolved.steps.iter().any(|step| {
             step.name == "test" && step.program == "go" && step.args == ["test", "-json", "./..."]
         });
-        if requires_go_test_json {
-            let supported = match client_id {
-                Some(client_id) => self
-                    .tools
-                    .shell_clients
-                    .client_supports_for_auth(
-                        client_id,
-                        SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-                        Some(auth),
-                    )
-                    .await
-                    .unwrap_or(false),
-                None => false,
-            };
-            if !supported {
-                return ConnectorCallOutcome::error_for_task(
-                    409,
-                    "structured_go_test_json_unavailable",
-                    "the selected local Agent does not support machine-readable Go test validation",
-                    false,
-                    true,
-                    Some("Upgrade and reconnect the WebCodex Agent, then retry checks_run."),
-                    &task,
-                    json!({
-                        "required_capability":
-                            SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON
-                    }),
-                );
-            }
-        }
         let mut validation_steps = resolved.steps.clone();
         // Steer cargo at the shared cache outside the slot: reset uses
         // `git clean -ffdx`, which would otherwise wipe target/ and force a
@@ -1815,6 +1757,64 @@ impl ConnectorRuntime {
         let reservation = match existing {
             Some(existing) => existing,
             None => {
+                let supports_structured_validation = match client_id {
+                    Some(client_id) => self
+                        .tools
+                        .shell_clients
+                        .client_supports_for_auth(
+                            client_id,
+                            SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
+                            Some(auth),
+                        )
+                        .await
+                        .unwrap_or(false),
+                    None => false,
+                };
+                if !supports_structured_validation {
+                    return ConnectorCallOutcome::error_for_task(
+                        409,
+                        "structured_validation_unavailable",
+                        "the selected local Agent does not support structured validation jobs",
+                        false,
+                        true,
+                        Some("Upgrade and reconnect the WebCodex Agent, then retry checks_run."),
+                        &task,
+                        json!({
+                            "required_capability":
+                                SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV
+                        }),
+                    );
+                }
+                if requires_go_test_json {
+                    let supported = match client_id {
+                        Some(client_id) => self
+                            .tools
+                            .shell_clients
+                            .client_supports_for_auth(
+                                client_id,
+                                SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
+                                Some(auth),
+                            )
+                            .await
+                            .unwrap_or(false),
+                        None => false,
+                    };
+                    if !supported {
+                        return ConnectorCallOutcome::error_for_task(
+                            409,
+                            "structured_go_test_json_unavailable",
+                            "the selected local Agent does not support machine-readable Go test validation",
+                            false,
+                            true,
+                            Some("Upgrade and reconnect the WebCodex Agent, then retry checks_run."),
+                            &task,
+                            json!({
+                                "required_capability":
+                                    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON
+                            }),
+                        );
+                    }
+                }
                 let check_workspace_sha256 =
                     match self.workspace_fingerprint(&task, "checks_run").await {
                         Ok(fingerprint) => fingerprint,

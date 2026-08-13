@@ -1815,6 +1815,106 @@ async fn go_test_failure_has_durable_structured_assertion_evidence() {
 }
 
 #[tokio::test]
+async fn go_json_execution_replay_does_not_require_current_runner_capability() {
+    let fixture = fixture(1_000).await;
+    let root = Path::new(&task(&fixture).execution_root).join("go-replay");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(
+        root.join("go.mod"),
+        "module example.test/go-replay\n\ngo 1.22\n",
+    )
+    .unwrap();
+    let arguments = json!({
+        "task_id": fixture.task_id,
+        "operation_id": "go-json-replay-1",
+        "checks": ["test"],
+        "recipe": "go",
+        "cwd": "go-replay",
+        "timeout_secs": 30
+    });
+    let registry = fixture.registry.clone();
+    let responder = tokio::spawn(async move {
+        let request = next_request(&registry).await;
+        update_validation_job(
+            &registry,
+            request.job_id.as_deref().unwrap(),
+            "completed",
+            Some(r#"{"Action":"pass","Package":"example.test/go-replay","Test":"TestOK"}"#),
+            Some(0),
+            check_progress(1, None, None),
+        )
+        .await;
+    });
+    let first = fixture.call("checks_run", arguments.clone()).await;
+    responder.await.unwrap();
+    assert!(first.ok, "{}", first.body);
+    let execution_id = first.body["data"]["execution"]["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let registered_projects = fixture
+        .registry
+        .list_client_projects("hosted")
+        .await
+        .unwrap();
+    fixture
+        .registry
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                client_id: "hosted".into(),
+                agent_instance_id: "instance".into(),
+                display_name: None,
+                owner: Some("owner".into()),
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    file_read: true,
+                    file_write: true,
+                    jobs: true,
+                    async_jobs: true,
+                    async_shell_jobs: true,
+                    structured_validation_argv: true,
+                    structured_go_test_json: false,
+                    ..Default::default()
+                }),
+                projects: Some(registered_projects),
+                agent_protocol_version: Some("legacy-go-json".into()),
+                policy: None,
+            },
+            Some(&fixture.owner),
+        )
+        .await
+        .unwrap();
+
+    let replay = fixture.call("checks_run", arguments).await;
+    assert!(replay.ok, "{}", replay.body);
+    assert_eq!(
+        replay.body["data"]["execution"]["execution_id"],
+        execution_id
+    );
+    let conflict = fixture
+        .call(
+            "checks_run",
+            json!({
+                "task_id": fixture.task_id,
+                "operation_id": "go-json-replay-1",
+                "checks": ["test"],
+                "recipe": "go",
+                "cwd": "go-replay",
+                "timeout_secs": 31
+            }),
+        )
+        .await;
+    assert_eq!(conflict.body["error"]["code"], "operation_id_conflict");
+    assert!(poll(&fixture.registry).await.is_none());
+}
+
+#[tokio::test]
 async fn structured_progress_rejects_invalid_order_and_preserves_fail_fast_plan() {
     let fixture = fixture(1_000).await;
     let plan = || ShellJobStartMetadata {

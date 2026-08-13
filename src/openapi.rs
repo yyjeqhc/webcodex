@@ -1172,11 +1172,15 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` and `arguments` are absent."
                 },
+                // Keep the flattened GPT Action shape composition-free. The canonical MCP/local-coding
+                // ToolSpec carries the strict per-kind oneOf contract; this import-facing projection uses
+                // explicit bounded properties plus exact field guidance because nested composed schemas are
+                // less reliable on the flattened Actions surface. Runtime preflight remains authoritative.
                 "changes": {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": 16,
-                    "description": "Flattened apply_text_edits transactional file changes. Existing files require expected_sha256. Used only when `params` and `arguments` are absent.",
+                    "description": "Flattened apply_text_edits transactional file changes. kind=edit requires path, expected_sha256, and edits and forbids to_path/content; create requires path/content and forbids to_path/expected_sha256/edits; delete requires path/expected_sha256 and forbids to_path/content/edits; rename requires path/to_path/expected_sha256 and forbids content/edits. Used only when `params` and `arguments` are absent.",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
@@ -1185,38 +1189,41 @@ fn schemas() -> Value {
                             "kind": {
                                 "type": "string",
                                 "enum": ["edit", "create", "delete", "rename"],
-                                "description": "File change kind."
+                                "description": "File change kind; use only the fields allowed for that kind as documented on changes."
                             },
                             "path": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "Project-relative source or target path."
                             },
                             "to_path": {
                                 "type": "string",
-                                "description": "Project-relative rename destination."
+                                "minLength": 1,
+                                "description": "Required only for rename; project-relative destination must differ from path. Forbidden for edit/create/delete."
                             },
                             "content": {
                                 "type": "string",
-                                "description": "Complete UTF-8 content for create."
+                                "description": "Required only for create; complete UTF-8 content, which may be empty. Forbidden for edit/delete/rename."
                             },
                             "expected_sha256": {
                                 "type": "string",
                                 "pattern": "^[a-f0-9]{64}$",
-                                "description": "Required live hash for edit, delete, and rename."
+                                "description": "Required current-file hash for edit, delete, and rename; forbidden for create."
                             },
                             "edits": {
                                 "type": "array",
                                 "minItems": 1,
                                 "maxItems": 20,
+                                "description": "Required only for kind=edit. replace_exact requires non-empty old_text, optional new_text (omitted means empty replacement), and forbids anchor_text; delete_exact requires non-empty old_text and forbids new_text/anchor_text; insert_before/insert_after require non-empty anchor_text and new_text and forbid old_text.",
                                 "items": {
                                     "type": "object",
                                     "additionalProperties": false,
                                     "required": ["kind"],
                                     "properties": {
-                                        "kind": {"type": "string", "enum": ["replace_exact", "insert_after", "insert_before", "delete_exact"]},
-                                        "old_text": {"type": "string"},
-                                        "new_text": {"type": "string"},
-                                        "anchor_text": {"type": "string"}
+                                        "kind": {"type": "string", "enum": ["replace_exact", "insert_after", "insert_before", "delete_exact"], "description": "Exact edit kind; use only the fields documented on edits for that kind."},
+                                        "old_text": {"type": "string", "minLength": 1, "description": "Required for replace_exact/delete_exact; forbidden for insert_before/insert_after."},
+                                        "new_text": {"type": "string", "description": "Replacement for replace_exact (may be empty or omitted); required non-empty for insert_before/insert_after; forbidden for delete_exact."},
+                                        "anchor_text": {"type": "string", "minLength": 1, "description": "Required for insert_before/insert_after; forbidden for replace_exact/delete_exact."}
                                     }
                                 }
                             }

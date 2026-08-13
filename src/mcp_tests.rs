@@ -3288,6 +3288,43 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
 }
 
 #[tokio::test]
+async fn apply_text_edits_discriminated_schema_reaches_full_and_local_coding_mcp_surfaces() {
+    let expected = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "apply_text_edits")
+        .expect("apply_text_edits ToolSpec")
+        .input_schema;
+    assert_eq!(
+        expected["properties"]["changes"]["items"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+
+    for surface in [ModelSurface::FullOperatorRuntime, ModelSurface::LocalCoding] {
+        let runtime = test_runtime_with_surface(surface);
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(601)), json!({})),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(value) => value,
+            other => panic!("expected tools/list success for {surface:?}, got {other:?}"),
+        };
+        let schema = &value["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "apply_text_edits")
+            .unwrap_or_else(|| panic!("missing apply_text_edits on {surface:?}"))["inputSchema"];
+        assert_eq!(schema, &expected, "schema drift on {surface:?}");
+    }
+}
+
+#[tokio::test]
 async fn local_coding_default_initialize_and_discovery_report_local_coding() {
     // Preserve the unset-env integration path, but confine process env state
     // to synchronous runtime construction.

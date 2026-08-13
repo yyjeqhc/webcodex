@@ -1238,9 +1238,12 @@ fn openapi_call_runtime_tool_declares_apply_text_edits_flattened_fields() {
     );
     assert_eq!(changes["minItems"], 1);
     assert_eq!(changes["maxItems"], 16);
+    // This flattened GPT Action projection deliberately stays composition-free;
+    // the direct MCP/local-coding ToolSpec carries the strict per-kind oneOf.
     let items = &changes["items"];
     assert_eq!(items["type"], "object");
     assert_eq!(items["additionalProperties"], false);
+    assert!(items.get("oneOf").is_none());
     let kind_enum = &items["properties"]["kind"]["enum"]
         .as_array()
         .expect("changes.items.kind must be an enum");
@@ -1250,6 +1253,37 @@ fn openapi_call_runtime_tool_declares_apply_text_edits_flattened_fields() {
             "changes.items.kind enum must include {variant}"
         );
     }
+    assert_eq!(items["properties"]["path"]["minLength"], 1);
+    assert_eq!(items["properties"]["to_path"]["minLength"], 1);
+    let description = changes["description"].as_str().unwrap();
+    for contract in [
+        "kind=edit requires path, expected_sha256, and edits and forbids to_path/content",
+        "create requires path/content and forbids to_path/expected_sha256/edits",
+        "delete requires path/expected_sha256 and forbids to_path/content/edits",
+        "rename requires path/to_path/expected_sha256 and forbids content/edits",
+    ] {
+        assert!(
+            description.contains(contract),
+            "missing {contract}: {description}"
+        );
+    }
+    let edits = &items["properties"]["edits"];
+    let edit_description = edits["description"].as_str().unwrap();
+    for contract in [
+        "replace_exact requires non-empty old_text",
+        "delete_exact requires non-empty old_text",
+        "insert_before/insert_after require non-empty anchor_text and new_text",
+    ] {
+        assert!(
+            edit_description.contains(contract),
+            "missing {contract}: {edit_description}"
+        );
+    }
+    assert_eq!(edits["items"]["properties"]["old_text"]["minLength"], 1);
+    assert_eq!(edits["items"]["properties"]["anchor_text"]["minLength"], 1);
+    assert!(edits["items"]["properties"]["new_text"]
+        .get("minLength")
+        .is_none());
     assert_eq!(
         tool_call["additionalProperties"], false,
         "additionalProperties must stay false"

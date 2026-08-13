@@ -2604,6 +2604,7 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
             "execution_state": "running",
             "job_id": "job-123",
             "job_status": "running",
+            "observation_token": "observation",
             "promoted_to_job": true,
             "command_started": true,
             "command_completed": false,
@@ -2627,6 +2628,7 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
         ("terminal", 3),
         ("passed", 4),
         ("timeout failure", 5),
+        ("missing observation_token", 6),
     ] {
         let mut invalid = handoff.clone();
         let output = invalid["output"].as_object_mut().unwrap();
@@ -2648,6 +2650,9 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
             }
             5 => {
                 output.insert("failure_kind".to_string(), json!("timeout"));
+            }
+            6 => {
+                output.remove("observation_token");
             }
             _ => unreachable!(),
         }

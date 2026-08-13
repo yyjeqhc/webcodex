@@ -334,6 +334,39 @@ fn go_test_parser_bounds_safe_names_and_omits_unsafe_identities() {
 }
 
 #[test]
+fn go_test_parser_long_identity_digest_suffix_preserves_distinguishability() {
+    let shared = "p".repeat(300);
+    let package_a = format!("example.test/{shared}a");
+    let package_b = format!("example.test/{shared}b");
+    let output = [
+        serde_json::json!({
+            "Action": "fail",
+            "Package": package_a,
+            "Test": "TestSame"
+        })
+        .to_string(),
+        serde_json::json!({
+            "Action": "fail",
+            "Package": package_b,
+            "Test": "TestSame"
+        })
+        .to_string(),
+    ]
+    .join("\n");
+
+    let diagnostics = parse_go_test_diagnostics(&output, false);
+
+    assert_eq!(diagnostics.failed_test_details.len(), 2);
+    let first = &diagnostics.failed_test_details[0].name;
+    let second = &diagnostics.failed_test_details[1].name;
+    assert_ne!(first, second);
+    assert!(first.chars().count() <= 240);
+    assert!(second.chars().count() <= 240);
+    assert!(first.contains('#'));
+    assert!(second.contains('#'));
+}
+
+#[test]
 fn cargo_test_parser_caps_failed_test_details_at_twenty_in_first_seen_order() {
     let mut output = String::new();
     for index in 1..=22 {

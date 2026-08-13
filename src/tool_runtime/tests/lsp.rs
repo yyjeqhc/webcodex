@@ -1,10 +1,11 @@
 use super::support::*;
 use crate::lsp_bridge::{
     error_codes, parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest,
-    AgentLspResultEnvelope, CallHierarchyDirection, CallHierarchyResult, DocumentDiagnosticsResult,
-    DocumentDiagnosticsStatus, DocumentSymbolsResult, HoverResult, LocationsResult,
-    LspAvailabilityStatus, LspStatusResult, PublicCallHierarchySymbol, PublicDiagnostic,
-    PublicHover, PublicLocation, PublicPosition, PublicRange, PublicSymbol, PublicWorkspaceSymbol,
+    AgentLspResultEnvelope, CallHierarchyDirection, CallHierarchyEdgeDirection,
+    CallHierarchyResult, DocumentDiagnosticsResult, DocumentDiagnosticsStatus,
+    DocumentSymbolsResult, HoverResult, LocationsResult, LspAvailabilityStatus, LspStatusResult,
+    PublicCallHierarchyEdge, PublicCallHierarchySymbol, PublicDiagnostic, PublicHover,
+    PublicLocation, PublicPosition, PublicRange, PublicSymbol, PublicWorkspaceSymbol,
     WorkspaceSymbolsResult, AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::{
@@ -251,6 +252,24 @@ fn lsp_input_schemas_have_required_bounds() {
 }
 
 #[test]
+fn call_hierarchy_parser_rejects_explicit_null_optional_fields() {
+    for field in ["direction", "depth", "limit"] {
+        let mut arguments = json!({
+            "project": "agent:oe:demo",
+            "path": "src/main.rs",
+            "line": 1,
+            "column": 1
+        });
+        arguments[field] = Value::Null;
+        let error = ToolCall::from_tool_name("call_hierarchy", arguments).unwrap_err();
+        assert!(
+            error.contains("invalid arguments for tool 'call_hierarchy'"),
+            "{field}: {error}"
+        );
+    }
+}
+
+#[test]
 fn document_diagnostics_tool_call_parser_produces_only_typed_fields() {
     let call = ToolCall::from_tool_name(
         "document_diagnostics",
@@ -481,6 +500,66 @@ fn call_hierarchy_result(path: &str) -> CallHierarchyResult {
     }
 }
 
+fn call_hierarchy_result_with_edge(path: &str) -> CallHierarchyResult {
+    let mut result = call_hierarchy_result(path);
+    let mut caller = result.roots[0].clone();
+    caller.name = "caller".into();
+    caller.path = "src/caller.rs".into();
+    let call_site = result.roots[0].selection_range.clone();
+    result.edges.push(PublicCallHierarchyEdge {
+        direction: CallHierarchyEdgeDirection::Incoming,
+        depth: 1,
+        from: caller,
+        to: result.roots[0].clone(),
+        call_sites: vec![call_site],
+    });
+    result.returned_count = 1;
+    result
+}
+
+async fn dispatch_call_hierarchy_result(
+    client_id: &str,
+    result: CallHierarchyResult,
+) -> ToolResult {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent(&runtime, client_id, "demo", tmp.path(), true).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CallHierarchy {
+                        project,
+                        path: "src/main.rs".into(),
+                        line: 1,
+                        column: 4,
+                        direction: CallHierarchyDirection::Both,
+                        depth: 1,
+                        limit: 50,
+                        session_id: None,
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    complete_lsp_agent_request(&runtime, client_id, result).await;
+    task.await.unwrap()
+}
+
+fn assert_malformed_call_hierarchy(case: &str, result: &ToolResult) {
+    assert!(!result.success, "{case}: {result:?}");
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains(error_codes::MALFORMED_AGENT_LSP_RESULT),
+        "{case}: {result:?}"
+    );
+}
+
 async fn dispatch_document_symbols_with_result_path(client_id: &str, path: &str) -> ToolResult {
     let runtime = test_runtime();
     let tmp = tempfile::tempdir().unwrap();
@@ -571,6 +650,52 @@ async fn call_hierarchy_requires_its_distinct_runner_capability_before_dispatch(
             .await
             .is_none(),
         "capability failure must happen before agent dispatch"
+    );
+}
+
+#[tokio::test]
+async fn call_hierarchy_does_not_require_legacy_navigation_capability() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent_capabilities(
+        &runtime,
+        "hierarchy-only",
+        "demo",
+        tmp.path(),
+        false,
+        true,
+    )
+    .await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CallHierarchy {
+                        project,
+                        path: "src/main.rs".into(),
+                        line: 1,
+                        column: 4,
+                        direction: CallHierarchyDirection::Both,
+                        depth: 1,
+                        limit: 50,
+                        session_id: None,
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    complete_lsp_agent_request(
+        &runtime,
+        "hierarchy-only",
+        call_hierarchy_result("src/main.rs"),
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(
+        result.success,
+        "call_hierarchy must depend only on its distinct capability: {result:?}"
     );
 }
 
@@ -696,6 +821,64 @@ async fn call_hierarchy_result_boundary_rejects_inconsistent_bounds() {
 }
 
 #[tokio::test]
+async fn call_hierarchy_result_boundary_rejects_cross_field_correlation_mismatches() {
+    let mut cases = Vec::new();
+
+    let mut wrong_direction = call_hierarchy_result("src/main.rs");
+    wrong_direction.direction = CallHierarchyDirection::Incoming;
+    cases.push(("direction", wrong_direction));
+
+    let mut wrong_depth = call_hierarchy_result("src/main.rs");
+    wrong_depth.depth = 2;
+    cases.push(("depth", wrong_depth));
+
+    let mut wrong_query_position = call_hierarchy_result("src/main.rs");
+    wrong_query_position.query_position.column = 5;
+    cases.push(("query-position", wrong_query_position));
+
+    let mut edge_too_deep = call_hierarchy_result_with_edge("src/main.rs");
+    edge_too_deep.edges[0].depth = 2;
+    cases.push(("edge-depth", edge_too_deep));
+
+    for (name, malformed) in cases {
+        let result = dispatch_call_hierarchy_result("hierarchy-correlation", malformed).await;
+        assert_malformed_call_hierarchy(name, &result);
+    }
+}
+
+#[tokio::test]
+async fn call_hierarchy_result_boundary_rejects_public_symbol_and_range_violations() {
+    let mut cases = Vec::new();
+
+    let mut zero_based = call_hierarchy_result("src/main.rs");
+    zero_based.roots[0].range.start.line = 0;
+    cases.push(("zero-based", zero_based));
+
+    let mut reversed_range = call_hierarchy_result("src/main.rs");
+    reversed_range.roots[0].selection_range.start.column = 5;
+    reversed_range.roots[0].selection_range.end.column = 1;
+    cases.push(("reversed-range", reversed_range));
+
+    let mut oversized_name = call_hierarchy_result("src/main.rs");
+    oversized_name.roots[0].name = "x".repeat(257);
+    cases.push(("oversized-name", oversized_name));
+
+    let mut empty_kind = call_hierarchy_result("src/main.rs");
+    empty_kind.roots[0].kind.clear();
+    cases.push(("empty-kind", empty_kind));
+
+    let mut reversed_call_site = call_hierarchy_result_with_edge("src/main.rs");
+    reversed_call_site.edges[0].call_sites[0].start.column = 5;
+    reversed_call_site.edges[0].call_sites[0].end.column = 1;
+    cases.push(("reversed-call-site", reversed_call_site));
+
+    for (name, malformed) in cases {
+        let result = dispatch_call_hierarchy_result("hierarchy-public-bounds", malformed).await;
+        assert_malformed_call_hierarchy(name, &result);
+    }
+}
+
+#[tokio::test]
 async fn call_hierarchy_result_boundary_rejects_request_path_mismatch() {
     let runtime = test_runtime();
     let tmp = tempfile::tempdir().unwrap();
@@ -742,44 +925,44 @@ async fn call_hierarchy_result_boundary_rejects_request_path_mismatch() {
 }
 
 #[tokio::test]
-async fn call_hierarchy_result_boundary_rejects_non_normalized_symbol_path() {
-    let runtime = test_runtime();
-    let tmp = tempfile::tempdir().unwrap();
-    let project =
-        register_lsp_agent(&runtime, "hierarchy-symbol-path", "demo", tmp.path(), true).await;
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        async move {
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::CallHierarchy {
-                        project,
-                        path: "src/main.rs".into(),
-                        line: 1,
-                        column: 4,
-                        direction: CallHierarchyDirection::Both,
-                        depth: 1,
-                        limit: 50,
-                        session_id: None,
-                    },
-                    Some(&auth_context(None, true)),
-                )
-                .await
-        }
-    });
-    let mut malformed = call_hierarchy_result("src/main.rs");
-    malformed.roots[0].path = "src//main.rs".into();
-    complete_lsp_agent_request(&runtime, "hierarchy-symbol-path", malformed).await;
-    let result = task.await.unwrap();
-    assert!(!result.success, "{result:?}");
-    assert!(
-        result
-            .error
-            .as_deref()
-            .unwrap_or_default()
-            .contains(error_codes::MALFORMED_AGENT_LSP_RESULT),
-        "{result:?}"
-    );
+async fn call_hierarchy_result_symbol_paths_must_be_normalized_project_relative() {
+    for path in [
+        "../outside.rs",
+        "src/../../outside.rs",
+        "/tmp/outside.rs",
+        "file:///tmp/outside.rs",
+        "C:/tmp/outside.rs",
+        "C:outside.rs",
+        r"\\server\share\outside.rs",
+        "//server/share/outside.rs",
+        r"src\module\service.rs",
+        "./src/main.rs",
+        "src/./main.rs",
+        "src//main.rs",
+        "",
+    ] {
+        let mut malformed = call_hierarchy_result("src/main.rs");
+        malformed.roots[0].path = path.to_string();
+        let result = dispatch_call_hierarchy_result("hierarchy-symbol-path", malformed).await;
+        assert_malformed_call_hierarchy(path, &result);
+    }
+
+    let mut parent_from = call_hierarchy_result_with_edge("src/main.rs");
+    parent_from.edges[0].from.path = "../caller.rs".into();
+    let result = dispatch_call_hierarchy_result("hierarchy-edge-from-path", parent_from).await;
+    assert_malformed_call_hierarchy("edge-from", &result);
+
+    let mut parent_to = call_hierarchy_result_with_edge("src/main.rs");
+    parent_to.edges[0].to.path = "src/../../callee.rs".into();
+    let result = dispatch_call_hierarchy_result("hierarchy-edge-to-path", parent_to).await;
+    assert_malformed_call_hierarchy("edge-to", &result);
+
+    let mut valid = call_hierarchy_result_with_edge("src/main.rs");
+    valid.roots[0].path = "src/module/service.rs".into();
+    valid.edges[0].from.path = "src/module/caller.rs".into();
+    valid.edges[0].to.path = "src/module/service.rs".into();
+    let result = dispatch_call_hierarchy_result("hierarchy-normalized-paths", valid).await;
+    assert!(result.success, "{result:?}");
 }
 
 #[tokio::test]

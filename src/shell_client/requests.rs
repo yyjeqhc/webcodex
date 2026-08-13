@@ -798,6 +798,7 @@ impl ShellClientRegistry {
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
         // This check is the authoritative TOCTOU fence: capability validation
         // and pending-request admission happen under the same registry lock.
         let current =

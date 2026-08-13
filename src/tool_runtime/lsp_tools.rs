@@ -500,12 +500,19 @@ fn normalize_requested_call_hierarchy_path(path: &str) -> Option<String> {
 }
 
 fn is_safe_project_relative_path(path: &str) -> bool {
-    !path.is_empty()
-        && !Path::new(path).is_absolute()
-        && Path::new(path)
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-        && !string_contains_forbidden_path_material(path)
+    if path.is_empty()
+        || path.contains('\0')
+        || path.contains('\\')
+        || path.to_ascii_lowercase().starts_with("file:")
+        || string_contains_forbidden_path_material(path)
+    {
+        return false;
+    }
+    let bytes = path.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return false;
+    }
+    normalize_requested_call_hierarchy_path(path).as_deref() == Some(path)
 }
 
 fn validate_document_diagnostics_status(result: &DocumentDiagnosticsResult) -> Result<(), ()> {

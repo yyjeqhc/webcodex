@@ -2025,6 +2025,56 @@ async fn enqueue_lsp_rechecks_call_hierarchy_capability_atomically_after_downgra
 }
 
 #[tokio::test]
+async fn enqueue_lsp_prunes_expired_shared_key_registration_before_admission() {
+    let ttl_secs = 10;
+    let registry = ShellClientRegistry::with_shared_key_limits_for_test(1, 4, ttl_secs);
+    let auth = crate::auth::shared_key::shared_key_context("ttl-lsp");
+    let mut registration = runner_registration("ttl-lsp", "inst", Vec::new());
+    registration.capabilities = Some(ShellClientCapabilities {
+        lsp_call_hierarchy: true,
+        ..Default::default()
+    });
+    registry
+        .register_with_auth(registration, Some(&auth))
+        .await
+        .unwrap();
+    registry
+        .set_last_seen_for_test(
+            "ttl-lsp",
+            now_ts() - ttl_secs - CLIENT_ONLINE_WINDOW_SECS - 10,
+        )
+        .await;
+
+    let error = registry
+        .enqueue_lsp(
+            "ttl-lsp".to_string(),
+            AgentLspPayload {
+                project_id: "demo".to_string(),
+                request: AgentLspRequest::CallHierarchy {
+                    path: "src/main.rs".to_string(),
+                    line: 1,
+                    column: 1,
+                    direction: crate::lsp_bridge::CallHierarchyDirection::Both,
+                    depth: 1,
+                    limit: 50,
+                },
+            },
+            "test".to_string(),
+            5,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        EnqueueLspError::UnknownClient {
+            client_id: "ttl-lsp".to_string(),
+        }
+    );
+    let inner = registry.inner.lock().await;
+    assert!(!inner.clients.contains_key("ttl-lsp"));
+}
+
+#[tokio::test]
 async fn enqueue_lsp_returns_structured_unknown_client_error() {
     let registry = ShellClientRegistry::default();
     let error = registry

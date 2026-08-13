@@ -997,7 +997,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "edit: prefer apply_text_edits for transactional guarded file changes",
         "apply_patch_checked for complex unified diffs",
         "write_project_file only for intentional full rewrites",
-        "validate: use cargo_check / cargo_test / validate_patch",
+        "validate: use cargo_check / cargo_test / go_test / validate_patch",
         "raw run_shell is a bounded escape hatch",
         "not the primary validation path",
         "review: use show_changes / git_diff_hunks / workspace_hygiene_check",
@@ -1309,7 +1309,7 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    // cargo_* and validation_summary are validation;
+    // Structured validation tools and validation_summary are validation;
     // validate_patch/apply_patch_checked remain patch.
     assert_eq!(
         names,
@@ -1317,6 +1317,7 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
+            "go_test",
             "validation_summary"
         ]
     );

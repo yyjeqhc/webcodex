@@ -1,5 +1,5 @@
 use super::super::input_schemas::{
-    cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
+    cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema, go_test_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -20,6 +20,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "cargo_test",
             "Preferred structured Rust test runner. Supports filter, feature flags, package, --no-run, timeout, and bounded output tails. A short run returns immediately; a longer run continues as a Job and returns job_id. Use before raw run_shell when applicable.",
             cargo_test_input_schema(),
+        ),
+        tool_spec(
+            "go_test",
+            "Preferred structured Go test runner. Runs exactly go test -json ./... with an optional project-relative cwd. Requires Runner structured Go JSON validation support; a short run may return immediately and a longer run continues as the same Job.",
+            go_test_input_schema(),
         ),
     ]
 }

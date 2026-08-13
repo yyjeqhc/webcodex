@@ -530,7 +530,7 @@ fn key_tool_output_schemas_include_expected_fields() {
             "run_shell execution_state description missing {state}: {run_shell_state_description}"
         );
     }
-    for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+    for name in ["cargo_fmt", "cargo_check", "cargo_test", "go_test"] {
         assert!(
             has_output_field(name, "failure_kind"),
             "{name} missing failure_kind"
@@ -565,10 +565,9 @@ fn key_tool_output_schemas_include_expected_fields() {
         }
     }
     for field in ["tests_detected", "tests_run_count", "zero_tests_run"] {
-        assert!(
-            has_output_field("cargo_test", field),
-            "cargo_test missing {field}"
-        );
+        for name in ["cargo_test", "go_test"] {
+            assert!(has_output_field(name, field), "{name} missing {field}");
+        }
         assert!(
             !has_output_field("cargo_fmt", field),
             "cargo_fmt should not expose cargo_test zero-tests metadata field {field}"

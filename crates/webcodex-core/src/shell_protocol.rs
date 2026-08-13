@@ -1556,7 +1556,7 @@ impl ShellJobValidationMetadata {
     pub fn is_valid(&self) -> bool {
         matches!(
             self.tool.as_str(),
-            "cargo_fmt" | "cargo_check" | "cargo_test"
+            "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test"
         ) && matches!(self.kind.as_str(), "format" | "check" | "test")
             && self.adapter == self.tool
             && self.steps.len() == 1
@@ -3392,6 +3392,39 @@ mod filter_canonical_tests {
         assert!(!step(&["test", "-json", "-run", "TestOne", "./..."]).is_canonical());
         assert!(!step(&["test", "-v", "./..."]).is_canonical());
         assert!(!step(&["run", "./..."]).is_canonical());
+    }
+
+    #[test]
+    fn go_test_validation_metadata_accepts_exact_json_step_only() {
+        let exact_step = ShellJobValidationStep {
+            name: "test".to_string(),
+            program: "go".to_string(),
+            args: vec!["test".to_string(), "-json".to_string(), "./...".to_string()],
+            env: Vec::new(),
+        };
+        let metadata = ShellJobValidationMetadata {
+            tool: "go_test".to_string(),
+            kind: "test".to_string(),
+            steps: vec![exact_step],
+            effective_timeout_secs: 1800,
+            sync_wait_secs: 10,
+            adapter: "go_test".to_string(),
+        };
+        assert!(metadata.is_valid());
+
+        let mut wrong_adapter = metadata.clone();
+        wrong_adapter.adapter = "cargo_test".to_string();
+        assert!(!wrong_adapter.is_valid());
+
+        let mut filtered = metadata;
+        filtered.steps[0].args = vec![
+            "test".to_string(),
+            "-json".to_string(),
+            "-run".to_string(),
+            "TestOne".to_string(),
+            "./...".to_string(),
+        ];
+        assert!(!filtered.is_valid());
     }
 
     #[test]

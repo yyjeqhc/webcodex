@@ -777,7 +777,7 @@ pub(crate) fn validation_output_summary_for_tool_result(
         "executor": output.get("executor").cloned().unwrap_or(Value::Null),
         "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
     });
-    if tool_name == "cargo_test" {
+    if matches!(tool_name, "cargo_test" | "go_test") {
         summary["tests_detected"] = cargo_test_tests_detected(output);
         summary["tests_run_count"] = cargo_test_tests_run_count(output);
         summary["zero_tests_run"] = cargo_test_zero_tests_run(output);
@@ -835,7 +835,7 @@ pub(super) fn sanitize_persisted_validation_output_summary(
         "executor": object.get("executor").and_then(Value::as_str),
         "execution_state": object.get("execution_state").and_then(Value::as_str),
     });
-    if tool_name == "cargo_test" {
+    if matches!(tool_name, "cargo_test" | "go_test") {
         summary["tests_detected"] = persisted_cargo_test_tests_detected(object);
         summary["tests_run_count"] = persisted_cargo_test_tests_run_count(object);
         summary["zero_tests_run"] = persisted_cargo_test_zero_tests_run(object);

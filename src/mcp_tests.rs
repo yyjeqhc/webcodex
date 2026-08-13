@@ -3248,6 +3248,7 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
         "read_files",
         "search_project_texts",
         "apply_text_edits",
+        "go_test",
         "finish_coding_task",
     ] {
         assert!(names.contains(&required), "missing {required}: {names:?}");

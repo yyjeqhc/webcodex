@@ -147,6 +147,27 @@ pub(crate) fn cargo_test_input_schema() -> Value {
     )
 }
 
+pub(crate) fn go_test_input_schema() -> Value {
+    with_validation_timeout_bounds(
+        object_schema(with_optional_session_id(vec![
+            ("project", "string", "Agent-registered project id.", true),
+            (
+                "cwd",
+                "string",
+                "Optional project-relative working directory.",
+                false,
+            ),
+            (
+                "timeout_secs",
+                "integer",
+                VALIDATION_TIMEOUT_SECS_DESCRIPTION,
+                false,
+            ),
+        ])),
+        1800,
+    )
+}
+
 pub(crate) fn validate_patch_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),

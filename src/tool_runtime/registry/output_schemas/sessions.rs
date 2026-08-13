@@ -672,7 +672,7 @@ fn validation_event_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "tool_name": { "type": "string", "enum": ["cargo_fmt", "cargo_check", "cargo_test", "validate_patch", "apply_patch_checked", "run_process", "run_script", "run_shell", "run_job"] },
+            "tool_name": { "type": "string", "enum": ["cargo_fmt", "cargo_check", "cargo_test", "go_test", "validate_patch", "apply_patch_checked", "run_process", "run_script", "run_shell", "run_job"] },
             "execution_source": { "type": "string" },
             "identity": { "type": "string", "maxLength": 256 },
             "purpose": { "type": "string", "enum": ["validation", "test", "build", "format", "release"] },

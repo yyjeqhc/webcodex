@@ -159,6 +159,325 @@ async fn wait_for_local_job_terminal(
     panic!("local validation job did not become terminal: {job_id}");
 }
 
+#[tokio::test]
+async fn go_test_fails_closed_without_structured_go_capability() {
+    let client_id = "vhandoff-go-capability";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_validation_sync_wait(std::time::Duration::from_millis(20));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            structured_go_test_json: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let result = runtime
+        .go_test(agent_test_project_id(client_id), None, Some(1800))
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "capability_unavailable");
+    assert_eq!(result.output["command_started"], false);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("structured_go_test_json"));
+    assert!(next_patch_agent_request(&runtime, client_id)
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidence() {
+    let client_id = "vhandoff-go-fast";
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let scoped = root.join("internal/nodeapp");
+    std::fs::create_dir_all(&scoped).unwrap();
+    let runtime = test_runtime().with_validation_sync_wait(std::time::Duration::from_millis(300));
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            structured_go_test_json: true,
+            ..Default::default()
+        },
+        vec![registered_project(
+            "go-demo",
+            root.to_string_lossy().as_ref(),
+        )],
+    )
+    .await;
+    let project = crate::tool_runtime::agent_project_runtime_id(client_id, "go-demo");
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::GoTest {
+                        project,
+                        session_id: Some(session_id),
+                        cwd: Some("internal/nodeapp".to_string()),
+                        timeout_secs: Some(1800),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_agent_request(&runtime, client_id).await;
+    assert_eq!(request.kind, "start_validation_job");
+    let job_id = request.job_id.clone().expect("start_validation_job job_id");
+    assert_eq!(
+        request.cwd.as_deref(),
+        Some(scoped.to_string_lossy().as_ref())
+    );
+    let steps: serde_json::Value = serde_json::from_str(&request.command).unwrap();
+    assert_eq!(steps.as_array().unwrap().len(), 1);
+    assert_eq!(steps[0]["name"], "test");
+    assert_eq!(steps[0]["program"], "go");
+    assert_eq!(steps[0]["args"], json!(["test", "-json", "./..."]));
+    assert!(steps[0].get("env").is_none());
+
+    let stdout = concat!(
+        "{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestPass\"}\n",
+        "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Test\":\"TestPass\",\"Elapsed\":0}\n",
+        "{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestSkip\"}\n",
+        "{\"Action\":\"skip\",\"Package\":\"example/pkg\",\"Test\":\"TestSkip\",\"Elapsed\":0}\n",
+        "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
+    );
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "completed",
+            stdout,
+            "",
+            Some(0),
+            completed_progress(),
+            true,
+        ))
+        .await
+        .unwrap();
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["command_summary"], "go test -json ./...");
+    assert_eq!(result.output["cwd"], "internal/nodeapp");
+    assert_eq!(result.output["promoted_to_job"], false);
+    assert_eq!(result.output["tests_detected"], true);
+    assert_eq!(result.output["tests_run_count"], 2);
+    assert_eq!(result.output["tests_passed"], 1);
+    assert_eq!(result.output["tests_failed"], 0);
+    assert_eq!(result.output["diagnostics"]["test_summary"]["ignored"], 1);
+    assert_cargo_result_matches_schema("go_test", &result);
+
+    let session = runtime.sessions.summary(&session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["latest"]["tool_name"], "go_test");
+    assert_eq!(validation["latest"]["validation_kind"], "test");
+    assert!(validation["latest"]["identity"]
+        .as_str()
+        .unwrap_or_default()
+        .starts_with("command:"));
+    assert_eq!(validation["latest"]["tests_run_count"], 2);
+    assert_eq!(
+        validation["latest"]["diagnostics"]["test_summary"]["ignored"],
+        1
+    );
+    let serialized = serde_json::to_string(&validation).unwrap();
+    assert!(!serialized.contains(root.to_string_lossy().as_ref()));
+}
+
+#[tokio::test]
+async fn go_test_failure_reports_failed_test_identity_in_result_and_session() {
+    let client_id = "vhandoff-go-failure";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_validation_sync_wait(std::time::Duration::from_millis(300));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            structured_go_test_json: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::GoTest {
+                        project,
+                        session_id: Some(session_id),
+                        cwd: None,
+                        timeout_secs: Some(1800),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_agent_request(&runtime, client_id).await;
+    assert_eq!(request.kind, "start_validation_job");
+    let job_id = request.job_id.clone().expect("start_validation_job job_id");
+    let stdout = concat!(
+        "{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestFail\"}\n",
+        "{\"Action\":\"fail\",\"Package\":\"example/pkg\",\"Test\":\"TestFail\",\"Elapsed\":0}\n",
+        "{\"Action\":\"fail\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
+    );
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "failed",
+            stdout,
+            "",
+            Some(1),
+            completed_progress(),
+            true,
+        ))
+        .await
+        .unwrap();
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "validation_failed");
+    assert_eq!(result.output["tests_failed"], 1);
+    assert_eq!(
+        result.output["diagnostics"]["failed_test_details"][0]["name"],
+        "example/pkg::TestFail"
+    );
+    assert_cargo_result_matches_schema("go_test", &result);
+
+    let session = runtime.sessions.summary(&session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["latest"]["tool_name"], "go_test");
+    assert_eq!(validation["latest"]["failure_kind"], "test_failure");
+    assert_eq!(
+        validation["latest"]["diagnostics"]["failed_test_details"][0]["name"],
+        "example/pkg::TestFail"
+    );
+}
+
+#[tokio::test]
+async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
+    let client_id = "vhandoff-go-long";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_validation_sync_wait(std::time::Duration::from_millis(20));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            structured_go_test_json: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::GoTest {
+                        project,
+                        session_id: Some(session_id),
+                        cwd: None,
+                        timeout_secs: Some(1800),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_agent_request(&runtime, client_id).await;
+    assert_eq!(request.kind, "start_validation_job");
+    let job_id = request.job_id.clone().expect("start_validation_job job_id");
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["job_id"], job_id);
+
+    let stdout = concat!(
+        "{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestLater\"}\n",
+        "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Test\":\"TestLater\",\"Elapsed\":0}\n",
+        "{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Elapsed\":0}\n"
+    );
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "completed",
+            stdout,
+            "",
+            Some(0),
+            completed_progress(),
+            true,
+        ))
+        .await
+        .unwrap();
+
+    let session = runtime.sessions.summary(&session_id, Some(50)).unwrap();
+    let validation = runtime
+        .validation_summary_for_session_with_jobs(&session, 20, Some(&auth))
+        .await;
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["latest"]["tool_name"], "go_test");
+    assert_eq!(validation["latest"]["tests_run_count"], 1);
+    assert_eq!(
+        validation["latest"]["diagnostics"]["test_summary"]["passed"],
+        1
+    );
+}
+
 /// Fast sync-complete: a validation that finishes within the tiny injected
 /// sync window returns the existing terminal structure and leaves no visible
 /// Job in `list_jobs`.

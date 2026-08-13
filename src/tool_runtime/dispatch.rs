@@ -378,6 +378,7 @@ impl ToolRuntime {
                             | ToolCall::CargoFmt { .. }
                             | ToolCall::CargoCheck { .. }
                             | ToolCall::CargoTest { .. }
+                            | ToolCall::GoTest { .. }
                     ) {
                         ssh_resource = execution_context.resource.clone();
                     }
@@ -730,7 +731,8 @@ impl ToolRuntime {
 
             call @ (ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }
-            | ToolCall::CargoTest { .. }) => {
+            | ToolCall::CargoTest { .. }
+            | ToolCall::GoTest { .. }) => {
                 self.dispatch_cargo_tool(call, execution_sandbox, ssh_resource, auth)
                     .await
             }

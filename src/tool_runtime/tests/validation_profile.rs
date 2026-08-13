@@ -169,7 +169,7 @@ fn go_test_adapter_maps_only_structured_test_failures() {
 #[test]
 fn validation_profiles_reuse_existing_runtime_tool_schemas() {
     let specs = registered_tool_specs();
-    for tool_name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+    for tool_name in ["cargo_fmt", "cargo_check", "cargo_test", "go_test"] {
         assert!(is_known_tool_name(tool_name));
         assert_eq!(
             specs.iter().filter(|spec| spec.name == tool_name).count(),
@@ -178,7 +178,7 @@ fn validation_profiles_reuse_existing_runtime_tool_schemas() {
         );
     }
     assert!(validation_adapter_for_tool("validation_profile").is_none());
-    assert!(!is_known_tool_name("go_test"));
+    assert!(is_known_tool_name("go_test"));
     assert!(!is_known_tool_name("validation_profile"));
     assert!(!is_known_tool_name("validation_adapter"));
 }

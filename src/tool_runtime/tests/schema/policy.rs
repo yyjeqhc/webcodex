@@ -183,7 +183,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .collect::<Vec<_>>();
     assert_eq!(
         validation_output_tools,
-        vec!["cargo_fmt", "cargo_check", "cargo_test"]
+        vec!["cargo_fmt", "cargo_check", "cargo_test", "go_test"]
     );
 
     let current_session_control_tools = tool_definitions()
@@ -466,6 +466,7 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ("cargo_fmt", ToolRisk::JobRun, AgentCapability::Shell),
         ("cargo_check", ToolRisk::JobRun, AgentCapability::Shell),
         ("cargo_test", ToolRisk::JobRun, AgentCapability::Shell),
+        ("go_test", ToolRisk::JobRun, AgentCapability::OwnerOnly),
         ("read_file", ToolRisk::ReadOnly, AgentCapability::FileRead),
         ("read_files", ToolRisk::ReadOnly, AgentCapability::FileRead),
         (

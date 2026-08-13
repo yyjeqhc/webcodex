@@ -124,6 +124,25 @@ pub(crate) fn structured_validation_evidence(
         errors_count: None,
     };
     match kind {
+        "test" if tool == "go_test" => {
+            let test_summary = evidence
+                .diagnostics
+                .as_ref()
+                .and_then(|diagnostics| diagnostics.test_summary.as_ref());
+            evidence.tests_detected = Some(test_summary.is_some());
+            if !truncated {
+                evidence.tests_passed = test_summary.and_then(|summary| summary.passed);
+                evidence.tests_failed = test_summary.and_then(|summary| summary.failed);
+                evidence.tests_run_count = test_summary.map(|summary| {
+                    summary
+                        .passed
+                        .unwrap_or(0)
+                        .saturating_add(summary.failed.unwrap_or(0))
+                        .saturating_add(summary.ignored.unwrap_or(0))
+                });
+                evidence.zero_tests_run = evidence.tests_run_count.map(|count| count == 0);
+            }
+        }
         "test" => {
             let metadata = super::cargo::parse_cargo_test_run_metadata(&combined);
             let (tests_passed, tests_failed) = super::cargo::parse_cargo_test_counts(&combined);
@@ -157,7 +176,7 @@ pub(crate) fn validation_job_projection(
 ) -> Option<Value> {
     let tool = tool?;
     let kind = kind.unwrap_or(match tool {
-        "cargo_test" => "test",
+        "cargo_test" | "go_test" => "test",
         "cargo_fmt" => "format",
         _ => "check",
     });

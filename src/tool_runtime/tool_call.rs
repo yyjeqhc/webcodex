@@ -761,6 +761,17 @@ pub enum ToolCall {
         timeout_secs: Option<u64>,
     },
 
+    /// Run canonical structured `go test -json ./...` validation.
+    GoTest {
+        project: String,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+    },
+
     /// Read a file from a project.
     ReadFile {
         project: String,
@@ -1662,6 +1673,7 @@ impl ToolCall {
             Self::CargoFmt { .. } => "cargo_fmt",
             Self::CargoCheck { .. } => "cargo_check",
             Self::CargoTest { .. } => "cargo_test",
+            Self::GoTest { .. } => "go_test",
             Self::ReadFile { .. } => "read_file",
             Self::ReadFiles { .. } => "read_files",
             Self::RunJob { .. } => "run_job",
@@ -1723,6 +1735,7 @@ impl ToolCall {
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
             | Self::CargoTest { session_id, .. }
+            | Self::GoTest { session_id, .. }
             | Self::ReadFile { session_id, .. }
             | Self::ReadFiles { session_id, .. }
             | Self::RunJob { session_id, .. }
@@ -1785,6 +1798,7 @@ impl ToolCall {
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
             | Self::CargoTest { session_id, .. }
+            | Self::GoTest { session_id, .. }
             | Self::ReadFile { session_id, .. }
             | Self::ReadFiles { session_id, .. }
             | Self::RunJob { session_id, .. }
@@ -1875,6 +1889,7 @@ impl ToolCall {
             | Self::CargoFmt { project, .. }
             | Self::CargoCheck { project, .. }
             | Self::CargoTest { project, .. }
+            | Self::GoTest { project, .. }
             | Self::ReadFile { project, .. }
             | Self::ReadFiles { project, .. }
             | Self::RunJob { project, .. }

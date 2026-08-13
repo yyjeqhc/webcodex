@@ -91,6 +91,23 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::GoTest {
+                project,
+                session_id,
+                cwd,
+                timeout_secs,
+            } => {
+                self.go_test_with_context(
+                    project,
+                    cwd,
+                    timeout_secs,
+                    session_id,
+                    ssh_resource,
+                    sandbox,
+                    auth,
+                )
+                .await
+            }
             _ => unreachable!("non-cargo tool routed to cargo dispatcher"),
         };
         if !result.success

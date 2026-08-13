@@ -291,6 +291,7 @@ mod tests {
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
+            "go_test",
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.risk, ToolRisk::JobRun, "{name}");

@@ -26,8 +26,8 @@ use crate::shell_protocol::{
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
 const CARGO_VALIDATION_FAILURE_KIND: &str = "validation_failed";
-const CARGO_FAILURE_GUIDANCE: &str =
-    "command was started; inspect stdout_tail/stderr_tail in output, then fix the reported issue or rerun with a narrower cargo filter.";
+const VALIDATION_FAILURE_GUIDANCE: &str =
+    "command was started; inspect bounded validation evidence, fix the reported issue, then rerun the same structured validation tool.";
 
 fn validate_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
     match cwd {
@@ -208,10 +208,10 @@ fn sync_timeout_out_of_range_result_with_range(
     )
 }
 
-fn reject_structured_cargo_ssh_resource(ssh_resource: Option<&str>) -> Option<ToolResult> {
+fn reject_structured_validation_ssh_resource(ssh_resource: Option<&str>) -> Option<ToolResult> {
     ssh_resource.map(|_| {
         ToolResult::err(command_rejected_message(
-            "ssh_resource_unsupported_for_request: SSH resources do not support structured Cargo validation",
+            "ssh_resource_unsupported_for_request: SSH resources do not support structured validation tools",
             "use the named runner host through run_shell or run_job instead.",
         ))
     })
@@ -283,7 +283,7 @@ impl ToolRuntime {
         // Both read-only and mutating structured Cargo formatting reject named
         // SSH resources before selecting an execution path. In particular, the
         // mutating sync path must never fall back to the Agent project root.
-        if let Some(result) = reject_structured_cargo_ssh_resource(ssh_resource) {
+        if let Some(result) = reject_structured_validation_ssh_resource(ssh_resource) {
             return result;
         }
         // Non-check `cargo fmt` mutates source and keeps the existing explicit
@@ -559,6 +559,50 @@ impl ToolRuntime {
         .await
     }
 
+    #[cfg(test)]
+    pub(crate) async fn go_test(
+        &self,
+        project: String,
+        cwd: Option<String>,
+        timeout_secs: Option<u64>,
+    ) -> ToolResult {
+        self.go_test_with_context(project, cwd, timeout_secs, None, None, None, None)
+            .await
+    }
+
+    pub(crate) async fn go_test_with_context(
+        &self,
+        project: String,
+        cwd: Option<String>,
+        timeout_secs: Option<u64>,
+        session_id: Option<String>,
+        ssh_resource: Option<&str>,
+        sandbox: Option<&str>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        self.run_readonly_validation(
+            "go_test",
+            ValidationRunRequest {
+                project,
+                cwd,
+                check: false,
+                filter: None,
+                all_targets: None,
+                all_features: None,
+                no_default_features: None,
+                features: None,
+                package: None,
+                no_run: None,
+                timeout_secs,
+                session_id,
+                ssh_resource,
+                sandbox: sandbox.map(str::to_string),
+                auth,
+            },
+        )
+        .await
+    }
+
     /// Run one read-only structured validation exactly once, synchronously
     /// waiting for up to the internal sync window, then promoting the *same*
     /// execution to a queryable Job if it is still running.
@@ -569,7 +613,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         let default = match tool_name {
             "cargo_check" => DEFAULT_CARGO_CHECK_TIMEOUT_SECS,
-            "cargo_test" => DEFAULT_CARGO_TEST_TIMEOUT_SECS,
+            "cargo_test" | "go_test" => DEFAULT_CARGO_TEST_TIMEOUT_SECS,
             "cargo_fmt" => DEFAULT_CARGO_FMT_TIMEOUT_SECS,
             _ => unreachable!("unknown read-only validation tool"),
         };
@@ -587,7 +631,7 @@ impl ToolRuntime {
             }
         };
         let adapter = validation_adapter_for_tool(tool_name)
-            .expect("Rust validation profile must register the read-only cargo tool");
+            .expect("structured validation profile must register the read-only tool");
         let options = ValidationCommandOptions {
             check: request.check,
             filter: request.filter,
@@ -630,10 +674,11 @@ impl ToolRuntime {
         let ssh_resource = request.ssh_resource.map(str::to_string);
 
         if resolved.is_agent() {
-            // Structured Cargo tools never execute through a named SSH resource.
+            // Structured validation tools never execute through a named SSH resource.
             // Reject at the shared Agent entry so legacy sync, short sync, and
             // long Job handoff paths cannot silently fall back to the project root.
-            if let Some(result) = reject_structured_cargo_ssh_resource(ssh_resource.as_deref()) {
+            if let Some(result) = reject_structured_validation_ssh_resource(ssh_resource.as_deref())
+            {
                 return result;
             }
             let client_id = match resolved.agent_client_id() {
@@ -657,6 +702,38 @@ impl ToolRuntime {
             let async_handoff_available = (capabilities.async_jobs
                 || capabilities.async_shell_jobs)
                 && capabilities.structured_validation_argv;
+            if tool_name == "go_test" && !capabilities.structured_go_test_json {
+                return ToolResult::err_with_output(
+                    command_rejected_message(
+                        "capability_unavailable: this Runner does not advertise structured_go_test_json",
+                        "select or upgrade a Runner that advertises structured_go_test_json, then retry go_test.",
+                    ),
+                    json!({
+                        "command_started": false,
+                        "command_completed": false,
+                        "command_ok": false,
+                        "failure_kind": "capability_unavailable",
+                        "tool_failure": true,
+                        "async_handoff_available": async_handoff_available,
+                    }),
+                );
+            }
+            if tool_name == "go_test" && !async_handoff_available {
+                return ToolResult::err_with_output(
+                    command_rejected_message(
+                        "capability_unavailable: this Runner cannot execute structured Go validation jobs",
+                        "select or upgrade a Runner that advertises structured validation argv plus async jobs, then retry go_test.",
+                    ),
+                    json!({
+                        "command_started": false,
+                        "command_completed": false,
+                        "command_ok": false,
+                        "failure_kind": "capability_unavailable",
+                        "tool_failure": true,
+                        "async_handoff_available": false,
+                    }),
+                );
+            }
             if !async_handoff_available {
                 let legacy_timeout = match request.timeout_secs {
                     Some(value) if value > 120 => {
@@ -714,7 +791,7 @@ impl ToolRuntime {
                 result.output["async_handoff_available"] = json!(false);
                 return result;
             }
-            if timeout_secs > SYNC_VALIDATION_WAIT_SECS {
+            if tool_name == "go_test" || timeout_secs > SYNC_VALIDATION_WAIT_SECS {
                 // The budget exceeds the internal sync window, so there is
                 // headroom to promote the same execution to a Job. The agent
                 // path enqueues exactly one structured validation Job, waits
@@ -845,16 +922,16 @@ impl ToolRuntime {
         let step = validation_step(tool_name, &options);
         let Ok(step) = step else {
             return ToolResult::err(command_rejected_message(
-                "could not encode structured cargo validation step",
-                "fix the cargo argument format, then retry.",
+                "could not encode structured validation step",
+                "fix the structured validation argument format, then retry.",
             ));
         };
         let dispatched_command = match serde_json::to_string(std::slice::from_ref(&step)) {
             Ok(command) => command,
             Err(_) => {
                 return ToolResult::err(command_rejected_message(
-                    "could not serialize structured cargo validation step",
-                    "fix the cargo argument format, then retry.",
+                    "could not serialize structured validation step",
+                    "fix the structured validation argument format, then retry.",
                 ))
             }
         };
@@ -1505,7 +1582,7 @@ impl ToolRuntime {
                         &stderr_tail,
                     )
                 } else {
-                    format!("cargo command failed; {}", CARGO_FAILURE_GUIDANCE)
+                    format!("structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}")
                 }),
             };
             self.shell_clients.remove_job_record(&job_id).await;
@@ -1612,7 +1689,7 @@ impl ToolRuntime {
                         output
                             .error
                             .as_deref()
-                            .unwrap_or("the Runner rejected the Cargo command before process spawn"),
+                            .unwrap_or("the Runner rejected the structured validation command before process spawn"),
                         "correct the project, cwd, permissions, sandbox, or Runner availability indicated by the rejection, then retry.",
                     )),
                 }
@@ -1624,7 +1701,7 @@ impl ToolRuntime {
                     output: payload,
                     error: Some(command_outcome_unknown_message(
                         output.error.as_deref().unwrap_or(
-                            "the executor did not return a trustworthy terminal Cargo result",
+                            "the executor did not return a trustworthy terminal validation result",
                         ),
                     )),
                 }
@@ -1650,7 +1727,9 @@ impl ToolRuntime {
                 ToolResult {
                     success: false,
                     output: payload,
-                    error: Some(format!("cargo command failed; {}", CARGO_FAILURE_GUIDANCE)),
+                    error: Some(format!(
+                        "structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}"
+                    )),
                 }
             }
         }
@@ -1754,15 +1833,16 @@ struct ValidationHandoff {
     auth: Option<AuthContext>,
 }
 
-/// Build the canonical structured validation step for a read-only cargo tool
+/// Build the canonical structured validation step for a read-only validation tool
 /// from the same options the synchronous adapter would have used.
 fn validation_step(
     tool_name: &str,
     options: &ValidationCommandOptions,
 ) -> Result<ShellJobValidationStep, String> {
-    let (name, args) = match tool_name {
+    let (name, program, args) = match tool_name {
         "cargo_fmt" => (
             "format",
+            "cargo",
             vec!["fmt".to_string(), "--".to_string(), "--check".to_string()],
         ),
         "cargo_check" => {
@@ -1778,7 +1858,7 @@ fn validation_step(
             }
             push_paired_arg(&mut args, "--features", options.features.as_deref())?;
             push_paired_arg(&mut args, "-p", options.package.as_deref())?;
-            ("check", args)
+            ("check", "cargo", args)
         }
         "cargo_test" => {
             let mut args = vec!["test".to_string()];
@@ -1805,18 +1885,23 @@ fn validation_step(
             if options.no_run.unwrap_or(false) {
                 args.push("--no-run".to_string());
             }
-            ("test", args)
+            ("test", "cargo", args)
         }
+        "go_test" => (
+            "test",
+            "go",
+            vec!["test".to_string(), "-json".to_string(), "./...".to_string()],
+        ),
         _ => return Err("unknown validation tool".to_string()),
     };
     let step = ShellJobValidationStep {
         name: name.to_string(),
-        program: "cargo".to_string(),
+        program: program.to_string(),
         args,
         env: Vec::new(),
     };
     if !step.is_canonical() {
-        return Err("cargo validation step is not canonical".to_string());
+        return Err("structured validation step is not canonical".to_string());
     }
     Ok(step)
 }

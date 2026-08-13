@@ -78,5 +78,5 @@ pub(super) use testing::with_common_testing_metadata;
 pub(super) use text_edits::write_project_file_input_schema;
 pub(super) use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
-    validate_patch_input_schema,
+    go_test_input_schema, validate_patch_input_schema,
 };

@@ -1,4 +1,4 @@
-use super::AgentCapability::Shell;
+use super::AgentCapability::{OwnerOnly, Shell};
 use super::ToolVisibility::ModelVisible;
 use super::{captures_validation_output, def, ToolDefinition, TOOL_CATEGORY_VALIDATION};
 use crate::tool_runtime::metadata::{
@@ -37,6 +37,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_VALIDATION,
         Some(Shell),
+        TOOL_PROVIDER_AGENT,
+        JobRun,
+        Some(JOB_RUN),
+        true,
+        NoPath,
+        false,
+        false,
+    )),
+    captures_validation_output(def(
+        "go_test",
+        ModelVisible,
+        TOOL_CATEGORY_VALIDATION,
+        Some(OwnerOnly),
         TOOL_PROVIDER_AGENT,
         JobRun,
         Some(JOB_RUN),

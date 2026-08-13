@@ -93,6 +93,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
+            "go_test",
             "validation_summary",
             "validate_patch",
             "apply_patch_checked",
@@ -246,12 +247,13 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "validate",
         summary:
-            "Validate: use cargo_check / cargo_test / validate_patch; long validation continues as a Job. Prefer run_process for native argv and run_script for typed scripts. Raw run_shell is a bounded escape hatch, not the primary validation path or editing path.",
+            "Validate: use cargo_check / cargo_test / go_test / validate_patch; long validation continues as a Job. Prefer structured validation tools when available; raw run_shell is a bounded escape hatch, not the primary validation path.",
         manifest_purpose:
-            "Use structured validation; long checks become Jobs. Prefer run_process for native argv and run_script for typed scripts; run_shell is a command-string escape hatch, not the primary validation path.",
+            "Use structured Rust or Go validation; long checks become Jobs. Prefer structured validation tools when available; run_shell remains an explicit escape hatch, not the primary validation path.",
         tools: &[
             "cargo_check",
             "cargo_test",
+            "go_test",
             "observe_jobs",
             "job_status",
             "validation_summary",
@@ -321,6 +323,7 @@ pub(crate) const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "cargo_fmt",
     "cargo_check",
     "cargo_test",
+    "go_test",
     "validation_summary",
     // git review
     "git_status",

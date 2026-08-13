@@ -11,8 +11,8 @@ use crate::shell_protocol::{
 use serde_json::json;
 
 #[test]
-fn cargo_runtime_tools_are_known_and_parse() {
-    for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+fn structured_validation_tools_are_known_and_parse() {
+    for name in ["cargo_fmt", "cargo_check", "cargo_test", "go_test"] {
         assert!(is_known_tool_name(name), "{name} missing");
     }
     assert!(matches!(
@@ -40,6 +40,14 @@ fn cargo_runtime_tools_are_known_and_parse() {
         )
         .unwrap(),
         ToolCall::CargoTest { filter: Some(filter), .. } if filter == "tool_runtime"
+    ));
+    assert!(matches!(
+        ToolCall::from_tool_name(
+            "go_test",
+            json!({"project":"agent:oe:webcodex","cwd":"internal/nodeapp"})
+        )
+        .unwrap(),
+        ToolCall::GoTest { cwd: Some(cwd), .. } if cwd == "internal/nodeapp"
     ));
 }
 
@@ -88,6 +96,26 @@ async fn cargo_tools_reject_unsafe_cwd_before_project_dispatch() {
         .await;
     assert!(!test.success);
     assert!(test.error.unwrap().contains("NUL"));
+
+    let go_parent = runtime
+        .go_test(
+            "agent:oe:webcodex".to_string(),
+            Some("../outside".to_string()),
+            None,
+        )
+        .await;
+    assert!(!go_parent.success);
+    assert!(go_parent.error.unwrap().contains("parent traversal"));
+
+    let go_absolute = runtime
+        .go_test(
+            "agent:oe:webcodex".to_string(),
+            Some("/tmp".to_string()),
+            None,
+        )
+        .await;
+    assert!(!go_absolute.success);
+    assert!(go_absolute.error.unwrap().contains("project-relative"));
 }
 
 #[tokio::test]
@@ -233,9 +261,9 @@ async fn cargo_test_failure_includes_stderr_tail_or_guidance() {
     let result = task.await.unwrap();
     assert!(!result.success);
     let error = result.error.as_deref().unwrap_or("");
-    assert!(error.contains("cargo command failed"));
+    assert!(error.contains("structured validation command failed"));
     assert!(error.contains("command was started"));
-    assert!(error.contains("stdout_tail/stderr_tail"));
+    assert!(error.contains("bounded validation evidence"));
     assert_eq!(result.output["passed"], false);
     assert_eq!(result.output["failure_kind"], "validation_failed");
     assert!(result.output["stdout_tail"]

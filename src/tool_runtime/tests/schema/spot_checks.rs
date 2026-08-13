@@ -59,9 +59,9 @@ fn tool_specs_show_changes_schema() {
 }
 
 #[test]
-fn tool_specs_cargo_tools_schema_and_output() {
+fn tool_specs_structured_validation_schema_and_output() {
     let specs = registered_tool_specs();
-    for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+    for name in ["cargo_fmt", "cargo_check", "cargo_test", "go_test"] {
         let spec = spec_named(&specs, name);
         let required = required_fields(spec);
         assert_eq!(required, vec!["project".to_string()]);
@@ -86,6 +86,30 @@ fn tool_specs_cargo_tools_schema_and_output() {
                 field
             );
         }
+    }
+    let go_props = spec_named(&specs, "go_test").input_schema["properties"]
+        .as_object()
+        .unwrap();
+    for field in ["project", "cwd", "timeout_secs", "session_id"] {
+        assert!(
+            go_props.contains_key(field),
+            "go_test missing input {field}"
+        );
+    }
+    for field in [
+        "filter",
+        "package",
+        "features",
+        "all_targets",
+        "all_features",
+        "no_default_features",
+        "no_run",
+        "env",
+    ] {
+        assert!(
+            !go_props.contains_key(field),
+            "go_test must not expose {field}"
+        );
     }
 }
 

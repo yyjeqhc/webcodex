@@ -599,6 +599,16 @@ impl ToolCall {
                 "no_run": no_run,
                 "timeout_secs": timeout_secs,
             }),
+            Self::GoTest {
+                project,
+                cwd,
+                timeout_secs,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "cwd": cwd,
+                "timeout_secs": timeout_secs,
+            }),
             Self::ReadFile {
                 project,
                 path,

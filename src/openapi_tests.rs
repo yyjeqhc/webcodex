@@ -1328,6 +1328,7 @@ fn openapi_runtime_only_tools_do_not_get_dedicated_paths() {
         "/api/projects/cargo_fmt",
         "/api/projects/cargo_check",
         "/api/projects/cargo_test",
+        "/api/projects/go_test",
         "/api/projects/git_diff_hunks",
         "/api/projects/show_changes",
         "/api/projects/workspace_checkpoint_create",

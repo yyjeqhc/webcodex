@@ -114,18 +114,18 @@ pub(crate) fn work_on_project_input_schema() -> Value {
             "project": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Existing runtime project id, such as agent:<client_id>:<project_id>. Mutually exclusive with client_id + path."
+                "description": "Existing runtime project id. Use project + instruction for an existing project; do not combine project with client_id or path."
             },
             "client_id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Runner client_id that owns path. Required exactly with path."
+                "description": "Runner client_id for the path form. Use client_id + path + instruction together; do not combine with project."
             },
             "path": {
                 "type": "string",
                 "minLength": 1,
                 "pattern": "^/",
-                "description": "Existing absolute directory path on the selected Runner. The Runner authoritatively resolves or permanently registers it before exact Workflow Session handling."
+                "description": "Runner-owned absolute directory path for the path form. Use with client_id + instruction; do not combine with project. The Runner authoritatively resolves or permanently registers it before exact Workflow Session handling."
             },
             "instruction": {
                 "type": "string",
@@ -140,21 +140,6 @@ pub(crate) fn work_on_project_input_schema() -> Value {
             }
         },
         "required": ["instruction"],
-        "oneOf": [
-            {
-                "required": ["project"],
-                "not": {
-                    "anyOf": [
-                        {"required": ["client_id"]},
-                        {"required": ["path"]}
-                    ]
-                }
-            },
-            {
-                "required": ["client_id", "path"],
-                "not": {"required": ["project"]}
-            }
-        ],
         "additionalProperties": false,
     })
 }

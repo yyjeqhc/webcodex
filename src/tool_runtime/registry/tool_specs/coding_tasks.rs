@@ -8,12 +8,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "start_coding_task",
-            "Preferred coding bootstrap for normal or advanced tasks. Starts or continues a project and returns built-in workflow guidance, project-local instructions, and repository/startup context; explicit resume and isolation controls remain available.",
+            "Preferred coding bootstrap for normal or advanced tasks. Starts or continues a project and returns built-in workflow guidance, project-local instructions, and repository/startup context. Use resume_session_id for exact explicit resume and new_session=true for deliberate isolation.",
             start_coding_task_input_schema(),
         ),
         tool_spec(
             "work_on_project",
-            "Preferred normal coding bootstrap. Starts a project/path or continues exact session_id and returns compact built-in workflow guidance, project-local instructions, and repository/startup context. Use start_coding_task for advanced controls.",
+            "Preferred normal coding bootstrap. Use project + instruction for an existing project or client_id + path + instruction for a Runner-owned absolute path; do not mix the forms. Returns compact built-in workflow guidance and project-local instructions. Use start_coding_task for advanced controls.",
             work_on_project_input_schema(),
         ),
         tool_spec(

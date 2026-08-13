@@ -2996,6 +2996,31 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
         );
     }
 
+    let work_schema = &tool("work_on_project")["inputSchema"];
+    let work_props = work_schema["properties"]
+        .as_object()
+        .expect("work_on_project MCP properties");
+    for field in ["project", "client_id", "path", "instruction", "session_id"] {
+        assert!(work_props.contains_key(field), "MCP schema missing {field}");
+    }
+    assert_eq!(work_schema["required"], json!(["instruction"]));
+    assert_eq!(work_schema["additionalProperties"], false);
+    for keyword in [
+        "oneOf",
+        "anyOf",
+        "allOf",
+        "not",
+        "dependentRequired",
+        "if",
+        "then",
+        "else",
+    ] {
+        assert!(
+            work_schema.get(keyword).is_none(),
+            "work_on_project MCP schema must not expose top-level {keyword}"
+        );
+    }
+
     let finish_props = tool("finish_coding_task")["inputSchema"]["properties"]
         .as_object()
         .expect("finish_coding_task inputSchema properties");
@@ -3285,6 +3310,20 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
             "local_coding must not expose {forbidden}: {names:?}"
         );
     }
+
+    let work = tools
+        .iter()
+        .find(|tool| tool["name"] == "work_on_project")
+        .expect("local_coding work_on_project");
+    let schema = &work["inputSchema"];
+    let props = schema["properties"].as_object().unwrap();
+    for field in ["project", "client_id", "path", "instruction", "session_id"] {
+        assert!(props.contains_key(field), "local_coding missing {field}");
+    }
+    assert_eq!(schema["required"], json!(["instruction"]));
+    assert_eq!(schema["additionalProperties"], false);
+    assert!(schema.get("oneOf").is_none());
+    assert!(schema.get("not").is_none());
 }
 
 #[tokio::test]

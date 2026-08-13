@@ -1556,6 +1556,11 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // the current machine-readable JSON argv. Do not trust static config or
     // infer this from generic structured validation support.
     capabilities.structured_go_test_json = true;
+    // This binary also understands the first-class go_test durable metadata
+    // identity. Keep this independent from JSON parsing so an old Runner that
+    // supported Connector Go evidence cannot be mistaken for a first-class
+    // go_test executor by a newer Server.
+    capabilities.structured_go_test_tool = true;
     capabilities.structured_process_argv = true;
     capabilities.structured_script_payload = true;
     capabilities.structured_execution_jobs = true;

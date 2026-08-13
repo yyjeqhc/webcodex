@@ -204,10 +204,9 @@ async fn cargo_check_failure_includes_stderr_tail_or_guidance() {
     let result = task.await.unwrap();
     assert!(!result.success);
     let error = result.error.as_deref().unwrap_or("");
-    assert!(error.contains("cargo command failed"));
+    assert!(error.contains("structured validation command failed"));
     assert!(error.contains("command was started"));
-    assert!(error.contains("stdout_tail/stderr_tail"));
-    assert!(error.contains("narrower cargo filter"));
+    assert!(error.contains("bounded validation evidence"));
     assert_eq!(result.output["passed"], false);
     assert_eq!(result.output["execution_state"], "completed");
     assert_eq!(result.output["command_started"], true);
@@ -579,9 +578,9 @@ async fn cargo_fmt_failure_includes_stderr_tail_or_guidance() {
     let result = task.await.unwrap();
     assert!(!result.success);
     let error = result.error.as_deref().unwrap_or("");
-    assert!(error.contains("cargo command failed"));
+    assert!(error.contains("structured validation command failed"));
     assert!(error.contains("command was started"));
-    assert!(error.contains("stdout_tail/stderr_tail"));
+    assert!(error.contains("bounded validation evidence"));
     assert_eq!(result.output["passed"], false);
     assert_eq!(result.output["failure_kind"], "validation_failed");
     assert!(result.output["stdout_tail"].is_string());

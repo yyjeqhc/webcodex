@@ -211,6 +211,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // The running binary advertises this process-lifetime protocol
             // capability after installing its exact Go argv boundary.
             structured_go_test_json: false,
+            // Like JSON parsing, first-class durable go_test support is
+            // advertised by the running binary, never by generated static config.
+            structured_go_test_tool: false,
             structured_process_argv: true,
             structured_script_payload: true,
             structured_execution_jobs: true,
@@ -411,6 +414,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(rendered_roots, vec![home.to_string_lossy().to_string()]);
             assert!(!content.contains("structured_go_test_json"));
+            assert!(!content.contains("structured_go_test_tool"));
             assert!(!content.contains("job_state_reconciliation"));
         }
     }

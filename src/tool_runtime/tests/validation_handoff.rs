@@ -195,6 +195,110 @@ async fn go_test_fails_closed_without_structured_go_capability() {
 }
 
 #[tokio::test]
+async fn go_test_requires_first_class_tool_capability_before_job_reservation() {
+    let client_id = "vhandoff-go-old-runner";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_validation_sync_wait(std::time::Duration::from_millis(20));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            structured_go_test_json: true,
+            structured_go_test_tool: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::GoTest {
+                project: project.clone(),
+                session_id: Some(session.session_id.clone()),
+                cwd: None,
+                timeout_secs: Some(1800),
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "capability_unavailable");
+    assert_eq!(result.output["command_started"], false);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("structured_go_test_tool"));
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(next_patch_agent_request(&runtime, client_id)
+        .await
+        .is_none());
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(50))
+        .unwrap();
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "not_run");
+    assert_eq!(validation["events_total"], 0);
+    assert!(validation["latest"].is_null());
+
+    // The new first-class bit must not narrow unrelated structured validation
+    // on an otherwise capable older Runner.
+    let check_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CargoCheck {
+                        project,
+                        session_id: None,
+                        cwd: None,
+                        all_targets: None,
+                        all_features: None,
+                        no_default_features: None,
+                        features: None,
+                        package: None,
+                        timeout_secs: Some(600),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
+    let steps: Vec<crate::shell_protocol::ShellJobValidationStep> =
+        serde_json::from_str(&request.command).unwrap();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].name, "check");
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "completed",
+            "Finished `dev` profile [unoptimized + debuginfo] target(s)\n",
+            "",
+            Some(0),
+            completed_progress(),
+            true,
+        ))
+        .await
+        .unwrap();
+    let check = check_task.await.unwrap();
+    assert!(check.success, "{:?}", check.error);
+}
+
+#[tokio::test]
 async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidence() {
     let client_id = "vhandoff-go-fast";
     let tmp = tempfile::tempdir().unwrap();
@@ -210,6 +314,7 @@ async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidenc
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_go_test_json: true,
+            structured_go_test_tool: true,
             ..Default::default()
         },
         vec![registered_project(
@@ -322,6 +427,7 @@ async fn go_test_failure_reports_failed_test_identity_in_result_and_session() {
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_go_test_json: true,
+            structured_go_test_tool: true,
             ..Default::default()
         },
     )
@@ -407,6 +513,7 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_go_test_json: true,
+            structured_go_test_tool: true,
             ..Default::default()
         },
     )

@@ -718,6 +718,22 @@ impl ToolRuntime {
                     }),
                 );
             }
+            if tool_name == "go_test" && !capabilities.structured_go_test_tool {
+                return ToolResult::err_with_output(
+                    command_rejected_message(
+                        "capability_unavailable: this Runner does not advertise structured_go_test_tool",
+                        "upgrade and reconnect a Runner that supports the first-class go_test tool contract, then retry go_test.",
+                    ),
+                    json!({
+                        "command_started": false,
+                        "command_completed": false,
+                        "command_ok": false,
+                        "failure_kind": "capability_unavailable",
+                        "tool_failure": true,
+                        "async_handoff_available": async_handoff_available,
+                    }),
+                );
+            }
             if tool_name == "go_test" && !async_handoff_available {
                 return ToolResult::err_with_output(
                     command_rejected_message(

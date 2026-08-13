@@ -593,6 +593,16 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
+        if validation
+            .as_ref()
+            .is_some_and(|metadata| metadata.tool == "go_test")
+            && !client.capabilities.structured_go_test_tool
+        {
+            return Err(format!(
+                "structured_go_test_tool_unavailable: agent client {} does not support the first-class go_test validation contract",
+                client_id
+            ));
+        }
         if metadata
             .project_id
             .as_deref()

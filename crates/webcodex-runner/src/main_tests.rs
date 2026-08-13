@@ -2175,6 +2175,35 @@ fn shell_job_request(cwd: &Path, command: &str) -> ShellAgentShellRequest {
     }
 }
 
+#[test]
+fn runner_recovery_context_rejects_cross_product_go_test_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = shell_job_request(temp.path(), "");
+    request.kind = "start_validation_job".to_string();
+    let cargo_step = ShellJobValidationStep {
+        name: "test".to_string(),
+        program: "cargo".to_string(),
+        args: vec!["test".to_string(), "tool_runtime".to_string()],
+        env: Vec::new(),
+    };
+    request.command = serde_json::to_string(&vec![cargo_step.clone()]).unwrap();
+    let context = request.job_context.as_mut().unwrap();
+    context.purpose = Some("validation".to_string());
+    context.validation_steps = vec!["test".to_string()];
+    context.validation = Some(shell_protocol::ShellJobValidationMetadata {
+        tool: "go_test".to_string(),
+        kind: "test".to_string(),
+        steps: vec![cargo_step],
+        effective_timeout_secs: 1800,
+        sync_wait_secs: 10,
+        adapter: "go_test".to_string(),
+    });
+    let context = context.clone();
+
+    let error = validate_runner_job_context(&context, &request, "ws-client").unwrap_err();
+    assert!(error.contains("validation metadata is invalid"), "{error}");
+}
+
 fn wait_for_job_stdout(rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>) -> String {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut stdout = String::new();
@@ -6017,6 +6046,8 @@ fn register_request_announces_correct_protocol_version() {
         (AGENT_PROTOCOL_VERSION_QUIC_V1, "quic-v1"),
     ] {
         let body = build_register_request(&cfg, Vec::new(), version, "inst-1", 0);
+        let caps = body.capabilities.as_ref().expect("transport capabilities");
+        assert!(caps.structured_go_test_tool, "{expected_str}");
         assert_eq!(body.agent_instance_id, "inst-1");
         assert_eq!(
             body.agent_protocol_version.as_deref(),
@@ -6041,6 +6072,7 @@ fn register_request_announces_correct_protocol_version() {
     assert!(caps.async_shell_jobs);
     assert!(caps.structured_validation_argv);
     assert!(caps.structured_go_test_json);
+    assert!(caps.structured_go_test_tool);
     assert!(caps.structured_process_argv);
     assert!(caps.structured_script_payload);
     assert!(caps.structured_execution_jobs);

@@ -12,8 +12,9 @@ use crate::shell_protocol::{
     ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
     ShellClientRegisterRequest, ShellCommandExecutionState, ShellJobContext, ShellJobInventory,
     ShellJobLogSnapshot, ShellJobOpRequest, ShellJobSnapshot, ShellJobStreamSnapshot,
-    ShellJobValidationProgress, ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload,
-    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
+    ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
+    ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload, JOB_INVENTORY_MAX_TERMINAL_JOBS,
+    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
 };
 
 const CLIENT_ID: &str = "oe";
@@ -214,6 +215,37 @@ fn update(
         validation_progress: None,
         finished,
     }
+}
+
+#[tokio::test]
+async fn reconciliation_rejects_cross_product_first_class_go_test_metadata() {
+    let registry = ShellClientRegistry::default();
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let (job, request) = start_and_take_over(&registry, INSTANCE_A).await;
+    let mut snapshot = snapshot_from_request(&job, &request, "running", 2, stream("", 1, false));
+    let cargo_step = ShellJobValidationStep {
+        name: "test".to_string(),
+        program: "cargo".to_string(),
+        args: vec!["test".to_string(), "tool_runtime".to_string()],
+        env: Vec::new(),
+    };
+    snapshot.context.purpose = Some("validation".to_string());
+    snapshot.context.validation_steps = vec!["test".to_string()];
+    snapshot.context.validation = Some(ShellJobValidationMetadata {
+        tool: "go_test".to_string(),
+        kind: "test".to_string(),
+        steps: vec![cargo_step],
+        effective_timeout_secs: 1800,
+        sync_wait_secs: 10,
+        adapter: "go_test".to_string(),
+    });
+    let inventory = ShellJobInventory {
+        active_complete: true,
+        jobs: vec![snapshot],
+    };
+
+    let error = validate_job_inventory(CLIENT_ID, &[project_summary()], &inventory).unwrap_err();
+    assert!(error.contains("validation metadata is invalid"), "{error}");
 }
 
 #[tokio::test]

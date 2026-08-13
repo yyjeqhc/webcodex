@@ -119,6 +119,12 @@ pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured
 /// `go test -json ./...`. Missing on older Runners and never inferred from
 /// generic structured validation support.
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON: &str = "structured_go_test_json";
+/// The Runner understands the first-class model-facing `go_test` tool identity
+/// and its durable `ShellJobValidationMetadata` contract. This is deliberately
+/// separate from Go JSON parsing support: older Runners may advertise
+/// `structured_go_test_json` for Connector validation without understanding
+/// first-class `validation.tool = "go_test"` metadata.
+pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL: &str = "structured_go_test_tool";
 /// General model-facing native process execution with a typed executable and
 /// argv. This is deliberately independent from structured Cargo validation:
 /// older Runners may support validation argv without accepting arbitrary
@@ -164,6 +170,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_JSON,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
@@ -231,6 +238,11 @@ pub struct ShellClientCapabilities {
     /// agent_protocol_version.
     #[serde(default, skip_serializing_if = "is_false")]
     pub structured_go_test_json: bool,
+    /// First-class `go_test` tool plus its durable validation metadata identity.
+    /// Missing on older Runners and false; never inferred from Go JSON parsing,
+    /// generic structured validation, protocol version, or executable presence.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_go_test_tool: bool,
     /// General native executable + argv requests. Missing on older agents and
     /// therefore false; the Server must fail closed without a shell fallback.
     #[serde(default)]
@@ -310,6 +322,7 @@ impl Default for ShellClientCapabilities {
             ssh_persistent_shell: false,
             structured_validation_argv: false,
             structured_go_test_json: false,
+            structured_go_test_tool: false,
             structured_process_argv: false,
             structured_script_payload: false,
             structured_execution_jobs: false,
@@ -1554,16 +1567,32 @@ pub struct ShellJobValidationMetadata {
 
 impl ShellJobValidationMetadata {
     pub fn is_valid(&self) -> bool {
-        matches!(
-            self.tool.as_str(),
-            "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test"
-        ) && matches!(self.kind.as_str(), "format" | "check" | "test")
-            && self.adapter == self.tool
-            && self.steps.len() == 1
-            && self.steps.iter().all(ShellJobValidationStep::is_canonical)
-            && self.steps[0].name == self.kind
-            && self.effective_timeout_secs >= 1
-            && self.sync_wait_secs <= self.effective_timeout_secs
+        if self.adapter != self.tool
+            || self.steps.len() != 1
+            || !self.steps[0].is_canonical()
+            || self.effective_timeout_secs < 1
+            || self.sync_wait_secs > self.effective_timeout_secs
+        {
+            return false;
+        }
+        let step = &self.steps[0];
+        match self.tool.as_str() {
+            "cargo_fmt" => {
+                self.kind == "format" && step.name == "format" && step.program == "cargo"
+            }
+            "cargo_check" => {
+                self.kind == "check" && step.name == "check" && step.program == "cargo"
+            }
+            "cargo_test" => self.kind == "test" && step.name == "test" && step.program == "cargo",
+            "go_test" => {
+                self.kind == "test"
+                    && step.name == "test"
+                    && step.program == "go"
+                    && step.args == ["test", "-json", "./..."]
+                    && step.env.is_empty()
+            }
+            _ => false,
+        }
     }
 }
 
@@ -2280,6 +2309,7 @@ mod envelope_tests {
                 ssh_persistent_shell: true,
                 structured_validation_argv: true,
                 structured_go_test_json: true,
+                structured_go_test_tool: true,
                 structured_process_argv: true,
                 structured_script_payload: true,
                 structured_execution_jobs: true,
@@ -3394,37 +3424,89 @@ mod filter_canonical_tests {
         assert!(!step(&["run", "./..."]).is_canonical());
     }
 
-    #[test]
-    fn go_test_validation_metadata_accepts_exact_json_step_only() {
-        let exact_step = ShellJobValidationStep {
-            name: "test".to_string(),
-            program: "go".to_string(),
-            args: vec!["test".to_string(), "-json".to_string(), "./...".to_string()],
+    fn validation_step(name: &str, program: &str, args: &[&str]) -> ShellJobValidationStep {
+        ShellJobValidationStep {
+            name: name.to_string(),
+            program: program.to_string(),
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
             env: Vec::new(),
-        };
-        let metadata = ShellJobValidationMetadata {
-            tool: "go_test".to_string(),
-            kind: "test".to_string(),
-            steps: vec![exact_step],
+        }
+    }
+
+    fn validation_metadata(
+        tool: &str,
+        kind: &str,
+        step: ShellJobValidationStep,
+    ) -> ShellJobValidationMetadata {
+        ShellJobValidationMetadata {
+            tool: tool.to_string(),
+            kind: kind.to_string(),
+            steps: vec![step],
             effective_timeout_secs: 1800,
             sync_wait_secs: 10,
-            adapter: "go_test".to_string(),
-        };
+            adapter: tool.to_string(),
+        }
+    }
+
+    #[test]
+    fn structured_validation_metadata_binds_tool_kind_and_canonical_step() {
+        for metadata in [
+            validation_metadata(
+                "cargo_fmt",
+                "format",
+                validation_step("format", "cargo", &["fmt", "--", "--check"]),
+            ),
+            validation_metadata(
+                "cargo_check",
+                "check",
+                validation_step("check", "cargo", &["check", "--all-targets"]),
+            ),
+            validation_metadata(
+                "cargo_test",
+                "test",
+                validation_step("test", "cargo", &["test", "tool_runtime"]),
+            ),
+        ] {
+            assert!(metadata.is_valid(), "expected valid metadata: {metadata:?}");
+        }
+
+        let metadata = validation_metadata(
+            "go_test",
+            "test",
+            validation_step("test", "go", &["test", "-json", "./..."]),
+        );
         assert!(metadata.is_valid());
 
         let mut wrong_adapter = metadata.clone();
         wrong_adapter.adapter = "cargo_test".to_string();
         assert!(!wrong_adapter.is_valid());
 
-        let mut filtered = metadata;
-        filtered.steps[0].args = vec![
-            "test".to_string(),
-            "-json".to_string(),
-            "-run".to_string(),
-            "TestOne".to_string(),
-            "./...".to_string(),
-        ];
-        assert!(!filtered.is_valid());
+        let mut wrong_kind = metadata.clone();
+        wrong_kind.kind = "check".to_string();
+        assert!(!wrong_kind.is_valid());
+
+        let plain_go = validation_step("test", "go", &["test", "./..."]);
+        assert!(plain_go.is_canonical());
+        assert!(!validation_metadata("go_test", "test", plain_go).is_valid());
+
+        let cargo_cross_product = validation_step("test", "cargo", &["test", "tool_runtime"]);
+        assert!(cargo_cross_product.is_canonical());
+        assert!(!validation_metadata("go_test", "test", cargo_cross_product).is_valid());
+
+        let pytest_cross_product = validation_step("test", "python", &["-m", "pytest"]);
+        assert!(pytest_cross_product.is_canonical());
+        assert!(!validation_metadata("go_test", "test", pytest_cross_product).is_valid());
+
+        let npm_cross_product = validation_step("test", "npm", &["run", "--silent", "test"]);
+        assert!(npm_cross_product.is_canonical());
+        assert!(!validation_metadata("go_test", "test", npm_cross_product).is_valid());
+
+        let mut env_injected = metadata;
+        env_injected.steps[0]
+            .env
+            .push(("CARGO_TARGET_DIR".to_string(), "/tmp/cache".to_string()));
+        assert!(env_injected.steps[0].is_canonical());
+        assert!(!env_injected.is_valid());
     }
 
     #[test]

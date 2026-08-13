@@ -151,6 +151,7 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ("workspace_symbols", "lsp", "current_session_fallback"),
         ("goto_definition", "lsp", "current_session_fallback"),
         ("find_references", "lsp", "current_session_fallback"),
+        ("call_hierarchy", "lsp", "current_session_fallback"),
         ("run_job", "job", "current_session_fallback"),
         ("stop_job", "job", "current_session_fallback"),
         ("job_status", "job", "none"),

@@ -282,11 +282,19 @@ run on the repository machine:
 
 The tools are `lsp_status`, `document_symbols`, `goto_definition`,
 `find_references`, `document_diagnostics`, `hover`, and `workspace_symbols`.
+The distinct `call_hierarchy` operation performs prepare plus bounded
+incoming/outgoing breadth-first traversal inside the Runner. The canonical
+Connector projects it as `code_impact`; raw protocol methods and opaque LSP
+item data are never exposed.
 They are read-only, project-bound, and constrained so that starting a language
 server never executes repository code or fetches dependencies. Paths are
 project-relative; external/dependency locations are omitted. Servers must be
 installed on the Runner machine or pointed to by env overrides such as
 `WEBCODEX_RUST_ANALYZER`.
+
+Call hierarchy requires the separately advertised `lsp_call_hierarchy`
+capability and the selected server's `callHierarchyProvider`. Missing support
+fails explicitly without grep, AST, shell, or reference fallback.
 
 ## Operating the Runner
 

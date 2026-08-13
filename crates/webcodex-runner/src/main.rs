@@ -1574,6 +1574,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // New agents always advertise read-only LSP navigation. Older agents omit
     // the field and deserialize as false on the server.
     capabilities.lsp_read_only_navigation = true;
+    // Advertise the distinct capability only because this binary installs the
+    // bounded typed prepare/incoming/outgoing traversal implementation.
+    capabilities.lsp_call_hierarchy = true;
     // Advertise only after a real child-process enforcement probe proves Linux
     // Landlock ABI v3 (including TRUNCATE) works on this host. Every request
     // still applies the policy again in pre_exec and fails closed on error.

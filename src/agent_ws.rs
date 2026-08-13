@@ -383,6 +383,7 @@ mod tests {
                     structured_script_payload: false,
                     structured_execution_jobs: false,
                     lsp_read_only_navigation: false,
+                    lsp_call_hierarchy: false,
                     sandbox_inspect_commands: false,
                     project_lifecycle: false,
                     project_path_registration: false,

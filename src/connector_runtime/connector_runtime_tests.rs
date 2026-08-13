@@ -3,8 +3,10 @@ use super::wire_models::{CodeNavigateInput, FilesSearchInput};
 use super::*;
 use crate::auth::{AuthKind, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_RUNTIME_READ};
 use crate::lsp_bridge::{
-    AgentLspRequest, AgentLspResultEnvelope, LspAvailabilityStatus, LspServerStatusEntry,
-    LspStatusResult, PublicWorkspaceSymbol, WorkspaceSymbolsResult, AGENT_LSP_REQUEST_KIND,
+    AgentLspRequest, AgentLspResultEnvelope, CallHierarchyDirection, CallHierarchyResult,
+    LspAvailabilityStatus, LspServerStatusEntry, LspStatusResult, PublicCallHierarchySymbol,
+    PublicPosition, PublicRange, PublicWorkspaceSymbol, WorkspaceSymbolsResult,
+    AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
@@ -30,6 +32,23 @@ async fn register_agent_with_lsp(
     project_id: &str,
     path: &str,
     lsp_read_only_navigation: bool,
+) {
+    register_agent_with_lsp_capabilities(
+        registry,
+        project_id,
+        path,
+        lsp_read_only_navigation,
+        lsp_read_only_navigation,
+    )
+    .await;
+}
+
+async fn register_agent_with_lsp_capabilities(
+    registry: &ShellClientRegistry,
+    project_id: &str,
+    path: &str,
+    lsp_read_only_navigation: bool,
+    lsp_call_hierarchy: bool,
 ) {
     registry
         .register_with_auth(
@@ -60,6 +79,7 @@ async fn register_agent_with_lsp(
                     structured_script_payload: false,
                     structured_execution_jobs: false,
                     lsp_read_only_navigation,
+                    lsp_call_hierarchy,
                     sandbox_inspect_commands: false,
                     project_lifecycle: false,
                     project_path_registration: false,
@@ -223,15 +243,27 @@ async fn connector_with_lsp(
     Arc<ConnectorRuntime>,
     Arc<ShellClientRegistry>,
 ) {
+    connector_with_lsp_capabilities(lsp_read_only_navigation, lsp_read_only_navigation).await
+}
+
+async fn connector_with_lsp_capabilities(
+    lsp_read_only_navigation: bool,
+    lsp_call_hierarchy: bool,
+) -> (
+    tempfile::TempDir,
+    Arc<ConnectorRuntime>,
+    Arc<ShellClientRegistry>,
+) {
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().join("project");
     init_repo(&project);
     let registry = Arc::new(ShellClientRegistry::default());
-    register_agent_with_lsp(
+    register_agent_with_lsp_capabilities(
         &registry,
         "demo",
         &project.to_string_lossy(),
         lsp_read_only_navigation,
+        lsp_call_hierarchy,
     )
     .await;
     let connector = Arc::new(
@@ -264,16 +296,51 @@ async fn connector_with_lsp(
 }
 
 async fn start_read_only_task(connector: &ConnectorRuntime, goal: &str) -> String {
+    start_task_mode(connector, goal, "read_only").await
+}
+
+async fn start_task_mode(connector: &ConnectorRuntime, goal: &str, mode: &str) -> String {
     let started = connector
         .call(
             "task_start",
-            json!({ "goal": goal, "mode": "read_only" }),
+            json!({ "goal": goal, "mode": mode }),
             Some(&auth("u1")),
             ConnectorTransport::Mcp,
         )
         .await;
     assert!(started.ok, "{}", started.body);
     started.body["task_id"].as_str().unwrap().to_string()
+}
+
+fn connector_call_hierarchy_result(path: &str) -> CallHierarchyResult {
+    let range = PublicRange {
+        start: PublicPosition { line: 1, column: 1 },
+        end: PublicPosition { line: 1, column: 5 },
+    };
+    CallHierarchyResult {
+        project: "private-agent-project".to_string(),
+        path: path.to_string(),
+        language: "typescript".to_string(),
+        query_position: PublicPosition { line: 1, column: 4 },
+        direction: CallHierarchyDirection::Both,
+        depth: 2,
+        roots: vec![PublicCallHierarchySymbol {
+            name: "root".to_string(),
+            kind: "function".to_string(),
+            kind_code: 12,
+            path: path.to_string(),
+            range: range.clone(),
+            selection_range: range,
+        }],
+        root_total_count: 1,
+        root_returned_count: 1,
+        edges: Vec::new(),
+        returned_count: 0,
+        truncated: false,
+        external_results_omitted: 0,
+        invalid_results_omitted: 0,
+        call_site_ranges_omitted: 0,
+    }
 }
 
 #[tokio::test]
@@ -1886,6 +1953,396 @@ async fn code_navigate_rejects_irrelevant_null_fields_before_dispatch() {
             )
             .await;
         assert_eq!(outcome.http_status, 400);
+        assert_eq!(outcome.body["error"]["code"], "invalid_arguments");
+    }
+    assert!(registry
+        .poll(ShellAgentPollRequest {
+            client_id: "hosted".to_string(),
+            agent_instance_id: "instance".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn code_impact_uses_bound_executor_holds_lifecycle_lock_and_bounds_ledger() {
+    let (_temp, connector, registry) = connector_with_lsp_capabilities(true, true).await;
+    let owner = auth("u1");
+    let task_id = start_read_only_task(&connector, "inspect TypeScript change impact").await;
+    let impact_connector = connector.clone();
+    let impact_owner = owner.clone();
+    let impact_task = task_id.clone();
+    let impact = tokio::spawn(async move {
+        impact_connector
+            .call(
+                "code_impact",
+                json!({
+                    "task_id": impact_task,
+                    "path": "src/app.ts",
+                    "line": 1,
+                    "column": 4,
+                    "direction": "both",
+                    "depth": 2,
+                    "limit": 25
+                }),
+                Some(&impact_owner),
+                ConnectorTransport::Mcp,
+            )
+            .await
+    });
+    let request = next_lsp_request(&registry).await;
+    let payload = request.lsp.as_ref().expect("typed LSP payload");
+    assert_eq!(payload.project_id, "demo");
+    assert_eq!(
+        payload.request,
+        AgentLspRequest::CallHierarchy {
+            path: "src/app.ts".to_string(),
+            line: 1,
+            column: 4,
+            direction: CallHierarchyDirection::Both,
+            depth: 2,
+            limit: 25,
+        }
+    );
+    assert!(
+        connector.task_lock(&task_id).try_lock().is_err(),
+        "code_impact must hold the lifecycle lock during semantic dispatch"
+    );
+
+    let finish_connector = connector.clone();
+    let finish_owner = owner.clone();
+    let finish_task = task_id.clone();
+    let finish = tokio::spawn(async move {
+        finish_connector
+            .call(
+                "task_finish",
+                json!({"task_id": finish_task, "summary": "impact inspection complete"}),
+                Some(&finish_owner),
+                ConnectorTransport::Mcp,
+            )
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert!(!finish.is_finished());
+
+    let mut raw_result =
+        serde_json::to_value(connector_call_hierarchy_result("src/app.ts")).unwrap();
+    raw_result["client_id"] = json!("hosted-private");
+    raw_result["execution_executor_ref"] = json!("agent:hosted:demo");
+    raw_result["roots"][0]["data"] = json!({"opaque": "file:///private/root"});
+    raw_result["roots"][0]["uri"] = json!("file:///private/root");
+    complete_lsp_request(&registry, &request, raw_result).await;
+
+    let impact = impact.await.unwrap();
+    let finish = finish.await.unwrap();
+    assert!(impact.ok, "{}", impact.body);
+    assert!(finish.ok, "{}", finish.body);
+    assert_eq!(impact.body["data"]["project"], "wc_proj_1234567890");
+    assert_eq!(impact.body["data"]["language"], "typescript");
+    let serialized = serde_json::to_string(&impact.body).unwrap();
+    for private in [
+        "agent:hosted:demo",
+        "hosted-private",
+        "file:///private",
+        "execution_executor_ref",
+        "\"opaque\"",
+        "\"uri\"",
+    ] {
+        assert!(
+            !serialized.contains(private),
+            "{private} leaked: {serialized}"
+        );
+    }
+
+    let events = connector
+        .db
+        .connector_task_events(
+            &task_id,
+            &connector.context.project_id,
+            PROJECT_SUBJECT_ID,
+            20,
+        )
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.kind == "code_impact")
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].payload,
+        json!({"ok": true, "direction": "both", "depth": 2})
+    );
+    let ledger = serde_json::to_string(&events).unwrap();
+    assert!(!ledger.contains("src/app.ts"));
+    assert!(!ledger.contains("roots"));
+    assert!(!ledger.contains("edges"));
+}
+
+#[tokio::test]
+async fn code_impact_lifecycle_lock_blocks_task_cancel_until_read_completes() {
+    let (_temp, connector, registry) = connector_with_lsp_capabilities(true, true).await;
+    let task_id = start_read_only_task(&connector, "inspect impact before cancellation").await;
+    let impact_connector = connector.clone();
+    let impact_task_id = task_id.clone();
+    let impact = tokio::spawn(async move {
+        impact_connector
+            .call(
+                "code_impact",
+                json!({
+                    "task_id": impact_task_id,
+                    "path": "src/main.rs",
+                    "line": 1,
+                    "column": 1
+                }),
+                Some(&auth("u1")),
+                ConnectorTransport::Mcp,
+            )
+            .await
+    });
+    let request = next_lsp_request(&registry).await;
+
+    let cancel_connector = connector.clone();
+    let cancel_task_id = task_id.clone();
+    let cancel = tokio::spawn(async move {
+        cancel_connector
+            .call(
+                "task_cancel",
+                json!({"task_id": cancel_task_id}),
+                Some(&auth("u1")),
+                ConnectorTransport::Mcp,
+            )
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert!(
+        !cancel.is_finished(),
+        "task_cancel must wait for the semantic read lifecycle lock"
+    );
+
+    let mut result = connector_call_hierarchy_result("src/main.rs");
+    result.depth = 1;
+    complete_lsp_request(&registry, &request, result).await;
+    let impact = impact.await.unwrap();
+    let cancel = cancel.await.unwrap();
+    assert!(impact.ok, "{}", impact.body);
+    assert!(cancel.ok, "{}", cancel.body);
+}
+
+#[tokio::test]
+async fn code_impact_is_available_in_normal_inspect_and_read_only_tasks() {
+    for mode in ["normal", "inspect", "read_only"] {
+        let (_temp, connector, registry) = connector_with_lsp_capabilities(true, true).await;
+        let registration = if mode == "normal" {
+            let registration_registry = registry.clone();
+            Some(tokio::spawn(async move {
+                for _ in 0..1_000 {
+                    if let Some(request) = registration_registry
+                        .poll(ShellAgentPollRequest {
+                            client_id: "hosted".to_string(),
+                            agent_instance_id: "instance".to_string(),
+                            projects: None,
+                        })
+                        .await
+                        .unwrap()
+                    {
+                        assert_eq!(request.kind, "register_project");
+                        let payload: Value =
+                            serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
+                        let stdout = json!({
+                            "agent_project_id": payload["id"],
+                            "client_id": "hosted",
+                            "name": payload["name"],
+                            "path": payload["path"],
+                            "allow_patch": true
+                        })
+                        .to_string();
+                        registration_registry
+                            .complete(ShellAgentResultRequest {
+                                client_id: "hosted".to_string(),
+                                agent_instance_id: "instance".to_string(),
+                                request_id: request.request_id,
+                                exit_code: Some(0),
+                                stdout: Some(stdout),
+                                stderr: Some(String::new()),
+                                duration_ms: Some(1),
+                                error: None,
+                            })
+                            .await
+                            .unwrap();
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                }
+                panic!("normal task did not register its isolated execution project");
+            }))
+        } else {
+            None
+        };
+        let task_id = start_task_mode(&connector, "inspect call impact", mode).await;
+        if let Some(registration) = registration {
+            registration.await.unwrap();
+        }
+        let calling_connector = connector.clone();
+        let calling_task = task_id.clone();
+        let call = tokio::spawn(async move {
+            calling_connector
+                .call(
+                    "code_impact",
+                    json!({
+                        "task_id": calling_task,
+                        "path": "src/main.rs",
+                        "line": 1,
+                        "column": 1
+                    }),
+                    Some(&auth("u1")),
+                    ConnectorTransport::Mcp,
+                )
+                .await
+        });
+        let request = next_lsp_request(&registry).await;
+        assert_eq!(
+            request.lsp.as_ref().unwrap().request,
+            AgentLspRequest::CallHierarchy {
+                path: "src/main.rs".to_string(),
+                line: 1,
+                column: 1,
+                direction: CallHierarchyDirection::Both,
+                depth: 1,
+                limit: 50,
+            }
+        );
+        let mut result = connector_call_hierarchy_result("src/main.rs");
+        result.depth = 1;
+        complete_lsp_request(&registry, &request, result).await;
+        let outcome = call.await.unwrap();
+        assert!(outcome.ok, "{mode}: {}", outcome.body);
+    }
+}
+
+#[tokio::test]
+async fn code_impact_requires_distinct_capability_scope_and_active_owned_task() {
+    let (_temp, connector, registry) = connector_with_lsp_capabilities(true, false).await;
+    let task_id = start_read_only_task(&connector, "inspect impact policy").await;
+    let unavailable = connector
+        .call(
+            "code_impact",
+            json!({
+                "task_id": task_id,
+                "path": "src/main.rs",
+                "line": 1,
+                "column": 1
+            }),
+            Some(&auth("u1")),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert!(!unavailable.ok);
+    assert!(unavailable.body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("lsp_call_hierarchy"));
+    assert!(
+        !unavailable.body.to_string().contains("hosted"),
+        "agent client identity leaked: {}",
+        unavailable.body
+    );
+    assert!(registry
+        .poll(ShellAgentPollRequest {
+            client_id: "hosted".to_string(),
+            agent_instance_id: "instance".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .is_none());
+
+    let mut runtime_only = auth("u1");
+    runtime_only.scopes = vec![SCOPE_RUNTIME_READ.to_string()];
+    let denied = connector
+        .call(
+            "code_impact",
+            json!({
+                "task_id": task_id,
+                "path": "src/main.rs",
+                "line": 1,
+                "column": 1
+            }),
+            Some(&runtime_only),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert_eq!(denied.http_status, 403);
+    assert_eq!(denied.required_scope, Some(SCOPE_PROJECT_READ));
+
+    let mut foreign = auth("u1");
+    foreign.user_id = Some("foreign-user".to_string());
+    let foreign = connector
+        .call(
+            "code_impact",
+            json!({
+                "task_id": task_id,
+                "path": "src/main.rs",
+                "line": 1,
+                "column": 1
+            }),
+            Some(&foreign),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert_eq!(foreign.http_status, 404);
+    assert_eq!(foreign.body["error"]["code"], "task_not_found");
+
+    let finished = connector
+        .call(
+            "task_finish",
+            json!({"task_id": task_id, "summary": "inspection complete"}),
+            Some(&auth("u1")),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert!(finished.ok, "{}", finished.body);
+    let inactive = connector
+        .call(
+            "code_impact",
+            json!({
+                "task_id": task_id,
+                "path": "src/main.rs",
+                "line": 1,
+                "column": 1
+            }),
+            Some(&auth("u1")),
+            ConnectorTransport::Mcp,
+        )
+        .await;
+    assert_eq!(inactive.http_status, 409);
+    assert_eq!(inactive.body["error"]["code"], "task_not_active");
+}
+
+#[tokio::test]
+async fn code_impact_rejects_null_malformed_and_schema_bypassing_inputs() {
+    let (_temp, connector, registry) = connector_with_lsp_capabilities(true, true).await;
+    let task_id = start_read_only_task(&connector, "validate impact input").await;
+    for arguments in [
+        json!({"task_id": task_id, "path": "src/main.rs", "line": 1, "column": 1, "direction": null}),
+        json!({"task_id": task_id, "path": "src/main.rs", "line": 1, "column": 1, "depth": null}),
+        json!({"task_id": task_id, "path": "src/main.rs", "line": 1, "column": 1, "limit": null}),
+        json!({"task_id": task_id, "path": "/private/main.rs", "line": 1, "column": 1}),
+        json!({"task_id": task_id, "path": "src/main.rs", "line": 0, "column": 1}),
+        json!({"task_id": task_id, "path": "src/main.rs", "line": 1, "column": 1, "depth": 3}),
+        json!({"task_id": task_id, "path": "src/main.rs", "line": 1, "column": 1, "limit": 101}),
+        json!({"task_id": task_id, "path": "src/main.rs", "line": 1, "column": 1, "project": "agent:other:private"}),
+        json!({"task_id": task_id, "path": "src/main.rs", "line": 1, "column": 1, "uri": "file:///private/main.rs"}),
+    ] {
+        let outcome = connector
+            .call(
+                "code_impact",
+                arguments,
+                Some(&auth("u1")),
+                ConnectorTransport::Mcp,
+            )
+            .await;
+        assert_eq!(outcome.http_status, 400, "{}", outcome.body);
         assert_eq!(outcome.body["error"]["code"], "invalid_arguments");
     }
     assert!(registry

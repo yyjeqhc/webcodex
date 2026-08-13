@@ -24,7 +24,7 @@ https://your-domain.example/openapi.json
 ```
 
 不要预设导入后的 operation 集合。带 project-bound Connector 配置的 Server 返回
-下文十三个 capability；普通 Server 则返回标准 runtime OpenAPI projection。
+下文十四个 capability；普通 Server 则返回标准 runtime OpenAPI projection。
 
 ChatGPT 需要公网 HTTPS。把 API-key 认证配置为 HTTP Bearer。使用生成的
 `webcodex-user-token`（`wc_pat_*`）——它用于 GPT Actions、MCP 与普通 REST/项目
@@ -37,7 +37,7 @@ setup、doctor、npm、server 管理与 audit endpoint。这些请用 `webcodex`
 ## Connector surface
 
 Server 以 project-bound Connector 配置运行时，OpenAPI 从与 canonical MCP
-Connector 相同的十三个 capability 生成：
+Connector 相同的十四个 capability 生成：
 
 ```text
 task_start
@@ -53,6 +53,7 @@ commands_run
 task_review
 task_cancel
 task_finish
+code_impact
 ```
 
 Connector 已经拥有确定性的项目绑定。Custom GPT 在普通 coding 前不得调用
@@ -70,6 +71,8 @@ listing，prompt 中也不得包含 Agent client ID 或 runtime project ID。
 在 edits_apply 前使用 files_read/files_search。
 使用 code_navigate 进行只读的语义状态、symbols、definition、references、
 diagnostics 与 hover；只提供项目相对路径。
+使用 code_impact 做有界 incoming/outgoing call hierarchy 与变更影响检查；只提供
+项目相对路径和源码位置。
 用稳定的 operation_id 做精确重试。
 在 task_finish 前运行 checks_run。
 用 task_review 查看执行进度与结果审查。

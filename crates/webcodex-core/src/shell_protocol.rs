@@ -138,6 +138,9 @@ pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS: &str = "structured_
 /// older agents and defaults to `false` so the server never dispatches typed
 /// LSP requests to agents that cannot handle them.
 pub const SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION: &str = "lsp_read_only_navigation";
+/// Bounded typed call-hierarchy traversal. Missing on older Runners and false;
+/// never inferred from general LSP navigation or protocol version.
+pub const SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY: &str = "lsp_call_hierarchy";
 /// Linux Landlock ABI v3 inspect-command write sandbox.
 pub const SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS: &str = "sandbox_inspect_commands";
 pub const SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
@@ -165,6 +168,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
     SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
@@ -245,6 +249,9 @@ pub struct ShellClientCapabilities {
     /// false for wire compatibility with older agents.
     #[serde(default)]
     pub lsp_read_only_navigation: bool,
+    /// The Runner implements the bounded typed call-hierarchy operation.
+    #[serde(default)]
+    pub lsp_call_hierarchy: bool,
     /// The runner can fail-closed enforce the Linux Landlock ABI v3 write
     /// sandbox used by inspect commands.
     #[serde(default)]
@@ -307,6 +314,7 @@ impl Default for ShellClientCapabilities {
             structured_script_payload: false,
             structured_execution_jobs: false,
             lsp_read_only_navigation: false,
+            lsp_call_hierarchy: false,
             sandbox_inspect_commands: false,
             project_lifecycle: false,
             project_path_registration: false,
@@ -2276,6 +2284,7 @@ mod envelope_tests {
                 structured_script_payload: true,
                 structured_execution_jobs: true,
                 lsp_read_only_navigation: false,
+                lsp_call_hierarchy: false,
                 sandbox_inspect_commands: false,
                 project_lifecycle: false,
                 project_path_registration: false,

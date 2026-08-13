@@ -468,6 +468,8 @@ mod tests {
             (
                 EnqueueLspError::UnsupportedCapability {
                     client_id: "unknown shell client wording".to_string(),
+                    capability:
+                        crate::shell_protocol::SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
                 },
                 SemanticNavigationStartupStatus::AgentCapabilityUnavailable,
                 SemanticNavigationReasonCode::LspCapabilityNotAdvertised,

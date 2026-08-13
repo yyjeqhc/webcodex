@@ -1,7 +1,7 @@
 use super::super::input_schemas::{
-    document_diagnostics_input_schema, document_symbols_input_schema, find_references_input_schema,
-    goto_definition_input_schema, hover_input_schema, lsp_status_input_schema,
-    workspace_symbols_input_schema,
+    call_hierarchy_input_schema, document_diagnostics_input_schema, document_symbols_input_schema,
+    find_references_input_schema, goto_definition_input_schema, hover_input_schema,
+    lsp_status_input_schema, workspace_symbols_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -42,6 +42,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "find_references",
             "Read-only find-references for a project-relative supported source file at a 1-based Unicode scalar position via its configured agent-side language server. Results are deduplicated and truncated on the agent; external/invalid locations are counted separately.",
             find_references_input_schema(),
+        ),
+        tool_spec(
+            "call_hierarchy",
+            "Read-only bounded call hierarchy for a project-relative supported source position. The Runner performs prepare plus incoming/outgoing breadth-first traversal to depth 1 or 2, returning only normalized project-local symbols and globally bounded edges.",
+            call_hierarchy_input_schema(),
         ),
     ]
 }

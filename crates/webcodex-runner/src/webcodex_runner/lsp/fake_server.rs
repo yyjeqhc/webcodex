@@ -96,14 +96,21 @@ fn run() -> io::Result<()> {
                     )?;
                 }
                 let encoding = match scenario.as_str() {
-                    "utf8" => Some("utf-8"),
-                    "utf16" => Some("utf-16"),
-                    "utf32" => Some("utf-32"),
+                    value if value.ends_with("_utf8") || value == "utf8" => Some("utf-8"),
+                    value if value.ends_with("_utf16") || value == "utf16" => Some("utf-16"),
+                    value if value.ends_with("_utf32") || value == "utf32" => Some("utf-32"),
                     _ => None,
                 };
-                let capabilities = encoding
-                    .map(|encoding| format!(r#"{{"positionEncoding":"{encoding}"}}"#))
-                    .unwrap_or_else(|| "{}".to_string());
+                let mut capability_fields = Vec::new();
+                if let Some(encoding) = encoding {
+                    capability_fields.push(format!(r#""positionEncoding":"{encoding}""#));
+                }
+                if scenario.starts_with("call_hierarchy")
+                    && scenario != "call_hierarchy_provider_unsupported"
+                {
+                    capability_fields.push(r#""callHierarchyProvider":true"#.to_string());
+                }
+                let capabilities = format!("{{{}}}", capability_fields.join(","));
                 write_frame(
                     &mut writer,
                     &format!(
@@ -183,7 +190,7 @@ fn run() -> io::Result<()> {
                         // child as running.
                         write_frame(&mut writer, "{not-json")?;
                     } else {
-                        write_result(&mut writer, id, method)?;
+                        write_result(&mut writer, id, method, &body)?;
                     }
                 }
                 "malformed_alive_always" => {
@@ -200,6 +207,19 @@ fn run() -> io::Result<()> {
                         id.unwrap_or(0)
                     ),
                 )?,
+                "call_hierarchy_method_unsupported"
+                    if method == "textDocument/prepareCallHierarchy"
+                        || method == "callHierarchy/incomingCalls"
+                        || method == "callHierarchy/outgoingCalls" =>
+                {
+                    write_frame(
+                        &mut writer,
+                        &format!(
+                            r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32601,"message":"method not found","data":{{"private":"file:///secret/private"}}}}}}"#,
+                            id.unwrap_or(0)
+                        ),
+                    )?
+                }
                 "crash_request" | "restart_exhausted" => return Ok(()),
                 "restart_then_success" => {
                     let crashed = marker
@@ -212,23 +232,23 @@ fn run() -> io::Result<()> {
                         }
                         return Ok(());
                     }
-                    write_result(&mut writer, id, method)?;
+                    write_result(&mut writer, id, method, &body)?;
                 }
                 "unknown_id" => {
                     write_frame(
                         &mut writer,
                         r#"{"jsonrpc":"2.0","id":999999,"result":{"ignored":true}}"#,
                     )?;
-                    write_result(&mut writer, id, method)?;
+                    write_result(&mut writer, id, method, &body)?;
                 }
                 "server_request" => {
                     write_frame(
                         &mut writer,
                         r#"{"jsonrpc":"2.0","id":"server-request","method":"fake/serverRequest","params":{}}"#,
                     )?;
-                    write_result(&mut writer, id, method)?;
+                    write_result(&mut writer, id, method, &body)?;
                 }
-                _ => write_result(&mut writer, id, method)?,
+                _ => write_result(&mut writer, id, method, &body)?,
             },
             None => {
                 // JSON-RPC response to a fake server->client request.
@@ -339,7 +359,12 @@ fn start_count(marker: Option<&Path>) -> usize {
         .unwrap_or(0)
 }
 
-fn write_result(writer: &mut impl Write, id: Option<u64>, method: &str) -> io::Result<()> {
+fn write_result(
+    writer: &mut impl Write,
+    id: Option<u64>,
+    method: &str,
+    request_body: &str,
+) -> io::Result<()> {
     let cwd = env::current_dir()?.display().to_string();
     // The `space_unicode` scenario points responses at a file whose name
     // needs URI percent-encoding (space + non-ASCII), exercising the full
@@ -351,6 +376,8 @@ fn write_result(writer: &mut impl Write, id: Option<u64>, method: &str) -> io::R
     };
     let main_uri = path_to_file_uri(&Path::new(&cwd).join(main_relative));
     let other_uri = path_to_file_uri(&Path::new(&cwd).join("src/other.rs"));
+    let request_uri =
+        json_string_field(request_body, "uri").unwrap_or_else(|| main_uri.clone());
     let external_uri = "file:///usr/lib/rustlib/src/rust/library/core/src/lib.rs";
     // Scenario is argv[1]; navigation scenarios encode response shape without
     // process-global env vars (which race under parallel tests).
@@ -454,6 +481,92 @@ fn write_result(writer: &mut impl Write, id: Option<u64>, method: &str) -> io::R
             ),
             _ => "[]".to_string(),
         },
+        "textDocument/prepareCallHierarchy" => match scenario.as_str() {
+            "call_hierarchy_prepare_empty" => "null".to_string(),
+            "call_hierarchy_external_invalid" => format!(
+                "[{}, {}, {{\"name\":\"invalid\",\"kind\":12,\"uri\":7}}]",
+                call_hierarchy_item("file:///secret/root", &request_uri, 0, "root-private"),
+                call_hierarchy_item("External", external_uri, 0, "external-private")
+            ),
+            "call_hierarchy_utf16" => format!(
+                r#"[{{"name":"Root","kind":12,"uri":"{}","range":{{"start":{{"line":2,"character":3}},"end":{{"line":2,"character":5}}}},"selectionRange":{{"start":{{"line":2,"character":3}},"end":{{"line":2,"character":5}}}},"data":{{"opaque":"private"}}}}]"#,
+                json_escape(&request_uri)
+            ),
+            _ if scenario.starts_with("call_hierarchy") => format!(
+                "[{}]",
+                call_hierarchy_item("Root", &request_uri, 0, "root-private")
+            ),
+            _ => "null".to_string(),
+        },
+        "callHierarchy/incomingCalls" => {
+            let current =
+                json_string_field_from_last_item(request_body, "name").unwrap_or_default();
+            match scenario.as_str() {
+                "call_hierarchy_external_invalid" => "[]".to_string(),
+                _ if scenario.starts_with("call_hierarchy") && current == "Root" => format!(
+                    r#"[{{"from":{},"fromRanges":[{{"start":{{"line":0,"character":3}},"end":{{"line":0,"character":7}}}}]}}]"#,
+                    call_hierarchy_item("Caller", &request_uri, 0, "caller-private")
+                ),
+                _ if scenario.starts_with("call_hierarchy") && current == "Caller" => format!(
+                    r#"[{{"from":{},"fromRanges":[{{"start":{{"line":3,"character":0}},"end":{{"line":3,"character":4}}}}]}}]"#,
+                    call_hierarchy_item("Caller2", &request_uri, 3, "caller2-private")
+                ),
+                _ => "[]".to_string(),
+            }
+        }
+        "callHierarchy/outgoingCalls" => {
+            let current =
+                json_string_field_from_last_item(request_body, "name").unwrap_or_default();
+            match scenario.as_str() {
+                "call_hierarchy_external_invalid" => format!(
+                    r#"[{{"to":{},"fromRanges":[{{"start":{{"line":0,"character":3}},"end":{{"line":0,"character":7}}}}]}},{{"to":{},"fromRanges":[]}},{{"to":{{"name":"Bad","kind":12,"uri":7}},"fromRanges":[]}}]"#,
+                    call_hierarchy_item("Local", &request_uri, 1, "file:///secret/private-data"),
+                    call_hierarchy_item("External", external_uri, 0, "external-private")
+                ),
+                "call_hierarchy_dedup" if current == "Root" => {
+                    let target = call_hierarchy_item("Callee", &request_uri, 1, "callee-private");
+                    format!(
+                        r#"[{{"to":{target},"fromRanges":[{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":1}}}}]}},{{"to":{target},"fromRanges":[{{"start":{{"line":0,"character":1}},"end":{{"line":0,"character":2}}}}]}}]"#
+                    )
+                }
+                "call_hierarchy_call_sites_overflow" if current == "Root" => {
+                    let ranges = (0..30)
+                        .map(|line| format!(r#"{{"start":{{"line":{line},"character":0}},"end":{{"line":{line},"character":1}}}}"#))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(
+                        r#"[{{"to":{},"fromRanges":[{ranges}]}}]"#,
+                        call_hierarchy_item("Callee", &request_uri, 1, "callee-private")
+                    )
+                }
+                "call_hierarchy_overflow" if current == "Root" => {
+                    let calls = (0..120)
+                        .rev()
+                        .map(|index| {
+                            format!(
+                                r#"{{"to":{},"fromRanges":[]}}"#,
+                                call_hierarchy_item(
+                                    &format!("Callee{index:03}"),
+                                    &request_uri,
+                                    1,
+                                    "private"
+                                )
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    format!("[{}]", calls.join(","))
+                }
+                _ if scenario.starts_with("call_hierarchy") && current == "Root" => format!(
+                    r#"[{{"to":{},"fromRanges":[{{"start":{{"line":0,"character":3}},"end":{{"line":0,"character":7}}}}]}}]"#,
+                    call_hierarchy_item("Callee", &request_uri, 1, "callee-private")
+                ),
+                _ if scenario.starts_with("call_hierarchy") && current == "Callee" => format!(
+                    r#"[{{"to":{},"fromRanges":[{{"start":{{"line":1,"character":0}},"end":{{"line":1,"character":3}}}}]}}]"#,
+                    call_hierarchy_item("Callee2", &request_uri, 3, "callee2-private")
+                ),
+                _ => "[]".to_string(),
+            }
+        }
         _ => format!(
             r#"{{"method":"{}","cwd":"{}"}}"#,
             json_escape(method),
@@ -467,6 +580,24 @@ fn write_result(writer: &mut impl Write, id: Option<u64>, method: &str) -> io::R
             id.unwrap_or(0),
         ),
     )
+}
+
+fn call_hierarchy_item(name: &str, uri: &str, line: usize, data: &str) -> String {
+    format!(
+        r#"{{"name":"{}","kind":12,"uri":"{}","range":{{"start":{{"line":{line},"character":0}},"end":{{"line":{line},"character":4}}}},"selectionRange":{{"start":{{"line":{line},"character":0}},"end":{{"line":{line},"character":4}}}},"data":{{"opaque":"{}"}}}}"#,
+        json_escape(name),
+        json_escape(uri),
+        json_escape(data)
+    )
+}
+
+fn json_string_field_from_last_item(body: &str, field: &str) -> Option<String> {
+    let marker = format!(r#""{field}""#);
+    let (_, after) = body.rsplit_once(&marker)?;
+    let after_colon = after.split_once(':')?.1.trim_start();
+    let quoted = after_colon.strip_prefix('"')?;
+    let end = quoted.find('"')?;
+    Some(quoted[..end].to_string())
 }
 
 fn scenario_is_space_unicode() -> bool {

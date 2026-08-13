@@ -58,9 +58,9 @@ pub(crate) use super::tool_policy::{
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
     SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
-    SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
+    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
+    SHELL_CLIENT_CAPABILITY_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
 
@@ -92,6 +92,8 @@ pub(crate) enum AgentCapability {
     PersistentShell,
     /// Read-only agent-side rust-analyzer navigation tools.
     LspReadOnlyNavigation,
+    /// Bounded typed call-hierarchy traversal; never inferred from navigation.
+    LspCallHierarchy,
 }
 
 impl AgentCapability {
@@ -107,6 +109,7 @@ impl AgentCapability {
             Self::AsyncJobs => "async shell jobs",
             Self::PersistentShell => SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
             Self::LspReadOnlyNavigation => SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+            Self::LspCallHierarchy => SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
         }
     }
 
@@ -125,6 +128,7 @@ impl AgentCapability {
             ],
             Self::PersistentShell => &[SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL],
             Self::LspReadOnlyNavigation => &[SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION],
+            Self::LspCallHierarchy => &[SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY],
         }
     }
 

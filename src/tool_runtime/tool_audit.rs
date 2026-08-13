@@ -741,6 +741,24 @@ impl ToolCall {
                 "include_declaration": include_declaration,
                 "limit": limit,
             }),
+            Self::CallHierarchy {
+                project,
+                path,
+                line,
+                column,
+                direction,
+                depth,
+                limit,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "line": line,
+                "column": column,
+                "direction": direction,
+                "depth": depth,
+                "limit": limit,
+            }),
             Self::ShowChanges {
                 project,
                 include_diff,

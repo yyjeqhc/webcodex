@@ -40,6 +40,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "workspace_symbols",
             "goto_definition",
             "find_references",
+            "call_hierarchy",
             "lsp_status",
             "list_project_files",
             "show_changes",
@@ -302,6 +303,7 @@ pub(crate) const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "workspace_symbols",
     "goto_definition",
     "find_references",
+    "call_hierarchy",
     // guarded edits
     "apply_text_edits",
     "apply_patch_checked",

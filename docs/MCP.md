@@ -55,7 +55,7 @@ extra permission). Server-side OAuth setup is in
 ## The project-bound surface
 
 When the Server is started with project-first Connector configuration
-(`canonical_connector`), MCP `tools/list` contains exactly these thirteen
+(`canonical_connector`), MCP `tools/list` contains exactly these fourteen
 operations. This is the surface used by `webcodex run` and `webcodex share`;
 a generic hosted/self-hosted Server without Connector context exposes
 `local_coding` by default (or explicit `full_operator_runtime`) instead:
@@ -74,6 +74,7 @@ commands_run
 task_review
 task_cancel
 task_finish
+code_impact
 ```
 
 The Connector context already binds the configured repository. Start with
@@ -88,7 +89,7 @@ identity.
 ```text
 task_start
 → files_list
-→ files_read / files_search / code_navigate
+→ files_read / files_search / code_navigate / code_impact
 → edits_apply
 → checks_run
 → task_finish
@@ -105,6 +106,12 @@ task_start
   workspace symbols takes `query`; definition, references, and hover take
   `path` + `line` + `column`. Unsupported fields are rejected. It is available
   in normal, inspect, and read-only tasks.
+- `code_impact` performs one bounded call-hierarchy operation from a
+  project-relative source position. It accepts `incoming`, `outgoing`, or
+  `both`, breadth-first depth 1 or 2, and a global edge limit of 1..100. It
+  returns only normalized project-local roots, edges, and bounded call-site
+  ranges; unsupported language servers fail explicitly with no grep or AST
+  fallback. It is available in normal, inspect, and read-only tasks.
 - `edits_apply` is the guarded edit tool; `commands_run` is the bounded escape
   hatch for commands that need a shell.
 - `checks_run` validates. Use a stable `operation_id` so an exact retry reuses
@@ -132,7 +139,7 @@ started validator returning non-zero is an assertion failure.
 ### Long validation continues durably
 
 `checks_run` and `commands_run` use durable executions and may quick-yield
-after about 8 seconds while work continues. On the thirteen-tool Connector
+after about 8 seconds while work continues. On the fourteen-tool Connector
 surface, call `task_review` with `after_cursor` / `wait_ms` (and
 `include_output_tail=true` when output is needed) until the execution becomes
 terminal; use `task_cancel` to stop it. Do not re-run an operation merely to
@@ -140,7 +147,7 @@ poll it.
 
 The broader `local_coding` and `full_operator_runtime` MCP surfaces expose raw
 Job tools such as `job_status`, `job_log`, `validation_summary`, and
-`stop_job`; those tools are not part of the thirteen Connector capabilities.
+`stop_job`; those tools are not part of the fourteen Connector capabilities.
 
 ## First safe prompt
 

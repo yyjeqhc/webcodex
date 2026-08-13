@@ -253,9 +253,16 @@ Runner 可以通过在仓库机器上运行的语言服务器提供只读语义�
 
 工具包括 `lsp_status`、`document_symbols`、`goto_definition`、
 `find_references`、`document_diagnostics`、`hover` 与 `workspace_symbols`。
+独立的 `call_hierarchy` 操作在 Runner 内完成 prepare 以及有界的
+incoming/outgoing 广度优先遍历；canonical Connector 将其投影为 `code_impact`，
+不会暴露原始协议方法或不透明 LSP item data。
 它们只读、project-bound，并且被约束为启动语言服务器绝不执行仓库代码或拉取依赖。
 路径是项目相对路径；外部/依赖位置会被省略。语言服务器必须安装在 Runner 机器上，
 或通过 `WEBCODEX_RUST_ANALYZER` 等 env override 指定。
+
+Call hierarchy 必须由独立的 `lsp_call_hierarchy` capability 声明，且所选语言服务器
+必须提供 `callHierarchyProvider`。缺少支持会显式失败，不回退到 grep、AST、shell
+或 references。
 
 ## 运维 Runner
 

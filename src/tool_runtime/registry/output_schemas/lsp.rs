@@ -227,6 +227,68 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("integer", "Invalid locations omitted."),
             ),
         ])),
+        "call_hierarchy" => Some(wrapped_output_schema(vec![
+            (
+                "project",
+                schema_type("string", "Resolved runtime project id."),
+            ),
+            (
+                "path",
+                schema_type("string", "Project-relative query path."),
+            ),
+            ("language", schema_type("string", "Detected language id.")),
+            ("query_position", position_schema()),
+            (
+                "direction",
+                json!({"type": "string", "enum": ["incoming", "outgoing", "both"]}),
+            ),
+            (
+                "depth",
+                json!({"type": "integer", "minimum": 1, "maximum": 2}),
+            ),
+            (
+                "roots",
+                array_schema(
+                    open_object_schema("Normalized project-local call-hierarchy root symbol."),
+                    "Bounded normalized prepareCallHierarchy roots.",
+                ),
+            ),
+            (
+                "root_total_count",
+                schema_type("integer", "Raw prepare result count before filtering."),
+            ),
+            (
+                "root_returned_count",
+                schema_type("integer", "Normalized root symbols returned."),
+            ),
+            (
+                "edges",
+                array_schema(
+                    open_object_schema("Normalized project-local call edge."),
+                    "Breadth-first flattened call edges.",
+                ),
+            ),
+            (
+                "returned_count",
+                schema_type("integer", "Flattened edges returned."),
+            ),
+            (
+                "truncated",
+                schema_type("boolean", "Whether any configured result bound truncated output."),
+            ),
+            (
+                "external_results_omitted",
+                schema_type("integer", "External/dependency items omitted."),
+            ),
+            (
+                "invalid_results_omitted",
+                schema_type("integer", "Malformed items or ranges omitted."),
+            ),
+            (
+                "call_site_ranges_omitted",
+                schema_type("integer", "Valid call-site ranges omitted by per-edge bounds."),
+            ),
+        ])),
         _ => None,
     }
 }

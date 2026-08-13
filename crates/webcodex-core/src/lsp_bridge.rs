@@ -30,6 +30,15 @@ pub const DEFAULT_WORKSPACE_SYMBOLS_LIMIT: usize = 50;
 pub const MIN_WORKSPACE_SYMBOLS_LIMIT: usize = 1;
 pub const MAX_WORKSPACE_SYMBOLS_LIMIT: usize = 200;
 
+pub const DEFAULT_CALL_HIERARCHY_DEPTH: usize = 1;
+pub const MIN_CALL_HIERARCHY_DEPTH: usize = 1;
+pub const MAX_CALL_HIERARCHY_DEPTH: usize = 2;
+pub const DEFAULT_CALL_HIERARCHY_LIMIT: usize = 50;
+pub const MIN_CALL_HIERARCHY_LIMIT: usize = 1;
+pub const MAX_CALL_HIERARCHY_LIMIT: usize = 100;
+pub const MAX_CALL_HIERARCHY_ROOTS: usize = 16;
+pub const MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE: usize = 20;
+
 pub const MAX_ERROR_MESSAGE_CHARS: usize = 240;
 
 /// Stable error codes for the agent LSP bridge and public tools.
@@ -48,6 +57,7 @@ pub mod error_codes {
     pub const UNKNOWN_PROJECT: &str = "unknown_project";
     pub const MISSING_LSP_PAYLOAD: &str = "missing_lsp_payload";
     pub const DOCUMENT_TOO_LARGE: &str = "document_too_large";
+    pub const CALL_HIERARCHY_UNSUPPORTED: &str = "call_hierarchy_unsupported";
 }
 
 pub fn is_known_error_code(code: &str) -> bool {
@@ -67,7 +77,17 @@ pub fn is_known_error_code(code: &str) -> bool {
             | error_codes::UNKNOWN_PROJECT
             | error_codes::MISSING_LSP_PAYLOAD
             | error_codes::DOCUMENT_TOO_LARGE
+            | error_codes::CALL_HIERARCHY_UNSUPPORTED
     )
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallHierarchyDirection {
+    Incoming,
+    Outgoing,
+    #[default]
+    Both,
 }
 
 /// Typed LSP navigation request carried on agent requests.
@@ -114,6 +134,17 @@ pub enum AgentLspRequest {
         #[serde(default = "default_find_references_limit")]
         limit: usize,
     },
+    CallHierarchy {
+        path: String,
+        line: usize,
+        column: usize,
+        #[serde(default)]
+        direction: CallHierarchyDirection,
+        #[serde(default = "default_call_hierarchy_depth")]
+        depth: usize,
+        #[serde(default = "default_call_hierarchy_limit")]
+        limit: usize,
+    },
 }
 
 fn default_document_symbols_limit() -> usize {
@@ -138,6 +169,14 @@ fn default_find_references_limit() -> usize {
 
 fn default_include_declaration() -> bool {
     true
+}
+
+fn default_call_hierarchy_depth() -> usize {
+    DEFAULT_CALL_HIERARCHY_DEPTH
+}
+
+fn default_call_hierarchy_limit() -> usize {
+    DEFAULT_CALL_HIERARCHY_LIMIT
 }
 
 /// Agent-side LSP payload. `project_id` is the agent-local project id already
@@ -333,6 +372,55 @@ pub struct LocationsResult {
     pub invalid_results_omitted: usize,
 }
 
+/// Public project-local symbol used by call-hierarchy results.
+///
+/// The opaque LSP `data` field and the source URI intentionally have no
+/// representation here; they remain request-local inside the Runner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicCallHierarchySymbol {
+    pub name: String,
+    pub kind: String,
+    pub kind_code: i64,
+    pub path: String,
+    pub range: PublicRange,
+    pub selection_range: PublicRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallHierarchyEdgeDirection {
+    Incoming,
+    Outgoing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicCallHierarchyEdge {
+    pub direction: CallHierarchyEdgeDirection,
+    pub depth: usize,
+    pub from: PublicCallHierarchySymbol,
+    pub to: PublicCallHierarchySymbol,
+    pub call_sites: Vec<PublicRange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallHierarchyResult {
+    pub project: String,
+    pub path: String,
+    pub language: String,
+    pub query_position: PublicPosition,
+    pub direction: CallHierarchyDirection,
+    pub depth: usize,
+    pub roots: Vec<PublicCallHierarchySymbol>,
+    pub root_total_count: usize,
+    pub root_returned_count: usize,
+    pub edges: Vec<PublicCallHierarchyEdge>,
+    pub returned_count: usize,
+    pub truncated: bool,
+    pub external_results_omitted: usize,
+    pub invalid_results_omitted: usize,
+    pub call_site_ranges_omitted: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentLspError {
     pub code: String,
@@ -446,6 +534,16 @@ pub fn clamp_workspace_symbols_limit(limit: Option<usize>) -> usize {
     limit
         .unwrap_or(DEFAULT_WORKSPACE_SYMBOLS_LIMIT)
         .clamp(MIN_WORKSPACE_SYMBOLS_LIMIT, MAX_WORKSPACE_SYMBOLS_LIMIT)
+}
+
+pub fn validate_call_hierarchy_bounds(depth: usize, limit: usize) -> Result<(), &'static str> {
+    if !(MIN_CALL_HIERARCHY_DEPTH..=MAX_CALL_HIERARCHY_DEPTH).contains(&depth) {
+        return Err("call hierarchy depth must be 1..=2");
+    }
+    if !(MIN_CALL_HIERARCHY_LIMIT..=MAX_CALL_HIERARCHY_LIMIT).contains(&limit) {
+        return Err("call hierarchy limit must be 1..=100");
+    }
+    Ok(())
 }
 
 /// Best-effort redaction of absolute-path-looking material in error text.
@@ -563,6 +661,14 @@ mod tests {
                 include_declaration: false,
                 limit: 40,
             },
+            AgentLspRequest::CallHierarchy {
+                path: "src/lib.rs".to_string(),
+                line: 3,
+                column: 8,
+                direction: CallHierarchyDirection::Both,
+                depth: 2,
+                limit: 40,
+            },
         ];
         for request in cases {
             let payload = AgentLspPayload {
@@ -625,6 +731,84 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+        let hierarchy = r#"{"project_id":"p","request":{"operation":"call_hierarchy","path":"a.rs","line":1,"column":1}}"#;
+        let payload: AgentLspPayload = serde_json::from_str(hierarchy).unwrap();
+        match payload.request {
+            AgentLspRequest::CallHierarchy {
+                direction,
+                depth,
+                limit,
+                ..
+            } => {
+                assert_eq!(direction, CallHierarchyDirection::Both);
+                assert_eq!(depth, DEFAULT_CALL_HIERARCHY_DEPTH);
+                assert_eq!(limit, DEFAULT_CALL_HIERARCHY_LIMIT);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        for field in ["direction", "depth", "limit"] {
+            let json = format!(
+                r#"{{"project_id":"p","request":{{"operation":"call_hierarchy","path":"a.rs","line":1,"column":1,"{field}":null}}}}"#
+            );
+            assert!(
+                serde_json::from_str::<AgentLspPayload>(&json).is_err(),
+                "explicit null must be rejected for {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn call_hierarchy_bounds_are_stable() {
+        assert!(validate_call_hierarchy_bounds(1, 1).is_ok());
+        assert!(validate_call_hierarchy_bounds(2, 100).is_ok());
+        assert_eq!(
+            validate_call_hierarchy_bounds(0, 50),
+            Err("call hierarchy depth must be 1..=2")
+        );
+        assert_eq!(
+            validate_call_hierarchy_bounds(1, 101),
+            Err("call hierarchy limit must be 1..=100")
+        );
+    }
+
+    #[test]
+    fn call_hierarchy_result_serde_is_normalized_and_typed() {
+        let range = PublicRange {
+            start: PublicPosition { line: 2, column: 3 },
+            end: PublicPosition { line: 2, column: 7 },
+        };
+        let symbol = PublicCallHierarchySymbol {
+            name: "caller".to_string(),
+            kind: "function".to_string(),
+            kind_code: 12,
+            path: "src/lib.rs".to_string(),
+            range: range.clone(),
+            selection_range: range,
+        };
+        let result = CallHierarchyResult {
+            project: "demo".to_string(),
+            path: "src/lib.rs".to_string(),
+            language: "rust".to_string(),
+            query_position: PublicPosition { line: 2, column: 3 },
+            direction: CallHierarchyDirection::Incoming,
+            depth: 1,
+            roots: vec![symbol],
+            root_total_count: 1,
+            root_returned_count: 1,
+            edges: Vec::new(),
+            returned_count: 0,
+            truncated: false,
+            external_results_omitted: 0,
+            invalid_results_omitted: 0,
+            call_site_ranges_omitted: 0,
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert!(value.pointer("/roots/0/data").is_none());
+        assert!(value.pointer("/roots/0/uri").is_none());
+        assert_eq!(
+            serde_json::from_value::<CallHierarchyResult>(value).unwrap(),
+            result
+        );
     }
 
     #[test]

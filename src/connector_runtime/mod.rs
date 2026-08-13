@@ -33,9 +33,9 @@ use projections::{
     DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT,
 };
 use wire_models::{
-    sanitize_value, ChecksRunInput, CodeNavigateInput, CodeNavigateOperation, CommandsRunInput,
-    EditsApplyInput, FilesListInput, FilesReadInput, FilesSearchInput, TaskFinishInput,
-    TaskListInput, TaskResumeInput, TaskStartInput,
+    sanitize_value, ChecksRunInput, CodeImpactInput, CodeNavigateInput, CodeNavigateOperation,
+    CommandsRunInput, EditsApplyInput, FilesListInput, FilesReadInput, FilesSearchInput,
+    TaskFinishInput, TaskListInput, TaskResumeInput, TaskStartInput,
 };
 
 // Crate-visible API re-exported for the HTTP/MCP layers and the CLI. The
@@ -496,7 +496,10 @@ impl ConnectorRuntime {
 
         // Read operations coordinate with lifecycle transitions, while every
         // mutation/reservation method owns its narrower task-lock boundary.
-        let task_lock = if matches!(capability, "files_read" | "files_search" | "code_navigate") {
+        let task_lock = if matches!(
+            capability,
+            "files_read" | "files_search" | "code_navigate" | "code_impact"
+        ) {
             arguments
                 .get("task_id")
                 .and_then(Value::as_str)
@@ -529,6 +532,10 @@ impl ConnectorRuntime {
             }
             "code_navigate" => {
                 self.code_navigate(arguments, &subject_id, auth, transport, now)
+                    .await
+            }
+            "code_impact" => {
+                self.code_impact(arguments, &subject_id, auth, transport, now)
                     .await
             }
             "edits_apply" => {
@@ -1429,6 +1436,82 @@ impl ConnectorRuntime {
                     &task,
                     "code_navigate",
                     json!({ "ok": false, "operation": operation }),
+                    now,
+                );
+                self.kernel_error_outcome(error, &task, cursor, Value::Null)
+            }
+        }
+    }
+
+    async fn code_impact(
+        &self,
+        arguments: Value,
+        subject_id: &str,
+        auth: &AuthContext,
+        transport: ConnectorTransport,
+        now: i64,
+    ) -> ConnectorCallOutcome {
+        let input: CodeImpactInput = match parse_input("code_impact", arguments) {
+            Ok(input) => input,
+            Err(outcome) => return outcome,
+        };
+        if let Err(message) = validate_path(&input.path) {
+            return invalid_input("code_impact", message);
+        }
+        if redact_absolute_paths(&input.path) != input.path {
+            return invalid_input("code_impact", "path must be project-relative");
+        }
+        if input.line < 1 || input.column < 1 {
+            return invalid_input("code_impact", "line and column must be >= 1");
+        }
+        if !(1..=2).contains(&input.depth) {
+            return invalid_input("code_impact", "depth must be 1..=2");
+        }
+        if !(1..=100).contains(&input.limit) {
+            return invalid_input("code_impact", "limit must be 1..=100");
+        }
+        let task = match self.active_task(&input.task_id, subject_id) {
+            Ok(task) => task,
+            Err(outcome) => return outcome,
+        };
+        let arguments = json!({
+            "project": task.execution_executor_ref,
+            "path": input.path,
+            "line": input.line,
+            "column": input.column,
+            "direction": input.direction,
+            "depth": input.depth,
+            "limit": input.limit,
+        });
+        match self
+            .invoke_kernel("call_hierarchy", arguments, &task, auth, transport)
+            .await
+        {
+            Ok(output) => {
+                let cursor = match self.record_event(
+                    &task,
+                    "code_impact",
+                    json!({
+                        "ok": true,
+                        "direction": input.direction,
+                        "depth": input.depth,
+                    }),
+                    now,
+                ) {
+                    Ok(cursor) => cursor,
+                    Err(outcome) => return outcome,
+                };
+                ConnectorCallOutcome::success_at(&task, cursor, output)
+            }
+            Err(error) => {
+                let cursor = self.record_event(
+                    &task,
+                    "code_impact",
+                    json!({
+                        "ok": false,
+                        "direction": input.direction,
+                        "depth": input.depth,
+                    }),
                     now,
                 );
                 self.kernel_error_outcome(error, &task, cursor, Value::Null)
@@ -3290,16 +3373,49 @@ impl ConnectorRuntime {
             &self.context.project_id,
             &task.execution_root,
         );
+        if let Some(client_id) = executor_client_id(&task.execution_executor_ref) {
+            replace_string_material(&mut value, client_id, "<agent>");
+        }
         value
     }
 
     fn sanitize_task_string(&self, task: &ConnectorTaskSnapshot, value: &str) -> String {
-        value
+        let value = value
             .replace(&task.execution_executor_ref, &self.context.project_id)
             .replace(&task.execution_root, ".")
             .replace(&self.context.runs_root, "<managed-runs>")
             .replace(&self.context.results_root, "<managed-results>")
-            .replace(&self.context.projects_dir, "<managed-projects>")
+            .replace(&self.context.projects_dir, "<managed-projects>");
+        match executor_client_id(&task.execution_executor_ref) {
+            Some(client_id) => value.replace(client_id, "<agent>"),
+            None => value,
+        }
+    }
+}
+
+fn executor_client_id(executor_ref: &str) -> Option<&str> {
+    let (client_id, project_id) = executor_ref.strip_prefix("agent:")?.split_once(':')?;
+    (!client_id.is_empty() && !project_id.is_empty()).then_some(client_id)
+}
+
+fn replace_string_material(value: &mut Value, needle: &str, replacement: &str) {
+    match value {
+        Value::String(string) => {
+            if string.contains(needle) {
+                *string = string.replace(needle, replacement);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                replace_string_material(item, needle, replacement);
+            }
+        }
+        Value::Object(object) => {
+            for item in object.values_mut() {
+                replace_string_material(item, needle, replacement);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
 

@@ -199,3 +199,56 @@ pub(crate) fn find_references_input_schema() -> Value {
     schema["properties"]["limit"]["default"] = json!(50);
     schema
 }
+
+pub(crate) fn call_hierarchy_input_schema() -> Value {
+    let mut schema = object_schema(with_optional_session_id(vec![
+        (
+            "project",
+            "string",
+            "Full agent runtime project id (agent:<client_id>:<project_id>).",
+            true,
+        ),
+        (
+            "path",
+            "string",
+            "Project-relative UTF-8 path to a supported source file.",
+            true,
+        ),
+        ("line", "integer", "1-based line number.", true),
+        (
+            "column",
+            "integer",
+            "1-based Unicode scalar column (end-of-line caret allowed at length+1).",
+            true,
+        ),
+        (
+            "direction",
+            "string",
+            "Call direction: incoming, outgoing, or both (default both).",
+            false,
+        ),
+        (
+            "depth",
+            "integer",
+            "Breadth-first traversal depth (default 1, maximum 2).",
+            false,
+        ),
+        (
+            "limit",
+            "integer",
+            "Global flattened edge limit (default 50, maximum 100).",
+            false,
+        ),
+    ]));
+    schema["properties"]["line"]["minimum"] = json!(1);
+    schema["properties"]["column"]["minimum"] = json!(1);
+    schema["properties"]["direction"]["enum"] = json!(["incoming", "outgoing", "both"]);
+    schema["properties"]["direction"]["default"] = json!("both");
+    schema["properties"]["depth"]["minimum"] = json!(1);
+    schema["properties"]["depth"]["maximum"] = json!(2);
+    schema["properties"]["depth"]["default"] = json!(1);
+    schema["properties"]["limit"]["minimum"] = json!(1);
+    schema["properties"]["limit"]["maximum"] = json!(100);
+    schema["properties"]["limit"]["default"] = json!(50);
+    schema
+}

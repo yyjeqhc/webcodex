@@ -490,13 +490,14 @@ fn project_connector_tools_list_is_exact_canonical_surface() {
         .map(|tool| tool["name"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(names, crate::connector_runtime::surface::CAPABILITY_NAMES);
-    assert_eq!(tools.len(), 13);
+    assert_eq!(tools.len(), 14);
     assert!(tools.iter().all(|tool| tool["inputSchema"].is_object()));
     assert!(tools.iter().all(|tool| tool["outputSchema"].is_object()));
     assert!(!names.contains(&"runtime_status"));
     assert!(!names.contains(&"list_projects"));
     assert!(!names.contains(&"start_session"));
     assert!(names.contains(&"code_navigate"));
+    assert!(names.contains(&"code_impact"));
     for raw_name in [
         "lsp_status",
         "document_symbols",
@@ -505,6 +506,10 @@ fn project_connector_tools_list_is_exact_canonical_surface() {
         "find_references",
         "document_diagnostics",
         "hover",
+        "call_hierarchy",
+        "prepare_call_hierarchy",
+        "incoming_calls",
+        "outgoing_calls",
     ] {
         assert!(!names.contains(&raw_name));
     }
@@ -2002,18 +2007,24 @@ async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities
         .await;
     assert_eq!(effective_status(&schema), StatusCode::OK);
     let schema_body: Value = schema.take_json().await.unwrap();
-    assert_eq!(schema_body["paths"].as_object().unwrap().len(), 13);
+    assert_eq!(schema_body["paths"].as_object().unwrap().len(), 14);
     assert!(schema_body["paths"]
         .get("/api/connector/task/start")
         .is_some());
     assert!(schema_body["paths"]
         .get("/api/connector/code/navigate")
         .is_some());
+    assert!(schema_body["paths"]
+        .get("/api/connector/code/impact")
+        .is_some());
     assert!(schema_body["paths"].get("/api/tools/call").is_none());
     let action_checks_schema = schema_body["paths"]["/api/connector/checks/run"]["post"]
         ["requestBody"]["content"]["application/json"]["schema"]
         .clone();
     let action_navigation_schema = schema_body["paths"]["/api/connector/code/navigate"]["post"]
+        ["requestBody"]["content"]["application/json"]["schema"]
+        .clone();
+    let action_impact_schema = schema_body["paths"]["/api/connector/code/impact"]["post"]
         ["requestBody"]["content"]["application/json"]["schema"]
         .clone();
 
@@ -2052,6 +2063,14 @@ async fn http_project_connector_lists_and_dispatches_only_canonical_capabilities
         .unwrap()["inputSchema"]
         .clone();
     assert_eq!(mcp_navigation_schema, action_navigation_schema);
+    let mcp_impact_schema = listed_body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "code_impact")
+        .unwrap()["inputSchema"]
+        .clone();
+    assert_eq!(mcp_impact_schema, action_impact_schema);
 
     let mut missing_window = TestClient::post("http://localhost/mcp")
         .bearer_auth(user_token)

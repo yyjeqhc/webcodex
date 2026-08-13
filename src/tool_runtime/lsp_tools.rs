@@ -4,14 +4,17 @@ use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::lsp_bridge::{
     clamp_document_diagnostics_limit, clamp_document_symbols_limit, clamp_find_references_limit,
     clamp_goto_definition_limit, clamp_workspace_symbols_limit, error_codes, is_known_error_code,
-    parse_agent_lsp_result_envelope, redact_absolute_paths, AgentLspPayload, AgentLspRequest,
-    DocumentDiagnosticsResult, DocumentDiagnosticsStatus, DocumentSymbolsResult, HoverResult,
-    LocationsResult, LspStatusResult, WorkspaceSymbolsResult,
+    parse_agent_lsp_result_envelope, redact_absolute_paths, validate_call_hierarchy_bounds,
+    AgentLspPayload, AgentLspRequest, CallHierarchyResult, DocumentDiagnosticsResult,
+    DocumentDiagnosticsStatus, DocumentSymbolsResult, HoverResult, LocationsResult,
+    LspStatusResult, WorkspaceSymbolsResult, MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE,
+    MAX_CALL_HIERARCHY_ROOTS,
 };
 use crate::shell_client::EnqueueLspError;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::path::{Component, Path};
 use std::time::Duration;
 
 impl ToolRuntime {
@@ -147,6 +150,41 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::CallHierarchy {
+                project,
+                path,
+                line,
+                column,
+                direction,
+                depth,
+                limit,
+                session_id: _,
+            } => {
+                if line < 1 || column < 1 {
+                    return ToolResult::err(format!(
+                        "{}: line and column must be >= 1",
+                        error_codes::INVALID_ARGUMENTS
+                    ));
+                }
+                if let Err(message) = validate_call_hierarchy_bounds(depth, limit) {
+                    return ToolResult::err(format!(
+                        "{}: {message}",
+                        error_codes::INVALID_ARGUMENTS
+                    ));
+                }
+                self.call_agent_lsp(
+                    project,
+                    AgentLspRequest::CallHierarchy {
+                        path,
+                        line,
+                        column,
+                        direction,
+                        depth,
+                        limit,
+                    },
+                )
+                .await
+            }
             other => ToolResult::err(format!("not an LSP tool: {}", other.tool_name())),
         }
     }
@@ -179,7 +217,14 @@ impl ToolRuntime {
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
             ));
         }
-        if !client.capabilities.lsp_read_only_navigation {
+        let call_hierarchy = matches!(&request, AgentLspRequest::CallHierarchy { .. });
+        if call_hierarchy && !client.capabilities.lsp_call_hierarchy {
+            return ToolResult::err(format!(
+                "{}: agent does not support lsp_call_hierarchy",
+                error_codes::AGENT_CAPABILITY_UNAVAILABLE
+            ));
+        }
+        if !call_hierarchy && !client.capabilities.lsp_read_only_navigation {
             return ToolResult::err(format!(
                 "{}: agent does not support lsp_read_only_navigation",
                 error_codes::AGENT_CAPABILITY_UNAVAILABLE
@@ -321,6 +366,22 @@ fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result
         AgentLspRequest::GotoDefinition { .. } | AgentLspRequest::FindReferences { .. } => {
             roundtrip_typed_result::<LocationsResult>(result)
         }
+        AgentLspRequest::CallHierarchy {
+            direction,
+            line,
+            column,
+            depth,
+            limit,
+            ..
+        } => serde_json::from_value::<CallHierarchyResult>(result).and_then(|typed| {
+            validate_call_hierarchy_result(&typed, *direction, *line, *column, *depth, *limit)
+                .map_err(|_| {
+                    serde_json::Error::io(std::io::Error::other(
+                        "inconsistent call hierarchy result",
+                    ))
+                })?;
+            serde_json::to_value(typed)
+        }),
     }
     .map_err(|_| {
         format!(
@@ -335,6 +396,99 @@ fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result
         ));
     }
     Ok(result)
+}
+
+fn validate_call_hierarchy_result(
+    result: &CallHierarchyResult,
+    requested_direction: crate::lsp_bridge::CallHierarchyDirection,
+    requested_line: usize,
+    requested_column: usize,
+    requested_depth: usize,
+    requested_limit: usize,
+) -> Result<(), ()> {
+    use crate::lsp_bridge::{CallHierarchyDirection, CallHierarchyEdgeDirection};
+
+    validate_call_hierarchy_bounds(requested_depth, requested_limit).map_err(|_| ())?;
+    if result.direction != requested_direction
+        || result.depth != requested_depth
+        || result.returned_count != result.edges.len()
+        || result.edges.len() > requested_limit
+        || result.root_returned_count != result.roots.len()
+        || result.root_total_count < result.root_returned_count
+        || result.roots.len() > MAX_CALL_HIERARCHY_ROOTS
+        || (result.call_site_ranges_omitted > 0 && !result.truncated)
+        || result.query_position.line != requested_line
+        || result.query_position.column != requested_column
+        || !is_safe_project_relative_path(&result.path)
+        || result.language.is_empty()
+        || result.language.chars().count() > 64
+    {
+        return Err(());
+    }
+    for symbol in &result.roots {
+        validate_call_hierarchy_symbol(symbol)?;
+    }
+    for edge in &result.edges {
+        let direction_allowed = match requested_direction {
+            CallHierarchyDirection::Incoming => {
+                edge.direction == CallHierarchyEdgeDirection::Incoming
+            }
+            CallHierarchyDirection::Outgoing => {
+                edge.direction == CallHierarchyEdgeDirection::Outgoing
+            }
+            CallHierarchyDirection::Both => true,
+        };
+        if !direction_allowed
+            || !(1..=requested_depth).contains(&edge.depth)
+            || edge.call_sites.len() > MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE
+        {
+            return Err(());
+        }
+        validate_call_hierarchy_symbol(&edge.from)?;
+        validate_call_hierarchy_symbol(&edge.to)?;
+        for range in &edge.call_sites {
+            validate_public_range(range)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_call_hierarchy_symbol(
+    symbol: &crate::lsp_bridge::PublicCallHierarchySymbol,
+) -> Result<(), ()> {
+    if symbol.name.is_empty()
+        || symbol.name.chars().count() > 256
+        || symbol.kind.is_empty()
+        || symbol.kind.chars().count() > 64
+        || !is_safe_project_relative_path(&symbol.path)
+    {
+        return Err(());
+    }
+    validate_public_range(&symbol.range)?;
+    validate_public_range(&symbol.selection_range)
+}
+
+fn validate_public_range(range: &crate::lsp_bridge::PublicRange) -> Result<(), ()> {
+    let start = (range.start.line, range.start.column);
+    let end = (range.end.line, range.end.column);
+    if range.start.line < 1
+        || range.start.column < 1
+        || range.end.line < 1
+        || range.end.column < 1
+        || end < start
+    {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn is_safe_project_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && !Path::new(path).is_absolute()
+        && Path::new(path)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+        && !string_contains_forbidden_path_material(path)
 }
 
 fn validate_document_diagnostics_status(result: &DocumentDiagnosticsResult) -> Result<(), ()> {

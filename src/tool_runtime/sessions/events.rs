@@ -7,8 +7,8 @@ use super::super::tool_definition::{
     runtime_tool_session_risk_class, TOOL_CATEGORY_LSP,
 };
 use crate::lsp_bridge::{
-    DocumentDiagnosticsResult, DocumentSymbolsResult, HoverResult, LocationsResult,
-    WorkspaceSymbolsResult,
+    CallHierarchyResult, DocumentDiagnosticsResult, DocumentSymbolsResult, HoverResult,
+    LocationsResult, WorkspaceSymbolsResult,
 };
 use serde_json::{json, Value};
 
@@ -339,6 +339,7 @@ pub(crate) const EXPLORATION_TOOL_NAMES: &[&str] = &[
     "workspace_symbols",
     "goto_definition",
     "find_references",
+    "call_hierarchy",
 ];
 
 pub(crate) fn exploration_tool_kind(tool_name: &str) -> Option<ExplorationToolKind> {
@@ -594,6 +595,18 @@ fn push_lsp_result_paths(tool_name: &str, output: &Value, paths: &mut Vec<String
                 push_observed_path(paths, &result.path);
                 for location in result.locations {
                     push_observed_path(paths, &location.path);
+                }
+            }
+        }
+        "call_hierarchy" => {
+            if let Ok(result) = serde_json::from_value::<CallHierarchyResult>(output.clone()) {
+                push_observed_path(paths, &result.path);
+                for root in result.roots {
+                    push_observed_path(paths, &root.path);
+                }
+                for edge in result.edges {
+                    push_observed_path(paths, &edge.from.path);
+                    push_observed_path(paths, &edge.to.path);
                 }
             }
         }

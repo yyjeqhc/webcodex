@@ -6045,6 +6045,7 @@ fn register_request_announces_correct_protocol_version() {
     assert!(caps.structured_script_payload);
     assert!(caps.structured_execution_jobs);
     assert!(caps.lsp_read_only_navigation);
+    assert!(caps.lsp_call_hierarchy);
     assert!(caps.project_lifecycle);
     assert!(caps.project_path_registration);
     assert_eq!(

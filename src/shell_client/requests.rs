@@ -9,13 +9,13 @@ use super::validation::{
     validate_script_enqueue_request, MAX_COMMAND_LEN,
 };
 use super::{now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS};
-use crate::lsp_bridge::{AgentLspPayload, AGENT_LSP_REQUEST_KIND};
+use crate::lsp_bridge::{AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND};
 use crate::shell_protocol::{
     PersistentShellRequest, PersistentShellResult, ShellAgentShellRequest, ShellFileOpRequest,
     ShellJobContext, ShellProcessArgv, ShellRunRequest, ShellRunResponse, ShellScriptPayload,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
+    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
 use std::fmt;
@@ -24,11 +24,23 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EnqueueLspError {
-    InvalidRequest { message: String },
-    UnknownClient { client_id: String },
-    ClientOffline { client_id: String },
-    UnsupportedCapability { client_id: String },
-    QueueFull { client_id: String, limit: usize },
+    InvalidRequest {
+        message: String,
+    },
+    UnknownClient {
+        client_id: String,
+    },
+    ClientOffline {
+        client_id: String,
+    },
+    UnsupportedCapability {
+        client_id: String,
+        capability: &'static str,
+    },
+    QueueFull {
+        client_id: String,
+        limit: usize,
+    },
 }
 
 impl fmt::Display for EnqueueLspError {
@@ -43,10 +55,12 @@ impl fmt::Display for EnqueueLspError {
                 "shell client {client_id} is offline (no keepalive within \
                  {CLIENT_ONLINE_WINDOW_SECS}s); reconnect the agent before retrying"
             ),
-            Self::UnsupportedCapability { client_id } => write!(
+            Self::UnsupportedCapability {
+                client_id,
+                capability,
+            } => write!(
                 formatter,
-                "agent client {client_id} does not support \
-                 {SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION}"
+                "agent client {client_id} does not support {capability}"
             ),
             Self::QueueFull { client_id, limit } => write!(
                 formatter,
@@ -748,12 +762,21 @@ impl ShellClientRegistry {
             .map_err(|message| EnqueueLspError::InvalidRequest { message })?;
         // Capability gate before enqueue so old agents never receive unknown
         // LSP kinds that could fall into shell fallback.
+        let required_capability =
+            if matches!(&payload.request, AgentLspRequest::CallHierarchy { .. }) {
+                SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY
+            } else {
+                SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION
+            };
         if !self
-            .client_supports(&client_id, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION)
+            .client_supports(&client_id, required_capability)
             .await
             .map_err(EnqueueLspError::from)?
         {
-            return Err(EnqueueLspError::UnsupportedCapability { client_id });
+            return Err(EnqueueLspError::UnsupportedCapability {
+                client_id,
+                capability: required_capability,
+            });
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();

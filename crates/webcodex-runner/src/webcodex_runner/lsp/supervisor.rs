@@ -109,6 +109,7 @@ pub(crate) enum LspError {
         limit: usize,
     },
     InvalidProjectRoot(String),
+    CallHierarchyUnsupported,
 }
 
 impl LspError {
@@ -152,6 +153,9 @@ impl fmt::Display for LspError {
                 write!(f, "language server capacity exceeded (limit {limit})")
             }
             Self::InvalidProjectRoot(message) => write!(f, "invalid project root: {message}"),
+            Self::CallHierarchyUnsupported => {
+                f.write_str("language server does not support call hierarchy")
+            }
         }
     }
 }
@@ -544,6 +548,69 @@ impl LspSupervisor {
             params,
             self.inner.config.request_timeout,
             None,
+            false,
+        )
+    }
+
+    pub(crate) fn prepare_call_hierarchy(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        document_uri: &str,
+        language_id: &str,
+        text: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<(Value, PositionEncoding), LspError> {
+        self.request_with_timeout_and_encoding_inner(
+            validated_project_root,
+            kind,
+            "textDocument/prepareCallHierarchy",
+            json!({
+                "textDocument": { "uri": document_uri },
+                "position": { "line": line, "character": character }
+            }),
+            self.inner.config.request_timeout,
+            Some(DocumentOpen {
+                uri: document_uri,
+                language_id,
+                text,
+            }),
+            true,
+        )
+    }
+
+    pub(crate) fn incoming_call_hierarchy(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        item: Value,
+    ) -> Result<(Value, PositionEncoding), LspError> {
+        self.request_with_timeout_and_encoding_inner(
+            validated_project_root,
+            kind,
+            "callHierarchy/incomingCalls",
+            json!({ "item": item }),
+            self.inner.config.request_timeout,
+            None,
+            true,
+        )
+    }
+
+    pub(crate) fn outgoing_call_hierarchy(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        item: Value,
+    ) -> Result<(Value, PositionEncoding), LspError> {
+        self.request_with_timeout_and_encoding_inner(
+            validated_project_root,
+            kind,
+            "callHierarchy/outgoingCalls",
+            json!({ "item": item }),
+            self.inner.config.request_timeout,
+            None,
+            true,
         )
     }
 
@@ -563,6 +630,7 @@ impl LspSupervisor {
             params,
             timeout,
             document,
+            false,
         )
         .map(|(value, _)| value)
     }
@@ -575,6 +643,7 @@ impl LspSupervisor {
         params: Value,
         timeout: Duration,
         document: Option<DocumentOpen<'_>>,
+        require_call_hierarchy: bool,
     ) -> Result<(Value, PositionEncoding), LspError> {
         let key = ProcessKey {
             project_root: canonical_project_root(validated_project_root)?,
@@ -593,6 +662,9 @@ impl LspSupervisor {
                 }
                 Err(error) => return Err(error),
             };
+            if require_call_hierarchy && !server.call_hierarchy_supported() {
+                return Err(LspError::CallHierarchyUnsupported);
+            }
             if let Some(document) = document {
                 if let Err(error) = server.synchronize_document(document) {
                     if attempt == 0 && error.permits_restart() {
@@ -611,6 +683,9 @@ impl LspSupervisor {
             }
             match server.request(method, params.clone(), timeout) {
                 Ok(value) => return Ok((value, server.position_encoding())),
+                Err(LspError::JsonRpc { code: -32601, .. }) if require_call_hierarchy => {
+                    return Err(LspError::CallHierarchyUnsupported);
+                }
                 Err(error) if attempt == 0 && error.permits_restart() => {
                     last_error = Some(error);
                 }
@@ -1604,6 +1679,7 @@ struct ServerInstance {
     connection: Arc<ConnectionState>,
     next_id: AtomicU64,
     position_encoding: Mutex<PositionEncoding>,
+    call_hierarchy_supported: AtomicBool,
     open_documents: Mutex<HashMap<String, OpenDocumentState>>,
     diagnostics: Arc<DiagnosticsCache>,
     last_used: Mutex<Instant>,
@@ -1708,6 +1784,7 @@ impl ServerInstance {
             connection,
             next_id: AtomicU64::new(1),
             position_encoding: Mutex::new(PositionEncoding::Utf16),
+            call_hierarchy_supported: AtomicBool::new(false),
             open_documents: Mutex::new(HashMap::new()),
             diagnostics,
             last_used: Mutex::new(Instant::now()),
@@ -1775,6 +1852,11 @@ impl ServerInstance {
                 "capabilities": {
                     "general": {
                         "positionEncodings": ["utf-8", "utf-16", "utf-32"]
+                    },
+                    "textDocument": {
+                        "callHierarchy": {
+                            "dynamicRegistration": false
+                        }
                     }
                 }
             }),
@@ -1782,6 +1864,12 @@ impl ServerInstance {
             true,
         )?;
         *lock_unpoison(&self.position_encoding) = PositionEncoding::from_initialize_result(&result);
+        self.call_hierarchy_supported.store(
+            result
+                .pointer("/capabilities/callHierarchyProvider")
+                .is_some_and(|provider| provider == &Value::Bool(true) || provider.is_object()),
+            Ordering::SeqCst,
+        );
         self.notify("initialized", json!({}))?;
         if !self.is_alive() {
             return Err(LspError::ServerExited);
@@ -1817,6 +1905,10 @@ impl ServerInstance {
 
     fn position_encoding(&self) -> PositionEncoding {
         *lock_unpoison(&self.position_encoding)
+    }
+
+    fn call_hierarchy_supported(&self) -> bool {
+        self.call_hierarchy_supported.load(Ordering::SeqCst)
     }
 
     fn request_raw(

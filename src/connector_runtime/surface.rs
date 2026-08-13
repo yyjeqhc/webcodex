@@ -21,6 +21,7 @@ pub(crate) const CAPABILITY_NAMES: &[&str] = &[
     "task_review",
     "task_cancel",
     "task_finish",
+    "code_impact",
 ];
 
 pub(crate) fn capability_specs() -> Vec<ToolSpec> {
@@ -376,6 +377,48 @@ pub(crate) fn capability_specs() -> Vec<ToolSpec> {
             false,
             false,
         ),
+        spec(
+            "code_impact",
+            "Inspect bounded project-local incoming and outgoing call hierarchy from a source position. The Runner uses the configured language server and returns normalized roots plus breadth-first flattened edges to depth 1 or 2; external/private LSP data is omitted and no heuristic fallback is used.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "task_id": task_id_schema(),
+                    "path": path_schema(),
+                    "line": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based line number."
+                    },
+                    "column": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based Unicode scalar column."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["incoming", "outgoing", "both"],
+                        "default": "both"
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2,
+                        "default": 1
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "default": 50
+                    }
+                },
+                "required": ["task_id", "path", "line", "column"],
+                "additionalProperties": false
+            }),
+            true,
+            true,
+        ),
     ]
 }
 
@@ -400,6 +443,7 @@ pub(crate) fn route_for(name: &str) -> Option<&'static str> {
         "task_review" => Some("/api/connector/task/review"),
         "task_cancel" => Some("/api/connector/task/cancel"),
         "task_finish" => Some("/api/connector/task/finish"),
+        "code_impact" => Some("/api/connector/code/impact"),
         _ => None,
     }
 }
@@ -581,7 +625,7 @@ mod tests {
             .map(|name| name.to_string())
             .collect::<BTreeSet<_>>();
         assert_eq!(operations, expected);
-        assert_eq!(spec["paths"].as_object().unwrap().len(), 13);
+        assert_eq!(spec["paths"].as_object().unwrap().len(), 14);
         let start = &spec["paths"]["/api/connector/task/start"]["post"]["requestBody"]["content"]
             ["application/json"]["schema"];
         assert_eq!(start["properties"]["target_path"]["type"], "string");
@@ -626,6 +670,19 @@ mod tests {
             ])
         );
         assert!(CAPABILITY_NAMES.contains(&"code_navigate"));
+        let impact = &spec["paths"]["/api/connector/code/impact"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"];
+        assert_eq!(
+            impact["required"],
+            json!(["task_id", "path", "line", "column"])
+        );
+        assert_eq!(impact["properties"]["direction"]["default"], "both");
+        assert_eq!(impact["properties"]["depth"]["maximum"], 2);
+        assert_eq!(impact["properties"]["limit"]["maximum"], 100);
+        assert_eq!(impact["additionalProperties"], false);
+        assert!(impact.get("oneOf").is_none());
+        assert!(impact.get("anyOf").is_none());
+        assert_eq!(CAPABILITY_NAMES.last(), Some(&"code_impact"));
         for raw_name in [
             "lsp_status",
             "document_symbols",
@@ -634,6 +691,10 @@ mod tests {
             "find_references",
             "document_diagnostics",
             "hover",
+            "call_hierarchy",
+            "prepare_call_hierarchy",
+            "incoming_calls",
+            "outgoing_calls",
         ] {
             assert!(!CAPABILITY_NAMES.contains(&raw_name));
         }

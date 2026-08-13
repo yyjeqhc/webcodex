@@ -966,8 +966,8 @@ pub(super) fn model_next_action(task_status: &str, host_action: &str) -> &'stati
 pub(super) fn required_scope(capability: &str) -> &'static str {
     match capability {
         "task_start" => SCOPE_RUNTIME_READ,
-        "files_read" | "files_search" | "code_navigate" | "task_review" | "task_list"
-        | "task_resume" => SCOPE_PROJECT_READ,
+        "files_read" | "files_search" | "code_navigate" | "code_impact" | "task_review"
+        | "task_list" | "task_resume" => SCOPE_PROJECT_READ,
         "edits_apply" | "task_finish" => SCOPE_PROJECT_WRITE,
         "checks_run" | "commands_run" | "task_cancel" => SCOPE_JOB_RUN,
         _ => SCOPE_RUNTIME_READ,

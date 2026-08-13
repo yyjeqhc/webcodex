@@ -503,6 +503,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
             ToolRisk::ReadOnly,
             AgentCapability::LspReadOnlyNavigation,
         ),
+        (
+            "call_hierarchy",
+            ToolRisk::ReadOnly,
+            AgentCapability::LspCallHierarchy,
+        ),
         ("run_job", ToolRisk::JobRun, AgentCapability::AsyncJobs),
         (
             "project_overview",

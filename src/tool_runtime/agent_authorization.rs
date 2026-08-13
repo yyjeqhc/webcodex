@@ -120,7 +120,10 @@ impl ToolRuntime {
                         client_id,
                         required.label()
                     );
-                    if matches!(required, AgentCapability::LspReadOnlyNavigation) {
+                    if matches!(
+                        required,
+                        AgentCapability::LspReadOnlyNavigation | AgentCapability::LspCallHierarchy
+                    ) {
                         return Err(ToolResult::err(format!(
                             "{}: {}",
                             crate::lsp_bridge::error_codes::AGENT_CAPABILITY_UNAVAILABLE,

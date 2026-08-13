@@ -26,7 +26,7 @@ https://your-domain.example/openapi.json
 ```
 
 Inspect the imported operation names rather than assuming one schema shape. A
-Server with project-bound Connector configuration returns the thirteen
+Server with project-bound Connector configuration returns the fourteen
 capabilities documented below; a generic Server returns the standard runtime
 OpenAPI projection instead.
 
@@ -43,7 +43,7 @@ audit endpoints. Use the `webcodex` CLI for those tasks.
 ## The Connector surface
 
 When the Server is running with project-bound Connector configuration,
-OpenAPI is generated from the same thirteen capabilities as the canonical MCP
+OpenAPI is generated from the same fourteen capabilities as the canonical MCP
 Connector:
 
 ```text
@@ -60,6 +60,7 @@ commands_run
 task_review
 task_cancel
 task_finish
+code_impact
 ```
 
 The Connector already owns a deterministic project binding. A Custom GPT must
@@ -79,6 +80,8 @@ Use files_list to see what the project contains before guessing paths.
 Use files_read/files_search before edits_apply.
 Use code_navigate for read-only semantic status, symbols, definitions,
 references, diagnostics, and hover; provide only project-relative paths.
+Use code_impact for bounded incoming/outgoing call hierarchy and change-impact
+inspection; provide only a project-relative path and source position.
 Use a stable operation_id for exact retry.
 Run checks_run before task_finish.
 Use task_review for execution progress and result review.

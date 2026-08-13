@@ -215,6 +215,7 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             structured_script_payload: true,
             structured_execution_jobs: true,
             lsp_read_only_navigation: true,
+            lsp_call_hierarchy: true,
             sandbox_inspect_commands: false,
             project_lifecycle: false,
             project_path_registration: false,

@@ -1643,6 +1643,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 structured_script_payload: true,
                 structured_execution_jobs: true,
                 lsp_read_only_navigation: true,
+                lsp_call_hierarchy: true,
                 sandbox_inspect_commands: true,
                 project_lifecycle: true,
                 project_path_registration: true,
@@ -1916,6 +1917,15 @@ async fn register_lsp_test_client(
     client_id: &str,
     lsp_capable: bool,
 ) {
+    register_lsp_test_client_capabilities(registry, client_id, lsp_capable, lsp_capable).await;
+}
+
+async fn register_lsp_test_client_capabilities(
+    registry: &ShellClientRegistry,
+    client_id: &str,
+    lsp_capable: bool,
+    call_hierarchy_capable: bool,
+) {
     registry
         .register(ShellClientRegisterRequest {
             process_started_at: None,
@@ -1929,6 +1939,7 @@ async fn register_lsp_test_client(
             hostname: None,
             capabilities: Some(ShellClientCapabilities {
                 lsp_read_only_navigation: lsp_capable,
+                lsp_call_hierarchy: call_hierarchy_capable,
                 ..Default::default()
             }),
             projects: None,
@@ -1937,6 +1948,27 @@ async fn register_lsp_test_client(
         })
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn enqueue_call_hierarchy_uses_only_its_distinct_capability() {
+    let registry = ShellClientRegistry::default();
+    register_lsp_test_client_capabilities(&registry, "hierarchy", false, true).await;
+    let payload = AgentLspPayload {
+        project_id: "demo".to_string(),
+        request: AgentLspRequest::CallHierarchy {
+            path: "src/main.rs".to_string(),
+            line: 1,
+            column: 1,
+            direction: crate::lsp_bridge::CallHierarchyDirection::Both,
+            depth: 1,
+            limit: 50,
+        },
+    };
+    registry
+        .enqueue_lsp("hierarchy".to_string(), payload, "test".to_string(), 5)
+        .await
+        .expect("distinct call hierarchy capability should authorize enqueue");
 }
 
 #[tokio::test]
@@ -1978,7 +2010,8 @@ async fn enqueue_lsp_returns_structured_unsupported_capability_error() {
     assert_eq!(
         error,
         EnqueueLspError::UnsupportedCapability {
-            client_id: "legacy".to_string()
+            client_id: "legacy".to_string(),
+            capability: crate::shell_protocol::SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
         }
     );
     assert_eq!(

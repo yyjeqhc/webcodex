@@ -69,13 +69,13 @@ webcodex setup --root "$repo" --state-dir "$state" --json
 webcodex agent start --root "$repo" --state-dir "$state" &   # boots server+runner+connector
 port=$(grep -oP 'port = \K[0-9]+' "$state/project.toml")
 conn=$(cat "$state/credentials/connector-key")
-# MCP JSON-RPC: initialize, tools/list (exactly 13 canonical, no operator runtime),
-# then task_start → files_read → code_navigate → edits_apply → commands_run → checks_run →
+# MCP JSON-RPC: initialize, tools/list (exactly 14 canonical, no operator runtime),
+# then task_start → files_read → code_navigate/code_impact → edits_apply → commands_run → checks_run →
 # task_review → task_finish, and task_resume after a fresh initialize:
 curl -fsS -H "Authorization: Bearer $conn" -H 'Content-Type: application/json' \
   -X POST "http://127.0.0.1:$port/mcp" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-# OpenAPI projection is the same 13 operations:
+# OpenAPI projection is the same 14 operations:
 curl -fsS -H "Authorization: Bearer $conn" "http://127.0.0.1:$port/openapi.json"
 # Boundary: a project credential must be denied operator-only routes (HTTP 403):
 curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $conn" \

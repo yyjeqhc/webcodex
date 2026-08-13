@@ -754,7 +754,8 @@ impl ToolRuntime {
             | ToolCall::Hover { .. }
             | ToolCall::WorkspaceSymbols { .. }
             | ToolCall::GotoDefinition { .. }
-            | ToolCall::FindReferences { .. }) => self.dispatch_lsp_tool(call).await,
+            | ToolCall::FindReferences { .. }
+            | ToolCall::CallHierarchy { .. }) => self.dispatch_lsp_tool(call).await,
         }
     }
 }

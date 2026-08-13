@@ -4,7 +4,8 @@ use super::supervisor::{
     LspCommand, LspServerKind, LspSupervisor, LspSupervisorConfig, PositionEncoding,
 };
 use crate::lsp_bridge::{
-    parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND,
+    parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, CallHierarchyDirection,
+    AGENT_LSP_REQUEST_KIND,
 };
 use crate::shell_protocol::{ShellAgentShellRequest, ShellClientCapabilities};
 use crate::webcodex_runner::config::AgentPolicy;
@@ -220,6 +221,28 @@ impl NavFixture {
             },
         })
     }
+
+    fn call_hierarchy(
+        &self,
+        path: &str,
+        line: usize,
+        column: usize,
+        direction: CallHierarchyDirection,
+        depth: usize,
+        limit: usize,
+    ) -> Value {
+        self.request(AgentLspPayload {
+            project_id: "demo".into(),
+            request: AgentLspRequest::CallHierarchy {
+                path: path.into(),
+                line,
+                column,
+                direction,
+                depth,
+                limit,
+            },
+        })
+    }
 }
 
 #[test]
@@ -235,12 +258,189 @@ fn capability_default_is_false_and_new_agent_sets_true() {
     let _serial = super::serialize_fake_lsp_test();
     let old: ShellClientCapabilities = serde_json::from_str(r#"{"shell":true}"#).unwrap();
     assert!(!old.lsp_read_only_navigation);
+    assert!(!old.lsp_call_hierarchy);
     let caps = ShellClientCapabilities {
         lsp_read_only_navigation: true,
+        lsp_call_hierarchy: true,
         ..Default::default()
     };
     let json = serde_json::to_string(&caps).unwrap();
     assert!(json.contains("lsp_read_only_navigation"));
+    assert!(json.contains("lsp_call_hierarchy"));
+}
+
+#[test]
+fn call_hierarchy_supports_each_direction_and_bounded_depth_two_bfs() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = NavFixture::new("call_hierarchy");
+    let incoming =
+        fixture.call_hierarchy("src/main.rs", 1, 4, CallHierarchyDirection::Incoming, 1, 50);
+    assert_eq!(incoming["success"], true, "{incoming}");
+    assert_eq!(incoming["result"]["returned_count"], 1);
+    assert_eq!(incoming["result"]["edges"][0]["direction"], "incoming");
+    assert_eq!(incoming["result"]["edges"][0]["from"]["name"], "Caller");
+    assert_eq!(incoming["result"]["edges"][0]["to"]["name"], "Root");
+
+    let outgoing =
+        fixture.call_hierarchy("src/main.rs", 1, 4, CallHierarchyDirection::Outgoing, 1, 50);
+    assert_eq!(outgoing["success"], true, "{outgoing}");
+    assert_eq!(outgoing["result"]["returned_count"], 1);
+    assert_eq!(outgoing["result"]["edges"][0]["direction"], "outgoing");
+    assert_eq!(outgoing["result"]["edges"][0]["from"]["name"], "Root");
+    assert_eq!(outgoing["result"]["edges"][0]["to"]["name"], "Callee");
+
+    let both = fixture.call_hierarchy("src/main.rs", 1, 4, CallHierarchyDirection::Both, 2, 50);
+    assert_eq!(both["success"], true, "{both}");
+    assert_eq!(both["result"]["returned_count"], 4);
+    assert_eq!(
+        both["result"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|edge| edge["depth"] == 2)
+            .count(),
+        2
+    );
+    assert_eq!(both["result"]["truncated"], false);
+}
+
+#[test]
+fn call_hierarchy_is_deterministic_deduplicated_and_globally_bounded() {
+    let _serial = super::serialize_fake_lsp_test();
+    let overflow = NavFixture::new("call_hierarchy_overflow").call_hierarchy(
+        "src/main.rs",
+        1,
+        4,
+        CallHierarchyDirection::Outgoing,
+        2,
+        2,
+    );
+    assert_eq!(overflow["success"], true, "{overflow}");
+    assert_eq!(overflow["result"]["returned_count"], 2);
+    assert_eq!(overflow["result"]["truncated"], true);
+    assert_eq!(overflow["result"]["edges"][0]["to"]["name"], "Callee000");
+    assert_eq!(overflow["result"]["edges"][1]["to"]["name"], "Callee001");
+
+    let dedup = NavFixture::new("call_hierarchy_dedup").call_hierarchy(
+        "src/main.rs",
+        1,
+        4,
+        CallHierarchyDirection::Outgoing,
+        1,
+        50,
+    );
+    assert_eq!(dedup["result"]["returned_count"], 1, "{dedup}");
+    assert_eq!(
+        dedup["result"]["edges"][0]["call_sites"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let sites = NavFixture::new("call_hierarchy_call_sites_overflow").call_hierarchy(
+        "src/main.rs",
+        1,
+        4,
+        CallHierarchyDirection::Outgoing,
+        1,
+        50,
+    );
+    assert_eq!(
+        sites["result"]["edges"][0]["call_sites"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
+    assert_eq!(sites["result"]["call_site_ranges_omitted"], 10);
+    assert_eq!(sites["result"]["truncated"], true);
+}
+
+#[test]
+fn call_hierarchy_omits_external_invalid_and_private_lsp_data() {
+    let _serial = super::serialize_fake_lsp_test();
+    let value = NavFixture::new("call_hierarchy_external_invalid").call_hierarchy(
+        "src/main.rs",
+        1,
+        4,
+        CallHierarchyDirection::Outgoing,
+        1,
+        50,
+    );
+    assert_eq!(value["success"], true, "{value}");
+    assert_eq!(value["result"]["returned_count"], 1);
+    assert_eq!(value["result"]["external_results_omitted"], 2);
+    assert_eq!(value["result"]["invalid_results_omitted"], 2);
+    let serialized = serde_json::to_string(&value["result"]).unwrap();
+    assert!(!serialized.contains("/usr/lib"), "{serialized}");
+    assert!(!serialized.contains("secret"), "{serialized}");
+    assert!(!serialized.contains("opaque"), "{serialized}");
+    assert!(!serialized.contains("private-data"), "{serialized}");
+}
+
+#[test]
+fn call_hierarchy_fails_explicitly_when_provider_or_method_is_unsupported() {
+    let _serial = super::serialize_fake_lsp_test();
+    for scenario in [
+        "call_hierarchy_provider_unsupported",
+        "call_hierarchy_method_unsupported",
+    ] {
+        let value = NavFixture::new(scenario).call_hierarchy(
+            "src/main.rs",
+            1,
+            4,
+            CallHierarchyDirection::Both,
+            1,
+            50,
+        );
+        assert_eq!(value["success"], false, "{scenario}: {value}");
+        assert_eq!(
+            value["error"]["code"], "call_hierarchy_unsupported",
+            "{scenario}: {value}"
+        );
+        let serialized = serde_json::to_string(&value).unwrap();
+        assert!(!serialized.contains("secret"), "{scenario}: {serialized}");
+    }
+}
+
+#[test]
+fn call_hierarchy_preserves_unicode_scalar_positions_and_language_profiles() {
+    let _serial = super::serialize_fake_lsp_test();
+    let unicode = NavFixture::new("call_hierarchy_utf16").call_hierarchy(
+        "src/main.rs",
+        3,
+        4,
+        CallHierarchyDirection::Outgoing,
+        1,
+        50,
+    );
+    assert_eq!(unicode["success"], true, "{unicode}");
+    assert_eq!(unicode["result"]["query_position"]["column"], 4);
+    assert_eq!(unicode["result"]["roots"][0]["range"]["start"]["column"], 4);
+    assert_eq!(unicode["result"]["roots"][0]["range"]["end"]["column"], 5);
+
+    for (kind, path, body, language) in [
+        (
+            LspServerKind::Pyright,
+            "src/app.py",
+            "def root():\n    pass\n\ndef leaf():\n    pass\n",
+            "python",
+        ),
+        (
+            LspServerKind::TypeScriptLanguageServer,
+            "src/app.ts",
+            "function root() {}\nfunction next() {}\n\nfunction leaf() {}\n",
+            "typescript",
+        ),
+    ] {
+        let fixture = NavFixture::with_language("call_hierarchy", kind, &[(path, body)]);
+        let value = fixture.call_hierarchy(path, 1, 4, CallHierarchyDirection::Both, 1, 50);
+        assert_eq!(value["success"], true, "{path}: {value}");
+        assert_eq!(value["result"]["language"], language);
+        assert_eq!(value["result"]["returned_count"], 2);
+        assert_eq!(value["result"]["roots"][0]["path"], path);
+    }
 }
 
 #[test]

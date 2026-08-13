@@ -1,4 +1,4 @@
-use super::AgentCapability::LspReadOnlyNavigation;
+use super::AgentCapability::{LspCallHierarchy, LspReadOnlyNavigation};
 use super::ToolVisibility::ModelVisible;
 use super::{def, ToolDefinition, TOOL_CATEGORY_LSP};
 use crate::tool_runtime::metadata::{
@@ -91,6 +91,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_LSP,
         Some(LspReadOnlyNavigation),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        SinglePath,
+        false,
+        false,
+    ),
+    def(
+        "call_hierarchy",
+        ModelVisible,
+        TOOL_CATEGORY_LSP,
+        Some(LspCallHierarchy),
         TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(PROJECT_READ),

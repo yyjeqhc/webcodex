@@ -13,6 +13,9 @@ use super::tool_inputs::{
     default_true, ApplyFileChangeInput, CheckpointValidationInput, ExecutionPurpose,
     ExecutionShell, SessionMode, StartupDetail,
 };
+use crate::lsp_bridge::{
+    CallHierarchyDirection, DEFAULT_CALL_HIERARCHY_DEPTH, DEFAULT_CALL_HIERARCHY_LIMIT,
+};
 use crate::shell_protocol::ShellScriptLanguage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -181,6 +184,14 @@ where
 
 fn default_observe_jobs_tail_lines() -> usize {
     super::observe_jobs::DEFAULT_OBSERVE_JOBS_TAIL_LINES
+}
+
+fn default_call_hierarchy_depth() -> usize {
+    DEFAULT_CALL_HIERARCHY_DEPTH
+}
+
+fn default_call_hierarchy_limit() -> usize {
+    DEFAULT_CALL_HIERARCHY_LIMIT
 }
 
 fn deserialize_search_project_texts_queries<'de, D>(
@@ -1200,6 +1211,22 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Bounded incoming/outgoing semantic call hierarchy at a source position.
+    CallHierarchy {
+        project: String,
+        path: String,
+        line: usize,
+        column: usize,
+        #[serde(default)]
+        direction: CallHierarchyDirection,
+        #[serde(default = "default_call_hierarchy_depth")]
+        depth: usize,
+        #[serde(default = "default_call_hierarchy_limit")]
+        limit: usize,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     ListProjects,
 
     /// Register an existing directory as a WebCodex project on a selected
@@ -1668,6 +1695,7 @@ impl ToolCall {
             Self::WorkspaceSymbols { .. } => "workspace_symbols",
             Self::GotoDefinition { .. } => "goto_definition",
             Self::FindReferences { .. } => "find_references",
+            Self::CallHierarchy { .. } => "call_hierarchy",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",
             Self::CreateProject { .. } => "create_project",
@@ -1728,6 +1756,7 @@ impl ToolCall {
             | Self::WorkspaceSymbols { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. } => session_id.as_deref(),
+            Self::CallHierarchy { session_id, .. } => session_id.as_deref(),
             Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
             Self::WorkOnProject { session_id, .. } => session_id.as_deref(),
             Self::OpenSessionShell { session_id, .. }
@@ -1789,6 +1818,7 @@ impl ToolCall {
             | Self::WorkspaceSymbols { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. }
+            | Self::CallHierarchy { session_id, .. }
                 if session_id.is_none() =>
             {
                 *session_id = Some(effective_session_id);
@@ -1881,6 +1911,7 @@ impl ToolCall {
             | Self::WorkspaceSymbols { project, .. }
             | Self::GotoDefinition { project, .. }
             | Self::FindReferences { project, .. } => Some(project.as_str()),
+            Self::CallHierarchy { project, .. } => Some(project.as_str()),
             Self::StartCodingTask { project, .. } if !project.trim().is_empty() => {
                 Some(project.as_str())
             }

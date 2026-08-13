@@ -31,8 +31,8 @@ use super::session_context::{
 use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIELD};
 use super::startup_brief::{
-    build_startup_brief, startup_brief_from_output, StartupBriefInput,
-    REPOSITORY_OVERVIEW_NOT_REQUESTED_REASON,
+    build_startup_brief, builtin_coding_workflow_projection, startup_brief_from_output,
+    StartupBriefInput, REPOSITORY_OVERVIEW_NOT_REQUESTED_REASON,
 };
 use super::tool_catalog::TOOL_RECOMMENDED_FLOWS;
 use super::tool_inputs::{SessionMode, StartupDetail};
@@ -1879,6 +1879,7 @@ struct WorkOnProjectBriefProjection {
     project: WorkOnProjectProjectProjection,
     project_resolution: ProjectResolutionMetadata,
     workspace: WorkOnProjectWorkspaceProjection,
+    workflow: Value,
     instructions: WorkOnProjectInstructionsProjection,
     semantic_navigation: WorkOnProjectSemanticNavigationProjection,
     repository: Value,
@@ -2056,6 +2057,14 @@ pub(crate) fn project_work_on_project_output(project: String, output: Value) -> 
             None,
         );
     }
+    if projection.workflow != builtin_coding_workflow_projection() {
+        return work_on_project_projection_failed(
+            "workflow",
+            "canonical built-in coding workflow contract",
+            "non-canonical workflow projection",
+            None,
+        );
+    }
 
     let suggested_next_actions = if projection.startup_verdict.suggested_next_actions.is_empty() {
         projection.continuation.suggested_next_actions.items
@@ -2098,6 +2107,7 @@ pub(crate) fn project_work_on_project_output(project: String, output: Value) -> 
             "clean": projection.workspace.clean,
             "conflicts": projection.workspace.conflicts,
         },
+        "workflow": projection.workflow,
         "repository": projection.repository,
         "instructions": instructions,
         "semantic_navigation": semantic_navigation,

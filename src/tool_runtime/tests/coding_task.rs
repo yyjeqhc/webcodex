@@ -92,6 +92,13 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         standard["properties"]
             .as_object()
             .unwrap()
+            .contains_key("workflow"),
+        "standard startup brief should include built-in workflow"
+    );
+    assert!(
+        standard["properties"]
+            .as_object()
+            .unwrap()
             .contains_key("startup_verdict"),
         "start_coding_task output schema should include startup_verdict"
     );

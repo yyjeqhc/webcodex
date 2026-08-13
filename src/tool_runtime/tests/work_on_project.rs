@@ -261,6 +261,7 @@ fn valid_work_on_project_projection_input() -> serde_json::Value {
             "clean": true,
             "conflicts": 0,
         },
+        "workflow": crate::tool_runtime::startup_brief::builtin_coding_workflow_projection(),
         "instructions": {
             "status": "loaded",
             "sources": [],
@@ -402,6 +403,7 @@ fn work_on_project_schema_and_registration() {
         "readiness",
         "workspace",
         "repository",
+        "workflow",
         "instructions",
         "semantic_navigation",
         "jobs",
@@ -540,6 +542,24 @@ fn work_on_project_projection_fails_closed_for_wrong_field_type() {
 }
 
 #[test]
+fn work_on_project_projection_fails_closed_for_noncanonical_workflow() {
+    let mut output = valid_work_on_project_projection_input();
+    output["workflow"]["version"] = json!(2);
+
+    let result = crate::tool_runtime::coding_task::project_work_on_project_output(
+        SAMPLE_PROJECT.to_string(),
+        output,
+    );
+    assert!(!result.success);
+    assert_eq!(
+        result.output["error_kind"],
+        "work_on_project_projection_failed"
+    );
+    assert_eq!(result.output["field"], "workflow");
+    assert_eq!(result.output["state_changed"], true);
+}
+
+#[test]
 fn work_on_project_projection_does_not_default_missing_instruction_sources() {
     let mut output = valid_work_on_project_projection_input();
     output["instructions"]
@@ -592,6 +612,11 @@ async fn work_on_project_creates_a_new_normal_session_without_binding() {
         project
     );
     assert_eq!(result.output["continuation"], "created");
+    assert_eq!(
+        result.output["workflow"],
+        crate::tool_runtime::startup_brief::builtin_coding_workflow_projection()
+    );
+    assert!(result.output["instructions"].is_object());
     for hidden in [
         "runtime_status",
         "connection_state",
@@ -1176,6 +1201,11 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
     assert!(continued.success, "{:?}", continued.error);
     assert_eq!(continued.output["session_id"], session_id);
     assert_eq!(continued.output["continuation"], "resumed_explicitly");
+    assert_eq!(first.output["workflow"], continued.output["workflow"]);
+    assert_eq!(
+        continued.output["workflow"],
+        crate::tool_runtime::startup_brief::builtin_coding_workflow_projection()
+    );
 
     // Same single session reused: no second session, no current binding.
     assert_eq!(
@@ -1197,6 +1227,15 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
     );
     let summary = runtime.sessions.summary(&session_id, Some(50)).unwrap();
     assert_eq!(summary.title.as_deref(), Some("root objective"));
+    assert_eq!(summary.mode, SessionMode::Normal);
+    assert!(!summary.guards.deny_write_tools);
+    assert!(!summary.guards.deny_shell_tools);
+    assert!(
+        !serde_json::to_string(&summary)
+            .unwrap()
+            .contains("webcodex.coding_workflow"),
+        "workflow projection must not become Session state"
+    );
 }
 
 #[tokio::test]

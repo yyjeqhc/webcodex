@@ -12,6 +12,10 @@ use super::files::{
     key_file_schema, path_kind_schema, project_type_schema, scan_schema, suggested_read_schema,
     top_level_entry_schema,
 };
+use crate::tool_runtime::startup_brief::{
+    BUILTIN_CODING_WORKFLOW_CONTRACT, BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
+    BUILTIN_CODING_WORKFLOW_VERSION,
+};
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
@@ -199,6 +203,7 @@ fn startup_brief_schema(detail: &str) -> Value {
             "project": startup_project_schema(),
             "project_resolution": project_resolution_schema(),
             "workspace": startup_workspace_schema(),
+            "workflow": startup_workflow_schema(),
             "instructions": startup_instructions_schema(),
             "continuation": startup_continuation_schema(detail),
             "semantic_navigation": startup_semantic_navigation_schema(),
@@ -215,6 +220,7 @@ fn startup_brief_schema(detail: &str) -> Value {
             "project",
             "project_resolution",
             "workspace",
+            "workflow",
             "instructions",
             "continuation",
             "semantic_navigation",
@@ -424,9 +430,51 @@ fn startup_workspace_schema() -> Value {
     })
 }
 
+fn startup_workflow_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "WebCodex-owned model guidance for named coding/review pass roles. Separate from project instructions and Session authority.",
+        "properties": {
+            "contract": {"type": "string", "const": BUILTIN_CODING_WORKFLOW_CONTRACT},
+            "version": {"type": "integer", "const": BUILTIN_CODING_WORKFLOW_VERSION},
+            "authority": {"type": "string", "const": "model_guidance_only"},
+            "role_selection": {"type": "string", "maxLength": 240},
+            "roles": {
+                "type": "object",
+                "properties": {
+                    "implementation_owner": startup_workflow_role_schema(),
+                    "independent_review": startup_workflow_role_schema()
+                },
+                "required": ["implementation_owner", "independent_review"],
+                "additionalProperties": false
+            }
+        },
+        "required": ["contract", "version", "authority", "role_selection", "roles"],
+        "additionalProperties": false
+    })
+}
+
+fn startup_workflow_role_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "purpose": {"type": "string", "maxLength": 240},
+            "guidance": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
+                "items": {"type": "string", "maxLength": 320}
+            }
+        },
+        "required": ["purpose", "guidance"],
+        "additionalProperties": false
+    })
+}
+
 fn startup_instructions_schema() -> Value {
     json!({
         "type": "object",
+        "description": "Project-local repository instructions discovered from fixed sources such as AGENTS.md or CLAUDE.md. Separate from the WebCodex built-in workflow.",
         "properties": {
             "status": {
                 "type": "string",
@@ -983,6 +1031,7 @@ fn work_on_project_output_schema() -> Value {
     });
     let compact_instructions = json!({
         "type": "object",
+        "description": "Compact project-local repository instruction projection, separate from the WebCodex built-in workflow.",
         "properties": {
             "status": {
                 "type": "string",
@@ -1105,6 +1154,7 @@ fn work_on_project_output_schema() -> Value {
             compact_workspace,
         ),
         ("repository", compact_repository),
+        ("workflow", startup_workflow_schema()),
         ("instructions", compact_instructions),
         ("semantic_navigation", compact_semantic_navigation),
         ("jobs", compact_jobs),

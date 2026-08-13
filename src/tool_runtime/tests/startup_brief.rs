@@ -83,6 +83,37 @@ fn instruction_source<'a>(output: &'a Value, path: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("missing instruction source {path}: {output}"))
 }
 
+fn assert_builtin_workflow(output: &Value) {
+    let workflow = &output["workflow"];
+    assert_eq!(workflow["contract"], "webcodex.coding_workflow");
+    assert_eq!(workflow["version"], 1);
+    assert_eq!(workflow["authority"], "model_guidance_only");
+    assert!(workflow["role_selection"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    for role in ["implementation_owner", "independent_review"] {
+        let role = &workflow["roles"][role];
+        assert!(role["purpose"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+        let guidance = role["guidance"]
+            .as_array()
+            .expect("workflow guidance array");
+        assert!(!guidance.is_empty());
+        assert!(
+            guidance.len()
+                <= crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS
+        );
+    }
+    let serialized = workflow.to_string();
+    for forbidden in ["ChatGPT", "browser", "another window", "online", "offline"] {
+        assert!(
+            !serialized.contains(forbidden),
+            "workflow leaked host-specific term {forbidden}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn fresh_coding_task_session_loads_all_bounded_repository_rules() {
     let root = tempfile::tempdir().unwrap();
@@ -110,6 +141,7 @@ async fn fresh_coding_task_session_loads_all_bounded_repository_rules() {
     );
     assert_eq!(result.output["instructions"]["status"], "loaded");
     assert_eq!(result.output["instructions"]["content_included"], true);
+    assert_builtin_workflow(&result.output);
     assert_eq!(
         result.output["instructions"]["sources"]
             .as_array()
@@ -134,10 +166,44 @@ async fn fresh_coding_task_session_loads_all_bounded_repository_rules() {
     assert!(bytes < 16 * 1024, "{bytes}");
     assert!(bytes <= STANDARD_STARTUP_HARD_MAX_BYTES);
     let serialized = result.output.to_string();
+    assert_ne!(
+        result.output["workflow"], result.output["instructions"],
+        "built-in workflow must remain distinct from project instructions"
+    );
     assert!(
         !serialized.contains(&root.path().to_string_lossy().to_string()),
         "standard output leaked the absolute repository root"
     );
+}
+
+#[tokio::test]
+async fn repository_without_project_instructions_still_receives_builtin_workflow() {
+    let root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    commit_file(root.path(), "README.md", "hello\n", "initial");
+    let runtime = ToolRuntime::new_for_tests();
+    let project =
+        register_agent_project_at_path(&runtime, "workflow-no-rules", "demo", root.path()).await;
+
+    let result = start(
+        &runtime,
+        "workflow-no-rules",
+        &project,
+        "workflow-no-rules-window",
+        StartupDetail::Standard,
+        "implementation task",
+        None,
+        false,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["instructions"]["status"], "not_found");
+    assert!(result.output["instructions"]["sources"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_builtin_workflow(&result.output);
 }
 
 #[tokio::test]
@@ -177,6 +243,9 @@ async fn ordinary_coding_task_continuation_reuses_rules_without_repeating_conten
         first.output["session"]["session_id"]
     );
     assert_eq!(second.output["session"]["continuation"], "continued");
+    assert_eq!(first.output["workflow"], second.output["workflow"]);
+    assert_builtin_workflow(&second.output);
+    assert!(second.output["session"].get("workflow").is_none());
     assert_eq!(
         second.output["project"]["canonical_repository_root_matches"],
         true
@@ -189,6 +258,17 @@ async fn ordinary_coding_task_continuation_reuses_rules_without_repeating_conten
         assert!(source["fingerprint"].is_string());
         assert!(source["headings"].is_array());
     }
+    let session_id = second.output["session"]["session_id"].as_str().unwrap();
+    let summary = runtime.sessions.summary(session_id, Some(50)).unwrap();
+    assert_eq!(summary.mode, SessionMode::Normal);
+    assert!(!summary.guards.deny_write_tools);
+    assert!(!summary.guards.deny_shell_tools);
+    assert!(
+        !serde_json::to_string(&summary)
+            .unwrap()
+            .contains("webcodex.coding_workflow"),
+        "built-in workflow guidance must not become durable Session authority"
+    );
 }
 
 #[tokio::test]
@@ -1135,6 +1215,7 @@ async fn minimal_standard_and_full_coding_task_outputs_validate_against_strict_s
             &result.output
         };
         let core_bytes = startup_brief_size(core);
+        assert_builtin_workflow(core);
         let action_wrapped_bytes = serde_json::to_vec(&ToolResult::ok(json!({
             "compact": true,
             "startup_brief": core,

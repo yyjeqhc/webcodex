@@ -38,6 +38,48 @@ const MAX_FAILURE_FILE_JSON_BYTES: usize = 160;
 const MAX_ACTION_JSON_BYTES: usize = 384;
 const MAX_INSTRUCTION_EXCERPT_JSON_BYTES: usize = 768;
 
+pub(crate) const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
+pub(crate) const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 1;
+pub(crate) const BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS: usize = 8;
+
+/// Stable model-facing coding/review semantics owned by WebCodex itself.
+///
+/// This is intentionally not a project instruction source and is never stored
+/// as Session mode, capability, permission, or execution authority. Task text
+/// may name one of these roles; the projection only gives that phrase a stable
+/// meaning for the model conducting the pass.
+pub(crate) fn builtin_coding_workflow_projection() -> Value {
+    json!({
+        "contract": BUILTIN_CODING_WORKFLOW_CONTRACT,
+        "version": BUILTIN_CODING_WORKFLOW_VERSION,
+        "authority": "model_guidance_only",
+        "role_selection": "Apply a role when the task instruction explicitly names it; role guidance does not create Session mode or execution authority.",
+        "roles": {
+            "implementation_owner": {
+                "purpose": "Implement one coherent change through the existing authoritative architecture.",
+                "guidance": [
+                    "Map the complete authoritative vertical slice before editing.",
+                    "Close the existing architecture end to end before local hardening.",
+                    "Minimize new concepts rather than touched-file count.",
+                    "Use compiler, type, schema, and exhaustiveness failures to close missing adapters, registries, and projections.",
+                    "After focused validation, review completeness and trust, bounds, privacy, and replay.",
+                    "Fix correctness issues discovered during the pass; do not fragment the implementation around undemonstrated speculative concerns."
+                ]
+            },
+            "independent_review": {
+                "purpose": "Independently challenge an already implemented change and correct concrete findings.",
+                "guidance": [
+                    "Inspect the implemented change independently rather than assuming the implementation pass was correct.",
+                    "Challenge semantic contracts and invariants before relying on passing tests.",
+                    "Focus on authority, bounds, malformed inputs or producers, privacy, replay and races, timeout and correlation, and fail-closed behavior.",
+                    "Make concrete findings-driven corrections and add focused regression evidence.",
+                    "Do not broaden the review into unrelated redesign."
+                ]
+            }
+        }
+    })
+}
+
 // Model-side caps for the deterministic repository overview projected into the
 // shared startup brief. Lists are stable-sorted and record truncation; a list
 // that exceeds its cap is never silently presented as complete.
@@ -133,6 +175,7 @@ pub(crate) fn build_startup_brief(input: StartupBriefInput<'_>) -> Value {
         },
         "project_resolution": input.project_resolution,
         "workspace": workspace,
+        "workflow": builtin_coding_workflow_projection(),
         "instructions": instruction_projection,
         "continuation": continuation,
         "semantic_navigation": semantic_navigation,

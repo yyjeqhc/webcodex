@@ -2984,6 +2984,17 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
             .find(|tool| tool["name"] == name)
             .unwrap_or_else(|| panic!("missing MCP tool {name}"))
     };
+    for name in ["start_coding_task", "work_on_project"] {
+        let description = tool(name)["description"].as_str().unwrap();
+        assert!(
+            description.contains("built-in workflow guidance"),
+            "{name}: {description}"
+        );
+        assert!(
+            description.contains("project-local instructions"),
+            "{name}: {description}"
+        );
+    }
 
     let finish_props = tool("finish_coding_task")["inputSchema"]["properties"]
         .as_object()

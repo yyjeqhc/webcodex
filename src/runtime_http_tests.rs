@@ -588,6 +588,14 @@ async fn http_start_coding_task_default_response_is_standard() {
     assert!(body["output"].get("rules").is_none());
     assert!(body["output"].get("runtime_status").is_none());
     assert!(body["output"]["instructions"].is_object());
+    assert_eq!(
+        body["output"]["workflow"]["contract"],
+        "webcodex.coding_workflow"
+    );
+    assert_eq!(
+        body["output"]["workflow"]["authority"],
+        "model_guidance_only"
+    );
     assert!(body["output"]["continuation"].is_object());
     assert!(body["output"]["workspace"].is_object());
     assert!(body["output"]["startup_verdict"].is_object());
@@ -652,6 +660,8 @@ async fn http_start_coding_task_action_compact_wraps_the_shared_core_brief() {
     assert!(compact_session.starts_with("wc_sess_"));
     assert_eq!(core["detail"], "standard");
     assert!(core["instructions"].is_object());
+    assert_eq!(core["workflow"]["contract"], "webcodex.coding_workflow");
+    assert_eq!(core["workflow"]["authority"], "model_guidance_only");
     assert!(core["continuation"].is_object());
     assert!(core["workspace"].is_object());
     assert!(core["startup_verdict"]["suggested_next_actions"].is_array());
@@ -660,6 +670,7 @@ async fn http_start_coding_task_action_compact_wraps_the_shared_core_brief() {
         "detail",
         "project",
         "workspace",
+        "workflow",
         "instructions",
         "continuation",
         "semantic_navigation",

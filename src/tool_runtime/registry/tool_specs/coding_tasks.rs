@@ -8,12 +8,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "start_coding_task",
-            "Start or continue coding from an existing project, a Runner-owned absolute path, or a managed temporary project. Paths are policy-checked and reused or permanently registered before exact Session handling. Stable windows reuse; resume_session_id recovers exactly; new_session=true isolates.",
+            "Preferred coding bootstrap for normal or advanced tasks. Starts or continues a project and returns built-in workflow guidance, project-local instructions, and repository/startup context; explicit resume and isolation controls remain available.",
             start_coding_task_input_schema(),
         ),
         tool_spec(
             "work_on_project",
-            "Start normal coding from an existing project or Runner-owned absolute path, or continue exactly by session_id. Unregistered paths are permanently registered before Session handling. Returns compact context; use start_coding_task for advanced modes, guards, temporary projects, or binding.",
+            "Preferred normal coding bootstrap. Starts a project/path or continues exact session_id and returns compact built-in workflow guidance, project-local instructions, and repository/startup context. Use start_coding_task for advanced controls.",
             work_on_project_input_schema(),
         ),
         tool_spec(

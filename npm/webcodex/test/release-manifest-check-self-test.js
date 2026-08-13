@@ -43,15 +43,15 @@ function main() {
   assert.strictEqual(validateReleaseManifest(linuxOnly), true);
   assert.strictEqual(validateReleaseManifest(validFixture()), true);
 
-  // win32-x64 is a producible release platform: its URL shape and a
-  // placeholder-free checksum must validate like any other platform. The
-  // published manifest only gains a real win32-x64 entry once a Windows-host
-  // built artifact and its checksum exist.
-  assert.strictEqual(
-    expectedArtifactUrl(packageJson.version, "win32-x64"),
-    `https://github.com/yyjeqhc/webcodex/releases/download/v${packageJson.version}/webcodex-v${packageJson.version}-win32-x64.tar.gz`
-  );
-  assert.strictEqual(validateReleaseManifest(validFixture(["win32-x64"])), true);
+  // Both Windows architectures are native release platforms: their URL shapes
+  // and placeholder-free checksums must validate like any other platform.
+  for (const platform of ["win32-x64", "win32-arm64"]) {
+    assert.strictEqual(
+      expectedArtifactUrl(packageJson.version, platform),
+      `https://github.com/yyjeqhc/webcodex/releases/download/v${packageJson.version}/webcodex-v${packageJson.version}-${platform}.tar.gz`
+    );
+    assert.strictEqual(validateReleaseManifest(validFixture([platform])), true);
+  }
 
   assertInvalid({ version: packageJson.version, binaries: EXPECTED_BINARIES, artifacts: {} }, /at least one artifact/);
 

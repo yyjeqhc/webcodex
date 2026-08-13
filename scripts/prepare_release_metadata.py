@@ -11,7 +11,7 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PLATFORMS = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64")
+PLATFORMS = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
 
 
@@ -28,7 +28,7 @@ def archive_filename(version: str, platform: str) -> str:
 
 
 def expected_members(platform: str) -> set[str]:
-    suffix = ".exe" if platform == "win32-x64" else ""
+    suffix = ".exe" if platform in {"win32-x64", "win32-arm64"} else ""
     return {f"{name}{suffix}" for name in BINARIES}
 
 

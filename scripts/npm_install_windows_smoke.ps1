@@ -22,18 +22,31 @@
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\npm_install_windows_smoke.ps1
-#   powershell -ExecutionPolicy Bypass -File scripts\npm_install_windows_smoke.ps1 -BinDir E:\webcodex\target\release
+#   powershell -ExecutionPolicy Bypass -File scripts\npm_install_windows_smoke.ps1 -BinDir E:\webcodex\target\release -Platform win32-x64
 [CmdletBinding()]
 param(
     # Directory containing webcodex.exe / webcodex-server.exe / webcodex-runner.exe.
     # Defaults to the debug build, which this script builds first.
-    [string]$BinDir
+    [string]$BinDir,
+    # Native Windows release platform exercised by this host.
+    [string]$Platform
 )
 
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Version = (Get-Content -LiteralPath (Join-Path $Root "npm\webcodex\package.json") -Raw | ConvertFrom-Json).version
+if (-not $Platform) {
+    $Platform = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "win32-arm64" } else { "win32-x64" }
+}
+if ($Platform -notin @("win32-x64", "win32-arm64")) {
+    throw "invalid Windows smoke platform '$Platform'"
+}
+$ExpectedNodeArch = if ($Platform -eq "win32-arm64") { "arm64" } else { "x64" }
+$NodeArch = (& node -p "process.arch").Trim()
+if ($LASTEXITCODE -ne 0 -or $NodeArch -ne $ExpectedNodeArch) {
+    throw "native npm smoke requires Node $ExpectedNodeArch for $Platform; got '$NodeArch'"
+}
 
 # ---------------------------------------------------------------------------
 # 0. Build the three Windows binaries unless an explicit BIN_DIR was given.
@@ -77,7 +90,7 @@ try {
     # -----------------------------------------------------------------------
     Write-Host "creating Windows release artifact..."
     $artifactOutput = & (Join-Path $PSScriptRoot "package_release_artifact.ps1") `
-        -BinDir $BinDir -OutDir $ArtifactOut -AllowDevelopmentBuild
+        -BinDir $BinDir -OutDir $ArtifactOut -Platform $Platform -AllowDevelopmentBuild
     if ($LASTEXITCODE -ne 0) {
         throw "package_release_artifact.ps1 failed with exit code $LASTEXITCODE"
     }
@@ -90,7 +103,7 @@ try {
     if ($sha256 -notmatch '^[a-f0-9]{64}$') {
         throw "packaging did not report a SHA-256: $shaLine"
     }
-    $ExpectedArchiveName = "webcodex-v$Version-win32-x64.tar.gz"
+    $ExpectedArchiveName = "webcodex-v$Version-$Platform.tar.gz"
     if ((Split-Path -Leaf $Archive) -ne $ExpectedArchiveName) {
         throw "unexpected artifact name: $(Split-Path -Leaf $Archive) (expected $ExpectedArchiveName)"
     }
@@ -115,15 +128,15 @@ try {
     # -----------------------------------------------------------------------
     # 3. Local manifest with the actual SHA-256.
     # -----------------------------------------------------------------------
+    $artifacts = [ordered]@{}
+    $artifacts[$Platform] = [ordered]@{
+        url = [System.Uri]::new($Archive).AbsoluteUri
+        sha256 = $sha256
+    }
     $manifest = [ordered]@{
         version = $Version
         binaries = @("webcodex", "webcodex-server", "webcodex-runner")
-        artifacts = [ordered]@{
-            "win32-x64" = [ordered]@{
-                url = [System.Uri]::new($Archive).AbsoluteUri
-                sha256 = $sha256
-            }
-        }
+        artifacts = $artifacts
     }
     # BOM-less UTF-8: install.js parses the manifest with JSON.parse, which
     # rejects a leading byte-order mark.
@@ -205,15 +218,15 @@ try {
     # -----------------------------------------------------------------------
     # 6. An install failure must not break the previous binary set.
     # -----------------------------------------------------------------------
+    $badArtifacts = [ordered]@{}
+    $badArtifacts[$Platform] = [ordered]@{
+        url = [System.Uri]::new($Archive).AbsoluteUri
+        sha256 = "0" * 64
+    }
     $badManifest = [ordered]@{
         version = $Version
         binaries = @("webcodex", "webcodex-server", "webcodex-runner")
-        artifacts = [ordered]@{
-            "win32-x64" = [ordered]@{
-                url = [System.Uri]::new($Archive).AbsoluteUri
-                sha256 = "0" * 64
-            }
-        }
+        artifacts = $badArtifacts
     }
     $BadManifestPath = Join-Path $TempRoot "bad-manifest.json"
     [System.IO.File]::WriteAllText(
@@ -248,7 +261,7 @@ try {
         throw "installer left staging/temp files behind: $($leftovers + $stagingLeftovers -join '; ')"
     }
 
-    Write-Host "Windows artifact -> npm install smoke passed"
+    Write-Host "Windows artifact -> npm install smoke passed for $Platform"
     Write-Host "  artifact:  $Archive"
     Write-Host "  sha256:    $sha256"
     Write-Host "  installed: $VendorBin"

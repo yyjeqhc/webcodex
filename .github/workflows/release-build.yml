@@ -396,11 +396,13 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             processor_architecture: AMD64
             pe_machine: "8664"
+            node_architecture: x64
           - platform: win32-arm64
             runner: windows-11-arm
             rust_target: aarch64-pc-windows-msvc
             processor_architecture: ARM64
             pe_machine: "AA64"
+            node_architecture: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -423,6 +425,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          architecture: ${{ matrix.node_architecture }}
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.platform }}
@@ -491,6 +497,18 @@ jobs:
           $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           $checksumLine = "$hash  $(Split-Path -Leaf $archive)`n"
           [System.IO.File]::WriteAllText("$archive.sha256", $checksumLine, [System.Text.Encoding]::ASCII)
+
+      - name: Smoke native Windows artifact through npm installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
+          & .\scripts\npm_install_windows_smoke.ps1 `
+            -BinDir $binDir `
+            -Platform $env:WEBCODEX_RELEASE_PLATFORM
+          if ($LASTEXITCODE -ne 0) {
+            throw "native Windows npm smoke failed with exit code $LASTEXITCODE"
+          }
 
       - name: Upload Windows candidate
         uses: actions/upload-artifact@v4

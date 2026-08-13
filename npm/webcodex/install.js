@@ -22,7 +22,7 @@ const RUNTIME_BINARIES = Object.freeze(["webcodex", "webcodex-server", "webcodex
 const PLATFORM_KEYS = Object.freeze({
   linux: Object.freeze({ x64: "linux-x64", arm64: "linux-arm64" }),
   darwin: Object.freeze({ x64: "darwin-x64", arm64: "darwin-arm64" }),
-  win32: Object.freeze({ x64: "win32-x64" })
+  win32: Object.freeze({ x64: "win32-x64", arm64: "win32-arm64" })
 });
 const SUPPORTED_PLATFORM_KEYS = Object.freeze(
   Object.values(PLATFORM_KEYS).flatMap((architectures) => Object.values(architectures))

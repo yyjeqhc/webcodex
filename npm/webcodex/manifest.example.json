@@ -17,6 +17,10 @@
     "win32-x64": {
       "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.3.6/webcodex-v0.3.6-win32-x64.tar.gz",
       "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
+    },
+    "win32-arm64": {
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.3.6/webcodex-v0.3.6-win32-arm64.tar.gz",
+      "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
     }
   }
 }

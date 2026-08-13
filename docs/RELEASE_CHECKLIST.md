@@ -42,7 +42,7 @@ Confirm the user-facing docs tell one story:
 - Architecture starts with client/server/agent/codebase, security-boundary, and runtime-module diagrams before Rust module notes.
 - MCP and GPT Actions both say they call the same WebCodex ToolRuntime.
 - Security explains what the model can and cannot do, project access, agent trust boundary, shell/job risk, token handling, session/audit evidence, and revocation.
-- Release Notes read like external release notes and include highlights, breaking changes, known limitations, upgrade notes, validation, and next steps.
+- The release PR / GitHub Release notes read like external release notes and include highlights, compatibility or breaking changes, known limitations, upgrade notes, and validation. Do not restore per-version release-note files as a second documentation source.
 - Roadmap stays short and does not promise a full IDE replacement, autonomous ops, arbitrary computer use, or universal client compatibility.
 
 Run a markdown local link check and report markdown file count, local link count, and missing local link count.
@@ -95,11 +95,11 @@ For every new binary and npm release, choose one candidate `<VERSION>` first and
 
 - `Cargo.toml`, every local WebCodex workspace entry in `Cargo.lock`, `npm/webcodex/package.json`, `manifest.example.json`, and the npm self-tests must agree on `<VERSION>` before tagging.
 - `npm/webcodex/manifest.json` is generated release metadata and is intentionally not tracked. Do not commit real checksums or create a post-tag checksum-only PR.
-- Build the four published platforms (`linux-x64`, `linux-arm64`, `darwin-arm64`, `win32-x64`) on their native release hosts from the exact `v<VERSION>` tag. Do not rebuild an artifact on an intermediate packaging machine or substitute a cross-compiled artifact for native validation.
-- For `linux-x64`, build on the dedicated compatibility release builder whose userspace baseline is glibc 2.17. Before packaging, inspect all three ELF binaries with `readelf` and fail the release if any required `GLIBC_*` symbol version exceeds 2.17. This glibc floor currently applies only to `linux-x64`; `linux-arm64` keeps its native-host compatibility until its release builder is migrated separately.
+- Build the five published platforms (`linux-x64`, `linux-arm64`, `darwin-arm64`, `win32-x64`, `win32-arm64`) natively from the exact `v<VERSION>` tag through the reviewed release-build workflow. Do not rebuild an artifact on an intermediate packaging machine or substitute a cross-compiled artifact for native validation.
+- For both `linux-x64` and `linux-arm64`, build in the native-architecture manylinux2014 userspace used by the release-build workflow. Before packaging, inspect all three ELF binaries with `readelf` and fail the release if any required `GLIBC_*` symbol version exceeds 2.17 or an unexpected host-specific `DT_NEEDED` dependency appears. The published Linux x64 and arm64 artifacts therefore share the glibc 2.17 floor.
 - Pin one `WEBCODEX_BUILT_AT` value for the release. Every final `webcodex`, `webcodex-server`, and `webcodex-runner` binary must report `<VERSION>`, the same concrete tag commit, `dirty=false`, and the shared `built_at`.
 - Windows packaging must use `scripts/package_release_artifact.ps1` in its default provenance-checked mode. `-AllowDevelopmentBuild` is for local/CI smoke only and its output must never be uploaded.
-- The release control host is where the final archives are collected. Collect all four final archives there, then run `scripts/prepare_release_metadata.py` to validate archive contents and generate `manifest.json` plus `SHA256SUMS` from the exact bytes.
+- The release control host is where the final archives are collected. Collect all five final archives there, then run `scripts/prepare_release_metadata.py` to validate archive contents and generate `manifest.json` plus `SHA256SUMS` from the exact bytes.
 - Create the npm publication tree with `scripts/stage_npm_release.sh`. Its default mode requires a clean source worktree at exactly `v<VERSION>` and overlays the generated manifest without modifying Git. `--allow-development` is never valid for publication.
 - Run `WEBCODEX_NPM_PACKAGE_DIR=<STAGE_DIR>/npm-package bash scripts/npm_package_smoke.sh` before npm publication. The smoke must validate the generated manifest, package contents, temporary installation, wrapper, and all three binaries.
 - Upload `SHA256SUMS` with the native archives to the GitHub Release. Re-download uploaded assets to the release control host and verify their checksums before making the release public.
@@ -109,11 +109,11 @@ For every new binary and npm release, choose one candidate `<VERSION>` first and
 
 1. Select a new `<VERSION>` that does not already exist as a Git tag, GitHub Release, or npm package version. Put version bumps, release notes, platform docs, packaging changes, and release tests in **one release-prep PR** and squash-merge it into `main`.
 2. On the release control host, fast-forward to `origin/main`, require a clean worktree, run the source/release gates, and only after explicit operator authorization create the immutable annotated `v<VERSION>` tag. Never move that tag afterward.
-3. Build the four native artifacts from that exact tag on their native release hosts (`linux-x64` glibc 2.17 baseline, `linux-arm64`, `darwin-arm64`, `win32-x64`). Verify version/build identity on each host, enforce the Linux x64 `GLIBC_* <= 2.17` gate, and transfer the final archives back to the release control host.
-4. On the release control host, run `scripts/prepare_release_metadata.py --version <VERSION> --artifact-dir <ARTIFACT_DIR> --output-dir <METADATA_DIR>`. Create a draft GitHub Release and upload the four archives plus `SHA256SUMS`; download them again and verify SHA-256 against the local exact bytes.
+3. Dispatch the reviewed release-build workflow for the exact tag and collect the five native artifacts (`linux-x64`, `linux-arm64`, `darwin-arm64`, `win32-x64`, `win32-arm64`). Verify version/build identity and native architecture for every target, enforce the `GLIBC_* <= 2.17` plus `DT_NEEDED` gates for both Linux targets, and transfer the exact candidate archives to the release control host.
+4. On the release control host, run `scripts/prepare_release_metadata.py --version <VERSION> --artifact-dir <ARTIFACT_DIR> --output-dir <METADATA_DIR>`. Create a draft GitHub Release and upload the five archives plus `SHA256SUMS`; download them again and verify SHA-256 against the local exact bytes.
 5. From a clean detached worktree at the immutable tag, run `scripts/stage_npm_release.sh --manifest <METADATA_DIR>/manifest.json --output-dir <STAGE_DIR>`, then run the npm package smoke against `<STAGE_DIR>/npm-package`.
 6. Make the GitHub Release public and verify every generated manifest URL is reachable. From the release control host only, publish npm from the staged package (`npm publish --access public`) and verify the requested version/dist-tag in the registry.
-7. Run public npm install acceptance on Linux x64 and Windows x64 when network routing permits, then fast-forward the four build-host source repositories to current `main` and clean temporary worktrees/bundles/pre-smoke artifacts.
+7. Run public npm install acceptance on Linux x64, Windows x64, and native Windows arm64 when a suitable runner and network path are available. Then fast-forward any persistent release-control/build-host source checkouts used outside GitHub Actions to current `main` and clean temporary worktrees/bundles/pre-smoke artifacts.
 
 ## 10. Post-Deployment Acceptance Smoke
 

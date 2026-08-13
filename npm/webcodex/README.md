@@ -11,8 +11,8 @@ platforms.
 
 ### Install and connect
 
-Supported platforms are Linux x64, Linux arm64, macOS arm64, and Windows x64. Node.js 18 or
-newer is required by the installer wrapper.
+Supported platforms are Linux x64, Linux arm64, macOS arm64, Windows x64, and native Windows
+arm64. Node.js 18 or newer is required by the installer wrapper.
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -59,8 +59,8 @@ WebCodex 让 ChatGPT、Claude 和其他 MCP client 成为连接到你自己仓�
 
 ### 安装与接入
 
-支持 Linux x64、Linux arm64、macOS arm64 和 Windows x64；installer wrapper 需要 Node.js 18
-或更新版本。
+支持 Linux x64、Linux arm64、macOS arm64、Windows x64 和原生 Windows arm64；installer
+wrapper 需要 Node.js 18 或更新版本。
 
 ```bash
 npm install -g @yyjeqhc/webcodex

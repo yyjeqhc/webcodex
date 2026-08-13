@@ -212,7 +212,7 @@ async function main() {
   assert.strictEqual(packageJson.version, "0.3.6");
   assert.deepStrictEqual(packageJson.bin, { webcodex: "bin/webcodex.js" });
   assert.deepStrictEqual(install.RUNTIME_BINARIES, ["webcodex", "webcodex-server", "webcodex-runner"]);
-  assert.deepStrictEqual(install.SUPPORTED_PLATFORM_KEYS, ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64"]);
+  assert.deepStrictEqual(install.SUPPORTED_PLATFORM_KEYS, ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"]);
   assert.strictEqual(install.MAX_MANIFEST_BYTES, 1024 * 1024);
   assert.strictEqual(install.MAX_ARTIFACT_BYTES, 128 * 1024 * 1024);
   assert.strictEqual(install.MAX_UNCOMPRESSED_BYTES, 256 * 1024 * 1024);
@@ -231,6 +231,7 @@ async function main() {
 
   assert.strictEqual(install.platformKey("linux", "x64"), "linux-x64");
   assert.strictEqual(install.platformKey("darwin", "arm64"), "darwin-arm64");
+  assert.strictEqual(install.platformKey("win32", "arm64"), "win32-arm64");
   assert.throws(() => install.platformKey("sunos", "x64"), /Unsupported/);
   assert.strictEqual(
     wrapper.nativePath({ packageRoot: "/tmp/package", platform: "linux" }),

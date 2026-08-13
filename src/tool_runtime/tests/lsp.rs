@@ -696,6 +696,52 @@ async fn call_hierarchy_result_boundary_rejects_inconsistent_bounds() {
 }
 
 #[tokio::test]
+async fn call_hierarchy_result_boundary_rejects_request_path_mismatch() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let project = register_lsp_agent(
+        &runtime,
+        "hierarchy-path-mismatch",
+        "demo",
+        tmp.path(),
+        true,
+    )
+    .await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CallHierarchy {
+                        project,
+                        path: "src/./main.rs".into(),
+                        line: 1,
+                        column: 4,
+                        direction: CallHierarchyDirection::Both,
+                        depth: 1,
+                        limit: 50,
+                        session_id: None,
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    let malformed = call_hierarchy_result("src/other.rs");
+    complete_lsp_agent_request(&runtime, "hierarchy-path-mismatch", malformed).await;
+    let result = task.await.unwrap();
+    assert!(!result.success, "{result:?}");
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains(error_codes::MALFORMED_AGENT_LSP_RESULT),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
 async fn disconnected_agent_blocks_document_diagnostics_dispatch() {
     let runtime = test_runtime();
     let tmp = tempfile::tempdir().unwrap();

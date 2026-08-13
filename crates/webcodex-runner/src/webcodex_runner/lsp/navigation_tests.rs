@@ -5,7 +5,9 @@ use super::supervisor::{
 };
 use crate::lsp_bridge::{
     parse_agent_lsp_result_envelope, AgentLspPayload, AgentLspRequest, CallHierarchyDirection,
-    AGENT_LSP_REQUEST_KIND,
+    AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC,
+    MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
+    MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY,
 };
 use crate::shell_protocol::{ShellAgentShellRequest, ShellClientCapabilities};
 use crate::webcodex_runner::config::AgentPolicy;
@@ -15,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 struct FakeServerBinary {
     path: PathBuf,
@@ -302,6 +304,127 @@ fn call_hierarchy_supports_each_direction_and_bounded_depth_two_bfs() {
         2
     );
     assert_eq!(both["result"]["truncated"], false);
+}
+
+#[test]
+fn call_hierarchy_uses_one_shared_operation_deadline() {
+    let _serial = super::serialize_fake_lsp_test();
+    let fixture = NavFixture::new("call_hierarchy_shared_deadline");
+    let mut request = shell_lsp_request(AgentLspPayload {
+        project_id: "demo".into(),
+        request: AgentLspRequest::CallHierarchy {
+            path: "src/main.rs".into(),
+            line: 1,
+            column: 4,
+            direction: CallHierarchyDirection::Both,
+            depth: 2,
+            limit: 50,
+        },
+    });
+    request.timeout_secs = 1;
+
+    let started = Instant::now();
+    let result = handle_lsp_request(
+        &fixture.policy,
+        &fixture.projects_dir,
+        &fixture.supervisor,
+        &request,
+    );
+    let elapsed = started.elapsed();
+    let envelope = parse_agent_lsp_result_envelope(result.stdout.as_deref().unwrap()).unwrap();
+    assert!(!envelope.success, "{envelope:?}");
+    assert_eq!(
+        envelope.error.as_ref().map(|error| error.code.as_str()),
+        Some("lsp_request_timeout")
+    );
+    assert!(
+        elapsed < Duration::from_millis(1500),
+        "hierarchy re-armed per-RPC timeouts instead of sharing its request budget: {elapsed:?}"
+    );
+
+    // Let the fake server finish its stalled handler. A timed-out traversal must
+    // not resume and issue the next direction after the caller has returned.
+    std::thread::sleep(Duration::from_millis(800));
+    let marker = fs::read_to_string(&fixture.marker).unwrap();
+    assert_eq!(
+        marker
+            .matches("hierarchy:textDocument/prepareCallHierarchy")
+            .count(),
+        1
+    );
+    assert_eq!(
+        marker
+            .matches("hierarchy:callHierarchy/incomingCalls")
+            .count(),
+        1
+    );
+    assert_eq!(
+        marker
+            .matches("hierarchy:callHierarchy/outgoingCalls")
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn call_hierarchy_bounds_raw_fanout_before_normalization() {
+    let _serial = super::serialize_fake_lsp_test();
+
+    let prepare = NavFixture::new("call_hierarchy_raw_prepare_fanout").call_hierarchy(
+        "src/main.rs",
+        1,
+        4,
+        CallHierarchyDirection::Outgoing,
+        1,
+        100,
+    );
+    assert_eq!(prepare["success"], true, "{prepare}");
+    assert_eq!(prepare["result"]["root_total_count"], 80);
+    assert_eq!(prepare["result"]["root_returned_count"], 0);
+    assert_eq!(
+        prepare["result"]["invalid_results_omitted"],
+        MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED
+    );
+    assert_eq!(prepare["result"]["truncated"], true);
+
+    let calls = NavFixture::new("call_hierarchy_raw_call_entries_fanout").call_hierarchy(
+        "src/main.rs",
+        1,
+        4,
+        CallHierarchyDirection::Outgoing,
+        1,
+        100,
+    );
+    assert_eq!(calls["success"], true, "{calls}");
+    assert_eq!(calls["result"]["returned_count"], 0);
+    assert_eq!(
+        calls["result"]["invalid_results_omitted"],
+        MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC
+    );
+    assert_eq!(calls["result"]["truncated"], true);
+
+    let sites = NavFixture::new("call_hierarchy_raw_call_sites_fanout").call_hierarchy(
+        "src/main.rs",
+        1,
+        4,
+        CallHierarchyDirection::Outgoing,
+        1,
+        100,
+    );
+    assert_eq!(sites["success"], true, "{sites}");
+    assert_eq!(sites["result"]["returned_count"], 1);
+    assert_eq!(
+        sites["result"]["edges"][0]["call_sites"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        sites["result"]["call_site_ranges_omitted"],
+        140 - MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY
+    );
+    assert_eq!(sites["result"]["truncated"], true);
 }
 
 #[test]

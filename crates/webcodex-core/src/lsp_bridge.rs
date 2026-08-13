@@ -38,6 +38,9 @@ pub const MIN_CALL_HIERARCHY_LIMIT: usize = 1;
 pub const MAX_CALL_HIERARCHY_LIMIT: usize = 100;
 pub const MAX_CALL_HIERARCHY_ROOTS: usize = 16;
 pub const MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE: usize = 20;
+pub const MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED: usize = 64;
+pub const MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC: usize = 256;
+pub const MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY: usize = 100;
 
 pub const MAX_ERROR_MESSAGE_CHARS: usize = 240;
 
@@ -768,6 +771,12 @@ mod tests {
         assert_eq!(
             validate_call_hierarchy_bounds(1, 101),
             Err("call hierarchy limit must be 1..=100")
+        );
+        assert_eq!(MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED, 64);
+        assert_eq!(MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC, 256);
+        assert_eq!(
+            MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY,
+            100
         );
     }
 

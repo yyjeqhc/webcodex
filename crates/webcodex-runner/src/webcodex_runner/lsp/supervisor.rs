@@ -421,6 +421,44 @@ impl LspSupervisor {
         language_id: &str,
         text: &str,
     ) -> Result<PositionEncoding, LspError> {
+        self.prepare_document_inner(
+            validated_project_root,
+            kind,
+            document_uri,
+            language_id,
+            text,
+            None,
+        )
+    }
+
+    pub(crate) fn prepare_document_until(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        document_uri: &str,
+        language_id: &str,
+        text: &str,
+        deadline: Instant,
+    ) -> Result<PositionEncoding, LspError> {
+        self.prepare_document_inner(
+            validated_project_root,
+            kind,
+            document_uri,
+            language_id,
+            text,
+            Some(deadline),
+        )
+    }
+
+    fn prepare_document_inner(
+        &self,
+        validated_project_root: &Path,
+        kind: LspServerKind,
+        document_uri: &str,
+        language_id: &str,
+        text: &str,
+        operation_deadline: Option<Instant>,
+    ) -> Result<PositionEncoding, LspError> {
         let key = ProcessKey {
             project_root: canonical_project_root(validated_project_root)?,
             kind,
@@ -431,7 +469,12 @@ impl LspSupervisor {
             text,
         };
         for attempt in 0..=1 {
-            let server = match self.get_or_start(&key, attempt == 1) {
+            ensure_request_budget(
+                "initialize",
+                self.inner.config.initialize_timeout,
+                operation_deadline,
+            )?;
+            let server = match self.get_or_start(&key, attempt == 1, operation_deadline) {
                 Ok(server) => server,
                 Err(error) if attempt == 0 && error.permits_restart() => continue,
                 Err(error) if attempt == 1 && error.permits_restart() => {
@@ -478,7 +521,7 @@ impl LspSupervisor {
             text,
         };
         for attempt in 0..=1 {
-            let server = match self.get_or_start(&key, attempt == 1) {
+            let server = match self.get_or_start(&key, attempt == 1, None) {
                 Ok(server) => server,
                 Err(error) if attempt == 0 && error.permits_restart() => continue,
                 Err(error) if attempt == 1 && error.permits_restart() => {
@@ -548,6 +591,7 @@ impl LspSupervisor {
             params,
             self.inner.config.request_timeout,
             None,
+            None,
             false,
         )
     }
@@ -561,6 +605,7 @@ impl LspSupervisor {
         text: &str,
         line: u32,
         character: u32,
+        operation_deadline: Instant,
     ) -> Result<(Value, PositionEncoding), LspError> {
         self.request_with_timeout_and_encoding_inner(
             validated_project_root,
@@ -571,6 +616,7 @@ impl LspSupervisor {
                 "position": { "line": line, "character": character }
             }),
             self.inner.config.request_timeout,
+            Some(operation_deadline),
             Some(DocumentOpen {
                 uri: document_uri,
                 language_id,
@@ -585,6 +631,7 @@ impl LspSupervisor {
         validated_project_root: &Path,
         kind: LspServerKind,
         item: Value,
+        operation_deadline: Instant,
     ) -> Result<(Value, PositionEncoding), LspError> {
         self.request_with_timeout_and_encoding_inner(
             validated_project_root,
@@ -592,6 +639,7 @@ impl LspSupervisor {
             "callHierarchy/incomingCalls",
             json!({ "item": item }),
             self.inner.config.request_timeout,
+            Some(operation_deadline),
             None,
             true,
         )
@@ -602,6 +650,7 @@ impl LspSupervisor {
         validated_project_root: &Path,
         kind: LspServerKind,
         item: Value,
+        operation_deadline: Instant,
     ) -> Result<(Value, PositionEncoding), LspError> {
         self.request_with_timeout_and_encoding_inner(
             validated_project_root,
@@ -609,6 +658,7 @@ impl LspSupervisor {
             "callHierarchy/outgoingCalls",
             json!({ "item": item }),
             self.inner.config.request_timeout,
+            Some(operation_deadline),
             None,
             true,
         )
@@ -629,6 +679,7 @@ impl LspSupervisor {
             method,
             params,
             timeout,
+            None,
             document,
             false,
         )
@@ -642,6 +693,7 @@ impl LspSupervisor {
         method: &str,
         params: Value,
         timeout: Duration,
+        operation_deadline: Option<Instant>,
         document: Option<DocumentOpen<'_>>,
         require_call_hierarchy: bool,
     ) -> Result<(Value, PositionEncoding), LspError> {
@@ -651,7 +703,8 @@ impl LspSupervisor {
         };
         let mut last_error = None;
         for attempt in 0..=1 {
-            let server = match self.get_or_start(&key, attempt == 1) {
+            ensure_request_budget(method, timeout, operation_deadline)?;
+            let server = match self.get_or_start(&key, attempt == 1, operation_deadline) {
                 Ok(server) => server,
                 Err(error) if attempt == 0 && error.permits_restart() => {
                     last_error = Some(error);
@@ -681,7 +734,8 @@ impl LspSupervisor {
                     return Err(error);
                 }
             }
-            match server.request(method, params.clone(), timeout) {
+            let request_timeout = ensure_request_budget(method, timeout, operation_deadline)?;
+            match server.request(method, params.clone(), request_timeout) {
                 Ok(value) => return Ok((value, server.position_encoding())),
                 Err(LspError::JsonRpc { code: -32601, .. }) if require_call_hierarchy => {
                     return Err(LspError::CallHierarchyUnsupported);
@@ -865,7 +919,13 @@ impl LspSupervisor {
         &self,
         key: &ProcessKey,
         retry_failed: bool,
+        operation_deadline: Option<Instant>,
     ) -> Result<Arc<ServerInstance>, LspError> {
+        ensure_request_budget(
+            "initialize",
+            self.inner.config.initialize_timeout,
+            operation_deadline,
+        )?;
         if self.inner.shutting_down.load(Ordering::SeqCst) {
             return Err(LspError::ServerUnavailable);
         }
@@ -901,7 +961,28 @@ impl LspSupervisor {
                 match &*state {
                     SlotState::Starting => {
                         waited = true;
-                        state = wait_unpoison(&slot.ready, state);
+                        if let Some(deadline) = operation_deadline {
+                            let remaining = deadline.saturating_duration_since(Instant::now());
+                            if remaining.is_zero() {
+                                return Err(LspError::RequestTimeout {
+                                    method: "initialize".to_string(),
+                                    timeout: Duration::ZERO,
+                                });
+                            }
+                            let (next, wait_result) = slot
+                                .ready
+                                .wait_timeout(state, remaining)
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            state = next;
+                            if wait_result.timed_out() {
+                                return Err(LspError::RequestTimeout {
+                                    method: "initialize".to_string(),
+                                    timeout: remaining,
+                                });
+                            }
+                        } else {
+                            state = wait_unpoison(&slot.ready, state);
+                        }
                     }
                     SlotState::Running(server) if server.is_usable() => {
                         return Ok(Arc::clone(server));
@@ -933,9 +1014,18 @@ impl LspSupervisor {
             if let Some(server) = stale_server {
                 // Reap the stale instance outside the slot lock. Even when the
                 // child is still alive after a reader crash, kill/wait it.
-                let _ = server.shutdown_until(Instant::now() + self.inner.config.shutdown_timeout);
+                let ordinary_deadline = Instant::now() + self.inner.config.shutdown_timeout;
+                let shutdown_deadline = operation_deadline
+                    .map(|deadline| deadline.min(ordinary_deadline))
+                    .unwrap_or(ordinary_deadline);
+                let _ = server.shutdown_until(shutdown_deadline);
             }
-            let result = self.start_server(key);
+            ensure_request_budget(
+                "initialize",
+                self.inner.config.initialize_timeout,
+                operation_deadline,
+            )?;
+            let result = self.start_server(key, operation_deadline);
             if self.inner.shutting_down.load(Ordering::SeqCst) {
                 if let Ok(server) = &result {
                     let _ = server.shutdown_until(
@@ -983,15 +1073,25 @@ impl LspSupervisor {
         Ok(())
     }
 
-    fn start_server(&self, key: &ProcessKey) -> Result<Arc<ServerInstance>, LspError> {
+    fn start_server(
+        &self,
+        key: &ProcessKey,
+        operation_deadline: Option<Instant>,
+    ) -> Result<Arc<ServerInstance>, LspError> {
         let command = self
             .resolve_command(key.kind)
             .ok_or(LspError::ServerUnavailable)?;
+        let initialize_timeout = ensure_request_budget(
+            "initialize",
+            self.inner.config.initialize_timeout,
+            operation_deadline,
+        )?;
         ServerInstance::start(
             key.clone(),
             command,
-            self.inner.config.initialize_timeout,
+            initialize_timeout,
             self.inner.config.shutdown_timeout,
+            operation_deadline,
             Arc::clone(&self.inner.shutting_down),
             Arc::clone(&self.inner.shutdown_deadline),
         )
@@ -1109,6 +1209,7 @@ impl LspSupervisor {
                 kind,
             },
             false,
+            None,
         )
     }
 
@@ -1688,7 +1789,6 @@ struct ServerInstance {
     stderr_thread: Mutex<Option<JoinHandle<()>>>,
     shutdown_started: AtomicBool,
     supervisor_shutdown: Arc<AtomicBool>,
-    global_shutdown_deadline: Arc<Mutex<Option<Instant>>>,
 }
 
 #[derive(Debug)]
@@ -1703,12 +1803,17 @@ impl ServerInstance {
         command: LspCommand,
         initialize_timeout: Duration,
         shutdown_timeout: Duration,
+        startup_deadline: Option<Instant>,
         supervisor_shutdown: Arc<AtomicBool>,
         global_shutdown_deadline: Arc<Mutex<Option<Instant>>>,
     ) -> Result<Arc<Self>, LspError> {
+        let cleanup_shutdown_deadline = Arc::clone(&global_shutdown_deadline);
         let cleanup_deadline = || {
-            lock_unpoison(&global_shutdown_deadline)
-                .unwrap_or_else(|| Instant::now() + shutdown_timeout)
+            let ordinary_deadline = lock_unpoison(&cleanup_shutdown_deadline)
+                .unwrap_or_else(|| Instant::now() + shutdown_timeout);
+            startup_deadline
+                .map(|deadline| deadline.min(ordinary_deadline))
+                .unwrap_or(ordinary_deadline)
         };
         let mut managed = command.spawn(&key.project_root)?;
         let Some(stdin) = managed.child_mut().stdin.take() else {
@@ -1793,16 +1898,22 @@ impl ServerInstance {
             stderr_thread: Mutex::new(Some(stderr_thread)),
             shutdown_started: AtomicBool::new(false),
             supervisor_shutdown,
-            global_shutdown_deadline,
         });
 
         if let Err(error) = server.initialize(initialize_timeout) {
-            // Use the configured shutdown budget, never a fixed default.
-            // Shutdown also joins the stderr drain thread so the bounded capture
-            // is complete before we classify the failure.
-            let deadline = lock_unpoison(&server.global_shutdown_deadline)
-                .unwrap_or_else(|| Instant::now() + shutdown_timeout);
+            // Use the configured shutdown budget, never a fixed default. A
+            // hierarchy-scoped startup also shares the caller's earlier
+            // operation deadline, so cleanup cannot re-arm a fresh wait.
+            let deadline = cleanup_deadline();
             let _ = server.shutdown_until(deadline);
+            if startup_deadline.is_some_and(|deadline| Instant::now() >= deadline)
+                || (startup_deadline.is_some() && matches!(&error, LspError::RequestTimeout { .. }))
+            {
+                return Err(LspError::RequestTimeout {
+                    method: "initialize".to_string(),
+                    timeout: initialize_timeout,
+                });
+            }
             let stderr_summary = server.startup_stderr_summary();
             return Err(LspError::InitializeFailed(combine_initialize_failure(
                 &error,
@@ -2345,6 +2456,24 @@ fn lock_unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn ensure_request_budget(
+    method: &str,
+    ordinary_timeout: Duration,
+    operation_deadline: Option<Instant>,
+) -> Result<Duration, LspError> {
+    let Some(deadline) = operation_deadline else {
+        return Ok(ordinary_timeout);
+    };
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(LspError::RequestTimeout {
+            method: method.to_string(),
+            timeout: Duration::ZERO,
+        });
+    }
+    Ok(ordinary_timeout.min(remaining))
 }
 
 fn wait_unpoison<'a, T>(condvar: &Condvar, guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {

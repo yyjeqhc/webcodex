@@ -178,7 +178,20 @@ fn run() -> io::Result<()> {
                     append_marker(marker, &format!("cancel:{body}\n"))?;
                 }
             }
-            Some(method) => match scenario.as_str() {
+            Some(method) => {
+                if scenario.starts_with("call_hierarchy")
+                    && matches!(
+                        method,
+                        "textDocument/prepareCallHierarchy"
+                            | "callHierarchy/incomingCalls"
+                            | "callHierarchy/outgoingCalls"
+                    )
+                {
+                    if let Some(marker) = &marker {
+                        append_marker(marker, &format!("hierarchy:{method}\n"))?;
+                    }
+                }
+                match scenario.as_str() {
                 // Never answer business requests; keep the process alive.
                 "timeout" | "timeout_cancel" | "shutdown_hang" => {}
                 "malformed_json" => write_frame(&mut writer, "{not-json")?,
@@ -207,6 +220,10 @@ fn run() -> io::Result<()> {
                         id.unwrap_or(0)
                     ),
                 )?,
+                "call_hierarchy_shared_deadline" if method == "callHierarchy/incomingCalls" => {
+                    thread::sleep(Duration::from_millis(1600));
+                    write_result(&mut writer, id, method, &body)?;
+                }
                 "call_hierarchy_method_unsupported"
                     if method == "textDocument/prepareCallHierarchy"
                         || method == "callHierarchy/incomingCalls"
@@ -249,7 +266,8 @@ fn run() -> io::Result<()> {
                     write_result(&mut writer, id, method, &body)?;
                 }
                 _ => write_result(&mut writer, id, method, &body)?,
-            },
+                }
+            }
             None => {
                 // JSON-RPC response to a fake server->client request.
             }
@@ -483,6 +501,18 @@ fn write_result(
         },
         "textDocument/prepareCallHierarchy" => match scenario.as_str() {
             "call_hierarchy_prepare_empty" => "null".to_string(),
+            "call_hierarchy_raw_prepare_fanout" => {
+                let mut items = vec!["7".to_string(); 64];
+                items.extend((0..16).map(|index| {
+                    call_hierarchy_item(
+                        &format!("LateRoot{index:02}"),
+                        &request_uri,
+                        0,
+                        "private",
+                    )
+                }));
+                format!("[{}]", items.join(","))
+            }
             "call_hierarchy_external_invalid" => format!(
                 "[{}, {}, {{\"name\":\"invalid\",\"kind\":12,\"uri\":7}}]",
                 call_hierarchy_item("file:///secret/root", &request_uri, 0, "root-private"),
@@ -527,6 +557,33 @@ fn write_result(
                     let target = call_hierarchy_item("Callee", &request_uri, 1, "callee-private");
                     format!(
                         r#"[{{"to":{target},"fromRanges":[{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":1}}}}]}},{{"to":{target},"fromRanges":[{{"start":{{"line":0,"character":1}},"end":{{"line":0,"character":2}}}}]}}]"#
+                    )
+                }
+                "call_hierarchy_raw_call_entries_fanout" if current == "Root" => {
+                    let mut calls = vec!["7".to_string(); 256];
+                    calls.extend((0..16).map(|index| {
+                        format!(
+                            r#"{{"to":{},"fromRanges":[]}}"#,
+                            call_hierarchy_item(
+                                &format!("LateCallee{index:02}"),
+                                &request_uri,
+                                1,
+                                "private"
+                            )
+                        )
+                    }));
+                    format!("[{}]", calls.join(","))
+                }
+                "call_hierarchy_raw_call_sites_fanout" if current == "Root" => {
+                    let ranges = std::iter::repeat(
+                        r#"{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}"#,
+                    )
+                    .take(140)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                    format!(
+                        r#"[{{"to":{},"fromRanges":[{ranges}]}}]"#,
+                        call_hierarchy_item("Callee", &request_uri, 1, "callee-private")
                     )
                 }
                 "call_hierarchy_call_sites_overflow" if current == "Root" => {

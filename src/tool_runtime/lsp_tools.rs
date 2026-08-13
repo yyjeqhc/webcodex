@@ -367,19 +367,19 @@ fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result
             roundtrip_typed_result::<LocationsResult>(result)
         }
         AgentLspRequest::CallHierarchy {
+            path,
             direction,
             line,
             column,
             depth,
             limit,
-            ..
         } => serde_json::from_value::<CallHierarchyResult>(result).and_then(|typed| {
-            validate_call_hierarchy_result(&typed, *direction, *line, *column, *depth, *limit)
-                .map_err(|_| {
-                    serde_json::Error::io(std::io::Error::other(
-                        "inconsistent call hierarchy result",
-                    ))
-                })?;
+            validate_call_hierarchy_result(
+                &typed, path, *direction, *line, *column, *depth, *limit,
+            )
+            .map_err(|_| {
+                serde_json::Error::io(std::io::Error::other("inconsistent call hierarchy result"))
+            })?;
             serde_json::to_value(typed)
         }),
     }
@@ -400,6 +400,7 @@ fn validate_agent_lsp_result(request: &AgentLspRequest, result: Value) -> Result
 
 fn validate_call_hierarchy_result(
     result: &CallHierarchyResult,
+    requested_path: &str,
     requested_direction: crate::lsp_bridge::CallHierarchyDirection,
     requested_line: usize,
     requested_column: usize,
@@ -409,7 +410,10 @@ fn validate_call_hierarchy_result(
     use crate::lsp_bridge::{CallHierarchyDirection, CallHierarchyEdgeDirection};
 
     validate_call_hierarchy_bounds(requested_depth, requested_limit).map_err(|_| ())?;
-    if result.direction != requested_direction
+    let normalized_requested_path =
+        normalize_requested_call_hierarchy_path(requested_path).ok_or(())?;
+    if result.path != normalized_requested_path
+        || result.direction != requested_direction
         || result.depth != requested_depth
         || result.returned_count != result.edges.len()
         || result.edges.len() > requested_limit
@@ -480,6 +484,19 @@ fn validate_public_range(range: &crate::lsp_bridge::PublicRange) -> Result<(), (
         return Err(());
     }
     Ok(())
+}
+
+fn normalize_requested_call_hierarchy_path(path: &str) -> Option<String> {
+    let normalized = path.trim().replace('\\', "/");
+    let mut components = Vec::new();
+    for component in Path::new(&normalized).components() {
+        match component {
+            Component::Normal(value) => components.push(value.to_str()?.to_string()),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    (!components.is_empty()).then(|| components.join("/"))
 }
 
 fn is_safe_project_relative_path(path: &str) -> bool {

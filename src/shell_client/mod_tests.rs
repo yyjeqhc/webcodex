@@ -1972,6 +1972,59 @@ async fn enqueue_call_hierarchy_uses_only_its_distinct_capability() {
 }
 
 #[tokio::test]
+async fn enqueue_lsp_rechecks_call_hierarchy_capability_atomically_after_downgrade() {
+    let registry = ShellClientRegistry::default();
+    register_lsp_test_client_capabilities(&registry, "hierarchy-fence", true, true).await;
+    assert!(registry
+        .client_supports(
+            "hierarchy-fence",
+            crate::shell_protocol::SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
+        )
+        .await
+        .unwrap());
+
+    // Same instance re-registers without the hierarchy capability after an
+    // earlier observer saw it as enabled.
+    register_lsp_test_client_capabilities(&registry, "hierarchy-fence", true, false).await;
+    let error = registry
+        .enqueue_lsp(
+            "hierarchy-fence".to_string(),
+            AgentLspPayload {
+                project_id: "demo".to_string(),
+                request: AgentLspRequest::CallHierarchy {
+                    path: "src/main.rs".to_string(),
+                    line: 1,
+                    column: 1,
+                    direction: crate::lsp_bridge::CallHierarchyDirection::Both,
+                    depth: 1,
+                    limit: 50,
+                },
+            },
+            "test".to_string(),
+            5,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        EnqueueLspError::UnsupportedCapability {
+            client_id: "hierarchy-fence".to_string(),
+            capability: crate::shell_protocol::SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
+        }
+    );
+
+    let inner = registry.inner.lock().await;
+    assert!(inner
+        .queues_by_client
+        .get("hierarchy-fence")
+        .is_none_or(|queue| queue.is_empty()));
+    assert!(inner
+        .pending_by_id
+        .values()
+        .all(|pending| pending.request.client_id != "hierarchy-fence"));
+}
+
+#[tokio::test]
 async fn enqueue_lsp_returns_structured_unknown_client_error() {
     let registry = ShellClientRegistry::default();
     let error = registry

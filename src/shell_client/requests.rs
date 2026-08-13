@@ -2,7 +2,7 @@ use super::jobs::{
     command_preview, ensure_dispatch_supported_locked, ensure_queue_capacity_locked,
     request_preview, PendingRequestEnqueueError,
 };
-use super::projects::ShellClientLookupError;
+use super::projects::{capability_enabled, ShellClientLookupError};
 use super::state::{PendingShellRequest, ShellClientRegistryInner};
 use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
@@ -768,16 +768,6 @@ impl ShellClientRegistry {
             } else {
                 SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION
             };
-        if !self
-            .client_supports(&client_id, required_capability)
-            .await
-            .map_err(EnqueueLspError::from)?
-        {
-            return Err(EnqueueLspError::UnsupportedCapability {
-                client_id,
-                capability: required_capability,
-            });
-        }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = ShellAgentShellRequest {
@@ -808,6 +798,21 @@ impl ShellClientRegistry {
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
+        // This check is the authoritative TOCTOU fence: capability validation
+        // and pending-request admission happen under the same registry lock.
+        let current =
+            inner
+                .clients
+                .get(&client_id)
+                .ok_or_else(|| EnqueueLspError::UnknownClient {
+                    client_id: client_id.clone(),
+                })?;
+        if !capability_enabled(&current.capabilities, required_capability) {
+            return Err(EnqueueLspError::UnsupportedCapability {
+                client_id,
+                capability: required_capability,
+            });
+        }
         enqueue_pending_request_locked(
             &mut inner,
             &client_id,

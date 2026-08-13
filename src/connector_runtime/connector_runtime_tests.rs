@@ -312,7 +312,7 @@ async fn start_task_mode(connector: &ConnectorRuntime, goal: &str, mode: &str) -
     started.body["task_id"].as_str().unwrap().to_string()
 }
 
-fn connector_call_hierarchy_result(path: &str) -> CallHierarchyResult {
+fn connector_call_hierarchy_result(path: &str, line: usize, column: usize) -> CallHierarchyResult {
     let range = PublicRange {
         start: PublicPosition { line: 1, column: 1 },
         end: PublicPosition { line: 1, column: 5 },
@@ -321,7 +321,7 @@ fn connector_call_hierarchy_result(path: &str) -> CallHierarchyResult {
         project: "private-agent-project".to_string(),
         path: path.to_string(),
         language: "typescript".to_string(),
-        query_position: PublicPosition { line: 1, column: 4 },
+        query_position: PublicPosition { line, column },
         direction: CallHierarchyDirection::Both,
         depth: 2,
         roots: vec![PublicCallHierarchySymbol {
@@ -2028,7 +2028,7 @@ async fn code_impact_uses_bound_executor_holds_lifecycle_lock_and_bounds_ledger(
     assert!(!finish.is_finished());
 
     let mut raw_result =
-        serde_json::to_value(connector_call_hierarchy_result("src/app.ts")).unwrap();
+        serde_json::to_value(connector_call_hierarchy_result("src/app.ts", 1, 4)).unwrap();
     raw_result["client_id"] = json!("hosted-private");
     raw_result["execution_executor_ref"] = json!("agent:hosted:demo");
     raw_result["roots"][0]["data"] = json!({"opaque": "file:///private/root"});
@@ -2120,7 +2120,7 @@ async fn code_impact_lifecycle_lock_blocks_task_cancel_until_read_completes() {
         "task_cancel must wait for the semantic read lifecycle lock"
     );
 
-    let mut result = connector_call_hierarchy_result("src/main.rs");
+    let mut result = connector_call_hierarchy_result("src/main.rs", 1, 1);
     result.depth = 1;
     complete_lsp_request(&registry, &request, result).await;
     let impact = impact.await.unwrap();
@@ -2212,7 +2212,7 @@ async fn code_impact_is_available_in_normal_inspect_and_read_only_tasks() {
                 limit: 50,
             }
         );
-        let mut result = connector_call_hierarchy_result("src/main.rs");
+        let mut result = connector_call_hierarchy_result("src/main.rs", 1, 1);
         result.depth = 1;
         complete_lsp_request(&registry, &request, result).await;
         let outcome = call.await.unwrap();

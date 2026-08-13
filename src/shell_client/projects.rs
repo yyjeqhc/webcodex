@@ -36,7 +36,7 @@ impl fmt::Display for ShellClientLookupError {
 
 impl std::error::Error for ShellClientLookupError {}
 
-fn capability_enabled(caps: &ShellClientCapabilities, capability: &str) -> bool {
+pub(super) fn capability_enabled(caps: &ShellClientCapabilities, capability: &str) -> bool {
     match capability {
         SHELL_CLIENT_CAPABILITY_SHELL => caps.shell,
         SHELL_CLIENT_CAPABILITY_FILE_READ => caps.file_read,
@@ -106,6 +106,7 @@ impl ShellClientRegistry {
     /// `sandbox_inspect_commands`, `project_lifecycle`,
     /// `project_path_registration`, `job_state_reconciliation`. Unknown capability
     /// names return `false`.
+    #[cfg(test)]
     pub(crate) async fn client_supports(
         &self,
         client_id: &str,

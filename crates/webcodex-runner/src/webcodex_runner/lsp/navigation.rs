@@ -25,7 +25,9 @@ use crate::lsp_bridge::{
     LspAvailabilityStatus, LspServerStatusEntry, LspStatusResult, PublicCallHierarchyEdge,
     PublicCallHierarchySymbol, PublicDiagnostic, PublicHover, PublicLocation, PublicPosition,
     PublicRange, PublicSymbol, PublicWorkspaceSymbol, WorkspaceSymbolsResult,
-    AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE, MAX_CALL_HIERARCHY_ROOTS,
+    AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC,
+    MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE, MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
+    MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY, MAX_CALL_HIERARCHY_ROOTS,
 };
 use crate::shell_protocol::ShellAgentShellRequest;
 use serde_json::{json, Value};
@@ -62,7 +64,16 @@ pub(crate) fn handle_lsp_request(
             "LSP request missing typed payload",
         );
     };
-    match execute_lsp(policy, projects_dir, supervisor, payload) {
+    let operation_deadline = start
+        .checked_add(Duration::from_secs(request.timeout_secs.max(1)))
+        .unwrap_or(start);
+    match execute_lsp(
+        policy,
+        projects_dir,
+        supervisor,
+        payload,
+        operation_deadline,
+    ) {
         Ok(envelope) => CommandResult {
             // Always exit 0 for structured envelopes so the server can parse
             // success/failure from the versioned JSON rather than shell status.
@@ -87,6 +98,7 @@ fn execute_lsp(
     projects_dir: &Path,
     supervisor: &LspSupervisor,
     payload: &AgentLspPayload,
+    operation_deadline: Instant,
 ) -> Result<AgentLspResultEnvelope, AgentLspResultEnvelope> {
     let project = resolve_agent_project(projects_dir, &payload.project_id)?;
     let project_root = validate_project_root(policy, &project.path)?;
@@ -181,6 +193,7 @@ fn execute_lsp(
                 *direction,
                 *depth,
                 *limit,
+                operation_deadline,
             )?;
             Ok(AgentLspResultEnvelope::ok(result))
         }
@@ -727,6 +740,7 @@ fn call_hierarchy(
     direction: CallHierarchyDirection,
     depth: usize,
     limit: usize,
+    operation_deadline: Instant,
 ) -> Result<CallHierarchyResult, AgentLspResultEnvelope> {
     if line < 1 || column < 1 {
         return Err(AgentLspResultEnvelope::err(
@@ -756,8 +770,16 @@ fn call_hierarchy(
     })?;
     // The prepare request synchronizes the document and returns the exact
     // encoding negotiated by the server instance that produced the items.
+    ensure_call_hierarchy_budget(operation_deadline)?;
     let provisional_encoding = supervisor
-        .prepare_document(project_root, profile.kind, &uri, language_id, &text)
+        .prepare_document_until(
+            project_root,
+            profile.kind,
+            &uri,
+            language_id,
+            &text,
+            operation_deadline,
+        )
         .map_err(map_lsp_error)?;
     let (lsp_line, lsp_character) = public_to_lsp(&text, line, column, provisional_encoding)
         .map_err(|message| AgentLspResultEnvelope::err(error_codes::INVALID_ARGUMENTS, message))?;
@@ -770,16 +792,21 @@ fn call_hierarchy(
             &text,
             lsp_line,
             lsp_character,
+            operation_deadline,
         )
         .map_err(map_lsp_error)?;
     let prepared_items = call_hierarchy_array(&prepared, "prepareCallHierarchy")?;
     let root_total_count = prepared_items.len();
+    let mut truncated = root_total_count > MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED;
     let mut cache = LineCache::new();
     cache.seed(&file, text);
     let mut external_results_omitted = 0usize;
     let mut invalid_results_omitted = 0usize;
     let mut roots = Vec::new();
-    for item in prepared_items {
+    for item in prepared_items
+        .iter()
+        .take(MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED)
+    {
         match normalize_call_hierarchy_item(project_root, item, prepare_encoding, &mut cache) {
             CallHierarchyItemNormalize::Ok(item) => roots.push(item),
             CallHierarchyItemNormalize::External => external_results_omitted += 1,
@@ -799,7 +826,7 @@ fn call_hierarchy(
         call_hierarchy_symbol_key(&left.symbol) == call_hierarchy_symbol_key(&right.symbol)
     });
 
-    let mut truncated = roots.len() > MAX_CALL_HIERARCHY_ROOTS;
+    truncated |= roots.len() > MAX_CALL_HIERARCHY_ROOTS;
     roots.truncate(MAX_CALL_HIERARCHY_ROOTS);
     let public_roots = roots
         .iter()
@@ -829,8 +856,14 @@ fn call_hierarchy(
             direction,
             CallHierarchyDirection::Incoming | CallHierarchyDirection::Both
         ) {
+            ensure_call_hierarchy_budget(operation_deadline)?;
             let (value, encoding) = supervisor
-                .incoming_call_hierarchy(project_root, profile.kind, current.raw.clone())
+                .incoming_call_hierarchy(
+                    project_root,
+                    profile.kind,
+                    current.raw.clone(),
+                    operation_deadline,
+                )
                 .map_err(map_lsp_error)?;
             normalize_call_hierarchy_calls(
                 project_root,
@@ -843,14 +876,21 @@ fn call_hierarchy(
                 &mut candidates,
                 &mut external_results_omitted,
                 &mut invalid_results_omitted,
+                &mut truncated,
             )?;
         }
         if matches!(
             direction,
             CallHierarchyDirection::Outgoing | CallHierarchyDirection::Both
         ) {
+            ensure_call_hierarchy_budget(operation_deadline)?;
             let (value, encoding) = supervisor
-                .outgoing_call_hierarchy(project_root, profile.kind, current.raw.clone())
+                .outgoing_call_hierarchy(
+                    project_root,
+                    profile.kind,
+                    current.raw.clone(),
+                    operation_deadline,
+                )
                 .map_err(map_lsp_error)?;
             normalize_call_hierarchy_calls(
                 project_root,
@@ -863,6 +903,7 @@ fn call_hierarchy(
                 &mut candidates,
                 &mut external_results_omitted,
                 &mut invalid_results_omitted,
+                &mut truncated,
             )?;
         }
         candidates.sort_by_key(call_hierarchy_candidate_key);
@@ -931,6 +972,16 @@ fn call_hierarchy(
     })
 }
 
+fn ensure_call_hierarchy_budget(operation_deadline: Instant) -> Result<(), AgentLspResultEnvelope> {
+    if Instant::now() >= operation_deadline {
+        return Err(AgentLspResultEnvelope::err(
+            error_codes::LSP_REQUEST_TIMEOUT,
+            "language server request timed out",
+        ));
+    }
+    Ok(())
+}
+
 fn call_hierarchy_array<'a>(
     value: &'a Value,
     operation: &str,
@@ -958,12 +1009,20 @@ fn normalize_call_hierarchy_calls(
     candidates: &mut Vec<CallHierarchyCandidate>,
     external_results_omitted: &mut usize,
     invalid_results_omitted: &mut usize,
+    truncated: &mut bool,
 ) -> Result<(), AgentLspResultEnvelope> {
     let operation = match direction {
         CallHierarchyEdgeDirection::Incoming => "callHierarchy/incomingCalls",
         CallHierarchyEdgeDirection::Outgoing => "callHierarchy/outgoingCalls",
     };
-    for call in call_hierarchy_array(value, operation)? {
+    let calls = call_hierarchy_array(value, operation)?;
+    if calls.len() > MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC {
+        *truncated = true;
+    }
+    for call in calls
+        .iter()
+        .take(MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC)
+    {
         let Some(call) = call.as_object() else {
             *invalid_results_omitted += 1;
             continue;
@@ -997,7 +1056,13 @@ fn normalize_call_hierarchy_calls(
             CallHierarchyEdgeDirection::Outgoing => &current.absolute_path,
         };
         let mut call_sites = Vec::new();
-        for raw_range in raw_ranges {
+        let raw_call_site_ranges_omitted = raw_ranges
+            .len()
+            .saturating_sub(MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY);
+        for raw_range in raw_ranges
+            .iter()
+            .take(MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY)
+        {
             match convert_range(cache, call_site_path, raw_range, encoding) {
                 Some(range) => call_sites.push(range),
                 None => *invalid_results_omitted += 1,
@@ -1005,9 +1070,11 @@ fn normalize_call_hierarchy_calls(
         }
         call_sites.sort_by_key(call_hierarchy_range_key);
         call_sites.dedup();
-        let call_site_ranges_omitted = call_sites
-            .len()
-            .saturating_sub(MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE);
+        let call_site_ranges_omitted = raw_call_site_ranges_omitted.saturating_add(
+            call_sites
+                .len()
+                .saturating_sub(MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE),
+        );
         call_sites.truncate(MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE);
         let (from, to) = match direction {
             CallHierarchyEdgeDirection::Incoming => (target.symbol.clone(), current.symbol.clone()),

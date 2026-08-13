@@ -699,7 +699,14 @@ impl ShellClientRegistry {
         // records hidden so the initiating structured tool call returns its
         // terminal result instead of handing off an already-finished Job.
         if !is_final_job_status(&job.status) {
+            let view = job_view(job);
+            if view.observation_token.is_none() {
+                return Err(format!(
+                    "structured job has no canonical observation token: {job_id}"
+                ));
+            }
             job.visibility = ShellJobVisibility::Public;
+            return Ok(view);
         }
         Ok(job_view(job))
     }

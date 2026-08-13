@@ -1291,7 +1291,7 @@ impl ToolRuntime {
             .validation_sync_wait
             .min(std::time::Duration::from_secs(sync_wait_secs));
         let deadline = std::time::Instant::now() + wait;
-        loop {
+        let promoted_observation = loop {
             let status = normalize_local_status(
                 &record
                     .read_text("status")
@@ -1350,15 +1350,30 @@ impl ToolRuntime {
                     };
                     record.promote_if_active()
                 };
-                if promoted {
-                    break;
+                match promoted {
+                    Ok(Some(observation)) => break observation,
+                    Ok(None) => {}
+                    Err(error) => {
+                        return ToolResult::err(format!(
+                            "local validation job observation failed before handoff: {error}"
+                        ));
+                    }
                 }
                 // The watcher linearized terminal publication before promotion.
                 // Re-enter the loop and return the structured terminal result.
                 continue;
             }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
+        };
+        let observation_token = match promoted_observation.token(&job_id) {
+            Ok(token) => token,
+            Err(error) => {
+                return ToolResult::err(format!(
+                    "local validation job has no canonical observation token: {error}"
+                ));
+            }
+        };
+        let job_status = normalize_local_status(&promoted_observation.status);
         let mut public_metadata = metadata;
         public_metadata["visibility"] = json!("public");
         let _ = std::fs::write(
@@ -1371,7 +1386,8 @@ impl ToolRuntime {
             "purpose": purpose.as_str(),
             "execution_state": "running",
             "job_id": job_id,
-            "job_status": "running",
+            "job_status": job_status,
+            "observation_token": observation_token,
             "promoted_to_job": true,
             "command_started": true,
             "command_completed": false,
@@ -1460,7 +1476,7 @@ impl ToolRuntime {
                 ));
             }
         };
-        let latest_status = promoted.status;
+        let latest_status = promoted.status.clone();
         if crate::tool_runtime::jobs::is_terminal_job_status(&latest_status) {
             let result = self
                 .validation_terminal_result(job_id, adapter, &latest_status, handoff)
@@ -1468,6 +1484,14 @@ impl ToolRuntime {
             guard.disarm();
             return result;
         }
+        let observation_token = match promoted.observation_token {
+            Some(token) => token,
+            None => {
+                return ToolResult::err(
+                    "promoted validation job has no canonical observation token".to_string(),
+                );
+            }
+        };
         let queued = matches!(
             latest_status.as_str(),
             "queued" | "agent_queued" | "started"
@@ -1479,6 +1503,7 @@ impl ToolRuntime {
             "execution_state": execution_state,
             "job_id": handoff.job_id,
             "job_status": latest_status,
+            "observation_token": observation_token,
             "promoted_to_job": true,
             "command_started": !queued,
             "command_completed": false,

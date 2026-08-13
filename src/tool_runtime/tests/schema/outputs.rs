@@ -532,6 +532,14 @@ fn key_tool_output_schemas_include_expected_fields() {
     }
     for name in ["cargo_fmt", "cargo_check", "cargo_test", "go_test"] {
         assert!(
+            has_output_field(name, "observation_token"),
+            "{name} missing promoted Job observation_token"
+        );
+        assert_eq!(
+            output_schema_property(&specs, name, "observation_token")["maxLength"],
+            crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
+        );
+        assert!(
             has_output_field(name, "failure_kind"),
             "{name} missing failure_kind"
         );

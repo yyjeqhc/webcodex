@@ -550,6 +550,28 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
     assert_eq!(result.output["promoted_to_job"], true);
     assert_eq!(result.output["terminal"], false);
     assert_eq!(result.output["job_id"], job_id);
+    let observation_token = result.output["observation_token"]
+        .as_str()
+        .expect("go_test handoff observation token")
+        .to_string();
+    let observed = runtime
+        .observe_jobs_for_auth(
+            vec![ObserveJobsItem {
+                job_id: job_id.clone(),
+                after_observation_token: Some(observation_token.clone()),
+            }],
+            40,
+            None,
+            Some(&auth),
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    assert_eq!(observed.output["items"][0]["success"], true);
+    assert_eq!(
+        observed.output["items"][0]["output"]["observation_token"],
+        observation_token
+    );
+    assert_cargo_result_matches_schema("go_test", &result);
 
     let stdout = concat!(
         "{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestLater\"}\n",
@@ -651,6 +673,7 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
     assert_eq!(result.output["command_completed"], true);
     assert_eq!(result.output["promoted_to_job"], false);
     assert_eq!(result.output["effective_timeout_secs"], 600);
+    assert!(result.output.get("observation_token").is_none());
     assert_eq!(result.output["sync_wait_secs"], 90);
     assert_cargo_result_matches_schema("cargo_check", &result);
     // No redundant visible job.
@@ -667,6 +690,78 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
     assert_eq!(validation["events_total"], 1);
     assert_eq!(validation["status"], "passed");
     assert_eq!(validation["latest"]["tool_name"], "cargo_check");
+}
+
+#[tokio::test]
+async fn long_cargo_check_hands_off_with_immediately_observable_token() {
+    let client_id = "vhandoff-long-check";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_validation_sync_wait(std::time::Duration::from_millis(20));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            runtime
+                .cargo_check(project, None, None, None, None, None, None, Some(600))
+                .await
+        }
+    });
+    let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
+    runtime
+        .shell_clients
+        .update_job(cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "running",
+            "Checking demo v0.1.0\n",
+            "",
+            None,
+            running_progress("check"),
+            false,
+        ))
+        .await
+        .unwrap();
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["job_id"], job_id);
+    let observation_token = result.output["observation_token"]
+        .as_str()
+        .expect("cargo_check handoff observation token")
+        .to_string();
+    let observed = runtime
+        .observe_jobs_for_auth(
+            vec![ObserveJobsItem {
+                job_id: job_id.clone(),
+                after_observation_token: Some(observation_token.clone()),
+            }],
+            40,
+            None,
+            None,
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    assert_eq!(observed.output["items"][0]["success"], true);
+    assert_eq!(
+        observed.output["items"][0]["output"]["observation_token"],
+        observation_token
+    );
+    assert_cargo_result_matches_schema("cargo_check", &result);
 }
 
 /// Auto handoff: a validation still running when the injected sync window
@@ -746,6 +841,27 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     assert!(result.output.get("failure_kind").is_none());
     assert_eq!(result.output["job_id"].as_str().unwrap(), job_id.as_str());
     assert_cargo_result_matches_schema("cargo_test", &result);
+    let observation_token = result.output["observation_token"]
+        .as_str()
+        .expect("cargo_test handoff observation token")
+        .to_string();
+    let observed = runtime
+        .observe_jobs_for_auth(
+            vec![ObserveJobsItem {
+                job_id: job_id.clone(),
+                after_observation_token: Some(observation_token.clone()),
+            }],
+            40,
+            None,
+            None,
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    assert_eq!(observed.output["items"][0]["success"], true);
+    assert_eq!(
+        observed.output["items"][0]["output"]["observation_token"],
+        observation_token
+    );
 
     // Job is immediately queryable and still active.
     let status = runtime
@@ -770,7 +886,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
                 job_id,
-                after_observation_token: None,
+                after_observation_token: Some(observation_token),
             }],
             200,
             None,
@@ -2147,6 +2263,27 @@ mod tests {
     assert_eq!(handoff.output["job_id"], hidden_job_id);
     assert_eq!(handoff.output["executor"], "local");
     assert_cargo_result_matches_schema("cargo_test", &handoff);
+    let observation_token = handoff.output["observation_token"]
+        .as_str()
+        .expect("local validation handoff observation token")
+        .to_string();
+    let observed = runtime
+        .observe_jobs_for_auth(
+            vec![ObserveJobsItem {
+                job_id: hidden_job_id.clone(),
+                after_observation_token: Some(observation_token.clone()),
+            }],
+            40,
+            None,
+            None,
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    assert_eq!(observed.output["items"][0]["success"], true);
+    assert_eq!(
+        observed.output["items"][0]["output"]["observation_token"],
+        observation_token
+    );
 
     let status = wait_for_local_job_terminal(&runtime, &hidden_job_id).await;
     assert_eq!(status.output["status"], "completed");

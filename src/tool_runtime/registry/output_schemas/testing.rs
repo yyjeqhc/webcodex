@@ -97,6 +97,14 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                 nullable_schema("string", "Job status when the validation continues as a Job."),
             ),
             (
+                "observation_token",
+                json!({
+                    "type": "string",
+                    "maxLength": crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN,
+                    "description": "Current opaque observation token for the exact public Job snapshot returned by a promoted validation handoff."
+                }),
+            ),
+            (
                 "promoted_to_job",
                 schema_type("boolean", "True only when the validation was promoted to a Job and the same command continues running."),
             ),
@@ -238,7 +246,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "project", "command_summary", "cwd", "shell", "executor",
                             "execution_source", "purpose", "promoted_to_job", "terminal",
                             "command_started", "command_completed", "execution_state", "job_id",
-                            "job_status", "effective_timeout_secs", "sync_wait_secs",
+                            "job_status", "observation_token", "effective_timeout_secs", "sync_wait_secs",
                             "stdout_tail", "stderr_tail", "stdout_lines", "stderr_lines",
                             "stdout_truncated", "stderr_truncated"
                         ],
@@ -249,6 +257,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "execution_state": {"enum": ["queued", "running"]},
                             "job_id": {"type": "string", "minLength": 1},
                             "job_status": {"type": "string", "minLength": 1},
+                            "observation_token": {"type": "string", "minLength": 1, "maxLength": crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN},
                             "passed": {"enum": []},
                             "failure_kind": {"enum": []},
                             "warnings_count": {"enum": []},
@@ -278,7 +287,8 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "passed": {"const": true},
                             "failure_kind": {"enum": []},
                             "job_id": {"enum": []},
-                            "job_status": {"enum": []}
+                            "job_status": {"enum": []},
+                            "observation_token": {"enum": []}
                         }
                     }
                 }
@@ -299,7 +309,8 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "passed": {"const": false},
                             "failure_kind": {"const": "timeout"},
                             "job_id": {"enum": []},
-                            "job_status": {"enum": []}
+                            "job_status": {"enum": []},
+                            "observation_token": {"enum": []}
                         }
                     }
                 }
@@ -320,7 +331,8 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "passed": {"const": false},
                             "failure_kind": {"const": "outcome_unknown"},
                             "job_id": {"enum": []},
-                            "job_status": {"enum": []}
+                            "job_status": {"enum": []},
+                            "observation_token": {"enum": []}
                         }
                     }
                 }
@@ -341,7 +353,8 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "passed": {"const": false},
                             "failure_kind": {"enum": ["permission_denied", "project_not_found", "cwd_invalid", "sandbox_unavailable", "executor_unavailable"]},
                             "job_id": {"enum": []},
-                            "job_status": {"enum": []}
+                            "job_status": {"enum": []},
+                            "observation_token": {"enum": []}
                         }
                     }
                 }
@@ -362,7 +375,8 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "passed": {"const": false},
                             "failure_kind": {"enum": ["validation_failed", "process_exit"]},
                             "job_id": {"enum": []},
-                            "job_status": {"enum": []}
+                            "job_status": {"enum": []},
+                            "observation_token": {"enum": []}
                         }
                     }
                 }
@@ -380,6 +394,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "failure_kind": {"enum": ["invalid_arguments", "capability_unavailable", "permission_denied", "project_not_found", "cwd_invalid", "sandbox_unavailable", "executor_unavailable"]},
                             "job_id": {"enum": []},
                             "job_status": {"enum": []},
+                            "observation_token": {"enum": []},
                             "passed": {"enum": []},
                             "promoted_to_job": {"enum": []},
                             "terminal": {"enum": []}

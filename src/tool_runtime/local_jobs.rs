@@ -128,24 +128,33 @@ impl LocalJobRecord {
         self.visibility.load(Ordering::Acquire) == 0
     }
 
-    pub(crate) fn promote_if_active(&self) -> bool {
+    pub(crate) fn promote_if_active(&self) -> Result<Option<LocalJobObservation>, String> {
         if self.terminal.load(Ordering::Acquire) {
-            return false;
+            return Ok(None);
         }
         if self
             .visibility
             .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return false;
+            return Ok(None);
         }
-        if self.terminal.load(Ordering::Acquire) {
+        let observation = match self.observe() {
+            Ok(observation) => observation,
+            Err(error) => {
+                let _ = self
+                    .visibility
+                    .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
+                return Err(error);
+            }
+        };
+        if observation.terminal() || self.terminal.load(Ordering::Acquire) {
             let _ = self
                 .visibility
                 .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
-            return false;
+            return Ok(None);
         }
-        true
+        Ok(Some(observation))
     }
 
     pub(crate) fn mark_terminal(&self) {

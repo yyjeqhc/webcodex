@@ -14,6 +14,58 @@ mod project_files_tests;
 #[path = "runtime_http/tests/projects_tests.rs"]
 mod projects_tests;
 
+#[test]
+fn computer_action_audit_projection_omits_sensitive_observation_payloads() {
+    let list_output = serde_json::json!({
+        "windows": [{
+            "surface_id": "surface_secret",
+            "application": "Private App",
+            "title": "Confidential Window Title",
+            "width": 1200,
+            "height": 800,
+            "focused": true,
+            "active": true
+        }],
+        "count": 1,
+        "truncated": false
+    });
+    let list_audit = action_audit_output_for_tool("computer_list_windows", &list_output);
+    assert_eq!(
+        list_audit,
+        serde_json::json!({"count": 1, "truncated": false})
+    );
+    let list_serialized = serde_json::to_string(&list_audit).unwrap();
+    assert!(!list_serialized.contains("Confidential"));
+    assert!(!list_serialized.contains("Private App"));
+    assert!(!list_serialized.contains("surface_secret"));
+
+    let snapshot_output = serde_json::json!({
+        "surface": {
+            "surface_id": "surface_safe",
+            "application": "Private App",
+            "title": "Confidential Window Title",
+            "width": 1200,
+            "height": 800,
+            "focused": null,
+            "active": null
+        },
+        "width": 900,
+        "height": 600,
+        "mime_type": "image/jpeg",
+        "file_bytes": 12345,
+        "content_base64": "SUPER_SECRET_SCREENSHOT_BYTES"
+    });
+    let snapshot_audit = action_audit_output_for_tool("computer_snapshot", &snapshot_output);
+    let snapshot_serialized = serde_json::to_string(&snapshot_audit).unwrap();
+    assert_eq!(snapshot_audit["surface_id"], "surface_safe");
+    assert_eq!(snapshot_audit["width"], 900);
+    assert_eq!(snapshot_audit["height"], 600);
+    assert_eq!(snapshot_audit["file_bytes"], 12345);
+    assert!(!snapshot_serialized.contains("SUPER_SECRET"));
+    assert!(!snapshot_serialized.contains("Confidential"));
+    assert!(!snapshot_serialized.contains("Private App"));
+}
+
 fn seed_oauth_access_token_with_shared_key_hash(
     db: &crate::Database,
     client: &crate::models::OAuthClientRecord,

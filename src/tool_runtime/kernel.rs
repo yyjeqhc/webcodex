@@ -1,7 +1,7 @@
 use super::sessions::{
     strip_tool_call_expectation_metadata, SessionTransport, ToolCallRecorderMetadata,
 };
-use super::tool_audit::session_log_arguments_for_tool_request;
+use super::tool_audit::{session_log_arguments_for_tool_request, session_log_result_for_tool};
 use super::{
     session_context, session_guard_denied_result, tool_disabled_result_from_definition,
     unknown_session_result, ToolCall, ToolResult, ToolRuntime, ALLOW_CROSS_PROJECT_SESSION_FIELD,
@@ -419,10 +419,11 @@ impl ToolRuntime {
                 allow_cross_project_session,
             );
         }
+        let session_log_result = session_log_result_for_tool(&request.tool_name, &result.output);
         let outer_event_id = self.sessions.record_tool_call_finished(
             session_event,
             result.success,
-            &result.output,
+            &session_log_result,
             result.error.as_deref(),
             None,
         );
@@ -615,6 +616,23 @@ mod tests {
         let serialized = serde_json::to_string(&summary.events).unwrap();
         assert!(serialized.contains("\"content_present\":true"));
         assert!(!serialized.contains("secret-content"));
+    }
+
+    #[test]
+    fn computer_tools_require_independent_oauth_scope() {
+        let denied = oauth(&["runtime:read", "project:read"]);
+        assert_eq!(
+            check_oauth_runtime_tool_scope(Some(&denied), "computer_snapshot"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_READ),
+                description: "missing required scope: computer:read".to_string(),
+            })
+        );
+        let allowed = oauth(&["computer:read"]);
+        assert_eq!(
+            check_oauth_runtime_tool_scope(Some(&allowed), "computer_list_windows"),
+            Ok(())
+        );
     }
 
     #[tokio::test]

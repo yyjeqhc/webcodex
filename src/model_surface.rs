@@ -126,6 +126,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn computer_tools_are_full_operator_only() {
+        let full = registered_tool_specs();
+        let full_names = full
+            .iter()
+            .map(|spec| spec.name.as_str())
+            .collect::<Vec<_>>();
+        for name in ["computer_list_windows", "computer_snapshot"] {
+            assert!(
+                full_names.contains(&name),
+                "{name} must be in full_operator_runtime"
+            );
+            assert!(
+                !LOCAL_CODING_TOOL_NAMES.contains(&name),
+                "{name} must not expand local_coding"
+            );
+            assert!(
+                !crate::connector_runtime::surface::CAPABILITY_NAMES.contains(&name),
+                "{name} must not expand canonical_connector"
+            );
+        }
+    }
+
     fn connector_context() -> ConnectorContext {
         ConnectorContext {
             project_id: "wc_proj_1111111111111111".to_string(),

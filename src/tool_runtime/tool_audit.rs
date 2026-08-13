@@ -88,6 +88,12 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "session_shell_status" | "close_session_shell" => {
             copy_keys(obj, &mut out, &["session_id", "shell_id"]);
         }
+        "computer_list_windows" => {
+            copy_keys(obj, &mut out, &["client_id", "limit"]);
+        }
+        "computer_snapshot" => {
+            copy_keys(obj, &mut out, &["client_id", "surface_id"]);
+        }
         "observe_jobs" => {
             let items = obj.get("items").and_then(Value::as_array);
             out.insert(
@@ -353,6 +359,23 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
     Value::Object(out)
 }
 
+pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Value {
+    match tool_name {
+        "computer_list_windows" => serde_json::json!({
+            "count": output.get("count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+        }),
+        "computer_snapshot" => serde_json::json!({
+            "surface_id": output.pointer("/surface/surface_id").cloned().unwrap_or(Value::Null),
+            "width": output.get("width").cloned().unwrap_or(Value::Null),
+            "height": output.get("height").cloned().unwrap_or(Value::Null),
+            "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
+            "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
+        }),
+        _ => output.clone(),
+    }
+}
+
 fn copy_keys(
     obj: &serde_json::Map<String, Value>,
     out: &mut serde_json::Map<String, Value>,
@@ -362,6 +385,64 @@ fn copy_keys(
         if let Some(value) = obj.get(*key).cloned() {
             out.insert((*key).to_string(), value);
         }
+    }
+}
+
+#[cfg(test)]
+mod computer_privacy_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn computer_list_ledger_result_omits_window_content() {
+        let output = json!({
+            "windows": [{
+                "surface_id": "surface_secret",
+                "application": "Private App",
+                "title": "Confidential Window Title",
+                "width": 1200,
+                "height": 800,
+                "focused": true,
+                "active": true
+            }],
+            "count": 1,
+            "truncated": false
+        });
+        let summary = session_log_result_for_tool("computer_list_windows", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary, json!({"count": 1, "truncated": false}));
+        assert!(!serialized.contains("Confidential"));
+        assert!(!serialized.contains("Private App"));
+        assert!(!serialized.contains("surface_secret"));
+    }
+
+    #[test]
+    fn computer_snapshot_ledger_result_omits_image_and_titles() {
+        let output = json!({
+            "surface": {
+                "surface_id": "surface_safe",
+                "application": "Private App",
+                "title": "Confidential Window Title",
+                "width": 1200,
+                "height": 800,
+                "focused": null,
+                "active": null
+            },
+            "width": 900,
+            "height": 600,
+            "mime_type": "image/jpeg",
+            "file_bytes": 12345,
+            "content_base64": "SUPER_SECRET_SCREENSHOT_BYTES"
+        });
+        let summary = session_log_result_for_tool("computer_snapshot", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["surface_id"], "surface_safe");
+        assert_eq!(summary["width"], 900);
+        assert_eq!(summary["height"], 600);
+        assert_eq!(summary["file_bytes"], 12345);
+        assert!(!serialized.contains("SUPER_SECRET"));
+        assert!(!serialized.contains("Confidential"));
+        assert!(!serialized.contains("Private App"));
     }
 }
 
@@ -484,6 +565,17 @@ impl ToolCall {
                 "project": project,
                 "session_id": session_id,
                 "shell_id": shell_id,
+            }),
+            Self::ComputerListWindows { client_id, limit } => serde_json::json!({
+                "client_id": client_id,
+                "limit": limit,
+            }),
+            Self::ComputerSnapshot {
+                client_id,
+                surface_id,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
             }),
             Self::StopJob {
                 project,

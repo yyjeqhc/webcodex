@@ -4,6 +4,7 @@ mod artifacts;
 mod checkpoints;
 mod coding_tasks;
 mod common;
+mod computer;
 mod discovery;
 mod edits;
 mod files;
@@ -18,6 +19,9 @@ mod testing;
 use common::default_output_schema;
 
 pub(crate) fn output_schema_for_tool(name: &str) -> Value {
+    if let Some(schema) = computer::output_schema_for_tool(name) {
+        return schema;
+    }
     if let Some(schema) = jobs::output_schema_for_tool(name) {
         return schema;
     }

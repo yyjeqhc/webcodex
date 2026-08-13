@@ -11,7 +11,7 @@ use crate::tool_runtime::kernel::{
 };
 use crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES;
 use crate::tool_runtime::{registered_tool_specs, ToolResult, ToolRuntime, ToolSpec};
-use base64::engine::general_purpose;
+use base64::{engine::general_purpose, Engine as _};
 use salvo::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -384,17 +384,19 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool) -> Value {
     }
 }
 
-fn mcp_runtime_tool_result(
+pub(crate) fn mcp_runtime_tool_result(
     tool_name: &str,
     as_image_requested: bool,
     mut result: ToolResult,
 ) -> Value {
-    if tool_name == "read_project_artifact" && as_image_requested && result.success {
-        match mcp_native_image_tool_result(&mut result) {
+    let native_image_requested = (tool_name == "read_project_artifact" && as_image_requested)
+        || tool_name == "computer_snapshot";
+    if native_image_requested && result.success {
+        match mcp_native_image_tool_result(tool_name, &mut result) {
             Ok(value) => return value,
             Err(error) => {
                 result = ToolResult::err(format!(
-                    "cannot frame read_project_artifact as MCP image content: {error}"
+                    "cannot frame {tool_name} as MCP image content: {error}"
                 ));
             }
         }
@@ -422,7 +424,7 @@ fn mcp_runtime_tool_result(
     })
 }
 
-fn mcp_native_image_tool_result(result: &mut ToolResult) -> Result<Value, String> {
+fn mcp_native_image_tool_result(tool_name: &str, result: &mut ToolResult) -> Result<Value, String> {
     let data = result
         .output
         .get("content_base64")
@@ -441,22 +443,71 @@ fn mcp_native_image_tool_result(result: &mut ToolResult) -> Result<Value, String
     ) {
         return Err(format!("unsupported MIME type '{mime_type}'"));
     }
-    let path = result
-        .output
-        .get("path")
-        .and_then(Value::as_str)
-        .unwrap_or("project image");
+    let decoded = general_purpose::STANDARD
+        .decode(&data)
+        .map_err(|error| format!("invalid image base64: {error}"))?;
+    if decoded.is_empty() || decoded.len() > crate::artifact_policy::MAX_MCP_IMAGE_BYTES {
+        return Err(format!(
+            "image payload exceeds {} decoded bytes",
+            crate::artifact_policy::MAX_MCP_IMAGE_BYTES
+        ));
+    }
+    let detected = if decoded.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if decoded.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if decoded.len() >= 12 && decoded.starts_with(b"RIFF") && &decoded[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    };
+    if detected != Some(mime_type.as_str()) {
+        return Err("image MIME does not match decoded content".to_string());
+    }
+    let image_label = if tool_name == "computer_snapshot" {
+        result
+            .output
+            .pointer("/surface/surface_id")
+            .and_then(Value::as_str)
+            .unwrap_or("desktop surface")
+    } else {
+        result
+            .output
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("project image")
+    };
     let file_bytes = result
         .output
         .get("file_bytes")
         .and_then(Value::as_u64)
         .ok_or_else(|| "missing file_bytes".to_string())?;
+    if file_bytes != decoded.len() as u64 {
+        return Err("file_bytes does not match decoded image payload".to_string());
+    }
     let sha256 = result
         .output
         .get("sha256")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let metadata_text = format!("Image {path}: {mime_type}, {file_bytes} bytes, sha256 {sha256}.");
+    let metadata_text = if tool_name == "computer_snapshot" {
+        let width = result
+            .output
+            .get("width")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let height = result
+            .output
+            .get("height")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if width == 0 || height == 0 || width > 4096 || height > 4096 {
+            return Err("computer snapshot dimensions are invalid".to_string());
+        }
+        format!("Image {image_label}: {mime_type}, {width}x{height}, {file_bytes} bytes.")
+    } else {
+        format!("Image {image_label}: {mime_type}, {file_bytes} bytes, sha256 {sha256}.")
+    };
 
     let output = result
         .output

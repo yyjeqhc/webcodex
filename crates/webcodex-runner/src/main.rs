@@ -1855,6 +1855,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Default production behavior is unchanged: only the explicit opt-out
     // disables it, and the server already rejects inventory without the
     // capability and vice-versa.
+    // Native read-only desktop observation is implemented only on macOS and
+    // Windows. Unsupported platforms advertise false and fail closed.
+    capabilities.computer_observe = cfg!(any(target_os = "macos", windows));
     capabilities.job_state_reconciliation = !disable_job_state_reconciliation_for_test();
 
     // New agents always advertise read-only LSP navigation. Older agents omit

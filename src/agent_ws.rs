@@ -390,6 +390,7 @@ mod tests {
                     sandbox_inspect_commands: false,
                     project_lifecycle: false,
                     project_path_registration: false,
+                    computer_observe: false,
                     job_state_reconciliation: false,
                 }),
                 projects: None,

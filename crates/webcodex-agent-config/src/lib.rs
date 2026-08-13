@@ -228,6 +228,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             sandbox_inspect_commands: false,
             project_lifecycle: false,
             project_path_registration: false,
+            // Desktop observation is a runtime/platform capability and is never
+            // claimed by generated static config.
+            computer_observe: false,
             job_state_reconciliation: false,
         },
         policy: GeneratedAgentPolicy {

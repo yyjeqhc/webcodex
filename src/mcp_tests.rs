@@ -3,7 +3,7 @@ use crate::shell_protocol::{
     ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
     ShellClientCapabilities, ShellClientRegisterRequest,
 };
-use base64::{engine::general_purpose, Engine as _};
+use base64::engine::general_purpose;
 use sha2::{Digest, Sha256};
 
 fn test_runtime() -> ToolRuntime {
@@ -478,6 +478,43 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
         structured["output"].get("content_base64").is_none(),
         "structuredContent must not duplicate the image base64"
     );
+}
+
+#[test]
+fn computer_snapshot_frames_native_image_without_structured_base64() {
+    let image_bytes = vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46];
+    let image_base64 = general_purpose::STANDARD.encode(&image_bytes);
+    let result = ToolResult::ok(json!({
+        "surface": {
+            "surface_id": "surface_test",
+            "application": "Test App",
+            "title": "Test Window",
+            "width": 640,
+            "height": 480,
+            "focused": true,
+            "active": true
+        },
+        "width": 640,
+        "height": 480,
+        "mime_type": "image/jpeg",
+        "file_bytes": image_bytes.len(),
+        "content_base64": image_base64
+    }));
+
+    let value = crate::mcp::mcp_runtime_tool_result("computer_snapshot", false, result);
+    assert_eq!(value["isError"], false);
+    let content = value["content"].as_array().expect("native content");
+    assert_eq!(content.len(), 2);
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["mimeType"], "image/jpeg");
+    assert_eq!(content[1]["data"], image_base64);
+    assert_eq!(
+        value["structuredContent"]["output"]["content_delivery"],
+        "mcp_image"
+    );
+    assert!(value["structuredContent"]["output"]
+        .get("content_base64")
+        .is_none());
 }
 
 #[test]

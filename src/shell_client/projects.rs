@@ -4,8 +4,9 @@ use super::validation::validate_id;
 use super::ShellClientRegistry;
 use crate::shell_protocol::{
     ShellAgentProjectSummary, ShellClientCapabilities, SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
-    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS, SHELL_CLIENT_CAPABILITY_FILE_READ,
-    SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_JOBS,
+    SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
+    SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_JOBS,
     SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE, SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
@@ -64,6 +65,7 @@ pub(super) fn capability_enabled(caps: &ShellClientCapabilities, capability: &st
         SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS => caps.sandbox_inspect_commands,
         SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE => caps.project_lifecycle,
         SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION => caps.project_path_registration,
+        SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE => caps.computer_observe,
         SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION => caps.job_state_reconciliation,
         _ => false,
     }
@@ -111,7 +113,7 @@ impl ShellClientRegistry {
     /// `structured_execution_jobs`,
     /// `lsp_read_only_navigation`, `lsp_call_hierarchy`,
     /// `sandbox_inspect_commands`, `project_lifecycle`,
-    /// `project_path_registration`, `job_state_reconciliation`. Unknown capability
+    /// `project_path_registration`, `job_state_reconciliation`, `computer_observe`. Unknown capability
     /// names return `false`.
     #[cfg(test)]
     pub(crate) async fn client_supports(

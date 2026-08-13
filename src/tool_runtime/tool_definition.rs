@@ -7,6 +7,7 @@
 
 mod artifacts;
 mod checkpoints;
+mod computer;
 mod current_sessions;
 mod discovery;
 mod edits;
@@ -57,10 +58,11 @@ pub(crate) use super::tool_policy::{
 };
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
-    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
-    SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_FILE_READ,
+    SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_GIT,
+    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SHELL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
 
@@ -90,6 +92,8 @@ pub(crate) enum AgentCapability {
     AsyncJobs,
     /// Explicit process-local Workflow Session persistent shells.
     PersistentShell,
+    /// Native read-only desktop/window observation on the exact target Runner.
+    ComputerObserve,
     /// Read-only agent-side semantic navigation through constrained LSP profiles.
     LspReadOnlyNavigation,
     /// Bounded typed call-hierarchy traversal; never inferred from navigation.
@@ -108,6 +112,7 @@ impl AgentCapability {
             Self::GitOrShell => "shell or git",
             Self::AsyncJobs => "async shell jobs",
             Self::PersistentShell => SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
+            Self::ComputerObserve => SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
             Self::LspReadOnlyNavigation => SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
             Self::LspCallHierarchy => SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
         }
@@ -127,6 +132,7 @@ impl AgentCapability {
                 SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
             ],
             Self::PersistentShell => &[SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL],
+            Self::ComputerObserve => &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE],
             Self::LspReadOnlyNavigation => &[SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION],
             Self::LspCallHierarchy => &[SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY],
         }
@@ -174,6 +180,7 @@ pub(crate) struct ToolDefinition {
 
 pub(crate) const TOOL_CATEGORY_ARTIFACT: &str = "artifact";
 pub(crate) const TOOL_CATEGORY_CHECKPOINT: &str = "checkpoint";
+pub(crate) const TOOL_CATEGORY_COMPUTER: &str = "computer";
 pub(crate) const TOOL_CATEGORY_CLEANUP: &str = "cleanup";
 pub(crate) const TOOL_CATEGORY_EDIT: &str = "edit";
 pub(crate) const TOOL_CATEGORY_FILE: &str = "file";
@@ -402,6 +409,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     hygiene::DEFINITIONS,
     current_sessions::DEFINITIONS,
     checkpoints::DEFINITIONS,
+    computer::DEFINITIONS,
     discovery::DEFINITIONS,
     jobs::EXECUTION_DEFINITIONS,
     files::SEARCH_DEFINITIONS,

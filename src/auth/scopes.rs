@@ -20,6 +20,7 @@ pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
 pub const SCOPE_PROJECT_READ: &str = "project:read";
 pub const SCOPE_PROJECT_WRITE: &str = "project:write";
 pub const SCOPE_JOB_RUN: &str = "job:run";
+pub const SCOPE_COMPUTER_READ: &str = "computer:read";
 pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
 pub const SCOPE_ADMIN: &str = "admin";
 
@@ -46,6 +47,7 @@ pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
     SCOPE_JOB_RUN,
+    SCOPE_COMPUTER_READ,
     SCOPE_ACCOUNT_MANAGE,
     SCOPE_AGENT_REGISTER,
     SCOPE_AGENT_POLL,
@@ -698,6 +700,14 @@ mod tests {
                 "artifact_upload_abort",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
+            (
+                "computer_list_windows",
+                OAuthToolScopePolicy::Require(SCOPE_COMPUTER_READ),
+            ),
+            (
+                "computer_snapshot",
+                OAuthToolScopePolicy::Require(SCOPE_COMPUTER_READ),
+            ),
             ("run_shell", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
             ("stop_job", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
             ("cargo_test", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
@@ -734,6 +744,8 @@ mod tests {
             "artifact_upload_finish",
             "artifact_upload_abort",
             "apply_patch_checked",
+            "computer_list_windows",
+            "computer_snapshot",
             "run_shell",
             "cargo_test",
         ] {

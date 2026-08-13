@@ -190,7 +190,7 @@ impl ShellClientRegistry {
         let request_id = body.request_id.clone();
         let client_id = body.client_id.clone();
         let error = body.error.clone();
-        let stdout = if is_mcp_image_artifact_request(&pending.request) {
+        let stdout = if is_large_native_image_request(&pending.request) {
             truncate_output_to(
                 body.stdout,
                 crate::artifact_policy::MAX_MCP_IMAGE_RESPONSE_BYTES,
@@ -366,7 +366,10 @@ fn truncate_persistent_shell_stream(value: &mut String) -> bool {
     true
 }
 
-fn is_mcp_image_artifact_request(request: &ShellAgentShellRequest) -> bool {
+fn is_large_native_image_request(request: &ShellAgentShellRequest) -> bool {
+    if request.kind == "computer_snapshot" {
+        return true;
+    }
     request.kind == "file_read_project_artifact"
         && request
             .content

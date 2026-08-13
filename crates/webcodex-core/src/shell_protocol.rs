@@ -172,6 +172,9 @@ pub const SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
 pub const SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_path_registration";
 /// Same-process async job recovery across server restarts and transport
 /// reconnects. Missing on older runners and therefore defaults to `false`.
+/// Read-only native desktop/window observation. Missing on older Runners and
+/// false; never inferred from shell or file capabilities.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE: &str = "computer_observe";
 pub const SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION: &str = "job_state_reconciliation";
 pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_SHELL,
@@ -197,6 +200,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
     SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
     SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION,
 ];
 
@@ -304,6 +308,10 @@ pub struct ShellClientCapabilities {
     /// fail-closed.
     #[serde(default)]
     pub project_path_registration: bool,
+    /// Native read-only desktop/window observation. Missing on older Runners
+    /// and therefore fail-closed.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_observe: bool,
     /// The runner retains bounded active and recent terminal job snapshots and
     /// submits a complete active inventory at register/re-register time.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -360,6 +368,7 @@ impl Default for ShellClientCapabilities {
             sandbox_inspect_commands: false,
             project_lifecycle: false,
             project_path_registration: false,
+            computer_observe: false,
             job_state_reconciliation: false,
         }
     }
@@ -2442,6 +2451,7 @@ mod envelope_tests {
                 sandbox_inspect_commands: false,
                 project_lifecycle: false,
                 project_path_registration: false,
+                computer_observe: false,
                 job_state_reconciliation: false,
             }),
             projects: None,
@@ -2516,8 +2526,10 @@ mod envelope_tests {
         assert!(!capabilities.structured_execution_jobs);
         assert!(!capabilities.project_path_registration);
         assert!(!capabilities.structured_file_delete);
+        assert!(!capabilities.computer_observe);
         assert!(!ShellClientCapabilities::default().ssh_persistent_shell);
         assert!(!ShellClientCapabilities::default().project_path_registration);
+        assert!(!ShellClientCapabilities::default().computer_observe);
     }
 
     #[test]
@@ -2534,6 +2546,14 @@ mod envelope_tests {
         let capabilities: ShellClientCapabilities =
             serde_json::from_str(r#"{"project_path_registration":true}"#).unwrap();
         assert!(capabilities.project_path_registration);
+    }
+
+    #[test]
+    fn computer_observe_capability_deserializes_only_when_present() {
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_observe":true}"#).unwrap();
+        assert!(capabilities.computer_observe);
+        assert!(!capabilities.file_read);
     }
 
     fn reconciliation_inventory() -> ShellJobInventory {

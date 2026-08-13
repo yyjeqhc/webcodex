@@ -1687,6 +1687,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 sandbox_inspect_commands: true,
                 project_lifecycle: true,
                 project_path_registration: true,
+                computer_observe: true,
                 job_state_reconciliation: true,
             }),
             projects: None,
@@ -1943,6 +1944,96 @@ async fn registry_rejects_unknown_client_run() {
         .await
         .unwrap_err();
     assert!(err.contains("unknown shell client"));
+}
+
+async fn register_computer_test_client(
+    registry: &ShellClientRegistry,
+    client_id: &str,
+    owner: &str,
+    capable: bool,
+) {
+    registry
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            client_id: client_id.to_string(),
+            agent_instance_id: "computer-inst".to_string(),
+            display_name: None,
+            owner: Some(owner.to_string()),
+            hostname: None,
+            capabilities: Some(ShellClientCapabilities {
+                shell: true,
+                file_read: true,
+                computer_observe: capable,
+                ..Default::default()
+            }),
+            projects: None,
+            agent_protocol_version: None,
+            policy: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
+    let registry = ShellClientRegistry::default();
+    register_computer_test_client(&registry, "computer-owned", "alice", false).await;
+    let alice = auth_context(Some("alice"), false);
+    let error = registry
+        .enqueue_computer(
+            "computer-owned".to_string(),
+            "computer_list_windows",
+            r#"{"limit":1}"#.to_string(),
+            "alice".to_string(),
+            Some(&alice),
+            5,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("does not support computer_observe"));
+
+    register_computer_test_client(&registry, "computer-owned", "alice", true).await;
+    let bob = auth_context(Some("bob"), false);
+    let error = registry
+        .enqueue_computer(
+            "computer-owned".to_string(),
+            "computer_list_windows",
+            r#"{"limit":1}"#.to_string(),
+            "bob".to_string(),
+            Some(&bob),
+            5,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("owned by alice"));
+
+    let (_request_id, _rx) = registry
+        .enqueue_computer(
+            "computer-owned".to_string(),
+            "computer_snapshot",
+            r#"{"surface_id":"surface_test"}"#.to_string(),
+            "alice".to_string(),
+            Some(&alice),
+            5,
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "computer-owned".to_string(),
+            agent_instance_id: "computer-inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("queued computer request");
+    assert_eq!(request.kind, "computer_snapshot");
+    assert!(request.command.is_empty());
+    assert!(request.process.is_none());
+    assert!(request.script.is_none());
 }
 
 fn lsp_status_payload() -> AgentLspPayload {

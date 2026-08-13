@@ -3,6 +3,7 @@ use serde_json::Value;
 mod artifacts;
 mod checkpoints;
 mod coding_tasks;
+mod computer;
 mod discovery;
 mod edits;
 mod files;
@@ -48,6 +49,7 @@ fn tool_spec_declarations() -> Vec<ToolSpec> {
     declarations.extend(jobs::tool_specs());
     declarations.extend(checkpoints::tool_specs());
     declarations.extend(coding_tasks::tool_specs());
+    declarations.extend(computer::tool_specs());
     declarations.extend(hygiene::tool_specs());
     declarations.extend(files::tool_specs());
     declarations.extend(lsp::tool_specs());

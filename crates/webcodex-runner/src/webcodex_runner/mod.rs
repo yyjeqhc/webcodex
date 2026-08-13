@@ -1,5 +1,6 @@
 pub(crate) mod artifacts;
 pub(crate) mod checkpoints;
+pub(crate) mod computer;
 pub(crate) mod config;
 pub(crate) mod dispatch;
 pub(crate) mod external_tools;
@@ -25,6 +26,7 @@ pub(crate) mod validation;
 
 pub(crate) use artifacts::{handle_artifact_file_request, is_artifact_request_kind};
 pub(crate) use checkpoints::{handle_checkpoint_file_request, is_checkpoint_request_kind};
+pub(crate) use computer::{handle_computer_request, is_computer_request_kind};
 pub(crate) use config::SshConfig;
 pub(crate) use config::{
     client_profile_agent_config, default_config_path, hostname, load_config, max_concurrent_jobs,

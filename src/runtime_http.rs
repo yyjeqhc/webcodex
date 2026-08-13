@@ -101,10 +101,21 @@ fn render_result(
     res.render(Json(result));
 }
 
-/// Audit the full tool result, then optionally compact the client-facing body.
+/// Return the durable ActionAudit projection for one tool result.
 ///
-/// ActionAudit always records the pre-compact execution payload. Compaction
-/// only affects the GPT Action HTTP response when the experiment flag is on.
+/// Most tools retain the historical full output. Privacy-sensitive computer
+/// observation tools use the same bounded metadata-only projection as the
+/// Workflow Session ledger, so screenshots and complete window lists never
+/// enter ActionAudit. Coding startup rule prose keeps its existing redaction.
+fn action_audit_output_for_tool(tool: &str, output: &Value) -> Value {
+    if tool == "start_coding_task" {
+        crate::tool_runtime::startup_brief::startup_output_for_audit(output)
+    } else {
+        crate::tool_runtime::audit_safe_result_for_tool(tool, output)
+    }
+}
+
+/// Audit the pre-compact tool result, then optionally compact the client-facing body.
 fn prepare_action_tools_call_response(
     audit: &ActionAudit,
     tool: &str,
@@ -116,14 +127,7 @@ fn prepare_action_tools_call_response(
     } else {
         StatusCode::BAD_REQUEST
     };
-    // Audit the full execution payload so compacting the client body does not
-    // erase operator-visible tool output from the action audit trail. Coding
-    // startup rule prose is response-only and is redacted from durable audit.
-    let audit_output = if tool == "start_coding_task" {
-        crate::tool_runtime::startup_brief::startup_output_for_audit(&result.output)
-    } else {
-        result.output.clone()
-    };
+    let audit_output = action_audit_output_for_tool(tool, &result.output);
     let mut event = ActionAuditRecord::new(tool.to_string(), result.success, status)
         .error(result.error.clone())
         .summary(json!({
@@ -281,7 +285,7 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             } else {
                 guard.dispatch_finished(true, Some(false), "tool_error");
             }
-            // Audit full result; optionally compact only the HTTP response body.
+            // Audit the tool-specific durable projection; optionally compact only the HTTP response body.
             // Trace size reflects what ChatGPT receives (post-compact when on).
             let (status, response) =
                 prepare_action_tools_call_response(&audit, &tool, outcome.project, result);

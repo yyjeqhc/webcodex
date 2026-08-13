@@ -3,8 +3,9 @@ use super::lsp::{handle_lsp_request, is_lsp_request_kind, LspSupervisor};
 use super::transport::ResultSubmission;
 use super::validation::{handle_validation_request, is_validation_request_kind};
 use super::{
-    handle_project_lifecycle_op, handle_project_op_with_temporary_projects_root,
-    handle_resolve_or_register_project, run_process_with_profiles_in_sandbox_and_execution_state,
+    handle_computer_request, handle_project_lifecycle_op,
+    handle_project_op_with_temporary_projects_root, handle_resolve_or_register_project,
+    is_computer_request_kind, run_process_with_profiles_in_sandbox_and_execution_state,
     run_script_with_profiles_in_sandbox_and_execution_state,
     run_shell_with_profiles_in_sandbox_and_execution_state, run_ssh_shell_with_execution_state,
     AgentSink, CommandResult, HotAgentConfig, PersistentShellManager, ReloadableAgentConfig,
@@ -35,6 +36,30 @@ pub(crate) fn dispatch_request(
 ) -> Result<bool, SubmitResultError> {
     if runtime.shutdown_flag().load(Ordering::SeqCst) {
         return Ok(false);
+    }
+    // Computer observation is an explicit typed protocol surface. Unknown
+    // computer_* requests must never reach external providers or shell fallback.
+    if request.kind.starts_with("computer_") && !is_computer_request_kind(&request.kind) {
+        let result = CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(
+                "invalid_request: unsupported computer request kind; command was not started"
+                    .to_string(),
+            ),
+        };
+        return sink
+            .submit_result_with_metadata(request.request_id, result, config, runtime)
+            .map(|_| true);
+    }
+    if is_computer_request_kind(&request.kind) {
+        let request_id = request.request_id.clone();
+        let result = handle_computer_request(&request);
+        return sink
+            .submit_result_with_metadata(request_id, result, config, runtime)
+            .map(|_| true);
     }
     // File operations are an explicit protocol surface. Unknown `file_*`
     // requests must fail before provider routing or any shell fallback.

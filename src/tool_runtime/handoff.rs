@@ -971,8 +971,8 @@ fn compact_workflow_outcomes(
         Some("mixed") => {
             if unresolved_failure_count == 0 {
                 push_unique(
-                    &mut warning_reasons,
-                    "historical_validation_failures_resolved",
+                    &mut informational_notes,
+                    "historical validation failures were resolved by later successful validation",
                 );
             } else {
                 push_unique(&mut blocking_reasons, "validation_mixed");

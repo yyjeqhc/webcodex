@@ -2251,19 +2251,27 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
         result.output["validation"]["historical_failures"]["unresolved"],
         false
     );
-    assert_eq!(result.output["task_outcome"]["status"], "warn");
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
     assert_eq!(
         result.output["evidence_history"]["status"],
         "mixed_resolved"
     );
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
-    assert_eq!(result.output["verdict"]["status"], "warn");
+    assert_eq!(result.output["verdict"]["status"], "pass");
     assert_eq!(result.output["verdict"]["blocking"], false);
-    assert!(result.output["advisories"]
+    assert!(!result.output["advisories"]
         .as_array()
         .unwrap()
         .iter()
         .any(|reason| reason == "historical_validation_failures_resolved"));
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
     assert_reason_list_not_contains(
         &result.output["verdict"],
         "blocking_reasons",
@@ -2279,6 +2287,14 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
     );
     assert_eq!(full.output["task_outcome"], result.output["task_outcome"]);
     assert_eq!(full.output["verdict"], result.output["verdict"]);
+    assert_eq!(
+        full.output["evidence_history"],
+        result.output["evidence_history"]
+    );
+    assert_eq!(
+        full.output["informational_notes"],
+        result.output["informational_notes"]
+    );
     assert_eq!(
         full.output["suggested_next_actions"],
         result.output["suggested_next_actions"]

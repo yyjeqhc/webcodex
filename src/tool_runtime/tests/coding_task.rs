@@ -1885,13 +1885,21 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
         result.output["validation"]["historical_failures"]["unresolved"],
         false
     );
-    assert_eq!(result.output["task_outcome"]["status"], "warn");
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
     assert_eq!(result.output["task_outcome"]["blocking"], false);
-    assert!(result.output["advisories"]
+    assert!(!result.output["advisories"]
         .as_array()
         .unwrap()
         .iter()
         .any(|reason| reason == "historical_validation_failures_resolved"));
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
     assert_eq!(
         result.output["evidence_history"]["status"],
         "mixed_resolved"
@@ -1907,9 +1915,14 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
         "review unexpected failed tool calls before proceeding",
     );
     assert_eq!(full.output["task_outcome"], result.output["task_outcome"]);
+    assert_eq!(full.output["advisories"], result.output["advisories"]);
     assert_eq!(
         full.output["evidence_history"],
         result.output["evidence_history"]
+    );
+    assert_eq!(
+        full.output["informational_notes"],
+        result.output["informational_notes"]
     );
     assert_eq!(
         full.output["evidence_integrity"],
@@ -1963,18 +1976,154 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_c
         result.output["validation"]["historical_failures"]["resolved"],
         true
     );
-    assert_eq!(result.output["task_outcome"]["status"], "warn");
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
     assert_eq!(
         result.output["evidence_history"]["status"],
         "mixed_resolved"
     );
     assert_eq!(result.output["evidence_integrity"]["status"], "clean");
     assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
     assert_reason_list_not_contains(
         &result.output["task_outcome"],
         "blocking_reasons",
         "unexpected_tool_failures",
     );
+}
+
+#[tokio::test]
+async fn finish_coding_task_resolved_history_keeps_real_workspace_advisory() {
+    let fixture = finish_summary_fixture("coding-finish-resolved-dirty").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        false,
+        json!({
+            "exit_code": 1,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    std::fs::write(fixture._tmp.path().join("README.md"), "dirty\n").unwrap();
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["evidence_history"]["status"],
+        "mixed_resolved"
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "warn");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "warning_reasons",
+        "workspace_dirty",
+    );
+    assert_reason_list_not_contains(
+        &result.output["task_outcome"],
+        "warning_reasons",
+        "historical_validation_failures_resolved",
+    );
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
+}
+
+#[tokio::test]
+async fn finish_coding_task_resolved_history_keeps_real_tool_failure_blocking() {
+    let fixture = finish_summary_fixture("coding-finish-resolved-blocker").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        false,
+        json!({
+            "exit_code": 1,
+            "failure_kind": "validation_failed"
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "read_file",
+        json!({"project": fixture.project.clone(), "path": "README.md"}),
+        false,
+        json!({"error_kind": "permission_denied"}),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["latest_status"], "passed");
+    assert_eq!(
+        result.output["evidence_history"]["status"],
+        "mixed_resolved"
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_eq!(result.output["task_outcome"]["blocking"], true);
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some(
+                "historical validation failures were resolved by later successful validation"
+            )));
 }
 
 #[tokio::test]

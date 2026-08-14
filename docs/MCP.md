@@ -52,6 +52,75 @@ enabled when offered (it is a protocol-level refresh-token scope and grants no
 extra permission). Server-side OAuth setup is in
 [Deployment](DEPLOYMENT.md#oauth2).
 
+### Grok custom connector (OAuth)
+
+Grok supports custom MCP connectors and can complete the OAuth flow required by
+the MCP server. For a self-hosted WebCodex Server, first expose
+`https://your-domain.example/mcp` over public HTTPS and enable OAuth:
+
+```text
+WEBCODEX_OAUTH2_ENABLED=true
+WEBCODEX_OAUTH2_ISSUER=https://your-domain.example
+WEBCODEX_PUBLIC_URL=https://your-domain.example
+```
+
+For the current Grok web connector flow (verified in August 2026), register this
+redirect URI exactly:
+
+```text
+https://grok.com/connectors-oauth-exchange-code/
+```
+
+If Grok later presents or uses a different callback, register that exact value
+instead. Create a dedicated OAuth client; the client secret is returned only
+once:
+
+```bash
+curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
+  -H "Authorization: Bearer $WEBCODEX_PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Grok MCP","redirect_uris":["https://grok.com/connectors-oauth-exchange-code/"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
+```
+
+In Grok's **Custom Connector** form, use:
+
+| Field | Value |
+| --- | --- |
+| MCP server URL | `https://your-domain.example/mcp` |
+| Client ID | the returned `wc_client_*` value |
+| Client Secret | the returned one-time `wc_csec_*` value |
+| Authorization Endpoint | `https://your-domain.example/oauth/authorize` |
+| Token Endpoint | `https://your-domain.example/oauth/token` |
+| Scopes | `runtime:read`, `project:read`, `project:write`, `job:run`, `offline_access` |
+| Token Auth Method | `client_secret_post` |
+
+WebCodex advertises PKCE `S256`; Grok can use PKCE together with
+`client_secret_post`. Do not select `none (PKCE only)` for a WebCodex OAuth
+client that has a client secret. `offline_access` is a protocol-level scope for
+refresh tokens and is intentionally not stored in the OAuth client's
+`allowed_scopes` permission list.
+
+When the WebCodex authorization page opens, sign in with a current user PAT
+(`wc_pat_*`) for the user whose authority Grok should receive. A Runner token
+(`wc_agent_*`) is not a user login token. The resulting OAuth access token is
+bound to that user and remains constrained by the registered/requested scopes.
+
+Common setup failures:
+
+- **Save & Connect is disabled:** Grok requires a Client ID before it can start
+  the OAuth flow.
+- **`invalid token`:** the PAT must authenticate against the same current
+  WebCodex Server database. Do not use a Runner token or a stale PAT left from
+  an older Server/database.
+- **`invalid scope`:** every requested WebCodex permission scope must be in the
+  OAuth client's `allowed_scopes`. For normal Grok MCP use, do not request
+  `account:manage`; `offline_access` is accepted separately as a protocol scope.
+- **redirect mismatch:** the redirect URI must match the registered value
+  exactly, including path and trailing slash.
+
+See xAI's [Connector documentation](https://docs.x.ai/grok/connectors) for the
+current Grok Custom MCP UI and availability.
+
 ## The project-bound surface
 
 When the Server is started with project-first Connector configuration

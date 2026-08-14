@@ -47,6 +47,70 @@ Tools / 扫描工具**。ChatGPT 的 UI 文案与可用范围可能随 workspace
 URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-token scope，不授予
 额外权限）。服务端 OAuth 设置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
+### Grok Custom Connector（OAuth）
+
+Grok 支持自定义 MCP Connector，并可完成 MCP Server 要求的 OAuth 流程。对于
+自托管 WebCodex Server，先通过公网 HTTPS 暴露
+`https://your-domain.example/mcp`，并启用 OAuth：
+
+```text
+WEBCODEX_OAUTH2_ENABLED=true
+WEBCODEX_OAUTH2_ISSUER=https://your-domain.example
+WEBCODEX_PUBLIC_URL=https://your-domain.example
+```
+
+当前 Grok Web Connector 流程（2026 年 8 月已验证）使用以下 redirect URI，注册时
+必须精确匹配：
+
+```text
+https://grok.com/connectors-oauth-exchange-code/
+```
+
+如果后续 Grok 展示或实际使用了不同 callback，应改为注册 Grok 当时提供的精确值。
+为 Grok 单独创建 OAuth client；`client_secret` 只会返回一次：
+
+```bash
+curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
+  -H "Authorization: Bearer $WEBCODEX_PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Grok MCP","redirect_uris":["https://grok.com/connectors-oauth-exchange-code/"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
+```
+
+在 Grok 的 **Custom Connector** 表单中填写：
+
+| 字段 | 值 |
+| --- | --- |
+| MCP server URL | `https://your-domain.example/mcp` |
+| Client ID | 创建 client 时返回的 `wc_client_*` |
+| Client Secret | 只返回一次的 `wc_csec_*` |
+| Authorization Endpoint | `https://your-domain.example/oauth/authorize` |
+| Token Endpoint | `https://your-domain.example/oauth/token` |
+| Scopes | `runtime:read`、`project:read`、`project:write`、`job:run`、`offline_access` |
+| Token Auth Method | `client_secret_post` |
+
+WebCodex 会公布 PKCE `S256`；Grok 可以同时使用 PKCE 与
+`client_secret_post`。对于已经注册 client secret 的 WebCodex OAuth client，不要选
+`none (PKCE only)`。`offline_access` 是用于 refresh token 的协议级 scope，不会写进
+OAuth client 的 `allowed_scopes` 权限列表。
+
+打开 WebCodex Authorization 页面后，用希望 Grok 代表的用户当前有效 PAT
+（`wc_pat_*`）登录。Runner token（`wc_agent_*`）不是用户登录 token。最终签发的
+OAuth access token 会绑定到该用户，同时继续受 client 注册权限和本次请求 scopes
+约束。
+
+常见错误：
+
+- **Save & Connect 为灰色：** Grok 在启动 OAuth 前要求 Client ID 已填写。
+- **`invalid token`：** PAT 必须能在当前这台 WebCodex Server 的数据库中通过认证；
+  不要使用 Runner token，也不要使用旧 Server/旧数据库遗留的 stale PAT。
+- **`invalid scope`：** 每个 WebCodex permission scope 都必须包含在该 OAuth client
+  的 `allowed_scopes` 中。普通 Grok MCP 接入不需要 `account:manage`；
+  `offline_access` 作为协议级 scope 单独接受。
+- **redirect mismatch：** redirect URI 必须与注册值逐字一致，包括路径和末尾 `/`。
+
+Grok Custom MCP UI 与可用范围以 xAI 的
+[Connector 文档](https://docs.x.ai/grok/connectors)为准。
+
 ## project-bound surface
 
 Server 以 project-first Connector 配置（`canonical_connector`）启动时，MCP

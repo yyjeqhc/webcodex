@@ -132,7 +132,7 @@ Two different guides serve two different purposes:
 - [Deployment](docs/DEPLOYMENT.md) — self-hosting and production operations
 - [Authentication](docs/AUTH_MODEL.md) — credentials and tokens
 - [Runner](docs/RUNNER.md) — what the Runner/agent is and how to operate it
-- [MCP](docs/MCP.md) — connecting MCP clients
+- [MCP](docs/MCP.md) — connecting MCP clients, including Grok Custom Connector OAuth
 - [Coding Workflow](docs/CODING_WORKFLOW.md) — bootstrap, behavioral guidance, validation, and closeout
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Architecture](docs/ARCHITECTURE.md)

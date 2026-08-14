@@ -1,0 +1,370 @@
+<div id="app" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:14px;border:1px solid var(--color-border-primary,rgba(127,127,127,.35));border-radius:12px;max-width:920px;color:var(--color-text-primary,inherit);background:var(--color-background-primary,transparent)">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <strong style="font-size:17px">WebCodex Computer</strong>
+    <span id="target" style="font-size:12px;overflow-wrap:anywhere">waiting for screenshot</span>
+  </div>
+  <div style="margin-top:12px;border:1px solid var(--color-border-secondary,rgba(127,127,127,.25));border-radius:10px;overflow:hidden;background:rgba(127,127,127,.08);min-height:180px;display:flex;align-items:center;justify-content:center">
+    <img id="screenshot" alt="WebCodex Computer screenshot" style="display:none;max-width:100%;max-height:min(72vh,900px);object-fit:contain" />
+    <div id="empty" style="padding:28px;font-size:13px;text-align:center">Waiting for the native MCP image result…</div>
+  </div>
+  <div id="meta" style="margin-top:10px;font-size:12px">—</div>
+  <div id="surface" style="margin-top:4px;font-size:12px;overflow-wrap:anywhere">—</div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+    <button id="refresh" type="button" disabled>Refresh</button>
+    <button id="continue" type="button" disabled>Continue in chat</button>
+    <button id="fullscreen" type="button">Fullscreen</button>
+  </div>
+  <div id="note" style="margin-top:10px;font-size:12px">Connecting to the ChatGPT MCP Apps host…</div>
+</div>
+<script>
+(() => {
+  const APP_PROTOCOL = "2026-01-26";
+  const MAX_DECODED_IMAGE_BYTES = 1024 * 1024;
+  const MAX_ENCODED_IMAGE_CHARS = 4 * Math.ceil(MAX_DECODED_IMAGE_BYTES / 3);
+  const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
+  const el = (id) => document.getElementById(id);
+  const targetEl = el("target"), screenshotEl = el("screenshot"), emptyEl = el("empty");
+  const metaEl = el("meta"), surfaceEl = el("surface"), noteEl = el("note");
+  const refreshBtn = el("refresh"), continueBtn = el("continue"), fullscreenBtn = el("fullscreen");
+  const pending = new Map();
+  let nextId = 1;
+  let initialized = false;
+  let serverToolsAvailable = false;
+  let hostMessageAvailable = false;
+  let hostContextAvailable = false;
+  let tornDown = false;
+  let clientId = null;
+  let surfaceId = null;
+  let currentMeta = null;
+  let imageDataUrl = null;
+  let refreshInFlight = false;
+  let continueInFlight = false;
+  let refreshCount = 0;
+  let fullscreen = false;
+
+  function boundedString(value, max) {
+    if (typeof value !== "string") return null;
+    return value.length <= max ? value : value.slice(0, max) + "…";
+  }
+
+  function request(method, params, timeoutMs = 10000) {
+    if (tornDown) return Promise.reject(new Error("App is tearing down"));
+    const id = nextId++;
+    window.parent.postMessage({ jsonrpc: "2.0", id, method, params: params || {} }, "*");
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(method + " timed out"));
+      }, timeoutMs);
+      pending.set(id, { resolve, reject, timeout });
+    });
+  }
+
+  function notify(method, params) {
+    if (tornDown) return;
+    window.parent.postMessage({ jsonrpc: "2.0", method, ...(params === undefined ? {} : { params }) }, "*");
+  }
+
+  function reply(id, result) {
+    window.parent.postMessage({ jsonrpc: "2.0", id, result: result || {} }, "*");
+  }
+
+  function clearImageSource() {
+    imageDataUrl = null;
+  }
+
+  function updateButtons() {
+    refreshBtn.disabled = !initialized || !serverToolsAvailable || !clientId || !surfaceId || refreshInFlight;
+    continueBtn.disabled = !initialized || !currentMeta || !hostMessageAvailable || continueInFlight;
+    refreshBtn.title = serverToolsAvailable
+      ? "Refresh this exact surface through computer_snapshot"
+      : "This host did not declare serverTools; in-card refresh is unavailable.";
+    continueBtn.title = hostMessageAvailable
+      ? "Continue discussing this screenshot in chat"
+      : "This host did not declare ui/message support; chat continuation is unavailable.";
+  }
+
+  function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return "unknown size";
+    if (bytes < 1024) return String(bytes) + " B";
+    return (bytes / 1024).toFixed(bytes < 10240 ? 1 : 0) + " KB";
+  }
+
+  function renderFailure(parsed, fromRefresh) {
+    const output = parsed.output || {};
+    const kind = boundedString(output.error_kind, 64) || "tool_error";
+    const message = boundedString(output.message, 256)
+      || boundedString(parsed.error, 256)
+      || "WebCodex computer_snapshot failed.";
+    targetEl.textContent = kind;
+    if (!fromRefresh) {
+      emptyEl.style.display = "block";
+      emptyEl.textContent = message;
+      screenshotEl.style.display = "none";
+    }
+    if (kind === "stale_surface") {
+      noteEl.textContent = "Surface is stale. Select the window again from ChatGPT; this card will not enumerate or guess a replacement surface.";
+    } else {
+      noteEl.textContent = (fromRefresh ? "Refresh failed; the previous screenshot remains displayed. " : "") + message;
+    }
+    updateButtons();
+  }
+
+  function parseToolResult(result) {
+    if (!result || typeof result !== "object") return null;
+    const structured = result.structuredContent;
+    if (!structured || typeof structured !== "object") return null;
+    const output = structured.output && typeof structured.output === "object" ? structured.output : null;
+    return {
+      success: structured.success === true,
+      error: typeof structured.error === "string" ? structured.error : null,
+      output
+    };
+  }
+
+  function imageBlockFromResult(result) {
+    if (!result || !Array.isArray(result.content)) return null;
+    return result.content.find((item) => item && typeof item === "object" && item.type === "image") || null;
+  }
+
+  function decodeImage(block, output) {
+    const mimeType = block && typeof block.mimeType === "string" ? block.mimeType : "";
+    const data = block && typeof block.data === "string" ? block.data : "";
+    if (!IMAGE_MIMES.has(mimeType)) throw new Error("Unexpected screenshot MIME type.");
+    if (!data || data.length > MAX_ENCODED_IMAGE_CHARS) throw new Error("Encoded screenshot exceeds the card input bound.");
+    let binary;
+    try {
+      binary = atob(data);
+    } catch (_) {
+      throw new Error("Screenshot image data is not valid base64.");
+    }
+    if (!binary.length || binary.length > MAX_DECODED_IMAGE_BYTES) throw new Error("Decoded screenshot exceeds the 1 MiB card bound.");
+    const expectedBytes = output && Number.isInteger(output.file_bytes) ? output.file_bytes : null;
+    if (expectedBytes !== null && expectedBytes !== binary.length) throw new Error("Screenshot byte count does not match structured metadata.");
+    return { src: "data:" + mimeType + ";base64," + data, mimeType, fileBytes: binary.length };
+  }
+
+  function renderToolResult(result, source) {
+    const parsed = parseToolResult(result);
+    const fromRefresh = source === "refresh";
+    if (!parsed) {
+      renderFailure({ output: { error_kind: "malformed_result", message: "MCP tool result is missing structuredContent." }, error: null }, fromRefresh);
+      return false;
+    }
+    if (!parsed.success || !parsed.output) {
+      renderFailure(parsed, fromRefresh);
+      return false;
+    }
+    const output = parsed.output;
+    if (output.content_delivery !== "mcp_image") {
+      renderFailure({ output: { error_kind: "malformed_result", message: "computer_snapshot did not declare native MCP image delivery." }, error: null }, fromRefresh);
+      return false;
+    }
+    const imageBlock = imageBlockFromResult(result);
+    if (!imageBlock) {
+      renderFailure({ output: { error_kind: "malformed_result", message: "computer_snapshot result contains no image ContentBlock." }, error: null }, fromRefresh);
+      return false;
+    }
+    let decoded;
+    try {
+      decoded = decodeImage(imageBlock, output);
+    } catch (error) {
+      renderFailure({ output: { error_kind: "malformed_image", message: String(error && error.message ? error.message : error) }, error: null }, fromRefresh);
+      return false;
+    }
+
+    const width = Number.isInteger(output.width) && output.width > 0 && output.width <= 4096 ? output.width : null;
+    const height = Number.isInteger(output.height) && output.height > 0 && output.height <= 4096 ? output.height : null;
+    if (width === null || height === null) {
+      renderFailure({ output: { error_kind: "malformed_result", message: "Screenshot dimensions are outside the CU-1 bound." }, error: null }, fromRefresh);
+      return false;
+    }
+
+    clearImageSource();
+    imageDataUrl = decoded.src;
+    screenshotEl.src = imageDataUrl;
+    screenshotEl.style.display = "block";
+    emptyEl.style.display = "none";
+
+    const surface = output.surface && typeof output.surface === "object" ? output.surface : {};
+    const application = boundedString(surface.application, 256) || "unknown application";
+    const title = boundedString(surface.title, 256);
+    const resultSurfaceId = boundedString(surface.surface_id, 128);
+    if (resultSurfaceId) surfaceId = resultSurfaceId;
+    targetEl.textContent = (clientId || "unknown client") + " · " + application;
+    metaEl.textContent = width + " × " + height + " · " + decoded.mimeType + " · " + formatBytes(decoded.fileBytes);
+    surfaceEl.textContent = title ? application + " · " + title : application;
+    currentMeta = { width, height, mimeType: decoded.mimeType, fileBytes: decoded.fileBytes };
+    if (fromRefresh) refreshCount += 1;
+    noteEl.textContent = fromRefresh
+      ? "Screenshot refreshed in this App. The refreshed image is not assumed to be model-visible."
+      : "Native MCP screenshot attached. The initial computer_snapshot image remains model-visible.";
+    updateButtons();
+    return true;
+  }
+
+  function handleToolInput(params) {
+    const args = params && typeof params === "object" && params.arguments && typeof params.arguments === "object"
+      ? params.arguments
+      : {};
+    const nextClientId = boundedString(args.client_id, 128);
+    const nextSurfaceId = boundedString(args.surface_id, 128);
+    if (nextClientId) clientId = nextClientId;
+    if (nextSurfaceId) surfaceId = nextSurfaceId;
+    if (clientId) targetEl.textContent = clientId;
+    updateButtons();
+  }
+
+  async function refresh() {
+    if (!initialized || !serverToolsAvailable || !clientId || !surfaceId || refreshInFlight) return;
+    refreshInFlight = true;
+    updateButtons();
+    noteEl.textContent = "Refreshing the exact current surface through computer_snapshot…";
+    try {
+      const result = await request("tools/call", {
+        name: "computer_snapshot",
+        arguments: { client_id: clientId, surface_id: surfaceId }
+      }, 45000);
+      renderToolResult(result, "refresh");
+    } catch (error) {
+      noteEl.textContent = "Refresh request failed: " + String(error && error.message ? error.message : error);
+    } finally {
+      refreshInFlight = false;
+      updateButtons();
+    }
+  }
+
+  async function continueInChat() {
+    if (!initialized || !currentMeta || !hostMessageAvailable || continueInFlight) return;
+    continueInFlight = true;
+    updateButtons();
+    const refreshed = refreshCount > 0;
+    const context = {
+      source: "webcodex-computer-app",
+      client_id: clientId,
+      surface_id: surfaceId,
+      width: currentMeta.width,
+      height: currentMeta.height,
+      mime_type: currentMeta.mimeType,
+      file_bytes: currentMeta.fileBytes,
+      screenshot_present_in_card: true,
+      card_refresh_count: refreshCount,
+      current_card_image_model_visibility: refreshed ? "not_assumed_model_visible" : "initial_tool_result_model_visible"
+    };
+    try {
+      if (hostContextAvailable) {
+        await request("ui/update-model-context", {
+          content: [{
+            type: "text",
+            text: refreshed
+              ? "The current WebCodex Computer card contains a screenshot refreshed inside the App. The refreshed image is not assumed to be model-visible; call computer_snapshot again if a newer model-visible image is required."
+              : "The current WebCodex Computer card contains the initial computer_snapshot screenshot, which was also delivered as model-visible MCP image content."
+          }],
+          structuredContent: context
+        });
+      }
+      await request("ui/message", {
+        role: "user",
+        content: [{
+          type: "text",
+          text: "The user wants to continue discussing the current WebCodex Computer screenshot. Use the existing computer_snapshot result in this turn/context. If the card was refreshed in-App, do not assume that refreshed image is model-visible; call computer_snapshot again if a newer model-visible image is required."
+        }]
+      });
+      noteEl.textContent = "Continuation sent to ChatGPT.";
+    } catch (error) {
+      noteEl.textContent = "Chat continuation was rejected; no automatic retry will be attempted: " + String(error && error.message ? error.message : error);
+    } finally {
+      continueInFlight = false;
+      updateButtons();
+    }
+  }
+
+  async function toggleFullscreen() {
+    const requested = fullscreen ? "inline" : "fullscreen";
+    try {
+      await request("ui/request-display-mode", { mode: requested });
+      fullscreen = !fullscreen;
+      fullscreenBtn.textContent = fullscreen ? "Inline" : "Fullscreen";
+    } catch (error) {
+      noteEl.textContent = "Display mode request failed: " + String(error && error.message ? error.message : error);
+    }
+  }
+
+  function teardown() {
+    if (tornDown) return;
+    tornDown = true;
+    clearImageSource();
+    screenshotEl.removeAttribute("src");
+    for (const item of pending.values()) {
+      clearTimeout(item.timeout);
+      item.reject(new Error("App teardown"));
+    }
+    pending.clear();
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const message = event.data;
+    if (!message || typeof message !== "object" || message.jsonrpc !== "2.0") return;
+    if (message.id !== undefined && pending.has(message.id)) {
+      const item = pending.get(message.id);
+      pending.delete(message.id);
+      clearTimeout(item.timeout);
+      if (message.error !== undefined) item.reject(message.error);
+      else item.resolve(message.result);
+      return;
+    }
+    if (message.method === "ui/notifications/tool-input") {
+      handleToolInput(message.params);
+      return;
+    }
+    if (message.method === "ui/notifications/tool-result") {
+      renderToolResult(message.params, "initial");
+      return;
+    }
+    if (message.method === "ui/resource-teardown" && message.id !== undefined) {
+      teardown();
+      reply(message.id, {});
+    }
+  }, { passive: true });
+
+  refreshBtn.onclick = () => { void refresh(); };
+  continueBtn.onclick = () => { void continueInChat(); };
+  fullscreenBtn.onclick = () => { void toggleFullscreen(); };
+
+  async function initialize() {
+    try {
+      const initResult = await request("ui/initialize", {
+        protocolVersion: APP_PROTOCOL,
+        appInfo: { name: "webcodex-computer-app", title: "WebCodex Computer", version: "1.0.0" },
+        appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
+      });
+      const hostCapabilities = initResult && typeof initResult === "object" && initResult.hostCapabilities && typeof initResult.hostCapabilities === "object"
+        ? initResult.hostCapabilities
+        : {};
+      serverToolsAvailable = Boolean(hostCapabilities.serverTools && typeof hostCapabilities.serverTools === "object");
+      hostMessageAvailable = Boolean(
+        hostCapabilities.message && typeof hostCapabilities.message === "object"
+        && hostCapabilities.message.text && typeof hostCapabilities.message.text === "object"
+      );
+      hostContextAvailable = Boolean(
+        hostCapabilities.updateModelContext && typeof hostCapabilities.updateModelContext === "object"
+        && hostCapabilities.updateModelContext.text && typeof hostCapabilities.updateModelContext.text === "object"
+        && hostCapabilities.updateModelContext.structuredContent && typeof hostCapabilities.updateModelContext.structuredContent === "object"
+      );
+      initialized = true;
+      notify("ui/notifications/initialized", {});
+      noteEl.textContent = serverToolsAvailable
+        ? "MCP App initialized. Refresh is available for this exact surface."
+        : "MCP App initialized. This host did not declare serverTools, so in-card Refresh is disabled.";
+      if (!hostMessageAvailable) noteEl.textContent += " Continue in chat is unavailable because the host did not declare ui/message support.";
+      updateButtons();
+    } catch (error) {
+      noteEl.textContent = "MCP Apps handshake failed: " + String(error && error.message ? error.message : error);
+      updateButtons();
+    }
+  }
+
+  void initialize();
+})();
+</script>

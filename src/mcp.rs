@@ -26,6 +26,10 @@ const MCP_HEADER_MISMATCH: i64 = -32020;
 const MCP_UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
     &[MCP_STATELESS_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION];
+const MCP_UI_EXTENSION: &str = "io.modelcontextprotocol/ui";
+const MCP_COMPUTER_UI_RESOURCE_URI: &str = "ui://webcodex/computer/v1";
+const MCP_UI_RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
+const MCP_COMPUTER_APP_HTML: &str = include_str!("mcp_computer_app.html");
 
 /// Single source of truth for the JSON-RPC methods advertised by `GET /mcp`.
 /// Must match the dispatch arms in `handle_mcp_request_with_lifecycle`;
@@ -36,6 +40,8 @@ const MCP_INFO_METHODS: &[&str] = &[
     "ping",
     "tools/list",
     "tools/call",
+    "resources/list",
+    "resources/read",
     "notifications/initialized",
 ];
 const MCP_RESERVED_SESSION_ID_FIELD: &str = "_session_id";
@@ -124,6 +130,26 @@ fn request_client_capabilities(params: &Value) -> Option<&Value> {
     params
         .get("_meta")
         .and_then(|meta| meta.get("io.modelcontextprotocol/clientCapabilities"))
+}
+
+fn request_supports_mcp_apps(params: &Value) -> bool {
+    let Some(extension) = request_client_capabilities(params)
+        .and_then(|capabilities| capabilities.get("extensions"))
+        .and_then(|extensions| extensions.get(MCP_UI_EXTENSION))
+        .and_then(Value::as_object)
+    else {
+        return false;
+    };
+    match extension.get("mimeTypes").and_then(Value::as_array) {
+        Some(mime_types) => mime_types
+            .iter()
+            .any(|mime| mime.as_str() == Some(MCP_UI_RESOURCE_MIME_TYPE)),
+        None => false,
+    }
+}
+
+fn model_surface_supports_computer_app(model_surface: ModelSurface) -> bool {
+    model_surface == ModelSurface::FullOperatorRuntime
 }
 
 fn request_client_info_is_valid(params: &Value) -> bool {
@@ -344,6 +370,14 @@ fn mcp_tools_list_payload(model_surface: ModelSurface) -> Value {
 /// explicit bool so they never need process-global env. The schema shape is
 /// identical to the adapter path: `compact` only omits `outputSchema`.
 fn mcp_tools_list_payload_with_compact(model_surface: ModelSurface, compact: bool) -> Value {
+    mcp_tools_list_payload_with_compact_and_app(model_surface, compact, false)
+}
+
+fn mcp_tools_list_payload_with_compact_and_app(
+    model_surface: ModelSurface,
+    compact: bool,
+    app_enabled: bool,
+) -> Value {
     let specs = match model_surface {
         ModelSurface::CanonicalConnector => crate::connector_runtime::surface::capability_specs(),
         ModelSurface::LocalCoding => crate::model_surface::local_coding_tool_specs(),
@@ -351,13 +385,14 @@ fn mcp_tools_list_payload_with_compact(model_surface: ModelSurface, compact: boo
     };
     let tools: Vec<Value> = specs
         .into_iter()
-        .map(|spec| mcp_tool_spec_json(spec, compact))
+        .map(|spec| mcp_tool_spec_json(spec, compact, app_enabled))
         .collect();
     json!({ "tools": tools })
 }
 
-fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool) -> Value {
-    if spec.name == "read_project_artifact" {
+fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
+    let tool_name = spec.name.clone();
+    if tool_name == "read_project_artifact" {
         if let Some(properties) = spec.input_schema["properties"].as_object_mut() {
             properties.insert(
                 "as_image".to_string(),
@@ -371,7 +406,7 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool) -> Value {
             " Over MCP, set as_image=true to return one complete PNG, JPEG, or WebP as native image content; ordinary calls keep the existing chunked base64 response.",
         );
     }
-    if compact {
+    let mut value = if compact {
         json!({
             "name": spec.name,
             "description": spec.description,
@@ -381,7 +416,60 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool) -> Value {
     } else {
         // Match ToolSpec's camelCase serde so default behavior is unchanged.
         serde_json::to_value(spec).unwrap_or_else(|_| json!({}))
+    };
+    if app_enabled && tool_name == "computer_snapshot" {
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "_meta".to_string(),
+                json!({
+                    "ui": {
+                        "resourceUri": MCP_COMPUTER_UI_RESOURCE_URI,
+                        "visibility": ["model", "app"]
+                    },
+                    "ui/resourceUri": MCP_COMPUTER_UI_RESOURCE_URI,
+                    "openai/outputTemplate": MCP_COMPUTER_UI_RESOURCE_URI
+                }),
+            );
+        }
     }
+    value
+}
+
+fn mcp_computer_app_resource_meta() -> Value {
+    json!({
+        "ui": {
+            "prefersBorder": true,
+            "csp": {
+                "connectDomains": [],
+                "resourceDomains": []
+            }
+        }
+    })
+}
+
+fn mcp_computer_app_resources_list() -> Value {
+    json!({
+        "resources": [{
+            "uri": MCP_COMPUTER_UI_RESOURCE_URI,
+            "name": "WebCodex Computer",
+            "description": "Read-only WebCodex Computer screenshot card with optional in-card refresh and user-initiated chat continuation.",
+            "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
+            "_meta": mcp_computer_app_resource_meta()
+        }]
+    })
+}
+
+fn mcp_computer_app_resource_read(uri: &str) -> Option<Value> {
+    (uri == MCP_COMPUTER_UI_RESOURCE_URI).then(|| {
+        json!({
+            "contents": [{
+                "uri": MCP_COMPUTER_UI_RESOURCE_URI,
+                "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
+                "text": MCP_COMPUTER_APP_HTML,
+                "_meta": mcp_computer_app_resource_meta()
+            }]
+        })
+    })
 }
 
 pub(crate) fn mcp_runtime_tool_result(
@@ -906,14 +994,19 @@ async fn handle_mcp_request_with_lifecycle(
 ) -> McpOutcome {
     let is_oauth2 = auth.is_some_and(|ctx| ctx.is_oauth_token());
     let stateless_2026 = protocol_era == McpProtocolEra::Stateless2026;
+    let mcp_app_enabled = stateless_2026
+        && model_surface_supports_computer_app(runtime.model_surface())
+        && request_supports_mcp_apps(&request.params);
 
     if is_oauth2
-        && (matches!(request.method.as_str(), "server/discover" | "tools/list")
-            || (!stateless_2026
-                && matches!(
-                    request.method.as_str(),
-                    "initialize" | "ping" | "notifications/initialized"
-                )))
+        && (matches!(
+            request.method.as_str(),
+            "server/discover" | "tools/list" | "resources/list" | "resources/read"
+        ) || (!stateless_2026
+            && matches!(
+                request.method.as_str(),
+                "initialize" | "ping" | "notifications/initialized"
+            )))
     {
         if let Some(outcome) = require_mcp_oauth_scope(auth, crate::auth::SCOPE_RUNTIME_READ) {
             return outcome;
@@ -970,10 +1063,18 @@ async fn handle_mcp_request_with_lifecycle(
                 "ttlMs": 0,
                 "cacheScope": "private",
                 "supportedVersions": [MCP_STATELESS_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION],
-                "capabilities": {
-                    "tools": {
-                        "listChanged": false
-                    }
+                "capabilities": if model_surface_supports_computer_app(runtime.model_surface()) {
+                    json!({
+                        "tools": { "listChanged": false },
+                        "resources": { "listChanged": false, "subscribe": false },
+                        "extensions": {
+                            MCP_UI_EXTENSION: {
+                                "mimeTypes": [MCP_UI_RESOURCE_MIME_TYPE]
+                            }
+                        }
+                    })
+                } else {
+                    json!({ "tools": { "listChanged": false } })
                 },
                 "_meta": {
                     "io.modelcontextprotocol/serverInfo": {
@@ -1001,7 +1102,15 @@ async fn handle_mcp_request_with_lifecycle(
         ),
         "ping" if !stateless_2026 => rpc_result(id, json!({})),
         "tools/list" => {
-            let result = mcp_tools_list_payload(runtime.model_surface());
+            let result = if stateless_2026 {
+                mcp_tools_list_payload_with_compact_and_app(
+                    runtime.model_surface(),
+                    crate::config::mcp_compact_schemas_enabled(),
+                    mcp_app_enabled,
+                )
+            } else {
+                mcp_tools_list_payload(runtime.model_surface())
+            };
             rpc_result(
                 id,
                 if stateless_2026 {
@@ -1010,6 +1119,38 @@ async fn handle_mcp_request_with_lifecycle(
                     result
                 },
             )
+        }
+        "resources/list" if stateless_2026 => {
+            let result = if mcp_app_enabled {
+                mcp_computer_app_resources_list()
+            } else {
+                json!({ "resources": [] })
+            };
+            rpc_result(id, mcp_stateless_result(result, true))
+        }
+        "resources/read" if stateless_2026 => {
+            if !mcp_app_enabled {
+                return McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    "MCP App resource is unavailable because this request did not declare io.modelcontextprotocol/ui support",
+                ));
+            }
+            let Some(uri) = request.params.get("uri").and_then(Value::as_str) else {
+                return McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    "Invalid params: uri is required",
+                ));
+            };
+            let Some(result) = mcp_computer_app_resource_read(uri) else {
+                return McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    format!("Resource not found: {uri}"),
+                ));
+            };
+            rpc_result(id, mcp_stateless_result(result, true))
         }
         "tools/call" => {
             let mut params: McpToolCallParams = match serde_json::from_value(request.params) {

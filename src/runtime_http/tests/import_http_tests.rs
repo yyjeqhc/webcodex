@@ -105,13 +105,36 @@ async fn complete_one_save_artifact_request(
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     };
-    let payload: Value = serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
+    let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    assert_eq!(request.kind, "file_save_project_artifact");
+    assert!(payload.get("download_url").is_none());
+    assert!(payload.get("download_link").is_none());
+    assert!(payload.get("openaiFileIdRefs").is_none());
+    assert_eq!(payload["overwrite"], false);
     let path = payload["path"].as_str().unwrap().to_string();
     let mime_type = payload["mime_type"].as_str().unwrap().to_string();
     let bytes = general_purpose::STANDARD
         .decode(payload["content_base64"].as_str().unwrap())
         .unwrap();
     let full_path = std::path::Path::new(request.cwd.as_deref().unwrap()).join(&path);
+    if full_path.exists() && payload["overwrite"] == false {
+        registry
+            .complete(ShellAgentResultRequest {
+                client_id: "importer".to_string(),
+                agent_instance_id: "inst-import".to_string(),
+                request_id: request.request_id,
+                exit_code: Some(0),
+                stdout: Some(
+                    json!({"error":"artifact target exists and overwrite is false"}).to_string(),
+                ),
+                stderr: None,
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+        return;
+    }
     std::fs::create_dir_all(full_path.parent().unwrap()).unwrap();
     std::fs::write(&full_path, &bytes).unwrap();
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
@@ -224,6 +247,326 @@ async fn import_http_accepts_office_mime_and_extension_policy() {
             "artifact-only octet-stream suffix must remain rejected by conversation import: {path}: {body:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path() {
+    use crate::auth::{AuthContext, AuthKind};
+    use crate::shell_protocol::ShellClientCapabilities;
+    use crate::tool_runtime::sessions::SessionTransport;
+    use crate::tool_runtime::ToolCall;
+    use sha2::{Digest, Sha256};
+
+    let _guard = lock_import_http_test().await;
+    let pptx = b"pptx-conversation-attachment".to_vec();
+    let expected_sha256 = format!("{:x}", Sha256::digest(&pptx));
+    let server = start_mock_http_server(vec![http_response(
+        "200 OK",
+        &[("Content-Length", pptx.len().to_string())],
+        &pptx,
+    )])
+    .await;
+    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = super::register_import_agent_with_capabilities(
+        tmp.path(),
+        Some(ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        }),
+    )
+    .await;
+    let agent = tokio::spawn(complete_one_save_artifact_request(registry));
+    let call = ToolCall::from_tool_name(
+        "import_conversation_files_to_project",
+        json!({
+            "project": "agent:importer:demo",
+            "openaiFileIdRefs": [{
+                "download_url": "https://files.oaiusercontent.com/import-test.pptx",
+                "file_id": "file_host_pptx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "file_name": "source.pptx"
+            }],
+            "output_dir": "paper/export",
+            "targets": ["import-test.pptx"],
+            "overwrite": false
+        }),
+    )
+    .unwrap();
+    let auth = AuthContext {
+        kind: AuthKind::Bootstrap,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        role: Some("admin".to_string()),
+        scopes: vec!["admin".to_string()],
+        is_bootstrap: true,
+        token_kind: None,
+        allowed_client_id: None,
+        shared_key_hash: None,
+        project_grant_id: None,
+    };
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        runtime.dispatch_with_auth_transport_options(
+            call,
+            Some(&auth),
+            SessionTransport::Mcp,
+            true,
+            false,
+        ),
+    )
+    .await
+    .expect("conversation import dispatch timed out");
+    if !result.success {
+        agent.abort();
+        panic!("conversation import failed: {:?}", result.error);
+    }
+    tokio::time::timeout(Duration::from_secs(5), agent)
+        .await
+        .expect("save_project_artifact fixture timed out")
+        .unwrap();
+
+    assert_eq!(result.output["count"], 1);
+    let imported = &result.output["imported"][0];
+    assert_eq!(imported["path"], "paper/export/import-test.pptx");
+    assert_eq!(imported["source_name"], "source.pptx");
+    assert_eq!(imported["bytes_written"], pptx.len());
+    assert_eq!(imported["sha256"], expected_sha256);
+    assert_eq!(
+        imported["mime_type"],
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    );
+    assert_eq!(
+        std::fs::read(tmp.path().join("paper/export/import-test.pptx")).unwrap(),
+        pptx
+    );
+}
+
+#[tokio::test]
+async fn runtime_conversation_import_rejects_non_mcp_transport() {
+    use crate::auth::{AuthContext, AuthKind};
+    use crate::shell_protocol::ShellClientCapabilities;
+    use crate::tool_runtime::ToolCall;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, _registry) = super::register_import_agent_with_capabilities(
+        tmp.path(),
+        Some(ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        }),
+    )
+    .await;
+    let auth = AuthContext {
+        kind: AuthKind::Bootstrap,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        role: Some("admin".to_string()),
+        scopes: vec!["admin".to_string()],
+        is_bootstrap: true,
+        token_kind: None,
+        allowed_client_id: None,
+        shared_key_hash: None,
+        project_grant_id: None,
+    };
+    let call = ToolCall::from_tool_name(
+        "import_conversation_files_to_project",
+        json!({
+            "project": "agent:importer:demo",
+            "openaiFileIdRefs": [{
+                "download_url": "https://files.oaiusercontent.com/should-not-download.pptx",
+                "file_id": "file_host_pptx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "file_name": "source.pptx"
+            }],
+            "targets": ["import-test.pptx"]
+        }),
+    )
+    .unwrap();
+    let result = runtime.dispatch_with_auth(call, Some(&auth)).await;
+    assert!(!result.success);
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("MCP host file-reference mechanism")));
+}
+
+#[tokio::test]
+async fn import_http_existing_mime_policy_still_passes_before_host_validation() {
+    for (path, mime) in [
+        ("image.png", "image/png"),
+        ("paper.pdf", "application/pdf"),
+        ("bundle.zip", "application/zip"),
+        ("notes.txt", "text/plain"),
+    ] {
+        let service = import_test_service_with_local_runtime().await;
+        let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+            .bearer_auth("secret")
+            .json(&import_body("https://example.com/file", mime, path))
+            .send(&service)
+            .await;
+        assert_eq!(
+            super::effective_status(&resp),
+            salvo::http::StatusCode::BAD_REQUEST
+        );
+        let body: Value = resp.take_json().await.unwrap();
+        assert!(
+            body["error"].as_str().unwrap().contains("OpenAI file host"),
+            "existing MIME/path should pass import MIME policy before host validation: {path}: {body:?}"
+        );
+    }
+
+    let service = import_test_service_with_local_runtime().await;
+    let mut unsupported = TestClient::post("http://localhost/api/artifacts/import")
+        .bearer_auth("secret")
+        .json(&import_body(
+            "https://files.oaiusercontent.com/file",
+            "application/x-msdownload",
+            "payload.bin",
+        ))
+        .send(&service)
+        .await;
+    assert_eq!(
+        super::effective_status(&unsupported),
+        salvo::http::StatusCode::BAD_REQUEST
+    );
+    let body: Value = unsupported.take_json().await.unwrap();
+    assert!(body["error"].as_str().unwrap().contains("unsupported MIME"));
+}
+
+#[tokio::test]
+async fn import_http_existing_png_pdf_zip_text_formats_still_import() {
+    let _guard = lock_import_http_test().await;
+    let cases = [
+        ("image.png", "image/png", b"png-bytes".as_slice()),
+        ("paper.pdf", "application/pdf", b"pdf-bytes".as_slice()),
+        ("bundle.zip", "application/zip", b"zip-bytes".as_slice()),
+        ("notes.txt", "text/plain", b"text-bytes".as_slice()),
+    ];
+    let responses = cases
+        .iter()
+        .map(|(_, _, bytes)| {
+            http_response(
+                "200 OK",
+                &[("Content-Length", bytes.len().to_string())],
+                bytes,
+            )
+        })
+        .collect();
+    let server = start_mock_http_server(responses).await;
+    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = super::register_import_agent_with_capabilities(
+        tmp.path(),
+        Some(crate::shell_protocol::ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        }),
+    )
+    .await;
+    let config = super::test_config(Some("secret"));
+    let (_db_tmp, db) = super::test_db();
+    let service = Service::new(super::build_projects_router(config, db, runtime));
+
+    for (path, mime, expected_bytes) in cases {
+        let agent = tokio::spawn(complete_one_save_artifact_request(registry.clone()));
+        let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+            .bearer_auth("secret")
+            .json(&json!({
+                "project":"agent:importer:demo",
+                "output_dir":"docs/assets",
+                "targets":[path],
+                "openaiFileIdRefs":[{
+                    "name":path,
+                    "id":"file_existing_format",
+                    "mime_type":mime,
+                    "download_link":format!("https://files.oaiusercontent.com/{path}")
+                }]
+            }))
+            .send(&service)
+            .await;
+        tokio::time::timeout(Duration::from_secs(5), agent)
+            .await
+            .expect("existing-format save fixture timed out")
+            .unwrap();
+        assert_eq!(super::effective_status(&resp), salvo::http::StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["count"], 1);
+        assert_eq!(
+            body["output"]["imported"][0]["path"],
+            format!("docs/assets/{path}")
+        );
+        assert_eq!(
+            body["output"]["imported"][0]["bytes_written"],
+            expected_bytes.len()
+        );
+        assert_eq!(body["output"]["imported"][0]["mime_type"], mime);
+        assert_eq!(
+            std::fs::read(tmp.path().join("docs/assets").join(path)).unwrap(),
+            expected_bytes
+        );
+    }
+}
+
+#[tokio::test]
+async fn import_http_preserves_overwrite_false_protection() {
+    let _guard = lock_import_http_test().await;
+    let replacement = b"replacement".to_vec();
+    let server = start_mock_http_server(vec![http_response(
+        "200 OK",
+        &[("Content-Length", replacement.len().to_string())],
+        &replacement,
+    )])
+    .await;
+    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
+    let tmp = tempfile::tempdir().unwrap();
+    let existing = tmp.path().join("docs/assets/existing.png");
+    std::fs::create_dir_all(existing.parent().unwrap()).unwrap();
+    std::fs::write(&existing, b"original").unwrap();
+    let (runtime, registry) = super::register_import_agent_with_capabilities(
+        tmp.path(),
+        Some(crate::shell_protocol::ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        }),
+    )
+    .await;
+    let config = super::test_config(Some("secret"));
+    let (_db_tmp, db) = super::test_db();
+    let service = Service::new(super::build_projects_router(config, db, runtime));
+    let agent = tokio::spawn(complete_one_save_artifact_request(registry));
+    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+        .bearer_auth("secret")
+        .json(&json!({
+            "project":"agent:importer:demo",
+            "output_dir":"docs/assets",
+            "targets":["existing.png"],
+            "overwrite":false,
+            "openaiFileIdRefs":[{
+                "name":"replacement.png",
+                "id":"file_png",
+                "mime_type":"image/png",
+                "download_link":"https://files.oaiusercontent.com/replacement.png"
+            }]
+        }))
+        .send(&service)
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), agent)
+        .await
+        .expect("overwrite fixture timed out")
+        .unwrap();
+    assert_eq!(
+        super::effective_status(&resp),
+        salvo::http::StatusCode::BAD_REQUEST
+    );
+    let body: Value = resp.take_json().await.unwrap();
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("overwrite is false"));
+    assert_eq!(std::fs::read(existing).unwrap(), b"original");
 }
 
 #[tokio::test]
@@ -373,7 +716,14 @@ async fn import_http_success_uses_source_name_fallback_for_missing_target() {
     .await;
     let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
     let tmp = tempfile::tempdir().unwrap();
-    let (runtime, registry) = super::register_import_agent(tmp.path()).await;
+    let (runtime, registry) = super::register_import_agent_with_capabilities(
+        tmp.path(),
+        Some(crate::shell_protocol::ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        }),
+    )
+    .await;
     let config = super::test_config(Some("secret"));
     let (_db_tmp, db) = super::test_db();
     let service = Service::new(super::build_projects_router(config, db, runtime));

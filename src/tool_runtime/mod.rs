@@ -12,6 +12,7 @@ mod coding_task;
 mod coding_task_tools;
 mod computer_tools;
 mod continuation_feedback;
+pub(crate) mod conversation_import;
 mod discovery_tools;
 mod dispatch;
 mod edit_tool_telemetry;

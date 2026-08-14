@@ -423,6 +423,14 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
         // Match ToolSpec's camelCase serde so default behavior is unchanged.
         serde_json::to_value(spec).unwrap_or_else(|_| json!({}))
     };
+    if tool_name == "import_conversation_files_to_project" {
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "_meta".to_string(),
+                json!({"openai/fileParams": ["openaiFileIdRefs"]}),
+            );
+        }
+    }
     if app_enabled && tool_name == "computer_snapshot" {
         if let Some(object) = value.as_object_mut() {
             object.insert(

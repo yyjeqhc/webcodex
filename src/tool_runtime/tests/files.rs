@@ -904,6 +904,46 @@ async fn artifact_upload_chunk_session_log_arguments_do_not_store_base64() {
     );
 }
 
+#[test]
+fn conversation_import_session_log_arguments_do_not_store_host_file_refs() {
+    let download_url = "https://files.oaiusercontent.com/NEVER_PERSIST_IMPORT_URL";
+    let file_id = "NEVER_PERSIST_IMPORT_FILE_ID";
+    let arguments = serde_json::json!({
+        "project": "agent:test:demo",
+        "openaiFileIdRefs": [{
+            "download_url": download_url,
+            "file_id": file_id,
+            "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "file_name": "private-name.pptx"
+        }],
+        "output_dir": "paper/export",
+        "targets": ["import-test.pptx"],
+        "overwrite": false
+    });
+
+    let raw_summary = super::super::tool_audit::session_log_arguments_for_tool_request(
+        "import_conversation_files_to_project",
+        &arguments,
+    );
+    assert_eq!(raw_summary["project"], "agent:test:demo");
+    assert_eq!(raw_summary["file_count"], 1);
+    assert_eq!(raw_summary["targets_count"], 1);
+    let raw_json = serde_json::to_string(&raw_summary).unwrap();
+    assert!(!raw_json.contains(download_url));
+    assert!(!raw_json.contains(file_id));
+    assert!(!raw_json.contains("private-name.pptx"));
+
+    let call = ToolCall::from_tool_name("import_conversation_files_to_project", arguments).unwrap();
+    let typed_summary = call.session_log_arguments();
+    assert_eq!(typed_summary["project"], "agent:test:demo");
+    assert_eq!(typed_summary["file_count"], 1);
+    assert_eq!(typed_summary["targets_count"], 1);
+    let typed_json = serde_json::to_string(&typed_summary).unwrap();
+    assert!(!typed_json.contains(download_url));
+    assert!(!typed_json.contains(file_id));
+    assert!(!typed_json.contains("private-name.pptx"));
+}
+
 #[tokio::test]
 async fn read_project_artifact_metadata_allow_missing_does_not_count_as_failed() {
     let runtime = runtime_with_agent_project("artifact-missing-session");

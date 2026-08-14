@@ -24,6 +24,19 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 nullable_schema("string", "Caller-provided MIME type, when provided."),
             ),
         ])),
+        "import_conversation_files_to_project" => Some(wrapped_output_schema(vec![
+            (
+                "count",
+                schema_type("integer", "Number of conversation attachments imported."),
+            ),
+            (
+                "imported",
+                array_schema(
+                    open_object_schema("Imported conversation attachment result."),
+                    "Per-file path, byte count, sha256, MIME type, project, and source name.",
+                ),
+            ),
+        ])),
         "read_project_artifact_metadata" => Some(wrapped_output_schema(vec![
             (
                 "path",

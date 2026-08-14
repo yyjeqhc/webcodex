@@ -21,8 +21,8 @@ mod validation;
 pub(super) use artifacts::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
-    read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
-    save_project_artifact_input_schema,
+    import_conversation_files_to_project_input_schema, read_project_artifact_input_schema,
+    read_project_artifact_metadata_input_schema, save_project_artifact_input_schema,
 };
 pub(super) use checkpoints::{
     checkpoint_create_input_schema, checkpoint_delete_input_schema, checkpoint_labels_schema,

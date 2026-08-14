@@ -698,6 +698,29 @@ fn openapi_dedicated_actions_have_expected_routes_and_operation_ids() {
 }
 
 #[test]
+fn openapi_import_preserves_reserved_gpt_actions_file_reference_contract() {
+    let spec = build_openapi_spec();
+    let request = &spec["components"]["schemas"]["ImportConversationFilesRequest"];
+    assert_eq!(request["required"], json!(["openaiFileIdRefs", "project"]));
+    let refs = &request["properties"]["openaiFileIdRefs"];
+    assert_eq!(refs["type"], "array");
+    assert_eq!(refs["maxItems"], 10);
+    assert_eq!(
+        refs["items"]["$ref"],
+        "#/components/schemas/OpenAiFileIdRef"
+    );
+
+    let file_ref = &spec["components"]["schemas"]["OpenAiFileIdRef"];
+    assert_eq!(file_ref["required"], json!(["download_link"]));
+    assert_eq!(file_ref["additionalProperties"], false);
+    for property in ["name", "id", "mime_type", "download_link"] {
+        assert_eq!(file_ref["properties"][property]["type"], "string");
+    }
+    assert!(file_ref["properties"].get("download_url").is_none());
+    assert!(file_ref["properties"].get("file_id").is_none());
+}
+
+#[test]
 fn openapi_mutation_actions_describe_execution_risk_and_auth() {
     // Phase 3 mutation actions (applyProjectPatch, applyProjectPatchChecked,
     // runProjectShellCommand, deleteProjectFiles, gitRestorePaths,

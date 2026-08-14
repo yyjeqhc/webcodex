@@ -272,6 +272,27 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 Value::Bool(obj.contains_key("content_base64")),
             );
         }
+        "import_conversation_files_to_project" => {
+            copy_keys(obj, &mut out, &["output_dir", "overwrite", "session_id"]);
+            out.insert(
+                "file_count".to_string(),
+                Value::from(
+                    obj.get("openaiFileIdRefs")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "targets_count".to_string(),
+                Value::from(
+                    obj.get("targets")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                ),
+            );
+        }
         "artifact_upload_begin" => {
             copy_keys(
                 obj,
@@ -1124,6 +1145,21 @@ impl ToolCall {
                 "content_base64_present": true,
                 "mime_type": mime_type,
                 "overwrite": overwrite,
+            }),
+            Self::ImportConversationFilesToProject {
+                project,
+                openai_file_id_refs,
+                output_dir,
+                targets,
+                overwrite,
+                session_id,
+            } => serde_json::json!({
+                "project": project,
+                "file_count": openai_file_id_refs.len(),
+                "output_dir": output_dir,
+                "targets_count": targets.as_ref().map(Vec::len).unwrap_or_default(),
+                "overwrite": overwrite,
+                "session_id": session_id,
             }),
             Self::ReadProjectArtifactMetadata {
                 project,

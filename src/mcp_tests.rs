@@ -636,6 +636,37 @@ fn mcp_tools_list_adds_image_mode_without_changing_generic_artifact_schema() {
 }
 
 #[test]
+fn mcp_tools_list_exposes_host_file_params_for_conversation_import() {
+    let payload = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
+    let tool = payload["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "import_conversation_files_to_project")
+        .expect("MCP conversation import tool");
+
+    assert_eq!(
+        tool["_meta"]["openai/fileParams"],
+        json!(["openaiFileIdRefs"])
+    );
+    let refs = &tool["inputSchema"]["properties"]["openaiFileIdRefs"];
+    assert_eq!(refs["type"], "array");
+    assert_eq!(refs["minItems"], 1);
+    assert_eq!(refs["maxItems"], 10);
+    assert_eq!(
+        refs["items"]["required"],
+        json!(["download_url", "file_id"])
+    );
+    for property in ["download_url", "file_id", "mime_type", "file_name"] {
+        assert_eq!(refs["items"]["properties"][property]["type"], "string");
+    }
+    assert!(tool["description"]
+        .as_str()
+        .unwrap()
+        .contains("host file-reference mechanism"));
+}
+
+#[test]
 fn ordinary_artifact_result_keeps_existing_text_and_structured_base64_shape() {
     let value = mcp_runtime_tool_result(
         "read_project_artifact",

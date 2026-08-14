@@ -11,7 +11,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "save_project_artifact",
-            "Write a bounded binary project artifact from base64. Use for imported session files, generated images, PDFs, and zip files; not for UTF-8 source edits.",
+            "Write a bounded binary project artifact from base64. Use for imported session files, generated images, PDFs, ZIP archives, and DOCX/PPTX/XLSX Office artifacts; not for UTF-8 source edits.",
             save_project_artifact_input_schema(),
         ),
         tool_spec(

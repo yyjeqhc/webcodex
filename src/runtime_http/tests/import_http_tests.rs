@@ -134,6 +134,77 @@ async fn complete_one_save_artifact_request(
 }
 
 #[tokio::test]
+async fn import_http_accepts_office_mime_and_extension_policy() {
+    let cases = [
+        (
+            "report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "report.pptx",
+        ),
+        (
+            "deck.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "deck.xlsx",
+        ),
+        (
+            "book.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "book.docx",
+        ),
+    ];
+
+    for (path, mime, mismatched_path) in cases {
+        let service = import_test_service_with_local_runtime().await;
+        let mut accepted = TestClient::post("http://localhost/api/artifacts/import")
+            .bearer_auth("secret")
+            .json(&import_body("https://example.com/file", mime, path))
+            .send(&service)
+            .await;
+        assert_eq!(
+            super::effective_status(&accepted),
+            salvo::http::StatusCode::BAD_REQUEST
+        );
+        let body: Value = accepted.take_json().await.unwrap();
+        assert!(
+            body["error"].as_str().unwrap().contains("OpenAI file host"),
+            "matching Office MIME/path should pass import MIME policy: {body:?}"
+        );
+
+        let mut octet = TestClient::post("http://localhost/api/artifacts/import")
+            .bearer_auth("secret")
+            .json(&import_body(
+                "https://example.com/file",
+                "application/octet-stream",
+                path,
+            ))
+            .send(&service)
+            .await;
+        assert_eq!(
+            super::effective_status(&octet),
+            salvo::http::StatusCode::BAD_REQUEST
+        );
+        let body: Value = octet.take_json().await.unwrap();
+        assert!(body["error"].as_str().unwrap().contains("OpenAI file host"));
+
+        let mut mismatched = TestClient::post("http://localhost/api/artifacts/import")
+            .bearer_auth("secret")
+            .json(&import_body(
+                "https://files.oaiusercontent.com/file",
+                mime,
+                mismatched_path,
+            ))
+            .send(&service)
+            .await;
+        assert_eq!(
+            super::effective_status(&mismatched),
+            salvo::http::StatusCode::BAD_REQUEST
+        );
+        let body: Value = mismatched.take_json().await.unwrap();
+        assert!(body["error"].as_str().unwrap().contains("unsupported MIME"));
+    }
+}
+
+#[tokio::test]
 async fn import_http_rejects_http_download_link() {
     let service = import_test_service_with_local_runtime().await;
     let mut resp = TestClient::post("http://localhost/api/artifacts/import")

@@ -2718,6 +2718,106 @@ fn fake_zip_eocd_with_entries(entries: u16) -> Vec<u8> {
     bytes
 }
 
+fn append_fake_zip_entry(
+    bytes: &mut Vec<u8>,
+    central_directory: &mut Vec<u8>,
+    name: &str,
+    content: &[u8],
+    deflate: bool,
+) {
+    use flate2::{write::DeflateEncoder, Compression};
+    use std::io::Write as _;
+
+    let compression_method = if deflate { 8_u16 } else { 0_u16 };
+    let compressed = if deflate {
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(content).unwrap();
+        encoder.finish().unwrap()
+    } else {
+        content.to_vec()
+    };
+    let local_offset = u32::try_from(bytes.len()).unwrap();
+    let compressed_size = u32::try_from(compressed.len()).unwrap();
+    let uncompressed_size = u32::try_from(content.len()).unwrap();
+    let name_len = u16::try_from(name.len()).unwrap();
+
+    bytes.extend_from_slice(b"PK\x03\x04");
+    bytes.extend_from_slice(&20_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&compression_method.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&compressed_size.to_le_bytes());
+    bytes.extend_from_slice(&uncompressed_size.to_le_bytes());
+    bytes.extend_from_slice(&name_len.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(name.as_bytes());
+    bytes.extend_from_slice(&compressed);
+
+    central_directory.extend_from_slice(b"PK\x01\x02");
+    central_directory.extend_from_slice(&20_u16.to_le_bytes());
+    central_directory.extend_from_slice(&20_u16.to_le_bytes());
+    central_directory.extend_from_slice(&0_u16.to_le_bytes());
+    central_directory.extend_from_slice(&compression_method.to_le_bytes());
+    central_directory.extend_from_slice(&0_u16.to_le_bytes());
+    central_directory.extend_from_slice(&0_u16.to_le_bytes());
+    central_directory.extend_from_slice(&0_u32.to_le_bytes());
+    central_directory.extend_from_slice(&compressed_size.to_le_bytes());
+    central_directory.extend_from_slice(&uncompressed_size.to_le_bytes());
+    central_directory.extend_from_slice(&name_len.to_le_bytes());
+    central_directory.extend_from_slice(&0_u16.to_le_bytes());
+    central_directory.extend_from_slice(&0_u16.to_le_bytes());
+    central_directory.extend_from_slice(&0_u16.to_le_bytes());
+    central_directory.extend_from_slice(&0_u16.to_le_bytes());
+    central_directory.extend_from_slice(&0_u32.to_le_bytes());
+    central_directory.extend_from_slice(&local_offset.to_le_bytes());
+    central_directory.extend_from_slice(name.as_bytes());
+}
+
+fn fake_ooxml_zip(
+    main_part: &str,
+    main_content_type: &str,
+    malformed_content_types: bool,
+) -> Vec<u8> {
+    let content_types = if malformed_content_types {
+        b"<Types".to_vec()
+    } else {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/{main_part}" ContentType="{main_content_type}"/></Types>"#
+        )
+        .into_bytes()
+    };
+    let mut bytes = Vec::new();
+    let mut central_directory = Vec::new();
+    append_fake_zip_entry(
+        &mut bytes,
+        &mut central_directory,
+        "[Content_Types].xml",
+        &content_types,
+        true,
+    );
+    append_fake_zip_entry(
+        &mut bytes,
+        &mut central_directory,
+        main_part,
+        b"<root/>",
+        false,
+    );
+    let central_offset = u32::try_from(bytes.len()).unwrap();
+    let central_size = u32::try_from(central_directory.len()).unwrap();
+    bytes.extend_from_slice(&central_directory);
+    bytes.extend_from_slice(b"PK\x05\x06");
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&central_size.to_le_bytes());
+    bytes.extend_from_slice(&central_offset.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes
+}
+
 fn artifact_upload_temp_paths(
     root: &Path,
     artifact_path: &str,
@@ -2835,6 +2935,70 @@ fn file_save_project_artifact_writes_binary_and_blocks_overwrite() {
 }
 
 #[test]
+fn file_save_and_upload_begin_accept_office_mimes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let cases = [
+        (
+            "artifacts/imports/report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        (
+            "artifacts/imports/deck.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ),
+        (
+            "artifacts/imports/book.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    ];
+
+    for (path, mime) in cases {
+        let content_base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            b"office-artifact",
+        );
+        let saved = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_save_project_artifact",
+                path,
+                serde_json::json!({
+                    "path": path,
+                    "content_base64": content_base64,
+                    "mime_type": mime,
+                    "overwrite": false,
+                    "max_bytes": 1024,
+                }),
+            ),
+        ));
+        assert_eq!(saved["mime_type"], mime, "{path}");
+
+        let upload_path = path.replacen("artifacts/imports/", "artifacts/uploads/", 1);
+        let upload = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_artifact_upload_begin",
+                &upload_path,
+                serde_json::json!({
+                    "path": upload_path,
+                    "expected_bytes": 0,
+                    "expected_sha256": null,
+                    "mime_type": mime,
+                    "overwrite": false,
+                    "max_bytes": 1024,
+                }),
+            ),
+        ));
+        assert_eq!(upload["mime_type"], mime, "{path}");
+        let upload_id = upload["upload_id"].as_str().unwrap();
+        assert_upload_temp_files_exist(tmp.path(), &upload_path, upload_id);
+    }
+}
+
+#[test]
 fn file_read_project_artifact_metadata_counts_zip_without_extracting() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
@@ -2859,6 +3023,113 @@ fn file_read_project_artifact_metadata_counts_zip_without_extracting() {
     );
     assert!(!tmp.path().join("a.txt").exists());
     assert!(!tmp.path().join("b.txt").exists());
+}
+
+#[test]
+fn file_read_project_artifact_detects_ooxml_mime_from_package_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let cases = [
+        (
+            "sample.docx",
+            "word/document.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        (
+            "sample.pptx",
+            "ppt/presentation.xml",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ),
+        (
+            "sample.xlsx",
+            "xl/workbook.xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    ];
+
+    for (path, main_part, main_content_type, expected_mime) in cases {
+        let bytes = fake_ooxml_zip(main_part, main_content_type, false);
+        std::fs::write(tmp.path().join(path), &bytes).unwrap();
+        let metadata = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_read_project_artifact_metadata",
+                path,
+                serde_json::json!({"path": path, "max_bytes": 64 * 1024}),
+            ),
+        ));
+        assert_eq!(metadata["mime_type"], expected_mime, "{path}");
+        assert!(metadata.get("archive_entries_count").is_none(), "{path}");
+
+        let read = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_read_project_artifact",
+                path,
+                serde_json::json!({
+                    "path": path,
+                    "offset": 0,
+                    "length": 16,
+                    "max_file_bytes": 64 * 1024,
+                }),
+            ),
+        ));
+        assert_eq!(read["mime_type"], expected_mime, "{path}");
+        assert_eq!(read["file_bytes"], bytes.len(), "{path}");
+        assert_eq!(read["bytes_returned"], 16, "{path}");
+    }
+}
+
+#[test]
+fn file_read_project_artifact_does_not_trust_ooxml_extension_or_malformed_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+
+    std::fs::write(tmp.path().join("spoof.docx"), fake_zip_eocd_with_entries(0)).unwrap();
+    let spoof = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            "spoof.docx",
+            serde_json::json!({"path": "spoof.docx", "max_bytes": 1024}),
+        ),
+    ));
+    assert_eq!(spoof["mime_type"], "application/zip");
+
+    std::fs::write(tmp.path().join("not-a-zip.docx"), b"plain bytes").unwrap();
+    let non_zip = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            "not-a-zip.docx",
+            serde_json::json!({"path": "not-a-zip.docx", "max_bytes": 1024}),
+        ),
+    ));
+    assert!(non_zip["mime_type"].is_null());
+
+    let malformed = fake_ooxml_zip(
+        "word/document.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        true,
+    );
+    std::fs::write(tmp.path().join("broken.docx"), malformed).unwrap();
+    let broken = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            "broken.docx",
+            serde_json::json!({"path": "broken.docx", "max_bytes": 64 * 1024}),
+        ),
+    ));
+    assert_eq!(broken["mime_type"], "application/zip");
 }
 
 #[test]

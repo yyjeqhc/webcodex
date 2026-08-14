@@ -4893,6 +4893,7 @@ version = "0.3.7"
 dependencies = [
  "base64",
  "chrono",
+ "flate2",
  "futures-util",
  "image",
  "libc",
@@ -4922,6 +4923,7 @@ dependencies = [
  "webpki-roots 0.26.11",
  "windows-sys 0.61.2",
  "xcap",
+ "xml",
 ]
 
 [[package]]

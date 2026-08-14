@@ -1,5 +1,6 @@
 use super::{parse_json_body, render_result, require_runtime};
 use crate::action_audit::ActionAudit;
+use crate::artifact_policy::{has_safe_octet_stream_artifact_extension, ooxml_extension_for_mime};
 use crate::json_error;
 use crate::tool_runtime::ToolCall;
 use base64::{engine::general_purpose, Engine as _};
@@ -67,6 +68,10 @@ fn join_import_path(output_dir: Option<&str>, leaf: &str) -> Result<String, Stri
 }
 
 fn mime_allowed_for_import(mime: &str, path: &str) -> bool {
+    let lower_path = path.to_ascii_lowercase();
+    if let Some(required_extension) = ooxml_extension_for_mime(mime) {
+        return lower_path.ends_with(required_extension);
+    }
     matches!(
         mime,
         "image/png"
@@ -77,12 +82,7 @@ fn mime_allowed_for_import(mime: &str, path: &str) -> bool {
             | "text/plain"
             | "text/csv"
             | "application/json"
-    ) || (mime == "application/octet-stream"
-        && [
-            ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".zip", ".txt", ".csv", ".json",
-        ]
-        .iter()
-        .any(|suffix| path.to_lowercase().ends_with(suffix)))
+    ) || (mime == "application/octet-stream" && has_safe_octet_stream_artifact_extension(path))
 }
 
 fn validate_openai_download_url(download_link: &str) -> Result<reqwest::Url, String> {

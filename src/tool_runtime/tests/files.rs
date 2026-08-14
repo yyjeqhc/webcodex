@@ -3864,6 +3864,143 @@ async fn read_project_artifact_rejects_invalid_length_before_resolving_project()
 }
 
 #[tokio::test]
+async fn office_artifact_mime_policy_accepts_matching_save_and_upload_paths() {
+    let runtime = test_runtime();
+    let missing_project = "agent:missing:missing".to_string();
+    let cases = [
+        (
+            "docs/report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "docs/report.pptx",
+        ),
+        (
+            "slides/deck.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "slides/deck.xlsx",
+        ),
+        (
+            "data/book.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "data/book.docx",
+        ),
+    ];
+
+    for (path, mime, mismatched_path) in cases {
+        let save = runtime
+            .save_project_artifact(
+                missing_project.clone(),
+                path.to_string(),
+                "YQ==".to_string(),
+                Some(mime.to_string()),
+                Some(false),
+            )
+            .await;
+        assert!(!save.success, "{path}");
+        assert!(
+            !save
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unsupported mime_type")
+                && !save
+                    .error
+                    .as_deref()
+                    .unwrap()
+                    .contains("requires a matching"),
+            "matching Office MIME should pass policy before project resolution: {:?}",
+            save.error
+        );
+
+        let upload = runtime
+            .artifact_upload_begin(
+                missing_project.clone(),
+                path.to_string(),
+                Some(1),
+                None,
+                Some(mime.to_string()),
+                Some(false),
+            )
+            .await;
+        assert!(!upload.success, "{path}");
+        assert!(
+            !upload
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unsupported mime_type")
+                && !upload
+                    .error
+                    .as_deref()
+                    .unwrap()
+                    .contains("requires a matching"),
+            "matching Office upload MIME should pass policy before project resolution: {:?}",
+            upload.error
+        );
+
+        let octet = runtime
+            .artifact_upload_begin(
+                missing_project.clone(),
+                path.to_string(),
+                Some(1),
+                None,
+                Some("application/octet-stream".to_string()),
+                Some(false),
+            )
+            .await;
+        assert!(!octet.success, "{path}");
+        assert!(
+            !octet
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("only allowed for safe artifact extensions"),
+            "Office extensions should be safe octet-stream artifact paths: {:?}",
+            octet.error
+        );
+
+        let mismatched = runtime
+            .save_project_artifact(
+                missing_project.clone(),
+                mismatched_path.to_string(),
+                "YQ==".to_string(),
+                Some(mime.to_string()),
+                Some(false),
+            )
+            .await;
+        assert!(!mismatched.success);
+        assert!(
+            mismatched
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("requires a matching"),
+            "{:?}",
+            mismatched.error
+        );
+    }
+
+    let unsupported = runtime
+        .save_project_artifact(
+            missing_project,
+            "docs/report.docx".to_string(),
+            "YQ==".to_string(),
+            Some("application/msword".to_string()),
+            Some(false),
+        )
+        .await;
+    assert!(!unsupported.success);
+    assert!(
+        unsupported
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("unsupported mime_type"),
+        "{:?}",
+        unsupported.error
+    );
+}
+
+#[tokio::test]
 async fn artifact_upload_begin_rejects_invalid_inputs_before_resolving_project() {
     let runtime = test_runtime();
     let missing_project = "agent:missing:missing".to_string();

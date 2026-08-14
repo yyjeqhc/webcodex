@@ -1,3 +1,9 @@
+pub const DOCX_MIME: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+pub const PPTX_MIME: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+pub const XLSX_MIME: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
 pub const SAFE_OCTET_STREAM_ARTIFACT_EXTENSIONS: &[&str] = &[
     ".artifact",
     ".dat",
@@ -10,7 +16,19 @@ pub const SAFE_OCTET_STREAM_ARTIFACT_EXTENSIONS: &[&str] = &[
     ".webp",
     ".pdf",
     ".zip",
+    ".docx",
+    ".pptx",
+    ".xlsx",
 ];
+
+pub fn ooxml_extension_for_mime(mime: &str) -> Option<&'static str> {
+    match mime {
+        DOCX_MIME => Some(".docx"),
+        PPTX_MIME => Some(".pptx"),
+        XLSX_MIME => Some(".xlsx"),
+        _ => None,
+    }
+}
 
 /// Maximum decoded image size returned as one native MCP image content block.
 ///

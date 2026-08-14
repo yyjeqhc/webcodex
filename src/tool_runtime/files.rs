@@ -23,7 +23,7 @@ use super::tool_result::ToolResult;
 use super::{SearchResultMode, ToolRuntime};
 use crate::artifact_policy::{
     has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error,
-    MAX_MCP_IMAGE_BYTES,
+    ooxml_extension_for_mime, MAX_MCP_IMAGE_BYTES,
 };
 use crate::project_overview::{
     effective_project_overview_limit, effective_project_overview_max_depth,
@@ -1976,6 +1976,9 @@ fn validate_artifact_mime(mime_type: Option<&str>) -> Result<Option<String>, Str
     let Some(mime) = mime_type.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
+    if ooxml_extension_for_mime(mime).is_some() {
+        return Ok(Some(mime.to_string()));
+    }
     match mime {
         "image/png"
         | "image/jpeg"
@@ -1986,7 +1989,7 @@ fn validate_artifact_mime(mime_type: Option<&str>) -> Result<Option<String>, Str
         | "text/csv"
         | "application/json" => Ok(Some(mime.to_string())),
         "application/octet-stream" => Ok(Some(mime.to_string())),
-        _ => Err(format!("unsupported mime_type '{}'; allowed first-pass artifact MIME types are image/png, image/jpeg, image/webp, application/pdf, application/zip, text/plain, text/csv, application/json", mime)),
+        _ => Err(format!("unsupported mime_type '{}'; allowed artifact MIME types are image/png, image/jpeg, image/webp, application/pdf, application/zip, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.presentationml.presentation, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/plain, text/csv, application/json", mime)),
     }
 }
 
@@ -1999,6 +2002,15 @@ fn validate_artifact_mime_for_path(
         && !has_safe_octet_stream_artifact_extension(path)
     {
         return Err(octet_stream_safe_extension_error());
+    }
+    if let Some(mime) = mime_type.as_deref() {
+        if let Some(required_extension) = ooxml_extension_for_mime(mime) {
+            if !path.to_ascii_lowercase().ends_with(required_extension) {
+                return Err(format!(
+                    "OOXML MIME type '{mime}' requires a matching {required_extension} artifact path"
+                ));
+            }
+        }
     }
     Ok(mime_type)
 }

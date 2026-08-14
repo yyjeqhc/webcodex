@@ -1071,7 +1071,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["openaiFileIdRefs", "project"],
-            "description": "Import up to 10 GPT Actions conversation files into a project. Supports image/png, image/jpeg, image/webp, application/pdf, application/zip, text/plain, text/csv, application/json, and restricted application/octet-stream.",
+            "description": "Import up to 10 GPT Actions conversation files into a project. Supports image/png, image/jpeg, image/webp, application/pdf, application/zip, DOCX/PPTX/XLSX OOXML MIME types, text/plain, text/csv, application/json, and restricted application/octet-stream.",
             "properties": {
                 "openaiFileIdRefs": {"type": "array", "maxItems": 10, "items": {"$ref": "#/components/schemas/OpenAiFileIdRef"}},
                 "project": {"type": "string", "description": "Agent-registered runtime project id from listProjects."},

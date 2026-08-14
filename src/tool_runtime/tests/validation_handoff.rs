@@ -2394,9 +2394,31 @@ mod tests {
         .await;
     assert!(observed.success, "{:?}", observed.error);
     assert_eq!(observed.output["items"][0]["success"], true);
+    assert_eq!(observed.output["wake_reason"], "immediate");
+    let baseline_observation = crate::job_observation::JobObservationToken::parse_bound(
+        &observation_token,
+        crate::job_observation::JobObservationExecutor::Local,
+        &hidden_job_id,
+    )
+    .unwrap();
+    let observed_output = &observed.output["items"][0]["output"];
+    let current_observation_token = observed_output["observation_token"]
+        .as_str()
+        .expect("local validation observed token");
+    let current_observation = crate::job_observation::JobObservationToken::parse_bound(
+        current_observation_token,
+        crate::job_observation::JobObservationExecutor::Local,
+        &hidden_job_id,
+    )
+    .unwrap();
+    assert_eq!(current_observation.epoch, baseline_observation.epoch);
+    assert!(
+        current_observation.revision >= baseline_observation.revision,
+        "local Job observation revision must not move backwards"
+    );
     assert_eq!(
-        observed.output["items"][0]["output"]["observation_token"],
-        observation_token
+        observed_output["changed"].as_bool(),
+        Some(current_observation.revision != baseline_observation.revision)
     );
 
     let status = wait_for_local_job_terminal(&runtime, &hidden_job_id).await;

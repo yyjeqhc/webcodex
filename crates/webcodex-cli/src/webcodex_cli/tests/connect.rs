@@ -7,6 +7,13 @@ fn parsed(args: &[&str]) -> ConnectOptions {
     }
 }
 
+fn parsed_disconnect(args: &[&str]) -> DisconnectOptions {
+    match cli_action(args.iter().copied()) {
+        CliAction::Disconnect(options) => options,
+        other => panic!("expected disconnect action, got {other:?}"),
+    }
+}
+
 #[test]
 fn connect_parses_explicit_key_project_and_overrides() {
     let options = parsed(&[
@@ -77,6 +84,47 @@ fn connect_help_is_a_top_level_quick_start() {
     assert!(top.contains("connect"));
     assert!(top.contains("hosted Server"));
     assert!(!top.contains("__hosted-log-writer"));
+}
+
+#[test]
+fn disconnect_parses_defaults_profile_and_help() {
+    let defaults = parsed_disconnect(&["disconnect"]);
+    assert_eq!(defaults.project, PathBuf::from("."));
+    assert!(defaults.profile.is_none());
+
+    let explicit = parsed_disconnect(&[
+        "disconnect",
+        "--project",
+        "/tmp/project",
+        "--profile",
+        "workstation",
+    ]);
+    assert_eq!(explicit.project, PathBuf::from("/tmp/project"));
+    assert_eq!(explicit.profile.as_deref(), Some("workstation"));
+
+    let help = cli_exit(["disconnect", "--help"]).unwrap();
+    assert!(help.contains("Usage: webcodex disconnect [OPTIONS]"));
+    assert!(help.contains("never removed or modified"));
+    let top = cli_exit(["--help"]).unwrap();
+    assert!(top.contains("disconnect"));
+}
+
+#[test]
+fn disconnect_rejects_unsafe_profile_and_positional_guessing() {
+    for (args, needle) in [
+        (
+            vec!["disconnect", "--profile", "../escape"],
+            "--profile must be",
+        ),
+        (vec!["disconnect", "repo"], "unexpected disconnect argument"),
+    ] {
+        match cli_action(args) {
+            CliAction::Exit {
+                code: 2, stderr, ..
+            } => assert!(stderr.contains(needle), "{stderr}"),
+            other => panic!("expected parse error, got {other:?}"),
+        }
+    }
 }
 
 #[tokio::test]

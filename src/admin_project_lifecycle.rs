@@ -195,95 +195,177 @@ impl AdminProjectLifecycleService {
         request: ProjectMutationRequest,
     ) -> ServiceResponse {
         let target = request.project.clone();
-        self.idempotent(auth, action, &target, &request, &request.idempotency_key, || async {
-            if !request.confirm { return Err(api_error(400, "invalid_request")); }
-            validate_revision(&request.expected_revision)?;
-            let (client_id, project_id) = parse_runtime_project(&request.project)?;
-            let client = self.runtime.shell_clients.get_client_view_for_auth(&client_id, Some(auth)).await
-                .ok_or_else(|| api_error(503, "agent_unavailable"))?;
-            if !client.connected || client.status != "online" {
-                return Err(api_error(503, "agent_unavailable"));
+        self.idempotent(
+            auth,
+            action,
+            &target,
+            &request,
+            &request.idempotency_key,
+            || async {
+                if !request.confirm {
+                    return Err(api_error(400, "invalid_request"));
+                }
+                self.mutate_authorized_core(
+                    auth,
+                    action,
+                    &request.project,
+                    &request.expected_revision,
+                    "admin_project_lifecycle",
+                )
+                .await
+            },
+        )
+        .await
+    }
+
+    /// Narrow project-authorized unregister entry used by ordinary runtime
+    /// callers such as the hosted `webcodex disconnect` flow. Authorization is
+    /// still resolved through the caller-visible Runner/project inventory; this
+    /// does not grant access to any other admin lifecycle operation.
+    pub(crate) async fn unregister_authorized(
+        &self,
+        auth: &AuthContext,
+        project: &str,
+        expected_revision: &str,
+    ) -> ServiceResponse {
+        match self
+            .mutate_authorized_core(
+                auth,
+                "unregister",
+                project,
+                expected_revision,
+                "project_unregister",
+            )
+            .await
+        {
+            Ok(response) | Err(response) => response,
+        }
+    }
+
+    async fn mutate_authorized_core(
+        &self,
+        auth: &AuthContext,
+        action: &'static str,
+        target: &str,
+        expected_revision: &str,
+        requester: &'static str,
+    ) -> Result<ServiceResponse, ServiceResponse> {
+        validate_revision(expected_revision)?;
+        let (client_id, project_id) = parse_runtime_project(target)?;
+        let client = self
+            .runtime
+            .shell_clients
+            .get_client_view_for_auth(&client_id, Some(auth))
+            .await
+            .ok_or_else(|| api_error(503, "agent_unavailable"))?;
+        if !client.connected || client.status != "online" {
+            return Err(api_error(503, "agent_unavailable"));
+        }
+        if !client.capabilities.project_lifecycle {
+            return Err(api_error(409, "unsupported_runner_version"));
+        }
+        let project = client.projects.iter().find(|p| p.id == project_id);
+        if action != "unregister" && project.is_none() {
+            return Err(api_error(404, "project_not_found"));
+        }
+        let (active_jobs, _unregister_fence) = if action == "unregister" {
+            let active = self
+                .runtime
+                .shell_clients
+                .begin_project_unregister(Some(auth), target)
+                .await
+                .map_err(|_| api_error(500, "operation_failed"))?;
+            if active > 0 {
+                return Err(ServiceResponse {
+                    status: 409,
+                    body: json!({"error":{"code":"active_jobs_conflict"},"active_jobs":active}),
+                });
             }
-            if !client.capabilities.project_lifecycle {
-                return Err(api_error(409, "unsupported_runner_version"));
-            }
-            let project = client.projects.iter().find(|p| p.id == project_id);
-            if action != "unregister" && project.is_none() {
-                return Err(api_error(404, "project_not_found"));
-            }
-            let (active_jobs, _unregister_fence) = if action == "unregister" {
-                let active = self
-                    .runtime
+            (
+                active,
+                Some(ProjectUnregisterFence {
+                    registry: self.runtime.shell_clients.clone(),
+                    project: target.to_string(),
+                }),
+            )
+        } else {
+            (
+                self.runtime
                     .shell_clients
-                    .begin_project_unregister(Some(auth), &request.project)
-                    .await
-                    .map_err(|_| api_error(500, "operation_failed"))?;
-                if active > 0 {
-                    return Err(ServiceResponse { status: 409, body: json!({"error":{"code":"active_jobs_conflict"},"active_jobs":active}) });
-                }
-                (
-                    active,
-                    Some(ProjectUnregisterFence {
-                        registry: self.runtime.shell_clients.clone(),
-                        project: request.project.clone(),
-                    }),
-                )
-            } else {
-                (
-                    self.runtime
-                        .shell_clients
-                        .count_active_jobs_for_project(Some(auth), &request.project)
-                        .await,
-                    None,
-                )
-            };
-            let payload = serde_json::to_string(&json!({
-                "project_id": project_id,
-                "expected_revision": request.expected_revision,
-            })).map_err(|_| api_error(500, "operation_failed"))?;
-            let kind = format!("project_lifecycle_{action}");
-            let (request_id, receiver) = self.runtime.shell_clients.enqueue_project_op(
-                client_id.clone(), &kind, payload, "admin_project_lifecycle".to_string(),
-            ).await.map_err(|_| api_error(503, "agent_unavailable"))?;
-            let response = match tokio::time::timeout(Duration::from_secs(WAIT_SECS), receiver).await {
-                Ok(Ok(value)) => value,
-                Ok(Err(_)) => {
-                    self.runtime.shell_clients.cancel_request(&request_id).await;
-                    return Err(api_error(503, "operation_indeterminate"));
-                }
-                Err(_) => {
-                    self.runtime.shell_clients.cancel_request(&request_id).await;
-                    return Err(api_error(503, "operation_indeterminate"));
-                }
-            };
-            if let Some(error) = response.error.as_deref() {
-                return Err(map_agent_error(error));
+                    .count_active_jobs_for_project(Some(auth), target)
+                    .await,
+                None,
+            )
+        };
+        let payload = serde_json::to_string(&json!({
+            "project_id": project_id,
+            "expected_revision": expected_revision,
+        }))
+        .map_err(|_| api_error(500, "operation_failed"))?;
+        let kind = format!("project_lifecycle_{action}");
+        let (request_id, receiver) = self
+            .runtime
+            .shell_clients
+            .enqueue_project_op(client_id.clone(), &kind, payload, requester.to_string())
+            .await
+            .map_err(|_| api_error(503, "agent_unavailable"))?;
+        let response = match tokio::time::timeout(Duration::from_secs(WAIT_SECS), receiver).await {
+            Ok(Ok(value)) => value,
+            Ok(Err(_)) | Err(_) => {
+                self.runtime.shell_clients.cancel_request(&request_id).await;
+                return Err(api_error(503, "operation_indeterminate"));
             }
-            let output: Value = serde_json::from_str(response.stdout.as_deref().unwrap_or(""))
-                .map_err(|_| api_error(502, "operation_failed"))?;
-            if let Some(code) = output.get("error_code").and_then(Value::as_str) {
-                return Err(map_agent_error(code));
-            }
-            if response.exit_code != Some(0) {
-                return Err(api_error(500, "operation_failed"));
-            }
-            let outcome = output.get("outcome").and_then(Value::as_str).ok_or_else(|| api_error(502, "operation_failed"))?;
-            let changed = output.get("changed").and_then(Value::as_bool).unwrap_or(false);
-            let revision = output.get("revision").cloned().unwrap_or(Value::Null);
-            if action == "unregister" && matches!(outcome, "unregistered" | "already_unregistered") {
-                let _ = self.runtime.shell_clients.remove_client_project(&client_id, &project_id).await;
-            } else if let Some(summary) = lifecycle_summary(&output, &project_id) {
-                let _ = self.runtime.shell_clients.upsert_client_project(&client_id, summary).await;
-            }
-            let warnings = if active_jobs > 0 {
-                json!([{"code":"active_jobs_present","active_jobs":active_jobs}])
-            } else { json!([]) };
-            Ok(ServiceResponse { status: 200, body: json!({
-                "operation": action, "project": target, "outcome": outcome,
-                "changed": changed, "revision": revision, "active_jobs": active_jobs,
+        };
+        if let Some(error) = response.error.as_deref() {
+            return Err(map_agent_error(error));
+        }
+        let output: Value = serde_json::from_str(response.stdout.as_deref().unwrap_or(""))
+            .map_err(|_| api_error(502, "operation_failed"))?;
+        if let Some(code) = output.get("error_code").and_then(Value::as_str) {
+            return Err(map_agent_error(code));
+        }
+        if response.exit_code != Some(0) {
+            return Err(api_error(500, "operation_failed"));
+        }
+        let outcome = output
+            .get("outcome")
+            .and_then(Value::as_str)
+            .ok_or_else(|| api_error(502, "operation_failed"))?;
+        let changed = output
+            .get("changed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let revision = output.get("revision").cloned().unwrap_or(Value::Null);
+        if action == "unregister" && matches!(outcome, "unregistered" | "already_unregistered") {
+            let _ = self
+                .runtime
+                .shell_clients
+                .remove_client_project(&client_id, &project_id)
+                .await;
+        } else if let Some(summary) = lifecycle_summary(&output, &project_id) {
+            let _ = self
+                .runtime
+                .shell_clients
+                .upsert_client_project(&client_id, summary)
+                .await;
+        }
+        let warnings = if active_jobs > 0 {
+            json!([{"code":"active_jobs_present","active_jobs":active_jobs}])
+        } else {
+            json!([])
+        };
+        Ok(ServiceResponse {
+            status: 200,
+            body: json!({
+                "operation": action,
+                "project": target,
+                "outcome": outcome,
+                "changed": changed,
+                "revision": revision,
+                "active_jobs": active_jobs,
                 "warnings": warnings
-            }) })
-        }).await
+            }),
+        })
     }
 
     async fn idempotent<T, F, Fut>(

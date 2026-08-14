@@ -9,6 +9,7 @@ Project:\n\
   share                         Temporarily share the local project over HTTPS\n\n\
 Account (quick start):\n\
   connect                       Connect a local project to a hosted Server\n\
+  disconnect                    Disconnect a local project from its hosted Server\n\
   login                         Log this device into a server (one-time pairing code)\n\
   logout                        Remove this device's credentials\n\
   auth status                   Show login status\n\n\
@@ -55,6 +56,17 @@ When neither --key nor --key-file is supplied, a strong key is generated and\n\
 printed once. Hosted shared keys must not start with wc_; managed credentials\n\
 use `webcodex login` instead. Proxy flags apply only to this command's Server\n\
 HTTP probes; Runner proxy configuration remains independent.\n"
+}
+
+pub(crate) fn disconnect_usage() -> &'static str {
+    "Usage: webcodex disconnect [OPTIONS]\n\n\
+Disconnect exactly one local repository registered by hosted `webcodex connect`.\n\
+The source repository and .git are never removed or modified. A live Runner is\n\
+unregistered through the Server first; an offline hosted Runner is updated locally.\n\n\
+Options:\n\
+  --project PATH             Local project directory [default: .]\n\
+  --profile NAME             Select an exact hosted profile when more than one matches\n\
+  -h, --help                 Print help and exit\n"
 }
 
 pub(crate) fn pairing_usage() -> &'static str {

@@ -34,6 +34,13 @@ These commands work on the current Git project.
 | `webcodex status` | Concise project coding readiness | Short summary; `doctor` is the full check. |
 | `webcodex share` | Temporarily share the local project over HTTPS | Starts a Cloudflare Quick Tunnel and prints a temporary URL + credential. |
 | `webcodex connect <server>` | Connect the current project to an existing Server | Creates a profile, starts a detached Runner, prints the MCP URL and key. |
+| `webcodex disconnect [--project PATH] [--profile NAME]` | Remove one hosted project registration | Exact inverse of `connect` for that repository; never removes the repository or `.git`. |
+
+`disconnect` matches the canonical repository path, not a basename or project id. If the same
+repository is registered in more than one hosted profile, specify `--profile`. With a live
+managed Runner it performs a fenced structured unregister before removing the local registration;
+with a stopped Runner it removes only the exact local project registration. Other projects,
+profile credentials, and `agent.toml` are preserved.
 
 ### Enrollment
 

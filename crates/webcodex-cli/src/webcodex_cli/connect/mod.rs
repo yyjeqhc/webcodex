@@ -1,8 +1,10 @@
+mod disconnect;
 mod output;
 mod probe;
 mod process;
 mod profile;
 
+pub(crate) use disconnect::{run_disconnect, DisconnectOptions};
 pub(crate) use process::{
     local_runner_profile_marker, local_runner_state_summary, run_hosted_log_writer,
     run_local_runner_logs, run_local_runner_service, LocalRunnerServiceAction,

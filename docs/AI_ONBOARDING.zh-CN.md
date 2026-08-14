@@ -60,6 +60,12 @@ key 存放在 `~/.config/webcodex/clients/<profile>/agent.toml`（或
 detached Runner 能存活到终端关闭，但不能跨越机器重启。重启后，重新运行同一条
 `connect` 或使用 `webcodex agent start --profile <profile>`。
 
+逆操作是 `webcodex disconnect [--project PATH] [--profile NAME]`。当用户只想注销一个
+hosted 仓库时使用它；它不会删除或修改仓库、`.git`、profile credential、`agent.toml`
+或同 profile 下的其他项目。它严格按 canonical 仓库路径匹配；若多个 hosted profile
+都匹配，应让命令 fail closed 并请用户用 `--profile` 选择，而不是猜测。Runner 在线时，
+必须先通过 structured Server/Runner lifecycle 完成注销，再删除本地 registration。
+
 ## Managed flow
 
 用户需要独立身份、令牌撤销、设备级授权、身份审计或组织管理时使用：

@@ -98,6 +98,16 @@ For a stable, long-lived setup against an existing Server, use
 `webcodex connect` (hosted shared-key) or `webcodex login` (managed). See
 [Deployment](DEPLOYMENT.md).
 
+To remove only this repository from a hosted `connect` profile later, run from the repository:
+
+```bash
+webcodex disconnect
+```
+
+This unregisters the exact canonical repository and leaves the source tree, `.git`, profile
+credential, and any other registered projects intact. If more than one hosted profile registers
+the same repository, rerun with `--profile NAME`.
+
 ## 5. Run a coding task
 
 Ask the client for a small, reversible change. The canonical calls are:

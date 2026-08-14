@@ -29,7 +29,7 @@ pub use project_files::{
     projects_git_restore_paths, projects_git_status, projects_list_files, projects_read_file,
     projects_search_text, projects_validate_patch,
 };
-pub use projects::{projects_create, projects_list, projects_register};
+pub use projects::{projects_create, projects_list, projects_register, projects_unregister};
 
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
     depot.obtain::<Arc<ToolRuntime>>().ok().cloned()

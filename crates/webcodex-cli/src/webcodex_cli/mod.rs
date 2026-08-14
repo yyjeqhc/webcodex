@@ -51,9 +51,9 @@ pub(crate) fn shell_command(args: &[String]) -> String {
 pub(crate) use agent_service::render_agent_systemd_unit;
 pub(crate) use agent_service::{run_agent_install_service, run_agent_service, run_agent_status};
 pub(crate) use connect::{
-    local_runner_profile_marker, local_runner_state_summary, run_connect, run_hosted_log_writer,
-    run_local_runner_logs, run_local_runner_service, write_connect_result, ConnectOptions,
-    LocalRunnerServiceAction,
+    local_runner_profile_marker, local_runner_state_summary, run_connect, run_disconnect,
+    run_hosted_log_writer, run_local_runner_logs, run_local_runner_service, write_connect_result,
+    ConnectOptions, DisconnectOptions, LocalRunnerServiceAction,
 };
 pub(crate) use env::is_effective_root;
 #[cfg(test)]
@@ -114,8 +114,8 @@ pub(crate) use tokens::{
 };
 pub(crate) use usage::{
     agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
-    client_enroll_usage, client_usage, connect_usage, login_usage, logout_usage, ops_agents_usage,
-    ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
+    client_enroll_usage, client_usage, connect_usage, disconnect_usage, login_usage, logout_usage,
+    ops_agents_usage, ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
     pairing_create_usage, pairing_usage, server_init_usage, server_install_service_usage,
     server_status_usage, server_usage, status_usage, usage,
 };

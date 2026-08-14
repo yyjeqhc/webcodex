@@ -72,6 +72,13 @@ The detached Runner survives terminal closure but not a machine reboot. After
 reboot, rerun the same `connect` or use `webcodex agent start --profile
 <profile>`.
 
+The inverse operation is `webcodex disconnect [--project PATH] [--profile NAME]`.
+Use it when the user wants to unregister one hosted repository without deleting or modifying the
+repository, `.git`, the profile credential, `agent.toml`, or sibling projects. It resolves the
+canonical repository path exactly; if several hosted profiles match, let the command fail closed
+and ask the user to choose one with `--profile` rather than guessing. A live Runner is unregistered
+through the structured Server/Runner lifecycle before the local registration is removed.
+
 ## Managed flow
 
 Use the managed flow when the user needs a separate user identity, token

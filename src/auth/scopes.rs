@@ -224,6 +224,7 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         }
         ("POST", "/api/projects/register")
         | ("POST", "/api/projects/create")
+        | ("POST", "/api/projects/unregister")
         | ("POST", "/api/projects/apply_patch")
         | ("POST", "/api/projects/apply_patch_checked")
         | ("POST", "/api/projects/delete_files")

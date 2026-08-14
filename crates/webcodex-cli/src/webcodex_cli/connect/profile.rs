@@ -41,15 +41,15 @@ pub(super) struct ResolvedKey {
 
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct ExistingAgentConfig {
-    server_url: String,
-    token: String,
+    pub(super) server_url: String,
+    pub(super) token: String,
     pub(super) client_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(super) struct ProjectFile {
     pub(super) id: String,
-    path: String,
+    pub(super) path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shell_profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -250,7 +250,9 @@ pub(super) fn read_existing_agent_config(
         .map_err(|error| format!("failed to parse agent config {}: {error}", path.display()))
 }
 
-fn read_project_files(projects_dir: &Path) -> Result<Vec<(PathBuf, ProjectFile)>, String> {
+pub(super) fn read_project_files(
+    projects_dir: &Path,
+) -> Result<Vec<(PathBuf, ProjectFile)>, String> {
     let entries = match std::fs::read_dir(projects_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -285,7 +287,7 @@ fn read_project_files(projects_dir: &Path) -> Result<Vec<(PathBuf, ProjectFile)>
     Ok(projects)
 }
 
-fn stored_project_matches(project: &ProjectFile, canonical_project: &Path) -> bool {
+pub(super) fn stored_project_matches(project: &ProjectFile, canonical_project: &Path) -> bool {
     Path::new(&project.path).canonicalize().is_ok_and(|path| {
         // Windows `canonicalize` can return `\\?\`-prefixed extended paths and
         // the filesystem is case-insensitive, so identity uses the shared

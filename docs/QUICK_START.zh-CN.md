@@ -89,6 +89,16 @@ URL 与 Bearer token；命令退出后两者都失效。
 如需接入已有 Server 的稳定长期环境，用 `webcodex connect`（hosted shared-key）
 或 `webcodex login`（managed）。见[部署指南](DEPLOYMENT.zh-CN.md)。
 
+以后如果只想从 hosted `connect` profile 中注销当前仓库，可在仓库中运行：
+
+```bash
+webcodex disconnect
+```
+
+它只注销 canonical 路径精确匹配的仓库，保留 source tree、`.git`、profile credential
+以及其他已注册项目。如果同一仓库存在于多个 hosted profile 中，请显式传
+`--profile NAME`。
+
 ## 5. 运行 coding 任务
 
 让客户端做一个小的、可回退的改动。典型调用序列：

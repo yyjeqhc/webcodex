@@ -49,6 +49,13 @@ struct CreateProjectRequest {
     pub overwrite: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnregisterProjectRequest {
+    project: String,
+    expected_revision: String,
+}
+
 #[handler]
 pub async fn projects_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/list", "listProjects");
@@ -130,4 +137,58 @@ pub async fn projects_create(req: &mut Request, depot: &mut Depot, res: &mut Res
         )
         .await;
     render_result(res, &audit, "create_project", None, result);
+}
+
+/// `POST /api/projects/unregister` — narrow ordinary authenticated project
+/// lifecycle endpoint. It exposes only exact unregister and reuses the same
+/// Runner capability, active-job fencing, and Server inventory update as the
+/// admin lifecycle surface.
+#[handler]
+pub async fn projects_unregister(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/projects/unregister", "unregisterProject");
+    let Some(runtime) = require_runtime(depot, res) else {
+        return;
+    };
+    let Some(body) = parse_json_body::<UnregisterProjectRequest>(req, res).await else {
+        return;
+    };
+    let Some(auth) = depot.obtain::<crate::auth::AuthContext>().ok().cloned() else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(crate::json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+        return;
+    };
+    if auth.is_agent_token()
+        || auth.is_open_anonymous()
+        || !auth.has_scope(crate::auth::scopes::SCOPE_PROJECT_WRITE)
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(crate::json_error(StatusCode::FORBIDDEN, "Forbidden"));
+        return;
+    }
+    let Some(db) = crate::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(crate::json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database not configured",
+        ));
+        return;
+    };
+    let service = crate::admin_project_lifecycle::AdminProjectLifecycleService::new(runtime, db);
+    let response = service
+        .unregister_authorized(&auth, &body.project, &body.expected_revision)
+        .await;
+    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let success = status.is_success();
+    let error = response
+        .body
+        .pointer("/error/code")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    audit.record(
+        crate::action_audit::ActionAuditRecord::new("unregister_project", success, status)
+            .error(error)
+            .ids(serde_json::json!({"project": body.project})),
+    );
+    res.status_code(status);
+    res.render(Json(response.body));
 }

@@ -292,6 +292,7 @@ only for local/trusted-network demos."
         .push(Router::with_path("projects/list").post(runtime_http::projects_list))
         .push(Router::with_path("projects/register").post(runtime_http::projects_register))
         .push(Router::with_path("projects/create").post(runtime_http::projects_create))
+        .push(Router::with_path("projects/unregister").post(runtime_http::projects_unregister))
         .push(Router::with_path("projects/read_file").post(runtime_http::projects_read_file))
         .push(Router::with_path("projects/git_status").post(runtime_http::projects_git_status))
         .push(Router::with_path("projects/git_diff").post(runtime_http::projects_git_diff))

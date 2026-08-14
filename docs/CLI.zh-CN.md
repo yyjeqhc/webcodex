@@ -30,6 +30,12 @@ Server API 完成。
 | `webcodex status` | 简洁的项目 coding 就绪状态 | `doctor` 提供完整检查。 |
 | `webcodex share` | 临时把本地项目通过 HTTPS 分享出去 | 启动 Cloudflare Quick Tunnel，输出临时 URL 与 credential。 |
 | `webcodex connect <server>` | 把当前项目接入已有的 Server | 创建 profile、启动 detached Runner、输出 MCP URL 与 key。 |
+| `webcodex disconnect [--project PATH] [--profile NAME]` | 移除一个 hosted 项目注册 | 是该仓库 `connect` 的精确逆操作；绝不删除仓库或 `.git`。 |
+
+`disconnect` 按 canonical 仓库路径匹配，不根据 basename 或 project id 猜测。如果同一仓库
+注册在多个 hosted profile 中，必须显式指定 `--profile`。managed Runner 在线时，它先执行
+带 fencing 的 structured unregister，再删除本地 registration；Runner 已停止时，只删除精确
+匹配的本地项目 registration。其他项目、profile credential 和 `agent.toml` 都会保留。
 
 ### 设备接入
 

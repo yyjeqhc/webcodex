@@ -41,18 +41,18 @@ use webcodex_cli::{
     client_profile_state_dir, client_profile_user_token_file,
     client_profile_user_token_file_for_scope, client_usage, connect_usage, current_user_home,
     default_client_output_dir_for_profile, default_device_name, default_server_paths,
-    discover_internal_binary, is_effective_root, login_usage, logout_usage, ops_agents_usage,
-    ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
+    disconnect_usage, discover_internal_binary, is_effective_root, login_usage, logout_usage,
+    ops_agents_usage, ops_projects_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
     pairing_create_usage, pairing_usage, render_token_generate, run_agent_install_service,
     run_agent_service, run_agent_status, run_agent_token_create_local, run_client_enroll,
-    run_connect, run_hosted_log_writer, run_internal_binary, run_login, run_logout,
+    run_connect, run_disconnect, run_hosted_log_writer, run_internal_binary, run_login, run_logout,
     run_ops_command, run_pairing_create, run_server_init, run_server_install_service,
     run_server_service, run_server_status, run_setup_single_user, run_status,
     run_token_create_local, server_init_usage, server_install_service_usage, server_status_usage,
     server_usage, status_usage, system_user_home, system_user_is_root, usage,
     validate_client_profile, validate_service_file_scope, write_connect_result, write_secret_file,
-    write_text_file, ConnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions,
-    OpsSmokePreflightOptions, ServerStatusOptions, ServiceControl, StatusOptions,
+    write_text_file, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand,
+    OpsCommonOptions, OpsSmokePreflightOptions, ServerStatusOptions, ServiceControl, StatusOptions,
     AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
@@ -98,6 +98,7 @@ fn default_agent_service_scope(effective_root: bool) -> ServiceScope {
 enum CliAction {
     Project(Vec<String>),
     Connect(ConnectOptions),
+    Disconnect(DisconnectOptions),
     HostedLogWriter(PathBuf),
     Admin(AdminCliCommand),
     TokenGenerate(TokenGenerateOptions),
@@ -322,6 +323,7 @@ where
             CliAction::Project(args)
         }
         "connect" => parse_connect(&args[1..]),
+        "disconnect" => parse_disconnect(&args[1..]),
         "__hosted-log-writer" => {
             if args.len() == 2 {
                 CliAction::HostedLogWriter(PathBuf::from(&args[1]))
@@ -459,6 +461,56 @@ fn parse_connect(args: &[String]) -> CliAction {
         state_base: None,
         runner_bin: None,
         wait_timeout_ms: 15_000,
+    })
+}
+
+fn parse_disconnect(args: &[String]) -> CliAction {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        return CliAction::Exit {
+            code: 0,
+            stdout: disconnect_usage().to_string(),
+            stderr: String::new(),
+        };
+    }
+    let mut project = PathBuf::from(".");
+    let mut profile = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        let take = |index: &mut usize| -> Option<String> {
+            *index += 1;
+            args.get(*index).cloned()
+        };
+        match arg.as_str() {
+            "--project" => match take(&mut index) {
+                Some(value) => project = PathBuf::from(value),
+                None => return cli_parse_error("--project requires a value".to_string()),
+            },
+            "--profile" => match take(&mut index) {
+                Some(value) => profile = Some(value),
+                None => return cli_parse_error("--profile requires a value".to_string()),
+            },
+            other if other.starts_with('-') => {
+                return cli_parse_error(format!("unknown disconnect option: {other}"))
+            }
+            other => return cli_parse_error(format!("unexpected disconnect argument: {other}")),
+        }
+        index += 1;
+    }
+    if let Some(value) = profile.as_deref() {
+        if let Err(error) = validate_client_profile(value) {
+            return cli_parse_error(error);
+        }
+    }
+    CliAction::Disconnect(DisconnectOptions {
+        project,
+        profile,
+        config_base: None,
+        state_base: None,
+        server_http: ServerHttpOptions::default(),
     })
 }
 
@@ -2207,6 +2259,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         std::process::exit(1);
                     }
                 }
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::Disconnect(opts) => match run_disconnect(opts).await {
+            Ok(result) => {
+                print!("{}", result.render());
+                std::process::exit(0);
             }
             Err(stderr) => {
                 eprintln!("{}", stderr);

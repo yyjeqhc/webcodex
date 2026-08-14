@@ -139,7 +139,7 @@ impl ToolRuntime {
                 validate_window_list(output, list_limit.unwrap_or(MAX_WINDOWS))
             }
             "computer_snapshot" => {
-                validate_snapshot(output, expected_surface_id.unwrap_or_default())
+                validate_snapshot(output, expected_surface_id.unwrap_or_default(), client_id)
             }
             _ => computer_error("invalid_request", "unsupported computer request kind"),
         }
@@ -271,7 +271,7 @@ fn sniff_mime(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn validate_snapshot(output: Value, expected_surface_id: &str) -> ToolResult {
+fn validate_snapshot(mut output: Value, expected_surface_id: &str, client_id: &str) -> ToolResult {
     let surface = match output.get("surface") {
         Some(surface) => surface,
         None => {
@@ -338,6 +338,13 @@ fn validate_snapshot(output: Value, expected_surface_id: &str) -> ToolResult {
             "Runner snapshot byte count is inconsistent",
         );
     }
+    let Some(object) = output.as_object_mut() else {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner snapshot output is not an object",
+        );
+    };
+    object.insert("client_id".to_string(), json!(client_id));
     ToolResult::ok(output)
 }
 
@@ -392,8 +399,28 @@ mod tests {
                 "content_base64": encoded
             }),
             "surface_test",
+            "msi",
         );
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], "image_too_large");
+    }
+
+    #[test]
+    fn computer_snapshot_validator_attaches_exact_client_id() {
+        let image = [0xff, 0xd8, 0xff, 0xe0];
+        let result = validate_snapshot(
+            json!({
+                "surface": surface("surface_test"),
+                "width": 1280,
+                "height": 720,
+                "mime_type": "image/jpeg",
+                "file_bytes": image.len(),
+                "content_base64": general_purpose::STANDARD.encode(image)
+            }),
+            "surface_test",
+            "msi",
+        );
+        assert!(result.success);
+        assert_eq!(result.output["client_id"], "msi");
     }
 }

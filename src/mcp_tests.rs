@@ -362,6 +362,7 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
         "ui/message",
         "ui/resource-teardown",
         ";base64,",
+        "output.client_id",
     ] {
         assert!(
             html.contains(expected),
@@ -785,6 +786,7 @@ fn computer_snapshot_frames_native_image_without_structured_base64() {
     let image_bytes = vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46];
     let image_base64 = general_purpose::STANDARD.encode(&image_bytes);
     let result = ToolResult::ok(json!({
+        "client_id": "msi",
         "surface": {
             "surface_id": "surface_test",
             "application": "Test App",
@@ -812,6 +814,7 @@ fn computer_snapshot_frames_native_image_without_structured_base64() {
         value["structuredContent"]["output"]["content_delivery"],
         "mcp_image"
     );
+    assert_eq!(value["structuredContent"]["output"]["client_id"], "msi");
     assert!(value["structuredContent"]["output"]
         .get("content_base64")
         .is_none());

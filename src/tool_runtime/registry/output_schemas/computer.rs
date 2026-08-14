@@ -38,6 +38,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("truncated", json!({"type": "boolean"})),
         ])),
         "computer_snapshot" => Some(wrapped_output_schema(vec![
+            (
+                "client_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
             ("surface", surface_schema()),
             (
                 "width",

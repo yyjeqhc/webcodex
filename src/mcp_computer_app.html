@@ -186,6 +186,8 @@
     screenshotEl.style.display = "block";
     emptyEl.style.display = "none";
 
+    const resultClientId = boundedString(output.client_id, 128);
+    if (resultClientId) clientId = resultClientId;
     const surface = output.surface && typeof output.surface === "object" ? output.surface : {};
     const application = boundedString(surface.application, 256) || "unknown application";
     const title = boundedString(surface.title, 256);

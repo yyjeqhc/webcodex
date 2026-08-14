@@ -313,12 +313,33 @@ fn spawn_startup_agent_executor(registry: Arc<ShellClientRegistry>) -> tokio::ta
         if request.kind == "file_read" {
             return (1, String::new(), "No such file or directory".to_string());
         }
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&request.command)
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = std::process::Command::new("powershell.exe");
+            command
+                .args(["-NoProfile", "-NonInteractive", "-Command"])
+                .arg(&request.command);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = std::process::Command::new("sh");
+            command.arg("-c").arg(&request.command);
+            command
+        };
+        let output = match command
             .current_dir(Path::new(request.cwd.as_deref().unwrap_or(".")))
             .output()
-            .unwrap();
+        {
+            Ok(output) => output,
+            Err(error) => {
+                return (
+                    -1,
+                    String::new(),
+                    format!("failed to execute test agent shell: {error}"),
+                );
+            }
+        };
         (
             output.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&output.stdout).to_string(),

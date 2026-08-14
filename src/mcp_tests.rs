@@ -211,6 +211,9 @@ fn mcp_2026_ui_capability_detection_is_explicit_and_mime_aware() {
 #[tokio::test]
 async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    // The URI is a host cache key. Bump it whenever the App delivery contract
+    // changes so a previously failed/blank iframe cannot pin the old resource.
+    assert_eq!(MCP_COMPUTER_UI_RESOURCE_URI, "ui://webcodex/computer/v2");
     let expected_resource_meta = json!({
         "ui": {
             "prefersBorder": true,
@@ -441,7 +444,7 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
         .unwrap()
         .is_empty());
 
-    let unavailable = handle_mcp_request(
+    let resource_without_repeated_ui_capability = handle_mcp_request(
         &runtime,
         rpc(
             "resources/read",
@@ -451,10 +454,21 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
         None,
     )
     .await;
-    match unavailable {
-        McpOutcome::BadRequest(value) => assert_eq!(value["error"]["code"], -32602),
-        other => panic!("non-UI resource read must fail as invalid params, got {other:?}"),
-    }
+    let McpOutcome::Ok(resource_without_repeated_ui_capability) =
+        resource_without_repeated_ui_capability
+    else {
+        panic!(
+            "advertised UI resource must remain readable without repeated UI capability metadata"
+        );
+    };
+    assert_eq!(
+        resource_without_repeated_ui_capability["result"]["contents"][0]["uri"],
+        MCP_COMPUTER_UI_RESOURCE_URI
+    );
+    assert_eq!(
+        resource_without_repeated_ui_capability["result"]["contents"][0]["mimeType"],
+        MCP_UI_RESOURCE_MIME_TYPE
+    );
 }
 
 #[tokio::test]

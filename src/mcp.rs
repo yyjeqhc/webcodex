@@ -27,7 +27,7 @@ const MCP_UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
     &[MCP_STATELESS_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION];
 const MCP_UI_EXTENSION: &str = "io.modelcontextprotocol/ui";
-const MCP_COMPUTER_UI_RESOURCE_URI: &str = "ui://webcodex/computer/v1";
+const MCP_COMPUTER_UI_RESOURCE_URI: &str = "ui://webcodex/computer/v2";
 const MCP_UI_RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
 const MCP_COMPUTER_APP_HTML: &str = include_str!("mcp_computer_app.html");
 
@@ -1129,11 +1129,15 @@ async fn handle_mcp_request_with_lifecycle(
             rpc_result(id, mcp_stateless_result(result, true))
         }
         "resources/read" if stateless_2026 => {
-            if !mcp_app_enabled {
+            // Tool descriptors on the full-operator surface advertise the App
+            // resource independently of whether a later resource fetch repeats
+            // the UI client-capability metadata. Keep resources/list negotiated,
+            // but allow a client to dereference an already-advertised resource.
+            if !model_surface_supports_computer_app(runtime.model_surface()) {
                 return McpOutcome::BadRequest(rpc_error(
                     id,
                     -32602,
-                    "MCP App resource is unavailable because this request did not declare io.modelcontextprotocol/ui support",
+                    "MCP App resource is unavailable on this model surface",
                 ));
             }
             let Some(uri) = request.params.get("uri").and_then(Value::as_str) else {

@@ -1,6 +1,6 @@
 use super::{parse_json_body, render_result, require_runtime};
 use crate::action_audit::ActionAudit;
-use crate::artifact_policy::{has_safe_octet_stream_artifact_extension, ooxml_extension_for_mime};
+use crate::artifact_policy::ooxml_extension_for_mime;
 use crate::json_error;
 use crate::tool_runtime::ToolCall;
 use base64::{engine::general_purpose, Engine as _};
@@ -35,6 +35,10 @@ struct OpenAiFileIdRef {
 
 const MAX_IMPORT_FILES: usize = 10;
 pub(super) const MAX_IMPORT_FILE_BYTES: usize = 10 * 1024 * 1024;
+const IMPORT_OCTET_STREAM_EXTENSIONS: &[&str] = &[
+    ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".zip", ".docx", ".pptx", ".xlsx", ".txt", ".csv",
+    ".json",
+];
 
 fn sanitize_import_name(name: &str, fallback: &str) -> String {
     let mut out = String::new();
@@ -82,7 +86,10 @@ fn mime_allowed_for_import(mime: &str, path: &str) -> bool {
             | "text/plain"
             | "text/csv"
             | "application/json"
-    ) || (mime == "application/octet-stream" && has_safe_octet_stream_artifact_extension(path))
+    ) || (mime == "application/octet-stream"
+        && IMPORT_OCTET_STREAM_EXTENSIONS
+            .iter()
+            .any(|suffix| lower_path.ends_with(suffix)))
 }
 
 fn validate_openai_download_url(download_link: &str) -> Result<reqwest::Url, String> {

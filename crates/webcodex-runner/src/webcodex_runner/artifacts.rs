@@ -416,16 +416,13 @@ fn zip_eocd_offset(data: &[u8]) -> Option<usize> {
     None
 }
 
-fn read_ooxml_content_types_entry(
-    data: &[u8],
+fn validated_zip_entry_payload<'a>(
+    data: &'a [u8],
     central_directory_offset: usize,
     entry: ZipEntryMetadata,
-) -> Option<Vec<u8>> {
-    if entry.flags & 0x0001 != 0
-        || entry.compressed_size > MAX_OOXML_CONTENT_TYPES_BYTES
-        || entry.uncompressed_size > MAX_OOXML_CONTENT_TYPES_BYTES
-        || !matches!(entry.compression_method, 0 | 8)
-    {
+    expected_name: &[u8],
+) -> Option<&'a [u8]> {
+    if entry.flags & 0x0001 != 0 || !matches!(entry.compression_method, 0 | 8) {
         return None;
     }
     let local = entry.local_header_offset;
@@ -435,11 +432,24 @@ fn read_ooxml_content_types_entry(
     {
         return None;
     }
+    let local_compressed_size = usize::try_from(le_u32(data, local + 18)?).ok()?;
+    let local_uncompressed_size = usize::try_from(le_u32(data, local + 22)?).ok()?;
+    if entry.flags & 0x0008 == 0 {
+        if local_compressed_size != entry.compressed_size
+            || local_uncompressed_size != entry.uncompressed_size
+        {
+            return None;
+        }
+    } else if (local_compressed_size != 0 && local_compressed_size != entry.compressed_size)
+        || (local_uncompressed_size != 0 && local_uncompressed_size != entry.uncompressed_size)
+    {
+        return None;
+    }
     let name_len = usize::from(le_u16(data, local + 26)?);
     let extra_len = usize::from(le_u16(data, local + 28)?);
     let name_start = local.checked_add(30)?;
     let name_end = name_start.checked_add(name_len)?;
-    if data.get(name_start..name_end)? != b"[Content_Types].xml" {
+    if data.get(name_start..name_end)? != expected_name {
         return None;
     }
     let compressed_start = name_end.checked_add(extra_len)?;
@@ -447,7 +457,25 @@ fn read_ooxml_content_types_entry(
     if compressed_end > central_directory_offset {
         return None;
     }
-    let compressed = data.get(compressed_start..compressed_end)?;
+    data.get(compressed_start..compressed_end)
+}
+
+fn read_ooxml_content_types_entry(
+    data: &[u8],
+    central_directory_offset: usize,
+    entry: ZipEntryMetadata,
+) -> Option<Vec<u8>> {
+    if entry.compressed_size > MAX_OOXML_CONTENT_TYPES_BYTES
+        || entry.uncompressed_size > MAX_OOXML_CONTENT_TYPES_BYTES
+    {
+        return None;
+    }
+    let compressed = validated_zip_entry_payload(
+        data,
+        central_directory_offset,
+        entry,
+        b"[Content_Types].xml",
+    )?;
     let decoded = match entry.compression_method {
         0 => {
             if entry.compressed_size != entry.uncompressed_size {
@@ -574,9 +602,9 @@ fn ooxml_mime(data: &[u8]) -> Option<&'static str> {
     }
 
     let mut content_types_entry = None;
-    let mut has_word_document = false;
-    let mut has_presentation = false;
-    let mut has_workbook = false;
+    let mut word_document_entry = None;
+    let mut presentation_entry = None;
+    let mut workbook_entry = None;
     let mut cursor = central_directory_offset;
     for _ in 0..entry_count {
         if data.get(cursor..cursor.checked_add(4)?)? != b"PK\x01\x02" {
@@ -605,22 +633,34 @@ fn ooxml_mime(data: &[u8]) -> Option<&'static str> {
         if next > central_directory_end {
             return None;
         }
+        let entry = ZipEntryMetadata {
+            flags,
+            compression_method,
+            compressed_size,
+            uncompressed_size,
+            local_header_offset,
+        };
         match data.get(name_start..name_end)? {
             b"[Content_Types].xml" => {
-                if content_types_entry.is_some() {
+                if content_types_entry.replace(entry).is_some() {
                     return None;
                 }
-                content_types_entry = Some(ZipEntryMetadata {
-                    flags,
-                    compression_method,
-                    compressed_size,
-                    uncompressed_size,
-                    local_header_offset,
-                });
             }
-            b"word/document.xml" => has_word_document = true,
-            b"ppt/presentation.xml" => has_presentation = true,
-            b"xl/workbook.xml" => has_workbook = true,
+            b"word/document.xml" => {
+                if word_document_entry.replace(entry).is_some() {
+                    return None;
+                }
+            }
+            b"ppt/presentation.xml" => {
+                if presentation_entry.replace(entry).is_some() {
+                    return None;
+                }
+            }
+            b"xl/workbook.xml" => {
+                if workbook_entry.replace(entry).is_some() {
+                    return None;
+                }
+            }
             _ => {}
         }
         cursor = next;
@@ -631,12 +671,27 @@ fn ooxml_mime(data: &[u8]) -> Option<&'static str> {
 
     let content_types =
         read_ooxml_content_types_entry(data, central_directory_offset, content_types_entry?)?;
-    match ooxml_content_type_mime(&content_types)? {
-        DOCX_MIME if has_word_document => Some(DOCX_MIME),
-        PPTX_MIME if has_presentation => Some(PPTX_MIME),
-        XLSX_MIME if has_workbook => Some(XLSX_MIME),
-        _ => None,
-    }
+    let (mime, main_part_entry, main_part_name) = match ooxml_content_type_mime(&content_types)? {
+        DOCX_MIME => (
+            DOCX_MIME,
+            word_document_entry?,
+            b"word/document.xml".as_slice(),
+        ),
+        PPTX_MIME => (
+            PPTX_MIME,
+            presentation_entry?,
+            b"ppt/presentation.xml".as_slice(),
+        ),
+        XLSX_MIME => (XLSX_MIME, workbook_entry?, b"xl/workbook.xml".as_slice()),
+        _ => return None,
+    };
+    validated_zip_entry_payload(
+        data,
+        central_directory_offset,
+        main_part_entry,
+        main_part_name,
+    )?;
+    Some(mime)
 }
 
 fn extension_mime(path: &str) -> Option<&'static str> {

@@ -202,6 +202,28 @@ async fn import_http_accepts_office_mime_and_extension_policy() {
         let body: Value = mismatched.take_json().await.unwrap();
         assert!(body["error"].as_str().unwrap().contains("unsupported MIME"));
     }
+
+    for path in ["payload.dat", "payload.artifact"] {
+        let service = import_test_service_with_local_runtime().await;
+        let mut rejected = TestClient::post("http://localhost/api/artifacts/import")
+            .bearer_auth("secret")
+            .json(&import_body(
+                "https://files.oaiusercontent.com/file",
+                "application/octet-stream",
+                path,
+            ))
+            .send(&service)
+            .await;
+        assert_eq!(
+            super::effective_status(&rejected),
+            salvo::http::StatusCode::BAD_REQUEST
+        );
+        let body: Value = rejected.take_json().await.unwrap();
+        assert!(
+            body["error"].as_str().unwrap().contains("unsupported MIME"),
+            "artifact-only octet-stream suffix must remain rejected by conversation import: {path}: {body:?}"
+        );
+    }
 }
 
 #[tokio::test]

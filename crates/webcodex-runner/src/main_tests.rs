@@ -2818,6 +2818,31 @@ fn fake_ooxml_zip(
     bytes
 }
 
+fn fake_zip_central_entry_offset(bytes: &[u8], expected_name: &str) -> usize {
+    let eocd = bytes
+        .windows(4)
+        .rposition(|window| window == b"PK\x05\x06")
+        .unwrap();
+    let entry_count = u16::from_le_bytes(bytes[eocd + 10..eocd + 12].try_into().unwrap());
+    let mut cursor = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+    for _ in 0..entry_count {
+        assert_eq!(&bytes[cursor..cursor + 4], b"PK\x01\x02");
+        let name_len =
+            u16::from_le_bytes(bytes[cursor + 28..cursor + 30].try_into().unwrap()) as usize;
+        let extra_len =
+            u16::from_le_bytes(bytes[cursor + 30..cursor + 32].try_into().unwrap()) as usize;
+        let comment_len =
+            u16::from_le_bytes(bytes[cursor + 32..cursor + 34].try_into().unwrap()) as usize;
+        let name_start = cursor + 46;
+        let name_end = name_start + name_len;
+        if &bytes[name_start..name_end] == expected_name.as_bytes() {
+            return cursor;
+        }
+        cursor = name_end + extra_len + comment_len;
+    }
+    panic!("missing fake ZIP central entry {expected_name}");
+}
+
 fn artifact_upload_temp_paths(
     root: &Path,
     artifact_path: &str,
@@ -3130,6 +3155,55 @@ fn file_read_project_artifact_does_not_trust_ooxml_extension_or_malformed_packag
         ),
     ));
     assert_eq!(broken["mime_type"], "application/zip");
+}
+
+#[test]
+fn file_read_project_artifact_rejects_ooxml_main_part_with_invalid_local_structure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let main_part = "word/document.xml";
+    let main_content_type =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+
+    let mut invalid_offset = fake_ooxml_zip(main_part, main_content_type, false);
+    let central_entry = fake_zip_central_entry_offset(&invalid_offset, main_part);
+    invalid_offset[central_entry + 42..central_entry + 46].copy_from_slice(&1_u32.to_le_bytes());
+    std::fs::write(tmp.path().join("bad-offset.docx"), invalid_offset).unwrap();
+    let bad_offset = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            "bad-offset.docx",
+            serde_json::json!({"path": "bad-offset.docx", "max_bytes": 64 * 1024}),
+        ),
+    ));
+    assert_eq!(bad_offset["mime_type"], "application/zip");
+
+    let mut mismatched_name = fake_ooxml_zip(main_part, main_content_type, false);
+    let central_entry = fake_zip_central_entry_offset(&mismatched_name, main_part);
+    let local_offset = u32::from_le_bytes(
+        mismatched_name[central_entry + 42..central_entry + 46]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let local_name_start = local_offset + 30;
+    assert_eq!(
+        &mismatched_name[local_name_start..local_name_start + main_part.len()],
+        main_part.as_bytes()
+    );
+    mismatched_name[local_name_start] = b'v';
+    std::fs::write(tmp.path().join("bad-local-name.docx"), mismatched_name).unwrap();
+    let bad_name = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            "bad-local-name.docx",
+            serde_json::json!({"path": "bad-local-name.docx", "max_bytes": 64 * 1024}),
+        ),
+    ));
+    assert_eq!(bad_name["mime_type"], "application/zip");
 }
 
 #[test]

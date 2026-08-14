@@ -96,11 +96,21 @@ jobs:
           npm --prefix frontend test
           npm --prefix frontend run check:dist
 
+      - name: Build E2E runtime fixtures
+        run: |
+          cargo build --locked -p webcodex --bin webcodex-server
+          cargo build --locked -p webcodex-runner --bin webcodex-runner
+
       - name: Run WebSocket zero-config E2E
+        env:
+          E2E_SERVER_BIN: ${{ github.workspace }}/target/debug/webcodex-server
+          E2E_RUNNER_BIN: ${{ github.workspace }}/target/debug/webcodex-runner
         run: bash scripts/e2e_zero_config_ws.sh
 
       - name: Run polling zero-config E2E
         env:
+          E2E_SERVER_BIN: ${{ github.workspace }}/target/debug/webcodex-server
+          E2E_RUNNER_BIN: ${{ github.workspace }}/target/debug/webcodex-runner
           E2E_TRANSPORT: polling
         run: bash scripts/e2e_zero_config_ws.sh
 

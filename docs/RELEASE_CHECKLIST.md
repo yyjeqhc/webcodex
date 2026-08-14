@@ -61,7 +61,9 @@ Do not allow docs that ask users to configure server-side project onboarding, im
 
 ## 5. E2E Smoke
 
-The exact-source release-readiness workflow runs both supported zero-config transports against disposable local fixtures:
+The exact-source release-readiness workflow builds dedicated debug `webcodex-server` / `webcodex-runner` test fixtures once, then runs both supported zero-config transports against disposable local fixtures through the E2E script's existing-binary overrides. These binaries are never uploaded or treated as release candidates; `.github/workflows/release-build.yml` remains the only candidate producer.
+
+The underlying smoke commands remain:
 
 ```bash
 bash scripts/e2e_zero_config_ws.sh

@@ -35,8 +35,10 @@ set -euo pipefail
 #   E2E_KEEPALIVE_WAIT_SECS
 #                       seconds to idle before the keepalive-online recheck
 #                       (default: 2; raise to ~35 to span a real ping/pong)
-#   E2E_SKIP_RUN        if set to "1", skip `cargo run` and only syntax-check
-#   CARGO_BIN           cargo binary (default: cargo)
+#   E2E_SKIP_RUN        if set to "1", skip execution and only syntax-check
+#   E2E_SERVER_BIN      existing webcodex-server executable; skips server `cargo run`
+#   E2E_RUNNER_BIN      existing webcodex-runner executable; skips runner `cargo run`
+#   CARGO_BIN           cargo binary (default: cargo; used when an override is absent)
 #
 # Exit codes:
 #   0  all smoke checks passed
@@ -49,6 +51,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
 CARGO_BIN="${CARGO_BIN:-cargo}"
+SERVER_BIN="${E2E_SERVER_BIN:-}"
+RUNNER_BIN="${E2E_RUNNER_BIN:-}"
 TOKEN="${E2E_TOKEN:-e2e-smoke-token}"
 CLIENT_ID="${E2E_CLIENT_ID:-e2e-agent}"
 PROJECT_ID="${E2E_PROJECT_ID:-smoke-proj}"
@@ -243,7 +247,7 @@ cleanup() {
         sleep 1
         kill -9 "$SERVER_PID" 2>/dev/null || true
     fi
-    # Wait briefly for the cargo parent processes to tear down children.
+    # Wait briefly for the launched runtime processes to tear down children.
     sleep 1
 }
 
@@ -269,6 +273,31 @@ fi
 if [ "${E2E_SKIP_RUN:-0}" = "1" ]; then
     log "E2E_SKIP_RUN=1: skipping execution (syntax-only)"
     exit 0
+fi
+
+validate_binary_override() {
+    local label="$1"
+    local value="$2"
+    if [ -z "$value" ]; then
+        return 0
+    fi
+    case "$value" in
+        *$'\n'*|*$'\r'*)
+            echo "[e2e] $label contains a newline" >&2
+            exit 2
+            ;;
+    esac
+    if [ ! -f "$value" ] || [ ! -x "$value" ]; then
+        echo "[e2e] $label is not an executable regular file: $value" >&2
+        exit 2
+    fi
+}
+
+validate_binary_override "E2E_SERVER_BIN" "$SERVER_BIN"
+validate_binary_override "E2E_RUNNER_BIN" "$RUNNER_BIN"
+if { [ -z "$SERVER_BIN" ] || [ -z "$RUNNER_BIN" ]; } && ! command -v "$CARGO_BIN" >/dev/null 2>&1; then
+    echo "[e2e] cargo is required when an existing runtime binary override is absent" >&2
+    exit 2
 fi
 
 # ----------------------------------------------------------------------------
@@ -341,14 +370,25 @@ log "runtime project id: $RUNTIME_PROJECT_ID"
 # 3. Start the server
 # ----------------------------------------------------------------------------
 
-log "starting server (cargo run -p webcodex --bin webcodex-server)"
-WEBCODEX_ADDR="127.0.0.1:${PORT}" \
-WEBCODEX_DATA="$DATA_DIR" \
-WEBCODEX_TOKEN="$TOKEN" \
-CODEX_DEFAULT_TIMEOUT_SECS="30" \
-CODEX_APPROVAL_MODE="full-auto" \
-RUST_LOG="info" \
-"$CARGO_BIN" run --quiet -p webcodex --bin webcodex-server >"$SERVER_LOG" 2>&1 &
+if [ -n "$SERVER_BIN" ]; then
+    log "starting server (existing binary: $SERVER_BIN)"
+    WEBCODEX_ADDR="127.0.0.1:${PORT}" \
+    WEBCODEX_DATA="$DATA_DIR" \
+    WEBCODEX_TOKEN="$TOKEN" \
+    CODEX_DEFAULT_TIMEOUT_SECS="30" \
+    CODEX_APPROVAL_MODE="full-auto" \
+    RUST_LOG="info" \
+    "$SERVER_BIN" >"$SERVER_LOG" 2>&1 &
+else
+    log "starting server (cargo run -p webcodex --bin webcodex-server)"
+    WEBCODEX_ADDR="127.0.0.1:${PORT}" \
+    WEBCODEX_DATA="$DATA_DIR" \
+    WEBCODEX_TOKEN="$TOKEN" \
+    CODEX_DEFAULT_TIMEOUT_SECS="30" \
+    CODEX_APPROVAL_MODE="full-auto" \
+    RUST_LOG="info" \
+    "$CARGO_BIN" run --quiet -p webcodex --bin webcodex-server >"$SERVER_LOG" 2>&1 &
+fi
 SERVER_PID=$!
 
 if ! wait_for_port "$PORT" 40; then
@@ -362,8 +402,13 @@ pass "server listening on $PORT"
 # 4. Start the agent
 # ----------------------------------------------------------------------------
 
-log "starting agent (cargo run -p webcodex-runner --bin webcodex-runner, transport=$TRANSPORT)"
-"$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML" >"$AGENT_LOG" 2>&1 &
+if [ -n "$RUNNER_BIN" ]; then
+    log "starting agent (existing binary: $RUNNER_BIN, transport=$TRANSPORT)"
+    "$RUNNER_BIN" --config "$AGENT_TOML" >"$AGENT_LOG" 2>&1 &
+else
+    log "starting agent (cargo run -p webcodex-runner --bin webcodex-runner, transport=$TRANSPORT)"
+    "$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML" >"$AGENT_LOG" 2>&1 &
+fi
 AGENT_PID=$!
 
 # Wait for the agent to register by polling runtime_status for the client.

@@ -1106,7 +1106,7 @@ async fn handle_mcp_request_with_lifecycle(
                 mcp_tools_list_payload_with_compact_and_app(
                     runtime.model_surface(),
                     crate::config::mcp_compact_schemas_enabled(),
-                    mcp_app_enabled,
+                    model_surface_supports_computer_app(runtime.model_surface()),
                 )
             } else {
                 mcp_tools_list_payload(runtime.model_surface())

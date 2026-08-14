@@ -399,22 +399,29 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
         other => panic!("unknown UI resource must fail closed, got {other:?}"),
     }
 
-    let no_ui_tools = handle_mcp_request(
+    let tools_without_ui_capability = handle_mcp_request(
         &runtime,
         rpc("tools/list", Some(json!(2106)), mcp_2026_params(json!({}))),
         None,
     )
     .await;
-    let McpOutcome::Ok(no_ui_tools) = no_ui_tools else {
-        panic!("expected non-UI tools/list");
+    let McpOutcome::Ok(tools_without_ui_capability) = tools_without_ui_capability else {
+        panic!("expected tools/list without UI capability metadata");
     };
-    let snapshot = no_ui_tools["result"]["tools"]
+    let snapshot = tools_without_ui_capability["result"]["tools"]
         .as_array()
         .unwrap()
         .iter()
         .find(|tool| tool["name"] == "computer_snapshot")
         .unwrap();
-    assert!(snapshot.get("_meta").is_none());
+    assert_eq!(
+        snapshot["_meta"]["ui"]["resourceUri"],
+        MCP_COMPUTER_UI_RESOURCE_URI
+    );
+    assert_eq!(
+        snapshot["_meta"]["openai/outputTemplate"],
+        MCP_COMPUTER_UI_RESOURCE_URI
+    );
 
     let no_ui_resources = handle_mcp_request(
         &runtime,

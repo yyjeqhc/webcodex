@@ -267,6 +267,22 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
   -d '{"name":"ChatGPT MCP","redirect_uris":["https://chatgpt.com/connector/oauth/<callback-id>"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
 ```
 
+ChatGPT MCP host-file imports use a separate operator trust anchor because their
+host-provided temporary download URLs are not restricted to the GPT Action
+`files.oaiusercontent.com` hostname policy. To enable that path for a connector,
+configure its exact registered HTTPS callback URI (comma-separated for multiple
+trusted registrations):
+
+```text
+WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_REDIRECT_URIS=https://chatgpt.com/connector/oauth/<callback-id>
+```
+
+The server still requires the request's OAuth access token to resolve through
+`allowed_client_id` to an active OAuth client whose registered redirect URI
+matches this allowlist exactly. If multiple active clients register the same
+trusted callback, host-file import fails closed. Client display names are not a
+trust signal, and ordinary API-token/raw MCP callers remain ineligible.
+
 List and revoke clients with `POST /api/oauth/clients/list` and
 `POST /api/oauth/clients/revoke`. OAuth uses the authorization-code flow;
 dynamic client registration, OIDC, and the device-code flow are not

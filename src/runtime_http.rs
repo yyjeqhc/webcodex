@@ -249,6 +249,7 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
                 auth: auth.as_ref(),
                 window: Some(&window),
                 record_oauth_scope_denials: true,
+                host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
             },
         )
         .await;

@@ -1289,6 +1289,7 @@ async fn model_facing_run_script_session_denials_keep_phase_a_tuple() {
                 auth: Some(&auth),
                 window: None,
                 record_oauth_scope_denials: true,
+                host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
             },
         )
         .await;

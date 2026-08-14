@@ -407,6 +407,10 @@ pub struct OAuth2Config {
     /// Whether the public shared-key OAuth bridge authorize flow is enabled.
     /// Default `false`.
     pub shared_key_bridge_enabled: bool,
+    /// Exact OAuth redirect URIs whose active registered clients may use the
+    /// ChatGPT MCP host-file import path. This is an operator trust anchor, not
+    /// a client-name heuristic. Empty by default.
+    pub trusted_mcp_file_redirect_uris: Vec<String>,
 }
 
 impl Default for OAuth2Config {
@@ -419,6 +423,7 @@ impl Default for OAuth2Config {
             authorization_code_ttl_secs: 300,
             require_pkce: true,
             shared_key_bridge_enabled: false,
+            trusted_mcp_file_redirect_uris: Vec::new(),
         }
     }
 }
@@ -453,6 +458,18 @@ impl OAuth2Config {
         let require_pkce = env_flag("WEBCODEX_OAUTH2_REQUIRE_PKCE").unwrap_or(true);
         let shared_key_bridge_enabled =
             env_flag("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE").unwrap_or(false);
+        let trusted_mcp_file_redirect_uris =
+            std::env::var("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_REDIRECT_URIS")
+                .ok()
+                .map(|value| {
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
         Self {
             issuer,
             enabled,
@@ -461,6 +478,7 @@ impl OAuth2Config {
             authorization_code_ttl_secs,
             require_pkce,
             shared_key_bridge_enabled,
+            trusted_mcp_file_redirect_uris,
         }
     }
 }
@@ -729,6 +747,7 @@ mod tests {
         std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
         std::env::remove_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
+        std::env::remove_var("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_REDIRECT_URIS");
 
         let cfg = OAuth2Config::from_env();
         assert!(!cfg.enabled);
@@ -738,6 +757,7 @@ mod tests {
         assert_eq!(cfg.authorization_code_ttl_secs, 300);
         assert!(cfg.require_pkce);
         assert!(!cfg.shared_key_bridge_enabled);
+        assert!(cfg.trusted_mcp_file_redirect_uris.is_empty());
     }
 
     #[test]
@@ -750,6 +770,10 @@ mod tests {
         std::env::set_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "600");
         std::env::set_var("WEBCODEX_OAUTH2_REQUIRE_PKCE", "false");
         env.enable_oauth2_shared_key_bridge();
+        std::env::set_var(
+            "WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_REDIRECT_URIS",
+            " https://chatgpt.example/connector/a ,https://chatgpt.example/connector/b ",
+        );
 
         let cfg = OAuth2Config::from_env();
         assert!(cfg.enabled);
@@ -759,6 +783,13 @@ mod tests {
         assert_eq!(cfg.authorization_code_ttl_secs, 600);
         assert!(!cfg.require_pkce);
         assert!(cfg.shared_key_bridge_enabled);
+        assert_eq!(
+            cfg.trusted_mcp_file_redirect_uris,
+            vec![
+                "https://chatgpt.example/connector/a".to_string(),
+                "https://chatgpt.example/connector/b".to_string(),
+            ]
+        );
 
         std::env::remove_var("WEBCODEX_OAUTH2_ENABLED");
         std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
@@ -766,6 +797,7 @@ mod tests {
         std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
+        std::env::remove_var("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_REDIRECT_URIS");
     }
 
     #[test]

@@ -481,6 +481,8 @@ async fn generic_tool_call_uses_bound_current_session_without_session_id() {
                         auth: Some(&bootstrap),
                         window: Some(&ClientWindow::for_test("current-window")),
                         record_oauth_scope_denials: true,
+                        host_file_import_trust:
+                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                     },
                 )
                 .await

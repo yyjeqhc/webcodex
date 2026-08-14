@@ -25,6 +25,19 @@ impl From<ToolTransport> for SessionTransport {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum HostFileImportTrust {
+    #[default]
+    Untrusted,
+    TrustedOAuthClient,
+}
+
+impl HostFileImportTrust {
+    pub(crate) fn is_trusted(self) -> bool {
+        matches!(self, Self::TrustedOAuthClient)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ToolCallContext<'a> {
     pub(crate) transport: ToolTransport,
@@ -35,6 +48,9 @@ pub(crate) struct ToolCallContext<'a> {
     /// this facade existed. MCP rejected scope denials before `_session_id`
     /// became recorder metadata. Keep both adapter-visible behaviors stable.
     pub(crate) record_oauth_scope_denials: bool,
+    /// Server-derived provenance for ChatGPT host file references. Raw tool
+    /// arguments cannot set this value.
+    pub(crate) host_file_import_trust: HostFileImportTrust,
 }
 
 #[derive(Debug, Clone)]
@@ -365,7 +381,7 @@ impl ToolRuntime {
             }
         }
 
-        let call = match ToolCall::from_tool_name(&request.tool_name, concrete_arguments) {
+        let mut call = match ToolCall::from_tool_name(&request.tool_name, concrete_arguments) {
             Ok(call) => call,
             Err(message) => {
                 self.sessions.record_tool_call_finished(
@@ -383,6 +399,13 @@ impl ToolRuntime {
                 };
             }
         };
+        if let ToolCall::ImportConversationFilesToProject {
+            trusted_mcp_host_file_import,
+            ..
+        } = &mut call
+        {
+            *trusted_mcp_host_file_import = context.host_file_import_trust.is_trusted();
+        }
 
         let project = tool_project(&call);
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
@@ -526,6 +549,8 @@ mod tests {
                     auth: None,
                     window: None,
                     record_oauth_scope_denials: true,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                 },
             )
             .await;
@@ -559,6 +584,8 @@ mod tests {
                     auth: None,
                     window: None,
                     record_oauth_scope_denials: false,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                 },
             )
             .await;
@@ -604,6 +631,8 @@ mod tests {
                     auth: None,
                     window: None,
                     record_oauth_scope_denials: true,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                 },
             )
             .await;
@@ -679,6 +708,8 @@ mod tests {
                     auth: Some(&auth),
                     window: None,
                     record_oauth_scope_denials: true,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                 },
             )
             .await;
@@ -709,6 +740,8 @@ mod tests {
                     auth: Some(&auth),
                     window: None,
                     record_oauth_scope_denials: false,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                 },
             )
             .await;
@@ -734,6 +767,8 @@ mod tests {
                     auth: None,
                     window: None,
                     record_oauth_scope_denials: true,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                 },
             )
             .await;

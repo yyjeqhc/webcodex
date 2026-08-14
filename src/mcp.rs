@@ -7,7 +7,8 @@ use crate::tool_request_trace::{
     estimate_json_bytes, jsonrpc_id_safe, new_trace_id, ToolRequestLifecycle,
 };
 use crate::tool_runtime::kernel::{
-    ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
+    HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
+    ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
 use crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES;
 use crate::tool_runtime::{registered_tool_specs, ToolResult, ToolRuntime, ToolSpec};
@@ -840,7 +841,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     let audit = if request.method == "tools/call" && request.id.is_some() {
         Some((
             ActionAudit::start(req, depot, "/mcp", "toolsCall"),
-            tool_name.unwrap_or_else(|| "unknown".to_string()),
+            tool_name.clone().unwrap_or_else(|| "unknown".to_string()),
             project_from_tool_call_params(&request.params),
         ))
     } else {
@@ -857,6 +858,12 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     };
 
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let host_file_import_trust =
+        if tool_name.as_deref() == Some("import_conversation_files_to_project") {
+            mcp_host_file_import_trust(depot, auth.as_ref())
+        } else {
+            HostFileImportTrust::Untrusted
+        };
     // Defense-in-depth backstop: every tool bounds its own agent/subprocess
     // waits at <= 124s, so this outer limit never preempts a legitimate inner
     // timeout. It only fires if a dispatch path hangs without a bound (the
@@ -871,6 +878,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             request,
             auth.as_ref(),
             protocol_era,
+            host_file_import_trust,
             window.identity.as_ref(),
             Some(&mut guard),
         ),
@@ -1002,7 +1010,17 @@ async fn handle_mcp_request(
     auth: Option<&AuthContext>,
 ) -> McpOutcome {
     let protocol_era = inferred_protocol_era(&request);
-    handle_mcp_request_with_lifecycle(runtime, None, request, auth, protocol_era, None, None).await
+    handle_mcp_request_with_lifecycle(
+        runtime,
+        None,
+        request,
+        auth,
+        protocol_era,
+        HostFileImportTrust::Untrusted,
+        None,
+        None,
+    )
+    .await
 }
 
 async fn handle_mcp_request_with_lifecycle(
@@ -1011,6 +1029,7 @@ async fn handle_mcp_request_with_lifecycle(
     request: JsonRpcRequest,
     auth: Option<&AuthContext>,
     protocol_era: McpProtocolEra,
+    host_file_import_trust: HostFileImportTrust,
     window: Option<&crate::client_window::ClientWindow>,
     mut lifecycle: Option<&mut ToolRequestLifecycle>,
 ) -> McpOutcome {
@@ -1298,6 +1317,7 @@ async fn handle_mcp_request_with_lifecycle(
                         auth,
                         window,
                         record_oauth_scope_denials: false,
+                        host_file_import_trust,
                     },
                 )
                 .await;
@@ -1359,6 +1379,81 @@ async fn handle_mcp_request_with_lifecycle(
         }
     };
     McpOutcome::Ok(response)
+}
+
+fn configured_mcp_file_redirect_uri_is_safe(uri: &str) -> bool {
+    let Ok(url) = url::Url::parse(uri) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none()
+}
+
+fn mcp_host_file_import_trust_from_state(
+    config: &crate::Config,
+    db: &crate::Database,
+    auth: Option<&AuthContext>,
+) -> HostFileImportTrust {
+    let Some(auth) = auth.filter(|auth| auth.is_oauth_token()) else {
+        return HostFileImportTrust::Untrusted;
+    };
+    let Some(client_id) = auth
+        .allowed_client_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|client_id| !client_id.is_empty())
+    else {
+        return HostFileImportTrust::Untrusted;
+    };
+    if !config.oauth2.enabled {
+        return HostFileImportTrust::Untrusted;
+    }
+    let trusted_redirects = config
+        .oauth2
+        .trusted_mcp_file_redirect_uris
+        .iter()
+        .map(String::as_str)
+        .filter(|uri| configured_mcp_file_redirect_uri_is_safe(uri))
+        .collect::<std::collections::HashSet<_>>();
+    if trusted_redirects.is_empty() {
+        return HostFileImportTrust::Untrusted;
+    }
+    let Ok(Some(client)) = db.get_oauth_client_by_client_id(client_id) else {
+        // Active lookup intentionally excludes revoked clients.
+        return HostFileImportTrust::Untrusted;
+    };
+    let registered_redirects = client.redirect_uris_vec();
+    if registered_redirects.is_empty()
+        || !registered_redirects
+            .iter()
+            .all(|uri| trusted_redirects.contains(uri.as_str()))
+    {
+        return HostFileImportTrust::Untrusted;
+    }
+    // The operator allowlist is the trust anchor, but a second active client
+    // must not gain the same trust merely by registering the same callback URI.
+    // Shared active registrations are ambiguous and fail closed.
+    if registered_redirects.iter().any(|uri| {
+        db.count_active_oauth_clients_with_redirect_uri(uri)
+            .map(|count| count != 1)
+            .unwrap_or(true)
+    }) {
+        return HostFileImportTrust::Untrusted;
+    }
+    HostFileImportTrust::TrustedOAuthClient
+}
+
+fn mcp_host_file_import_trust(depot: &Depot, auth: Option<&AuthContext>) -> HostFileImportTrust {
+    let Some(config) = crate::auth::get_config(depot) else {
+        return HostFileImportTrust::Untrusted;
+    };
+    let Some(db) = crate::auth::get_db(depot) else {
+        return HostFileImportTrust::Untrusted;
+    };
+    mcp_host_file_import_trust_from_state(config.as_ref(), db.as_ref(), auth)
 }
 
 fn require_mcp_oauth_scope(auth: Option<&AuthContext>, scope: &'static str) -> Option<McpOutcome> {

@@ -12,6 +12,7 @@ use crate::auth::AuthContext;
 use base64::{engine::general_purpose, Engine as _};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 pub(crate) const MAX_IMPORT_FILES: usize = 10;
@@ -20,6 +21,22 @@ const IMPORT_OCTET_STREAM_EXTENSIONS: &[&str] = &[
     ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".zip", ".docx", ".pptx", ".xlsx", ".txt", ".csv",
     ".json",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConversationImportDownloadPolicy {
+    GptActionOpenAiHost,
+    TrustedMcpHostFile,
+}
+
+const IMPORT_DNS_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(5);
+const IMPORT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug)]
+struct TrustedDownloadTarget {
+    url: reqwest::Url,
+    resolver_host: Option<String>,
+    pinned_addrs: Vec<SocketAddr>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct OpenAiFileIdRef {
@@ -132,6 +149,220 @@ fn validate_openai_download_url(download_link: &str) -> Result<reqwest::Url, Str
     Ok(url)
 }
 
+fn ipv4_is_public(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _d] = ip.octets();
+    if a == 0
+        || a == 10
+        || a == 127
+        || (a == 100 && (64..=127).contains(&b))
+        || (a == 169 && b == 254)
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 192 && b == 0 && c == 2)
+        || (a == 192 && b == 88 && c == 99)
+        || (a == 192 && b == 168)
+        || (a == 198 && (b == 18 || b == 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        || a >= 224
+    {
+        return false;
+    }
+    true
+}
+
+fn ipv6_embedded_ipv4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    let segments = ip.segments();
+    if segments[..5] == [0, 0, 0, 0, 0] && (segments[5] == 0xffff || segments[5] == 0) {
+        return Some(Ipv4Addr::new(
+            (segments[6] >> 8) as u8,
+            segments[6] as u8,
+            (segments[7] >> 8) as u8,
+            segments[7] as u8,
+        ));
+    }
+    None
+}
+
+fn ipv6_is_public(ip: Ipv6Addr) -> bool {
+    if ip.is_unspecified() || ip.is_loopback() {
+        return false;
+    }
+    if let Some(ipv4) = ipv6_embedded_ipv4(ip) {
+        return ipv4_is_public(ipv4);
+    }
+    let segments = ip.segments();
+    let first = segments[0];
+    if first & 0xff00 == 0xff00 // multicast ff00::/8
+        || first & 0xfe00 == 0xfc00 // unique-local fc00::/7
+        || first & 0xffc0 == 0xfe80 // link-local fe80::/10
+        || first & 0xffc0 == 0xfec0 // deprecated site-local fec0::/10
+        || (first == 0x0100 && segments[1..4] == [0, 0, 0]) // discard-only 100::/64
+        || (first == 0x0064 && segments[1] == 0xff9b) // NAT64 well-known/local-use prefixes
+        || first == 0x2002 // 6to4 embeds an IPv4 destination
+        || (first == 0x2001 && segments[1] <= 0x01ff) // IETF protocol assignments
+        || (first == 0x2001 && segments[1] == 0x0db8) // documentation
+        || (first == 0x3fff && segments[1] & 0xf000 == 0)
+    // documentation 3fff::/20
+    {
+        return false;
+    }
+    true
+}
+
+fn ip_is_public(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ipv4_is_public(ip),
+        IpAddr::V6(ip) => ipv6_is_public(ip),
+    }
+}
+
+#[cfg(test)]
+static IMPORT_TEST_NETWORK_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(crate) async fn lock_import_test_network() -> tokio::sync::MutexGuard<'static, ()> {
+    IMPORT_TEST_NETWORK_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
+
+#[cfg(test)]
+static IMPORT_TEST_RESOLVED_IPS: std::sync::OnceLock<std::sync::Mutex<Option<Vec<IpAddr>>>> =
+    std::sync::OnceLock::new();
+#[cfg(test)]
+static IMPORT_TEST_DNS_RESOLUTION_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn set_import_test_resolved_ips(ips: Option<Vec<IpAddr>>) {
+    let slot = IMPORT_TEST_RESOLVED_IPS.get_or_init(|| std::sync::Mutex::new(None));
+    *slot.lock().expect("import test resolved IP mutex poisoned") = ips;
+}
+
+#[cfg(test)]
+pub(crate) fn reset_import_test_dns_resolution_count() {
+    IMPORT_TEST_DNS_RESOLUTION_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn import_test_dns_resolution_count() -> usize {
+    IMPORT_TEST_DNS_RESOLUTION_COUNT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+async fn resolve_download_domain(host: &str) -> Result<Vec<IpAddr>, String> {
+    #[cfg(test)]
+    IMPORT_TEST_DNS_RESOLUTION_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    #[cfg(test)]
+    {
+        if let Some(ips) = IMPORT_TEST_RESOLVED_IPS
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .expect("import test resolved IP mutex poisoned")
+            .clone()
+        {
+            return Ok(ips);
+        }
+    }
+    let resolved = tokio::time::timeout(
+        IMPORT_DNS_RESOLUTION_TIMEOUT,
+        tokio::net::lookup_host((host, 443)),
+    )
+    .await
+    .map_err(|_| "host-provided download URL DNS resolution timed out".to_string())?
+    .map_err(|_| "host-provided download URL DNS resolution failed".to_string())?;
+    Ok(resolved.map(|addr| addr.ip()).collect())
+}
+
+async fn validate_trusted_mcp_download_url(
+    download_link: &str,
+) -> Result<TrustedDownloadTarget, String> {
+    let url = reqwest::Url::parse(download_link)
+        .map_err(|_| "invalid host-provided download URL".to_string())?;
+    if url.scheme() != "https" {
+        return Err("host-provided download URL must use https".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("host-provided download URL must not contain userinfo".to_string());
+    }
+    if url.port().is_some_and(|port| port != 443) {
+        return Err("host-provided download URL must use port 443".to_string());
+    }
+    let Some(host) = url.host() else {
+        return Err("host-provided download URL must include a host".to_string());
+    };
+
+    let (resolver_host, ips) = match host {
+        url::Host::Ipv4(ip) => (None, vec![IpAddr::V4(ip)]),
+        url::Host::Ipv6(ip) => (None, vec![IpAddr::V6(ip)]),
+        url::Host::Domain(domain) => {
+            let domain = domain.trim();
+            if domain.is_empty() {
+                return Err("host-provided download URL has an empty host".to_string());
+            }
+            (
+                Some(domain.to_string()),
+                resolve_download_domain(domain).await?,
+            )
+        }
+    };
+    if ips.is_empty() {
+        return Err("host-provided download URL resolved to no addresses".to_string());
+    }
+    if ips.iter().copied().any(|ip| !ip_is_public(ip)) {
+        return Err("host-provided download URL resolves to a non-public address".to_string());
+    }
+    let mut pinned_addrs = Vec::with_capacity(ips.len());
+    for ip in ips {
+        let addr = SocketAddr::new(ip, 443);
+        if !pinned_addrs.contains(&addr) {
+            pinned_addrs.push(addr);
+        }
+    }
+    Ok(TrustedDownloadTarget {
+        url,
+        resolver_host,
+        pinned_addrs,
+    })
+}
+
+fn build_download_client(
+    trusted_target: Option<&TrustedDownloadTarget>,
+) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(IMPORT_DOWNLOAD_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some(target) = trusted_target {
+        if let Some(host) = target.resolver_host.as_deref() {
+            builder = builder.resolve_to_addrs(host, &target.pinned_addrs);
+        }
+    }
+    builder
+        .build()
+        .map_err(|_| "failed to build bounded import HTTP client".to_string())
+}
+
+async fn prepare_download_request(
+    download_link: &str,
+    policy: ConversationImportDownloadPolicy,
+) -> Result<(reqwest::Client, reqwest::Url), String> {
+    match policy {
+        ConversationImportDownloadPolicy::GptActionOpenAiHost => {
+            let url = validate_openai_download_url(download_link)?;
+            let client = build_download_client(None)?;
+            Ok((client, request_url_for_download(url)))
+        }
+        ConversationImportDownloadPolicy::TrustedMcpHostFile => {
+            let target = validate_trusted_mcp_download_url(download_link).await?;
+            let client = build_download_client(Some(&target))?;
+            Ok((client, request_url_for_download(target.url)))
+        }
+    }
+}
+
 #[cfg(test)]
 static IMPORT_TEST_DOWNLOAD_BASE_URL: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
     std::sync::OnceLock::new();
@@ -196,6 +427,7 @@ impl ToolRuntime {
         input: ImportConversationFilesInput,
         auth: Option<&AuthContext>,
         transport: SessionTransport,
+        download_policy: ConversationImportDownloadPolicy,
     ) -> ToolResult {
         if input.openai_file_id_refs.is_empty()
             || input.openai_file_id_refs.len() > MAX_IMPORT_FILES
@@ -204,15 +436,6 @@ impl ToolRuntime {
                 "openaiFileIdRefs must contain 1..={MAX_IMPORT_FILES} files"
             ));
         }
-        let client = match reqwest::Client::builder()
-            .no_proxy()
-            .timeout(Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-        {
-            Ok(client) => client,
-            Err(e) => return ToolResult::err(format!("failed to build HTTP client: {e}")),
-        };
         let mut imported = Vec::new();
         for (idx, file_ref) in input.openai_file_id_refs.iter().enumerate() {
             let source_name = file_ref
@@ -240,11 +463,12 @@ impl ToolRuntime {
                     "unsupported MIME type for '{source_name}': {mime}"
                 ));
             }
-            let url = match validate_openai_download_url(&file_ref.download_link) {
-                Ok(url) => url,
-                Err(e) => return ToolResult::err(e),
-            };
-            let mut response = match client.get(request_url_for_download(url)).send().await {
+            let (client, request_url) =
+                match prepare_download_request(&file_ref.download_link, download_policy).await {
+                    Ok(prepared) => prepared,
+                    Err(e) => return ToolResult::err(e),
+                };
+            let mut response = match client.get(request_url).send().await {
                 Ok(response) => response,
                 Err(_) => {
                     // reqwest error text can include the request URL. Keep the
@@ -311,6 +535,7 @@ impl ToolRuntime {
             targets,
             overwrite,
             session_id,
+            trusted_mcp_host_file_import,
         } = call
         else {
             unreachable!("dispatch_conversation_import_tool called with non-import tool")
@@ -318,6 +543,11 @@ impl ToolRuntime {
         if !matches!(transport, SessionTransport::Mcp) {
             return ToolResult::err(
                 "import_conversation_files_to_project requires the MCP host file-reference mechanism; use the dedicated /api/artifacts/import GPT Action outside MCP",
+            );
+        }
+        if !trusted_mcp_host_file_import {
+            return ToolResult::err(
+                "import_conversation_files_to_project requires an explicitly trusted OAuth MCP client",
             );
         }
         self.import_conversation_files(
@@ -331,6 +561,7 @@ impl ToolRuntime {
             },
             auth,
             transport,
+            ConversationImportDownloadPolicy::TrustedMcpHostFile,
         )
         .await
     }
@@ -352,5 +583,78 @@ mod tests {
             default_import_leaf(&file_ref, 0, crate::artifact_policy::PPTX_MIME),
             "artifact-1.pptx"
         );
+    }
+
+    #[test]
+    fn trusted_mcp_ssrf_policy_rejects_non_public_ip_ranges() {
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.1.1",
+            "100.64.0.1",
+            "0.0.0.0",
+            "224.0.0.1",
+        ] {
+            assert!(!ip_is_public(ip.parse().unwrap()), "{ip} must be rejected");
+        }
+        for ip in ["::1", "::", "fc00::1", "fd12::1", "fe80::1", "ff02::1"] {
+            assert!(!ip_is_public(ip.parse().unwrap()), "{ip} must be rejected");
+        }
+        assert!(ip_is_public("8.8.8.8".parse().unwrap()));
+        assert!(ip_is_public("2606:4700:4700::1111".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn trusted_mcp_url_policy_requires_safe_public_https_target() {
+        for url in [
+            "http://8.8.8.8/file",
+            "https://user:secret@8.8.8.8/file",
+            "https://8.8.8.8:8443/file",
+            "https://127.0.0.1/file",
+            "https://169.254.169.254/latest/meta-data",
+            "https://[::1]/file",
+            "https://[fc00::1]/file",
+            "https://[fe80::1]/file",
+        ] {
+            let error = validate_trusted_mcp_download_url(url)
+                .await
+                .expect_err("unsafe target must fail closed");
+            assert!(
+                !error.contains(url),
+                "error leaked full temporary URL: {error}"
+            );
+        }
+        let target = validate_trusted_mcp_download_url("https://8.8.8.8/file")
+            .await
+            .expect("public HTTPS literal should be accepted");
+        assert_eq!(target.pinned_addrs, vec!["8.8.8.8:443".parse().unwrap()]);
+    }
+
+    #[tokio::test]
+    async fn trusted_mcp_domain_resolution_fails_closed_on_empty_or_non_public_results() {
+        let _lock = lock_import_test_network().await;
+        for ips in [
+            Vec::<IpAddr>::new(),
+            vec!["127.0.0.1".parse().unwrap()],
+            vec!["169.254.1.1".parse().unwrap()],
+            vec!["::1".parse().unwrap()],
+            vec!["fe80::1".parse().unwrap()],
+        ] {
+            set_import_test_resolved_ips(Some(ips));
+            reset_import_test_dns_resolution_count();
+            let error = validate_trusted_mcp_download_url("https://download.example/file")
+                .await
+                .expect_err("unsafe DNS result must fail closed");
+            assert!(
+                error.contains("resolved to no addresses")
+                    || error.contains("resolves to a non-public address"),
+                "unexpected error: {error}"
+            );
+            assert_eq!(import_test_dns_resolution_count(), 1);
+        }
+        set_import_test_resolved_ips(None);
+        reset_import_test_dns_resolution_count();
     }
 }

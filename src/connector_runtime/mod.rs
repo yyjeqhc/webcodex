@@ -3265,6 +3265,8 @@ impl ConnectorRuntime {
                     auth: Some(auth),
                     window: None,
                     record_oauth_scope_denials: false,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                 },
             )
             .await;

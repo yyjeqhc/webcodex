@@ -1086,6 +1086,11 @@ pub enum ToolCall {
         overwrite: Option<bool>,
         #[serde(default)]
         session_id: Option<String>,
+        /// Internal provenance bit set only by the MCP HTTP adapter after
+        /// authenticating the OAuth client registration. Never deserialized
+        /// from model/caller arguments and never serialized back out.
+        #[serde(skip)]
+        trusted_mcp_host_file_import: bool,
     },
 
     /// Read bounded metadata for a binary project artifact. Zip files are

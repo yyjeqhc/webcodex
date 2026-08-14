@@ -362,6 +362,8 @@ async fn kernel_path_does_not_double_evaluate_or_duplicate_request_id() {
                         auth: Some(&bootstrap),
                         window: None,
                         record_oauth_scope_denials: true,
+                        host_file_import_trust:
+                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                     },
                 )
                 .await

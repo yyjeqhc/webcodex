@@ -3137,6 +3137,7 @@ async fn call_recorded_tool(
                 auth,
                 window: None,
                 record_oauth_scope_denials: true,
+                host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
             },
         )
         .await;
@@ -3201,6 +3202,7 @@ async fn call_kernel_tool(
                 auth,
                 window: None,
                 record_oauth_scope_denials: true,
+                host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
             },
         )
         .await;

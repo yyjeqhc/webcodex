@@ -945,6 +945,71 @@ fn conversation_import_session_log_arguments_do_not_store_host_file_refs() {
 }
 
 #[tokio::test]
+async fn conversation_import_durable_session_events_do_not_store_host_file_refs() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
+
+    let runtime = runtime_with_agent_project("telemetry-conversation-import");
+    register_agent(
+        &runtime,
+        "telemetry-conversation-import",
+        None,
+        ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("telemetry-conversation-import");
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let download_url = "https://download.example/NEVER_PERSIST_DURABLE_IMPORT_URL";
+    let file_id = "NEVER_PERSIST_DURABLE_IMPORT_FILE_ID";
+    let auth = auth_context(None, true);
+    let outcome = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "import_conversation_files_to_project".to_string(),
+                arguments: serde_json::json!({
+                    "project": project,
+                    "openaiFileIdRefs": [{
+                        "download_url": download_url,
+                        "file_id": file_id,
+                        "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        "file_name": "private-durable-name.pptx"
+                    }],
+                    "targets": ["import-test.pptx"]
+                }),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Mcp,
+                session_id: Some(&session.session_id),
+                auth: Some(&auth),
+                window: None,
+                record_oauth_scope_denials: false,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    let result = outcome.result.expect("tool result");
+    assert!(!result.success);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("explicitly trusted OAuth MCP client"));
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let serialized = serde_json::to_string(&summary.events).unwrap();
+    assert!(!serialized.contains(download_url));
+    assert!(!serialized.contains(file_id));
+    assert!(!serialized.contains("private-durable-name.pptx"));
+}
+
+#[tokio::test]
 async fn read_project_artifact_metadata_allow_missing_does_not_count_as_failed() {
     let runtime = runtime_with_agent_project("artifact-missing-session");
     register_agent(

@@ -6,14 +6,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-static IMPORT_HTTP_TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
-    std::sync::OnceLock::new();
-
 async fn lock_import_http_test() -> tokio::sync::MutexGuard<'static, ()> {
-    IMPORT_HTTP_TEST_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
+    crate::tool_runtime::conversation_import::lock_import_test_network().await
 }
 
 struct ImportDownloadBaseUrlGuard;
@@ -253,8 +247,9 @@ async fn import_http_accepts_office_mime_and_extension_policy() {
 async fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path() {
     use crate::auth::{AuthContext, AuthKind};
     use crate::shell_protocol::ShellClientCapabilities;
-    use crate::tool_runtime::sessions::SessionTransport;
-    use crate::tool_runtime::ToolCall;
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
     use sha2::{Digest, Sha256};
 
     let _guard = lock_import_http_test().await;
@@ -277,22 +272,18 @@ async fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path()
     )
     .await;
     let agent = tokio::spawn(complete_one_save_artifact_request(registry));
-    let call = ToolCall::from_tool_name(
-        "import_conversation_files_to_project",
-        json!({
-            "project": "agent:importer:demo",
-            "openaiFileIdRefs": [{
-                "download_url": "https://files.oaiusercontent.com/import-test.pptx",
-                "file_id": "file_host_pptx",
-                "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                "file_name": "source.pptx"
-            }],
-            "output_dir": "paper/export",
-            "targets": ["import-test.pptx"],
-            "overwrite": false
-        }),
-    )
-    .unwrap();
+    let arguments = json!({
+        "project": "agent:importer:demo",
+        "openaiFileIdRefs": [{
+            "download_url": "https://8.8.8.8/import-test.pptx",
+            "file_id": "file_host_pptx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "file_name": "source.pptx"
+        }],
+        "output_dir": "paper/export",
+        "targets": ["import-test.pptx"],
+        "overwrite": false
+    });
     let auth = AuthContext {
         kind: AuthKind::Bootstrap,
         user_id: None,
@@ -306,18 +297,26 @@ async fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path()
         shared_key_hash: None,
         project_grant_id: None,
     };
-    let result = tokio::time::timeout(
+    let outcome = tokio::time::timeout(
         Duration::from_secs(5),
-        runtime.dispatch_with_auth_transport_options(
-            call,
-            Some(&auth),
-            SessionTransport::Mcp,
-            true,
-            false,
+        runtime.call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "import_conversation_files_to_project".to_string(),
+                arguments,
+            },
+            ToolCallContext {
+                transport: ToolTransport::Mcp,
+                session_id: None,
+                auth: Some(&auth),
+                window: None,
+                record_oauth_scope_denials: false,
+                host_file_import_trust: HostFileImportTrust::TrustedOAuthClient,
+            },
         ),
     )
     .await
     .expect("conversation import dispatch timed out");
+    let result = outcome.result.expect("conversation import result");
     if !result.success {
         agent.abort();
         panic!("conversation import failed: {:?}", result.error);

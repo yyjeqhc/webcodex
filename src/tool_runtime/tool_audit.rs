@@ -1153,6 +1153,7 @@ impl ToolCall {
                 targets,
                 overwrite,
                 session_id,
+                ..
             } => serde_json::json!({
                 "project": project,
                 "file_count": openai_file_id_refs.len(),

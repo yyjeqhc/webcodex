@@ -1,6 +1,8 @@
 use super::{parse_json_body, render_result, require_runtime};
 use crate::action_audit::ActionAudit;
-use crate::tool_runtime::conversation_import::{ImportConversationFilesInput, OpenAiFileIdRef};
+use crate::tool_runtime::conversation_import::{
+    ConversationImportDownloadPolicy, ImportConversationFilesInput, OpenAiFileIdRef,
+};
 use crate::tool_runtime::sessions::SessionTransport;
 use salvo::prelude::*;
 use serde::Deserialize;
@@ -55,6 +57,7 @@ pub async fn import_conversation_files_to_project(
             },
             auth.as_ref(),
             SessionTransport::Api,
+            ConversationImportDownloadPolicy::GptActionOpenAiHost,
         )
         .await;
     render_result(

@@ -1526,6 +1526,8 @@ async fn model_facing_session_denials_keep_run_process_prestart_lifecycle() {
                     auth: Some(&auth),
                     window: None,
                     record_oauth_scope_denials: true,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
                 },
             )
             .await;

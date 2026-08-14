@@ -1557,6 +1557,7 @@ async fn model_facing_stop_job_session_project_mismatch_beats_auto_approve() {
                 auth: Some(&auth),
                 window: None,
                 record_oauth_scope_denials: true,
+                host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
             },
         )
         .await;

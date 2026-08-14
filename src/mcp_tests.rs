@@ -398,6 +398,35 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
         );
     }
 
+    for legacy_uri in MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS {
+        let legacy = handle_mcp_request(
+            &runtime,
+            rpc(
+                "resources/read",
+                Some(json!(21041)),
+                mcp_2026_params(json!({ "uri": legacy_uri })),
+            ),
+            None,
+        )
+        .await;
+        let McpOutcome::Ok(legacy) = legacy else {
+            panic!("legacy advertised UI resource must remain readable: {legacy_uri}");
+        };
+        assert_eq!(legacy["result"]["contents"][0]["uri"], *legacy_uri);
+        assert_eq!(
+            legacy["result"]["contents"][0]["mimeType"],
+            MCP_UI_RESOURCE_MIME_TYPE
+        );
+        assert_eq!(
+            legacy["result"]["contents"][0]["_meta"],
+            expected_resource_meta
+        );
+        assert_eq!(
+            legacy["result"]["contents"][0]["text"].as_str(),
+            Some(MCP_COMPUTER_APP_HTML)
+        );
+    }
+
     let unknown = handle_mcp_request(
         &runtime,
         rpc(

@@ -214,13 +214,11 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
     let expected_resource_meta = json!({
         "ui": {
             "prefersBorder": true,
-            "domain": MCP_COMPUTER_UI_DOMAIN,
             "csp": {
                 "connectDomains": [],
                 "resourceDomains": []
             }
-        },
-        "openai/widgetDomain": MCP_COMPUTER_UI_DOMAIN
+        }
     });
 
     let discover = handle_mcp_request(
@@ -339,10 +337,6 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
     };
     let resource_meta = &resource["result"]["contents"][0]["_meta"];
     assert_eq!(resource_meta, &expected_resource_meta);
-    assert_eq!(
-        resource_meta["openai/widgetDomain"],
-        resource_meta["ui"]["domain"]
-    );
     let html = resource["result"]["contents"][0]["text"].as_str().unwrap();
     for expected in [
         "ui/initialize",

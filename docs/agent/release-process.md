@@ -71,16 +71,18 @@ results (if any), and any deferred checks.
 ## 3. Operator checklist pointer
 
 Before tagging or publishing, follow sections in
-[`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md):
+[`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md). The final executable pre-tag gate is
+`.github/workflows/release-readiness.yml`, dispatched through
+`scripts/release_operator.py readiness-start` for one exact merged `main` SHA and
+observed through the same durable state with `readiness-status`. It runs the canonical
+release check, locked full workspace suite, frontend checks, both zero-config E2E
+transports, and the coding-loop compare eval without producing release candidates.
+Product-documentation consistency and allowed legacy-term matches remain part of the
+release-prep review rather than being guessed by an automated semantic checker.
 
-1. Source validation (fmt, check, full suite when required)
-2. Focused runtime tests for touched domains
-3. Product documentation consistency
-4. Legacy surface guard
-5. Remaining checklist items in that document
-
-The normal release topology deliberately separates roles: GitHub Actions builds and
-assembles the one same-run native candidate bundle; the release control host collects
+The normal release topology deliberately separates roles: GitHub Actions first validates
+the exact pre-tag source in the readiness workflow, then after the immutable tag builds
+and assembles the one same-run native candidate bundle; the release control host collects
 that exact bundle with `scripts/release_operator.py collect` (locked run id, source SHA,
 and tag; GitHub artifact REST download, no `gh run download`) and performs privileged
 GitHub/npm publication from the verified bytes; one well-connected Linux host may run

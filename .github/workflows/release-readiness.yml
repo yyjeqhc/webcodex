@@ -1,0 +1,131 @@
+name: Release readiness
+
+run-name: Release readiness ${{ inputs.request_id }} ${{ inputs.source_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-character main commit to validate before tagging
+        required: true
+        type: string
+      request_id:
+        description: Operator-generated correlation id (rr_<24 lowercase hex>)
+        required: true
+        type: string
+
+# This workflow validates one exact main commit before an immutable release tag is
+# created. It never builds release candidates, writes repository contents, publishes,
+# tags, or deploys.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-readiness-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release readiness must be dispatched from the main workflow definition." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]; then
+            echo "request_id must match rr_<24 lowercase hex>." >&2
+            exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$INPUT_SOURCE_SHA" ]; then
+            echo "main moved before readiness dispatch: requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Verify exact clean checkout
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Run canonical release check
+        run: bash scripts/release_check.sh
+
+      - name: Run full workspace suite
+        run: cargo test --locked --workspace -- --nocapture
+
+      - name: Validate frontend source and committed build
+        run: |
+          npm ci --prefix frontend
+          npm --prefix frontend run typecheck
+          npm --prefix frontend test
+          npm --prefix frontend run check:dist
+
+      - name: Run WebSocket zero-config E2E
+        run: bash scripts/e2e_zero_config_ws.sh
+
+      - name: Run polling zero-config E2E
+        env:
+          E2E_TRANSPORT: polling
+        run: bash scripts/e2e_zero_config_ws.sh
+
+      - name: Run coding-loop eval compare
+        env:
+          EVAL_MODE: compare
+        run: bash scripts/eval_coding_loop.sh
+
+      - name: Require final source cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Record readiness summary
+        if: ${{ success() }}
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          {
+            echo "### Release readiness passed"
+            echo "- source: \`$INPUT_SOURCE_SHA\`"
+            echo "- request: \`$INPUT_REQUEST_ID\`"
+            echo "- candidate binaries produced: no"
+          } >> "$GITHUB_STEP_SUMMARY"

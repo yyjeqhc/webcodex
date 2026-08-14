@@ -23,8 +23,10 @@ set -euo pipefail
 #  11. static: no python runtime helper regressions
 #  12. static: no sensitive files tracked or staged by git
 #
-# Manual final acceptance steps live in docs/RELEASE_CHECKLIST.md:
-#   - cargo test --workspace -- --nocapture
+# Final pre-tag acceptance is orchestrated by .github/workflows/release-readiness.yml:
+#   - this canonical release_check.sh
+#   - cargo test --locked --workspace -- --nocapture
+#   - frontend typecheck/test/committed-build check
 #   - bash scripts/e2e_zero_config_ws.sh
 #   - E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh
@@ -157,10 +159,13 @@ done
 # Stage 9: release verification tooling self-tests
 # ----------------------------------------------------------------------------
 stage_start "release verification tooling self-tests"
-if python3 -m unittest scripts.tests.test_verify_public_release scripts.tests.test_collect_release_bundle \
-    && python3 -m py_compile scripts/verify_public_release.py scripts/collect_release_bundle.py scripts/release_operator.py \
+if python3 -m unittest scripts.tests.test_verify_public_release scripts.tests.test_collect_release_bundle scripts.tests.test_release_readiness scripts.tests.test_check_markdown_links \
+    && python3 -m py_compile scripts/verify_public_release.py scripts/collect_release_bundle.py scripts/release_readiness.py scripts/release_operator.py scripts/check_markdown_links.py \
     && python3 scripts/release_operator.py --help >/dev/null \
     && python3 scripts/release_operator.py collect --help >/dev/null \
+    && python3 scripts/release_operator.py readiness-start --help >/dev/null \
+    && python3 scripts/release_operator.py readiness-status --help >/dev/null \
+    && python3 scripts/check_markdown_links.py \
     && bash scripts/tests/test_npm_package_smoke_existing_binaries.sh; then
     ok "release verification tooling self-tests"
 else
@@ -256,6 +261,6 @@ fi
 # ----------------------------------------------------------------------------
 printf '\n[release] ===== all stages passed =====\n'
 ok "workspace boundaries, fmt, check --all-targets, focused metadata/schema/openapi/mcp tests, bash syntax, release tooling self-tests, harness contracts, static checks"
-log "manual final acceptance: full suite, E2E websocket/polling, and eval compare (see docs/RELEASE_CHECKLIST.md)"
+log "final pre-tag acceptance: dispatch the exact-source release-readiness workflow (see docs/RELEASE_CHECKLIST.md)"
 log "release readiness gate PASSED"
 exit 0

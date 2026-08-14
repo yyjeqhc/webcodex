@@ -8,31 +8,29 @@ Do not create tags, push commits, publish npm packages, create GitHub Releases, 
 
 ## 1. Source Validation
 
-Run:
+After the release-prep PR is squash-merged, select the exact `origin/main` commit that would be tagged. Final pre-tag validation is a reviewed GitHub Actions workflow, not a sequence of hand-run release-host commands:
 
 ```bash
-cargo fmt --check
-cargo check --workspace --all-targets
-cargo test --workspace -- --nocapture
-git diff --check
-git status --short --branch
+python3 scripts/release_operator.py readiness-start \
+  --source-sha <MAIN_COMMIT> \
+  --state-file <STATE_FILE>
+
+python3 scripts/release_operator.py readiness-status \
+  --state-file <STATE_FILE> \
+  --wait-secs 3600
 ```
 
-For documentation-only release readiness work, the full test suite may be deferred, but the deferral must be reported.
+`readiness-start` first requires GitHub `main` to equal `<MAIN_COMMIT>`, writes a mode-0600 operator-local correlation state before dispatch, and dispatches `.github/workflows/release-readiness.yml` from `main`. The workflow itself requires its `github.sha` to equal the requested source, checks out that exact commit with no persisted credential, and never tags, publishes, deploys, or produces release candidate binaries.
+
+If dispatch delivery becomes uncertain or the run is not resolved before the short start timeout, **do not create a second state file and do not redispatch**. Continue with `readiness-status` on the original state; its unique request id recovers the exact workflow run when present. Only terminal `success` (operator exit 0) satisfies the pre-tag gate. A nonterminal/unresolved status is not release approval.
+
+The readiness workflow runs the canonical `scripts/release_check.sh`, the locked full workspace suite, frontend typecheck/tests/committed-build check, WebSocket and polling zero-config E2E, and coding-loop compare eval. `release_check.sh` includes formatting, workspace all-target check, focused metadata/schema/OpenAPI/MCP tests, release-tooling self-tests, Markdown local-link validation, and static current-contract/leakage guards.
+
+For focused diagnosis outside the final workflow, the underlying commands remain available, but a local pass does not replace the exact-source readiness run.
 
 ## 2. Focused Runtime Tests
 
-Run focused lanes when touching runtime metadata, schemas, OpenAPI, MCP, session, handoff, validation, or coding-task behavior:
-
-```bash
-cargo test -p webcodex --lib metadata -- --nocapture
-cargo test -p webcodex --lib schema -- --nocapture
-cargo test -p webcodex --lib openapi -- --nocapture
-cargo test -p webcodex --lib mcp -- --nocapture
-cargo test -p webcodex --lib validation -- --nocapture
-cargo test -p webcodex --lib handoff -- --nocapture
-cargo test -p webcodex --lib coding_task -- --nocapture
-```
+During implementation/review, run focused lanes when touching runtime metadata, schemas, OpenAPI, MCP, session, handoff, validation, or coding-task behavior. The final release-readiness run does **not** repeat every focused lane after the full workspace suite: `release_check.sh` already records metadata/schema/OpenAPI/MCP evidence, and the locked full workspace suite covers validation/handoff/coding-task tests. Re-run an individual lane only to diagnose a failure or when a review explicitly requires separate evidence.
 
 ## 3. Product Documentation Check
 
@@ -47,7 +45,7 @@ Confirm the user-facing docs tell one story:
 - The release PR / GitHub Release notes read like external release notes and include highlights, compatibility or breaking changes, known limitations, upgrade notes, and validation. Do not restore per-version release-note files as a second documentation source.
 - Roadmap stays short and does not promise a full IDE replacement, autonomous ops, arbitrary computer use, or universal client compatibility.
 
-Run a markdown local link check and report markdown file count, local link count, and missing local link count.
+Run `python3 scripts/check_markdown_links.py` (also included in `release_check.sh`) and require zero missing repository-local links. Product narrative and allowed legacy-term matches remain review judgments in the release-prep PR; the readiness workflow automates only deterministic checks.
 
 ## 4. Legacy Surface Guard
 
@@ -63,24 +61,18 @@ Do not allow docs that ask users to configure server-side project onboarding, im
 
 ## 5. E2E Smoke
 
-Run both supported zero-config transports against a safe local test project:
+The exact-source release-readiness workflow runs both supported zero-config transports against disposable local fixtures:
 
 ```bash
 bash scripts/e2e_zero_config_ws.sh
 E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
 ```
 
-These smokes must not target a production repository. Any write checks must stay within disposable probe files or a temporary project.
+These commands remain useful for diagnosis, but do not rerun them manually after a successful readiness workflow merely to duplicate evidence. They must never target a production repository; any write checks stay within disposable probe files or a temporary project.
 
 ## 6. Eval Harness
 
-Run the coding-loop comparison:
-
-```bash
-EVAL_MODE=compare bash scripts/eval_coding_loop.sh
-```
-
-The eval harness measures scripted WebCodex tool-call mechanics. It is not a full model-behavior evaluation.
+The exact-source release-readiness workflow runs `EVAL_MODE=compare bash scripts/eval_coding_loop.sh`. Run it separately only for focused diagnosis. The eval harness measures scripted WebCodex tool-call mechanics; it is not a full model-behavior evaluation.
 
 ## 7. Security And Leakage Checks
 
@@ -111,7 +103,7 @@ For every new binary and npm release, choose one candidate `<VERSION>` first and
 ## 9. Release Sequence
 
 1. Select a new `<VERSION>` that does not already exist as a Git tag, GitHub Release, or npm package version. Put version bumps, release notes, platform docs, packaging changes, and release tests in **one release-prep PR** and squash-merge it into `main`.
-2. On the release control host, fast-forward to `origin/main`, require a clean worktree, run the source/release gates, and only after explicit operator authorization create the immutable annotated `v<VERSION>` tag. Never move that tag afterward.
+2. Resolve the exact merged `origin/main` commit and run `release_operator.py readiness-start` with a fresh durable state file, then `readiness-status --wait-secs 3600` on that same state. Require terminal success for the exact source before explicit operator authorization creates the immutable annotated `v<VERSION>` tag. If readiness dispatch/observation is uncertain, recover from the same state instead of blind redispatch. Never move the release tag afterward.
 3. Dispatch the reviewed release-build workflow for the exact tag. Require all five native targets (`linux-x64`, `linux-arm64`, `darwin-arm64`, `win32-x64`, `win32-arm64`) plus the final `assemble` job to succeed in one recorded workflow run. Native jobs remain authoritative for executable version/build identity, architecture, Windows npm artifact smoke, and the Linux `GLIBC_* <= 2.17` / `DT_NEEDED` gates.
 4. Collect only that run's `<ARCHIVE_STEM>-bundle` with `scripts/release_operator.py collect`, passing the recorded run id, exact tag commit, and tag. The collector must finish successfully before publication; its output directory is the retained candidate bundle. Create a draft GitHub Release and upload the five exact archives plus `SHA256SUMS`; download those draft assets once and verify SHA-256 against the retained bundle bytes.
 5. From a clean detached worktree at the immutable tag, run `scripts/stage_npm_release.sh --manifest <BUNDLE_DIR>/manifest.json --output-dir <STAGE_DIR>`. Extract the retained `linux-x64` archive and run `scripts/npm_package_smoke.sh --package-dir <STAGE_DIR>/npm-package --binary-dir <EXTRACTED_LINUX_X64_DIR>` so npm publication smoke reuses the CI bytes without recompilation.

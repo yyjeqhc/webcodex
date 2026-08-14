@@ -80,9 +80,11 @@ Before tagging or publishing, follow sections in
 5. Remaining checklist items in that document
 
 The normal release topology deliberately separates roles: GitHub Actions builds and
-assembles the one same-run native candidate bundle; the release control host performs
-privileged GitHub/npm publication from that immutable bundle; one well-connected Linux
-host may run the read-only public verifier after publication. Do not fan release
+assembles the one same-run native candidate bundle; the release control host collects
+that exact bundle with `scripts/release_operator.py collect` (locked run id, source SHA,
+and tag; GitHub artifact REST download, no `gh run download`) and performs privileged
+GitHub/npm publication from the verified bytes; one well-connected Linux host may run
+the read-only public verifier after publication. Do not fan release
 downloads or rebuilds out to per-platform development machines merely to prove that a
 foreign archive is downloadable. Native execution/architecture evidence belongs to
 the reviewed release-build matrix; the public verifier checks the published bytes

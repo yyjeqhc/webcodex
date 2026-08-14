@@ -157,8 +157,10 @@ done
 # Stage 9: release verification tooling self-tests
 # ----------------------------------------------------------------------------
 stage_start "release verification tooling self-tests"
-if python3 -m unittest scripts.tests.test_verify_public_release \
-    && python3 -m py_compile scripts/verify_public_release.py \
+if python3 -m unittest scripts.tests.test_verify_public_release scripts.tests.test_collect_release_bundle \
+    && python3 -m py_compile scripts/verify_public_release.py scripts/collect_release_bundle.py scripts/release_operator.py \
+    && python3 scripts/release_operator.py --help >/dev/null \
+    && python3 scripts/release_operator.py collect --help >/dev/null \
     && bash scripts/tests/test_npm_package_smoke_existing_binaries.sh; then
     ok "release verification tooling self-tests"
 else

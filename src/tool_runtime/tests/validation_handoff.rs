@@ -11,8 +11,10 @@ use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentResultPayload, ShellAgentResultRequest,
     ShellClientCapabilities, ShellCommandExecutionState, ShellJobValidationProgress,
 };
+#[cfg(unix)]
 use crate::tool_runtime::tool_inputs::ExecutionPurpose;
 use crate::tool_runtime::validation_events::validation_summary_for_session;
+#[cfg(unix)]
 use crate::tool_runtime::validation_profile::{
     validation_adapter_for_tool, ValidationCommandOptions,
 };
@@ -135,6 +137,7 @@ fn assert_cargo_result_matches_schema(tool_name: &str, result: &crate::tool_runt
     );
 }
 
+#[cfg(unix)]
 fn write_local_validation_crate(root: &std::path::Path, source: &str) {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
@@ -145,6 +148,7 @@ fn write_local_validation_crate(root: &std::path::Path, source: &str) {
     std::fs::write(root.join("src/lib.rs"), source).unwrap();
 }
 
+#[cfg(unix)]
 async fn wait_for_local_job_terminal(
     runtime: &ToolRuntime,
     job_id: &str,
@@ -2272,6 +2276,7 @@ fn local_inspect_validation_stays_on_synchronous_sandbox_path() {
     ));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn local_fast_fmt_check_returns_terminal_without_public_job() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2306,6 +2311,7 @@ async fn local_fast_fmt_check_returns_terminal_without_public_job() {
     assert_cargo_result_matches_schema("cargo_fmt", &result);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn local_long_test_hides_then_hands_off_once_with_structured_terminal() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2352,17 +2358,28 @@ mod tests {
         }
     });
 
-    let hidden_job_id = loop {
-        let hidden = {
-            let jobs = runtime.local_jobs.lock().await;
-            jobs.iter()
-                .find(|(_, record)| !record.is_public())
-                .map(|(job_id, _)| job_id.clone())
-        };
-        if let Some(job_id) = hidden {
-            break job_id;
+    let hidden_job_id = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let hidden = {
+                let jobs = runtime.local_jobs.lock().await;
+                jobs.iter()
+                    .find(|(_, record)| !record.is_public())
+                    .map(|(job_id, _)| job_id.clone())
+            };
+            if hidden.is_some() || task.is_finished() {
+                break hidden;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        tokio::task::yield_now().await;
+    })
+    .await
+    .expect("local validation must publish a hidden job or finish within 3 seconds");
+    let hidden_job_id = match hidden_job_id {
+        Some(job_id) => job_id,
+        None => {
+            let early = task.await.unwrap();
+            panic!("local validation finished before publishing a hidden job: {early:?}");
+        }
     };
     assert!(
         runtime.list_jobs_for_auth(None, None, None).await.output["jobs"]
@@ -2508,6 +2525,7 @@ async fn local_job_status_uses_bounded_logs_and_nulls_complete_counts() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn local_validation_stop_job_terminates_descendant_process_group() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2578,6 +2596,7 @@ mod tests {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn local_validation_total_timeout_is_terminal_and_structured() {
     let tmp = tempfile::tempdir().unwrap();

@@ -1178,14 +1178,26 @@ impl ToolRuntime {
                 return ToolResult::err(format!("Failed to create validation stderr log: {error}"));
             }
         };
-        let mut process = std::process::Command::new("setsid");
+        #[cfg(unix)]
+        let mut process = {
+            use std::os::unix::process::CommandExt;
+            let mut process = std::process::Command::new(&step.program);
+            process.args(&step.args).process_group(0);
+            process
+        };
+        #[cfg(not(unix))]
+        let mut process = {
+            let mut process = std::process::Command::new("setsid");
+            process
+                .arg("timeout")
+                .arg("--signal=TERM")
+                .arg("--kill-after=2s")
+                .arg(format!("{timeout_secs}s"))
+                .arg(&step.program)
+                .args(&step.args);
+            process
+        };
         process
-            .arg("timeout")
-            .arg("--signal=TERM")
-            .arg("--kill-after=2s")
-            .arg(format!("{timeout_secs}s"))
-            .arg(&step.program)
-            .args(&step.args)
             .current_dir(&cwd_path)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::from(stdout_file))
@@ -1193,6 +1205,8 @@ impl ToolRuntime {
         for (key, value) in &step.env {
             process.env(key, value);
         }
+        #[cfg(unix)]
+        let spawn_time = std::time::Instant::now();
         let mut child = match process.spawn() {
             Ok(child) => child,
             Err(error) => {
@@ -1200,8 +1214,14 @@ impl ToolRuntime {
                 return ToolResult::err(format!("Failed to spawn validation job: {error}"));
             }
         };
+        #[cfg(unix)]
+        let validation_deadline = spawn_time + std::time::Duration::from_secs(timeout_secs);
         let pid = child.id();
-        let pgid = pid as i64;
+        let pgid = i64::from(pid);
+        // No await occurs between successful spawn and this guard being armed,
+        // so cancellation cannot observe an unowned running validation process.
+        let mut spawned_guard =
+            SpawnedValidationGuard::new(self.job_killer.clone(), i64::from(pid), pgid);
         let metadata = json!({
             "job_id": job_id,
             "project": project,
@@ -1209,9 +1229,9 @@ impl ToolRuntime {
             "status": "running",
             "created_at": now,
             "started_at": now,
-            // The wrapper enforces the exact validation budget. The local Job
+            // Validation execution enforces the exact budget. The local Job
             // watchdog gets a small publication grace so it does not race the
-            // wrapper's TERM/KILL sequence and misclassify a real timeout as lost.
+            // terminal publication and misclassify a real timeout as lost.
             "max_runtime_secs": timeout_secs.saturating_add(3),
             "executor": "local",
             "path": config.path,
@@ -1232,19 +1252,19 @@ impl ToolRuntime {
             dir.join("metadata.json"),
             serde_json::to_string_pretty(&metadata).unwrap_or_default(),
         ) {
-            let _ = self.job_killer.terminate_group(pgid, pgid);
+            spawned_guard.terminate_now();
             let _ = child.wait();
             let _ = std::fs::remove_dir_all(&dir);
             return ToolResult::err(format!("Failed to write validation job metadata: {error}"));
         }
         if let Err(error) = std::fs::write(dir.join("pid"), pid.to_string()) {
-            let _ = self.job_killer.terminate_group(pgid, pgid);
+            spawned_guard.terminate_now();
             let _ = child.wait();
             let _ = std::fs::remove_dir_all(&dir);
             return ToolResult::err(format!("Failed to write validation job pid: {error}"));
         }
         if let Err(error) = std::fs::write(dir.join("status"), "running") {
-            let _ = self.job_killer.terminate_group(pgid, pgid);
+            spawned_guard.terminate_now();
             let _ = child.wait();
             let _ = std::fs::remove_dir_all(&dir);
             return ToolResult::err(format!("Failed to write validation job status: {error}"));
@@ -1253,7 +1273,7 @@ impl ToolRuntime {
         {
             Ok(value) => value,
             Err(error) => {
-                let _ = self.job_killer.terminate_group(pgid, pgid);
+                spawned_guard.terminate_now();
                 let _ = child.wait();
                 let _ = std::fs::remove_dir_all(&dir);
                 return ToolResult::err(error);
@@ -1267,49 +1287,96 @@ impl ToolRuntime {
         let watcher_jobs = self.local_jobs.clone();
         let watcher_job_id = job_id.clone();
         let watcher_dir = dir.clone();
+        let watcher_killer = self.job_killer.clone();
         let watcher_handle = tokio::runtime::Handle::current();
-        std::thread::spawn(move || {
-            let exit = child.wait();
-            let exit_code = exit.ok().and_then(|status| status.code()).unwrap_or(-1);
-            let cleanup_pending_at_exit = watcher_record.cleanup_pending();
-            let recorded_status = normalize_local_status(
-                &watcher_record
-                    .read_text("status")
-                    .unwrap_or_else(|| "running".to_string()),
-            );
-            let terminal_status =
-                if crate::tool_runtime::jobs::is_terminal_job_status(&recorded_status) {
-                    recorded_status
-                } else if cleanup_pending_at_exit {
-                    "stopped".to_string()
-                } else if exit_code == 0 {
-                    "completed".to_string()
-                } else if matches!(exit_code, 124 | 137) {
-                    "timeout".to_string()
-                } else {
-                    "failed".to_string()
+        let watcher = std::thread::Builder::new()
+            .name("webcodex-local-validation".to_string())
+            .spawn(move || {
+                #[cfg(unix)]
+                let (exit_code, timed_out) = {
+                    let mut timed_out = false;
+                    let exit = loop {
+                        match child.try_wait() {
+                            Ok(Some(status)) => break Some(status),
+                            Ok(None) if std::time::Instant::now() >= validation_deadline => {
+                                timed_out = true;
+                                let _ = watcher_killer.terminate_group(pgid, pgid);
+                                break child.wait().ok();
+                            }
+                            Ok(None) => {
+                                std::thread::sleep(std::time::Duration::from_millis(25));
+                            }
+                            Err(_) => {
+                                let _ = watcher_killer.terminate_group(pgid, pgid);
+                                break child.wait().ok();
+                            }
+                        }
+                    };
+                    if !timed_out {
+                        let _ = watcher_killer.terminate_group(pgid, pgid);
+                    }
+                    (
+                        exit.and_then(|status| status.code()).unwrap_or(-1),
+                        timed_out,
+                    )
                 };
-            let _ = std::fs::write(watcher_dir.join("exit_code"), exit_code.to_string());
-            let _ = std::fs::write(
-                watcher_dir.join("finished_at"),
-                chrono::Utc::now().timestamp().to_string(),
-            );
-            let _ = std::fs::write(watcher_dir.join("status"), &terminal_status);
-            if let Err(error) = watcher_record.observe() {
-                tracing::error!(
-                    job_id = %watcher_job_id,
-                    error = %error,
-                    "failed to persist local validation terminal observation"
+                #[cfg(not(unix))]
+                let (exit_code, timed_out) = {
+                    let exit_code = child
+                        .wait()
+                        .ok()
+                        .and_then(|status| status.code())
+                        .unwrap_or(-1);
+                    (exit_code, matches!(exit_code, 124 | 137))
+                };
+                let cleanup_pending_at_exit = watcher_record.cleanup_pending();
+                let recorded_status = normalize_local_status(
+                    &watcher_record
+                        .read_text("status")
+                        .unwrap_or_else(|| "running".to_string()),
                 );
+                let terminal_status =
+                    if crate::tool_runtime::jobs::is_terminal_job_status(&recorded_status) {
+                        recorded_status
+                    } else if cleanup_pending_at_exit {
+                        "stopped".to_string()
+                    } else if timed_out {
+                        "timeout".to_string()
+                    } else if exit_code == 0 {
+                        "completed".to_string()
+                    } else {
+                        "failed".to_string()
+                    };
+                let _ = std::fs::write(watcher_dir.join("exit_code"), exit_code.to_string());
+                let _ = std::fs::write(
+                    watcher_dir.join("finished_at"),
+                    chrono::Utc::now().timestamp().to_string(),
+                );
+                let _ = std::fs::write(watcher_dir.join("status"), &terminal_status);
+                if let Err(error) = watcher_record.observe() {
+                    tracing::error!(
+                        job_id = %watcher_job_id,
+                        error = %error,
+                        "failed to persist local validation terminal observation"
+                    );
+                }
+                watcher_record.mark_terminal();
+                if watcher_record.cleanup_pending() {
+                    watcher_handle.spawn(async move {
+                        watcher_jobs.lock().await.remove(&watcher_job_id);
+                        let _ = std::fs::remove_dir_all(&watcher_dir);
+                    });
+                }
+            });
+        match watcher {
+            Ok(_handle) => spawned_guard.disarm(),
+            Err(error) => {
+                spawned_guard.terminate_now();
+                self.local_jobs.lock().await.remove(&job_id);
+                let _ = std::fs::remove_dir_all(&dir);
+                return ToolResult::err(format!("Failed to start validation job watcher: {error}"));
             }
-            watcher_record.mark_terminal();
-            if watcher_record.cleanup_pending() {
-                watcher_handle.spawn(async move {
-                    watcher_jobs.lock().await.remove(&watcher_job_id);
-                    let _ = std::fs::remove_dir_all(&watcher_dir);
-                });
-            }
-        });
+        }
         let mut guard = LocalValidationCleanupGuard::new(
             self.local_jobs.clone(),
             record.clone(),
@@ -2021,6 +2088,46 @@ fn apply_validation_projection_fields(payload: &mut Value, projection: &Value) {
     }
 }
 
+struct SpawnedValidationGuard {
+    killer: std::sync::Arc<dyn super::local_jobs::LocalJobKiller>,
+    pid: i64,
+    pgid: i64,
+    armed: bool,
+}
+
+impl SpawnedValidationGuard {
+    fn new(
+        killer: std::sync::Arc<dyn super::local_jobs::LocalJobKiller>,
+        pid: i64,
+        pgid: i64,
+    ) -> Self {
+        Self {
+            killer,
+            pid,
+            pgid,
+            armed: true,
+        }
+    }
+
+    fn terminate_now(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let _ = self.killer.terminate_group(self.pid, self.pgid);
+        self.armed = false;
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for SpawnedValidationGuard {
+    fn drop(&mut self) {
+        self.terminate_now();
+    }
+}
+
 struct LocalValidationCleanupGuard {
     jobs: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, LocalJobRecord>>>,
     record: LocalJobRecord,
@@ -2153,6 +2260,41 @@ impl Drop for ValidationCleanupGuard {
 #[cfg(test)]
 mod structured_cargo_arg_parity_tests {
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingJobKiller {
+        calls: std::sync::Mutex<Vec<(i64, i64)>>,
+    }
+
+    impl super::super::local_jobs::LocalJobKiller for RecordingJobKiller {
+        fn terminate_group(
+            &self,
+            pid: i64,
+            pgid: i64,
+        ) -> super::super::local_jobs::TerminateOutcome {
+            self.calls.lock().unwrap().push((pid, pgid));
+            super::super::local_jobs::TerminateOutcome::AlreadyGone
+        }
+    }
+
+    #[test]
+    fn spawned_validation_guard_cancellation_drop_terminates_owned_group() {
+        let killer = std::sync::Arc::new(RecordingJobKiller::default());
+        {
+            let _guard = SpawnedValidationGuard::new(killer.clone(), 41, 41);
+        }
+        assert_eq!(killer.calls.lock().unwrap().as_slice(), &[(41, 41)]);
+    }
+
+    #[test]
+    fn spawned_validation_guard_disarm_transfers_cleanup_ownership() {
+        let killer = std::sync::Arc::new(RecordingJobKiller::default());
+        {
+            let mut guard = SpawnedValidationGuard::new(killer.clone(), 42, 42);
+            guard.disarm();
+        }
+        assert!(killer.calls.lock().unwrap().is_empty());
+    }
 
     /// The structured Job argv builder must normalize a value-taking Cargo
     /// argument identically to the synchronous command builder, so the same

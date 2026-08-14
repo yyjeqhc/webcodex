@@ -83,6 +83,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # search_project_texts advanced result modes intentionally require ripgrep;
+      # do not rely on the mutable hosted-runner image to provide it implicitly.
+      - name: Install E2E search dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ripgrep
+
       - name: Run canonical release check
         run: bash scripts/release_check.sh
 

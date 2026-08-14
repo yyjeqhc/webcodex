@@ -211,6 +211,17 @@ fn mcp_2026_ui_capability_detection_is_explicit_and_mime_aware() {
 #[tokio::test]
 async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    let expected_resource_meta = json!({
+        "ui": {
+            "prefersBorder": true,
+            "domain": MCP_COMPUTER_UI_DOMAIN,
+            "csp": {
+                "connectDomains": [],
+                "resourceDomains": []
+            }
+        },
+        "openai/widgetDomain": MCP_COMPUTER_UI_DOMAIN
+    });
 
     let discover = handle_mcp_request(
         &runtime,
@@ -308,6 +319,10 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
         resources["result"]["resources"][0]["mimeType"],
         MCP_UI_RESOURCE_MIME_TYPE
     );
+    assert_eq!(
+        resources["result"]["resources"][0]["_meta"],
+        expected_resource_meta
+    );
 
     let resource = handle_mcp_request(
         &runtime,
@@ -322,6 +337,12 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
     let McpOutcome::Ok(resource) = resource else {
         panic!("expected UI resources/read");
     };
+    let resource_meta = &resource["result"]["contents"][0]["_meta"];
+    assert_eq!(resource_meta, &expected_resource_meta);
+    assert_eq!(
+        resource_meta["openai/widgetDomain"],
+        resource_meta["ui"]["domain"]
+    );
     let html = resource["result"]["contents"][0]["text"].as_str().unwrap();
     for expected in [
         "ui/initialize",

@@ -213,7 +213,7 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     // The URI is a host cache key. Bump it whenever the App delivery contract
     // changes so a previously failed/blank iframe cannot pin the old resource.
-    assert_eq!(MCP_COMPUTER_UI_RESOURCE_URI, "ui://webcodex/computer/v3");
+    assert_eq!(MCP_COMPUTER_UI_RESOURCE_URI, "ui://webcodex/computer/v4");
     let expected_resource_meta = json!({
         "ui": {
             "prefersBorder": true,
@@ -347,6 +347,11 @@ async fn mcp_2026_computer_app_is_progressive_and_snapshot_only() {
         resource_meta["ui"]["domain"]
     );
     let html = resource["result"]["contents"][0]["text"].as_str().unwrap();
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("<script type=\"module\">"));
+    assert!(html.contains(
+        "pending.set(id, { resolve, reject, timeout });\n      try {\n        window.parent.postMessage"
+    ));
     for expected in [
         "ui/initialize",
         "2026-01-26",

@@ -731,6 +731,23 @@ pub(crate) struct PersistentShellEventEvidence {
     pub(crate) already_closed: Option<bool>,
 }
 
+/// Minimal, bounded effect evidence copied from a structured ToolResult into a
+/// finished Session event. It deliberately retains only safe booleans and a
+/// closed execution-state atom; raw commands, output, paths, and secrets are
+/// never persisted here. Legacy ledger rows deserialize this as `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ToolEffectEventEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) state_changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) command_started: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) command_completed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) execution_state: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionEvent {
     pub(crate) event_id: String,
@@ -787,6 +804,8 @@ pub(crate) struct SessionEvent {
     pub(crate) job_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) persistent_shell: Option<PersistentShellEventEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) effect_evidence: Option<ToolEffectEventEvidence>,
     pub(crate) input_summary: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) validation_output_summary: Option<Value>,

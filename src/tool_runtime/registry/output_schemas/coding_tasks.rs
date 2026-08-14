@@ -74,7 +74,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "tool_failures",
-                open_object_schema("Expected/unexpected tool failure classification from the session ledger. Counts expected failures, unexpected failures, expectation mismatches, and expected-failure calls that unexpectedly succeeded. Compact output includes counts only."),
+                open_object_schema("Expected/unexpected tool failure classification from the session ledger. unexpected_count remains raw historical evidence; historical_non_actionable_count identifies resolved validation or structurally proven fail-closed attempts; actionable_unexpected_count is the conservative current blocker projection. Expectation mismatches and unexpected successes remain separate integrity evidence. Compact output includes counts only."),
             ),
             (
                 "hygiene",

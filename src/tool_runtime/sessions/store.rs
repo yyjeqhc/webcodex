@@ -15,8 +15,9 @@ use super::events::{
     actual_failure_kind_for_tool_result, changed_paths_for_tool, classify_failure_expectation,
     diff_review_like_for_tool, extract_job_id, extract_project, is_valid_session_id,
     observed_input_paths_for_tool, observed_paths_for_successful_result,
-    persistent_shell_event_evidence_for_tool_result, session_input_summary_for_tool,
-    validation_output_summary_for_tool_result, SessionToolClassification,
+    persistent_shell_event_evidence_for_tool_result, sanitize_tool_execution_state,
+    session_input_summary_for_tool, validation_output_summary_for_tool_result,
+    SessionToolClassification,
 };
 use super::model::{
     CodingSessionError, CodingSessionOutcome, CodingSessionRequest, ColdSessionRecord,
@@ -27,10 +28,11 @@ use super::model::{
     SessionExecutionContextUpdateError, SessionExecutionContextUpdateOutcome, SessionGuardDenial,
     SessionGuards, SessionLifecycle, SessionLifecycleDenial, SessionMessage, SessionMessageError,
     SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary, SessionTransport,
-    StoredSession, ToolCallRecorderMetadata, ToolCallStart, DEFAULT_MAX_EVENTS_PER_SESSION,
-    DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS, DEFAULT_SUMMARY_LIMIT,
-    DURABLE_CURRENT_BINDINGS_PER_SESSION, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS,
-    MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
+    StoredSession, ToolCallRecorderMetadata, ToolCallStart, ToolEffectEventEvidence,
+    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS,
+    DEFAULT_SUMMARY_LIMIT, DURABLE_CURRENT_BINDINGS_PER_SESSION, EVENT_ID_PREFIX,
+    MAX_CODING_INSTRUCTION_CHARS, MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX,
+    SESSION_LEDGER_VERSION,
 };
 use super::persistence::{
     cold_session_from_persisted, load_persisted_ledger, materialize_cold_session,
@@ -1156,6 +1158,7 @@ impl SessionStore {
             observed_paths,
             job_id: None,
             persistent_shell: None,
+            effect_evidence: None,
             input_summary,
             validation_output_summary: None,
             permission: None,
@@ -1216,6 +1219,29 @@ impl SessionStore {
         if persisted {
             self.persist_after_mutation();
         }
+    }
+
+    fn tool_effect_event_evidence_for_result(output: &Value) -> Option<ToolEffectEventEvidence> {
+        let state_changed = output.get("state_changed").and_then(Value::as_bool);
+        let command_started = output.get("command_started").and_then(Value::as_bool);
+        let command_completed = output.get("command_completed").and_then(Value::as_bool);
+        let execution_state = output
+            .get("execution_state")
+            .and_then(Value::as_str)
+            .and_then(sanitize_tool_execution_state);
+        if state_changed.is_none()
+            && command_started.is_none()
+            && command_completed.is_none()
+            && execution_state.is_none()
+        {
+            return None;
+        }
+        Some(ToolEffectEventEvidence {
+            state_changed,
+            command_started,
+            command_completed,
+            execution_state,
+        })
     }
 
     /// Sole entry for appending a `tool_call_finished` ledger event.
@@ -1281,6 +1307,7 @@ impl SessionStore {
         };
         let persistent_shell =
             persistent_shell_event_evidence_for_tool_result(&start.tool_name, output);
+        let effect_evidence = Self::tool_effect_event_evidence_for_result(output);
         self.push_event(SessionEvent {
             event_id: event_id.clone(),
             session_id: start.session_id,
@@ -1319,6 +1346,7 @@ impl SessionStore {
             observed_paths,
             job_id: extract_job_id(output),
             persistent_shell,
+            effect_evidence,
             input_summary: None,
             validation_output_summary,
             permission: start.permission,
@@ -1666,6 +1694,7 @@ fn coding_instruction_event(
         observed_paths: Vec::new(),
         job_id: None,
         persistent_shell: None,
+        effect_evidence: None,
         input_summary: Some(redact_and_bound_value(&serde_json::json!({
             "requested_mode": requested_mode.as_str(),
             "requested_guards": requested_guards,
@@ -1733,6 +1762,7 @@ fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
         observed_paths: Vec::new(),
         job_id: None,
         persistent_shell: None,
+        effect_evidence: None,
         input_summary: None,
         validation_output_summary: None,
         permission: None,
@@ -1796,6 +1826,7 @@ fn session_execution_context_updated_event(
         observed_paths: Vec::new(),
         job_id: None,
         persistent_shell: None,
+        effect_evidence: None,
         input_summary: Some(redact_and_bound_value(&serde_json::json!({
             "execution_context": execution_context,
             "previous_execution_context": previous_execution_context,

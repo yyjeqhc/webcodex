@@ -402,7 +402,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "tool_failures",
-                open_object_schema("Expected/unexpected tool failure classification from the session ledger. Counts expected failures, unexpected failures, expectation mismatches, and expected-failure calls that unexpectedly succeeded. Never includes raw input payloads, command text, stdout/stderr, tails, or excerpts."),
+                open_object_schema("Expected/unexpected tool failure classification from the session ledger. unexpected_count remains raw historical evidence; historical_non_actionable_count identifies resolved validation or structurally proven fail-closed attempts; actionable_unexpected_count is the conservative current blocker projection. Expectation mismatches and unexpected successes remain separate integrity evidence. Never includes raw input payloads, command text, stdout/stderr, tails, or excerpts."),
             ),
             (
                 "expected_failed_tool_calls",
@@ -415,7 +415,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "unexpected_failed_tool_calls",
                 array_schema(
                     open_object_schema("Bounded unexpected failed tool call summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."),
-                    "Unexpected failed tool calls requiring review.",
+                    "Raw bounded unexpected failed tool-call history. Entries may be historical non-actionable evidence; use tool_failures.actionable_unexpected_count for the current blocker projection.",
                 ),
             ),
             (

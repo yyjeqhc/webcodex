@@ -1882,6 +1882,14 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
     assert_eq!(result.output["workspace_clean"], true);
     assert_eq!(result.output["hygiene_clean"], true);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        1
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
     assert_eq!(result.output["validation"]["status"], "mixed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
     assert_eq!(
@@ -2094,10 +2102,10 @@ async fn finish_coding_task_resolved_history_keeps_real_tool_failure_blocking() 
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "read_file",
-        json!({"project": fixture.project.clone(), "path": "README.md"}),
+        "apply_text_edits",
+        json!({"project": fixture.project.clone(), "changes": []}),
         false,
-        json!({"error_kind": "permission_denied"}),
+        json!({"failure_kind": "stale_precondition"}),
     );
 
     let result = finish_coding_task_summary_only_with_agent(
@@ -2131,6 +2139,283 @@ async fn finish_coding_task_resolved_history_keeps_real_tool_failure_blocking() 
             == Some(
                 "historical validation failures were resolved by later successful validation"
             )));
+}
+
+#[tokio::test]
+async fn failure_history_fail_closed_attempts_do_not_block_clean_finish() {
+    let fixture = finish_summary_fixture("coding-finish-fail-closed-history").await;
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "read_file",
+        json!({"project": fixture.project.clone(), "path": "missing.rs"}),
+        false,
+        json!({"error_kind": "invalid_arguments"}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "apply_text_edits",
+        json!({"project": fixture.project.clone(), "changes": []}),
+        false,
+        json!({
+            "failure_kind": "stale_precondition",
+            "state_changed": false
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "run_shell",
+        json!({
+            "project": fixture.project.clone(),
+            "command": "false",
+            "purpose": "operation"
+        }),
+        false,
+        json!({
+            "failure_kind": "policy_rejected",
+            "command_started": false,
+            "command_completed": false,
+            "execution_state": "not_started"
+        }),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project.clone(),
+        fixture.session_id.clone(),
+        fixture.auth.clone(),
+    )
+    .await;
+    let full = finish_coding_task_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+        false,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 3);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        3
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+    assert_eq!(result.output["validation"]["status"], "passed");
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_eq!(result.output["evidence_integrity"]["status"], "clean");
+    assert_reason_list_not_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+    assert_action_list_not_contains(
+        &result.output["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some(
+                "historical fail-closed tool failures are retained as non-actionable evidence"
+            )));
+    for field in [
+        "unexpected_count",
+        "historical_non_actionable_count",
+        "actionable_unexpected_count",
+    ] {
+        assert_eq!(
+            full.output["tool_failures"][field], result.output["tool_failures"][field],
+            "compact/full tool failure projection must agree for {field}"
+        );
+    }
+    assert_eq!(full.output["task_outcome"], result.output["task_outcome"]);
+    assert_eq!(
+        full.output["suggested_next_actions"],
+        result.output["suggested_next_actions"]
+    );
+}
+
+#[tokio::test]
+async fn failure_history_started_shell_failure_remains_actionable() {
+    let fixture = finish_summary_fixture("coding-finish-started-shell-failure").await;
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "run_shell",
+        json!({
+            "project": fixture.project.clone(),
+            "command": "false",
+            "purpose": "operation"
+        }),
+        false,
+        json!({
+            "failure_kind": "process_exit",
+            "exit_code": 1,
+            "command_started": true,
+            "command_completed": true,
+            "execution_state": "completed"
+        }),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        0
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        1
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "fail");
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+    assert_action_list_contains(
+        &result.output["suggested_next_actions"],
+        "review unexpected failed tool calls before proceeding",
+    );
+}
+
+#[tokio::test]
+async fn failure_history_outcome_unknown_remains_actionable() {
+    let fixture = finish_summary_fixture("coding-finish-outcome-unknown").await;
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "apply_text_edits",
+        json!({"project": fixture.project.clone(), "changes": []}),
+        false,
+        json!({
+            "failure_kind": "outcome_unknown",
+            "state_changed": false,
+            "execution_state": "outcome_unknown"
+        }),
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        1
+    );
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+}
+
+#[tokio::test]
+async fn failure_history_missing_effect_proof_remains_actionable() {
+    let fixture = finish_summary_fixture("coding-finish-legacy-effect-proof").await;
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "apply_text_edits",
+        json!({"project": fixture.project.clone(), "changes": []}),
+        false,
+        json!({"failure_kind": "stale_precondition"}),
+    );
+    let summary = fixture
+        .runtime
+        .sessions
+        .summary(&fixture.session_id, Some(20))
+        .unwrap();
+    let failed = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "apply_text_edits")
+        .expect("failed guarded mutation event");
+    assert!(
+        failed.effect_evidence.is_none(),
+        "legacy-shaped event has no effect proof"
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        0
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        1
+    );
+    assert_reason_list_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
 }
 
 #[tokio::test]

@@ -39,7 +39,7 @@ fn closeout_projection_classifies_workspace_conflicts_as_hard_blockers() {
         "suggested_next_actions": []
     });
 
-    apply_compact_workflow_outcomes(&mut output, true, None, 0);
+    apply_compact_workflow_outcomes(&mut output, true, None);
 
     assert!(output["hard_blockers"]
         .as_array()
@@ -382,7 +382,7 @@ async fn expected_stop_job_failures_are_classified_without_permission_noise() {
 }
 
 #[tokio::test]
-async fn unexpected_failure_remains_actionable_in_handoff() {
+async fn failure_history_read_only_failure_is_non_actionable_in_handoff() {
     let runtime = test_runtime();
     let session = runtime
         .sessions
@@ -403,11 +403,24 @@ async fn unexpected_failure_remains_actionable_in_handoff() {
     assert!(handoff.success, "{:?}", handoff.error);
     assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
+        handoff.output["tool_failures"]["historical_non_actionable_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+    assert_eq!(
         handoff.output["unexpected_failed_tool_calls"][0]["tool_name"],
         "job_status"
     );
+    assert_reason_list_not_contains(
+        &handoff.output["verdict"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
     let actions = handoff.output["suggested_next_actions"].as_array().unwrap();
-    assert!(actions.iter().any(|action| {
+    assert!(!actions.iter().any(|action| {
         action.as_str().unwrap_or("") == "review unexpected failed tool calls before proceeding"
     }));
 }
@@ -452,6 +465,8 @@ async fn expectation_mismatch_and_unexpected_success_are_visible() {
         handoff.output["tool_failures"]["expectation_mismatch_count"],
         1
     );
+    assert_eq!(handoff.output["evidence_integrity"]["status"], "error");
+    assert_eq!(handoff.output["task_outcome"]["blocking"], true);
     assert_eq!(
         handoff.output["expectation_mismatches"][0]["actual_failure_kind"],
         "confirmation_required"
@@ -2327,6 +2342,14 @@ async fn session_handoff_summary_only_passes_with_resolved_unexpected_cargo_test
     assert_eq!(result.output["workspace_clean"], true);
     assert_eq!(result.output["hygiene_clean"], true);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        1
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
     assert_eq!(result.output["validation"]["latest_status"], "passed");
     assert_eq!(
         result.output["validation"]["historical_failures"]["resolved"],

@@ -1144,6 +1144,61 @@ fn legacy_session_events_without_validation_output_summary_restore() {
 }
 
 #[test]
+fn failure_history_legacy_event_without_effect_evidence_restores_conservatively() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = persistent_store(ledger.clone());
+    let session = store.start_session(None, Some("legacy effect evidence".to_string()));
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "apply_text_edits",
+        &json!({"project": "agent:eval:demo", "changes": []}),
+    );
+    store.record_tool_call_finished(
+        start,
+        false,
+        &json!({
+            "failure_kind": "stale_precondition",
+            "state_changed": false
+        }),
+        Some("guard rejected"),
+        None,
+    );
+    store.flush_persistence();
+
+    let mut ledger_value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+    let events = ledger_value["sessions"][0]["events"]
+        .as_array_mut()
+        .unwrap();
+    let finished = events
+        .iter_mut()
+        .find(|event| event["kind"] == "tool_call_finished")
+        .unwrap();
+    assert!(finished.get("effect_evidence").is_some());
+    finished.as_object_mut().unwrap().remove("effect_evidence");
+    std::fs::write(&ledger, serde_json::to_vec_pretty(&ledger_value).unwrap()).unwrap();
+    drop(store);
+
+    let restored = SessionStore::with_persistence(ledger, 10, 10);
+    let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished")
+        .unwrap();
+    assert!(finished.effect_evidence.is_none());
+    let projected = crate::tool_runtime::handoff::project_tool_failure_actionability(
+        &json!({"unexpected_count": 1}),
+        &summary.events,
+        &json!({}),
+    );
+    assert_eq!(projected["historical_non_actionable_count"], 0);
+    assert_eq!(projected["actionable_unexpected_count"], 1);
+}
+
+#[test]
 fn legacy_session_events_without_observed_paths_restore_with_empty_evidence() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");

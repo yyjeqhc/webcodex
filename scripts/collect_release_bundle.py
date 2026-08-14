@@ -169,7 +169,7 @@ class GitHubClient:
         url = self.api_url(f"/actions/artifacts/{artifact_id}/zip")
         digest = hashlib.sha256()
         written = 0
-        progress_step = 16 * 1024 * 1024
+        progress_step = 8 * 1024 * 1024
         next_progress = progress_step
         print(
             f"[release-collect] downloading bundle artifact {artifact_id}: "

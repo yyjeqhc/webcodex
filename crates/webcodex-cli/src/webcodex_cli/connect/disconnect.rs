@@ -157,11 +157,23 @@ pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<Disconnect
                     return Err(render_uncertain_unregister_error(reason, observation));
                 }
             };
-        // Remove the local registration only after the Server/Runner returned a
-        // terminal structured unregister outcome. If the response is uncertain,
-        // re-observe the exact registration under the still-held ProfileLock and
-        // return without recreating, retrying, or inferring Server inventory.
-        remove_exact_registration(&candidate.project_path)?;
+        // The Runner's authoritative unregister normally removes this exact
+        // registration before the terminal response reaches the CLI. Re-observe
+        // under the still-held ProfileLock: accept an already-absent file, remove
+        // the exact file only if it is still present, and fail closed if the path
+        // can no longer be identified safely.
+        match observe_exact_registration(&candidate, &canonical_project) {
+            ExactRegistrationObservation::Present => {
+                remove_exact_registration(&candidate.project_path)?;
+            }
+            ExactRegistrationObservation::Absent => {}
+            ExactRegistrationObservation::Unknown => {
+                return Err(
+                    "Server/Runner reported a terminal unregister outcome, but the exact local registration state could not be safely observed; no local cleanup or Runner stop was attempted"
+                        .to_string(),
+                );
+            }
+        }
         remote_outcome
     } else {
         remove_exact_registration(&candidate.project_path)?;
@@ -696,6 +708,100 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outcome, "unregistered");
+        server.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn successful_live_unregister_accepts_runner_removed_registration_and_stops_last_runner()
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config_base = tmp.path().join("config");
+        let state_base = tmp.path().join("state");
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::write(project.join("keep.txt"), "keep").unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (profile_dir, state_dir) =
+            write_profile(&config_base, &state_base, "one", &project, "repo");
+        std::fs::write(
+            profile_dir.join("agent.toml"),
+            format!(
+                "server_url = \"http://{address}\"\ntoken = \"shared-key\"\nclient_id = \"client\"\n"
+            ),
+        )
+        .unwrap();
+        let registration = profile_dir.join("projects.d/repo.toml");
+
+        let runner = tmp.path().join("webcodex-runner");
+        std::fs::write(
+            &runner,
+            "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            super::super::process::ensure_runner_unlocked(
+                &runner,
+                &profile_dir.join("agent.toml"),
+                &state_dir,
+            )
+            .unwrap(),
+            super::super::process::RunnerStart::Started
+        );
+        assert!(local_runner_state_summary(&state_dir).unwrap().running);
+
+        let registration_for_server = registration.clone();
+        let server = thread::spawn(move || {
+            for index in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 16 * 1024];
+                let read = stream.read(&mut request).unwrap();
+                let text = String::from_utf8_lossy(&request[..read]);
+                let payload = if index == 0 {
+                    assert!(text.starts_with("POST /api/projects/list "), "{text}");
+                    json!({"success":true,"output":{"projects":[{"id":"agent:client:repo","revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}).to_string()
+                } else {
+                    assert!(text.starts_with("POST /api/projects/unregister "), "{text}");
+                    std::fs::remove_file(&registration_for_server).unwrap();
+                    json!({"operation":"unregister","project":"agent:client:repo","outcome":"unregistered","changed":true}).to_string()
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    payload.len(),
+                    payload
+                )
+                .unwrap();
+            }
+        });
+
+        let result = run_disconnect(DisconnectOptions {
+            project: project.clone(),
+            profile: Some("one".to_string()),
+            config_base: Some(config_base),
+            state_base: Some(state_base),
+            server_http: ServerHttpOptions {
+                proxy: None,
+                no_system_proxy: true,
+            },
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.outcome, "unregistered");
+        assert_eq!(result.runner_action, "stopped");
+        assert!(!registration.exists());
+        assert!(!local_runner_state_summary(&state_dir).unwrap().running);
+        assert_eq!(
+            std::fs::read_to_string(project.join("keep.txt")).unwrap(),
+            "keep"
+        );
+        assert!(project.join(".git").is_dir());
         server.join().unwrap();
     }
 

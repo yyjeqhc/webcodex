@@ -7,6 +7,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+#[cfg(any(test, target_os = "macos"))]
+use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -26,6 +28,87 @@ const RGBA_BYTES_PER_PIXEL: u64 = 4;
 const MAX_RAW_CAPTURE_BYTES: u64 = 128 * 1024 * 1024;
 #[cfg(any(target_os = "macos", windows))]
 const MAX_IMAGE_DIMENSION: u32 = 4096;
+
+#[cfg(any(test, target_os = "macos"))]
+const AX_MESSAGING_TIMEOUT_SECS: f32 = 2.0;
+#[cfg(any(test, target_os = "macos"))]
+const AX_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(any(test, target_os = "macos"))]
+const AX_OBSERVATION_TIMEOUT_ERROR: &str =
+    "accessibility_failed: macOS Accessibility observation deadline exceeded";
+
+#[cfg(any(test, target_os = "macos"))]
+struct AxObservationDeadline {
+    expires_at: Instant,
+}
+
+#[cfg(any(test, target_os = "macos"))]
+impl AxObservationDeadline {
+    fn new() -> Self {
+        Self::from_now(Instant::now(), AX_OBSERVATION_TIMEOUT)
+    }
+
+    fn from_now(now: Instant, budget: Duration) -> Self {
+        Self {
+            expires_at: now + budget,
+        }
+    }
+
+    fn ensure_remaining_at(&self, now: Instant) -> Result<(), String> {
+        self.expires_at
+            .checked_duration_since(now)
+            .filter(|remaining| !remaining.is_zero())
+            .map(|_| ())
+            .ok_or_else(|| AX_OBSERVATION_TIMEOUT_ERROR.to_string())
+    }
+
+    fn ensure_remaining(&self) -> Result<(), String> {
+        self.ensure_remaining_at(Instant::now())
+    }
+
+    fn remaining_timeout_secs_at(&self, now: Instant) -> Result<f32, String> {
+        let remaining = self
+            .expires_at
+            .checked_duration_since(now)
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| AX_OBSERVATION_TIMEOUT_ERROR.to_string())?;
+        let timeout = remaining.as_secs_f32().min(AX_MESSAGING_TIMEOUT_SECS);
+        if timeout.is_finite() && timeout > 0.0 {
+            Ok(timeout)
+        } else {
+            Err(AX_OBSERVATION_TIMEOUT_ERROR.to_string())
+        }
+    }
+
+    fn remaining_timeout_secs(&self) -> Result<f32, String> {
+        self.remaining_timeout_secs_at(Instant::now())
+    }
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn select_exact_ax_window_index(
+    geometry_matches: &[usize],
+    title_matches: &[usize],
+    window_count: usize,
+) -> Result<usize, String> {
+    let resolved = match geometry_matches {
+        [index] => Some(*index),
+        [] => match title_matches {
+            [index] => Some(*index),
+            _ => None,
+        },
+        _ => None,
+    }
+    .filter(|index| *index < window_count);
+
+    resolved.ok_or_else(|| {
+        format!(
+            "accessibility_failed: exact AX window could not be resolved uniquely (geometry={}, title={}, windows={window_count})",
+            geometry_matches.len(),
+            title_matches.len(),
+        )
+    })
+}
 
 #[derive(Clone)]
 struct SurfaceRecord {
@@ -342,6 +425,71 @@ mod raw_capture_bound_tests {
     }
 }
 
+#[cfg(test)]
+mod ax_observation_bound_tests {
+    use super::*;
+
+    #[test]
+    fn computer_ax_window_selection_accepts_unique_geometry() {
+        assert_eq!(select_exact_ax_window_index(&[1], &[0, 1], 2).unwrap(), 1);
+    }
+
+    #[test]
+    fn computer_ax_window_selection_rejects_ambiguous_geometry() {
+        let error = select_exact_ax_window_index(&[0, 1], &[0], 2).unwrap_err();
+        assert!(error.starts_with("accessibility_failed:"), "{error}");
+    }
+
+    #[test]
+    fn computer_ax_window_selection_accepts_unique_title_only_without_geometry_match() {
+        assert_eq!(select_exact_ax_window_index(&[], &[1], 2).unwrap(), 1);
+        assert!(select_exact_ax_window_index(&[0, 1], &[1], 2).is_err());
+    }
+
+    #[test]
+    fn computer_ax_window_selection_rejects_uncorrelated_single_window() {
+        let error = select_exact_ax_window_index(&[], &[], 1).unwrap_err();
+        assert!(error.starts_with("accessibility_failed:"), "{error}");
+    }
+
+    #[test]
+    fn computer_ax_window_selection_rejects_ambiguous_title() {
+        let error = select_exact_ax_window_index(&[], &[0, 1], 2).unwrap_err();
+        assert!(error.starts_with("accessibility_failed:"), "{error}");
+    }
+
+    #[test]
+    fn computer_ax_observation_deadline_expired_fails_closed() {
+        let now = Instant::now();
+        let deadline = AxObservationDeadline::from_now(now, Duration::ZERO);
+        assert_eq!(
+            deadline.remaining_timeout_secs_at(now).unwrap_err(),
+            AX_OBSERVATION_TIMEOUT_ERROR
+        );
+        assert_eq!(
+            deadline.ensure_remaining_at(now).unwrap_err(),
+            AX_OBSERVATION_TIMEOUT_ERROR
+        );
+    }
+
+    #[test]
+    fn computer_ax_observation_call_timeout_never_exceeds_remaining_budget() {
+        let now = Instant::now();
+        let short_budget = Duration::from_millis(250);
+        let short_deadline = AxObservationDeadline::from_now(now, short_budget);
+        let short_timeout = short_deadline.remaining_timeout_secs_at(now).unwrap();
+        assert!(short_timeout > 0.0);
+        assert!(short_timeout <= short_budget.as_secs_f32());
+
+        let long_budget = Duration::from_secs(5);
+        let long_deadline = AxObservationDeadline::from_now(now, long_budget);
+        assert_eq!(
+            long_deadline.remaining_timeout_secs_at(now).unwrap(),
+            AX_MESSAGING_TIMEOUT_SECS
+        );
+    }
+}
+
 pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
     matches!(
         kind,
@@ -544,6 +692,8 @@ mod tests {
 #[cfg(any(target_os = "macos", windows))]
 mod platform {
     use super::{bounded_text, ensure_raw_capture_bound, PlatformWindow, SurfaceRecord};
+    #[cfg(target_os = "macos")]
+    use super::{select_exact_ax_window_index, AxObservationDeadline};
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use xcap::Window;
@@ -603,8 +753,6 @@ mod platform {
     const MAX_AX_WINDOWS: usize = 64;
     #[cfg(target_os = "macos")]
     const MAX_AX_CHILD_COUNT: usize = 1_000_000;
-    #[cfg(target_os = "macos")]
-    const AX_MESSAGING_TIMEOUT_SECS: f32 = 2.0;
 
     #[cfg(target_os = "macos")]
     fn accessibility_error(operation: &str, error: AXError) -> String {
@@ -619,13 +767,29 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
+    fn prepare_ax_call(
+        deadline: &AxObservationDeadline,
+        element: &AXUIElement,
+    ) -> Result<(), String> {
+        let timeout_secs = deadline.remaining_timeout_secs()?;
+        let error = unsafe { element.set_messaging_timeout(timeout_secs) };
+        if error != AXError::Success {
+            return Err(accessibility_error("AXUIElementSetMessagingTimeout", error));
+        }
+        deadline.ensure_remaining()
+    }
+
+    #[cfg(target_os = "macos")]
     fn optional_ax_value(
+        deadline: &AxObservationDeadline,
         element: &AXUIElement,
         attribute: &'static str,
     ) -> Result<Option<CFRetained<CFType>>, String> {
         let attribute = CFString::from_static_str(attribute);
         let mut raw: *const CFType = std::ptr::null();
+        prepare_ax_call(deadline, element)?;
         let error = unsafe { element.copy_attribute_value(&attribute, NonNull::from(&mut raw)) };
+        deadline.ensure_remaining()?;
         match error {
             AXError::Success => {
                 let raw = NonNull::new(raw.cast_mut()).ok_or_else(|| {
@@ -640,10 +804,11 @@ mod platform {
 
     #[cfg(target_os = "macos")]
     fn optional_ax_string(
+        deadline: &AxObservationDeadline,
         element: &AXUIElement,
         attribute: &'static str,
     ) -> Result<Option<String>, String> {
-        let Some(value) = optional_ax_value(element, attribute)? else {
+        let Some(value) = optional_ax_value(deadline, element, attribute)? else {
             return Ok(None);
         };
         Ok(value
@@ -654,10 +819,11 @@ mod platform {
 
     #[cfg(target_os = "macos")]
     fn optional_ax_bool(
+        deadline: &AxObservationDeadline,
         element: &AXUIElement,
         attribute: &'static str,
     ) -> Result<Option<bool>, String> {
-        let Some(value) = optional_ax_value(element, attribute)? else {
+        let Some(value) = optional_ax_value(deadline, element, attribute)? else {
             return Ok(None);
         };
         Ok(value
@@ -668,10 +834,11 @@ mod platform {
 
     #[cfg(target_os = "macos")]
     fn optional_ax_point(
+        deadline: &AxObservationDeadline,
         element: &AXUIElement,
         attribute: &'static str,
     ) -> Result<Option<CGPoint>, String> {
-        let Some(value) = optional_ax_value(element, attribute)? else {
+        let Some(value) = optional_ax_value(deadline, element, attribute)? else {
             return Ok(None);
         };
         let Ok(value) = value.downcast::<AXValue>() else {
@@ -687,10 +854,11 @@ mod platform {
 
     #[cfg(target_os = "macos")]
     fn optional_ax_size(
+        deadline: &AxObservationDeadline,
         element: &AXUIElement,
         attribute: &'static str,
     ) -> Result<Option<CGSize>, String> {
-        let Some(value) = optional_ax_value(element, attribute)? else {
+        let Some(value) = optional_ax_value(deadline, element, attribute)? else {
             return Ok(None);
         };
         let Ok(value) = value.downcast::<AXValue>() else {
@@ -706,6 +874,7 @@ mod platform {
 
     #[cfg(target_os = "macos")]
     fn ax_window_geometry_matches(
+        deadline: &AxObservationDeadline,
         element: &AXUIElement,
         x: i32,
         y: i32,
@@ -713,10 +882,10 @@ mod platform {
         height: u32,
     ) -> Result<bool, String> {
         const TOLERANCE: f64 = 2.0;
-        let Some(position) = optional_ax_point(element, "AXPosition")? else {
+        let Some(position) = optional_ax_point(deadline, element, "AXPosition")? else {
             return Ok(false);
         };
-        let Some(size) = optional_ax_size(element, "AXSize")? else {
+        let Some(size) = optional_ax_size(deadline, element, "AXSize")? else {
             return Ok(false);
         };
         Ok((position.x - f64::from(x)).abs() <= TOLERANCE
@@ -726,10 +895,16 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
-    fn ax_array_count(element: &AXUIElement, attribute: &'static str) -> Result<usize, String> {
+    fn ax_array_count(
+        deadline: &AxObservationDeadline,
+        element: &AXUIElement,
+        attribute: &'static str,
+    ) -> Result<usize, String> {
         let attribute = CFString::from_static_str(attribute);
         let mut count: CFIndex = 0;
+        prepare_ax_call(deadline, element)?;
         let error = unsafe { element.attribute_value_count(&attribute, NonNull::from(&mut count)) };
+        deadline.ensure_remaining()?;
         match error {
             AXError::Success => {
                 let count = usize::try_from(count).map_err(|_| {
@@ -753,6 +928,7 @@ mod platform {
 
     #[cfg(target_os = "macos")]
     fn ax_elements(
+        deadline: &AxObservationDeadline,
         element: &AXUIElement,
         attribute_name: &'static str,
         count: usize,
@@ -764,9 +940,11 @@ mod platform {
         let max_values = CFIndex::try_from(count)
             .map_err(|_| "accessibility_failed: AX array request exceeds CFIndex".to_string())?;
         let mut raw: *const CFArray = std::ptr::null();
+        prepare_ax_call(deadline, element)?;
         let error = unsafe {
             element.copy_attribute_values(&attribute, 0, max_values, NonNull::from(&mut raw))
         };
+        deadline.ensure_remaining()?;
         if error != AXError::Success {
             return Err(accessibility_error("AXUIElementCopyAttributeValues", error));
         }
@@ -810,58 +988,47 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
-    fn exact_ax_window(surface: &SurfaceRecord) -> Result<CFRetained<AXUIElement>, String> {
+    fn exact_ax_window(
+        surface: &SurfaceRecord,
+        deadline: &AxObservationDeadline,
+    ) -> Result<CFRetained<AXUIElement>, String> {
         let native_window = resolve_surface_window(surface)?;
+        deadline.ensure_remaining()?;
         let x = native_window.x().map_err(map_error)?;
         let y = native_window.y().map_err(map_error)?;
         let width = native_window.width().map_err(map_error)?;
         let height = native_window.height().map_err(map_error)?;
         let application = unsafe { AXUIElement::new_application(surface.pid as _) };
-        let timeout_error = unsafe { application.set_messaging_timeout(AX_MESSAGING_TIMEOUT_SECS) };
-        if timeout_error != AXError::Success {
-            return Err(accessibility_error(
-                "AXUIElementSetMessagingTimeout",
-                timeout_error,
-            ));
-        }
-        let window_count = ax_array_count(&application, "AXWindows")?;
+        let window_count = ax_array_count(deadline, &application, "AXWindows")?;
         if window_count == 0 || window_count > MAX_AX_WINDOWS {
             return Err(
                 "accessibility_failed: exact AX window cannot be resolved within the bounded window set"
                     .to_string(),
             );
         }
-        let mut windows = ax_elements(&application, "AXWindows", window_count)?;
+        let mut windows = ax_elements(deadline, &application, "AXWindows", window_count)?;
         let mut geometry_matches = Vec::new();
-        let mut title_matches = Vec::new();
         for (index, window) in windows.iter().enumerate() {
-            if ax_window_geometry_matches(window, x, y, width, height)? {
+            if ax_window_geometry_matches(deadline, window, x, y, width, height)? {
                 geometry_matches.push(index);
             }
-            let title = optional_ax_string(window, "AXTitle")?.unwrap_or_default();
-            if bounded_text(&title) == surface.title {
-                title_matches.push(index);
+        }
+        if !geometry_matches.is_empty() {
+            let index = select_exact_ax_window_index(&geometry_matches, &[], windows.len())?;
+            return Ok(windows.swap_remove(index));
+        }
+
+        let mut title_matches = Vec::new();
+        if !surface.title.is_empty() {
+            for (index, window) in windows.iter().enumerate() {
+                if optional_ax_string(deadline, window, "AXTitle")?
+                    .is_some_and(|title| bounded_text(&title) == surface.title)
+                {
+                    title_matches.push(index);
+                }
             }
         }
-        let resolved = if geometry_matches.len() == 1 {
-            Some(geometry_matches[0])
-        } else if geometry_matches.len() > 1 {
-            None
-        } else if title_matches.len() == 1 {
-            Some(title_matches[0])
-        } else if windows.len() == 1 {
-            Some(0)
-        } else {
-            None
-        };
-        let Some(index) = resolved else {
-            return Err(format!(
-                "accessibility_failed: exact AX window could not be resolved uniquely (geometry={}, title={}, windows={})",
-                geometry_matches.len(),
-                title_matches.len(),
-                windows.len()
-            ));
-        };
+        let index = select_exact_ax_window_index(&geometry_matches, &title_matches, windows.len())?;
         Ok(windows.swap_remove(index))
     }
 
@@ -893,23 +1060,25 @@ mod platform {
                 "permission_denied: macOS Accessibility permission is not granted".to_string(),
             );
         }
-        let root = exact_ax_window(surface)?;
+        let deadline = AxObservationDeadline::new();
+        let root = exact_ax_window(surface, &deadline)?;
         let mut queue = VecDeque::from([(root, None::<String>, 0usize)]);
         let mut nodes = Vec::with_capacity(max_nodes.min(64));
         let mut truncated = false;
         while let Some((element, parent_element_id, depth)) = queue.pop_front() {
+            deadline.ensure_remaining()?;
             if nodes.len() >= max_nodes {
                 truncated = true;
                 break;
             }
             let element_id = format!("element_{}", Uuid::new_v4().simple());
-            let role = optional_ax_string(&element, "AXRole")?.ok_or_else(|| {
+            let role = optional_ax_string(&deadline, &element, "AXRole")?.ok_or_else(|| {
                 "accessibility_failed: AX element is missing a string role".to_string()
             })?;
-            let subrole = optional_ax_string(&element, "AXSubrole")?;
-            let title = optional_ax_string(&element, "AXTitle")?;
-            let description = optional_ax_string(&element, "AXDescription")?;
-            let placeholder = optional_ax_string(&element, "AXPlaceholderValue")?;
+            let subrole = optional_ax_string(&deadline, &element, "AXSubrole")?;
+            let title = optional_ax_string(&deadline, &element, "AXTitle")?;
+            let description = optional_ax_string(&deadline, &element, "AXDescription")?;
+            let placeholder = optional_ax_string(&deadline, &element, "AXPlaceholderValue")?;
             let sensitive = role == "AXSecureTextField"
                 || subrole
                     .as_deref()
@@ -917,11 +1086,11 @@ mod platform {
             let value = if sensitive {
                 None
             } else {
-                optional_ax_string(&element, "AXValue")?
+                optional_ax_string(&deadline, &element, "AXValue")?
             };
-            let enabled = optional_ax_bool(&element, "AXEnabled")?;
-            let focused = optional_ax_bool(&element, "AXFocused")?;
-            let child_count = ax_array_count(&element, "AXChildren")?;
+            let enabled = optional_ax_bool(&deadline, &element, "AXEnabled")?;
+            let focused = optional_ax_bool(&deadline, &element, "AXFocused")?;
+            let child_count = ax_array_count(&deadline, &element, "AXChildren")?;
             if depth < max_depth && child_count > 0 {
                 let reserved = nodes.len() + queue.len() + 1;
                 let remaining = max_nodes.saturating_sub(reserved);
@@ -929,7 +1098,7 @@ mod platform {
                 if take < child_count {
                     truncated = true;
                 }
-                for child in ax_elements(&element, "AXChildren", take)? {
+                for child in ax_elements(&deadline, &element, "AXChildren", take)? {
                     queue.push_back((child, Some(element_id.clone()), depth + 1));
                 }
             } else if child_count > 0 {
@@ -953,6 +1122,7 @@ mod platform {
         if !queue.is_empty() {
             truncated = true;
         }
+        deadline.ensure_remaining()?;
         let node_count = nodes.len();
         Ok(json!({
             "platform": "macos",
@@ -1422,10 +1592,11 @@ mod macos_live_tests {
     #[test]
     #[ignore = "requires live WeChat window and macOS Accessibility permission"]
     fn computer_macos_accessibility_wechat_live_smoke() {
-        if !live_accessibility_smoke(|application| {
-            application == "微信" || application.to_ascii_lowercase().contains("wechat")
-        }) {
-            eprintln!("WeChat window is not open; live smoke skipped");
-        }
+        assert!(
+            live_accessibility_smoke(|application| {
+                application == "微信" || application.to_ascii_lowercase().contains("wechat")
+            }),
+            "WeChat window must be open for this live smoke"
+        );
     }
 }

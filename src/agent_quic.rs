@@ -599,6 +599,7 @@ mod tests {
                     computer_observe: false,
                     computer_accessibility_observe: false,
                     computer_control: false,
+                    computer_text_input: false,
                     job_state_reconciliation: false,
                 }),
                 projects: None,

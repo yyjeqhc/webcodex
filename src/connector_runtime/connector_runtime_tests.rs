@@ -89,6 +89,7 @@ async fn register_agent_with_lsp_capabilities(
                     computer_observe: false,
                     computer_accessibility_observe: false,
                     computer_control: false,
+                    computer_text_input: false,
                     job_state_reconciliation: false,
                 }),
                 projects: Some(vec![ShellAgentProjectSummary {

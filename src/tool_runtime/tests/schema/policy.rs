@@ -16,6 +16,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
         PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
         TOOL_DISCOVERY_GROUPS, TOOL_DISCOVERY_GROUP_GIT,
     };
+    use crate::tool_runtime::tool_policy::lookup_tool_definition;
+
+    let text_input = lookup_tool_definition("computer_input_text").expect("computer input tool");
+    assert!(text_input.is_write_like());
+    assert!(text_input.requires_permission());
+    assert_eq!(text_input.metadata().risk, ToolRisk::ComputerControl);
 
     let git_group = TOOL_DISCOVERY_GROUPS
         .iter()

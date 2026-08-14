@@ -1,4 +1,6 @@
-use super::AgentCapability::{ComputerAccessibilityObserve, ComputerControl, ComputerObserve};
+use super::AgentCapability::{
+    ComputerAccessibilityObserve, ComputerControl, ComputerObserve, ComputerTextInput,
+};
 use super::ToolVisibility::ModelVisible;
 use super::{def, ToolDefinition, TOOL_CATEGORY_COMPUTER};
 use crate::tool_runtime::metadata::{
@@ -52,6 +54,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_COMPUTER,
         Some(ComputerControl),
+        TOOL_PROVIDER_AGENT,
+        ComputerControlRisk,
+        Some(COMPUTER_CONTROL),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_input_text",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerTextInput),
         TOOL_PROVIDER_AGENT,
         ComputerControlRisk,
         Some(COMPUTER_CONTROL),

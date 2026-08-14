@@ -64,6 +64,23 @@ fn computer_action_audit_projection_omits_sensitive_observation_payloads() {
     assert!(!snapshot_serialized.contains("SUPER_SECRET"));
     assert!(!snapshot_serialized.contains("Confidential"));
     assert!(!snapshot_serialized.contains("Private App"));
+
+    let text_output = serde_json::json!({
+        "platform": "macos",
+        "surface_id": "surface_safe",
+        "element_id": "element_safe",
+        "text_bytes": 12,
+        "success": true,
+        "text": "REST_AUDIT_SECRET",
+        "value": "REST_AUDIT_SECRET"
+    });
+    let text_audit = action_audit_output_for_tool("computer_input_text", &text_output);
+    let text_serialized = serde_json::to_string(&text_audit).unwrap();
+    assert_eq!(text_audit["surface_id"], "surface_safe");
+    assert_eq!(text_audit["element_id"], "element_safe");
+    assert_eq!(text_audit["text_bytes"], 12);
+    assert_eq!(text_audit["success"], true);
+    assert!(!text_serialized.contains("REST_AUDIT_SECRET"));
 }
 
 fn seed_oauth_access_token_with_shared_key_hash(

@@ -51,6 +51,20 @@ pub(crate) fn computer_control_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_input_text_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose already-focused macOS Accessibility text element is mutated."},
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque surface_id used to obtain the element."},
+            "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local element_id returned by computer_accessibility_tree."},
+            "text": {"type": "string", "minLength": 1, "maxLength": 2048, "description": "Caller text written verbatim with AXValue. Runtime enforces a 2048-byte UTF-8 ceiling and rejects NUL; the target must already be focused and empty."}
+        },
+        "required": ["client_id", "surface_id", "element_id", "text"]
+    })
+}
+
 pub(crate) fn computer_snapshot_input_schema() -> Value {
     json!({
         "type": "object",

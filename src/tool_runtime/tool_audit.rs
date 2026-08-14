@@ -108,6 +108,18 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 &["client_id", "surface_id", "element_id", "action"],
             );
         }
+        "computer_input_text" => {
+            copy_keys(obj, &mut out, &["client_id", "surface_id", "element_id"]);
+            out.insert(
+                "text_bytes".to_string(),
+                Value::from(
+                    obj.get("text")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+        }
         "computer_snapshot" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id"]);
         }
@@ -406,6 +418,12 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "action": output.get("action").cloned().unwrap_or(Value::Null),
             "success": output.get("success").cloned().unwrap_or(Value::Null),
         }),
+        "computer_input_text" => serde_json::json!({
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
+            "text_bytes": output.get("text_bytes").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+        }),
         _ => output.clone(),
     }
 }
@@ -485,6 +503,7 @@ mod computer_privacy_tests {
 
     #[test]
     fn computer_control_ledger_result_is_metadata_only() {
+        // Control remains metadata-only independently of CU-AX3.
         let output = json!({
             "platform": "macos",
             "surface_id": "surface_safe",
@@ -505,7 +524,57 @@ mod computer_privacy_tests {
     }
 
     #[test]
+    fn computer_text_input_request_and_result_never_persist_text() {
+        let secret = "不要记录我🙂";
+        let request = json!({
+            "client_id": "mini",
+            "surface_id": "surface_safe",
+            "element_id": "element_safe",
+            "text": secret,
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_input_text", &request);
+        let request_serialized = serde_json::to_string(&request_summary).unwrap();
+        assert_eq!(request_summary["client_id"], "mini");
+        assert_eq!(request_summary["surface_id"], "surface_safe");
+        assert_eq!(request_summary["element_id"], "element_safe");
+        assert_eq!(request_summary["text_bytes"], secret.len());
+        assert!(!request_serialized.contains(secret));
+        assert!(request_summary.get("text").is_none());
+
+        let typed = ToolCall::ComputerInputText {
+            client_id: "mini".to_string(),
+            surface_id: "surface_safe".to_string(),
+            element_id: "element_safe".to_string(),
+            text: secret.to_string(),
+        };
+        let typed_summary = typed.session_log_arguments();
+        let typed_serialized = serde_json::to_string(&typed_summary).unwrap();
+        assert_eq!(typed_summary["text_bytes"], secret.len());
+        assert!(!typed_serialized.contains(secret));
+        assert!(typed_summary.get("text").is_none());
+
+        let output = json!({
+            "platform": "macos",
+            "surface_id": "surface_safe",
+            "element_id": "element_safe",
+            "text_bytes": secret.len(),
+            "success": true,
+            "text": secret,
+            "value": secret,
+        });
+        let result_summary = session_log_result_for_tool("computer_input_text", &output);
+        let result_serialized = serde_json::to_string(&result_summary).unwrap();
+        assert_eq!(result_summary["text_bytes"], secret.len());
+        assert_eq!(result_summary["success"], true);
+        assert!(!result_serialized.contains(secret));
+        assert!(result_summary.get("text").is_none());
+        assert!(result_summary.get("value").is_none());
+    }
+
+    #[test]
     fn computer_snapshot_ledger_result_omits_image_and_titles() {
+        // Snapshot privacy remains unchanged.
         let output = json!({
             "surface": {
                 "surface_id": "surface_safe",
@@ -682,6 +751,17 @@ impl ToolCall {
                 "surface_id": surface_id,
                 "element_id": element_id,
                 "action": action,
+            }),
+            Self::ComputerInputText {
+                client_id,
+                surface_id,
+                element_id,
+                text,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "element_id": element_id,
+                "text_bytes": text.len(),
             }),
             Self::ComputerSnapshot {
                 client_id,

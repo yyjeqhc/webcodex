@@ -3,6 +3,7 @@ use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
 };
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
@@ -13,6 +14,7 @@ const MAX_WINDOWS: usize = 64;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
+const MAX_INPUT_TEXT_BYTES: usize = 2048;
 const MAX_ACCESSIBILITY_DEPTH: usize = 8;
 const MAX_ACCESSIBILITY_NODES: usize = 256;
 const DEFAULT_ACCESSIBILITY_DEPTH: usize = 6;
@@ -20,6 +22,16 @@ const DEFAULT_ACCESSIBILITY_NODES: usize = 128;
 const MAX_ACCESSIBILITY_CHILD_COUNT: u64 = 1_000_000;
 const MAX_IMAGE_DIMENSION: u64 = 4096;
 const COMPUTER_WAIT_SECS: u64 = 30;
+
+fn validate_input_text(text: &str) -> Result<usize, &'static str> {
+    let text_bytes = text.len();
+    if text_bytes == 0 || text_bytes > MAX_INPUT_TEXT_BYTES || text.contains('\0') {
+        return Err(
+            "computer text input must be non-empty, NUL-free, and within the UTF-8 byte limit",
+        );
+    }
+    Ok(text_bytes)
+}
 
 impl ToolRuntime {
     pub(super) async fn dispatch_computer_tool(
@@ -116,6 +128,39 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::ComputerInputText {
+                client_id,
+                surface_id,
+                element_id,
+                text,
+            } => {
+                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+                    return computer_error("invalid_surface", "surface_id is invalid");
+                }
+                if !element_id.starts_with("element_")
+                    || element_id.len() <= "element_".len()
+                    || element_id.len() > MAX_ELEMENT_ID_BYTES
+                {
+                    return computer_error("invalid_element", "element_id is invalid");
+                }
+                if let Err(message) = validate_input_text(&text) {
+                    return computer_error("invalid_request", message);
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_input_text",
+                    json!({
+                        "surface_id": surface_id,
+                        "element_id": element_id,
+                        "text": text,
+                    }),
+                    auth,
+                    None,
+                    Some(surface_id.as_str()),
+                    None,
+                )
+                .await
+            }
             ToolCall::ComputerSnapshot {
                 client_id,
                 surface_id,
@@ -159,6 +204,7 @@ impl ToolRuntime {
                 crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
             "computer_control" => SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+            "computer_input_text" => SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
         };
         match self
@@ -183,6 +229,7 @@ impl ToolRuntime {
             .get("action")
             .and_then(Value::as_str)
             .map(str::to_string);
+        let expected_text_bytes = payload.get("text").and_then(Value::as_str).map(str::len);
         let payload = match serde_json::to_string(&payload) {
             Ok(payload) => payload,
             Err(_) => {
@@ -205,7 +252,8 @@ impl ToolRuntime {
             Ok(value) => value,
             Err(error) => return computer_error("dispatch_denied", &error),
         };
-        let is_control = kind == "computer_control";
+        let is_effect = matches!(kind, "computer_control" | "computer_input_text");
+        let is_text_input = kind == "computer_input_text";
         let response = match tokio::time::timeout(
             Duration::from_secs(COMPUTER_WAIT_SECS + 2),
             receiver,
@@ -213,26 +261,26 @@ impl ToolRuntime {
         .await
         {
             Ok(Ok(response)) => response,
-            Ok(Err(_)) if is_control => {
+            Ok(Err(_)) if is_effect => {
                 let request_dispatched = self
                     .shell_clients
                     .cancel_request_dispatch_state(&request_id)
                     .await;
-                return computer_control_delivery_failure(
-                        "Runner response channel closed before a terminal computer control result was received",
-                        request_dispatched,
-                    );
+                return computer_effect_delivery_failure(
+                    "Runner response channel closed before a terminal computer effect result was received",
+                    request_dispatched,
+                );
             }
             Ok(Err(_)) => {
                 return computer_error("runner_disconnected", "Runner response channel closed")
             }
-            Err(_) if is_control => {
+            Err(_) if is_effect => {
                 let request_dispatched = self
                     .shell_clients
                     .cancel_request_dispatch_state(&request_id)
                     .await;
-                return computer_control_delivery_failure(
-                    "Runner did not return a terminal computer control result in time",
+                return computer_effect_delivery_failure(
+                    "Runner did not return a terminal computer effect result in time",
                     request_dispatched,
                 );
             }
@@ -245,18 +293,21 @@ impl ToolRuntime {
         };
         if let Some(error) = response.error.as_deref() {
             let error_kind = classify_runner_error(error);
-            if is_control && error_kind == "outcome_unknown" {
-                return computer_control_outcome_unknown(error);
+            if is_text_input {
+                return computer_text_input_runner_error(error, response.request_dispatched);
             }
-            if is_control && error_kind == "runner_error" {
-                return computer_control_delivery_failure(error, response.request_dispatched);
+            if is_effect && error_kind == "outcome_unknown" {
+                return computer_effect_outcome_unknown(error);
+            }
+            if is_effect && error_kind == "runner_error" {
+                return computer_effect_delivery_failure(error, response.request_dispatched);
             }
             return computer_error(error_kind, error);
         }
         if response.exit_code != Some(0) {
-            if is_control {
-                return computer_control_delivery_failure(
-                    "Runner computer control ended without a structured terminal result",
+            if is_effect {
+                return computer_effect_delivery_failure(
+                    "Runner computer effect ended without a structured terminal result",
                     response.request_dispatched,
                 );
             }
@@ -269,9 +320,9 @@ impl ToolRuntime {
             .transpose()
         {
             Ok(Some(output)) => output,
-            _ if is_control => {
-                return computer_control_delivery_failure(
-                    "Runner returned invalid JSON after computer control execution",
+            _ if is_effect => {
+                return computer_effect_delivery_failure(
+                    "Runner returned invalid JSON after computer effect execution",
                     response.request_dispatched,
                 )
             }
@@ -299,21 +350,24 @@ impl ToolRuntime {
                     max_nodes,
                 )
             }
-            "computer_control" => {
-                let result = validate_computer_control(
+            "computer_control" => computer_effect_validated_result(
+                validate_computer_control(
                     output,
                     expected_surface_id.unwrap_or_default(),
                     expected_element_id.as_deref().unwrap_or_default(),
                     expected_action.as_deref().unwrap_or_default(),
-                );
-                if result.success {
-                    result
-                } else {
-                    computer_control_outcome_unknown(
-                        "Runner reported successful computer control but returned inconsistent metadata; inspect current UI state before retrying",
-                    )
-                }
-            }
+                ),
+                "Runner reported successful computer control but returned inconsistent metadata; inspect current UI state before retrying",
+            ),
+            "computer_input_text" => computer_effect_validated_result(
+                validate_computer_input_text(
+                    output,
+                    expected_surface_id.unwrap_or_default(),
+                    expected_element_id.as_deref().unwrap_or_default(),
+                    expected_text_bytes.unwrap_or_default(),
+                ),
+                "Runner reported successful computer text input but returned inconsistent metadata; inspect current UI state before retrying",
+            ),
             _ => computer_error("invalid_request", "unsupported computer request kind"),
         }
     }
@@ -326,7 +380,7 @@ fn computer_error(kind: &str, message: &str) -> ToolResult {
     )
 }
 
-fn computer_control_not_started(message: &str) -> ToolResult {
+fn computer_effect_not_started(message: &str) -> ToolResult {
     ToolResult::err_with_output(
         message.to_string(),
         json!({
@@ -338,7 +392,7 @@ fn computer_control_not_started(message: &str) -> ToolResult {
     )
 }
 
-fn computer_control_outcome_unknown(message: &str) -> ToolResult {
+fn computer_effect_outcome_unknown(message: &str) -> ToolResult {
     ToolResult::err_with_output(
         message.to_string(),
         json!({
@@ -349,16 +403,50 @@ fn computer_control_outcome_unknown(message: &str) -> ToolResult {
     )
 }
 
-fn computer_control_delivery_failure(
-    message: &str,
-    request_dispatched: Option<bool>,
-) -> ToolResult {
+fn computer_effect_delivery_failure(message: &str, request_dispatched: Option<bool>) -> ToolResult {
     if request_dispatched == Some(false) {
-        computer_control_not_started(message)
+        computer_effect_not_started(message)
     } else {
-        computer_control_outcome_unknown(&format!(
+        computer_effect_outcome_unknown(&format!(
             "{message}; the action may have taken effect, so inspect current UI state before retrying"
         ))
+    }
+}
+
+fn computer_effect_validated_result(result: ToolResult, inconsistent_message: &str) -> ToolResult {
+    if result.success {
+        result
+    } else {
+        computer_effect_outcome_unknown(inconsistent_message)
+    }
+}
+
+fn computer_text_input_runner_error(error: &str, request_dispatched: Option<bool>) -> ToolResult {
+    let error_kind = classify_runner_error(error);
+    match error_kind {
+        "outcome_unknown" => computer_effect_outcome_unknown(
+            "Runner reported an uncertain computer text input outcome; inspect current UI state before retrying",
+        ),
+        "runner_error" => computer_effect_delivery_failure(
+            "Runner computer text input ended without a recognized structured error",
+            request_dispatched,
+        ),
+        "permission_denied" => computer_error(
+            error_kind,
+            "Runner denied the bounded computer text input request",
+        ),
+        "stale_surface" => computer_error(error_kind, "Computer text input surface is stale"),
+        "stale_element" => computer_error(error_kind, "Computer text input element is stale"),
+        "unsupported_platform" => computer_error(
+            error_kind,
+            "Computer text input is unsupported by the target platform",
+        ),
+        "invalid_request" => computer_error(error_kind, "Runner rejected the computer text input request"),
+        "accessibility_failed" | "input_failed" => computer_error(
+            error_kind,
+            "Runner rejected computer text input before a successful native text write",
+        ),
+        _ => computer_error(error_kind, "Runner rejected computer text input"),
     }
 }
 
@@ -371,6 +459,7 @@ fn classify_runner_error(error: &str) -> &'static str {
         "capture_failed",
         "accessibility_failed",
         "control_failed",
+        "input_failed",
         "outcome_unknown",
         "image_too_large",
         "invalid_request",
@@ -696,6 +785,44 @@ fn validate_computer_control(
     ToolResult::ok(output)
 }
 
+fn validate_computer_input_text(
+    output: Value,
+    expected_surface_id: &str,
+    expected_element_id: &str,
+    expected_text_bytes: usize,
+) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "computer text input result is not an object",
+            )
+        }
+    };
+    let allowed = [
+        "platform",
+        "surface_id",
+        "element_id",
+        "text_bytes",
+        "success",
+    ];
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
+        || output.get("element_id").and_then(Value::as_str) != Some(expected_element_id)
+        || output.get("text_bytes").and_then(Value::as_u64) != Some(expected_text_bytes as u64)
+        || output.get("success").and_then(Value::as_bool) != Some(true)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "computer text input result is inconsistent",
+        );
+    }
+    ToolResult::ok(output)
+}
+
 fn sniff_mime(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
@@ -877,6 +1004,7 @@ mod tests {
 
     #[test]
     fn computer_control_validator_rejects_mismatch_or_semantic_extra_fields() {
+        // CU-AX2 remains closed to press/focus metadata; CU-AX3 does not widen it.
         let mismatched = validate_computer_control(
             json!({
                 "platform": "macos",
@@ -913,15 +1041,119 @@ mod tests {
     }
 
     #[test]
+    fn computer_input_text_validator_is_exact_and_post_dispatch_mismatch_is_unknown() {
+        let valid = validate_computer_input_text(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "text_bytes": "你好🙂".len(),
+                "success": true
+            }),
+            "surface_test",
+            "element_child",
+            "你好🙂".len(),
+        );
+        assert!(valid.success, "{:?}", valid.output);
+
+        let invalid = validate_computer_input_text(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "text_bytes": 1,
+                "success": true,
+                "text": "MUST_NOT_SURVIVE"
+            }),
+            "surface_test",
+            "element_child",
+            4,
+        );
+        assert!(!invalid.success);
+        let unknown = computer_effect_validated_result(
+            invalid,
+            "inconsistent text input result; observe before retrying",
+        );
+        assert_eq!(unknown.output["error_kind"], "outcome_unknown");
+        assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+        assert!(!serde_json::to_string(&unknown.output)
+            .unwrap()
+            .contains("MUST_NOT_SURVIVE"));
+    }
+
+    #[test]
+    fn computer_input_text_runner_errors_never_echo_text() {
+        let secret = "RUNNER_MUST_NOT_ECHO_隐私🙂";
+        for (error, dispatched, expected_kind) in [
+            (
+                format!("input_failed: {secret}"),
+                Some(true),
+                "input_failed",
+            ),
+            (
+                format!("outcome_unknown: {secret}"),
+                Some(true),
+                "outcome_unknown",
+            ),
+            (
+                format!("unstructured: {secret}"),
+                Some(false),
+                "not_started",
+            ),
+            (
+                format!("unstructured: {secret}"),
+                Some(true),
+                "outcome_unknown",
+            ),
+        ] {
+            let result = computer_text_input_runner_error(&error, dispatched);
+            let serialized = serde_json::to_string(&result.output).unwrap();
+            assert_eq!(result.output["error_kind"], expected_kind);
+            assert!(!serialized.contains(secret));
+            assert!(!result.error.as_deref().unwrap_or_default().contains(secret));
+        }
+    }
+
+    #[test]
+    fn computer_input_text_utf8_byte_bound_rejects_empty_nul_and_oversize() {
+        let valid = "你好🙂";
+        assert_eq!(validate_input_text(valid).unwrap(), valid.len());
+        let encoded = serde_json::to_value(ToolCall::ComputerInputText {
+            client_id: "mini".to_string(),
+            surface_id: "surface_test".to_string(),
+            element_id: "element_test".to_string(),
+            text: valid.to_string(),
+        })
+        .unwrap();
+        let decoded: ToolCall = serde_json::from_value(encoded).unwrap();
+        match decoded {
+            ToolCall::ComputerInputText { text, .. } => assert_eq!(text, valid),
+            other => panic!(
+                "expected computer input text call, got {}",
+                other.tool_name()
+            ),
+        }
+        assert_eq!(
+            validate_input_text(&"a".repeat(MAX_INPUT_TEXT_BYTES)).unwrap(),
+            MAX_INPUT_TEXT_BYTES
+        );
+        assert!(validate_input_text("").is_err());
+        assert!(validate_input_text("a\0b").is_err());
+        assert!(validate_input_text(&"a".repeat(MAX_INPUT_TEXT_BYTES + 1)).is_err());
+        assert!(validate_input_text(&"🙂".repeat((MAX_INPUT_TEXT_BYTES / 4) + 1)).is_err());
+    }
+
+    #[test]
     fn computer_control_transport_failure_is_retryable_only_when_undispatched() {
-        let not_started = computer_control_delivery_failure("transport lost", Some(false));
+        // The same narrow delivery fence is shared by computer_input_text.
+        let not_started = computer_effect_delivery_failure("transport lost", Some(false));
         assert!(!not_started.success);
         assert_eq!(not_started.output["error_kind"], "not_started");
         assert_eq!(not_started.output["state_changed"], false);
         assert_eq!(not_started.output["execution_state"], "not_started");
 
         for dispatched in [Some(true), None] {
-            let unknown = computer_control_delivery_failure("transport lost", dispatched);
+            let unknown = computer_effect_delivery_failure("transport lost", dispatched);
             assert!(!unknown.success);
             assert_eq!(unknown.output["error_kind"], "outcome_unknown");
             assert_eq!(unknown.output["execution_state"], "outcome_unknown");
@@ -951,7 +1183,7 @@ mod tests {
         }
         let unknown = "outcome_unknown: AXPress messaging failed after dispatch";
         assert_eq!(classify_runner_error(unknown), "outcome_unknown");
-        let result = computer_control_outcome_unknown(unknown);
+        let result = computer_effect_outcome_unknown(unknown);
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], "outcome_unknown");
         assert_eq!(result.output["execution_state"], "outcome_unknown");

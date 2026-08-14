@@ -681,6 +681,7 @@ impl ToolRuntime {
             | ToolCall::ComputerAccessibilityStatus { .. }
             | ToolCall::ComputerAccessibilityTree { .. }
             | ToolCall::ComputerControl { .. }
+            | ToolCall::ComputerInputText { .. }
             | ToolCall::ComputerSnapshot { .. }) => self.dispatch_computer_tool(call, auth).await,
 
             call @ (ToolCall::ListProjects

@@ -12,13 +12,14 @@ use super::validation::{
 use super::{now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS};
 use crate::lsp_bridge::{AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND};
 use crate::shell_protocol::{
-    PersistentShellRequest, PersistentShellResult, ShellAgentShellRequest, ShellFileOpRequest,
-    ShellJobContext, ShellProcessArgv, ShellRunRequest, ShellRunResponse, ShellScriptPayload,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
+    shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
+    ShellAgentShellRequest, ShellFileOpRequest, ShellJobContext, ShellProcessArgv, ShellRunRequest,
+    ShellRunResponse, ShellScriptPayload, SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
-    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
+    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
+    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
@@ -850,9 +851,11 @@ impl ShellClientRegistry {
                 SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
             "computer_control" => SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+            "computer_input_text" => SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
             _ => return Err("invalid computer request kind".to_string()),
         };
-        if payload.len() > 4096 || payload.contains('\0') {
+        if payload.len() > shell_computer_request_payload_max_bytes(kind) || payload.contains('\0')
+        {
             return Err("computer request payload is invalid or too large".to_string());
         }
         let request_id = next_request_id();

@@ -1294,6 +1294,14 @@ pub enum ToolCall {
         action: String,
     },
 
+    /// Set bounded text on an already-focused, empty exact registered AX text element.
+    ComputerInputText {
+        client_id: String,
+        surface_id: String,
+        element_id: String,
+        text: String,
+    },
+
     /// Capture one opaque process-local window surface on one exact Runner.
     ComputerSnapshot {
         client_id: String,
@@ -1774,6 +1782,7 @@ impl ToolCall {
             Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
             Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",
             Self::ComputerControl { .. } => "computer_control",
+            Self::ComputerInputText { .. } => "computer_input_text",
             Self::ComputerSnapshot { .. } => "computer_snapshot",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",

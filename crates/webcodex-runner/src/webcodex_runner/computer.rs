@@ -1,7 +1,7 @@
 use super::{err_cmd, ok_cmd, CommandResult};
 #[cfg(any(target_os = "macos", windows))]
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
-use crate::shell_protocol::ShellAgentShellRequest;
+use crate::shell_protocol::{shell_computer_request_payload_max_bytes, ShellAgentShellRequest};
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -17,6 +17,7 @@ const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
 const MAX_ELEMENT_REGISTRY: usize = 1024;
+const MAX_INPUT_TEXT_BYTES: usize = 2048;
 const MAX_ACCESSIBILITY_DEPTH: usize = 8;
 const MAX_ACCESSIBILITY_NODES: usize = 256;
 const DEFAULT_ACCESSIBILITY_DEPTH: usize = 6;
@@ -190,6 +191,100 @@ impl ElementRecord {
 
     fn contains_protected_content(&self) -> bool {
         self.lineage.iter().any(|fingerprint| fingerprint.protected)
+    }
+}
+
+fn validate_input_text(text: &str) -> Result<usize, String> {
+    let text_bytes = text.len();
+    if text_bytes == 0 || text_bytes > MAX_INPUT_TEXT_BYTES || text.contains('\0') {
+        return Err("invalid_request: computer text input must be non-empty, NUL-free, and within the UTF-8 byte limit".to_string());
+    }
+    Ok(text_bytes)
+}
+
+fn is_secure_text_fingerprint(fingerprint: &ElementFingerprint) -> bool {
+    fingerprint.role == "AXSecureTextField"
+        || fingerprint
+            .subrole
+            .as_deref()
+            .is_some_and(|subrole| subrole.contains("Secure"))
+}
+
+fn is_supported_text_input_fingerprint(fingerprint: &ElementFingerprint) -> bool {
+    match fingerprint.role.as_str() {
+        "AXTextField" => matches!(fingerprint.subrole.as_deref(), None | Some("AXSearchField")),
+        "AXTextArea" => fingerprint.subrole.is_none(),
+        _ => false,
+    }
+}
+
+fn validate_text_input_target(element: &ElementRecord) -> Result<&ElementFingerprint, String> {
+    let target = element
+        .target_fingerprint()
+        .ok_or_else(|| "stale_element: AX element correlation lineage is incomplete".to_string())?;
+    if element.contains_protected_content() {
+        return Err(
+            "permission_denied: macOS Accessibility protected content cannot receive text input"
+                .to_string(),
+        );
+    }
+    if element.lineage.iter().any(is_secure_text_fingerprint) {
+        return Err(
+            "permission_denied: secure Accessibility text elements cannot receive text input"
+                .to_string(),
+        );
+    }
+    if !target.has_positive_evidence() {
+        return Err(
+            "stale_element: AX element lacks positive correlation evidence for text input"
+                .to_string(),
+        );
+    }
+    if !is_supported_text_input_fingerprint(target) {
+        return Err(
+            "input_failed: AX element is not a supported bounded text-entry role/subrole"
+                .to_string(),
+        );
+    }
+    Ok(target)
+}
+
+fn validate_text_input_preflight(
+    enabled: Option<bool>,
+    focused: Option<bool>,
+    value_settable: bool,
+    current_value: Option<&str>,
+) -> Result<(), String> {
+    if enabled == Some(false) {
+        return Err("input_failed: AX text element is disabled".to_string());
+    }
+    if focused != Some(true) {
+        return Err("input_failed: AX text element must already be focused".to_string());
+    }
+    if !value_settable {
+        return Err("input_failed: AXValue is not settable for this text element".to_string());
+    }
+    match current_value {
+        Some("") => Ok(()),
+        Some(_) => Err(
+            "input_failed: AXValue must be empty before bounded text input; observe and reconcile before retrying"
+                .to_string(),
+        ),
+        None => Err("input_failed: AXValue is unavailable for bounded text input".to_string()),
+    }
+}
+
+fn ensure_correlated_fingerprint(
+    expected: &ElementFingerprint,
+    current: &ElementFingerprint,
+    ancestor: bool,
+) -> Result<(), String> {
+    if current == expected {
+        Ok(())
+    } else if ancestor {
+        Err("stale_element: AX element ancestor identity changed since observation".to_string())
+    } else {
+        Err("stale_element: AX element lineage changed since observation".to_string())
     }
 }
 
@@ -385,6 +480,37 @@ impl ComputerObserver {
             return Err("stale_element: element_id belongs to a different surface".to_string());
         }
         platform::control(surface_id, element_id, &record, &element, action)
+    }
+
+    fn input_text(&self, surface_id: &str, element_id: &str, text: &str) -> Result<Value, String> {
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return Err("invalid_request: surface_id is invalid".to_string());
+        }
+        if !element_id.starts_with("element_")
+            || element_id.len() <= "element_".len()
+            || element_id.len() > MAX_ELEMENT_ID_BYTES
+        {
+            return Err("invalid_request: element_id is invalid".to_string());
+        }
+        validate_input_text(text)?;
+        let surface_registry = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?;
+        let record = surface_registry
+            .get(surface_id)
+            .cloned()
+            .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        let element = self
+            .elements
+            .lock()
+            .map_err(|_| "computer_state_error: element registry lock poisoned".to_string())?
+            .get(element_id)
+            .ok_or_else(|| "stale_element: unknown, evicted, or stale element_id".to_string())?;
+        if element.surface_id != surface_id {
+            return Err("stale_element: element_id belongs to a different surface".to_string());
+        }
+        platform::input_text(surface_id, element_id, &record, &element, text)
     }
 
     fn snapshot(&self, surface_id: &str) -> Result<Value, String> {
@@ -793,6 +919,124 @@ mod element_registry_tests {
             ensure_exact_payload_fields(&extra, &["surface_id", "element_id", "action"]).is_err()
         );
     }
+
+    #[test]
+    fn computer_text_input_payload_and_utf8_bounds_are_closed() {
+        let exact =
+            json!({"surface_id": "surface_test", "element_id": "element_test", "text": "你好🙂"});
+        assert!(ensure_exact_payload_fields(&exact, &["surface_id", "element_id", "text"]).is_ok());
+        let extra = json!({"surface_id": "surface_test", "element_id": "element_test", "text": "hello", "action": "focus"});
+        assert!(
+            ensure_exact_payload_fields(&extra, &["surface_id", "element_id", "text"]).is_err()
+        );
+
+        assert_eq!(validate_input_text("你好🙂").unwrap(), "你好🙂".len());
+        assert!(validate_input_text("").is_err());
+        assert!(validate_input_text("a\0b").is_err());
+        assert_eq!(
+            validate_input_text(&"a".repeat(MAX_INPUT_TEXT_BYTES)).unwrap(),
+            MAX_INPUT_TEXT_BYTES
+        );
+        assert!(validate_input_text(&"a".repeat(MAX_INPUT_TEXT_BYTES + 1)).is_err());
+        assert!(validate_input_text(&"🙂".repeat((MAX_INPUT_TEXT_BYTES / 4) + 1)).is_err());
+
+        let escaped_text = "\u{1}".repeat(MAX_INPUT_TEXT_BYTES);
+        let escaped_payload = json!({
+            "surface_id": "surface_test",
+            "element_id": "element_test",
+            "text": escaped_text,
+        })
+        .to_string();
+        assert!(
+            escaped_payload.len() > crate::shell_protocol::SHELL_COMPUTER_REQUEST_PAYLOAD_MAX_BYTES
+        );
+        assert!(
+            escaped_payload.len()
+                <= crate::shell_protocol::SHELL_COMPUTER_TEXT_INPUT_PAYLOAD_MAX_BYTES
+        );
+        assert_eq!(
+            shell_computer_request_payload_max_bytes("computer_input_text"),
+            crate::shell_protocol::SHELL_COMPUTER_TEXT_INPUT_PAYLOAD_MAX_BYTES
+        );
+    }
+
+    #[test]
+    fn computer_text_input_target_preflight_fails_closed() {
+        let mut text_target = record("surface_test", "target", vec![0]);
+        text_target.lineage[1].role = "AXTextArea".to_string();
+        assert!(validate_text_input_target(&text_target).is_ok());
+
+        let mut protected = text_target.clone();
+        protected.lineage[0].protected = true;
+        assert!(validate_text_input_target(&protected)
+            .unwrap_err()
+            .starts_with("permission_denied:"));
+
+        let mut secure = text_target.clone();
+        secure.lineage[1].role = "AXSecureTextField".to_string();
+        assert!(validate_text_input_target(&secure)
+            .unwrap_err()
+            .starts_with("permission_denied:"));
+
+        let mut secure_subrole = text_target.clone();
+        secure_subrole.lineage[1].subrole = Some("AXSecureTextField".to_string());
+        assert!(validate_text_input_target(&secure_subrole)
+            .unwrap_err()
+            .starts_with("permission_denied:"));
+
+        let mut secure_ancestor = text_target.clone();
+        secure_ancestor.lineage[0].role = "AXSecureTextField".to_string();
+        assert!(validate_text_input_target(&secure_ancestor)
+            .unwrap_err()
+            .starts_with("permission_denied:"));
+
+        let mut search_field = text_target.clone();
+        search_field.lineage[1].role = "AXTextField".to_string();
+        search_field.lineage[1].subrole = Some("AXSearchField".to_string());
+        assert!(validate_text_input_target(&search_field).is_ok());
+
+        let mut unsupported_subrole = text_target.clone();
+        unsupported_subrole.lineage[1].role = "AXTextField".to_string();
+        unsupported_subrole.lineage[1].subrole = Some("AXUnknownTextSubrole".to_string());
+        assert!(validate_text_input_target(&unsupported_subrole)
+            .unwrap_err()
+            .starts_with("input_failed:"));
+
+        let mut non_text = text_target.clone();
+        non_text.lineage[1].role = "AXButton".to_string();
+        assert!(validate_text_input_target(&non_text)
+            .unwrap_err()
+            .starts_with("input_failed:"));
+
+        let mut incomplete = text_target.clone();
+        incomplete.lineage.pop();
+        assert!(validate_text_input_target(&incomplete)
+            .unwrap_err()
+            .starts_with("stale_element:"));
+
+        assert!(validate_text_input_preflight(Some(true), Some(true), true, Some("")).is_ok());
+        assert!(validate_text_input_preflight(Some(false), Some(true), true, Some("")).is_err());
+        assert!(validate_text_input_preflight(Some(true), Some(false), true, Some("")).is_err());
+        assert!(validate_text_input_preflight(Some(true), None, true, Some("")).is_err());
+        assert!(validate_text_input_preflight(Some(true), Some(true), false, Some("")).is_err());
+        assert!(
+            validate_text_input_preflight(Some(true), Some(true), true, Some("existing")).is_err()
+        );
+        assert!(validate_text_input_preflight(Some(true), Some(true), true, None).is_err());
+    }
+
+    #[test]
+    fn computer_text_input_rejects_stale_lineage_fingerprint() {
+        let expected = fingerprint("target");
+        let mut changed = expected.clone();
+        changed.title = Some("changed".to_string());
+        assert!(ensure_correlated_fingerprint(&expected, &changed, false)
+            .unwrap_err()
+            .starts_with("stale_element:"));
+        assert!(ensure_correlated_fingerprint(&expected, &changed, true)
+            .unwrap_err()
+            .contains("ancestor"));
+    }
 }
 
 pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
@@ -803,6 +1047,7 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
             | "computer_accessibility_status"
             | "computer_accessibility_tree"
             | "computer_control"
+            | "computer_input_text"
     )
 }
 
@@ -819,8 +1064,9 @@ fn ensure_exact_payload_fields(payload: &Value, expected: &[&str]) -> Result<(),
 
 pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> CommandResult {
     let start = Instant::now();
+    let payload_max_bytes = shell_computer_request_payload_max_bytes(&request.kind);
     let payload = match request.stdin.as_deref() {
-        Some(payload) if payload.len() <= 4096 && !payload.contains('\0') => {
+        Some(payload) if payload.len() <= payload_max_bytes && !payload.contains('\0') => {
             match serde_json::from_str::<Value>(payload) {
                 Ok(value) => value,
                 Err(_) => {
@@ -910,6 +1156,31 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 },
             )
         }
+        "computer_input_text" => {
+            ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "text"]).and_then(
+                |()| {
+                    let surface_id = payload
+                        .get("surface_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: surface_id is required".to_string());
+                    let element_id = payload
+                        .get("element_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: element_id is required".to_string());
+                    let text = payload
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: text is required".to_string());
+                    surface_id.and_then(|surface_id| {
+                        element_id.and_then(|element_id| {
+                            text.and_then(|text| {
+                                ComputerObserver::global().input_text(surface_id, element_id, text)
+                            })
+                        })
+                    })
+                },
+            )
+        }
         "computer_snapshot" => payload
             .get("surface_id")
             .and_then(Value::as_str)
@@ -978,6 +1249,16 @@ mod platform {
         Err("unsupported_platform: computer control is unavailable on this platform".to_string())
     }
 
+    pub(super) fn input_text(
+        _surface_id: &str,
+        _element_id: &str,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+        _text: &str,
+    ) -> Result<serde_json::Value, String> {
+        Err("unsupported_platform: computer text input is unavailable on this platform".to_string())
+    }
+
     pub(super) fn capture_window(_surface: &SurfaceRecord) -> Result<(), String> {
         Err(
             "unsupported_platform: computer observation is unavailable on this platform"
@@ -1042,6 +1323,37 @@ mod tests {
             .as_deref()
             .is_some_and(|error| error.starts_with("stale_surface:")));
     }
+
+    #[test]
+    fn computer_text_input_platform_is_unsupported_off_macos() {
+        let surface = SurfaceRecord {
+            native_id: 1,
+            pid: 1,
+            identity_hash: [0; 32],
+            application: "test".to_string(),
+            title: "test".to_string(),
+            width: 1,
+            height: 1,
+        };
+        let fingerprint = ElementFingerprint {
+            role: "AXTextField".to_string(),
+            subrole: None,
+            identifier: Some("field".to_string()),
+            title: None,
+            description: None,
+            placeholder: None,
+            protected: false,
+        };
+        let element = ElementRecord {
+            surface_id: "surface_test".to_string(),
+            path: Vec::new(),
+            lineage: vec![fingerprint],
+        };
+        let error =
+            platform::input_text("surface_test", "element_test", &surface, &element, "hello")
+                .unwrap_err();
+        assert!(error.starts_with("unsupported_platform:"), "{error}");
+    }
 }
 
 #[cfg(any(target_os = "macos", windows))]
@@ -1051,7 +1363,11 @@ mod platform {
         ElementRecord, PlatformWindow, SurfaceRecord,
     };
     #[cfg(target_os = "macos")]
-    use super::{select_exact_ax_window_index, AxObservationDeadline, ElementFingerprint};
+    use super::{
+        ensure_correlated_fingerprint, select_exact_ax_window_index, validate_input_text,
+        validate_text_input_preflight, validate_text_input_target, AxObservationDeadline,
+        ElementFingerprint,
+    };
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use xcap::Window;
@@ -1145,6 +1461,29 @@ mod platform {
         } else {
             format!(
                 "outcome_unknown: {operation} returned AXError({}) after the native action was attempted",
+                error.0
+            )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn text_input_attempt_error(error: AXError) -> String {
+        if error == AXError::APIDisabled {
+            "permission_denied: macOS Accessibility permission is not granted".to_string()
+        } else if matches!(
+            error,
+            AXError::IllegalArgument
+                | AXError::InvalidUIElement
+                | AXError::AttributeUnsupported
+                | AXError::NotImplemented
+        ) {
+            format!(
+                "input_failed: AXUIElementSetAttributeValue(AXValue) was rejected with AXError({})",
+                error.0
+            )
+        } else {
+            format!(
+                "outcome_unknown: AXUIElementSetAttributeValue(AXValue) returned AXError({}) after the native text write was attempted",
                 error.0
             )
         }
@@ -1686,6 +2025,35 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
+    fn resolve_correlated_element(
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
+        deadline: &AxObservationDeadline,
+    ) -> Result<CFRetained<AXUIElement>, String> {
+        if element.lineage.len() != element.path.len() + 1 {
+            return Err("stale_element: AX element correlation lineage is incomplete".to_string());
+        }
+        let mut current = exact_ax_window(surface, deadline)?;
+        let current_root_fingerprint = element_fingerprint(deadline, &current, false)?;
+        ensure_correlated_fingerprint(&element.lineage[0], &current_root_fingerprint, true)?;
+        for (depth, &index) in element.path.iter().enumerate() {
+            let child_count = ax_array_count(deadline, &current, "AXChildren")?;
+            if index >= child_count {
+                return Err("stale_element: AX child path no longer exists".to_string());
+            }
+            current = ax_element_at(deadline, &current, "AXChildren", index)?;
+            let current_fingerprint =
+                element_fingerprint(deadline, &current, element.lineage[depth].protected)?;
+            ensure_correlated_fingerprint(
+                &element.lineage[depth + 1],
+                &current_fingerprint,
+                false,
+            )?;
+        }
+        Ok(current)
+    }
+
+    #[cfg(target_os = "macos")]
     pub(super) fn control(
         surface_id: &str,
         element_id: &str,
@@ -1714,27 +2082,7 @@ mod platform {
             );
         }
         let deadline = AxObservationDeadline::new();
-        let mut current = exact_ax_window(surface, &deadline)?;
-        let current_root_fingerprint = element_fingerprint(&deadline, &current, false)?;
-        if current_root_fingerprint != element.lineage[0] {
-            return Err(
-                "stale_element: AX element ancestor identity changed since observation".to_string(),
-            );
-        }
-        for (depth, &index) in element.path.iter().enumerate() {
-            let child_count = ax_array_count(&deadline, &current, "AXChildren")?;
-            if index >= child_count {
-                return Err("stale_element: AX child path no longer exists".to_string());
-            }
-            current = ax_element_at(&deadline, &current, "AXChildren", index)?;
-            let current_fingerprint =
-                element_fingerprint(&deadline, &current, element.lineage[depth].protected)?;
-            if current_fingerprint != element.lineage[depth + 1] {
-                return Err(
-                    "stale_element: AX element lineage changed since observation".to_string(),
-                );
-            }
-        }
+        let current = resolve_correlated_element(surface, element, &deadline)?;
 
         match action {
             ComputerAction::Press if !ax_supports_action(&deadline, &current, "AXPress")? => {
@@ -1780,6 +2128,50 @@ mod platform {
         }))
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn input_text(
+        surface_id: &str,
+        element_id: &str,
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
+        text: &str,
+    ) -> Result<Value, String> {
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(
+                "permission_denied: macOS Accessibility permission is not granted".to_string(),
+            );
+        }
+        let text_bytes = validate_input_text(text)?;
+        validate_text_input_target(element)?;
+
+        let deadline = AxObservationDeadline::new();
+        let current = resolve_correlated_element(surface, element, &deadline)?;
+        let enabled = optional_ax_bool(&deadline, &current, "AXEnabled")?;
+        let value_settable = ax_attribute_settable(&deadline, &current, "AXValue")?;
+        let focused = optional_ax_bool(&deadline, &current, "AXFocused")?;
+        // This is deliberately the final read before the effect. The helper may
+        // truncate a non-empty string for bounded observation, but emptiness is
+        // preserved exactly and caller text is never transformed or normalized.
+        let current_value = optional_ax_string(&deadline, &current, "AXValue")?;
+        validate_text_input_preflight(enabled, focused, value_settable, current_value.as_deref())?;
+
+        let text_value = CFString::from_str(text);
+        prepare_ax_call(&deadline, &current)?;
+        let error = unsafe {
+            current.set_attribute_value(&CFString::from_static_str("AXValue"), &text_value)
+        };
+        if error != AXError::Success {
+            return Err(text_input_attempt_error(error));
+        }
+        Ok(json!({
+            "platform": "macos",
+            "surface_id": surface_id,
+            "element_id": element_id,
+            "text_bytes": text_bytes,
+            "success": true,
+        }))
+    }
+
     #[cfg(windows)]
     pub(super) fn accessibility_tree(
         _surface_id: &str,
@@ -1802,6 +2194,17 @@ mod platform {
         _action: ComputerAction,
     ) -> Result<Value, String> {
         Err("unsupported_platform: computer control is unavailable on this platform".to_string())
+    }
+
+    #[cfg(windows)]
+    pub(super) fn input_text(
+        _surface_id: &str,
+        _element_id: &str,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+        _text: &str,
+    ) -> Result<Value, String> {
+        Err("unsupported_platform: computer text input is unavailable on this platform".to_string())
     }
 
     #[cfg(windows)]

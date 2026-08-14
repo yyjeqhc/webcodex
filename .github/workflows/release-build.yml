@@ -10,9 +10,9 @@ on:
         required: true
         type: string
 
-# This workflow only produces candidate bytes. It has no release, package,
-# deployment, or repository-write permission. OE remains the publication and
-# final verification control plane.
+# This workflow only produces candidate bytes and one same-run assembled bundle.
+# It has no release, package, deployment, or repository-write permission. OE
+# remains the publication control plane.
 permissions:
   contents: read
 
@@ -517,6 +517,131 @@ jobs:
           path: |
             dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz
             dist/${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  assemble:
+    needs: [prepare, linux, macos-arm64, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
+      BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
+      INPUT_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Download same-run native candidates
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ needs.prepare.outputs.archive_stem }}-*
+          path: candidate-input
+          merge-multiple: true
+
+      - name: Verify and assemble one release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            "$ARCHIVE_STEM-linux-x64.tar.gz"
+            "$ARCHIVE_STEM-linux-x64.tar.gz.sha256"
+            "linux-x64-elf.txt"
+            "$ARCHIVE_STEM-linux-arm64.tar.gz"
+            "$ARCHIVE_STEM-linux-arm64.tar.gz.sha256"
+            "linux-arm64-elf.txt"
+            "$ARCHIVE_STEM-darwin-arm64.tar.gz"
+            "$ARCHIVE_STEM-darwin-arm64.tar.gz.sha256"
+            "$ARCHIVE_STEM-win32-x64.tar.gz"
+            "$ARCHIVE_STEM-win32-x64.tar.gz.sha256"
+            "$ARCHIVE_STEM-win32-arm64.tar.gz"
+            "$ARCHIVE_STEM-win32-arm64.tar.gz.sha256"
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          if find candidate-input -mindepth 1 ! -type f -print -quit | grep -q .; then
+            echo "same-run release candidate download contains a non-regular or nested entry" >&2
+            find candidate-input -mindepth 1 ! -type f -printf '%P %y\n' >&2
+            exit 1
+          fi
+          mapfile -t actual < <(find candidate-input -mindepth 1 -type f -printf '%P\n' | sort)
+          if ! diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${actual[@]}"); then
+            echo "same-run release candidate set is incomplete or contains unexpected files" >&2
+            exit 1
+          fi
+
+          platforms=(linux-x64 linux-arm64 darwin-arm64 win32-x64 win32-arm64)
+          for platform in "${platforms[@]}"; do
+            (cd candidate-input && sha256sum -c "$ARCHIVE_STEM-$platform.tar.gz.sha256")
+          done
+
+          mkdir release-bundle
+          for platform in "${platforms[@]}"; do
+            cp "candidate-input/$ARCHIVE_STEM-$platform.tar.gz" release-bundle/
+          done
+          cp candidate-input/linux-x64-elf.txt candidate-input/linux-arm64-elf.txt release-bundle/
+
+          if [ "$BUILD_KIND" = release ]; then
+            python3 scripts/prepare_release_metadata.py \
+              --version "$VERSION" \
+              --artifact-dir candidate-input \
+              --output-dir release-bundle
+          else
+            : > release-bundle/SHA256SUMS
+            for platform in "${platforms[@]}"; do
+              cat "candidate-input/$ARCHIVE_STEM-$platform.tar.gz.sha256" >> release-bundle/SHA256SUMS
+            done
+          fi
+
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          platforms = ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64")
+          stem = os.environ["ARCHIVE_STEM"]
+          source = Path("candidate-input")
+          artifacts = {}
+          for platform in platforms:
+              filename = f"{stem}-{platform}.tar.gz"
+              digest = hashlib.sha256((source / filename).read_bytes()).hexdigest()
+              artifacts[platform] = {"filename": filename, "sha256": digest}
+          payload = {
+              "tag": os.environ["INPUT_TAG"],
+              "version": os.environ["VERSION"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "built_at": int(os.environ["WEBCODEX_BUILT_AT"]),
+              "build_kind": os.environ["BUILD_KIND"],
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "archive_stem": stem,
+              "artifacts": artifacts,
+          }
+          Path("release-bundle/release-build.json").write_text(
+              json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
+          {
+            echo "### Assembled release candidate set"
+            echo "- source: \`$SOURCE_SHA\`"
+            echo "- workflow run: \`$GITHUB_RUN_ID\`"
+            echo "- build kind: \`$BUILD_KIND\`"
+            echo "- bundle artifact: \`$ARCHIVE_STEM-bundle\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload assembled candidate set
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.archive_stem }}-bundle
+          path: release-bundle/*
           if-no-files-found: error
           retention-days: 7
           compression-level: 0

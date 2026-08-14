@@ -80,17 +80,24 @@ transports, and the coding-loop compare eval without producing release candidate
 Product-documentation consistency and allowed legacy-term matches remain part of the
 release-prep review rather than being guessed by an automated semantic checker.
 
-The normal release topology deliberately separates roles: GitHub Actions first validates
-the exact pre-tag source in the readiness workflow, then after the immutable tag builds
-and assembles the one same-run native candidate bundle; the release control host collects
-that exact bundle with `scripts/release_operator.py collect` (locked run id, source SHA,
-and tag; GitHub artifact REST download, no `gh run download`) and performs privileged
-GitHub/npm publication from the verified bytes; one well-connected Linux host may run
-the read-only public verifier after publication. Do not fan release
-downloads or rebuilds out to per-platform development machines merely to prove that a
-foreign archive is downloadable. Native execution/architecture evidence belongs to
-the reviewed release-build matrix; the public verifier checks the published bytes
-without executing foreign binaries.
+The normal release topology deliberately separates roles. The release control host first
+runs `release_operator.py preflight`, then GitHub Actions validates the exact pre-tag
+source in the durable readiness workflow. After explicit authorization creates the
+immutable tag, `release_operator.py build-start` / `build-status` bind one durable
+`rb_*` request to the reviewed release-build workflow; GitHub Actions builds and assembles
+one same-run native candidate bundle. The release control host collects that exact bundle
+with `release_operator.py collect` (locked run id, source SHA, and tag; GitHub artifact
+REST download, no `gh run download`) and stages npm with `stage-npm` using the retained
+CI binaries without Cargo. After draft assets are uploaded, `verify-draft` compares the
+GitHub asset SHA-256 digests and sizes against the retained bytes instead of downloading
+the same ~100 MiB again. The privileged actions themselves—creating the immutable tag,
+making the GitHub Release public, and `npm publish`—remain explicit human-authorized
+steps rather than one opaque command. One well-connected Linux host performs the single
+full public-byte verifier after publication. Do not fan release downloads or rebuilds out
+to per-platform development machines merely to prove that a foreign archive is
+downloadable. Native execution/architecture evidence belongs to the reviewed
+release-build matrix; the public verifier checks the published bytes without executing
+foreign binaries.
 
 ---
 

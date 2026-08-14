@@ -1,6 +1,6 @@
 name: Release build candidates
 
-run-name: Release build ${{ inputs.tag }}
+run-name: Release build ${{ inputs.tag }} ${{ inputs.request_id }}
 
 on:
   workflow_dispatch:
@@ -8,6 +8,11 @@ on:
       tag:
         description: Existing annotated release tag (v0.3.7) or verification tag (release-build-test-*)
         required: true
+        type: string
+      request_id:
+        description: Durable operator correlation id (rb_<24 hex>) or manual
+        required: false
+        default: manual
         type: string
 
 # This workflow only produces candidate bytes and one same-run assembled bundle.
@@ -38,6 +43,7 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
@@ -45,6 +51,11 @@ jobs:
             exit 1
           fi
           tag="$INPUT_TAG"
+          request_id="$INPUT_REQUEST_ID"
+          if [ "$request_id" != "manual" ] && [[ ! "$request_id" =~ ^rb_[0-9a-f]{24}$ ]]; then
+            echo "Invalid release-build request id: $request_id" >&2
+            exit 1
+          fi
           if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             :
           elif [[ "$tag" =~ ^release-build-test-[0-9A-Za-z][0-9A-Za-z._-]*$ ]] && [ "${#tag}" -le 80 ]; then

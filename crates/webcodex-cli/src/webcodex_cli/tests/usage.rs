@@ -182,6 +182,15 @@ fn webcodex_cli_agent_help_mentions_new_subcommands() {
         }
         other => panic!("expected help exit, got {other:?}"),
     }
+    match cli_action(["agent", "restart", "--help"]) {
+        CliAction::Exit { code, stdout, .. } => {
+            assert_eq!(code, 0);
+            assert!(stdout.contains("--bin PATH"));
+            assert!(stdout.contains("hosted profile"));
+            assert!(stdout.contains("does not accept --bin"));
+        }
+        other => panic!("expected help exit, got {other:?}"),
+    }
     match cli_action(["agent", "status", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
             assert_eq!(code, 0);

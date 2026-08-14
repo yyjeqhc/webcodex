@@ -279,6 +279,7 @@ struct ServiceActionOptions {
 struct LocalProfileOptions {
     config: PathBuf,
     state_dir: PathBuf,
+    runner_bin: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -982,7 +983,8 @@ fn parse_agent_subcommand(args: &[String]) -> CliAction {
             "init" => agent_init_usage(),
             "install" => agent_install_service_usage(),
             "run" => "Usage: webcodex agent run [--profile NAME|--config PATH]\n\nRun webcodex-runner directly in the foreground.\n",
-            "start" | "stop" | "restart" => "Usage: webcodex agent <start|stop|restart> [--profile NAME] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner. An explicit scope manages the matching systemd service.\n",
+            "restart" => "Usage: webcodex agent restart [--profile NAME] [--bin PATH] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner; --bin selects an explicit Runner binary for that hosted profile. An explicit scope manages the matching systemd service and does not accept --bin.\n",
+            "start" | "stop" => "Usage: webcodex agent <start|stop> [--profile NAME] [--scope user|system] [--service-file PATH]\n\nWith a profile created by `webcodex connect`, omitting --scope manages its user-level background Runner. An explicit scope manages the matching systemd service.\n",
             "status" => agent_status_usage(),
             "logs" => "Usage: webcodex agent logs [--profile NAME] [--scope user|system] [--service-file PATH] [--lines N] [--since VALUE] [--follow]\n",
             "uninstall" => "Usage: webcodex agent uninstall [--profile NAME] [--scope user|system] [--service-file PATH] --confirm\n",
@@ -1433,6 +1435,7 @@ fn parse_agent_service_action(
     let mut profile: Option<String> = None;
     let mut scope: Option<ServiceScope> = None;
     let mut service_file: Option<PathBuf> = None;
+    let mut runner_bin: Option<PathBuf> = None;
     let mut remaining = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -1445,10 +1448,29 @@ fn parse_agent_service_action(
                 scope = Some(ServiceScope::parse(&next_value(&mut iter, arg)?)?);
             }
             "--service-file" => service_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--bin" => runner_bin = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             _ => remaining.push(arg.clone()),
         }
     }
     let scope_explicit = scope.is_some();
+    if let Some(bin) = runner_bin.as_ref() {
+        if bin.as_os_str().is_empty() {
+            return Err("--bin cannot be empty".to_string());
+        }
+        if scope_explicit {
+            return Err(
+                "--bin is supported only for hosted connect profiles; omit --scope".to_string(),
+            );
+        }
+        if profile.is_none() {
+            return Err("--bin requires --profile for a hosted connect profile".to_string());
+        }
+        if command != "restart" {
+            return Err(
+                "--bin is valid only with `webcodex agent restart --profile <name>`".to_string(),
+            );
+        }
+    }
     let scope = scope.unwrap_or_else(|| default_agent_service_scope(is_effective_root()));
     let profile = profile
         .as_deref()
@@ -1470,6 +1492,7 @@ fn parse_agent_service_action(
             Some(profile) => Some(LocalProfileOptions {
                 config: client_profile_agent_config(profile)?,
                 state_dir: client_profile_state_dir(profile)?,
+                runner_bin,
             }),
             None => None,
         }

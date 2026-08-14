@@ -573,6 +573,42 @@ fn agent_status_rejects_agent_token_in_user_runtime_token_file_without_leaking_i
 
 #[cfg(unix)]
 #[test]
+fn hosted_profile_runner_bin_never_falls_back_to_systemd_without_marker() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = env_test_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let config_home = tmp.path().join("config");
+    let state_home = tmp.path().join("state");
+    let fake_bin = tmp.path().join("bin");
+    let systemctl_called = tmp.path().join("systemctl-called");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let fake_systemctl = fake_bin.join("systemctl");
+    std::fs::write(
+        &fake_systemctl,
+        format!("#!/bin/sh\n: > {:?}\n", systemctl_called),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake_systemctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let _env = EnvGuard::new()
+        .set_os("HOME", home.into_os_string())
+        .set_os("XDG_CONFIG_HOME", config_home.into_os_string())
+        .set_os("XDG_STATE_HOME", state_home.into_os_string())
+        .set_os("PATH", fake_bin.into_os_string());
+    let opts = parse_agent_service_action(
+        "restart",
+        &args(&["--profile", "hosted", "--bin", "/tmp/webcodex-dev-runner"]),
+    )
+    .unwrap();
+    let error = run_agent_service(opts).unwrap_err();
+    assert!(error.contains("existing hosted connect profile"), "{error}");
+    assert!(!systemctl_called.exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn hosted_profile_status_uses_xdg_config_and_never_invokes_systemctl() {
     use std::os::unix::fs::PermissionsExt;
 

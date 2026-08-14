@@ -224,6 +224,38 @@ user 或 system 服务，并把令牌放进服务环境。
 `webcodex agent start --profile <profile>` 来恢复。hosted profile 暂不支持开机自动
 启动。
 
+## macOS 本地 dogfood 签名
+
+macOS 的屏幕录制、辅助功能等隐私授权不应在每次本地 Runner 重编译后都绑定到新生成的
+ad-hoc `cdhash`。computer-use 本地开发使用一套与 npm/release 安装分离的开发签名身份和
+binary；下面的 helper 不接入公开 release 打包流程。
+
+只需在“钥匙串访问”里创建一次签名身份：
+
+1. 打开 **证书助理 -> 创建证书**。
+2. 名称填写 `WebCodex Local Development`。
+3. 身份类型选择 **自签名根证书（Self Signed Root）**，证书类型选择 **代码签名（Code Signing）**。
+4. 勾选 **让我覆盖默认设置（Let me override defaults）**，填写一个唯一序列号和证书要求的
+   基本信息，然后接受其余默认值。
+5. 保留该证书及其私钥；后续 rebuild 不要重新创建证书。
+
+之后构建、签名到独立开发路径，并让 hosted `connect` profile 使用这一个 binary：
+
+```bash
+cargo build --release --bin webcodex --bin webcodex-runner
+scripts/macos_sign_local_runner.sh
+target/release/webcodex agent restart --profile <profile> \
+  --bin "$HOME/.local/lib/webcodex-dev/webcodex-runner"
+```
+
+签名 helper 要求钥匙串中恰好存在一个有效的同名 code-signing identity，并固定使用
+`dev.webcodex.runner.local` identifier。它会写入显式 designated requirement，使其锚定到
+该本地证书；如果结果仍退化为绑定单个 binary 的 `cdhash`，helper 会直接失败。以后本地
+Runner rebuild 后继续使用同一证书和 identifier 重新签名，再 restart profile 即可。
+
+npm 安装的 Runner 仍保留在 npm package 的 `vendor/bin` 下，本流程不会修改它。未来正式
+macOS release 可以使用独立的 distribution identity，不与本地开发授权混用。
+
 ## SSH 会话资源（高级）
 
 能够调用本地 OpenSSH 客户端的 Runner 会声明 `ssh_shell` capability。Workflow

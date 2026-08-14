@@ -160,7 +160,7 @@ pub(crate) fn run_agent_service(opts: ServiceActionOptions) -> Result<String, St
                     },
                     &local.config,
                     &local.state_dir,
-                    None,
+                    local.runner_bin.as_deref(),
                 ),
                 ServiceActionKind::Logs {
                     lines,
@@ -178,6 +178,16 @@ pub(crate) fn run_agent_service(opts: ServiceActionOptions) -> Result<String, St
                 ),
             };
         }
+    }
+    if opts
+        .local_profile
+        .as_ref()
+        .is_some_and(|local| local.runner_bin.is_some())
+    {
+        return Err(
+            "--bin requires an existing hosted connect profile; no hosted profile marker was found"
+                .to_string(),
+        );
     }
     match opts.kind {
         ServiceActionKind::Control(control) => {

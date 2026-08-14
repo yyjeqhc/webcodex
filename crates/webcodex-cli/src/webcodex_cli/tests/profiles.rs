@@ -681,6 +681,42 @@ fn explicit_scope_selects_systemd_while_omitted_scope_preserves_hosted_profile()
     assert!(explicit.local_profile.is_none());
 }
 
+#[cfg(unix)]
+#[test]
+fn hosted_profile_runner_bin_override_is_narrow_and_explicit() {
+    let _guard = env_test_guard();
+    let _env = deterministic_user_env();
+    let bin = "/tmp/webcodex-dev-runner";
+
+    let restart =
+        parse_agent_service_action("restart", &args(&["--profile", "hosted", "--bin", bin]))
+            .unwrap();
+    assert_eq!(
+        restart
+            .local_profile
+            .as_ref()
+            .and_then(|local| local.runner_bin.as_deref()),
+        Some(std::path::Path::new(bin))
+    );
+
+    for (command, values, expected) in [
+        (
+            "start",
+            vec!["--profile", "hosted", "--scope", "user", "--bin", bin],
+            "hosted connect profiles",
+        ),
+        ("restart", vec!["--bin", bin], "requires --profile"),
+        (
+            "start",
+            vec!["--profile", "hosted", "--bin", bin],
+            "valid only with `webcodex agent restart",
+        ),
+    ] {
+        let error = parse_agent_service_action(command, &args(&values)).unwrap_err();
+        assert!(error.contains(expected), "{command}: {error}");
+    }
+}
+
 /// Unix-only: derives systemd service paths, which require Unix
 /// absolute-path semantics (`/etc/systemd/system/...`). On Windows the
 /// agent service feature fails closed instead.

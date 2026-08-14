@@ -250,6 +250,43 @@ After a machine reboot, a hosted `connect` profile is restarted by rerunning
 `webcodex connect` or `webcodex agent start --profile <profile>`. Automatic
 startup at logon is not implemented for hosted profiles.
 
+## macOS local dogfood signing
+
+macOS privacy grants such as Screen Recording and Accessibility should not be
+attached to a newly generated ad-hoc `cdhash` on every local Runner rebuild.
+For local computer-use development, keep a separate development identity and
+binary from the npm/release installation. This helper is intentionally not
+wired into public release packaging.
+
+Create the signing identity once with Keychain Access:
+
+1. Open **Certificate Assistant -> Create a Certificate**.
+2. Name it `WebCodex Local Development`.
+3. Choose **Self Signed Root** and **Code Signing**.
+4. Enable **Let me override defaults**, choose a unique serial number, fill the
+   requested certificate information, then accept the remaining defaults.
+5. Keep the certificate and private key. Do not recreate it between rebuilds.
+
+Then build, sign into the dedicated development path, and restart a hosted
+`connect` profile with that exact binary:
+
+```bash
+cargo build --release --bin webcodex --bin webcodex-runner
+scripts/macos_sign_local_runner.sh
+target/release/webcodex agent restart --profile <profile> \
+  --bin "$HOME/.local/lib/webcodex-dev/webcodex-runner"
+```
+
+The signing helper requires exactly one valid matching keychain identity and
+uses the fixed identifier `dev.webcodex.runner.local`. It writes an explicit
+designated requirement anchored to that local certificate and rejects a result
+that falls back to a binary-specific `cdhash`. Re-sign future local builds with
+the same certificate and identifier before restarting the profile.
+
+The npm-installed Runner remains under the npm package's `vendor/bin` tree and
+is not modified by this workflow. A future public macOS signing policy can use
+a separate distribution identity without sharing the local development grant.
+
 ## SSH session resources (advanced)
 
 A Runner that can invoke the local OpenSSH client advertises the `ssh_shell`

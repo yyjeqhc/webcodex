@@ -211,6 +211,7 @@ impl AdminProjectLifecycleService {
                     &request.project,
                     &request.expected_revision,
                     "admin_project_lifecycle",
+                    false,
                 )
                 .await
             },
@@ -235,6 +236,7 @@ impl AdminProjectLifecycleService {
                 project,
                 expected_revision,
                 "project_unregister",
+                true,
             )
             .await
         {
@@ -249,9 +251,17 @@ impl AdminProjectLifecycleService {
         target: &str,
         expected_revision: &str,
         requester: &'static str,
+        require_owner_access: bool,
     ) -> Result<ServiceResponse, ServiceResponse> {
         validate_revision(expected_revision)?;
         let (client_id, project_id) = parse_runtime_project(target)?;
+        if require_owner_access {
+            self.runtime
+                .shell_clients
+                .assert_client_access(Some(auth), &client_id)
+                .await
+                .map_err(|_| api_error(503, "agent_unavailable"))?;
+        }
         let client = self
             .runtime
             .shell_clients
@@ -738,6 +748,153 @@ fn map_agent_error(error: &str) -> ServiceResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::AuthKind;
+    use crate::shell_client::ShellJobStartMetadata;
+    use crate::shell_protocol::{
+        ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
+        ShellJobOpRequest,
+    };
+
+    fn user_auth(username: &str) -> AuthContext {
+        AuthContext {
+            kind: AuthKind::ApiToken,
+            user_id: Some(format!("user-{username}")),
+            username: Some(username.to_string()),
+            api_key_id: Some(format!("key-{username}")),
+            role: Some("user".to_string()),
+            scopes: vec![crate::auth::scopes::SCOPE_PROJECT_WRITE.to_string()],
+            is_bootstrap: false,
+            token_kind: Some("user".to_string()),
+            allowed_client_id: None,
+            shared_key_hash: None,
+            project_grant_id: None,
+        }
+    }
+
+    fn active_job_request(client_id: &str, command: &str) -> ShellJobOpRequest {
+        ShellJobOpRequest {
+            op: "start".to_string(),
+            client_id: Some(client_id.to_string()),
+            cwd: None,
+            command: Some(command.to_string()),
+            timeout_secs: Some(60),
+            job_id: None,
+            since_stdout_line: None,
+            since_stderr_line: None,
+            tail_lines: None,
+            limit: None,
+            codex: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn project_unregister_rejects_cross_owner_before_active_job_fence() {
+        let registry = Arc::new(ShellClientRegistry::default());
+        let revision = format!("sha256:{}", "a".repeat(64));
+        let target = "agent:owned-runner:demo";
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "owned-runner".to_string(),
+                agent_instance_id: "instance-owned".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    jobs: true,
+                    async_jobs: true,
+                    async_shell_jobs: true,
+                    project_lifecycle: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![ShellAgentProjectSummary {
+                    id: "demo".to_string(),
+                    name: Some("demo".to_string()),
+                    path: "/tmp/demo".to_string(),
+                    allow_patch: true,
+                    kind: None,
+                    description: None,
+                    hooks: Vec::new(),
+                    disabled: false,
+                    revision: Some(revision.clone()),
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 1,
+                    shell_profile: None,
+                }]),
+                agent_protocol_version: None,
+                policy: None,
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+            })
+            .await
+            .unwrap();
+
+        let alice = user_auth("alice");
+        let bob = user_auth("bob");
+        registry
+            .start_job_with_metadata_for_auth(
+                active_job_request("owned-runner", "sleep 60"),
+                "alice".to_string(),
+                ShellJobStartMetadata {
+                    project_id: Some(target.to_string()),
+                    ..Default::default()
+                },
+                Some(&alice),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            registry
+                .count_active_jobs_for_project(Some(&alice), target)
+                .await,
+            1
+        );
+        assert_eq!(
+            registry.count_active_jobs_for_project(Some(&bob), target).await,
+            0,
+            "the regression requires the cross-owner principal to be unable to see the owner's active Job"
+        );
+
+        let runtime = Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
+            registry.clone(),
+        ));
+        let (_tmp, db) = crate::test_support::test_db();
+        let service = AdminProjectLifecycleService::new(runtime, db);
+        let response = tokio::time::timeout(
+            Duration::from_millis(250),
+            service.unregister_authorized(&bob, target, &revision),
+        )
+        .await
+        .expect(
+            "cross-owner unregister must fail before enqueueing or installing an unregister fence",
+        );
+        assert_eq!(response.status, 503);
+        assert_eq!(response.body["error"]["code"], "agent_unavailable");
+
+        registry
+            .start_job_with_metadata_for_auth(
+                active_job_request("owned-runner", "echo still-allowed"),
+                "alice".to_string(),
+                ShellJobStartMetadata {
+                    project_id: Some(target.to_string()),
+                    ..Default::default()
+                },
+                Some(&alice),
+            )
+            .await
+            .expect("rejected cross-owner unregister must not leave an unregister fence behind");
+        assert_eq!(
+            registry
+                .begin_project_unregister(Some(&alice), target)
+                .await
+                .unwrap(),
+            2,
+            "the owner's active Jobs must remain authoritative for the unregister fence"
+        );
+    }
 
     #[test]
     fn project_lifecycle_error_mapping_is_stable_and_safe() {

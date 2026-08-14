@@ -3543,7 +3543,7 @@ mod filter_canonical_tests {
     }
 
     #[test]
-    fn canonical_go_test_accepts_only_legacy_and_json_argv() {
+    fn canonical_go_test_accepts_legacy_and_bounded_json_packages() {
         let step = |args: &[&str]| ShellJobValidationStep {
             name: "test".to_string(),
             program: "go".to_string(),
@@ -3552,7 +3552,8 @@ mod filter_canonical_tests {
         };
         assert!(step(&["test", "./..."]).is_canonical());
         assert!(step(&["test", "-json", "./..."]).is_canonical());
-        assert!(!step(&["test", "-json", "./pkg"]).is_canonical());
+        assert!(step(&["test", "-json", "./pkg"]).is_canonical());
+        assert!(step(&["test", "-json", ".", "./pkg", "./internal/..."]).is_canonical());
         assert!(!step(&["test", "-json", "-run", "TestOne", "./..."]).is_canonical());
         assert!(!step(&["test", "-v", "./..."]).is_canonical());
         assert!(!step(&["run", "./..."]).is_canonical());
@@ -3639,7 +3640,10 @@ mod filter_canonical_tests {
         env_injected.steps[0]
             .env
             .push(("CARGO_TARGET_DIR".to_string(), "/tmp/cache".to_string()));
-        assert!(env_injected.steps[0].is_canonical());
+        assert!(
+            !env_injected.steps[0].is_canonical(),
+            "structured go_test rejects per-step environment overrides"
+        );
         assert!(!env_injected.is_valid());
     }
 

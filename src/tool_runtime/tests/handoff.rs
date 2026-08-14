@@ -744,6 +744,14 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
     assert_eq!(handoff.output["tool_failures"]["expected_count"], 0);
     assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
+        handoff.output["tool_failures"]["historical_non_actionable_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+    assert_eq!(
         handoff.output["tool_failures"]["expectation_mismatch_count"],
         1
     );
@@ -752,7 +760,7 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
         1
     );
     let actions = handoff.output["suggested_next_actions"].as_array().unwrap();
-    assert!(actions.iter().any(|action| {
+    assert!(!actions.iter().any(|action| {
         action.as_str().unwrap_or("") == "review unexpected failed tool calls before proceeding"
     }));
     assert!(actions.iter().any(|action| {
@@ -763,7 +771,7 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
             == "review expected-failure assertions that unexpectedly succeeded"
     }));
     assert_eq!(handoff.output["verdict"]["status"], "fail");
-    assert_reason_list_contains(
+    assert_reason_list_not_contains(
         &handoff.output["verdict"],
         "blocking_reasons",
         "unexpected_tool_failures",

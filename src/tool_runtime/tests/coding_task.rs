@@ -2688,7 +2688,7 @@ async fn finish_coding_task_summary_only_blocks_unresolved_cargo_fmt_failure() {
 }
 
 #[tokio::test]
-async fn finish_coding_task_summary_only_keeps_non_validation_tool_failures_blocking() {
+async fn finish_coding_task_summary_only_treats_read_failure_as_historical_non_actionable() {
     let fixture = finish_summary_fixture("coding-finish-read-failure").await;
 
     record_coding_task_tool_event(
@@ -2723,15 +2723,31 @@ async fn finish_coding_task_summary_only_keeps_non_validation_tool_failures_bloc
     assert_eq!(result.output["workspace_clean"], true);
     assert_eq!(result.output["hygiene_clean"], true);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        result.output["tool_failures"]["historical_non_actionable_count"],
+        1
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
     assert_eq!(result.output["validation"]["status"], "passed");
     assert_eq!(result.output["validation"]["latest_status"], "passed");
-    assert_eq!(result.output["task_outcome"]["status"], "fail");
-    assert_eq!(result.output["task_outcome"]["blocking"], true);
-    assert_reason_list_contains(
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_reason_list_not_contains(
         &result.output["task_outcome"],
         "blocking_reasons",
         "unexpected_tool_failures",
     );
+    assert!(result.output["informational_notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note.as_str()
+            == Some(
+                "historical fail-closed tool failures are retained as non-actionable evidence"
+            )));
 }
 
 #[tokio::test]

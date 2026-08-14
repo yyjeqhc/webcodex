@@ -2229,6 +2229,25 @@ fn wait_for_job_stdout(rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>) -> S
     panic!("timed out waiting for job completion; stdout so far: {stdout:?}");
 }
 
+fn wait_for_job_envelope(
+    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+    message: &str,
+) -> AgentEnvelope {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match rx.try_recv() {
+            Ok(envelope) => return envelope,
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => panic!("{message}"),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                panic!("{message}: channel disconnected")
+            }
+        }
+    }
+}
+
 fn file_read_request(
     cwd: &Path,
     path: &str,
@@ -6531,7 +6550,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
             request,
         },
     );
-    match rx.try_recv().expect("queued status was sent") {
+    match wait_for_job_envelope(&mut rx, "queued status was sent") {
         AgentEnvelope::JobUpdate { payload } => {
             assert_eq!(payload.job_id, "queued-job");
             assert_eq!(payload.status, "agent_queued");
@@ -6566,7 +6585,7 @@ fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
     assert!(jobs.queued.lock().unwrap().is_empty());
     let rejected = (0..2)
         .find_map(
-            |_| match rejected_rx.try_recv().expect("shutdown update was sent") {
+            |_| match wait_for_job_envelope(&mut rejected_rx, "shutdown update was sent") {
                 AgentEnvelope::JobUpdate { payload } if payload.finished => Some(payload),
                 AgentEnvelope::JobUpdate { .. } => None,
                 other => panic!("expected job_update, got {:?}", other.kind()),

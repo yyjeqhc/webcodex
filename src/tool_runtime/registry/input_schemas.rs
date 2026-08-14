@@ -36,7 +36,10 @@ pub(super) use cleanup::{
 pub(super) use coding::{
     finish_coding_task_input_schema, start_coding_task_input_schema, work_on_project_input_schema,
 };
-pub(super) use computer::{computer_list_windows_input_schema, computer_snapshot_input_schema};
+pub(super) use computer::{
+    computer_accessibility_status_input_schema, computer_accessibility_tree_input_schema,
+    computer_list_windows_input_schema, computer_snapshot_input_schema,
+};
 pub(crate) use discovery::accepted_flattened_args_for_spec;
 #[cfg(test)]
 pub(crate) use discovery::ACCEPTED_FLATTENED_ARG_PREFERRED_ORDER;

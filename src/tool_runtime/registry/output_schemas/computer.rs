@@ -24,6 +24,28 @@ fn surface_schema() -> Value {
     })
 }
 
+fn accessibility_node_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "element_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "parent_element_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
+            "depth": {"type": "integer", "minimum": 0, "maximum": 8},
+            "role": {"type": "string", "maxLength": 256},
+            "subrole": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "title": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "description": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "value": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "placeholder": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "enabled": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+            "focused": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+            "child_count": {"type": "integer", "minimum": 0}
+        },
+        "required": ["element_id", "parent_element_id", "depth", "role", "subrole", "title", "description", "value", "placeholder", "enabled", "focused", "child_count"]
+    })
+}
+
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "computer_list_windows" => Some(wrapped_output_schema(vec![
@@ -36,6 +58,34 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({"type": "integer", "minimum": 0, "maximum": 64}),
             ),
             ("truncated", json!({"type": "boolean"})),
+        ])),
+        "computer_accessibility_status" => Some(wrapped_output_schema(vec![
+            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            ("trusted", json!({"type": "boolean"})),
+        ])),
+        "computer_accessibility_tree" => Some(wrapped_output_schema(vec![
+            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "surface_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
+            (
+                "nodes",
+                json!({"type": "array", "maxItems": 256, "items": accessibility_node_schema()}),
+            ),
+            (
+                "node_count",
+                json!({"type": "integer", "minimum": 0, "maximum": 256}),
+            ),
+            ("truncated", json!({"type": "boolean"})),
+            (
+                "max_depth",
+                json!({"type": "integer", "minimum": 0, "maximum": 8}),
+            ),
+            (
+                "max_nodes",
+                json!({"type": "integer", "minimum": 1, "maximum": 256}),
+            ),
         ])),
         "computer_snapshot" => Some(wrapped_output_schema(vec![
             (

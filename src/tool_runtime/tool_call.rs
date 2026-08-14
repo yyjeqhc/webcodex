@@ -1271,6 +1271,21 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Read the exact Runner's macOS Accessibility trust status without prompting.
+    ComputerAccessibilityStatus {
+        client_id: String,
+    },
+
+    /// Inspect one exact previously listed macOS surface as a bounded AX tree.
+    ComputerAccessibilityTree {
+        client_id: String,
+        surface_id: String,
+        #[serde(default)]
+        max_depth: Option<usize>,
+        #[serde(default)]
+        max_nodes: Option<usize>,
+    },
+
     /// Capture one opaque process-local window surface on one exact Runner.
     ComputerSnapshot {
         client_id: String,
@@ -1748,6 +1763,8 @@ impl ToolCall {
             Self::FindReferences { .. } => "find_references",
             Self::CallHierarchy { .. } => "call_hierarchy",
             Self::ComputerListWindows { .. } => "computer_list_windows",
+            Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
+            Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",
             Self::ComputerSnapshot { .. } => "computer_snapshot",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",

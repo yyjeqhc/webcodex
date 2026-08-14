@@ -6146,6 +6146,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     cfg.capabilities = Some(ShellClientCapabilities {
         sandbox_inspect_commands: true,
         computer_observe: true,
+        computer_accessibility_observe: true,
         project_lifecycle: false,
         project_path_registration: false,
         ..Default::default()
@@ -6198,6 +6199,11 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         caps.computer_observe,
         cfg!(any(target_os = "macos", windows)),
         "computer observation is advertised only when this Runner binary has a supported native implementation"
+    );
+    assert_eq!(
+        caps.computer_accessibility_observe,
+        cfg!(target_os = "macos"),
+        "computer accessibility observation is advertised only by the macOS native implementation"
     );
     assert_eq!(
         caps.sandbox_inspect_commands,

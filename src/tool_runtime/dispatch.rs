@@ -677,9 +677,10 @@ impl ToolRuntime {
                 self.dispatch_workspace_checkpoint_tool(call).await
             }
 
-            call @ (ToolCall::ComputerListWindows { .. } | ToolCall::ComputerSnapshot { .. }) => {
-                self.dispatch_computer_tool(call, auth).await
-            }
+            call @ (ToolCall::ComputerListWindows { .. }
+            | ToolCall::ComputerAccessibilityStatus { .. }
+            | ToolCall::ComputerAccessibilityTree { .. }
+            | ToolCall::ComputerSnapshot { .. }) => self.dispatch_computer_tool(call, auth).await,
 
             call @ (ToolCall::ListProjects
             | ToolCall::RegisterProject { .. }

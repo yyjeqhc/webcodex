@@ -14,6 +14,7 @@ use crate::lsp_bridge::{AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND
 use crate::shell_protocol::{
     PersistentShellRequest, PersistentShellResult, ShellAgentShellRequest, ShellFileOpRequest,
     ShellJobContext, ShellProcessArgv, ShellRunRequest, ShellRunResponse, ShellScriptPayload,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
@@ -841,9 +842,15 @@ impl ShellClientRegistry {
         timeout_secs: u64,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_id(&client_id, "client_id")?;
-        if !matches!(kind, "computer_list_windows" | "computer_snapshot") {
-            return Err("invalid computer request kind".to_string());
-        }
+        let required_capability = match kind {
+            "computer_list_windows" | "computer_snapshot" => {
+                SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE
+            }
+            "computer_accessibility_status" | "computer_accessibility_tree" => {
+                SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
+            }
+            _ => return Err("invalid computer request kind".to_string()),
+        };
         if payload.len() > 4096 || payload.contains('\0') {
             return Err("computer request payload is invalid or too large".to_string());
         }
@@ -883,12 +890,9 @@ impl ShellClientRegistry {
             .get(&client_id)
             .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
         assert_shell_client_access(auth, current)?;
-        if !capability_enabled(
-            &current.capabilities,
-            SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-        ) {
+        if !capability_enabled(&current.capabilities, required_capability) {
             return Err(format!(
-                "agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE}"
+                "agent client {client_id} does not support {required_capability}"
             ));
         }
         enqueue_pending_request_locked(

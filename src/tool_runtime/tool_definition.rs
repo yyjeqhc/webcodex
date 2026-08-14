@@ -58,6 +58,7 @@ pub(crate) use super::tool_policy::{
 };
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_FILE_READ,
     SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
@@ -94,6 +95,8 @@ pub(crate) enum AgentCapability {
     PersistentShell,
     /// Native read-only desktop/window observation on the exact target Runner.
     ComputerObserve,
+    /// Native read-only semantic accessibility inspection on the exact Runner.
+    ComputerAccessibilityObserve,
     /// Read-only agent-side semantic navigation through constrained LSP profiles.
     LspReadOnlyNavigation,
     /// Bounded typed call-hierarchy traversal; never inferred from navigation.
@@ -113,6 +116,9 @@ impl AgentCapability {
             Self::AsyncJobs => "async shell jobs",
             Self::PersistentShell => SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
             Self::ComputerObserve => SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+            Self::ComputerAccessibilityObserve => {
+                SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
+            }
             Self::LspReadOnlyNavigation => SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
             Self::LspCallHierarchy => SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
         }
@@ -133,6 +139,9 @@ impl AgentCapability {
             ],
             Self::PersistentShell => &[SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL],
             Self::ComputerObserve => &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE],
+            Self::ComputerAccessibilityObserve => {
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]
+            }
             Self::LspReadOnlyNavigation => &[SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION],
             Self::LspCallHierarchy => &[SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY],
         }

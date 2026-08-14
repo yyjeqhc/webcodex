@@ -4,11 +4,18 @@ use crate::auth::AuthContext;
 use crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE;
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::time::Duration;
 
 const MAX_WINDOWS: usize = 64;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
+const MAX_ELEMENT_ID_BYTES: usize = 128;
+const MAX_ACCESSIBILITY_DEPTH: usize = 8;
+const MAX_ACCESSIBILITY_NODES: usize = 256;
+const DEFAULT_ACCESSIBILITY_DEPTH: usize = 6;
+const DEFAULT_ACCESSIBILITY_NODES: usize = 128;
+const MAX_ACCESSIBILITY_CHILD_COUNT: u64 = 1_000_000;
 const MAX_IMAGE_DIMENSION: u64 = 4096;
 const COMPUTER_WAIT_SECS: u64 = 30;
 
@@ -28,6 +35,49 @@ impl ToolRuntime {
                     auth,
                     Some(limit),
                     None,
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerAccessibilityStatus { client_id } => {
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_accessibility_status",
+                    json!({}),
+                    auth,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerAccessibilityTree {
+                client_id,
+                surface_id,
+                max_depth,
+                max_nodes,
+            } => {
+                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+                    return computer_error("invalid_surface", "surface_id is invalid");
+                }
+                let max_depth = max_depth
+                    .unwrap_or(DEFAULT_ACCESSIBILITY_DEPTH)
+                    .min(MAX_ACCESSIBILITY_DEPTH);
+                let max_nodes = max_nodes
+                    .unwrap_or(DEFAULT_ACCESSIBILITY_NODES)
+                    .clamp(1, MAX_ACCESSIBILITY_NODES);
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_accessibility_tree",
+                    json!({
+                        "surface_id": surface_id,
+                        "max_depth": max_depth,
+                        "max_nodes": max_nodes,
+                    }),
+                    auth,
+                    None,
+                    Some(surface_id.as_str()),
+                    Some((max_depth, max_nodes)),
                 )
                 .await
             }
@@ -45,6 +95,7 @@ impl ToolRuntime {
                     auth,
                     None,
                     Some(surface_id.as_str()),
+                    None,
                 )
                 .await
             }
@@ -60,20 +111,30 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         list_limit: Option<usize>,
         expected_surface_id: Option<&str>,
+        accessibility_bounds: Option<(usize, usize)>,
     ) -> ToolResult {
         if client_id.is_empty() || client_id.len() > 128 {
             return computer_error("invalid_client", "client_id is invalid");
         }
+        let required_capability = match kind {
+            "computer_list_windows" | "computer_snapshot" => {
+                SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE
+            }
+            "computer_accessibility_status" | "computer_accessibility_tree" => {
+                crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
+            }
+            _ => return computer_error("invalid_request", "unsupported computer request kind"),
+        };
         match self
             .shell_clients
-            .client_supports_for_auth(client_id, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, auth)
+            .client_supports_for_auth(client_id, required_capability, auth)
             .await
         {
             Ok(true) => {}
             Ok(false) => {
                 return computer_error(
                     "capability_unavailable",
-                    "target Runner does not support computer_observe",
+                    &format!("target Runner does not support {required_capability}"),
                 )
             }
             Err(error) => return computer_error("client_access_denied", &error),
@@ -141,6 +202,16 @@ impl ToolRuntime {
             "computer_snapshot" => {
                 validate_snapshot(output, expected_surface_id.unwrap_or_default(), client_id)
             }
+            "computer_accessibility_status" => validate_accessibility_status(output),
+            "computer_accessibility_tree" => {
+                let (max_depth, max_nodes) = accessibility_bounds.unwrap_or((0, 0));
+                validate_accessibility_tree(
+                    output,
+                    expected_surface_id.unwrap_or_default(),
+                    max_depth,
+                    max_nodes,
+                )
+            }
             _ => computer_error("invalid_request", "unsupported computer request kind"),
         }
     }
@@ -159,6 +230,7 @@ fn classify_runner_error(error: &str) -> &'static str {
         "stale_surface",
         "unsupported_platform",
         "capture_failed",
+        "accessibility_failed",
         "image_too_large",
         "invalid_request",
     ] {
@@ -255,6 +327,198 @@ fn validate_window_list(output: Value, limit: usize) -> ToolResult {
             "invalid_runner_response",
             "Runner window list metadata is inconsistent",
         );
+    }
+    ToolResult::ok(output)
+}
+
+fn validate_accessibility_status(output: Value) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "Accessibility status is not an object",
+            )
+        }
+    };
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "platform" | "trusted"))
+        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || output.get("trusted").and_then(Value::as_bool).is_none()
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Accessibility status is malformed",
+        );
+    }
+    ToolResult::ok(output)
+}
+
+fn validate_accessibility_node(
+    value: &Value,
+    max_depth: usize,
+    seen: &mut HashMap<String, usize>,
+) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "accessibility node must be an object".to_string())?;
+    let allowed = [
+        "element_id",
+        "parent_element_id",
+        "depth",
+        "role",
+        "subrole",
+        "title",
+        "description",
+        "value",
+        "placeholder",
+        "enabled",
+        "focused",
+        "child_count",
+    ];
+    if object.len() != allowed.len() || object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err("accessibility node fields are inconsistent".to_string());
+    }
+    let element_id = value
+        .get("element_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "element_id missing".to_string())?;
+    if !element_id.starts_with("element_")
+        || element_id.len() > MAX_ELEMENT_ID_BYTES
+        || element_id.len() <= "element_".len()
+        || seen.contains_key(element_id)
+    {
+        return Err("element_id is invalid or duplicated".to_string());
+    }
+    let depth = value
+        .get("depth")
+        .and_then(Value::as_u64)
+        .and_then(|depth| usize::try_from(depth).ok())
+        .ok_or_else(|| "accessibility node depth missing".to_string())?;
+    if depth > max_depth {
+        return Err("accessibility node depth exceeds requested bound".to_string());
+    }
+    match value.get("parent_element_id") {
+        Some(Value::Null) if depth == 0 => {}
+        Some(parent) if depth > 0 => {
+            let parent = parent
+                .as_str()
+                .ok_or_else(|| "parent_element_id must be string or null".to_string())?;
+            if parent.len() > MAX_ELEMENT_ID_BYTES || seen.get(parent).copied() != Some(depth - 1) {
+                return Err("parent_element_id is stale or structurally invalid".to_string());
+            }
+        }
+        _ => return Err("root accessibility parent/depth is inconsistent".to_string()),
+    }
+    let role = value
+        .get("role")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "accessibility role missing".to_string())?;
+    if role.is_empty() || role.len() > MAX_TEXT_BYTES {
+        return Err("accessibility role exceeds bound or is empty".to_string());
+    }
+    for field in ["subrole", "title", "description", "value", "placeholder"] {
+        match value.get(field) {
+            Some(Value::Null) => {}
+            Some(text)
+                if text
+                    .as_str()
+                    .is_some_and(|text| text.len() <= MAX_TEXT_BYTES) => {}
+            _ => {
+                return Err(format!(
+                    "accessibility {field} is malformed or exceeds bound"
+                ))
+            }
+        }
+    }
+    for field in ["enabled", "focused"] {
+        if !value
+            .get(field)
+            .is_some_and(|value| value.is_boolean() || value.is_null())
+        {
+            return Err(format!("accessibility {field} must be boolean or null"));
+        }
+    }
+    let child_count = value
+        .get("child_count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "accessibility child_count missing".to_string())?;
+    if child_count > MAX_ACCESSIBILITY_CHILD_COUNT {
+        return Err("accessibility child_count exceeds bound".to_string());
+    }
+    seen.insert(element_id.to_string(), depth);
+    Ok(())
+}
+
+fn validate_accessibility_tree(
+    output: Value,
+    expected_surface_id: &str,
+    max_depth: usize,
+    max_nodes: usize,
+) -> ToolResult {
+    if max_depth > MAX_ACCESSIBILITY_DEPTH || !(1..=MAX_ACCESSIBILITY_NODES).contains(&max_nodes) {
+        return computer_error(
+            "invalid_request",
+            "Accessibility validation bounds are invalid",
+        );
+    }
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "Accessibility tree is not an object",
+            )
+        }
+    };
+    let allowed = [
+        "platform",
+        "surface_id",
+        "nodes",
+        "node_count",
+        "truncated",
+        "max_depth",
+        "max_nodes",
+    ];
+    if object.len() != allowed.len() || object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return computer_error(
+            "invalid_runner_response",
+            "Accessibility tree fields are inconsistent",
+        );
+    }
+    if output.get("platform").and_then(Value::as_str) != Some("macos")
+        || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
+        || output.get("max_depth").and_then(Value::as_u64) != Some(max_depth as u64)
+        || output.get("max_nodes").and_then(Value::as_u64) != Some(max_nodes as u64)
+        || output.get("truncated").and_then(Value::as_bool).is_none()
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Accessibility tree metadata is inconsistent",
+        );
+    }
+    let nodes = match output.get("nodes").and_then(Value::as_array) {
+        Some(nodes) if !nodes.is_empty() && nodes.len() <= max_nodes => nodes,
+        _ => {
+            return computer_error(
+                "invalid_runner_response",
+                "Accessibility node list is missing or exceeds bound",
+            )
+        }
+    };
+    if output.get("node_count").and_then(Value::as_u64) != Some(nodes.len() as u64) {
+        return computer_error(
+            "invalid_runner_response",
+            "Accessibility node count is inconsistent",
+        );
+    }
+    let mut seen = HashMap::with_capacity(nodes.len());
+    if let Some(error) = nodes
+        .iter()
+        .find_map(|node| validate_accessibility_node(node, max_depth, &mut seen).err())
+    {
+        return computer_error("invalid_runner_response", &error);
     }
     ToolResult::ok(output)
 }
@@ -362,6 +626,63 @@ mod tests {
             "focused": false,
             "active": false
         })
+    }
+
+    fn accessibility_tree() -> Value {
+        json!({
+            "platform": "macos",
+            "surface_id": "surface_test",
+            "nodes": [
+                {
+                    "element_id": "element_root",
+                    "parent_element_id": null,
+                    "depth": 0,
+                    "role": "AXWindow",
+                    "subrole": null,
+                    "title": "Example",
+                    "description": null,
+                    "value": null,
+                    "placeholder": null,
+                    "enabled": true,
+                    "focused": false,
+                    "child_count": 1
+                },
+                {
+                    "element_id": "element_child",
+                    "parent_element_id": "element_root",
+                    "depth": 1,
+                    "role": "AXButton",
+                    "subrole": null,
+                    "title": "OK",
+                    "description": null,
+                    "value": null,
+                    "placeholder": null,
+                    "enabled": true,
+                    "focused": false,
+                    "child_count": 0
+                }
+            ],
+            "node_count": 2,
+            "truncated": false,
+            "max_depth": 2,
+            "max_nodes": 8
+        })
+    }
+
+    #[test]
+    fn computer_accessibility_tree_validator_accepts_bounded_parent_first_tree() {
+        let result = validate_accessibility_tree(accessibility_tree(), "surface_test", 2, 8);
+        assert!(result.success, "{:?}", result.output);
+    }
+
+    #[test]
+    fn computer_accessibility_tree_validator_rejects_forward_parent_reference() {
+        let mut tree = accessibility_tree();
+        tree["nodes"][0]["parent_element_id"] = json!("element_child");
+        tree["nodes"][0]["depth"] = json!(1);
+        let result = validate_accessibility_tree(tree, "surface_test", 2, 8);
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "invalid_runner_response");
     }
 
     #[test]

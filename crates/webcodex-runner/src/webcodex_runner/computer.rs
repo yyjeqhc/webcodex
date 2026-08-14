@@ -13,6 +13,10 @@ use uuid::Uuid;
 const MAX_WINDOWS: usize = 64;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
+const MAX_ACCESSIBILITY_DEPTH: usize = 8;
+const MAX_ACCESSIBILITY_NODES: usize = 256;
+const DEFAULT_ACCESSIBILITY_DEPTH: usize = 6;
+const DEFAULT_ACCESSIBILITY_NODES: usize = 128;
 #[cfg(any(test, target_os = "macos", windows))]
 const RGBA_BYTES_PER_PIXEL: u64 = 4;
 #[cfg(any(test, target_os = "macos", windows))]
@@ -27,6 +31,8 @@ const MAX_IMAGE_DIMENSION: u32 = 4096;
 struct SurfaceRecord {
     #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     native_id: u32,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pid: u32,
     #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     identity_hash: [u8; 32],
     application: String,
@@ -67,6 +73,7 @@ impl ComputerObserver {
             let surface_id = format!("surface_{}", Uuid::new_v4().simple());
             let record = SurfaceRecord {
                 native_id: candidate.native_id,
+                pid: candidate.pid,
                 identity_hash: candidate.identity_hash,
                 application: bounded_text(&candidate.application),
                 title: bounded_text(&candidate.title),
@@ -91,6 +98,34 @@ impl ComputerObserver {
             .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())? =
             surfaces;
         Ok(json!({"windows": windows, "count": count, "truncated": truncated}))
+    }
+
+    fn accessibility_status(&self) -> Result<Value, String> {
+        platform::accessibility_status()
+    }
+
+    fn accessibility_tree(
+        &self,
+        surface_id: &str,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<Value, String> {
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return Err("invalid_request: surface_id is invalid".to_string());
+        }
+        if max_depth > MAX_ACCESSIBILITY_DEPTH
+            || !(1..=MAX_ACCESSIBILITY_NODES).contains(&max_nodes)
+        {
+            return Err("invalid_request: accessibility bounds are invalid".to_string());
+        }
+        let record = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?
+            .get(surface_id)
+            .cloned()
+            .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        platform::accessibility_tree(surface_id, &record, max_depth, max_nodes)
     }
 
     fn snapshot(&self, surface_id: &str) -> Result<Value, String> {
@@ -308,7 +343,13 @@ mod raw_capture_bound_tests {
 }
 
 pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
-    matches!(kind, "computer_list_windows" | "computer_snapshot")
+    matches!(
+        kind,
+        "computer_list_windows"
+            | "computer_snapshot"
+            | "computer_accessibility_status"
+            | "computer_accessibility_tree"
+    )
 }
 
 pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> CommandResult {
@@ -358,6 +399,26 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 .clamp(1, MAX_WINDOWS);
             ComputerObserver::global().list_windows(limit)
         }
+        "computer_accessibility_status" => ComputerObserver::global().accessibility_status(),
+        "computer_accessibility_tree" => {
+            let surface_id = payload
+                .get("surface_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid_request: surface_id is required".to_string());
+            let max_depth = payload
+                .get("max_depth")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(DEFAULT_ACCESSIBILITY_DEPTH);
+            let max_nodes = payload
+                .get("max_nodes")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(DEFAULT_ACCESSIBILITY_NODES);
+            surface_id.and_then(|surface_id| {
+                ComputerObserver::global().accessibility_tree(surface_id, max_depth, max_nodes)
+            })
+        }
         "computer_snapshot" => payload
             .get("surface_id")
             .and_then(Value::as_str)
@@ -374,6 +435,7 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
 #[derive(Clone)]
 struct PlatformWindow {
     native_id: u32,
+    pid: u32,
     identity_hash: [u8; 32],
     application: String,
     title: String,
@@ -390,6 +452,25 @@ mod platform {
     pub(super) fn list_windows(_limit: usize) -> Result<Vec<PlatformWindow>, String> {
         Err(
             "unsupported_platform: computer observation is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    pub(super) fn accessibility_status() -> Result<serde_json::Value, String> {
+        Err(
+            "unsupported_platform: computer accessibility observation is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    pub(super) fn accessibility_tree(
+        _surface_id: &str,
+        _surface: &SurfaceRecord,
+        _max_depth: usize,
+        _max_nodes: usize,
+    ) -> Result<serde_json::Value, String> {
+        Err(
+            "unsupported_platform: computer accessibility observation is unavailable on this platform"
                 .to_string(),
         )
     }
@@ -463,8 +544,24 @@ mod tests {
 #[cfg(any(target_os = "macos", windows))]
 mod platform {
     use super::{bounded_text, ensure_raw_capture_bound, PlatformWindow, SurfaceRecord};
+    use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use xcap::Window;
+
+    #[cfg(target_os = "macos")]
+    use objc2_application_services::{
+        AXError, AXIsProcessTrusted, AXUIElement, AXValue, AXValueType,
+    };
+    #[cfg(target_os = "macos")]
+    use objc2_core_foundation::{
+        CFArray, CFBoolean, CFIndex, CFRetained, CFString, CFType, CGPoint, CGSize,
+    };
+    #[cfg(target_os = "macos")]
+    use std::collections::VecDeque;
+    #[cfg(target_os = "macos")]
+    use std::ptr::NonNull;
+    #[cfg(target_os = "macos")]
+    use uuid::Uuid;
 
     #[cfg(windows)]
     use windows_sys::Win32::{
@@ -480,7 +577,7 @@ mod platform {
 
     #[cfg(target_os = "macos")]
     fn ensure_capture_permission() -> Result<(), String> {
-        let granted = unsafe { objc2_core_graphics::CGPreflightScreenCaptureAccess() };
+        let granted = objc2_core_graphics::CGPreflightScreenCaptureAccess();
         if granted {
             Ok(())
         } else {
@@ -500,6 +597,385 @@ mod platform {
         } else {
             format!("capture_failed: {message}")
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    const MAX_AX_WINDOWS: usize = 64;
+    #[cfg(target_os = "macos")]
+    const MAX_AX_CHILD_COUNT: usize = 1_000_000;
+    #[cfg(target_os = "macos")]
+    const AX_MESSAGING_TIMEOUT_SECS: f32 = 2.0;
+
+    #[cfg(target_os = "macos")]
+    fn accessibility_error(operation: &str, error: AXError) -> String {
+        if error == AXError::APIDisabled {
+            "permission_denied: macOS Accessibility permission is not granted".to_string()
+        } else {
+            format!(
+                "accessibility_failed: {operation} failed with AXError({})",
+                error.0
+            )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn optional_ax_value(
+        element: &AXUIElement,
+        attribute: &'static str,
+    ) -> Result<Option<CFRetained<CFType>>, String> {
+        let attribute = CFString::from_static_str(attribute);
+        let mut raw: *const CFType = std::ptr::null();
+        let error = unsafe { element.copy_attribute_value(&attribute, NonNull::from(&mut raw)) };
+        match error {
+            AXError::Success => {
+                let raw = NonNull::new(raw.cast_mut()).ok_or_else(|| {
+                    "accessibility_failed: AX attribute succeeded with null value".to_string()
+                })?;
+                Ok(Some(unsafe { CFRetained::from_raw(raw) }))
+            }
+            AXError::AttributeUnsupported | AXError::NoValue => Ok(None),
+            error => Err(accessibility_error("AXUIElementCopyAttributeValue", error)),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn optional_ax_string(
+        element: &AXUIElement,
+        attribute: &'static str,
+    ) -> Result<Option<String>, String> {
+        let Some(value) = optional_ax_value(element, attribute)? else {
+            return Ok(None);
+        };
+        Ok(value
+            .downcast::<CFString>()
+            .ok()
+            .map(|value| bounded_text(&value.to_string())))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn optional_ax_bool(
+        element: &AXUIElement,
+        attribute: &'static str,
+    ) -> Result<Option<bool>, String> {
+        let Some(value) = optional_ax_value(element, attribute)? else {
+            return Ok(None);
+        };
+        Ok(value
+            .downcast::<CFBoolean>()
+            .ok()
+            .map(|value| value.value()))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn optional_ax_point(
+        element: &AXUIElement,
+        attribute: &'static str,
+    ) -> Result<Option<CGPoint>, String> {
+        let Some(value) = optional_ax_value(element, attribute)? else {
+            return Ok(None);
+        };
+        let Ok(value) = value.downcast::<AXValue>() else {
+            return Ok(None);
+        };
+        if unsafe { value.r#type() } != AXValueType::CGPoint {
+            return Ok(None);
+        }
+        let mut point = CGPoint::ZERO;
+        let copied = unsafe { value.value(AXValueType::CGPoint, NonNull::from(&mut point).cast()) };
+        Ok(copied.then_some(point))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn optional_ax_size(
+        element: &AXUIElement,
+        attribute: &'static str,
+    ) -> Result<Option<CGSize>, String> {
+        let Some(value) = optional_ax_value(element, attribute)? else {
+            return Ok(None);
+        };
+        let Ok(value) = value.downcast::<AXValue>() else {
+            return Ok(None);
+        };
+        if unsafe { value.r#type() } != AXValueType::CGSize {
+            return Ok(None);
+        }
+        let mut size = CGSize::ZERO;
+        let copied = unsafe { value.value(AXValueType::CGSize, NonNull::from(&mut size).cast()) };
+        Ok(copied.then_some(size))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn ax_window_geometry_matches(
+        element: &AXUIElement,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> Result<bool, String> {
+        const TOLERANCE: f64 = 2.0;
+        let Some(position) = optional_ax_point(element, "AXPosition")? else {
+            return Ok(false);
+        };
+        let Some(size) = optional_ax_size(element, "AXSize")? else {
+            return Ok(false);
+        };
+        Ok((position.x - f64::from(x)).abs() <= TOLERANCE
+            && (position.y - f64::from(y)).abs() <= TOLERANCE
+            && (size.width - f64::from(width)).abs() <= TOLERANCE
+            && (size.height - f64::from(height)).abs() <= TOLERANCE)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn ax_array_count(element: &AXUIElement, attribute: &'static str) -> Result<usize, String> {
+        let attribute = CFString::from_static_str(attribute);
+        let mut count: CFIndex = 0;
+        let error = unsafe { element.attribute_value_count(&attribute, NonNull::from(&mut count)) };
+        match error {
+            AXError::Success => {
+                let count = usize::try_from(count).map_err(|_| {
+                    "accessibility_failed: AX array count is negative or too large".to_string()
+                })?;
+                if count > MAX_AX_CHILD_COUNT {
+                    return Err(
+                        "accessibility_failed: AX child count exceeds bounded inspection limit"
+                            .to_string(),
+                    );
+                }
+                Ok(count)
+            }
+            AXError::AttributeUnsupported | AXError::NoValue => Ok(0),
+            error => Err(accessibility_error(
+                "AXUIElementGetAttributeValueCount",
+                error,
+            )),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn ax_elements(
+        element: &AXUIElement,
+        attribute_name: &'static str,
+        count: usize,
+    ) -> Result<Vec<CFRetained<AXUIElement>>, String> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let attribute = CFString::from_static_str(attribute_name);
+        let max_values = CFIndex::try_from(count)
+            .map_err(|_| "accessibility_failed: AX array request exceeds CFIndex".to_string())?;
+        let mut raw: *const CFArray = std::ptr::null();
+        let error = unsafe {
+            element.copy_attribute_values(&attribute, 0, max_values, NonNull::from(&mut raw))
+        };
+        if error != AXError::Success {
+            return Err(accessibility_error("AXUIElementCopyAttributeValues", error));
+        }
+        let raw = NonNull::new(raw.cast_mut()).ok_or_else(|| {
+            "accessibility_failed: AX array copy succeeded with null value".to_string()
+        })?;
+        let array: CFRetained<CFArray> = unsafe { CFRetained::from_raw(raw) };
+        let array: &CFArray<CFType> = unsafe { array.cast_unchecked() };
+        let mut output = Vec::with_capacity(array.len());
+        for value in array.iter() {
+            let element = value.downcast::<AXUIElement>().map_err(|_| {
+                "accessibility_failed: AX element array contained a non-element value".to_string()
+            })?;
+            output.push(element);
+        }
+        Ok(output)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn resolve_surface_window(surface: &SurfaceRecord) -> Result<Window, String> {
+        let window = Window::all()
+            .map_err(map_error)?
+            .into_iter()
+            .find(|window| window.id().ok() == Some(surface.native_id))
+            .ok_or_else(|| "stale_surface: window no longer exists".to_string())?;
+        let width = window.width().map_err(map_error)?;
+        let height = window.height().map_err(map_error)?;
+        let application = window.app_name().map_err(map_error)?;
+        let title = window.title().map_err(map_error)?;
+        let pid = window.pid().map_err(map_error)?;
+        let current_identity = identity_hash(&window, &application, &title, width, height)?;
+        if pid != surface.pid || current_identity != surface.identity_hash {
+            return Err("stale_surface: window identity changed since enumeration".to_string());
+        }
+        if bounded_text(&application) != surface.application
+            || bounded_text(&title) != surface.title
+        {
+            return Err("stale_surface: window metadata changed since enumeration".to_string());
+        }
+        Ok(window)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn exact_ax_window(surface: &SurfaceRecord) -> Result<CFRetained<AXUIElement>, String> {
+        let native_window = resolve_surface_window(surface)?;
+        let x = native_window.x().map_err(map_error)?;
+        let y = native_window.y().map_err(map_error)?;
+        let width = native_window.width().map_err(map_error)?;
+        let height = native_window.height().map_err(map_error)?;
+        let application = unsafe { AXUIElement::new_application(surface.pid as _) };
+        let timeout_error = unsafe { application.set_messaging_timeout(AX_MESSAGING_TIMEOUT_SECS) };
+        if timeout_error != AXError::Success {
+            return Err(accessibility_error(
+                "AXUIElementSetMessagingTimeout",
+                timeout_error,
+            ));
+        }
+        let window_count = ax_array_count(&application, "AXWindows")?;
+        if window_count == 0 || window_count > MAX_AX_WINDOWS {
+            return Err(
+                "accessibility_failed: exact AX window cannot be resolved within the bounded window set"
+                    .to_string(),
+            );
+        }
+        let mut windows = ax_elements(&application, "AXWindows", window_count)?;
+        let mut geometry_matches = Vec::new();
+        let mut title_matches = Vec::new();
+        for (index, window) in windows.iter().enumerate() {
+            if ax_window_geometry_matches(window, x, y, width, height)? {
+                geometry_matches.push(index);
+            }
+            let title = optional_ax_string(window, "AXTitle")?.unwrap_or_default();
+            if bounded_text(&title) == surface.title {
+                title_matches.push(index);
+            }
+        }
+        let resolved = if geometry_matches.len() == 1 {
+            Some(geometry_matches[0])
+        } else if geometry_matches.len() > 1 {
+            None
+        } else if title_matches.len() == 1 {
+            Some(title_matches[0])
+        } else if windows.len() == 1 {
+            Some(0)
+        } else {
+            None
+        };
+        let Some(index) = resolved else {
+            return Err(format!(
+                "accessibility_failed: exact AX window could not be resolved uniquely (geometry={}, title={}, windows={})",
+                geometry_matches.len(),
+                title_matches.len(),
+                windows.len()
+            ));
+        };
+        Ok(windows.swap_remove(index))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility_status() -> Result<Value, String> {
+        Ok(json!({
+            "platform": "macos",
+            "trusted": unsafe { AXIsProcessTrusted() },
+        }))
+    }
+
+    #[cfg(windows)]
+    pub(super) fn accessibility_status() -> Result<Value, String> {
+        Err(
+            "unsupported_platform: computer accessibility observation is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn accessibility_tree(
+        surface_id: &str,
+        surface: &SurfaceRecord,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<Value, String> {
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(
+                "permission_denied: macOS Accessibility permission is not granted".to_string(),
+            );
+        }
+        let root = exact_ax_window(surface)?;
+        let mut queue = VecDeque::from([(root, None::<String>, 0usize)]);
+        let mut nodes = Vec::with_capacity(max_nodes.min(64));
+        let mut truncated = false;
+        while let Some((element, parent_element_id, depth)) = queue.pop_front() {
+            if nodes.len() >= max_nodes {
+                truncated = true;
+                break;
+            }
+            let element_id = format!("element_{}", Uuid::new_v4().simple());
+            let role = optional_ax_string(&element, "AXRole")?.ok_or_else(|| {
+                "accessibility_failed: AX element is missing a string role".to_string()
+            })?;
+            let subrole = optional_ax_string(&element, "AXSubrole")?;
+            let title = optional_ax_string(&element, "AXTitle")?;
+            let description = optional_ax_string(&element, "AXDescription")?;
+            let placeholder = optional_ax_string(&element, "AXPlaceholderValue")?;
+            let sensitive = role == "AXSecureTextField"
+                || subrole
+                    .as_deref()
+                    .is_some_and(|value| value.contains("Secure"));
+            let value = if sensitive {
+                None
+            } else {
+                optional_ax_string(&element, "AXValue")?
+            };
+            let enabled = optional_ax_bool(&element, "AXEnabled")?;
+            let focused = optional_ax_bool(&element, "AXFocused")?;
+            let child_count = ax_array_count(&element, "AXChildren")?;
+            if depth < max_depth && child_count > 0 {
+                let reserved = nodes.len() + queue.len() + 1;
+                let remaining = max_nodes.saturating_sub(reserved);
+                let take = child_count.min(remaining);
+                if take < child_count {
+                    truncated = true;
+                }
+                for child in ax_elements(&element, "AXChildren", take)? {
+                    queue.push_back((child, Some(element_id.clone()), depth + 1));
+                }
+            } else if child_count > 0 {
+                truncated = true;
+            }
+            nodes.push(json!({
+                "element_id": element_id,
+                "parent_element_id": parent_element_id,
+                "depth": depth,
+                "role": role,
+                "subrole": subrole,
+                "title": title,
+                "description": description,
+                "value": value,
+                "placeholder": placeholder,
+                "enabled": enabled,
+                "focused": focused,
+                "child_count": child_count,
+            }));
+        }
+        if !queue.is_empty() {
+            truncated = true;
+        }
+        let node_count = nodes.len();
+        Ok(json!({
+            "platform": "macos",
+            "surface_id": surface_id,
+            "nodes": nodes,
+            "node_count": node_count,
+            "truncated": truncated,
+            "max_depth": max_depth,
+            "max_nodes": max_nodes,
+        }))
+    }
+
+    #[cfg(windows)]
+    pub(super) fn accessibility_tree(
+        _surface_id: &str,
+        _surface: &SurfaceRecord,
+        _max_depth: usize,
+        _max_nodes: usize,
+    ) -> Result<Value, String> {
+        Err(
+            "unsupported_platform: computer accessibility observation is unavailable on this platform"
+                .to_string(),
+        )
     }
 
     #[cfg(windows)]
@@ -844,6 +1320,7 @@ mod platform {
             let (focused, active) = focus_state(&window);
             output.push(PlatformWindow {
                 native_id: window.id().map_err(map_error)?,
+                pid: window.pid().map_err(map_error)?,
                 identity_hash,
                 application,
                 title,
@@ -884,6 +1361,71 @@ mod platform {
         #[cfg(windows)]
         {
             capture_window_gdi(surface.native_id, width, height)
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_live_tests {
+    use super::*;
+
+    fn surface_record(candidate: PlatformWindow) -> SurfaceRecord {
+        SurfaceRecord {
+            native_id: candidate.native_id,
+            pid: candidate.pid,
+            identity_hash: candidate.identity_hash,
+            application: bounded_text(&candidate.application),
+            title: bounded_text(&candidate.title),
+            width: candidate.width,
+            height: candidate.height,
+        }
+    }
+
+    fn live_accessibility_smoke(application_matches: impl Fn(&str) -> bool) -> bool {
+        let candidates = platform::list_windows(MAX_WINDOWS).expect("list live macOS windows");
+        let Some(candidate) = candidates
+            .into_iter()
+            .find(|candidate| application_matches(&candidate.application))
+        else {
+            return false;
+        };
+        let record = surface_record(candidate);
+        let output = platform::accessibility_tree("surface_live", &record, 3, 64)
+            .expect("read bounded live accessibility tree");
+        assert_eq!(output["platform"], "macos");
+        assert!(output["node_count"].as_u64().unwrap_or(0) > 0);
+        for node in output["nodes"].as_array().expect("nodes array") {
+            assert!(node["role"].as_str().is_some_and(|role| !role.is_empty()));
+        }
+        true
+    }
+
+    #[test]
+    #[ignore = "requires live macOS Accessibility permission and desktop"]
+    fn computer_macos_accessibility_permission_live_smoke() {
+        let status = platform::accessibility_status().expect("read accessibility status");
+        assert_eq!(status["trusted"], true);
+    }
+
+    #[test]
+    #[ignore = "requires live Microsoft Edge window and macOS Accessibility permission"]
+    fn computer_macos_accessibility_edge_live_smoke() {
+        assert!(
+            live_accessibility_smoke(|application| {
+                application.to_ascii_lowercase().contains("microsoft edge")
+                    || application.to_ascii_lowercase() == "edge"
+            }),
+            "Microsoft Edge window must be open for this live smoke"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires live WeChat window and macOS Accessibility permission"]
+    fn computer_macos_accessibility_wechat_live_smoke() {
+        if !live_accessibility_smoke(|application| {
+            application == "微信" || application.to_ascii_lowercase().contains("wechat")
+        }) {
+            eprintln!("WeChat window is not open; live smoke skipped");
         }
     }
 }

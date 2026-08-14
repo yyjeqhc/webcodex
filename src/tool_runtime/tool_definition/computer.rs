@@ -1,4 +1,4 @@
-use super::AgentCapability::ComputerObserve;
+use super::AgentCapability::{ComputerAccessibilityObserve, ComputerObserve};
 use super::ToolVisibility::ModelVisible;
 use super::{def, ToolDefinition, TOOL_CATEGORY_COMPUTER};
 use crate::tool_runtime::metadata::{
@@ -11,6 +11,32 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_COMPUTER,
         Some(ComputerObserve),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(COMPUTER_READ),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_accessibility_status",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerAccessibilityObserve),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(COMPUTER_READ),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_accessibility_tree",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerAccessibilityObserve),
         TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(COMPUTER_READ),

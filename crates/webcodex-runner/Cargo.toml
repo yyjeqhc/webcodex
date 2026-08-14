@@ -38,6 +38,8 @@ image = { version = "0.25.9", default-features = false, features = ["jpeg"] }
 xcap = { version = "0.9.8", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2-application-services = "0.3.2"
+objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]

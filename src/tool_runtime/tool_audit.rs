@@ -91,6 +91,16 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "computer_list_windows" => {
             copy_keys(obj, &mut out, &["client_id", "limit"]);
         }
+        "computer_accessibility_status" => {
+            copy_keys(obj, &mut out, &["client_id"]);
+        }
+        "computer_accessibility_tree" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["client_id", "surface_id", "max_depth", "max_nodes"],
+            );
+        }
         "computer_snapshot" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id"]);
         }
@@ -372,6 +382,17 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
             "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
         }),
+        "computer_accessibility_status" => serde_json::json!({
+            "platform": output.get("platform").cloned().unwrap_or(Value::Null),
+            "trusted": output.get("trusted").cloned().unwrap_or(Value::Null),
+        }),
+        "computer_accessibility_tree" => serde_json::json!({
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "node_count": output.get("node_count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+            "max_depth": output.get("max_depth").cloned().unwrap_or(Value::Null),
+            "max_nodes": output.get("max_nodes").cloned().unwrap_or(Value::Null),
+        }),
         _ => output.clone(),
     }
 }
@@ -414,6 +435,39 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("Confidential"));
         assert!(!serialized.contains("Private App"));
         assert!(!serialized.contains("surface_secret"));
+    }
+
+    #[test]
+    fn computer_accessibility_tree_ledger_result_omits_semantic_content() {
+        let output = json!({
+            "platform": "macos",
+            "surface_id": "surface_safe",
+            "nodes": [{
+                "element_id": "element_secret",
+                "parent_element_id": null,
+                "depth": 0,
+                "role": "AXWindow",
+                "subrole": null,
+                "title": "Private Chat",
+                "description": "Confidential",
+                "value": "SUPER_SECRET_MESSAGE",
+                "placeholder": null,
+                "enabled": true,
+                "focused": false,
+                "child_count": 2
+            }],
+            "node_count": 1,
+            "truncated": true,
+            "max_depth": 6,
+            "max_nodes": 128
+        });
+        let summary = session_log_result_for_tool("computer_accessibility_tree", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["surface_id"], "surface_safe");
+        assert_eq!(summary["node_count"], 1);
+        assert!(!serialized.contains("SUPER_SECRET"));
+        assert!(!serialized.contains("Private Chat"));
+        assert!(!serialized.contains("element_secret"));
     }
 
     #[test]
@@ -569,6 +623,20 @@ impl ToolCall {
             Self::ComputerListWindows { client_id, limit } => serde_json::json!({
                 "client_id": client_id,
                 "limit": limit,
+            }),
+            Self::ComputerAccessibilityStatus { client_id } => serde_json::json!({
+                "client_id": client_id,
+            }),
+            Self::ComputerAccessibilityTree {
+                client_id,
+                surface_id,
+                max_depth,
+                max_nodes,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "max_depth": max_depth,
+                "max_nodes": max_nodes,
             }),
             Self::ComputerSnapshot {
                 client_id,

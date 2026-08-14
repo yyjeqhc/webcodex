@@ -59,15 +59,17 @@ codesign --force \
     "$tmp"
 codesign --verify --strict --verbose=2 "$tmp"
 actual_requirement="$(codesign -d -r- "$tmp" 2>&1)"
+actual_requirement_lower="$(printf '%s' "$actual_requirement" | tr '[:upper:]' '[:lower:]')"
+identity_hash_lower="$(printf '%s' "$identity_hash" | tr '[:upper:]' '[:lower:]')"
 case "$actual_requirement" in
     *"identifier \"$IDENTIFIER\""*) ;;
     *) fail "signed Runner does not carry the expected identifier" ;;
 esac
-case "$actual_requirement" in
-    *"anchor H\"$identity_hash\""*) ;;
+case "$actual_requirement_lower" in
+    *"certificate root = h\"$identity_hash_lower\""*|*"anchor h\"$identity_hash_lower\""*) ;;
     *) fail "signed Runner designated requirement is not anchored to the selected local identity" ;;
 esac
-case "$actual_requirement" in
+case "$actual_requirement_lower" in
     *cdhash*) fail "designated requirement is still bound to one binary cdhash" ;;
 esac
 

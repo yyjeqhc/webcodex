@@ -163,6 +163,42 @@ async fn wait_for_local_job_terminal(
     panic!("local validation job did not become terminal: {job_id}");
 }
 
+#[cfg(unix)]
+fn unix_process_is_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(unix)]
+async fn wait_for_spawned_local_validation_pid(root: &std::path::Path) -> u32 {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Ok(entries) = std::fs::read_dir(root.join(".codex/jobs")) {
+                for entry in entries.flatten() {
+                    let dir = entry.path();
+                    if !dir.join("metadata.json").is_file() {
+                        continue;
+                    }
+                    if let Ok(pid) = std::fs::read_to_string(dir.join("pid")) {
+                        if let Ok(pid) = pid.trim().parse::<u32>() {
+                            return pid;
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("local validation must publish setup metadata and pid within 5 seconds")
+}
+
 #[tokio::test]
 async fn go_test_fails_closed_without_structured_go_capability() {
     let client_id = "vhandoff-go-capability";
@@ -2456,6 +2492,130 @@ mod tests {
             .count(),
         1,
         "the local validation command must execute exactly once"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_validation_cancellation_before_watcher_handoff_reaps_child() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_local_validation_crate(
+        tmp.path(),
+        r#"
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn blocks_until_cancelled() {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+}
+"#,
+    );
+    let runtime = runtime_with_project(tmp.path(), "demo")
+        .with_validation_sync_wait(std::time::Duration::from_secs(5));
+    let config = local_project_config(&tmp.path().to_string_lossy());
+    let jobs_lock = runtime.local_jobs.lock().await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let config = config.clone();
+        async move {
+            runtime
+                .run_readonly_validation_local_job(
+                    "cargo_test",
+                    "demo",
+                    &config,
+                    None,
+                    "cargo test",
+                    validation_adapter_for_tool("cargo_test").unwrap(),
+                    ValidationCommandOptions::default(),
+                    ExecutionPurpose::Test,
+                    30,
+                    5,
+                )
+                .await
+        }
+    });
+
+    let pid = wait_for_spawned_local_validation_pid(tmp.path()).await;
+    assert!(
+        unix_process_is_alive(pid),
+        "validation child must be running"
+    );
+    assert!(
+        jobs_lock.is_empty(),
+        "hidden record insertion must still be blocked"
+    );
+
+    task.abort();
+    let cancelled = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+        .await
+        .expect("cancellation cleanup must remain bounded")
+        .expect_err("validation caller must be cancelled");
+    assert!(cancelled.is_cancelled());
+    assert!(
+        !unix_process_is_alive(pid),
+        "cancellation before watcher handoff must terminate and reap the Child"
+    );
+    drop(jobs_lock);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_validation_deadline_includes_pre_watcher_handoff_delay() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_local_validation_crate(
+        tmp.path(),
+        r#"
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn exceeds_total_budget() {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+}
+"#,
+    );
+    let runtime = runtime_with_project(tmp.path(), "demo")
+        .with_validation_sync_wait(std::time::Duration::from_secs(5));
+    let config = local_project_config(&tmp.path().to_string_lossy());
+    let jobs_lock = runtime.local_jobs.lock().await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let config = config.clone();
+        async move {
+            runtime
+                .run_readonly_validation_local_job(
+                    "cargo_test",
+                    "demo",
+                    &config,
+                    None,
+                    "cargo test",
+                    validation_adapter_for_tool("cargo_test").unwrap(),
+                    ValidationCommandOptions::default(),
+                    ExecutionPurpose::Test,
+                    3,
+                    5,
+                )
+                .await
+        }
+    });
+
+    let pid = wait_for_spawned_local_validation_pid(tmp.path()).await;
+    assert!(
+        unix_process_is_alive(pid),
+        "validation child must be running"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(3200)).await;
+    drop(jobs_lock);
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+        .await
+        .expect("expired spawn-time deadline must not restart at watcher handoff")
+        .expect("validation task joins after timeout");
+    assert_eq!(result.output["effective_timeout_secs"], 3);
+    assert!(
+        !unix_process_is_alive(pid),
+        "expired absolute deadline must terminate and reap the Child"
     );
 }
 

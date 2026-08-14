@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use webcodex_admin::ServerHttpOptions;
+use webcodex_admin::{build_server_http_client, ServerHttpOptions};
 
 use super::super::connections::{canonical_server_url, ensure_real_directory_tree};
 use super::super::http::{post_json_authed, ApiCall};
@@ -54,6 +54,19 @@ struct ProjectRegistration {
     state_dir: PathBuf,
     project_path: PathBuf,
     project: ProjectFile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExactRegistrationObservation {
+    Present,
+    Absent,
+    Unknown,
+}
+
+#[derive(Debug)]
+enum LiveUnregisterError {
+    NoUnregister(String),
+    OutcomeUnknown(&'static str),
 }
 
 pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<DisconnectResult, String> {
@@ -136,10 +149,18 @@ pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<Disconnect
 
     let outcome = if runner.running {
         let remote_outcome =
-            unregister_live_project(&config, &opts.server_http, &runtime_project_id).await?;
-        // Only remove the local registration after the Server/Runner returned a
-        // terminal structured unregister outcome. Indeterminate remote outcomes
-        // leave this file intact.
+            match unregister_live_project(&config, &opts.server_http, &runtime_project_id).await {
+                Ok(outcome) => outcome,
+                Err(LiveUnregisterError::NoUnregister(error)) => return Err(error),
+                Err(LiveUnregisterError::OutcomeUnknown(reason)) => {
+                    let observation = observe_exact_registration(&candidate, &canonical_project);
+                    return Err(render_uncertain_unregister_error(reason, observation));
+                }
+            };
+        // Remove the local registration only after the Server/Runner returned a
+        // terminal structured unregister outcome. If the response is uncertain,
+        // re-observe the exact registration under the still-held ProfileLock and
+        // return without recreating, retrying, or inferring Server inventory.
         remove_exact_registration(&candidate.project_path)?;
         remote_outcome
     } else {
@@ -278,8 +299,9 @@ async fn unregister_live_project(
     config: &ExistingAgentConfig,
     server_http: &ServerHttpOptions,
     runtime_project_id: &str,
-) -> Result<String, String> {
-    let server = canonical_server_url(&config.server_url)?;
+) -> Result<String, LiveUnregisterError> {
+    let server =
+        canonical_server_url(&config.server_url).map_err(LiveUnregisterError::NoUnregister)?;
     let list = post_json_authed(ApiCall {
         server_url: &server.url,
         server_http,
@@ -287,46 +309,184 @@ async fn unregister_live_project(
         path: "/api/projects/list",
         body: json!({}),
     })
-    .await?;
+    .await
+    .map_err(LiveUnregisterError::NoUnregister)?;
     let projects = list
         .pointer("/output/projects")
         .or_else(|| list.get("projects"))
         .and_then(Value::as_array)
-        .ok_or_else(|| "Server returned an invalid project inventory".to_string())?;
+        .ok_or_else(|| {
+            LiveUnregisterError::NoUnregister(
+                "Server returned an invalid project inventory; unregister was not dispatched"
+                    .to_string(),
+            )
+        })?;
     let project = projects
         .iter()
         .find(|project| project.get("id").and_then(Value::as_str) == Some(runtime_project_id))
         .ok_or_else(|| {
-            "live Runner project is not present in the authenticated Server inventory; local registration was preserved"
-                .to_string()
+            LiveUnregisterError::NoUnregister(
+                "live Runner project is not present in the authenticated Server inventory; unregister was not dispatched"
+                    .to_string(),
+            )
         })?;
     let expected_revision = project
         .get("revision")
         .and_then(Value::as_str)
         .filter(|revision| valid_revision(revision))
-        .ok_or_else(|| "Server project inventory omitted a valid revision".to_string())?;
-    let response = post_json_authed(ApiCall {
-        server_url: &server.url,
+        .ok_or_else(|| {
+            LiveUnregisterError::NoUnregister(
+                "Server project inventory omitted a valid revision; unregister was not dispatched"
+                    .to_string(),
+            )
+        })?;
+    let response = post_live_unregister(
+        &server.url,
         server_http,
-        token: &config.token,
-        path: "/api/projects/unregister",
-        body: json!({
-            "project": runtime_project_id,
-            "expected_revision": expected_revision,
-        }),
-    })
+        &config.token,
+        runtime_project_id,
+        expected_revision,
+    )
     .await?;
     if response.get("project").and_then(Value::as_str) != Some(runtime_project_id) {
-        return Err(
-            "Server unregister response did not identify the requested project".to_string(),
-        );
+        return Err(LiveUnregisterError::OutcomeUnknown(
+            "Server unregister response did not identify the requested project",
+        ));
     }
     let outcome = response
         .get("outcome")
         .and_then(Value::as_str)
         .filter(|outcome| matches!(*outcome, "unregistered" | "already_unregistered"))
-        .ok_or_else(|| "Server did not return a terminal unregister outcome".to_string())?;
+        .ok_or(LiveUnregisterError::OutcomeUnknown(
+            "Server did not return a terminal unregister outcome",
+        ))?;
     Ok(outcome.to_string())
+}
+
+async fn post_live_unregister(
+    server_url: &str,
+    server_http: &ServerHttpOptions,
+    token: &str,
+    runtime_project_id: &str,
+    expected_revision: &str,
+) -> Result<Value, LiveUnregisterError> {
+    let url = format!(
+        "{}/api/projects/unregister",
+        server_url.trim_end_matches('/')
+    );
+    let client = build_server_http_client(server_http).map_err(|_| {
+        LiveUnregisterError::NoUnregister(
+            "failed to configure Server HTTP client; unregister was not dispatched".to_string(),
+        )
+    })?;
+    let response = client
+        .post(url)
+        .bearer_auth(token)
+        .json(&json!({
+            "project": runtime_project_id,
+            "expected_revision": expected_revision,
+        }))
+        .send()
+        .await
+        .map_err(|_| {
+            LiveUnregisterError::OutcomeUnknown(
+                "Server transport did not return an unregister response",
+            )
+        })?;
+    let status = response.status();
+    let text = response.text().await.map_err(|_| {
+        LiveUnregisterError::OutcomeUnknown("Server unregister response could not be read")
+    })?;
+    if !status.is_success() {
+        let parsed = serde_json::from_str::<Value>(&text).ok();
+        let code = parsed
+            .as_ref()
+            .and_then(|value| value.pointer("/error/code"))
+            .and_then(Value::as_str);
+        if matches!(code, Some("operation_indeterminate" | "operation_failed")) {
+            return Err(LiveUnregisterError::OutcomeUnknown(
+                "Server could not prove a terminal unregister outcome",
+            ));
+        }
+        if let Some(code) = code.filter(|code| known_no_unregister_error(code)) {
+            return Err(LiveUnregisterError::NoUnregister(format!(
+                "Server rejected unregister without a project removal outcome: {code}"
+            )));
+        }
+        if matches!(status.as_u16(), 400 | 401 | 403) {
+            return Err(LiveUnregisterError::NoUnregister(format!(
+                "Server rejected unregister before Runner dispatch: HTTP {}",
+                status.as_u16()
+            )));
+        }
+        return Err(LiveUnregisterError::OutcomeUnknown(
+            "Server returned an unclassified unregister failure",
+        ));
+    }
+    serde_json::from_str(&text).map_err(|_| {
+        LiveUnregisterError::OutcomeUnknown("Server unregister response was not valid JSON")
+    })
+}
+
+fn known_no_unregister_error(code: &str) -> bool {
+    matches!(
+        code,
+        "active_jobs_conflict"
+            | "agent_unavailable"
+            | "unsupported_runner_version"
+            | "revision_conflict"
+            | "project_not_found"
+            | "invalid_request"
+    )
+}
+
+fn observe_exact_registration(
+    candidate: &ProjectRegistration,
+    canonical_project: &Path,
+) -> ExactRegistrationObservation {
+    let metadata = match std::fs::symlink_metadata(&candidate.project_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ExactRegistrationObservation::Absent
+        }
+        Err(_) => return ExactRegistrationObservation::Unknown,
+    };
+    if metadata.is_symlink() || !metadata.is_file() {
+        return ExactRegistrationObservation::Unknown;
+    }
+    let content = match std::fs::read_to_string(&candidate.project_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ExactRegistrationObservation::Absent
+        }
+        Err(_) => return ExactRegistrationObservation::Unknown,
+    };
+    let observed: ProjectFile = match toml::from_str(&content) {
+        Ok(project) => project,
+        Err(_) => return ExactRegistrationObservation::Unknown,
+    };
+    if observed.id == candidate.project.id && stored_project_matches(&observed, canonical_project) {
+        ExactRegistrationObservation::Present
+    } else {
+        ExactRegistrationObservation::Unknown
+    }
+}
+
+fn render_uncertain_unregister_error(
+    reason: &str,
+    observation: ExactRegistrationObservation,
+) -> String {
+    match observation {
+        ExactRegistrationObservation::Present => format!(
+            "disconnect outcome unknown after live structured unregister: {reason}; exact local registration is still present; no retry or recreation was attempted"
+        ),
+        ExactRegistrationObservation::Absent => format!(
+            "disconnect outcome unknown after live structured unregister: {reason}; exact local registration is no longer present; Server inventory state was not inferred and no retry or recreation was attempted"
+        ),
+        ExactRegistrationObservation::Unknown => format!(
+            "disconnect outcome unknown after live structured unregister: {reason}; exact local registration state could not be safely observed; Server inventory state was not inferred and no retry or recreation was attempted"
+        ),
+    }
 }
 
 fn valid_revision(value: &str) -> bool {
@@ -536,6 +696,157 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outcome, "unregistered");
+        server.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn lost_unregister_response_reobserves_runner_removed_registration_as_absent() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config_base = tmp.path().join("config");
+        let state_base = tmp.path().join("state");
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::write(project.join("keep.txt"), "keep").unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (profile_dir, state_dir) =
+            write_profile(&config_base, &state_base, "one", &project, "repo");
+        std::fs::write(
+            profile_dir.join("agent.toml"),
+            format!(
+                "server_url = \"http://{address}\"\ntoken = \"shared-key\"\nclient_id = \"client\"\n"
+            ),
+        )
+        .unwrap();
+        let registration = profile_dir.join("projects.d/repo.toml");
+
+        let runner = tmp.path().join("webcodex-runner");
+        std::fs::write(
+            &runner,
+            "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            super::super::process::ensure_runner_unlocked(
+                &runner,
+                &profile_dir.join("agent.toml"),
+                &state_dir,
+            )
+            .unwrap(),
+            super::super::process::RunnerStart::Started
+        );
+        assert!(local_runner_state_summary(&state_dir).unwrap().running);
+
+        let registration_for_server = registration.clone();
+        let server = thread::spawn(move || {
+            for index in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 16 * 1024];
+                let read = stream.read(&mut request).unwrap();
+                let text = String::from_utf8_lossy(&request[..read]);
+                if index == 0 {
+                    assert!(text.starts_with("POST /api/projects/list "), "{text}");
+                    let payload = json!({"success":true,"output":{"projects":[{"id":"agent:client:repo","revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}).to_string();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        payload.len(),
+                        payload
+                    )
+                    .unwrap();
+                } else {
+                    assert!(text.starts_with("POST /api/projects/unregister "), "{text}");
+                    assert!(text.contains("agent:client:repo"), "{text}");
+                    std::fs::remove_file(&registration_for_server).unwrap();
+                    // Simulate Runner authoritative removal followed by a lost
+                    // Server/transport response. Dropping the stream sends no
+                    // terminal unregister outcome back to the CLI.
+                }
+            }
+        });
+
+        let error = run_disconnect(DisconnectOptions {
+            project: project.clone(),
+            profile: Some("one".to_string()),
+            config_base: Some(config_base),
+            state_base: Some(state_base),
+            server_http: ServerHttpOptions {
+                proxy: None,
+                no_system_proxy: true,
+            },
+        })
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("disconnect outcome unknown"), "{error}");
+        assert!(
+            error.contains("exact local registration is no longer present"),
+            "{error}"
+        );
+        assert!(!error.contains("was preserved"), "{error}");
+        assert!(!registration.exists());
+        assert_eq!(
+            std::fs::read_to_string(project.join("keep.txt")).unwrap(),
+            "keep"
+        );
+        assert!(project.join(".git").is_dir());
+        assert!(
+            local_runner_state_summary(&state_dir).unwrap().running,
+            "uncertain disconnect must not infer inventory or stop the Runner"
+        );
+        stop_runner_unlocked(&state_dir).unwrap();
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_live_inventory_reports_unregister_not_dispatched() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = vec![0u8; 16 * 1024];
+            let read = stream.read(&mut request).unwrap();
+            let text = String::from_utf8_lossy(&request[..read]);
+            assert!(text.starts_with("POST /api/projects/list "), "{text}");
+            let payload = json!({"success":true,"output":{"projects":[]}}).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                payload.len(),
+                payload
+            )
+            .unwrap();
+        });
+        let config = ExistingAgentConfig {
+            server_url: format!("http://{address}"),
+            token: "shared-key".to_string(),
+            client_id: "client".to_string(),
+        };
+        let error = unregister_live_project(
+            &config,
+            &ServerHttpOptions {
+                proxy: None,
+                no_system_proxy: true,
+            },
+            "agent:client:repo",
+        )
+        .await
+        .unwrap_err();
+        match error {
+            LiveUnregisterError::NoUnregister(message) => {
+                assert!(
+                    message.contains("unregister was not dispatched"),
+                    "{message}"
+                );
+                assert!(!message.contains("was preserved"), "{message}");
+            }
+            other => panic!("expected pre-dispatch failure, got {other:?}"),
+        }
         server.join().unwrap();
     }
 

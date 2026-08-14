@@ -5,7 +5,7 @@ use crate::shell_protocol::ShellAgentShellRequest;
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 #[cfg(any(test, target_os = "macos"))]
 use std::time::Duration;
@@ -15,6 +15,8 @@ use uuid::Uuid;
 const MAX_WINDOWS: usize = 64;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
+const MAX_ELEMENT_ID_BYTES: usize = 128;
+const MAX_ELEMENT_REGISTRY: usize = 1024;
 const MAX_ACCESSIBILITY_DEPTH: usize = 8;
 const MAX_ACCESSIBILITY_NODES: usize = 256;
 const DEFAULT_ACCESSIBILITY_DEPTH: usize = 6;
@@ -110,7 +112,7 @@ fn select_exact_ax_window_index(
     })
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct SurfaceRecord {
     #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     native_id: u32,
@@ -122,6 +124,122 @@ struct SurfaceRecord {
     title: String,
     width: u32,
     height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComputerAction {
+    Press,
+    Focus,
+}
+
+impl ComputerAction {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "press" => Ok(Self::Press),
+            "focus" => Ok(Self::Focus),
+            _ => Err("invalid_request: computer control action must be press or focus".to_string()),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Press => "press",
+            Self::Focus => "focus",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ElementFingerprint {
+    role: String,
+    subrole: Option<String>,
+    identifier: Option<String>,
+    title: Option<String>,
+    description: Option<String>,
+    placeholder: Option<String>,
+    protected: bool,
+}
+
+impl ElementFingerprint {
+    fn has_positive_evidence(&self) -> bool {
+        [
+            self.identifier.as_deref(),
+            self.title.as_deref(),
+            self.description.as_deref(),
+            self.placeholder.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| !value.is_empty())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ElementRecord {
+    surface_id: String,
+    path: Vec<usize>,
+    lineage: Vec<ElementFingerprint>,
+}
+
+impl ElementRecord {
+    fn target_fingerprint(&self) -> Option<&ElementFingerprint> {
+        (self.lineage.len() == self.path.len() + 1)
+            .then(|| self.lineage.last())
+            .flatten()
+    }
+
+    fn contains_protected_content(&self) -> bool {
+        self.lineage.iter().any(|fingerprint| fingerprint.protected)
+    }
+}
+
+struct AccessibilityTreeResult {
+    output: Value,
+    elements: Vec<(String, ElementRecord)>,
+}
+
+#[derive(Default)]
+struct ElementRegistry {
+    entries: HashMap<String, ElementRecord>,
+    order: VecDeque<String>,
+}
+
+impl ElementRegistry {
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+    }
+
+    fn get(&self, element_id: &str) -> Option<ElementRecord> {
+        self.entries.get(element_id).cloned()
+    }
+
+    fn replace_surface(&mut self, surface_id: &str, elements: Vec<(String, ElementRecord)>) {
+        let stale_ids: Vec<String> = self
+            .entries
+            .iter()
+            .filter_map(|(element_id, record)| {
+                (record.surface_id == surface_id).then(|| element_id.clone())
+            })
+            .collect();
+        for element_id in &stale_ids {
+            self.entries.remove(element_id);
+        }
+        self.order
+            .retain(|element_id| !stale_ids.iter().any(|stale| stale == element_id));
+
+        for (element_id, record) in elements {
+            debug_assert_eq!(record.surface_id, surface_id);
+            self.order.push_back(element_id.clone());
+            self.entries.insert(element_id, record);
+        }
+        while self.entries.len() > MAX_ELEMENT_REGISTRY {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -137,6 +255,7 @@ struct SurfaceOutput<'a> {
 
 struct ComputerObserver {
     surfaces: Mutex<HashMap<String, SurfaceRecord>>,
+    elements: Mutex<ElementRegistry>,
 }
 
 impl ComputerObserver {
@@ -144,6 +263,7 @@ impl ComputerObserver {
         static OBSERVER: OnceLock<ComputerObserver> = OnceLock::new();
         OBSERVER.get_or_init(|| ComputerObserver {
             surfaces: Mutex::new(HashMap::new()),
+            elements: Mutex::new(ElementRegistry::default()),
         })
     }
 
@@ -175,11 +295,16 @@ impl ComputerObserver {
             surfaces.insert(surface_id, record);
         }
         let count = windows.len();
-        *self
+        let mut surface_registry = self
             .surfaces
             .lock()
-            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())? =
-            surfaces;
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?;
+        let mut element_registry = self
+            .elements
+            .lock()
+            .map_err(|_| "computer_state_error: element registry lock poisoned".to_string())?;
+        *surface_registry = surfaces;
+        element_registry.clear();
         Ok(json!({"windows": windows, "count": count, "truncated": truncated}))
     }
 
@@ -208,7 +333,58 @@ impl ComputerObserver {
             .get(surface_id)
             .cloned()
             .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
-        platform::accessibility_tree(surface_id, &record, max_depth, max_nodes)
+        let tree = platform::accessibility_tree(surface_id, &record, max_depth, max_nodes)?;
+        let surface_registry = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?;
+        if surface_registry.get(surface_id) != Some(&record) {
+            return Err(
+                "stale_surface: surface registry changed during accessibility observation"
+                    .to_string(),
+            );
+        }
+        let mut element_registry = self
+            .elements
+            .lock()
+            .map_err(|_| "computer_state_error: element registry lock poisoned".to_string())?;
+        element_registry.replace_surface(surface_id, tree.elements);
+        Ok(tree.output)
+    }
+
+    fn control(
+        &self,
+        surface_id: &str,
+        element_id: &str,
+        action: ComputerAction,
+    ) -> Result<Value, String> {
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return Err("invalid_request: surface_id is invalid".to_string());
+        }
+        if !element_id.starts_with("element_")
+            || element_id.len() <= "element_".len()
+            || element_id.len() > MAX_ELEMENT_ID_BYTES
+        {
+            return Err("invalid_request: element_id is invalid".to_string());
+        }
+        let surface_registry = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?;
+        let record = surface_registry
+            .get(surface_id)
+            .cloned()
+            .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        let element = self
+            .elements
+            .lock()
+            .map_err(|_| "computer_state_error: element registry lock poisoned".to_string())?
+            .get(element_id)
+            .ok_or_else(|| "stale_element: unknown, evicted, or stale element_id".to_string())?;
+        if element.surface_id != surface_id {
+            return Err("stale_element: element_id belongs to a different surface".to_string());
+        }
+        platform::control(surface_id, element_id, &record, &element, action)
     }
 
     fn snapshot(&self, surface_id: &str) -> Result<Value, String> {
@@ -490,6 +666,135 @@ mod ax_observation_bound_tests {
     }
 }
 
+#[cfg(test)]
+mod element_registry_tests {
+    use super::*;
+
+    fn fingerprint(label: &str) -> ElementFingerprint {
+        ElementFingerprint {
+            role: "AXButton".to_string(),
+            subrole: None,
+            identifier: None,
+            title: Some(label.to_string()),
+            description: None,
+            placeholder: None,
+            protected: false,
+        }
+    }
+
+    fn record(surface_id: &str, label: &str, path: Vec<usize>) -> ElementRecord {
+        let fingerprint = fingerprint(label);
+        ElementRecord {
+            surface_id: surface_id.to_string(),
+            lineage: vec![fingerprint; path.len() + 1],
+            path,
+        }
+    }
+
+    #[test]
+    fn computer_element_registry_is_bounded_and_evicts_oldest() {
+        let mut registry = ElementRegistry::default();
+        let elements = (0..=MAX_ELEMENT_REGISTRY)
+            .map(|index| {
+                let element_id = format!("element_{index}");
+                (
+                    element_id,
+                    record("surface_test", &format!("button-{index}"), vec![index]),
+                )
+            })
+            .collect();
+        registry.replace_surface("surface_test", elements);
+        assert_eq!(registry.entries.len(), MAX_ELEMENT_REGISTRY);
+        assert!(registry.get("element_0").is_none());
+        assert!(registry
+            .get(&format!("element_{MAX_ELEMENT_REGISTRY}"))
+            .is_some());
+    }
+
+    #[test]
+    fn computer_element_registry_replaces_same_surface_generation() {
+        let mut registry = ElementRegistry::default();
+        registry.replace_surface(
+            "surface_test",
+            vec![(
+                "element_old".to_string(),
+                record("surface_test", "old", vec![0]),
+            )],
+        );
+        registry.replace_surface(
+            "surface_test",
+            vec![(
+                "element_new".to_string(),
+                record("surface_test", "new", vec![1]),
+            )],
+        );
+        assert!(registry.get("element_old").is_none());
+        assert!(registry.get("element_new").is_some());
+    }
+
+    #[test]
+    fn computer_element_registry_clear_invalidates_all_handles() {
+        let mut registry = ElementRegistry::default();
+        registry.replace_surface(
+            "surface_test",
+            vec![(
+                "element_test".to_string(),
+                record("surface_test", "test", vec![]),
+            )],
+        );
+        registry.clear();
+        assert!(registry.entries.is_empty());
+        assert!(registry.order.is_empty());
+    }
+
+    #[test]
+    fn computer_control_actions_are_closed_to_press_and_focus() {
+        assert_eq!(
+            ComputerAction::parse("press").unwrap(),
+            ComputerAction::Press
+        );
+        assert_eq!(
+            ComputerAction::parse("focus").unwrap(),
+            ComputerAction::Focus
+        );
+        for action in ["type", "scroll", "click", "", "PRESS"] {
+            assert!(ComputerAction::parse(action).is_err(), "{action}");
+        }
+    }
+
+    #[test]
+    fn computer_element_fingerprint_requires_positive_correlation_evidence() {
+        let mut fingerprint = fingerprint("");
+        assert!(!fingerprint.has_positive_evidence());
+        fingerprint.identifier = Some("stable-id".to_string());
+        assert!(fingerprint.has_positive_evidence());
+    }
+
+    #[test]
+    fn computer_element_record_requires_complete_lineage_and_tracks_protected_content() {
+        let mut element = record("surface_test", "target", vec![0, 1]);
+        assert!(element.target_fingerprint().is_some());
+        assert!(!element.contains_protected_content());
+        element.lineage[1].protected = true;
+        assert!(element.contains_protected_content());
+        element.lineage.pop();
+        assert!(element.target_fingerprint().is_none());
+    }
+
+    #[test]
+    fn computer_control_payload_rejects_semantic_extra_fields() {
+        let exact =
+            json!({"surface_id": "surface_test", "element_id": "element_test", "action": "press"});
+        assert!(
+            ensure_exact_payload_fields(&exact, &["surface_id", "element_id", "action"]).is_ok()
+        );
+        let extra = json!({"surface_id": "surface_test", "element_id": "element_test", "action": "press", "script": "ignored"});
+        assert!(
+            ensure_exact_payload_fields(&extra, &["surface_id", "element_id", "action"]).is_err()
+        );
+    }
+}
+
 pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
     matches!(
         kind,
@@ -497,7 +802,19 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
             | "computer_snapshot"
             | "computer_accessibility_status"
             | "computer_accessibility_tree"
+            | "computer_control"
     )
+}
+
+fn ensure_exact_payload_fields(payload: &Value, expected: &[&str]) -> Result<(), String> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "invalid_request: computer payload must be an object".to_string())?;
+    if object.len() != expected.len() || object.keys().any(|key| !expected.contains(&key.as_str()))
+    {
+        return Err("invalid_request: computer payload contains unsupported fields".to_string());
+    }
+    Ok(())
 }
 
 pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> CommandResult {
@@ -567,6 +884,32 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 ComputerObserver::global().accessibility_tree(surface_id, max_depth, max_nodes)
             })
         }
+        "computer_control" => {
+            ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "action"]).and_then(
+                |()| {
+                    let surface_id = payload
+                        .get("surface_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: surface_id is required".to_string());
+                    let element_id = payload
+                        .get("element_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: element_id is required".to_string());
+                    let action = payload
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: action is required".to_string())
+                        .and_then(ComputerAction::parse);
+                    surface_id.and_then(|surface_id| {
+                        element_id.and_then(|element_id| {
+                            action.and_then(|action| {
+                                ComputerObserver::global().control(surface_id, element_id, action)
+                            })
+                        })
+                    })
+                },
+            )
+        }
         "computer_snapshot" => payload
             .get("surface_id")
             .and_then(Value::as_str)
@@ -595,7 +938,9 @@ struct PlatformWindow {
 
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
-    use super::{PlatformWindow, SurfaceRecord};
+    use super::{
+        AccessibilityTreeResult, ComputerAction, ElementRecord, PlatformWindow, SurfaceRecord,
+    };
 
     pub(super) fn list_windows(_limit: usize) -> Result<Vec<PlatformWindow>, String> {
         Err(
@@ -616,11 +961,21 @@ mod platform {
         _surface: &SurfaceRecord,
         _max_depth: usize,
         _max_nodes: usize,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<AccessibilityTreeResult, String> {
         Err(
             "unsupported_platform: computer accessibility observation is unavailable on this platform"
                 .to_string(),
         )
+    }
+
+    pub(super) fn control(
+        _surface_id: &str,
+        _element_id: &str,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+        _action: ComputerAction,
+    ) -> Result<serde_json::Value, String> {
+        Err("unsupported_platform: computer control is unavailable on this platform".to_string())
     }
 
     pub(super) fn capture_window(_surface: &SurfaceRecord) -> Result<(), String> {
@@ -691,9 +1046,12 @@ mod tests {
 
 #[cfg(any(target_os = "macos", windows))]
 mod platform {
-    use super::{bounded_text, ensure_raw_capture_bound, PlatformWindow, SurfaceRecord};
+    use super::{
+        bounded_text, ensure_raw_capture_bound, AccessibilityTreeResult, ComputerAction,
+        ElementRecord, PlatformWindow, SurfaceRecord,
+    };
     #[cfg(target_os = "macos")]
-    use super::{select_exact_ax_window_index, AxObservationDeadline};
+    use super::{select_exact_ax_window_index, AxObservationDeadline, ElementFingerprint};
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use xcap::Window;
@@ -753,6 +1111,8 @@ mod platform {
     const MAX_AX_WINDOWS: usize = 64;
     #[cfg(target_os = "macos")]
     const MAX_AX_CHILD_COUNT: usize = 1_000_000;
+    #[cfg(target_os = "macos")]
+    const MAX_AX_ACTION_NAMES: usize = 64;
 
     #[cfg(target_os = "macos")]
     fn accessibility_error(operation: &str, error: AXError) -> String {
@@ -761,6 +1121,30 @@ mod platform {
         } else {
             format!(
                 "accessibility_failed: {operation} failed with AXError({})",
+                error.0
+            )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn control_attempt_error(operation: &str, error: AXError) -> String {
+        if error == AXError::APIDisabled {
+            "permission_denied: macOS Accessibility permission is not granted".to_string()
+        } else if matches!(
+            error,
+            AXError::IllegalArgument
+                | AXError::InvalidUIElement
+                | AXError::AttributeUnsupported
+                | AXError::ActionUnsupported
+                | AXError::NotImplemented
+        ) {
+            format!(
+                "control_failed: {operation} was rejected with AXError({})",
+                error.0
+            )
+        } else {
+            format!(
+                "outcome_unknown: {operation} returned AXError({}) after the native action was attempted",
                 error.0
             )
         }
@@ -815,6 +1199,40 @@ mod platform {
             .downcast::<CFString>()
             .ok()
             .map(|value| bounded_text(&value.to_string())))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn element_fingerprint(
+        deadline: &AxObservationDeadline,
+        element: &AXUIElement,
+        inherited_protected: bool,
+    ) -> Result<ElementFingerprint, String> {
+        let role = optional_ax_string(deadline, element, "AXRole")?.ok_or_else(|| {
+            "accessibility_failed: AX element is missing a string role".to_string()
+        })?;
+        let protected = inherited_protected
+            || optional_ax_bool(deadline, element, "AXProtectedContent")?.unwrap_or(false);
+        Ok(ElementFingerprint {
+            role,
+            subrole: optional_ax_string(deadline, element, "AXSubrole")?,
+            identifier: optional_ax_string(deadline, element, "AXIdentifier")?,
+            title: if protected {
+                None
+            } else {
+                optional_ax_string(deadline, element, "AXTitle")?
+            },
+            description: if protected {
+                None
+            } else {
+                optional_ax_string(deadline, element, "AXDescription")?
+            },
+            placeholder: if protected {
+                None
+            } else {
+                optional_ax_string(deadline, element, "AXPlaceholderValue")?
+            },
+            protected,
+        })
     }
 
     #[cfg(target_os = "macos")]
@@ -964,6 +1382,98 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
+    fn ax_supports_action(
+        deadline: &AxObservationDeadline,
+        element: &AXUIElement,
+        expected_action: &'static str,
+    ) -> Result<bool, String> {
+        let mut raw: *const CFArray = std::ptr::null();
+        prepare_ax_call(deadline, element)?;
+        let error = unsafe { element.copy_action_names(NonNull::from(&mut raw)) };
+        deadline.ensure_remaining()?;
+        if error != AXError::Success {
+            return Err(accessibility_error("AXUIElementCopyActionNames", error));
+        }
+        let raw = NonNull::new(raw.cast_mut()).ok_or_else(|| {
+            "accessibility_failed: AX action-name copy succeeded with null value".to_string()
+        })?;
+        let array: CFRetained<CFArray> = unsafe { CFRetained::from_raw(raw) };
+        let array: &CFArray<CFType> = unsafe { array.cast_unchecked() };
+        if array.len() > MAX_AX_ACTION_NAMES {
+            return Err(
+                "accessibility_failed: AX action-name list exceeds bounded inspection limit"
+                    .to_string(),
+            );
+        }
+        let expected_utf16_len = expected_action.encode_utf16().count();
+        for value in array.iter() {
+            let action = value.downcast::<CFString>().map_err(|_| {
+                "accessibility_failed: AX action-name array contained a non-string value"
+                    .to_string()
+            })?;
+            let action_len = usize::try_from(action.length()).map_err(|_| {
+                "accessibility_failed: AX action name has invalid string length".to_string()
+            })?;
+            if action_len == expected_utf16_len && action.to_string() == expected_action {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn ax_attribute_settable(
+        deadline: &AxObservationDeadline,
+        element: &AXUIElement,
+        attribute_name: &'static str,
+    ) -> Result<bool, String> {
+        let attribute = CFString::from_static_str(attribute_name);
+        let mut settable = 0u8;
+        prepare_ax_call(deadline, element)?;
+        let error =
+            unsafe { element.is_attribute_settable(&attribute, NonNull::from(&mut settable)) };
+        deadline.ensure_remaining()?;
+        match error {
+            AXError::Success => Ok(settable != 0),
+            AXError::AttributeUnsupported => Ok(false),
+            error => Err(accessibility_error("AXUIElementIsAttributeSettable", error)),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn ax_element_at(
+        deadline: &AxObservationDeadline,
+        element: &AXUIElement,
+        attribute_name: &'static str,
+        index: usize,
+    ) -> Result<CFRetained<AXUIElement>, String> {
+        let attribute = CFString::from_static_str(attribute_name);
+        let index = CFIndex::try_from(index)
+            .map_err(|_| "stale_element: AX child index exceeds CFIndex".to_string())?;
+        let mut raw: *const CFArray = std::ptr::null();
+        prepare_ax_call(deadline, element)?;
+        let error =
+            unsafe { element.copy_attribute_values(&attribute, index, 1, NonNull::from(&mut raw)) };
+        deadline.ensure_remaining()?;
+        if error != AXError::Success {
+            return Err(accessibility_error("AXUIElementCopyAttributeValues", error));
+        }
+        let raw = NonNull::new(raw.cast_mut())
+            .ok_or_else(|| "stale_element: AX child lookup returned null".to_string())?;
+        let array: CFRetained<CFArray> = unsafe { CFRetained::from_raw(raw) };
+        let array: &CFArray<CFType> = unsafe { array.cast_unchecked() };
+        if array.len() != 1 {
+            return Err("stale_element: AX child path no longer resolves exactly".to_string());
+        }
+        array
+            .iter()
+            .next()
+            .expect("single AX child")
+            .downcast::<AXUIElement>()
+            .map_err(|_| "stale_element: AX child path resolved to a non-element value".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
     fn resolve_surface_window(surface: &SurfaceRecord) -> Result<Window, String> {
         let window = Window::all()
             .map_err(map_error)?
@@ -1054,7 +1564,7 @@ mod platform {
         surface: &SurfaceRecord,
         max_depth: usize,
         max_nodes: usize,
-    ) -> Result<Value, String> {
+    ) -> Result<AccessibilityTreeResult, String> {
         if !unsafe { AXIsProcessTrusted() } {
             return Err(
                 "permission_denied: macOS Accessibility permission is not granted".to_string(),
@@ -1062,28 +1572,45 @@ mod platform {
         }
         let deadline = AxObservationDeadline::new();
         let root = exact_ax_window(surface, &deadline)?;
-        let mut queue = VecDeque::from([(root, None::<String>, 0usize)]);
+        let mut queue = VecDeque::from([(
+            root,
+            None::<String>,
+            0usize,
+            Vec::<usize>::new(),
+            Vec::<ElementFingerprint>::new(),
+            false,
+        )]);
         let mut nodes = Vec::with_capacity(max_nodes.min(64));
+        let mut elements = Vec::with_capacity(max_nodes.min(64));
         let mut truncated = false;
-        while let Some((element, parent_element_id, depth)) = queue.pop_front() {
+        while let Some((
+            element,
+            parent_element_id,
+            depth,
+            path,
+            mut lineage,
+            inherited_protected,
+        )) = queue.pop_front()
+        {
             deadline.ensure_remaining()?;
             if nodes.len() >= max_nodes {
                 truncated = true;
                 break;
             }
             let element_id = format!("element_{}", Uuid::new_v4().simple());
-            let role = optional_ax_string(&deadline, &element, "AXRole")?.ok_or_else(|| {
-                "accessibility_failed: AX element is missing a string role".to_string()
-            })?;
-            let subrole = optional_ax_string(&deadline, &element, "AXSubrole")?;
-            let title = optional_ax_string(&deadline, &element, "AXTitle")?;
-            let description = optional_ax_string(&deadline, &element, "AXDescription")?;
-            let placeholder = optional_ax_string(&deadline, &element, "AXPlaceholderValue")?;
+            let fingerprint = element_fingerprint(&deadline, &element, inherited_protected)?;
+            let role = fingerprint.role.clone();
+            let subrole = fingerprint.subrole.clone();
+            let title = fingerprint.title.clone();
+            let description = fingerprint.description.clone();
+            let placeholder = fingerprint.placeholder.clone();
+            let protected = fingerprint.protected;
+            lineage.push(fingerprint);
             let sensitive = role == "AXSecureTextField"
                 || subrole
                     .as_deref()
                     .is_some_and(|value| value.contains("Secure"));
-            let value = if sensitive {
+            let value = if sensitive || protected {
                 None
             } else {
                 optional_ax_string(&deadline, &element, "AXValue")?
@@ -1098,12 +1625,32 @@ mod platform {
                 if take < child_count {
                     truncated = true;
                 }
-                for child in ax_elements(&deadline, &element, "AXChildren", take)? {
-                    queue.push_back((child, Some(element_id.clone()), depth + 1));
+                for (index, child) in ax_elements(&deadline, &element, "AXChildren", take)?
+                    .into_iter()
+                    .enumerate()
+                {
+                    let mut child_path = path.clone();
+                    child_path.push(index);
+                    queue.push_back((
+                        child,
+                        Some(element_id.clone()),
+                        depth + 1,
+                        child_path,
+                        lineage.clone(),
+                        protected,
+                    ));
                 }
             } else if child_count > 0 {
                 truncated = true;
             }
+            elements.push((
+                element_id.clone(),
+                ElementRecord {
+                    surface_id: surface_id.to_string(),
+                    path,
+                    lineage,
+                },
+            ));
             nodes.push(json!({
                 "element_id": element_id,
                 "parent_element_id": parent_element_id,
@@ -1124,14 +1671,112 @@ mod platform {
         }
         deadline.ensure_remaining()?;
         let node_count = nodes.len();
+        Ok(AccessibilityTreeResult {
+            output: json!({
+                "platform": "macos",
+                "surface_id": surface_id,
+                "nodes": nodes,
+                "node_count": node_count,
+                "truncated": truncated,
+                "max_depth": max_depth,
+                "max_nodes": max_nodes,
+            }),
+            elements,
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn control(
+        surface_id: &str,
+        element_id: &str,
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
+        action: ComputerAction,
+    ) -> Result<Value, String> {
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(
+                "permission_denied: macOS Accessibility permission is not granted".to_string(),
+            );
+        }
+        let target_fingerprint = element.target_fingerprint().ok_or_else(|| {
+            "stale_element: AX element correlation lineage is incomplete".to_string()
+        })?;
+        if element.contains_protected_content() {
+            return Err(
+                "permission_denied: macOS Accessibility protected content cannot be controlled"
+                    .to_string(),
+            );
+        }
+        if !target_fingerprint.has_positive_evidence() {
+            return Err(
+                "stale_element: AX element lacks positive correlation evidence for control"
+                    .to_string(),
+            );
+        }
+        let deadline = AxObservationDeadline::new();
+        let mut current = exact_ax_window(surface, &deadline)?;
+        let current_root_fingerprint = element_fingerprint(&deadline, &current, false)?;
+        if current_root_fingerprint != element.lineage[0] {
+            return Err(
+                "stale_element: AX element ancestor identity changed since observation".to_string(),
+            );
+        }
+        for (depth, &index) in element.path.iter().enumerate() {
+            let child_count = ax_array_count(&deadline, &current, "AXChildren")?;
+            if index >= child_count {
+                return Err("stale_element: AX child path no longer exists".to_string());
+            }
+            current = ax_element_at(&deadline, &current, "AXChildren", index)?;
+            let current_fingerprint =
+                element_fingerprint(&deadline, &current, element.lineage[depth].protected)?;
+            if current_fingerprint != element.lineage[depth + 1] {
+                return Err(
+                    "stale_element: AX element lineage changed since observation".to_string(),
+                );
+            }
+        }
+
+        match action {
+            ComputerAction::Press if !ax_supports_action(&deadline, &current, "AXPress")? => {
+                return Err(
+                    "control_failed: AX element does not support the AXPress action".to_string(),
+                );
+            }
+            ComputerAction::Focus if !ax_attribute_settable(&deadline, &current, "AXFocused")? => {
+                return Err(
+                    "control_failed: AX element does not allow AXFocused to be set".to_string(),
+                );
+            }
+            _ => {}
+        }
+
+        prepare_ax_call(&deadline, &current)?;
+        let error = match action {
+            ComputerAction::Press => unsafe {
+                current.perform_action(&CFString::from_static_str("AXPress"))
+            },
+            ComputerAction::Focus => unsafe {
+                current.set_attribute_value(
+                    &CFString::from_static_str("AXFocused"),
+                    CFBoolean::new(true),
+                )
+            },
+        };
+        if error != AXError::Success {
+            return Err(control_attempt_error(
+                match action {
+                    ComputerAction::Press => "AXUIElementPerformAction(AXPress)",
+                    ComputerAction::Focus => "AXUIElementSetAttributeValue(AXFocused)",
+                },
+                error,
+            ));
+        }
         Ok(json!({
             "platform": "macos",
             "surface_id": surface_id,
-            "nodes": nodes,
-            "node_count": node_count,
-            "truncated": truncated,
-            "max_depth": max_depth,
-            "max_nodes": max_nodes,
+            "element_id": element_id,
+            "action": action.as_str(),
+            "success": true,
         }))
     }
 
@@ -1141,11 +1786,22 @@ mod platform {
         _surface: &SurfaceRecord,
         _max_depth: usize,
         _max_nodes: usize,
-    ) -> Result<Value, String> {
+    ) -> Result<AccessibilityTreeResult, String> {
         Err(
             "unsupported_platform: computer accessibility observation is unavailable on this platform"
                 .to_string(),
         )
+    }
+
+    #[cfg(windows)]
+    pub(super) fn control(
+        _surface_id: &str,
+        _element_id: &str,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+        _action: ComputerAction,
+    ) -> Result<Value, String> {
+        Err("unsupported_platform: computer control is unavailable on this platform".to_string())
     }
 
     #[cfg(windows)]
@@ -1560,14 +2216,69 @@ mod macos_live_tests {
             return false;
         };
         let record = surface_record(candidate);
-        let output = platform::accessibility_tree("surface_live", &record, 3, 64)
+        let tree = platform::accessibility_tree("surface_live", &record, 3, 64)
             .expect("read bounded live accessibility tree");
+        let output = tree.output;
         assert_eq!(output["platform"], "macos");
         assert!(output["node_count"].as_u64().unwrap_or(0) > 0);
         for node in output["nodes"].as_array().expect("nodes array") {
             assert!(node["role"].as_str().is_some_and(|role| !role.is_empty()));
         }
         true
+    }
+
+    fn live_focus_control_smoke(application_matches: impl Fn(&str) -> bool) -> bool {
+        let candidates = platform::list_windows(MAX_WINDOWS).expect("list live macOS windows");
+        let Some(candidate) = candidates
+            .into_iter()
+            .find(|candidate| application_matches(&candidate.application))
+        else {
+            return false;
+        };
+        let record = surface_record(candidate);
+        let surface_id = "surface_control_live";
+        let tree = platform::accessibility_tree(surface_id, &record, 6, 128)
+            .expect("read bounded accessibility tree for live focus control");
+        let candidate_roles = [
+            "AXTextField",
+            "AXTextArea",
+            "AXComboBox",
+            "AXButton",
+            "AXCheckBox",
+            "AXRadioButton",
+            "AXLink",
+        ];
+        for (element_id, element) in tree
+            .elements
+            .into_iter()
+            .filter(|(_, element)| {
+                element.target_fingerprint().is_some_and(|fingerprint| {
+                    fingerprint.has_positive_evidence()
+                        && !fingerprint.protected
+                        && candidate_roles.contains(&fingerprint.role.as_str())
+                })
+            })
+            .take(16)
+        {
+            match platform::control(
+                surface_id,
+                &element_id,
+                &record,
+                &element,
+                ComputerAction::Focus,
+            ) {
+                Ok(output) => {
+                    assert_eq!(output["action"], "focus");
+                    assert_eq!(output["success"], true);
+                    return true;
+                }
+                Err(error) if error.starts_with("control_failed:") => continue,
+                Err(error) => {
+                    panic!("live focus control failed with uncertain/error state: {error}")
+                }
+            }
+        }
+        false
     }
 
     #[test]
@@ -1586,6 +2297,18 @@ mod macos_live_tests {
                     || application.to_ascii_lowercase() == "edge"
             }),
             "Microsoft Edge window must be open for this live smoke"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires live Microsoft Edge window and macOS Accessibility permission"]
+    fn computer_macos_control_focus_edge_live_smoke() {
+        assert!(
+            live_focus_control_smoke(|application| {
+                application.to_ascii_lowercase().contains("microsoft edge")
+                    || application.to_ascii_lowercase() == "edge"
+            }),
+            "Microsoft Edge must expose a bounded focusable AX element for this live smoke"
         );
     }
 

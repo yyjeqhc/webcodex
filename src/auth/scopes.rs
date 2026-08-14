@@ -21,6 +21,7 @@ pub const SCOPE_PROJECT_READ: &str = "project:read";
 pub const SCOPE_PROJECT_WRITE: &str = "project:write";
 pub const SCOPE_JOB_RUN: &str = "job:run";
 pub const SCOPE_COMPUTER_READ: &str = "computer:read";
+pub const SCOPE_COMPUTER_CONTROL: &str = "computer:control";
 pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
 pub const SCOPE_ADMIN: &str = "admin";
 
@@ -48,6 +49,7 @@ pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_PROJECT_WRITE,
     SCOPE_JOB_RUN,
     SCOPE_COMPUTER_READ,
+    SCOPE_COMPUTER_CONTROL,
     SCOPE_ACCOUNT_MANAGE,
     SCOPE_AGENT_REGISTER,
     SCOPE_AGENT_POLL,

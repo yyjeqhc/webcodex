@@ -37,6 +37,20 @@ pub(crate) fn computer_accessibility_tree_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_control_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose macOS Accessibility element is controlled."},
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque surface_id used to obtain the element."},
+            "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local element_id returned by computer_accessibility_tree."},
+            "action": {"type": "string", "enum": ["press", "focus"], "description": "Bounded control action. CU-AX2 supports only press and focus."}
+        },
+        "required": ["client_id", "surface_id", "element_id", "action"]
+    })
+}
+
 pub(crate) fn computer_snapshot_input_schema() -> Value {
     json!({
         "type": "object",

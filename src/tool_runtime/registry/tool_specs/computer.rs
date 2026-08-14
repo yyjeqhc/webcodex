@@ -1,6 +1,7 @@
 use super::super::input_schemas::{
     computer_accessibility_status_input_schema, computer_accessibility_tree_input_schema,
-    computer_list_windows_input_schema, computer_snapshot_input_schema,
+    computer_control_input_schema, computer_list_windows_input_schema,
+    computer_snapshot_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -19,8 +20,13 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_accessibility_tree",
-            "Inspect a previously listed exact macOS window as a bounded read-only Accessibility tree. element_id values are opaque and process-local; this tool never performs control actions and never falls back to AppleScript or shell automation.",
+            "Inspect a previously listed exact macOS window as a bounded read-only Accessibility tree. element_id values are opaque, process-local, ephemeral handles that may be passed to computer_control while they remain registered; this tool never performs control actions and never falls back to AppleScript or shell automation.",
             computer_accessibility_tree_input_schema(),
+        ),
+        tool_spec(
+            "computer_control",
+            "Perform one bounded macOS Accessibility action on an exact reusable element_id from computer_accessibility_tree. Only press and focus are supported; stale or uncorrelated surfaces/elements fail closed and there is no AppleScript, shell, or application-level fallback. If delivery is lost after dispatch, outcome is reported as unknown: inspect current UI state before retrying instead of blindly repeating the action.",
+            computer_control_input_schema(),
         ),
         tool_spec(
             "computer_snapshot",

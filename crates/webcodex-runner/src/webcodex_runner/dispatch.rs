@@ -37,7 +37,7 @@ pub(crate) fn dispatch_request(
     if runtime.shutdown_flag().load(Ordering::SeqCst) {
         return Ok(false);
     }
-    // Computer observation is an explicit typed protocol surface. Unknown
+    // Computer operations are an explicit typed protocol surface. Unknown
     // computer_* requests must never reach external providers or shell fallback.
     if request.kind.starts_with("computer_") && !is_computer_request_kind(&request.kind) {
         let result = CommandResult {

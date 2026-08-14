@@ -128,6 +128,7 @@ async fn register_agent_projects_for_auth(
                     project_path_registration: false,
                     computer_observe: false,
                     computer_accessibility_observe: false,
+                    computer_control: false,
                     job_state_reconciliation: false,
                 }),
                 projects: Some(vec![registered_project(

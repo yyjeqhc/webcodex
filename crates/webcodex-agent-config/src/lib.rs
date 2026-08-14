@@ -234,6 +234,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // Semantic accessibility inspection is also a runtime/platform
             // capability and remains distinct from screenshot observation.
             computer_accessibility_observe: false,
+            // Control authority is runtime/platform-specific and is never
+            // implied by either observation capability in generated config.
+            computer_control: false,
             job_state_reconciliation: false,
         },
         policy: GeneratedAgentPolicy {

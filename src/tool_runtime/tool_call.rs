@@ -1286,6 +1286,14 @@ pub enum ToolCall {
         max_nodes: Option<usize>,
     },
 
+    /// Perform one bounded control action on an exact registered AX element.
+    ComputerControl {
+        client_id: String,
+        surface_id: String,
+        element_id: String,
+        action: String,
+    },
+
     /// Capture one opaque process-local window surface on one exact Runner.
     ComputerSnapshot {
         client_id: String,
@@ -1765,6 +1773,7 @@ impl ToolCall {
             Self::ComputerListWindows { .. } => "computer_list_windows",
             Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
             Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",
+            Self::ComputerControl { .. } => "computer_control",
             Self::ComputerSnapshot { .. } => "computer_snapshot",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",

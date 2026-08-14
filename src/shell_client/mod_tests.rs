@@ -1689,6 +1689,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 project_path_registration: true,
                 computer_observe: true,
                 computer_accessibility_observe: true,
+                computer_control: true,
                 job_state_reconciliation: true,
             }),
             projects: None,
@@ -1953,6 +1954,7 @@ async fn register_computer_test_client(
     owner: &str,
     observe_capable: bool,
     accessibility_capable: bool,
+    control_capable: bool,
 ) {
     registry
         .register(ShellClientRegisterRequest {
@@ -1970,6 +1972,7 @@ async fn register_computer_test_client(
                 file_read: true,
                 computer_observe: observe_capable,
                 computer_accessibility_observe: accessibility_capable,
+                computer_control: control_capable,
                 ..Default::default()
             }),
             projects: None,
@@ -1983,7 +1986,7 @@ async fn register_computer_test_client(
 #[tokio::test]
 async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
     let registry = ShellClientRegistry::default();
-    register_computer_test_client(&registry, "computer-owned", "alice", false, false).await;
+    register_computer_test_client(&registry, "computer-owned", "alice", false, false, false).await;
     let alice = auth_context(Some("alice"), false);
     let error = registry
         .enqueue_computer(
@@ -1998,7 +2001,7 @@ async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
         .unwrap_err();
     assert!(error.contains("does not support computer_observe"));
 
-    register_computer_test_client(&registry, "computer-owned", "alice", true, false).await;
+    register_computer_test_client(&registry, "computer-owned", "alice", true, false, false).await;
     let bob = auth_context(Some("bob"), false);
     let error = registry
         .enqueue_computer(
@@ -2042,7 +2045,7 @@ async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
 #[tokio::test]
 async fn computer_accessibility_enqueue_requires_distinct_capability() {
     let registry = ShellClientRegistry::default();
-    register_computer_test_client(&registry, "computer-ax", "alice", true, false).await;
+    register_computer_test_client(&registry, "computer-ax", "alice", true, false, false).await;
     let alice = auth_context(Some("alice"), false);
     let error = registry
         .enqueue_computer(
@@ -2057,7 +2060,7 @@ async fn computer_accessibility_enqueue_requires_distinct_capability() {
         .unwrap_err();
     assert!(error.contains("does not support computer_accessibility_observe"));
 
-    register_computer_test_client(&registry, "computer-ax", "alice", true, true).await;
+    register_computer_test_client(&registry, "computer-ax", "alice", true, true, false).await;
     let (_request_id, _rx) = registry
         .enqueue_computer(
             "computer-ax".to_string(),
@@ -2080,6 +2083,53 @@ async fn computer_accessibility_enqueue_requires_distinct_capability() {
         .expect("queued accessibility request");
     assert_eq!(request.kind, "computer_accessibility_tree");
     assert!(request.command.is_empty());
+}
+
+#[tokio::test]
+async fn computer_control_enqueue_requires_independent_capability() {
+    let registry = ShellClientRegistry::default();
+    let alice = auth_context(Some("alice"), false);
+    register_computer_test_client(&registry, "computer-control", "alice", true, true, false).await;
+    let payload = r#"{"surface_id":"surface_test","element_id":"element_test","action":"focus"}"#;
+    let error = registry
+        .enqueue_computer(
+            "computer-control".to_string(),
+            "computer_control",
+            payload.to_string(),
+            "alice".to_string(),
+            Some(&alice),
+            5,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("does not support computer_control"));
+
+    register_computer_test_client(&registry, "computer-control", "alice", true, true, true).await;
+    let (_request_id, _rx) = registry
+        .enqueue_computer(
+            "computer-control".to_string(),
+            "computer_control",
+            payload.to_string(),
+            "alice".to_string(),
+            Some(&alice),
+            5,
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "computer-control".to_string(),
+            agent_instance_id: "computer-inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("queued computer control request");
+    assert_eq!(request.kind, "computer_control");
+    assert_eq!(request.stdin.as_deref(), Some(payload));
+    assert!(request.command.is_empty());
+    assert!(request.process.is_none());
+    assert!(request.script.is_none());
 }
 
 fn lsp_status_payload() -> AgentLspPayload {

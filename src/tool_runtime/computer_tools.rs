@@ -1,7 +1,9 @@
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
-use crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE;
+use crate::shell_protocol::{
+    SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+};
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -81,6 +83,39 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::ComputerControl {
+                client_id,
+                surface_id,
+                element_id,
+                action,
+            } => {
+                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+                    return computer_error("invalid_surface", "surface_id is invalid");
+                }
+                if !element_id.starts_with("element_")
+                    || element_id.len() <= "element_".len()
+                    || element_id.len() > MAX_ELEMENT_ID_BYTES
+                {
+                    return computer_error("invalid_element", "element_id is invalid");
+                }
+                if !matches!(action.as_str(), "press" | "focus") {
+                    return computer_error("invalid_request", "computer control action is invalid");
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_control",
+                    json!({
+                        "surface_id": surface_id,
+                        "element_id": element_id,
+                        "action": action,
+                    }),
+                    auth,
+                    None,
+                    Some(surface_id.as_str()),
+                    None,
+                )
+                .await
+            }
             ToolCall::ComputerSnapshot {
                 client_id,
                 surface_id,
@@ -123,6 +158,7 @@ impl ToolRuntime {
             "computer_accessibility_status" | "computer_accessibility_tree" => {
                 crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
+            "computer_control" => SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
         };
         match self
@@ -139,6 +175,14 @@ impl ToolRuntime {
             }
             Err(error) => return computer_error("client_access_denied", &error),
         }
+        let expected_element_id = payload
+            .get("element_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let expected_action = payload
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let payload = match serde_json::to_string(&payload) {
             Ok(payload) => payload,
             Err(_) => {
@@ -146,7 +190,7 @@ impl ToolRuntime {
             }
         };
         let requested_by = crate::shell_client::requested_by_from_auth(auth);
-        let (_, receiver) = match self
+        let (request_id, receiver) = match self
             .shell_clients
             .enqueue_computer(
                 client_id.to_string(),
@@ -161,25 +205,62 @@ impl ToolRuntime {
             Ok(value) => value,
             Err(error) => return computer_error("dispatch_denied", &error),
         };
-        let response =
-            match tokio::time::timeout(Duration::from_secs(COMPUTER_WAIT_SECS + 2), receiver).await
-            {
-                Ok(Ok(response)) => response,
-                Ok(Err(_)) => {
-                    return computer_error("runner_disconnected", "Runner response channel closed")
-                }
-                Err(_) => {
-                    return computer_error(
-                        "runner_timeout",
-                        "Runner did not return computer observation in time",
-                    )
-                }
-            };
+        let is_control = kind == "computer_control";
+        let response = match tokio::time::timeout(
+            Duration::from_secs(COMPUTER_WAIT_SECS + 2),
+            receiver,
+        )
+        .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) if is_control => {
+                let request_dispatched = self
+                    .shell_clients
+                    .cancel_request_dispatch_state(&request_id)
+                    .await;
+                return computer_control_delivery_failure(
+                        "Runner response channel closed before a terminal computer control result was received",
+                        request_dispatched,
+                    );
+            }
+            Ok(Err(_)) => {
+                return computer_error("runner_disconnected", "Runner response channel closed")
+            }
+            Err(_) if is_control => {
+                let request_dispatched = self
+                    .shell_clients
+                    .cancel_request_dispatch_state(&request_id)
+                    .await;
+                return computer_control_delivery_failure(
+                    "Runner did not return a terminal computer control result in time",
+                    request_dispatched,
+                );
+            }
+            Err(_) => {
+                return computer_error(
+                    "runner_timeout",
+                    "Runner did not return computer request in time",
+                )
+            }
+        };
         if let Some(error) = response.error.as_deref() {
-            return computer_error(classify_runner_error(error), error);
+            let error_kind = classify_runner_error(error);
+            if is_control && error_kind == "outcome_unknown" {
+                return computer_control_outcome_unknown(error);
+            }
+            if is_control && error_kind == "runner_error" {
+                return computer_control_delivery_failure(error, response.request_dispatched);
+            }
+            return computer_error(error_kind, error);
         }
         if response.exit_code != Some(0) {
-            return computer_error("runner_error", "Runner computer observation failed");
+            if is_control {
+                return computer_control_delivery_failure(
+                    "Runner computer control ended without a structured terminal result",
+                    response.request_dispatched,
+                );
+            }
+            return computer_error("runner_error", "Runner computer request failed");
         }
         let output: Value = match response
             .stdout
@@ -188,6 +269,12 @@ impl ToolRuntime {
             .transpose()
         {
             Ok(Some(output)) => output,
+            _ if is_control => {
+                return computer_control_delivery_failure(
+                    "Runner returned invalid JSON after computer control execution",
+                    response.request_dispatched,
+                )
+            }
             _ => {
                 return computer_error(
                     "invalid_runner_response",
@@ -212,6 +299,21 @@ impl ToolRuntime {
                     max_nodes,
                 )
             }
+            "computer_control" => {
+                let result = validate_computer_control(
+                    output,
+                    expected_surface_id.unwrap_or_default(),
+                    expected_element_id.as_deref().unwrap_or_default(),
+                    expected_action.as_deref().unwrap_or_default(),
+                );
+                if result.success {
+                    result
+                } else {
+                    computer_control_outcome_unknown(
+                        "Runner reported successful computer control but returned inconsistent metadata; inspect current UI state before retrying",
+                    )
+                }
+            }
             _ => computer_error("invalid_request", "unsupported computer request kind"),
         }
     }
@@ -224,13 +326,52 @@ fn computer_error(kind: &str, message: &str) -> ToolResult {
     )
 }
 
+fn computer_control_not_started(message: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        message.to_string(),
+        json!({
+            "error_kind": "not_started",
+            "message": bounded_text(message),
+            "state_changed": false,
+            "execution_state": "not_started"
+        }),
+    )
+}
+
+fn computer_control_outcome_unknown(message: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        message.to_string(),
+        json!({
+            "error_kind": "outcome_unknown",
+            "message": bounded_text(message),
+            "execution_state": "outcome_unknown"
+        }),
+    )
+}
+
+fn computer_control_delivery_failure(
+    message: &str,
+    request_dispatched: Option<bool>,
+) -> ToolResult {
+    if request_dispatched == Some(false) {
+        computer_control_not_started(message)
+    } else {
+        computer_control_outcome_unknown(&format!(
+            "{message}; the action may have taken effect, so inspect current UI state before retrying"
+        ))
+    }
+}
+
 fn classify_runner_error(error: &str) -> &'static str {
     for kind in [
         "permission_denied",
         "stale_surface",
+        "stale_element",
         "unsupported_platform",
         "capture_failed",
         "accessibility_failed",
+        "control_failed",
+        "outcome_unknown",
         "image_too_large",
         "invalid_request",
     ] {
@@ -523,6 +664,38 @@ fn validate_accessibility_tree(
     ToolResult::ok(output)
 }
 
+fn validate_computer_control(
+    output: Value,
+    expected_surface_id: &str,
+    expected_element_id: &str,
+    expected_action: &str,
+) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "computer control result is not an object",
+            )
+        }
+    };
+    let allowed = ["platform", "surface_id", "element_id", "action", "success"];
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
+        || output.get("element_id").and_then(Value::as_str) != Some(expected_element_id)
+        || output.get("action").and_then(Value::as_str) != Some(expected_action)
+        || output.get("success").and_then(Value::as_bool) != Some(true)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "computer control result is inconsistent",
+        );
+    }
+    ToolResult::ok(output)
+}
+
 fn sniff_mime(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
@@ -683,6 +856,105 @@ mod tests {
         let result = validate_accessibility_tree(tree, "surface_test", 2, 8);
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], "invalid_runner_response");
+    }
+
+    #[test]
+    fn computer_control_validator_accepts_exact_metadata_only_success() {
+        let result = validate_computer_control(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "action": "focus",
+                "success": true
+            }),
+            "surface_test",
+            "element_child",
+            "focus",
+        );
+        assert!(result.success, "{:?}", result.output);
+    }
+
+    #[test]
+    fn computer_control_validator_rejects_mismatch_or_semantic_extra_fields() {
+        let mismatched = validate_computer_control(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_other",
+                "action": "focus",
+                "success": true
+            }),
+            "surface_test",
+            "element_child",
+            "focus",
+        );
+        assert!(!mismatched.success);
+        assert_eq!(mismatched.output["error_kind"], "invalid_runner_response");
+
+        let semantic_extra = validate_computer_control(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "action": "press",
+                "success": true,
+                "title": "SECRET BUTTON"
+            }),
+            "surface_test",
+            "element_child",
+            "press",
+        );
+        assert!(!semantic_extra.success);
+        assert_eq!(
+            semantic_extra.output["error_kind"],
+            "invalid_runner_response"
+        );
+    }
+
+    #[test]
+    fn computer_control_transport_failure_is_retryable_only_when_undispatched() {
+        let not_started = computer_control_delivery_failure("transport lost", Some(false));
+        assert!(!not_started.success);
+        assert_eq!(not_started.output["error_kind"], "not_started");
+        assert_eq!(not_started.output["state_changed"], false);
+        assert_eq!(not_started.output["execution_state"], "not_started");
+
+        for dispatched in [Some(true), None] {
+            let unknown = computer_control_delivery_failure("transport lost", dispatched);
+            assert!(!unknown.success);
+            assert_eq!(unknown.output["error_kind"], "outcome_unknown");
+            assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+            assert!(unknown.output.get("state_changed").is_none());
+        }
+    }
+
+    #[test]
+    fn read_only_computer_transport_errors_keep_existing_classification() {
+        let disconnected = computer_error("runner_disconnected", "Runner response channel closed");
+        let timed_out = computer_error("runner_timeout", "Runner did not return computer request");
+        assert_eq!(disconnected.output["error_kind"], "runner_disconnected");
+        assert_eq!(timed_out.output["error_kind"], "runner_timeout");
+        assert!(disconnected.output.get("execution_state").is_none());
+        assert!(timed_out.output.get("execution_state").is_none());
+    }
+
+    #[test]
+    fn computer_control_runner_errors_preserve_structured_error_kinds() {
+        for error in [
+            "stale_element: handle expired",
+            "control_failed: AXPress was rejected",
+        ] {
+            let result = computer_error(classify_runner_error(error), error);
+            assert!(!result.success);
+            assert_eq!(result.output["error_kind"], classify_runner_error(error));
+        }
+        let unknown = "outcome_unknown: AXPress messaging failed after dispatch";
+        assert_eq!(classify_runner_error(unknown), "outcome_unknown");
+        let result = computer_control_outcome_unknown(unknown);
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "outcome_unknown");
+        assert_eq!(result.output["execution_state"], "outcome_unknown");
     }
 
     #[test]

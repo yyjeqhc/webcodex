@@ -101,6 +101,13 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 &["client_id", "surface_id", "max_depth", "max_nodes"],
             );
         }
+        "computer_control" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["client_id", "surface_id", "element_id", "action"],
+            );
+        }
         "computer_snapshot" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id"]);
         }
@@ -393,6 +400,12 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "max_depth": output.get("max_depth").cloned().unwrap_or(Value::Null),
             "max_nodes": output.get("max_nodes").cloned().unwrap_or(Value::Null),
         }),
+        "computer_control" => serde_json::json!({
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
+            "action": output.get("action").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+        }),
         _ => output.clone(),
     }
 }
@@ -468,6 +481,27 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("SUPER_SECRET"));
         assert!(!serialized.contains("Private Chat"));
         assert!(!serialized.contains("element_secret"));
+    }
+
+    #[test]
+    fn computer_control_ledger_result_is_metadata_only() {
+        let output = json!({
+            "platform": "macos",
+            "surface_id": "surface_safe",
+            "element_id": "element_safe",
+            "action": "press",
+            "success": true,
+            "title": "PRIVATE CONTROL TARGET",
+            "value": "SUPER_SECRET_VALUE"
+        });
+        let summary = session_log_result_for_tool("computer_control", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["surface_id"], "surface_safe");
+        assert_eq!(summary["element_id"], "element_safe");
+        assert_eq!(summary["action"], "press");
+        assert_eq!(summary["success"], true);
+        assert!(!serialized.contains("PRIVATE CONTROL TARGET"));
+        assert!(!serialized.contains("SUPER_SECRET_VALUE"));
     }
 
     #[test]
@@ -637,6 +671,17 @@ impl ToolCall {
                 "surface_id": surface_id,
                 "max_depth": max_depth,
                 "max_nodes": max_nodes,
+            }),
+            Self::ComputerControl {
+                client_id,
+                surface_id,
+                element_id,
+                action,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "element_id": element_id,
+                "action": action,
             }),
             Self::ComputerSnapshot {
                 client_id,

@@ -1,8 +1,10 @@
-use super::AgentCapability::{ComputerAccessibilityObserve, ComputerObserve};
+use super::AgentCapability::{ComputerAccessibilityObserve, ComputerControl, ComputerObserve};
 use super::ToolVisibility::ModelVisible;
 use super::{def, ToolDefinition, TOOL_CATEGORY_COMPUTER};
 use crate::tool_runtime::metadata::{
-    ToolPathHint::None, ToolRisk::ReadOnly, COMPUTER_READ, TOOL_PROVIDER_AGENT,
+    ToolPathHint::None,
+    ToolRisk::{ComputerControl as ComputerControlRisk, ReadOnly},
+    COMPUTER_CONTROL, COMPUTER_READ, TOOL_PROVIDER_AGENT,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -40,6 +42,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(COMPUTER_READ),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_control",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerControl),
+        TOOL_PROVIDER_AGENT,
+        ComputerControlRisk,
+        Some(COMPUTER_CONTROL),
         false,
         None,
         false,

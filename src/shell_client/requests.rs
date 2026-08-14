@@ -15,10 +15,10 @@ use crate::shell_protocol::{
     PersistentShellRequest, PersistentShellResult, ShellAgentShellRequest, ShellFileOpRequest,
     ShellJobContext, ShellProcessArgv, ShellRunRequest, ShellRunResponse, ShellScriptPayload,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
+    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
@@ -828,10 +828,10 @@ impl ShellClientRegistry {
         Ok((request_id, rx))
     }
 
-    /// Enqueue one typed read-only computer observation request. The payload is
-    /// bounded JSON in stdin and command is always empty. Owner/auth and exact
-    /// computer_observe capability are rechecked under the registry lock so a
-    /// concurrent re-registration cannot create a TOCTOU escape.
+    /// Enqueue one typed bounded computer request. The payload is bounded JSON
+    /// in stdin and command is always empty. Owner/auth and the exact per-kind
+    /// computer capability are rechecked under the registry lock so a concurrent
+    /// re-registration cannot create a TOCTOU escape.
     pub async fn enqueue_computer(
         &self,
         client_id: String,
@@ -849,6 +849,7 @@ impl ShellClientRegistry {
             "computer_accessibility_status" | "computer_accessibility_tree" => {
                 SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
+            "computer_control" => SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
             _ => return Err("invalid computer request kind".to_string()),
         };
         if payload.len() > 4096 || payload.contains('\0') {

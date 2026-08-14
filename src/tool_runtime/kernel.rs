@@ -635,6 +635,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn computer_control_requires_its_own_oauth_scope() {
+        let observe_only = oauth(&["computer:read"]);
+        assert_eq!(
+            check_oauth_runtime_tool_scope(Some(&observe_only), "computer_control"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_CONTROL),
+                description: "missing required scope: computer:control".to_string(),
+            })
+        );
+        let control = oauth(&["computer:control"]);
+        assert_eq!(
+            check_oauth_runtime_tool_scope(Some(&control), "computer_control"),
+            Ok(())
+        );
+    }
+
     #[tokio::test]
     async fn tool_kernel_rejects_missing_oauth_scope() {
         let runtime = test_runtime();

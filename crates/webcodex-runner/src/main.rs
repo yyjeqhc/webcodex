@@ -1862,6 +1862,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // It is currently implemented only by the macOS Runner and never implies
     // future computer-control authority.
     capabilities.computer_accessibility_observe = cfg!(target_os = "macos");
+    // Accessibility control is independently fenced and currently implemented
+    // only by the macOS Runner; observation authority never implies it.
+    capabilities.computer_control = cfg!(target_os = "macos");
     capabilities.job_state_reconciliation = !disable_job_state_reconciliation_for_test();
 
     // New agents always advertise read-only LSP navigation. Older agents omit

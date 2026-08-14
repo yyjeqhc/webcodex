@@ -2,6 +2,7 @@
 pub(crate) enum ToolRisk {
     ReadOnly,
     ProjectWrite,
+    ComputerControl,
     JobRun,
     /// Reserved for account-control tools; the current runtime manifest has
     /// no model-facing account mutation tool.
@@ -15,6 +16,7 @@ impl ToolRisk {
         match self {
             ToolRisk::ReadOnly => "read_only",
             ToolRisk::ProjectWrite => "project_write",
+            ToolRisk::ComputerControl => "computer_control",
             ToolRisk::JobRun => "job_run",
             ToolRisk::AccountManage => "account_manage",
             ToolRisk::Unknown => "unknown",
@@ -61,6 +63,7 @@ pub(crate) const PROJECT_READ: &str = crate::auth::SCOPE_PROJECT_READ;
 pub(crate) const PROJECT_WRITE: &str = crate::auth::SCOPE_PROJECT_WRITE;
 pub(crate) const JOB_RUN: &str = crate::auth::SCOPE_JOB_RUN;
 pub(crate) const COMPUTER_READ: &str = crate::auth::SCOPE_COMPUTER_READ;
+pub(crate) const COMPUTER_CONTROL: &str = crate::auth::SCOPE_COMPUTER_CONTROL;
 
 pub(crate) const TOOL_PROVIDER_AGENT: &str = "agent";
 pub(crate) const TOOL_PROVIDER_CONTROL: &str = "control";

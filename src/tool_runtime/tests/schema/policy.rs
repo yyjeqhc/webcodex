@@ -42,7 +42,10 @@ fn tool_definitions_drive_session_and_permission_policy() {
         );
         assert_eq!(
             definition.is_write_like(),
-            metadata.risk == ToolRisk::ProjectWrite,
+            matches!(
+                metadata.risk,
+                ToolRisk::ProjectWrite | ToolRisk::ComputerControl
+            ),
             "{} write-like policy must derive from metadata",
             definition.name
         );

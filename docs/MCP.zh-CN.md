@@ -175,5 +175,9 @@ stderr。
 
 在 project-bound Connector 之外，WebCodex 还可以作为多项目管理 ToolRuntime 运行，
 提供 discovery、session、LSP、raw job 与 artifact 工具。那是面向运维者的高级
-surface，不是 canonical project Connector，也不是普通 coding 的前提。运维工具见
+surface，不是 canonical project Connector，也不是普通 coding 的前提。
+
+更宽的 coding surface 暴露 `work_on_project` 或 `start_coding_task` 时，请阅读
+[Coding 工作流](CODING_WORKFLOW.zh-CN.md)，按 canonical mental model 区分 bootstrap
+与 behavioral role，并遵循其中的 validation/closeout guidance。运维工具见
 [架构](ARCHITECTURE.md)与 `webcodex` CLI。

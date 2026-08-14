@@ -120,6 +120,7 @@ webcodex task list                             # 查看任务并在本地决策
 - [认证模型](docs/AUTH_MODEL.zh-CN.md) —— 凭据与令牌
 - [Runner](docs/RUNNER.zh-CN.md) —— Runner/agent 是什么，以及如何运维
 - [MCP](docs/MCP.zh-CN.md) —— 接入 MCP 客户端
+- [Coding 工作流](docs/CODING_WORKFLOW.zh-CN.md) —— bootstrap、behavioral guidance、validation 与 closeout
 - [故障排查](docs/TROUBLESHOOTING.zh-CN.md)
 - [架构](docs/ARCHITECTURE.md)
 - [安全](SECURITY.md)

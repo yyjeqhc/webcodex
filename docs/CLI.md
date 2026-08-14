@@ -42,6 +42,10 @@ managed Runner it performs a fenced structured unregister before removing the lo
 with a stopped Runner it removes only the exact local project registration. Other projects,
 profile credentials, and `agent.toml` are preserved.
 
+After connecting an MCP coding client, see the [Coding Workflow](CODING_WORKFLOW.md) for the
+canonical `work_on_project` / `start_coding_task` bootstrap model, behavioral guidance, validation,
+and closeout evidence.
+
 ### Enrollment
 
 | Command | Purpose | Notes |

@@ -8,6 +8,7 @@
 - [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent configure WebCodex for you
 - [Quick Start](QUICK_START.md) — shortest local setup
 - [CLI](CLI.md) — command map, terminology, and credentials
+- [Coding Workflow](CODING_WORKFLOW.md) — canonical task bootstrap, behavioral guidance, validation, and closeout
 
 ## Self-hosting
 

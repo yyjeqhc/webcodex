@@ -2994,12 +2994,29 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
             description.contains("project-local instructions"),
             "{name}: {description}"
         );
+        assert!(
+            description.contains("task instruction"),
+            "tool-only consumers must learn that behavioral role is instruction-selected: {name}: {description}"
+        );
+        assert!(
+            description.contains("grants no authority"),
+            "tool-only consumers must not mistake guidance for authority: {name}: {description}"
+        );
     }
 
+    let start_schema = &tool("start_coding_task")["inputSchema"];
+    assert!(
+        start_schema["properties"].get("role").is_none(),
+        "start_coding_task must not grow a role wire field"
+    );
     let work_schema = &tool("work_on_project")["inputSchema"];
     let work_props = work_schema["properties"]
         .as_object()
         .expect("work_on_project MCP properties");
+    assert!(
+        !work_props.contains_key("role"),
+        "work_on_project must not grow a role wire field"
+    );
     for field in ["project", "client_id", "path", "instruction", "session_id"] {
         assert!(work_props.contains_key(field), "MCP schema missing {field}");
     }

@@ -191,5 +191,9 @@ never absolute paths, commands, or Runner stderr.
 Beyond the project-bound Connector, WebCodex can run as a multi-project
 management ToolRuntime with discovery, session, LSP, raw job, and artifact
 tools. That is an advanced surface for operators, not the canonical project
-Connector and not a prerequisite for ordinary coding. See
+Connector and not a prerequisite for ordinary coding.
+
+When a broader coding surface exposes `work_on_project` or `start_coding_task`,
+use the [Coding Workflow](CODING_WORKFLOW.md) for the canonical bootstrap versus
+behavioral-role mental model and validation/closeout guidance. See
 [Architecture](ARCHITECTURE.md) and the `webcodex` CLI for operator tooling.

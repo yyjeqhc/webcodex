@@ -37,6 +37,10 @@ Server API 完成。
 带 fencing 的 structured unregister，再删除本地 registration；Runner 已停止时，只删除精确
 匹配的本地项目 registration。其他项目、profile credential 和 `agent.toml` 都会保留。
 
+接入 MCP coding client 后，可阅读 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，了解 canonical
+`work_on_project` / `start_coding_task` bootstrap 心智模型、behavioral guidance、validation 与
+closeout evidence。
+
 ### 设备接入
 
 | 命令 | 用途 | 说明 |

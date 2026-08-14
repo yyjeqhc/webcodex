@@ -8,6 +8,7 @@
 - [AI 接入指南](AI_ONBOARDING.zh-CN.md) —— 让 AI agent 帮你配置 WebCodex
 - [快速开始](QUICK_START.zh-CN.md) —— 最短的本地设置
 - [CLI](CLI.zh-CN.md) —— 命令、术语与凭据
+- [Coding 工作流](CODING_WORKFLOW.zh-CN.md) —— canonical task bootstrap、behavioral guidance、validation 与 closeout
 
 ## 自托管
 

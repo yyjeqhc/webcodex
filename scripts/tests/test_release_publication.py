@@ -123,7 +123,7 @@ class PreflightTests(unittest.TestCase):
             publication, "_fetch_public_json_optional", return_value=None
         ), mock.patch.object(publication, "_git", return_value=""), mock.patch.object(
             publication, "_run_capture", return_value="npm-publisher"
-        ):
+        ) as run_capture:
             summary = publication.preflight_release(
                 repo=collector.DEFAULT_REPO,
                 version=VERSION,
@@ -136,6 +136,9 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(summary["npm_version_available"])
         self.assertEqual(summary["github_user"], "publisher")
         self.assertEqual(summary["npm_user"], "npm-publisher")
+        run_capture.assert_called_once_with(
+            ["npm", "whoami", "--registry", publication.NPM_REGISTRY], timeout=5
+        )
         self.assertEqual(optional_json.call_count, 2)
 
     def test_preflight_rejects_existing_local_tag(self) -> None:
@@ -346,6 +349,13 @@ class DraftVerificationTests(unittest.TestCase):
                         bundle_dir=root,
                         timeout=5,
                     )
+
+
+class NpmPublicationContractTests(unittest.TestCase):
+    def test_package_pins_public_npm_registry(self) -> None:
+        package = json.loads(Path("npm/webcodex/package.json").read_text(encoding="utf-8"))
+        self.assertEqual(package["publishConfig"]["access"], "public")
+        self.assertEqual(package["publishConfig"]["registry"], publication.NPM_REGISTRY)
 
 
 class WorkflowContractTests(unittest.TestCase):

@@ -27,6 +27,7 @@ else:
     import collect_release_bundle as collector
 
 PACKAGE = "@yyjeqhc/webcodex"
+NPM_REGISTRY = "https://registry.npmjs.org/"
 BUILD_WORKFLOW_FILE = "release-build.yml"
 BUILD_WORKFLOW_PATH = f".github/workflows/{BUILD_WORKFLOW_FILE}"
 BUILD_STATE_SCHEMA_VERSION = 1
@@ -199,7 +200,7 @@ def preflight_release(
 
     encoded_package = urllib.parse.quote(PACKAGE, safe="")
     npm_metadata = _fetch_public_json_optional(
-        f"https://registry.npmjs.org/{encoded_package}/{urllib.parse.quote(release_version, safe='')}",
+        f"{NPM_REGISTRY}{encoded_package}/{urllib.parse.quote(release_version, safe='')}",
         timeout,
     )
     if npm_metadata is not None:
@@ -208,7 +209,9 @@ def preflight_release(
     github_user = client.fetch_json("/user").get("login")
     if not isinstance(github_user, str) or not github_user:
         raise PublicationError("GitHub publication identity is unavailable")
-    npm_user = _run_capture(["npm", "whoami"], timeout=min(timeout, 30.0))
+    npm_user = _run_capture(
+        ["npm", "whoami", "--registry", NPM_REGISTRY], timeout=min(timeout, 30.0)
+    )
     if not npm_user or any(ch.isspace() for ch in npm_user):
         raise PublicationError("npm publication identity is unavailable")
 

@@ -3,6 +3,10 @@
   "version": "0.3.7",
   "description": "Thin npm installer/wrapper for WebCodex native binaries.",
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "bin": {
     "webcodex": "bin/webcodex.js"
   },

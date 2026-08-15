@@ -1,5 +1,34 @@
 //! Schema tests for tool_runtime.
 
+macro_rules! assert_schema_fields {
+    (
+        $properties:expr,
+        $context:expr,
+        present: [$($present:expr),* $(,)?]
+        $(, absent: [$($absent:expr),* $(,)?])?
+        $(,)?
+    ) => {{
+        let properties = $properties;
+        let context = $context;
+        $(
+            assert!(
+                properties.contains_key($present),
+                "{context}: missing schema field {}",
+                $present
+            );
+        )*
+        $(
+            $(
+                assert!(
+                    !properties.contains_key($absent),
+                    "{context}: unexpected schema field {}",
+                    $absent
+                );
+            )*
+        )?
+    }};
+}
+
 mod annotations;
 mod artifacts;
 mod consistency;

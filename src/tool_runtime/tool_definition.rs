@@ -305,55 +305,29 @@ const fn def(
     }
 }
 
-const fn captures_validation_output(definition: ToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            captures_validation_output: true,
-            ..definition.policy
-        },
-        ..definition
-    }
+macro_rules! bool_policy_modifier {
+    ($function:ident, $field:ident) => {
+        const fn $function(definition: ToolDefinition) -> ToolDefinition {
+            ToolDefinition {
+                policy: ToolDefinitionPolicy {
+                    $field: true,
+                    ..definition.policy
+                },
+                ..definition
+            }
+        }
+    };
 }
 
-const fn change_summary_like(definition: ToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            change_summary_like: true,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
+bool_policy_modifier!(captures_validation_output, captures_validation_output);
 
-const fn current_session_control(definition: ToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            current_session_control: true,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
+bool_policy_modifier!(change_summary_like, change_summary_like);
 
-const fn git_like(definition: ToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            git_like: true,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
+bool_policy_modifier!(current_session_control, current_session_control);
 
-const fn creates_or_binds_session(definition: ToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            creates_or_binds_session: true,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
+bool_policy_modifier!(git_like, git_like);
+
+bool_policy_modifier!(creates_or_binds_session, creates_or_binds_session);
 
 const fn extra_accepted_flattened_args(
     definition: ToolDefinition,
@@ -381,35 +355,17 @@ const fn permission_risk(
     }
 }
 
-const fn requires_artifact_upload_path_binding(definition: ToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            requires_artifact_upload_path_binding: true,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
+bool_policy_modifier!(
+    requires_artifact_upload_path_binding,
+    requires_artifact_upload_path_binding
+);
 
-const fn unit_arguments(definition: ToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            unit_arguments: true,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
+bool_policy_modifier!(unit_arguments, unit_arguments);
 
-const fn requires_explicit_business_session(definition: ToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        policy: ToolDefinitionPolicy {
-            requires_explicit_business_session: true,
-            ..definition.policy
-        },
-        ..definition
-    }
-}
+bool_policy_modifier!(
+    requires_explicit_business_session,
+    requires_explicit_business_session
+);
 
 use ToolPathHint::None as NoPath;
 use ToolRisk::ReadOnly;

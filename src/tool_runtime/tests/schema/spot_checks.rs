@@ -7,15 +7,19 @@ fn tool_specs_git_log_schema() {
     let required = required_fields(spec);
     assert_eq!(required, vec!["project".to_string()]);
     let props = spec.input_schema["properties"].as_object().unwrap();
-    for field in ["project", "limit", "skip", "session_id"] {
-        assert!(props.contains_key(field), "missing {}", field);
-    }
+    assert_schema_fields!(
+        props,
+        "git_log input schema",
+        present: ["project", "limit", "skip", "session_id"]
+    );
     let output_props = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
-    for field in ["project", "limit", "skip", "count", "truncated", "commits"] {
-        assert!(output_props.contains_key(field), "missing {}", field);
-    }
+    assert_schema_fields!(
+        output_props,
+        "git_log output schema",
+        present: ["project", "limit", "skip", "count", "truncated", "commits"]
+    );
     assert!(spec.description.chars().count() <= 300);
 }
 
@@ -26,35 +30,39 @@ fn tool_specs_show_changes_schema() {
     let required = required_fields(spec);
     assert_eq!(required, vec!["project".to_string()]);
     let props = spec.input_schema["properties"].as_object().unwrap();
-    for field in [
-        "project",
-        "session_id",
-        "include_diff",
-        "max_hunks",
-        "max_hunk_lines",
-        "session_event_limit",
-    ] {
-        assert!(props.contains_key(field), "missing {}", field);
-    }
+    assert_schema_fields!(
+        props,
+        "show_changes input schema",
+        present: [
+            "project",
+            "session_id",
+            "include_diff",
+            "max_hunks",
+            "max_hunk_lines",
+            "session_event_limit",
+        ]
+    );
     let output_props = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
-    for field in [
-        "project",
-        "branch",
-        "head",
-        "clean",
-        "counts",
-        "files",
-        "diff_stat",
-        "untracked_previews",
-        "untracked_previews_truncated",
-        "warnings",
-        "suggested_next_actions",
-        "session",
-    ] {
-        assert!(output_props.contains_key(field), "missing {}", field);
-    }
+    assert_schema_fields!(
+        output_props,
+        "show_changes output schema",
+        present: [
+            "project",
+            "branch",
+            "head",
+            "clean",
+            "counts",
+            "files",
+            "diff_stat",
+            "untracked_previews",
+            "untracked_previews_truncated",
+            "warnings",
+            "suggested_next_actions",
+            "session",
+        ]
+    );
     assert!(spec.description.chars().count() <= 300);
 }
 
@@ -69,48 +77,33 @@ fn tool_specs_structured_validation_schema_and_output() {
             .as_object()
             .unwrap()
             .contains_key("cwd"));
-        for field in [
-            "exit_code",
-            "duration_ms",
-            "stdout_tail",
-            "stderr_tail",
-            "passed",
-        ] {
-            assert!(
-                spec.output_schema["properties"]["output"]["properties"]
-                    .as_object()
-                    .unwrap()
-                    .contains_key(field),
-                "{} missing output field {}",
-                name,
-                field
-            );
-        }
+        let output_props = spec.output_schema["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap();
+        assert_schema_fields!(
+            output_props,
+            format!("{name} output schema"),
+            present: ["exit_code", "duration_ms", "stdout_tail", "stderr_tail", "passed"]
+        );
     }
     let go_props = spec_named(&specs, "go_test").input_schema["properties"]
         .as_object()
         .unwrap();
-    for field in ["project", "cwd", "timeout_secs", "session_id"] {
-        assert!(
-            go_props.contains_key(field),
-            "go_test missing input {field}"
-        );
-    }
-    for field in [
-        "filter",
-        "package",
-        "features",
-        "all_targets",
-        "all_features",
-        "no_default_features",
-        "no_run",
-        "env",
-    ] {
-        assert!(
-            !go_props.contains_key(field),
-            "go_test must not expose {field}"
-        );
-    }
+    assert_schema_fields!(
+        go_props,
+        "go_test input schema",
+        present: ["project", "cwd", "timeout_secs", "session_id"],
+        absent: [
+            "filter",
+            "package",
+            "features",
+            "all_targets",
+            "all_features",
+            "no_default_features",
+            "no_run",
+            "env",
+        ]
+    );
 }
 
 #[test]

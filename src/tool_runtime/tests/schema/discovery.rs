@@ -5,35 +5,33 @@ fn list_tools_schema_exposes_bounded_discovery_fields() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "list_tools");
     let props = spec.input_schema["properties"].as_object().unwrap();
-    for field in ["category", "features", "summary_only", "limit"] {
-        assert!(
-            props.contains_key(field),
-            "list_tools input schema must expose {field}"
-        );
-    }
+    assert_schema_fields!(
+        props,
+        "list_tools input schema",
+        present: ["category", "features", "summary_only", "limit"]
+    );
     assert!(spec.input_schema["required"].as_array().unwrap().is_empty());
     let output = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
-    for field in [
-        "category",
-        "features",
-        "limit",
-        "returned_count",
-        "total_count",
-        "filtered_count",
-        "limit_applied",
-        "requested_limit",
-        "truncation_reason",
-        "truncated",
-        "categories",
-        "recommended_flows",
-    ] {
-        assert!(
-            output.contains_key(field),
-            "list_tools output schema must expose {field}"
-        );
-    }
+    assert_schema_fields!(
+        output,
+        "list_tools output schema",
+        present: [
+            "category",
+            "features",
+            "limit",
+            "returned_count",
+            "total_count",
+            "filtered_count",
+            "limit_applied",
+            "requested_limit",
+            "truncation_reason",
+            "truncated",
+            "categories",
+            "recommended_flows",
+        ]
+    );
 }
 
 #[test]
@@ -41,47 +39,45 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "tool_manifest");
     let props = spec.input_schema["properties"].as_object().unwrap();
-    for field in [
-        "category",
-        "intent",
-        "include_recommended_flows",
-        "include_risk_summary",
-    ] {
-        assert!(
-            props.contains_key(field),
-            "tool_manifest input schema must expose {field}"
-        );
-    }
+    assert_schema_fields!(
+        props,
+        "tool_manifest input schema",
+        present: [
+            "category",
+            "intent",
+            "include_recommended_flows",
+            "include_risk_summary",
+        ]
+    );
     let output = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
-    for field in [
-        "schema_version",
-        "count",
-        "tool_count",
-        "filtered_count",
-        "category",
-        "intent",
-        "available_intents",
-        "filtered",
-        "categories_requested",
-        "limit",
-        "returned_count",
-        "total_count",
-        "limit_applied",
-        "requested_limit",
-        "truncation_reason",
-        "truncated",
-        "categories",
-        "tools",
-        "risk_summary",
-        "recommended_flows",
-    ] {
-        assert!(
-            output.contains_key(field),
-            "tool_manifest output schema must expose {field}"
-        );
-    }
+    assert_schema_fields!(
+        output,
+        "tool_manifest output schema",
+        present: [
+            "schema_version",
+            "count",
+            "tool_count",
+            "filtered_count",
+            "category",
+            "intent",
+            "available_intents",
+            "filtered",
+            "categories_requested",
+            "limit",
+            "returned_count",
+            "total_count",
+            "limit_applied",
+            "requested_limit",
+            "truncation_reason",
+            "truncated",
+            "categories",
+            "tools",
+            "risk_summary",
+            "recommended_flows",
+        ]
+    );
 }
 
 #[test]

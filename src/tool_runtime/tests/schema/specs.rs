@@ -123,14 +123,11 @@ fn search_project_text_schema_declares_bounded_advanced_inputs() {
         .expect("search_project_text spec");
     let properties = search.input_schema["properties"].as_object().unwrap();
 
-    for field in [
-        "include_globs",
-        "exclude_globs",
-        "result_mode",
-        "timeout_secs",
-    ] {
-        assert!(properties.contains_key(field), "missing {field}");
-    }
+    assert_schema_fields!(
+        properties,
+        "search_project_text input schema",
+        present: ["include_globs", "exclude_globs", "result_mode", "timeout_secs"]
+    );
     for field in ["include_globs", "exclude_globs"] {
         assert_eq!(properties[field]["type"], "array");
         assert_eq!(properties[field]["maxItems"], 32);
@@ -221,24 +218,21 @@ fn run_process_schema_is_small_bounded_and_has_no_shell_or_environment_input() {
         spec.input_schema["required"],
         json!(["project", "executable"])
     );
-    for field in [
-        "project",
-        "executable",
-        "args",
-        "cwd",
-        "stdin",
-        "timeout_secs",
-        "purpose",
-        "session_id",
-    ] {
-        assert!(properties.contains_key(field), "missing {field}");
-    }
-    for forbidden in ["shell", "env", "environment"] {
-        assert!(
-            !properties.contains_key(forbidden),
-            "run_process must not expose {forbidden}"
-        );
-    }
+    assert_schema_fields!(
+        properties,
+        "run_process input schema",
+        present: [
+            "project",
+            "executable",
+            "args",
+            "cwd",
+            "stdin",
+            "timeout_secs",
+            "purpose",
+            "session_id",
+        ],
+        absent: ["shell", "env", "environment"]
+    );
     assert_eq!(properties["executable"]["minLength"], 1);
     assert_eq!(properties["executable"]["maxLength"], 1024);
     assert_eq!(properties["args"]["type"], "array");
@@ -272,38 +266,35 @@ fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
         spec.input_schema["required"],
         json!(["project", "language", "script"])
     );
-    for field in [
-        "project",
-        "language",
-        "script",
-        "args",
-        "stdin",
-        "cwd",
-        "timeout_secs",
-        "purpose",
-        "session_id",
-    ] {
-        assert!(properties.contains_key(field), "missing {field}");
-    }
-    for forbidden in [
-        "command",
-        "executable",
-        "interpreter",
-        "interpreter_path",
-        "interpreter_args",
-        "shell",
-        "env",
-        "environment",
-        "temp_file",
-        "profile",
-        "pty",
-        "allow_cross_project_session",
-    ] {
-        assert!(
-            !properties.contains_key(forbidden),
-            "run_script must not expose {forbidden}"
-        );
-    }
+    assert_schema_fields!(
+        properties,
+        "run_script input schema",
+        present: [
+            "project",
+            "language",
+            "script",
+            "args",
+            "stdin",
+            "cwd",
+            "timeout_secs",
+            "purpose",
+            "session_id",
+        ],
+        absent: [
+            "command",
+            "executable",
+            "interpreter",
+            "interpreter_path",
+            "interpreter_args",
+            "shell",
+            "env",
+            "environment",
+            "temp_file",
+            "profile",
+            "pty",
+            "allow_cross_project_session",
+        ]
+    );
     assert_eq!(
         properties["language"]["enum"],
         json!(["sh", "bash", "powershell"])

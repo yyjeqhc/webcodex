@@ -124,23 +124,6 @@ impl Database {
         }
     }
 
-    pub fn count_active_oauth_clients_with_redirect_uri(
-        &self,
-        redirect_uri: &str,
-    ) -> anyhow::Result<i64> {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT COUNT(*)
-             FROM oauth_clients
-             WHERE revoked_at IS NULL
-               AND instr(char(10) || redirect_uris || char(10),
-                         char(10) || ?1 || char(10)) > 0",
-            params![redirect_uri],
-            |row| row.get(0),
-        )
-        .map_err(Into::into)
-    }
-
     pub fn get_oauth_client_by_id(&self, id: &str) -> anyhow::Result<Option<OAuthClientRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

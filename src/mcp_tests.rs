@@ -711,25 +711,23 @@ fn mcp_file_params_keep_raw_object_shape_and_reject_model_mask_strings() {
 }
 
 #[test]
-fn mcp_file_import_trust_requires_active_client_with_exact_configured_redirects() {
-    const TRUSTED: &str = "https://chatgpt.example/connector/oauth/test";
+fn mcp_file_import_trust_requires_exact_configured_active_client_id() {
+    const CALLBACK: &str = "https://chatgpt.example/connector/oauth/test";
     let mut config = (*test_config_oauth2(Some("secret"))).clone();
-    config.oauth2.trusted_mcp_file_redirect_uris = vec![TRUSTED.to_string()];
     let (_tmp, db) = test_db();
     let user = seed_user(&db, "alice");
 
-    let make_client =
-        |client_id: &str, name: &str, redirect_uris: &str| crate::models::OAuthClientRecord {
-            id: uuid::Uuid::new_v4().to_string(),
-            client_id: client_id.to_string(),
-            client_secret_hash: crate::auth::hash_token("test-secret"),
-            name: name.to_string(),
-            owner_user_id: user.id.clone(),
-            redirect_uris: redirect_uris.to_string(),
-            allowed_scopes: "project:write".to_string(),
-            created_at: chrono::Utc::now().timestamp(),
-            revoked_at: None,
-        };
+    let make_client = |name: &str, redirect_uris: &str| crate::models::OAuthClientRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        client_id: crate::auth::generate_oauth_client_id(),
+        client_secret_hash: crate::auth::hash_token("test-secret"),
+        name: name.to_string(),
+        owner_user_id: user.id.clone(),
+        redirect_uris: redirect_uris.to_string(),
+        allowed_scopes: "project:write".to_string(),
+        created_at: chrono::Utc::now().timestamp(),
+        revoked_at: None,
+    };
     let auth_for = |client_id: &str| {
         let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token);
         auth.username = Some("alice".to_string());
@@ -739,60 +737,60 @@ fn mcp_file_import_trust_requires_active_client_with_exact_configured_redirects(
         auth
     };
 
-    let unknown = auth_for("wc_client_unknown");
-    assert_eq!(
-        mcp_host_file_import_trust_from_state(&config, &db, Some(&unknown)),
-        HostFileImportTrust::Untrusted
-    );
-
-    let spoof = make_client(
-        "wc_client_spoof",
-        "ChatGPT WebCodex",
-        "https://attacker.example/callback",
-    );
-    db.insert_oauth_client(&spoof).unwrap();
-    assert_eq!(
-        mcp_host_file_import_trust_from_state(&config, &db, Some(&auth_for(&spoof.client_id))),
-        HostFileImportTrust::Untrusted,
-        "client name alone must never establish trust"
-    );
-
-    let mismatch = make_client(
-        "wc_client_mismatch",
-        "ChatGPT WebCodex",
-        "https://chatgpt.example/connector/oauth/test/",
-    );
-    db.insert_oauth_client(&mismatch).unwrap();
-    assert_eq!(
-        mcp_host_file_import_trust_from_state(&config, &db, Some(&auth_for(&mismatch.client_id))),
-        HostFileImportTrust::Untrusted,
-        "redirect matching is exact"
-    );
-
-    let trusted = make_client("wc_client_trusted", "Any Display Name", TRUSTED);
+    let trusted = make_client("ChatGPT WebCodex", CALLBACK);
     db.insert_oauth_client(&trusted).unwrap();
+    config.oauth2.trusted_mcp_file_client_ids = vec![trusted.client_id.clone()];
     let trusted_auth = auth_for(&trusted.client_id);
     assert_eq!(
         mcp_host_file_import_trust_from_state(&config, &db, Some(&trusted_auth)),
-        HostFileImportTrust::TrustedOAuthClient
+        HostFileImportTrust::TrustedOAuthClient,
+        "the exact configured active OAuth client ID is trusted"
     );
 
-    let duplicate = make_client("wc_client_duplicate", "Spoofed ChatGPT", TRUSTED);
-    db.insert_oauth_client(&duplicate).unwrap();
+    let same_redirect = make_client("Different Client", CALLBACK);
+    db.insert_oauth_client(&same_redirect).unwrap();
     assert_eq!(
-        mcp_host_file_import_trust_from_state(&config, &db, Some(&trusted_auth)),
+        mcp_host_file_import_trust_from_state(
+            &config,
+            &db,
+            Some(&auth_for(&same_redirect.client_id))
+        ),
         HostFileImportTrust::Untrusted,
-        "a second active client cannot gain or share trust by registering the configured redirect"
+        "sharing a redirect URI must not grant authority"
     );
-    assert_eq!(
-        mcp_host_file_import_trust_from_state(&config, &db, Some(&auth_for(&duplicate.client_id))),
-        HostFileImportTrust::Untrusted
-    );
-    db.revoke_oauth_client(&duplicate.id, chrono::Utc::now().timestamp())
-        .unwrap();
     assert_eq!(
         mcp_host_file_import_trust_from_state(&config, &db, Some(&trusted_auth)),
-        HostFileImportTrust::TrustedOAuthClient
+        HostFileImportTrust::TrustedOAuthClient,
+        "multiple active clients sharing the callback must not revoke explicit client-ID trust"
+    );
+
+    let same_name = make_client("ChatGPT WebCodex", "https://other.example/callback");
+    db.insert_oauth_client(&same_name).unwrap();
+    assert_eq!(
+        mcp_host_file_import_trust_from_state(&config, &db, Some(&auth_for(&same_name.client_id))),
+        HostFileImportTrust::Untrusted,
+        "sharing the display name must not grant authority"
+    );
+
+    let unknown_client_id = crate::auth::generate_oauth_client_id();
+    let mut unknown_config = config.clone();
+    unknown_config.oauth2.trusted_mcp_file_client_ids = vec![unknown_client_id.clone()];
+    assert_eq!(
+        mcp_host_file_import_trust_from_state(
+            &unknown_config,
+            &db,
+            Some(&auth_for(&unknown_client_id))
+        ),
+        HostFileImportTrust::Untrusted,
+        "a configured ID without an active OAuth client record must fail closed"
+    );
+
+    let mut empty_config = config.clone();
+    empty_config.oauth2.trusted_mcp_file_client_ids.clear();
+    assert_eq!(
+        mcp_host_file_import_trust_from_state(&empty_config, &db, Some(&trusted_auth)),
+        HostFileImportTrust::Untrusted,
+        "empty operator trust config must fail closed"
     );
 
     db.revoke_oauth_client(&trusted.id, chrono::Utc::now().timestamp())
@@ -800,7 +798,20 @@ fn mcp_file_import_trust_requires_active_client_with_exact_configured_redirects(
     assert_eq!(
         mcp_host_file_import_trust_from_state(&config, &db, Some(&trusted_auth)),
         HostFileImportTrust::Untrusted,
-        "revoked client registrations must fail closed"
+        "revoked configured client registrations must fail closed"
+    );
+
+    let replacement = make_client("ChatGPT WebCodex", CALLBACK);
+    db.insert_oauth_client(&replacement).unwrap();
+    assert_ne!(replacement.client_id, trusted.client_id);
+    assert_eq!(
+        mcp_host_file_import_trust_from_state(
+            &config,
+            &db,
+            Some(&auth_for(&replacement.client_id))
+        ),
+        HostFileImportTrust::Untrusted,
+        "recreating a client with the same callback cannot inherit the configured client-ID trust"
     );
 
     let api_auth = crate::auth::AuthContext::new(crate::auth::AuthKind::ApiToken);
@@ -2032,9 +2043,9 @@ async fn start_mcp_import_mock_server(response: Vec<u8>) -> McpImportMockServer 
     }
 }
 
-fn mcp_import_config(trusted_redirects: &[&str]) -> Arc<crate::Config> {
+fn mcp_import_config(trusted_client_ids: &[&str]) -> Arc<crate::Config> {
     let mut config = (*test_config_oauth2(Some("secret"))).clone();
-    config.oauth2.trusted_mcp_file_redirect_uris = trusted_redirects
+    config.oauth2.trusted_mcp_file_client_ids = trusted_client_ids
         .iter()
         .map(|value| (*value).to_string())
         .collect();
@@ -2060,6 +2071,35 @@ fn seed_mcp_import_client(
     };
     db.insert_oauth_client(&record).unwrap();
     record
+}
+
+fn seed_mcp_import_pat(db: &crate::Database, user: &crate::models::UserRecord) -> String {
+    let plaintext = crate::auth::generate_api_token();
+    let record = crate::models::ApiKeyRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: user.id.clone(),
+        name: "mcp-import-client-manager".to_string(),
+        key_prefix: crate::auth::token_prefix(&plaintext),
+        created_at: chrono::Utc::now().timestamp(),
+        last_used_at: None,
+        revoked_at: None,
+        scopes: "runtime:read project:read project:write job:run account:manage".to_string(),
+        expires_at: None,
+        kind: crate::models::TOKEN_KIND_USER.to_string(),
+        allowed_client_id: None,
+    };
+    db.insert_api_key(&record, &crate::auth::hash_token(&plaintext))
+        .unwrap();
+    plaintext
+}
+
+fn mcp_import_oauth_auth(client_id: &str) -> crate::auth::AuthContext {
+    let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token);
+    auth.username = Some("alice".to_string());
+    auth.token_kind = Some("oauth2".to_string());
+    auth.scopes = vec![crate::auth::SCOPE_PROJECT_WRITE.to_string()];
+    auth.allowed_client_id = Some(client_id.to_string());
+    auth
 }
 
 async fn mcp_import_runtime(
@@ -2170,6 +2210,60 @@ async fn complete_mcp_import_save(
 }
 
 #[tokio::test]
+async fn pat_created_replacement_client_with_same_redirect_remains_untrusted() {
+    let (_db_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let trusted =
+        seed_mcp_import_client(&db, &user, "ChatGPT WebCodex", MCP_IMPORT_TRUSTED_REDIRECT);
+    let config = mcp_import_config(&[trusted.client_id.as_str()]);
+    let pat = seed_mcp_import_pat(&db, &user);
+    let service = Service::new(build_mcp_import_oauth_management_router(
+        config.clone(),
+        db.clone(),
+    ));
+
+    let mut revoked = TestClient::post("http://localhost/api/oauth/clients/revoke")
+        .bearer_auth(&pat)
+        .json(&json!({"client_id": trusted.client_id}))
+        .send(&service)
+        .await;
+    assert_eq!(revoked.status_code, Some(StatusCode::OK));
+    let revoked_body: Value = revoked.take_json().await.unwrap();
+    assert_eq!(revoked_body["success"], true);
+
+    let mut created = TestClient::post("http://localhost/api/oauth/clients/create")
+        .bearer_auth(&pat)
+        .json(&json!({
+            "name": "ChatGPT WebCodex",
+            "redirect_uris": [MCP_IMPORT_TRUSTED_REDIRECT],
+            "allowed_scopes": ["project:write"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(created.status_code, Some(StatusCode::OK));
+    let created_body: Value = created.take_json().await.unwrap();
+    let replacement_client_id = created_body["client"]["client_id"]
+        .as_str()
+        .expect("replacement client id");
+    assert!(replacement_client_id.starts_with("wc_client_"));
+    assert_ne!(replacement_client_id, trusted.client_id);
+    assert_eq!(
+        created_body["client"]["redirect_uris"][0],
+        MCP_IMPORT_TRUSTED_REDIRECT
+    );
+
+    // Model the strongest downstream case: even if the PAT holder completes
+    // OAuth for the replacement and obtains a valid access token, its
+    // allowed_client_id is the new server-generated ID and cannot match the
+    // operator-controlled trust configuration for the revoked client.
+    let replacement_auth = mcp_import_oauth_auth(replacement_client_id);
+    assert_eq!(
+        mcp_host_file_import_trust_from_state(&config, &db, Some(&replacement_auth)),
+        HostFileImportTrust::Untrusted
+    );
+}
+
+#[tokio::test]
 async fn oauth_mcp_file_import_trusted_client_saves_pptx() {
     use sha2::{Digest, Sha256};
 
@@ -2192,7 +2286,7 @@ async fn oauth_mcp_file_import_trusted_client_saves_pptx() {
     let project_tmp = tempfile::tempdir().unwrap();
     let (runtime, registry) = mcp_import_runtime(project_tmp.path(), Some("alice")).await;
     let service = Service::new(build_test_router(
-        mcp_import_config(&[MCP_IMPORT_TRUSTED_REDIRECT]),
+        mcp_import_config(&[client.client_id.as_str()]),
         db.clone(),
         runtime,
     ));
@@ -2264,7 +2358,7 @@ async fn oauth_mcp_file_import_trusted_download_guards_remain_bounded() {
     let project_tmp = tempfile::tempdir().unwrap();
     let (runtime, _registry) = mcp_import_runtime(project_tmp.path(), Some("alice")).await;
     let service = Service::new(build_test_router(
-        mcp_import_config(&[MCP_IMPORT_TRUSTED_REDIRECT]),
+        mcp_import_config(&[client.client_id.as_str()]),
         db,
         runtime,
     ));
@@ -2348,8 +2442,9 @@ async fn mcp_file_import_untrusted_callers_fail_before_dns() {
     let token = seed_oauth_access_token(&db, &ordinary, &user, "project:write");
     let project_tmp = tempfile::tempdir().unwrap();
     let (runtime, _registry) = mcp_import_runtime(project_tmp.path(), Some("alice")).await;
+    let configured_but_unrelated_client_id = crate::auth::generate_oauth_client_id();
     let service = Service::new(build_test_router(
-        mcp_import_config(&[MCP_IMPORT_TRUSTED_REDIRECT]),
+        mcp_import_config(&[configured_but_unrelated_client_id.as_str()]),
         db,
         runtime,
     ));
@@ -2414,6 +2509,21 @@ fn build_test_router(
                 .hoop(crate::AuthMiddleware)
                 .get(mcp_info)
                 .post(mcp_post),
+        )
+}
+
+fn build_mcp_import_oauth_management_router(
+    config: Arc<crate::Config>,
+    db: Arc<crate::Database>,
+) -> Router {
+    Router::new()
+        .hoop(affix_state::inject(config))
+        .hoop(affix_state::inject(db))
+        .push(
+            Router::with_path("api/oauth/clients")
+                .hoop(crate::AuthMiddleware)
+                .push(Router::with_path("create").post(crate::oauth_http::oauth_clients_create))
+                .push(Router::with_path("revoke").post(crate::oauth_http::oauth_clients_revoke)),
         )
 }
 

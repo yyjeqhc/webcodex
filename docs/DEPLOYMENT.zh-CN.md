@@ -242,18 +242,19 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
 ```
 
 ChatGPT MCP 的宿主文件导入使用独立的 operator trust anchor，因为宿主提供的临时
-下载 URL 不受 GPT Action `files.oaiusercontent.com` hostname policy 限制。要为某个
-connector 开启该路径，配置其**精确注册的 HTTPS callback URI**；多个可信注册用逗号
-分隔：
+下载 URL 不受 GPT Action `files.oaiusercontent.com` hostname policy 限制。正常创建
+ChatGPT OAuth client 后，取创建接口返回的 server-generated `wc_client_*` ID，并把
+这个精确 ID 配入下列设置；多个可信 client 用逗号分隔：
 
 ```text
-WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_REDIRECT_URIS=https://chatgpt.com/connector/oauth/<callback-id>
+WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS=wc_client_<server-generated-id>
 ```
 
-服务端仍要求当前 OAuth access token 的 `allowed_client_id` 能解析到 active OAuth
-client，且该 client 的 registered redirect URI 与 allowlist 精确匹配。若多个 active
-client 注册了同一个 trusted callback，宿主文件导入会 fail closed。Client display
-name 不是 trust signal；普通 API token/raw MCP caller 仍不能使用该下载路径。
+服务端要求当前 OAuth access token 的 `allowed_client_id` 精确命中该 allowlist，且
+对应 OAuth client record 仍为 active。Redirect URI 与 client display name 都不是
+trust identity。重新创建 ChatGPT OAuth client 会产生新的 client ID，因此属于显式的
+trust rotation，operator 必须同步更新此设置。普通 API token/raw MCP caller 仍不能
+使用该下载路径。
 
 用 `POST /api/oauth/clients/list` 与 `POST /api/oauth/clients/revoke` 列出与
 撤销 client。OAuth 使用 authorization-code 流程；动态 client 注册、OIDC 与

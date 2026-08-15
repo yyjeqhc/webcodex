@@ -1381,17 +1381,6 @@ async fn handle_mcp_request_with_lifecycle(
     McpOutcome::Ok(response)
 }
 
-fn configured_mcp_file_redirect_uri_is_safe(uri: &str) -> bool {
-    let Ok(url) = url::Url::parse(uri) else {
-        return false;
-    };
-    url.scheme() == "https"
-        && url.host_str().is_some()
-        && url.username().is_empty()
-        && url.password().is_none()
-        && url.fragment().is_none()
-}
-
 fn mcp_host_file_import_trust_from_state(
     config: &crate::Config,
     db: &crate::Database,
@@ -1411,36 +1400,19 @@ fn mcp_host_file_import_trust_from_state(
     if !config.oauth2.enabled {
         return HostFileImportTrust::Untrusted;
     }
-    let trusted_redirects = config
+    if !config
         .oauth2
-        .trusted_mcp_file_redirect_uris
+        .trusted_mcp_file_client_ids
         .iter()
-        .map(String::as_str)
-        .filter(|uri| configured_mcp_file_redirect_uri_is_safe(uri))
-        .collect::<std::collections::HashSet<_>>();
-    if trusted_redirects.is_empty() {
+        .any(|trusted_client_id| trusted_client_id == client_id)
+    {
         return HostFileImportTrust::Untrusted;
     }
     let Ok(Some(client)) = db.get_oauth_client_by_client_id(client_id) else {
         // Active lookup intentionally excludes revoked clients.
         return HostFileImportTrust::Untrusted;
     };
-    let registered_redirects = client.redirect_uris_vec();
-    if registered_redirects.is_empty()
-        || !registered_redirects
-            .iter()
-            .all(|uri| trusted_redirects.contains(uri.as_str()))
-    {
-        return HostFileImportTrust::Untrusted;
-    }
-    // The operator allowlist is the trust anchor, but a second active client
-    // must not gain the same trust merely by registering the same callback URI.
-    // Shared active registrations are ambiguous and fail closed.
-    if registered_redirects.iter().any(|uri| {
-        db.count_active_oauth_clients_with_redirect_uri(uri)
-            .map(|count| count != 1)
-            .unwrap_or(true)
-    }) {
+    if client.client_id != client_id {
         return HostFileImportTrust::Untrusted;
     }
     HostFileImportTrust::TrustedOAuthClient

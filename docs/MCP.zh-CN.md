@@ -241,6 +241,29 @@ stderr。
 提供 discovery、session、LSP、raw job 与 artifact 工具。那是面向运维者的高级
 surface，不是 canonical project Connector，也不是普通 coding 的前提。
 
+### ChatGPT 文件桥接
+
+在暴露 artifact 工具的更宽 MCP operator surface 上，WebCodex 支持双向的
+host-native 文件传输，不需要把完整二进制经由模型文本搬运：
+
+- `import_conversation_files_to_project` 通过 ChatGPT host 的
+  `openai/fileParams` 导入 1..10 个文件。它既适用于用户选择的当前会话附件，也
+  适用于 host 能绑定为 file parameter 的本轮新生成文件。Control 端负责下载原始
+  bytes，并通过现有有界 artifact write 路径提交；调用方不应自行构造下载 URL，
+  也不应手工 Base64 转运这些文件。
+- `export_project_artifact` 为一个有界 project artifact 创建短期、受认证的 MCP
+  `ResourceLink` 并返回 metadata。`tools/call` 不包含完整二进制；host 通过
+  `resources/read` 取得 binary resource。读取时会再次检查认证与当前
+  project-read authority，并在返回 bytes 前重新验证 artifact metadata。
+- resource URI 本身不是独立 bearer authority。Export handle 只是短期、
+  process-local 的 presentation state；现有 project artifact 的大小、MIME、路径与
+  authorization 边界继续生效。
+
+`read_project_artifact` 仍然只是有界 chunk inspection API，不承担大文件下载。
+DOCX/PPTX/XLSX 等 Office artifact 与 PDF 复用同一 artifact transport，因此在
+支持这些 host 能力的 ChatGPT 中，可以在 project 与 host 之间直接传递，而不需要
+模型手工搬运 Base64。
+
 更宽的 coding surface 暴露 `work_on_project` 或 `start_coding_task` 时，请阅读
 [Coding 工作流](CODING_WORKFLOW.zh-CN.md)，按 canonical mental model 区分 bootstrap
 与 behavioral role，并遵循其中的 validation/closeout guidance。运维工具见

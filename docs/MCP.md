@@ -262,6 +262,33 @@ management ToolRuntime with discovery, session, LSP, raw job, and artifact
 tools. That is an advanced surface for operators, not the canonical project
 Connector and not a prerequisite for ordinary coding.
 
+### ChatGPT file bridge
+
+On broader MCP operator surfaces that expose artifact tools, WebCodex supports
+host-native file transfer in both directions without routing complete binary
+payloads through model text:
+
+- `import_conversation_files_to_project` imports 1..10 files supplied by the
+  ChatGPT host through `openai/fileParams`. This applies to user-selected
+  conversation attachments and to newly generated files when the host binds
+  them as file parameters. The Control downloads the referenced bytes and
+  commits them through the existing bounded artifact-write path; callers should
+  not construct download URLs or manually Base64-transfer those files.
+- `export_project_artifact` prepares one bounded project artifact for download
+  and returns a short-lived authenticated MCP `ResourceLink` plus metadata.
+  `tools/call` does not contain the complete binary. The host follows
+  `resources/read` to obtain the binary resource; authentication and current
+  project-read authority are checked again, and the artifact metadata is
+  revalidated before the bytes are returned.
+- The resource URI is not standalone bearer authority. Export handles are
+  short-lived process-local presentation state, and the normal project artifact
+  size, MIME, path, and authorization bounds remain in force.
+
+`read_project_artifact` remains the bounded chunk-inspection API; it is not the
+large-file download path. Office artifacts such as DOCX/PPTX/XLSX and PDFs use
+the same artifact transport and can therefore move between a project and a
+supporting ChatGPT host without a model manually carrying their Base64.
+
 When a broader coding surface exposes `work_on_project` or `start_coding_task`,
 use the [Coding Workflow](CODING_WORKFLOW.md) for the canonical bootstrap versus
 behavioral-role mental model and validation/closeout guidance. See

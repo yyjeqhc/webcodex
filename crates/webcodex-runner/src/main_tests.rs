@@ -6691,6 +6691,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         computer_observe: true,
         computer_accessibility_observe: true,
         computer_control: true,
+        computer_window_activate: true,
         computer_text_input: true,
         project_lifecycle: false,
         project_path_registration: false,
@@ -6755,6 +6756,11 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         caps.computer_control,
         cfg!(target_os = "macos"),
         "computer control is independently advertised only by the macOS native implementation"
+    );
+    assert_eq!(
+        caps.computer_window_activate,
+        cfg!(target_os = "macos"),
+        "computer window activation is independently advertised only by the macOS native implementation"
     );
     assert_eq!(
         caps.computer_text_input,

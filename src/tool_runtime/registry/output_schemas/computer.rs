@@ -159,6 +159,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("truncated", json!({"type": "boolean"})),
         ])),
+        "computer_activate_window" => Some(wrapped_output_schema(vec![
+            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "surface_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
+            ("success", json!({"type": "boolean", "const": true})),
+        ])),
         "computer_control" => Some(wrapped_output_schema(vec![
             ("platform", json!({"type": "string", "enum": ["macos"]})),
             (

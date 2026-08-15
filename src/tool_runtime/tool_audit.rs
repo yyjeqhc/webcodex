@@ -115,6 +115,9 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 );
             }
         }
+        "computer_activate_window" => {
+            copy_keys(obj, &mut out, &["client_id", "surface_id"]);
+        }
         "computer_control" => {
             copy_keys(
                 obj,
@@ -458,6 +461,10 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "scanned_nodes": output.get("scanned_nodes").cloned().unwrap_or(Value::Null),
             "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
         }),
+        "computer_activate_window" => serde_json::json!({
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+        }),
         "computer_control" => serde_json::json!({
             "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
             "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
@@ -617,6 +624,31 @@ mod computer_privacy_tests {
         assert!(!result_serialized.contains(secret));
         assert!(!result_serialized.contains("element_secret"));
         assert!(!result_serialized.contains("Private Search"));
+    }
+
+    #[test]
+    fn computer_activate_window_ledger_is_exact_metadata_only() {
+        let request = json!({
+            "client_id": "mini",
+            "surface_id": "surface_safe",
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_activate_window", &request);
+        assert_eq!(request_summary, request);
+
+        let output = json!({
+            "platform": "macos",
+            "surface_id": "surface_safe",
+            "success": true,
+            "application": "PRIVATE APP",
+            "title": "PRIVATE WINDOW"
+        });
+        let summary = session_log_result_for_tool("computer_activate_window", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["surface_id"], "surface_safe");
+        assert_eq!(summary["success"], true);
+        assert!(!serialized.contains("PRIVATE APP"));
+        assert!(!serialized.contains("PRIVATE WINDOW"));
     }
 
     #[test]
@@ -878,6 +910,13 @@ impl ToolCall {
                 "focused": focused,
                 "enabled": enabled,
                 "limit": limit,
+            }),
+            Self::ComputerActivateWindow {
+                client_id,
+                surface_id,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
             }),
             Self::ComputerControl {
                 client_id,

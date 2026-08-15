@@ -459,6 +459,20 @@ impl ComputerObserver {
         Ok(tree.output)
     }
 
+    fn activate_window(&self, surface_id: &str) -> Result<Value, String> {
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return Err("invalid_request: surface_id is invalid".to_string());
+        }
+        let record = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?
+            .get(surface_id)
+            .cloned()
+            .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        platform::activate_window(surface_id, &record)
+    }
+
     fn control(
         &self,
         surface_id: &str,
@@ -920,6 +934,20 @@ mod element_registry_tests {
     }
 
     #[test]
+    fn computer_activate_window_payload_is_exact_surface_only() {
+        let exact = json!({"surface_id": "surface_test"});
+        assert!(ensure_exact_payload_fields(&exact, &["surface_id"]).is_ok());
+        for extra in [
+            json!({"surface_id": "surface_test", "application": "Finder"}),
+            json!({"surface_id": "surface_test", "pid": 42}),
+            json!({"surface_id": "surface_test", "path": "/Applications/Finder.app"}),
+            json!({"surface_id": "surface_test", "command": "open -a Finder"}),
+        ] {
+            assert!(ensure_exact_payload_fields(&extra, &["surface_id"]).is_err());
+        }
+    }
+
+    #[test]
     fn computer_control_payload_rejects_semantic_extra_fields() {
         let exact =
             json!({"surface_id": "surface_test", "element_id": "element_test", "action": "press"});
@@ -1058,6 +1086,7 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
             | "computer_snapshot"
             | "computer_accessibility_status"
             | "computer_accessibility_tree"
+            | "computer_activate_window"
             | "computer_control"
             | "computer_input_text"
     )
@@ -1142,6 +1171,14 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 ComputerObserver::global().accessibility_tree(surface_id, max_depth, max_nodes)
             })
         }
+        "computer_activate_window" => ensure_exact_payload_fields(&payload, &["surface_id"])
+            .and_then(|()| {
+                payload
+                    .get("surface_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_request: surface_id is required".to_string())
+            })
+            .and_then(|surface_id| ComputerObserver::global().activate_window(surface_id)),
         "computer_control" => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "action"]).and_then(
                 |()| {
@@ -1247,6 +1284,16 @@ mod platform {
     ) -> Result<AccessibilityTreeResult, String> {
         Err(
             "unsupported_platform: computer accessibility observation is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    pub(super) fn activate_window(
+        _surface_id: &str,
+        _surface: &SurfaceRecord,
+    ) -> Result<serde_json::Value, String> {
+        Err(
+            "unsupported_platform: computer window activation is unavailable on this platform"
                 .to_string(),
         )
     }
@@ -1475,6 +1522,44 @@ mod platform {
                 "outcome_unknown: {operation} returned AXError({}) after the native action was attempted",
                 error.0
             )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn window_activation_attempt_error(
+        operation: &str,
+        error: AXError,
+        prior_effect_succeeded: bool,
+    ) -> String {
+        if prior_effect_succeeded {
+            format!(
+                "outcome_unknown: {operation} returned AXError({}) after application activation had already succeeded",
+                error.0
+            )
+        } else {
+            control_attempt_error(operation, error)
+        }
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    mod window_activation_tests {
+        use super::*;
+
+        #[test]
+        fn partial_window_activation_failure_is_always_outcome_unknown() {
+            let partial = window_activation_attempt_error(
+                "AXUIElementPerformAction(AXRaise)",
+                AXError::ActionUnsupported,
+                true,
+            );
+            assert!(partial.starts_with("outcome_unknown:"), "{partial}");
+
+            let not_started = window_activation_attempt_error(
+                "AXUIElementPerformAction(AXRaise)",
+                AXError::ActionUnsupported,
+                false,
+            );
+            assert!(not_started.starts_with("control_failed:"), "{not_started}");
         }
     }
 
@@ -2066,6 +2151,71 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
+    pub(super) fn activate_window(
+        surface_id: &str,
+        surface: &SurfaceRecord,
+    ) -> Result<Value, String> {
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(
+                "permission_denied: macOS Accessibility permission is not granted".to_string(),
+            );
+        }
+
+        // Re-resolve the native surface and exact AX window immediately before
+        // any effect so an opaque stale surface cannot drift to another window.
+        let deadline = AxObservationDeadline::new();
+        let window = exact_ax_window(surface, &deadline)?;
+        let application = unsafe { AXUIElement::new_application(surface.pid as _) };
+        let frontmost = optional_ax_bool(&deadline, &application, "AXFrontmost")?;
+        if frontmost != Some(true)
+            && !ax_attribute_settable(&deadline, &application, "AXFrontmost")?
+        {
+            return Err(
+                "control_failed: AX application does not allow AXFrontmost to be set".to_string(),
+            );
+        }
+        if !ax_supports_action(&deadline, &window, "AXRaise")? {
+            return Err("control_failed: exact AX window does not support AXRaise".to_string());
+        }
+
+        // Prepare both native call sites before the first mutation. After the
+        // application becomes frontmost, any later failure is a partial effect.
+        prepare_ax_call(&deadline, &application)?;
+        prepare_ax_call(&deadline, &window)?;
+        let mut application_activated = false;
+        if frontmost != Some(true) {
+            let error = unsafe {
+                application.set_attribute_value(
+                    &CFString::from_static_str("AXFrontmost"),
+                    CFBoolean::new(true),
+                )
+            };
+            if error != AXError::Success {
+                return Err(window_activation_attempt_error(
+                    "AXUIElementSetAttributeValue(AXFrontmost)",
+                    error,
+                    false,
+                ));
+            }
+            application_activated = true;
+        }
+
+        let error = unsafe { window.perform_action(&CFString::from_static_str("AXRaise")) };
+        if error != AXError::Success {
+            return Err(window_activation_attempt_error(
+                "AXUIElementPerformAction(AXRaise)",
+                error,
+                application_activated,
+            ));
+        }
+        Ok(json!({
+            "platform": "macos",
+            "surface_id": surface_id,
+            "success": true,
+        }))
+    }
+
+    #[cfg(target_os = "macos")]
     pub(super) fn control(
         surface_id: &str,
         element_id: &str,
@@ -2193,6 +2343,17 @@ mod platform {
     ) -> Result<AccessibilityTreeResult, String> {
         Err(
             "unsupported_platform: computer accessibility observation is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    #[cfg(windows)]
+    pub(super) fn activate_window(
+        _surface_id: &str,
+        _surface: &SurfaceRecord,
+    ) -> Result<Value, String> {
+        Err(
+            "unsupported_platform: computer window activation is unavailable on this platform"
                 .to_string(),
         )
     }

@@ -904,6 +904,7 @@ mod tests {
             "apply_patch_checked",
             "computer_list_windows",
             "computer_find_elements",
+            "computer_activate_window",
             "computer_snapshot",
             "run_shell",
             "cargo_test",

@@ -682,6 +682,7 @@ impl ToolRuntime {
             | ToolCall::ComputerAccessibilityStatus { .. }
             | ToolCall::ComputerAccessibilityTree { .. }
             | ToolCall::ComputerFindElements { .. }
+            | ToolCall::ComputerActivateWindow { .. }
             | ToolCall::ComputerControl { .. }
             | ToolCall::ComputerInputText { .. }
             | ToolCall::ComputerSnapshot { .. }) => self.dispatch_computer_tool(call, auth).await,

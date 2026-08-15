@@ -1,5 +1,6 @@
 use super::AgentCapability::{
     ComputerAccessibilityObserve, ComputerControl, ComputerObserve, ComputerTextInput,
+    ComputerWindowActivate,
 };
 use super::ToolVisibility::ModelVisible;
 use super::{def, unit_arguments, ToolDefinition, TOOL_CATEGORY_COMPUTER};
@@ -70,6 +71,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_PROVIDER_CONTROL,
         ReadOnly,
         Some(COMPUTER_READ),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_activate_window",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerWindowActivate),
+        TOOL_PROVIDER_AGENT,
+        ComputerControlRisk,
+        Some(COMPUTER_CONTROL),
         false,
         None,
         false,

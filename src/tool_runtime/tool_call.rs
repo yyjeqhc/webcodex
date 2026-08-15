@@ -1349,6 +1349,12 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Activate and raise one exact previously observed macOS window surface.
+    ComputerActivateWindow {
+        client_id: String,
+        surface_id: String,
+    },
+
     /// Perform one bounded control action on an exact registered AX element.
     ComputerControl {
         client_id: String,
@@ -1843,6 +1849,7 @@ impl ToolCall {
             Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
             Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",
             Self::ComputerFindElements { .. } => "computer_find_elements",
+            Self::ComputerActivateWindow { .. } => "computer_activate_window",
             Self::ComputerControl { .. } => "computer_control",
             Self::ComputerInputText { .. } => "computer_input_text",
             Self::ComputerSnapshot { .. } => "computer_snapshot",

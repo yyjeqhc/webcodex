@@ -55,6 +55,18 @@ pub(crate) fn computer_find_elements_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_activate_window_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose already-observed window is activated."},
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque process-local surface_id returned by computer_list_windows."}
+        },
+        "required": ["client_id", "surface_id"]
+    })
+}
+
 pub(crate) fn computer_control_input_schema() -> Value {
     json!({
         "type": "object",

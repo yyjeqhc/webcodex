@@ -217,6 +217,9 @@ pub const SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE: &str =
 /// Native bounded accessibility control. Missing on older Runners is false and
 /// is never inferred from either observation capability.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL: &str = "computer_control";
+/// Native exact-window activation/raise. Missing on older Runners is false and
+/// is never inferred from accessibility control, observation, or platform.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE: &str = "computer_window_activate";
 /// Native bounded Accessibility text input. Missing on older Runners is false
 /// and is never inferred from accessibility observation or computer control.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT: &str = "computer_text_input";
@@ -263,6 +266,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
 ];
 
@@ -387,6 +391,10 @@ pub struct ShellClientCapabilities {
     /// and never follows from desktop or accessibility observation authority.
     #[serde(default, skip_serializing_if = "is_false")]
     pub computer_control: bool,
+    /// The Runner can activate/raise one exact previously observed native window.
+    /// Missing on older Runners is false and never follows from computer_control.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_window_activate: bool,
     /// The Runner implements bounded native Accessibility text input. Missing on
     /// older Runners is false and never follows from computer_control.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -450,6 +458,7 @@ impl Default for ShellClientCapabilities {
             computer_observe: false,
             computer_accessibility_observe: false,
             computer_control: false,
+            computer_window_activate: false,
             computer_text_input: false,
             job_state_reconciliation: false,
         }
@@ -2694,6 +2703,7 @@ mod envelope_tests {
                 computer_observe: false,
                 computer_accessibility_observe: false,
                 computer_control: false,
+                computer_window_activate: false,
                 computer_text_input: false,
                 job_state_reconciliation: false,
             }),
@@ -2772,12 +2782,14 @@ mod envelope_tests {
         assert!(!capabilities.computer_observe);
         assert!(!capabilities.computer_accessibility_observe);
         assert!(!capabilities.computer_control);
+        assert!(!capabilities.computer_window_activate);
         assert!(!ShellClientCapabilities::default().ssh_persistent_shell);
         assert!(!capabilities.computer_text_input);
         assert!(!ShellClientCapabilities::default().project_path_registration);
         assert!(!ShellClientCapabilities::default().computer_observe);
         assert!(!ShellClientCapabilities::default().computer_accessibility_observe);
         assert!(!ShellClientCapabilities::default().computer_control);
+        assert!(!ShellClientCapabilities::default().computer_window_activate);
         assert!(!ShellClientCapabilities::default().computer_text_input);
     }
 
@@ -2820,6 +2832,20 @@ mod envelope_tests {
         assert!(capabilities.computer_control);
         assert!(!capabilities.computer_observe);
         assert!(!capabilities.computer_accessibility_observe);
+    }
+
+    #[test]
+    fn computer_window_activate_capability_deserializes_only_when_present() {
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_control":true}"#).unwrap();
+        assert!(capabilities.computer_control);
+        assert!(!capabilities.computer_window_activate);
+
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_window_activate":true}"#).unwrap();
+        assert!(capabilities.computer_window_activate);
+        assert!(!capabilities.computer_control);
+        assert!(!capabilities.computer_observe);
     }
 
     #[test]

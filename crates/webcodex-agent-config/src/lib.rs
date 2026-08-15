@@ -240,6 +240,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // Control authority is runtime/platform-specific and is never
             // implied by either observation capability in generated config.
             computer_control: false,
+            // Exact window activation is independently advertised only by the
+            // running binary after the native handler is installed.
+            computer_window_activate: false,
             // Text input is another runtime/platform capability and must never
             // be inferred from computer_control in generated static config.
             computer_text_input: false,

@@ -3,7 +3,7 @@ use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
 };
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
@@ -170,6 +170,24 @@ impl ToolRuntime {
                     limit,
                 )
             }
+            ToolCall::ComputerActivateWindow {
+                client_id,
+                surface_id,
+            } => {
+                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+                    return computer_error("invalid_surface", "surface_id is invalid");
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_activate_window",
+                    json!({"surface_id": surface_id}),
+                    auth,
+                    None,
+                    Some(surface_id.as_str()),
+                    None,
+                )
+                .await
+            }
             ToolCall::ComputerControl {
                 client_id,
                 surface_id,
@@ -312,6 +330,7 @@ impl ToolRuntime {
                 crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
             "computer_control" => SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+            "computer_activate_window" => SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
             "computer_input_text" => SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
         };
@@ -360,7 +379,7 @@ impl ToolRuntime {
             Ok(value) => value,
             Err(error) => return computer_error("dispatch_denied", &error),
         };
-        let is_effect = matches!(kind, "computer_control" | "computer_input_text");
+        let is_effect = computer_request_is_effect(kind);
         let is_text_input = kind == "computer_input_text";
         let response = match tokio::time::timeout(
             Duration::from_secs(COMPUTER_WAIT_SECS + 2),
@@ -458,6 +477,13 @@ impl ToolRuntime {
                     max_nodes,
                 )
             }
+            "computer_activate_window" => computer_effect_validated_result(
+                validate_computer_activate_window(
+                    output,
+                    expected_surface_id.unwrap_or_default(),
+                ),
+                "Runner reported successful computer window activation but returned inconsistent metadata; inspect current UI state before retrying",
+            ),
             "computer_control" => computer_effect_validated_result(
                 validate_computer_control(
                     output,
@@ -479,6 +505,13 @@ impl ToolRuntime {
             _ => computer_error("invalid_request", "unsupported computer request kind"),
         }
     }
+}
+
+fn computer_request_is_effect(kind: &str) -> bool {
+    matches!(
+        kind,
+        "computer_activate_window" | "computer_control" | "computer_input_text"
+    )
 }
 
 fn node_matches_find_query(
@@ -952,6 +985,31 @@ fn validate_accessibility_tree(
     ToolResult::ok(output)
 }
 
+fn validate_computer_activate_window(output: Value, expected_surface_id: &str) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "computer window activation result is not an object",
+            )
+        }
+    };
+    let allowed = ["platform", "surface_id", "success"];
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
+        || output.get("success").and_then(Value::as_bool) != Some(true)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "computer window activation result metadata is inconsistent",
+        );
+    }
+    ToolResult::ok(output)
+}
+
 fn validate_computer_control(
     output: Value,
     expected_surface_id: &str,
@@ -1257,6 +1315,39 @@ mod tests {
     }
 
     #[test]
+    fn computer_activate_window_validator_is_exact_and_post_dispatch_mismatch_is_unknown() {
+        let valid = validate_computer_activate_window(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "success": true
+            }),
+            "surface_test",
+        );
+        assert!(valid.success, "{:?}", valid.output);
+
+        let invalid = validate_computer_activate_window(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_other",
+                "success": true,
+                "title": "MUST_NOT_SURVIVE"
+            }),
+            "surface_test",
+        );
+        assert!(!invalid.success);
+        let unknown = computer_effect_validated_result(
+            invalid,
+            "inconsistent window activation result; observe before retrying",
+        );
+        assert_eq!(unknown.output["error_kind"], "outcome_unknown");
+        assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+        assert!(!serde_json::to_string(&unknown.output)
+            .unwrap()
+            .contains("MUST_NOT_SURVIVE"));
+    }
+
+    #[test]
     fn computer_control_validator_accepts_exact_metadata_only_success() {
         let result = validate_computer_control(
             json!({
@@ -1415,8 +1506,22 @@ mod tests {
     }
 
     #[test]
+    fn computer_activate_window_uses_effect_delivery_semantics() {
+        assert!(computer_request_is_effect("computer_activate_window"));
+        assert!(computer_request_is_effect("computer_control"));
+        assert!(computer_request_is_effect("computer_input_text"));
+        for read_only in [
+            "computer_list_windows",
+            "computer_accessibility_tree",
+            "computer_snapshot",
+        ] {
+            assert!(!computer_request_is_effect(read_only), "{read_only}");
+        }
+    }
+
+    #[test]
     fn computer_control_transport_failure_is_retryable_only_when_undispatched() {
-        // The same narrow delivery fence is shared by computer_input_text.
+        // The same narrow delivery fence is shared by computer_activate_window and computer_input_text.
         let not_started = computer_effect_delivery_failure("transport lost", Some(false));
         assert!(!not_started.success);
         assert_eq!(not_started.output["error_kind"], "not_started");

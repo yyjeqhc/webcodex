@@ -140,6 +140,44 @@ fn tool_specs_computer_find_elements_is_bounded_semantic_observation() {
 }
 
 #[test]
+fn tool_specs_computer_activate_window_is_exact_surface_only() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "computer_activate_window");
+    assert_eq!(
+        required_fields(spec),
+        vec!["client_id".to_string(), "surface_id".to_string()]
+    );
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_activate_window input schema",
+        present: ["client_id", "surface_id"]
+    );
+    for forbidden in [
+        "application",
+        "pid",
+        "path",
+        "bundle_id",
+        "command",
+        "action",
+    ] {
+        assert!(
+            props.get(forbidden).is_none(),
+            "forbidden activation field: {forbidden}"
+        );
+    }
+
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_activate_window output schema",
+        present: ["platform", "surface_id", "success"]
+    );
+}
+
+#[test]
 fn tool_specs_schema_spot_checks() {
     // Table-driven: (tool_name, required_fields, forbidden_fields).
     // Required fields are checked via exact equality to catch unexpected additions.

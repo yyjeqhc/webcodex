@@ -34,7 +34,7 @@ const MAX_IMAGE_DIMENSION: u32 = 4096;
 
 #[cfg(any(test, target_os = "macos"))]
 const AX_MESSAGING_TIMEOUT_SECS: f32 = 2.0;
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(target_os = "macos")]
 const AX_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(any(test, target_os = "macos"))]
 const AX_OBSERVATION_TIMEOUT_ERROR: &str =
@@ -47,6 +47,7 @@ struct AxObservationDeadline {
 
 #[cfg(any(test, target_os = "macos"))]
 impl AxObservationDeadline {
+    #[cfg(target_os = "macos")]
     fn new() -> Self {
         Self::from_now(Instant::now(), AX_OBSERVATION_TIMEOUT)
     }
@@ -65,6 +66,7 @@ impl AxObservationDeadline {
             .ok_or_else(|| AX_OBSERVATION_TIMEOUT_ERROR.to_string())
     }
 
+    #[cfg(target_os = "macos")]
     fn ensure_remaining(&self) -> Result<(), String> {
         self.ensure_remaining_at(Instant::now())
     }
@@ -83,6 +85,7 @@ impl AxObservationDeadline {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn remaining_timeout_secs(&self) -> Result<f32, String> {
         self.remaining_timeout_secs_at(Instant::now())
     }
@@ -142,6 +145,7 @@ impl ComputerAction {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn as_str(self) -> &'static str {
         match self {
             Self::Press => "press",
@@ -162,6 +166,7 @@ struct ElementFingerprint {
 }
 
 impl ElementFingerprint {
+    #[cfg(any(test, target_os = "macos"))]
     fn has_positive_evidence(&self) -> bool {
         [
             self.identifier.as_deref(),
@@ -183,12 +188,14 @@ struct ElementRecord {
 }
 
 impl ElementRecord {
+    #[cfg(any(test, target_os = "macos"))]
     fn target_fingerprint(&self) -> Option<&ElementFingerprint> {
         (self.lineage.len() == self.path.len() + 1)
             .then(|| self.lineage.last())
             .flatten()
     }
 
+    #[cfg(any(test, target_os = "macos"))]
     fn contains_protected_content(&self) -> bool {
         self.lineage.iter().any(|fingerprint| fingerprint.protected)
     }
@@ -202,6 +209,7 @@ fn validate_input_text(text: &str) -> Result<usize, String> {
     Ok(text_bytes)
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn is_secure_text_fingerprint(fingerprint: &ElementFingerprint) -> bool {
     fingerprint.role == "AXSecureTextField"
         || fingerprint
@@ -210,6 +218,7 @@ fn is_secure_text_fingerprint(fingerprint: &ElementFingerprint) -> bool {
             .is_some_and(|subrole| subrole.contains("Secure"))
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn is_supported_text_input_fingerprint(fingerprint: &ElementFingerprint) -> bool {
     match fingerprint.role.as_str() {
         "AXTextField" => matches!(fingerprint.subrole.as_deref(), None | Some("AXSearchField")),
@@ -218,6 +227,7 @@ fn is_supported_text_input_fingerprint(fingerprint: &ElementFingerprint) -> bool
     }
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn validate_text_input_target(element: &ElementRecord) -> Result<&ElementFingerprint, String> {
     let target = element
         .target_fingerprint()
@@ -249,6 +259,7 @@ fn validate_text_input_target(element: &ElementRecord) -> Result<&ElementFingerp
     Ok(target)
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn validate_text_input_preflight(
     enabled: Option<bool>,
     focused: Option<bool>,
@@ -274,6 +285,7 @@ fn validate_text_input_preflight(
     }
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn ensure_correlated_fingerprint(
     expected: &ElementFingerprint,
     current: &ElementFingerprint,

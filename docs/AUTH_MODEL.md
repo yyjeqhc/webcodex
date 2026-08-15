@@ -172,23 +172,33 @@ metadata. Dynamic client registration, OIDC, JWKS/JWT ID tokens, and the
 device-code flow are not implemented. OAuth setup steps are in
 [Deployment](DEPLOYMENT.md#oauth2).
 
-## Computer observation authorization
+## Computer observation and control authorization
 
-`computer:read` is the dedicated scope for CU-1 read-only desktop/window
-observation. It authorizes the model-facing `computer_list_windows` and
-`computer_snapshot` tools; it is separate from `runtime:read`, `project:read`,
-and `job:run`, and none of those scopes imply it.
+`computer:read` is the dedicated scope for read-only desktop/window observation.
+It authorizes the model-facing `computer_list_windows`, `computer_snapshot`,
+`computer_accessibility_status`, and `computer_accessibility_tree` tools; it is
+separate from `runtime:read`, `project:read`, `job:run`, and `computer:control`,
+and none of those scopes imply it.
 
-The scope is only one layer of the check. A Computer call names one exact Runner
-`client_id`, and the Server also requires caller access/ownership for that Runner
-and its independently advertised `computer_observe` capability before dispatch.
-The existing shared-key OAuth bridge/default Connector scope intentionally does
-not grant `computer:read`, and the two Computer tools are currently exposed only
-on `full_operator_runtime`, not the canonical Connector surface.
+`computer:control` is the separate effect scope for `computer_control` and
+`computer_input_text`. `computer_control` is deliberately closed to native macOS
+Accessibility press and focus actions. `computer_input_text` writes bounded text
+through native AXValue only to an already focused, enabled when known, empty,
+non-secure, unprotected supported text element. There is no coordinate-click,
+keypress, scrolling, dragging, clipboard, app-launch, AppleScript, shell,
+paste, or synthetic-keystroke fallback in this contract. A lost response after
+an effect may have been dispatched is reported as an unknown outcome and must be
+reconciled by observing current UI state before any retry.
 
-CU-1 has no desktop-control authority. There is no `computer:control` scope and
-no click, typing, keypress, scrolling, dragging, clipboard, or app-launch tool in
-this contract.
+Scopes are only one layer of the check. Every Computer call names one exact
+Runner `client_id`, and the Server also requires caller access/ownership for that
+Runner plus the independently advertised capability for the requested operation:
+`computer_observe` for window observation/snapshot,
+`computer_accessibility_observe` for Accessibility observation,
+`computer_control` for press/focus, and `computer_text_input` for bounded text
+input. The existing shared-key OAuth bridge/default Connector scope
+intentionally grants neither Computer scope, and these Computer tools are
+exposed only on `full_operator_runtime`, not the canonical Connector surface.
 
 ## `client_id`
 

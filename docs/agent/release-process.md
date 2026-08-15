@@ -18,6 +18,12 @@ restart. When the user explicitly requests deployment of a reviewed development
 commit to named dogfood targets, the operator may build/install/restart that
 exact development build without starting the release process.
 
+For iterative self-hosted deployment builds, prefer `cargo build --profile dogfood`
+(and the resulting `target/dogfood/` binaries). This profile inherits release
+runtime semantics while disabling LTO and enabling incremental compilation for
+faster rebuilds. Formal release and publication artifacts continue to use the
+`release` profile.
+
 For that development deployment:
 
 1. Change only the explicitly named targets. Do not create staging resources,

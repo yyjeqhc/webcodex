@@ -51,6 +51,7 @@ Validation is evidence, not ceremony.
 - Do not rerun the same command unless relevant code changed, a rebase or conflict invalidated it, the earlier run was incomplete or flaky, or the user requested a repeat.
 - Documentation-only changes do not require Cargo compilation or tests.
 - Rust changes normally require affected formatting, the smallest relevant package check when compilation may be affected, and focused tests.
+- For ordinary development builds that need optimized binaries, use the `dogfood` Cargo profile by default (for example, `cargo build --profile dogfood --bin webcodex-server`). Reserve the `release` profile for formal release/publication artifacts.
 - Full library or workspace tests, `--all-targets`, ignored tests, real-process harnesses, and E2E scripts are not defaults. Run them only for an explicit user request, release or deployment, a genuinely cross-cutting boundary, broad conflict resolution, or when focused validation cannot cover the change. State the reason first.
 - Distinguish current failures from pre-existing failures, expected negative cases, and failures resolved by a successful retry.
 - Before finishing, review the diff and confirm whitespace, worktree, conflict, and active-job state.

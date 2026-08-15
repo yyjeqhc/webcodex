@@ -76,6 +76,14 @@ strip = "symbols"
 lto = "thin"
 codegen-units = 1
 
+# Fast optimized builds for self-hosted dogfood deployment. Keep release-like
+# runtime semantics while trading peak optimization for rebuild speed.
+[profile.dogfood]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true
+
 [dev-dependencies]
 urlencoding = "2"
 salvo = { version = "0.93", features = ["test"] }

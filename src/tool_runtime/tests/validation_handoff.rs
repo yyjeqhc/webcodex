@@ -2556,6 +2556,14 @@ mod tests {
         !unix_process_is_alive(pid),
         "cancellation before watcher handoff must terminate and reap the Child"
     );
+    let jobs_dir = tmp.path().join(".codex/jobs");
+    assert!(
+        std::fs::read_dir(&jobs_dir)
+            .expect("validation jobs directory should exist")
+            .next()
+            .is_none(),
+        "cancellation before watcher handoff must remove the unregistered job directory"
+    );
     drop(jobs_lock);
 }
 

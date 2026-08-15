@@ -1221,7 +1221,8 @@ impl ToolRuntime {
         // No await occurs between successful spawn and this guard taking the
         // Child, so cancellation cannot leave either the process group or its
         // reap responsibility unowned.
-        let mut spawned_guard = SpawnedValidationGuard::new(child, self.job_killer.clone(), pgid);
+        let mut spawned_guard = SpawnedValidationGuard::new(child, self.job_killer.clone(), pgid)
+            .with_job_dir(dir.clone());
         let metadata = json!({
             "job_id": job_id,
             "project": project,
@@ -2123,6 +2124,7 @@ struct SpawnedValidationGuard {
     killer: std::sync::Arc<dyn super::local_jobs::LocalJobKiller>,
     pid: i64,
     pgid: i64,
+    job_dir: Option<std::path::PathBuf>,
     armed: bool,
 }
 
@@ -2138,8 +2140,14 @@ impl SpawnedValidationGuard {
             killer,
             pid,
             pgid,
+            job_dir: None,
             armed: true,
         }
+    }
+
+    fn with_job_dir(mut self, job_dir: std::path::PathBuf) -> Self {
+        self.job_dir = Some(job_dir);
+        self
     }
 
     fn cleanup_now(&mut self) {
@@ -2164,6 +2172,9 @@ impl SpawnedValidationGuard {
                     }
                 }
             }
+        }
+        if let Some(job_dir) = self.job_dir.take() {
+            let _ = std::fs::remove_dir_all(job_dir);
         }
         self.armed = false;
     }
@@ -2190,6 +2201,7 @@ impl SpawnedValidationGuard {
 
     fn disarm_after_handoff(&mut self) {
         debug_assert!(self.child.is_none());
+        self.job_dir = None;
         self.armed = false;
     }
 }

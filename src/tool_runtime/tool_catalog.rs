@@ -51,6 +51,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "git_log",
             "workspace_checkpoint_list",
             "workspace_checkpoint_show",
+            "computer_list_targets",
             "computer_list_windows",
             "computer_accessibility_status",
             "computer_accessibility_tree",

@@ -1249,15 +1249,22 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
         .iter()
         .map(|item| item.kind.as_str())
         .collect::<Vec<_>>();
-    for expected in [
-        "Read",
-        "Searched",
-        "Edited",
-        "Tested",
-        "Navigated",
-        "Progress",
-    ] {
+    for expected in ["Edited", "Tested", "Navigated", "Progress"] {
         assert!(kinds.contains(&expected), "missing {expected}: {kinds:?}");
+    }
+    if let Some(explored) = detail.activity.iter().find(|item| item.kind == "Explored") {
+        assert_eq!(explored.group_count, Some(2));
+        assert_eq!(explored.group_kinds, vec!["Read", "Searched"]);
+        assert!(explored.group_tools.contains(&"read_file".to_string()));
+        assert!(explored
+            .group_tools
+            .contains(&"search_project_text".to_string()));
+    } else {
+        // If Progress shares this coarse timestamp, conservative grouping keeps
+        // the exploration facts separate rather than crossing an unordered
+        // Progress boundary.
+        assert!(kinds.contains(&"Read"));
+        assert!(kinds.contains(&"Searched"));
     }
     assert!(detail.running_call);
     let progress = detail
@@ -1305,6 +1312,416 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
         .sessions
         .iter()
         .all(|row| row.session_id != other.session_id));
+}
+
+#[test]
+fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last() {
+    let store = SessionStore::new_in_memory(10, 40);
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), Some("live list".to_string()));
+
+    let read = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "read_file",
+        &json!({"project": project, "path": "src/lib.rs"}),
+    );
+    store.record_tool_call_finished(read, true, &json!({"content": "omitted"}), None, None);
+
+    let job_id = "11111111-2222-3333-4444-555555555555";
+    let cargo = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_test",
+        &json!({"project": project}),
+    );
+    store.record_tool_call_finished(
+        cargo,
+        true,
+        &json!({
+            "execution_state": "running",
+            "job_id": job_id,
+            "job_status": "running",
+            "promoted_to_job": true,
+            "command_started": true,
+            "command_completed": false,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_lines": 0,
+            "stderr_lines": 0
+        }),
+        None,
+        None,
+    );
+    store
+        .post_message(PostSessionMessageInput {
+            session_id: session.session_id.clone(),
+            kind: SessionMessageKind::Progress,
+            message: "this message must not replace runtime activity".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .unwrap();
+
+    let list = store.console_list_for_project(project, Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert!(!row.running_call);
+    assert!(row.current_activity.is_none());
+    let last = row.last_activity.as_ref().unwrap();
+    assert_eq!(last.tool.as_deref(), Some("cargo_test"));
+    assert_eq!(last.state, "running");
+    assert_eq!(last.execution_state.as_deref(), Some("running"));
+    assert!(last.job_handoff);
+    assert_eq!(last.job_id.as_deref(), Some(job_id));
+    assert!(last
+        .summary
+        .as_deref()
+        .unwrap_or_default()
+        .contains("handed off to Job"));
+
+    let running = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "goto_definition",
+        &json!({"project": project, "path": "src/lib.rs", "line": 1, "column": 1}),
+    );
+    assert!(running.is_some());
+    let list = store.console_list_for_project(project, Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert!(row.running_call);
+    assert_eq!(
+        row.current_activity.as_ref().unwrap().tool.as_deref(),
+        Some("goto_definition")
+    );
+    assert_eq!(row.current_activity.as_ref().unwrap().state, "running");
+    assert_eq!(
+        row.last_activity.as_ref().unwrap().tool.as_deref(),
+        Some("cargo_test")
+    );
+}
+
+#[test]
+fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_becomes_last() {
+    let store = SessionStore::new_in_memory(10, 30);
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), Some("async job".to_string()));
+    let job_id = "12345678-1234-5678-9abc-123456789abc";
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "run_job",
+        &json!({"project": project}),
+    );
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({
+            "execution_state": "started",
+            "job_id": job_id,
+            "status": "running",
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_lines": 0,
+            "stderr_lines": 0
+        }),
+        None,
+        None,
+    );
+
+    let list = store.console_list_for_project(project, Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert!(row.current_activity.is_none());
+    let last = row.last_activity.as_ref().unwrap();
+    assert_eq!(last.tool.as_deref(), Some("run_job"));
+    assert!(last.job_handoff);
+    assert_eq!(last.state, "running");
+    assert_eq!(last.execution_state.as_deref(), Some("started"));
+    assert_eq!(last.job_id.as_deref(), Some(job_id));
+
+    // A later authoritative Job observation may say terminal completed while
+    // the original handoff event remains the historical `started` snapshot.
+    let observed = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "job_status",
+        &json!({"project": project, "job_id": job_id}),
+    );
+    store.record_tool_call_finished(
+        observed,
+        true,
+        &json!({"job_id": job_id, "status": "completed", "execution_state": "completed"}),
+        None,
+        None,
+    );
+
+    let detail = store
+        .console_detail_for_project(project, &session.session_id, Some(20))
+        .unwrap();
+    let handoff = detail
+        .activity
+        .iter()
+        .find(|activity| activity.tool.as_deref() == Some("run_job"))
+        .unwrap();
+    assert_eq!(handoff.execution_state.as_deref(), Some("started"));
+
+    let list = store.console_list_for_project(project, Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert!(row.current_activity.is_none());
+    assert_eq!(
+        row.last_activity.as_ref().unwrap().tool.as_deref(),
+        Some("job_status")
+    );
+
+    store.close_session(&session.session_id).unwrap();
+    let list = store.console_list_for_project(project, Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert_eq!(row.lifecycle, "closed");
+    assert!(row.current_activity.is_none());
+    assert_eq!(
+        row.last_activity.as_ref().unwrap().tool.as_deref(),
+        Some("job_status")
+    );
+}
+
+#[test]
+fn console_list_without_running_work_shows_last_meaningful_activity() {
+    let store = SessionStore::new_in_memory(10, 20);
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), Some("last activity".to_string()));
+    for (tool, input, output) in [
+        (
+            "read_file",
+            json!({"project": project, "path": "src/lib.rs"}),
+            json!({"content": "omitted"}),
+        ),
+        (
+            "git_status",
+            json!({"project": project}),
+            json!({"status": "clean"}),
+        ),
+    ] {
+        let start = store.record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Api,
+            tool,
+            &input,
+        );
+        store.record_tool_call_finished(start, true, &output, None, None);
+    }
+    store
+        .post_message(PostSessionMessageInput {
+            session_id: session.session_id.clone(),
+            kind: SessionMessageKind::Progress,
+            message: "done inspecting".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .unwrap();
+    store.close_session(&session.session_id).unwrap();
+    let list = store.console_list_for_project(project, Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert_eq!(row.lifecycle, "closed");
+    assert!(row.current_activity.is_none());
+    assert_eq!(
+        row.last_activity.as_ref().unwrap().tool.as_deref(),
+        Some("git_status")
+    );
+    assert_eq!(row.last_activity.as_ref().unwrap().kind, "Reviewed");
+}
+
+#[test]
+fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() {
+    let store = SessionStore::new_in_memory(10, 80);
+    let project = "agent:eval:demo";
+    let session = store.start_session(
+        Some(project.to_string()),
+        Some("group activity".to_string()),
+    );
+
+    for (tool, input, output) in [
+        (
+            "read_file",
+            json!({"project": project, "path": "src/a.rs"}),
+            json!({"content": "PRIVATE_CONTENT_A"}),
+        ),
+        (
+            "search_project_text",
+            json!({"project": project, "pattern": "PRIVATE_PATTERN", "path": "src"}),
+            json!({"matches": [{"path": "src/b.rs"}]}),
+        ),
+        (
+            "goto_definition",
+            json!({"project": project, "path": "src/c.rs", "line": 1, "column": 1}),
+            json!({"locations": [{"path": "src/c.rs"}]}),
+        ),
+    ] {
+        let start = store.record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Api,
+            tool,
+            &input,
+        );
+        store.record_tool_call_finished(start, true, &output, None, None);
+    }
+
+    let edit = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "apply_text_edits",
+        &json!({"project": project, "changes": [{"kind": "edit", "path": "src/a.rs"}]}),
+    );
+    store.record_tool_call_finished(
+        edit,
+        true,
+        &json!({"changed_paths": ["src/a.rs"]}),
+        None,
+        None,
+    );
+
+    let read = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "read_file",
+        &json!({"project": project, "path": "src/d.rs"}),
+    );
+    store.record_tool_call_finished(
+        read,
+        true,
+        &json!({"content": "PRIVATE_CONTENT_D"}),
+        None,
+        None,
+    );
+    let failed = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "search_project_text",
+        &json!({"project": project, "pattern": "PRIVATE_FAILED_PATTERN", "path": "src"}),
+    );
+    store.record_tool_call_finished(
+        failed,
+        false,
+        &json!({"failure_kind": "search_failed"}),
+        Some("search failed"),
+        Some("search_failed"),
+    );
+
+    let job_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    let job = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_check",
+        &json!({"project": project}),
+    );
+    store.record_tool_call_finished(
+        job,
+        true,
+        &json!({
+            "execution_state": "running",
+            "job_id": job_id,
+            "promoted_to_job": true,
+            "command_started": true,
+            "command_completed": false,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_lines": 0,
+            "stderr_lines": 0
+        }),
+        None,
+        None,
+    );
+    // Without an unordered Progress message, adjacent successful exploration
+    // groups normally and concrete fact barriers remain separate.
+    let detail = store
+        .console_detail_for_project(project, &session.session_id, Some(20))
+        .unwrap();
+    let kinds = detail
+        .activity
+        .iter()
+        .map(|activity| activity.kind.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        vec!["Explored", "Edited", "Read", "Searched", "Tested"]
+    );
+    let group = &detail.activity[0];
+    assert_eq!(group.group_count, Some(3));
+    assert_eq!(group.group_kinds, vec!["Read", "Searched", "Navigated"]);
+    assert_eq!(
+        group.group_tools,
+        vec!["read_file", "search_project_text", "goto_definition"]
+    );
+    assert_eq!(group.paths, vec!["src/a.rs", "src/b.rs", "src/c.rs"]);
+    assert_eq!(detail.activity[3].state, "failed");
+    assert!(detail.activity[4].job_handoff);
+    assert_eq!(
+        detail.activity[4].execution_state.as_deref(),
+        Some("running")
+    );
+    assert_eq!(detail.activity[4].job_id.as_deref(), Some(job_id));
+
+    let bounded = store
+        .console_detail_for_project(project, &session.session_id, Some(3))
+        .unwrap();
+    assert_eq!(bounded.activity.len(), 3);
+    assert!(bounded.activity_truncated);
+
+    store
+        .post_message(PostSessionMessageInput {
+            session_id: session.session_id.clone(),
+            kind: SessionMessageKind::Progress,
+            message: "waiting for validation".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .unwrap();
+    let with_progress = store
+        .console_detail_for_project(project, &session.session_id, Some(20))
+        .unwrap();
+    let progress = with_progress
+        .activity
+        .iter()
+        .find(|activity| activity.kind == "Progress")
+        .unwrap();
+    assert_eq!(progress.state, "info");
+    let serialized = serde_json::to_string(&with_progress).unwrap();
+    for hidden in [
+        "PRIVATE_CONTENT_A",
+        "PRIVATE_CONTENT_D",
+        "PRIVATE_PATTERN",
+        "PRIVATE_FAILED_PATTERN",
+    ] {
+        assert!(
+            !serialized.contains(hidden),
+            "{hidden} leaked: {serialized}"
+        );
+    }
 }
 
 #[test]

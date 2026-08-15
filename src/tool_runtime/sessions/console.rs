@@ -5,7 +5,7 @@
 //! arguments/output. Correlation is presentation-only via `call_id`.
 
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::super::helpers::is_safe_job_id;
 use super::events::normalize_observed_project_path;
@@ -18,6 +18,9 @@ pub(crate) const DEFAULT_CONSOLE_ACTIVITY_LIMIT: usize = 100;
 pub(crate) const MAX_CONSOLE_ACTIVITY_LIMIT: usize = 200;
 const MAX_CONSOLE_TEXT_CHARS: usize = 240;
 const MAX_CONSOLE_PATHS_PER_ITEM: usize = 8;
+const MAX_CONSOLE_LIST_TEXT_CHARS: usize = 120;
+const MAX_CONSOLE_LIST_PATHS_PER_ITEM: usize = 3;
+const MAX_CONSOLE_GROUP_TOOLS: usize = 8;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct WorkflowSessionConsoleList {
@@ -35,6 +38,27 @@ pub(crate) struct WorkflowSessionConsoleListItem {
     pub(crate) mode: String,
     pub(crate) updated_at: i64,
     pub(crate) running_call: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) current_activity: Option<WorkflowSessionConsoleActivityPreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) last_activity: Option<WorkflowSessionConsoleActivityPreview>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowSessionConsoleActivityPreview {
+    pub(crate) kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tool: Option<String>,
+    pub(crate) state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) execution_state: Option<String>,
+    pub(crate) job_handoff: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) summary: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +82,9 @@ pub(crate) struct WorkflowSessionConsoleActivity {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool: Option<String>,
     pub(crate) state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) execution_state: Option<String>,
+    pub(crate) job_handoff: bool,
     pub(crate) started_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) finished_at: Option<i64>,
@@ -71,6 +98,12 @@ pub(crate) struct WorkflowSessionConsoleActivity {
     pub(crate) summary: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) paths: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) group_count: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) group_kinds: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) group_tools: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -98,16 +131,41 @@ pub(super) fn normalize_console_activity_limit(limit: Option<usize>) -> usize {
         .clamp(1, MAX_CONSOLE_ACTIVITY_LIMIT)
 }
 
-pub(super) fn build_list_item(record: &SessionRecord) -> WorkflowSessionConsoleListItem {
+pub(super) fn build_list_item(
+    record: &SessionRecord,
+    project: &str,
+) -> WorkflowSessionConsoleListItem {
+    let interactions = build_interactions(record);
+    let running_call = interactions
+        .iter()
+        .any(|interaction| interaction.finish.is_none() && interaction.start.is_some());
+    // `queued` / `running` / `started` on a finished Job handoff is only the
+    // bounded execution snapshot observed when the tool returned. Job terminal
+    // lifecycle does not write back into the Session event, so only an actually
+    // unfinished correlated tool call is truthful current work here.
+    let current = interactions
+        .iter()
+        .rev()
+        .copied()
+        .find(|interaction| interaction.finish.is_none() && interaction.start.is_some());
+    let current_sequence = current.map(|interaction| interaction.sequence);
+    let last = interactions.iter().rev().copied().find(|interaction| {
+        interaction.finish.is_some()
+            && Some(interaction.sequence) != current_sequence
+            && interaction
+                .finish
+                .or(interaction.start)
+                .is_some_and(|event| !interaction_is_progress_metadata(event))
+    });
     WorkflowSessionConsoleListItem {
         session_id: record.session_id.clone(),
         title: console_title(record.title.as_deref()),
         lifecycle: record.lifecycle.as_str().to_string(),
         mode: record.mode.as_str().to_string(),
         updated_at: record.updated_at,
-        running_call: build_interactions(record)
-            .into_iter()
-            .any(|interaction| interaction.finish.is_none() && interaction.start.is_some()),
+        running_call,
+        current_activity: current.map(|interaction| activity_preview(interaction, project)),
+        last_activity: last.map(|interaction| activity_preview(interaction, project)),
     }
 }
 
@@ -139,6 +197,8 @@ pub(super) fn build_detail(
                 kind: "Progress".to_string(),
                 tool: None,
                 state: "info".to_string(),
+                execution_state: None,
+                job_handoff: false,
                 started_at: message.created_at,
                 finished_at: None,
                 duration_ms: None,
@@ -146,12 +206,16 @@ pub(super) fn build_detail(
                 job_id: None,
                 summary: Some(console_safe_text(&message.message, MAX_CONSOLE_TEXT_CHARS)),
                 paths: Vec::new(),
+                group_count: None,
+                group_kinds: Vec::new(),
+                group_tools: Vec::new(),
             },
             ledger_sequence: None,
             fallback_sequence,
         });
     }
     sort_ordered_activity(&mut ordered_activity);
+    let mut ordered_activity = group_exploration_activity(ordered_activity);
     let activity_total = ordered_activity.len();
     if ordered_activity.len() > limit {
         ordered_activity.drain(0..ordered_activity.len() - limit);
@@ -191,6 +255,84 @@ fn sort_ordered_activity(activity: &mut [OrderedActivity]) {
                 (None, None) => left.fallback_sequence.cmp(&right.fallback_sequence),
             })
     });
+}
+
+fn group_exploration_activity(activity: Vec<OrderedActivity>) -> Vec<OrderedActivity> {
+    let ambiguous_progress_timestamps = activity
+        .iter()
+        .filter(|entry| entry.ledger_sequence.is_none() && entry.activity.kind == "Progress")
+        .map(|entry| entry.activity.started_at)
+        .collect::<HashSet<_>>();
+    let mut grouped: Vec<OrderedActivity> = Vec::with_capacity(activity.len());
+    for entry in activity {
+        if !is_groupable_exploration(&entry.activity)
+            || ambiguous_progress_timestamps.contains(&entry.activity.started_at)
+        {
+            // Progress has no sequence comparable to Session events. When a
+            // timestamp contains Progress, any same-second tool placement is a
+            // display fallback only, so do not merge exploration across that
+            // ambiguity boundary.
+            grouped.push(entry);
+            continue;
+        }
+        let Some(previous) = grouped.last_mut() else {
+            grouped.push(entry);
+            continue;
+        };
+        if !is_groupable_exploration(&previous.activity) {
+            grouped.push(entry);
+            continue;
+        }
+        if previous.activity.group_count.is_none() {
+            let first_kind = previous.activity.kind.clone();
+            let first_tool = previous.activity.tool.clone();
+            previous.activity.kind = "Explored".to_string();
+            previous.activity.tool = None;
+            previous.activity.duration_ms = None;
+            previous.activity.exit_code = None;
+            previous.activity.summary = None;
+            previous.activity.group_count = Some(1);
+            previous.activity.group_kinds = vec![first_kind];
+            if let Some(tool) = first_tool {
+                previous.activity.group_tools.push(tool);
+            }
+        }
+        let next_kind = entry.activity.kind.clone();
+        if !previous.activity.group_kinds.contains(&next_kind) {
+            previous.activity.group_kinds.push(next_kind);
+        }
+        if let Some(tool) = entry.activity.tool.as_ref() {
+            if previous.activity.group_tools.len() < MAX_CONSOLE_GROUP_TOOLS
+                && !previous.activity.group_tools.contains(tool)
+            {
+                previous.activity.group_tools.push(tool.clone());
+            }
+        }
+        for path in &entry.activity.paths {
+            if previous.activity.paths.len() >= MAX_CONSOLE_PATHS_PER_ITEM {
+                break;
+            }
+            if !previous.activity.paths.contains(path) {
+                previous.activity.paths.push(path.clone());
+            }
+        }
+        let count = previous.activity.group_count.unwrap_or(1).saturating_add(1);
+        previous.activity.group_count = Some(count);
+        previous.activity.finished_at =
+            entry.activity.finished_at.or(previous.activity.finished_at);
+        previous.activity.summary = Some(format!("{count} exploration activities"));
+    }
+    grouped
+}
+
+fn is_groupable_exploration(activity: &WorkflowSessionConsoleActivity) -> bool {
+    activity.state == "succeeded"
+        && !activity.job_handoff
+        && activity.job_id.is_none()
+        && matches!(
+            activity.kind.as_str(),
+            "Read" | "Searched" | "Navigated" | "Explored"
+        )
 }
 
 fn build_interactions(record: &SessionRecord) -> Vec<Interaction<'_>> {
@@ -240,6 +382,29 @@ fn build_interactions(record: &SessionRecord) -> Vec<Interaction<'_>> {
     interactions
 }
 
+fn activity_preview(
+    interaction: Interaction<'_>,
+    project: &str,
+) -> WorkflowSessionConsoleActivityPreview {
+    let activity = activity_from_interaction(interaction, project);
+    WorkflowSessionConsoleActivityPreview {
+        kind: activity.kind,
+        tool: activity.tool,
+        state: activity.state,
+        execution_state: activity.execution_state,
+        job_handoff: activity.job_handoff,
+        job_id: activity.job_id,
+        summary: activity
+            .summary
+            .map(|summary| bound_chars(&summary, MAX_CONSOLE_LIST_TEXT_CHARS)),
+        paths: activity
+            .paths
+            .into_iter()
+            .take(MAX_CONSOLE_LIST_PATHS_PER_ITEM)
+            .collect(),
+    }
+}
+
 fn activity_from_interaction(
     interaction: Interaction<'_>,
     project: &str,
@@ -260,6 +425,17 @@ fn activity_from_interaction(
         .chain(finish)
         .all(|event| event_is_project_safe(event, project));
     let state = console_activity_state(interaction.start, finish);
+    let execution_state = finish.and_then(console_execution_state).map(str::to_string);
+    let job_id = same_project
+        .then(|| {
+            finish
+                .and_then(|event| event.job_id.as_deref())
+                .and_then(safe_job_id)
+        })
+        .flatten();
+    let job_handoff = job_id.is_some()
+        && finish.is_some_and(|event| is_job_handoff_tool(&event.tool_name))
+        && execution_state.is_some();
     let paths = if same_project {
         safe_paths(interaction.start, finish)
     } else {
@@ -274,19 +450,18 @@ fn activity_from_interaction(
         kind: semantic_kind(evidence).to_string(),
         tool: Some(bound_chars(&evidence.tool_name, 80)),
         state,
+        execution_state,
+        job_handoff,
         started_at,
         finished_at: finish.and_then(|event| event.finished_at),
         duration_ms: finish.and_then(|event| event.duration_ms),
         exit_code: finish.and_then(|event| event.exit_code),
-        job_id: same_project
-            .then(|| {
-                finish
-                    .and_then(|event| event.job_id.as_deref())
-                    .and_then(safe_job_id)
-            })
-            .flatten(),
+        job_id,
         summary,
         paths,
+        group_count: None,
+        group_kinds: Vec::new(),
+        group_tools: Vec::new(),
     }
 }
 
@@ -348,6 +523,20 @@ fn console_execution_state(event: &SessionEvent) -> Option<&str> {
                     | "not_started"
             )
         })
+}
+
+fn is_job_handoff_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "cargo_test"
+            | "cargo_check"
+            | "cargo_fmt"
+            | "go_test"
+            | "run_process"
+            | "run_script"
+            | "run_shell"
+            | "run_job"
+    )
 }
 
 fn event_is_project_safe(event: &SessionEvent, project: &str) -> bool {
@@ -420,12 +609,18 @@ fn console_interaction_summary(
         {
             parts.push("0 tests".to_string());
         }
-        if let Some(state) = validation
-            .get("execution_state")
-            .and_then(|value| value.as_str())
-            .and_then(safe_atom)
-        {
-            parts.push(state);
+        let handoff = finish.is_some_and(|event| {
+            event.job_id.as_deref().and_then(safe_job_id).is_some()
+                && is_job_handoff_tool(&event.tool_name)
+        });
+        if !handoff {
+            if let Some(state) = validation
+                .get("execution_state")
+                .and_then(|value| value.as_str())
+                .and_then(safe_atom)
+            {
+                parts.push(format!("execution {state}"));
+            }
         }
         let output_lines = validation
             .get("stdout_lines")
@@ -441,12 +636,16 @@ fn console_interaction_summary(
             parts.push(format!("{output_lines} output lines (content omitted)"));
         }
     }
-    if finish
-        .and_then(|event| event.job_id.as_deref())
-        .and_then(safe_job_id)
-        .is_some()
-    {
-        parts.push("job-backed".to_string());
+    if let Some(finish) = finish {
+        let safe_job = finish.job_id.as_deref().and_then(safe_job_id);
+        if safe_job.is_some() && is_job_handoff_tool(&finish.tool_name) {
+            parts.push("handed off to Job".to_string());
+            if let Some(state) = console_execution_state(finish).and_then(safe_atom) {
+                parts.push(format!("execution {state}"));
+            }
+        } else if safe_job.is_some() {
+            parts.push("job-backed".to_string());
+        }
     }
     if finish.and_then(|event| event.exit_code).is_some() {
         parts.push(format!(
@@ -636,6 +835,8 @@ mod tests {
                 kind: kind.to_string(),
                 tool: None,
                 state: "succeeded".to_string(),
+                execution_state: None,
+                job_handoff: false,
                 started_at: 1_234,
                 finished_at: Some(1_234),
                 duration_ms: Some(0),
@@ -643,10 +844,35 @@ mod tests {
                 job_id: None,
                 summary: None,
                 paths: Vec::new(),
+                group_count: None,
+                group_kinds: Vec::new(),
+                group_tools: Vec::new(),
             },
             ledger_sequence,
             fallback_sequence,
         }
+    }
+
+    #[test]
+    fn same_second_progress_timestamp_blocks_exploration_grouping_across_ambiguity() {
+        // The source facts are Read -> Progress -> Read in one second, but
+        // Progress has no ledger sequence comparable to either tool event.
+        let mut activity = vec![
+            ordered("Read", Some(1), 1),
+            ordered("Progress", None, 1),
+            ordered("Read", Some(2), 2),
+        ];
+        activity[1].activity.state = "info".to_string();
+        sort_ordered_activity(&mut activity);
+        let grouped = group_exploration_activity(activity);
+        let kinds = grouped
+            .iter()
+            .map(|entry| entry.activity.kind.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(kinds, vec!["Read", "Read", "Progress"]);
+        assert!(grouped
+            .iter()
+            .all(|entry| entry.activity.group_count.is_none()));
     }
 
     #[test]

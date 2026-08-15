@@ -6,6 +6,10 @@ import {
   refreshWorkflowSessionDetail,
   clearWorkflowSessionSelection,
   adoptWorkflowSessionDetail,
+  updateWorkflowSessionFollowFromScroll,
+  workflowSessionScrollTopAfterRender,
+  jumpWorkflowSessionToLatest,
+  shouldFollowWorkflowSessionLatest,
 } from "../dist/workflow_session_state.js";
 
 test("stale same-session detail response cannot overwrite newer snapshot", () => {
@@ -32,4 +36,36 @@ test("switching workflow sessions invalidates the previous detail snapshot", () 
   clearWorkflowSessionSelection(state);
   assert.equal(state.selectedSessionId, "");
   assert.equal(state.snapshot, null);
+});
+
+test("timeline follow stays enabled at bottom and manual upward scroll disables it", () => {
+  const state = initialWorkflowSessionState();
+  selectWorkflowSession(state, "wc_sess_follow");
+  assert.equal(shouldFollowWorkflowSessionLatest(state), true);
+
+  assert.equal(updateWorkflowSessionFollowFromScroll(state, 700, 300, 1000), true);
+  assert.equal(shouldFollowWorkflowSessionLatest(state), true);
+  assert.equal(workflowSessionScrollTopAfterRender(state, 700, 300, 1200), 900);
+
+  assert.equal(updateWorkflowSessionFollowFromScroll(state, 400, 300, 1000), false);
+  assert.equal(shouldFollowWorkflowSessionLatest(state), false);
+  assert.equal(workflowSessionScrollTopAfterRender(state, 400, 300, 1200), 400);
+});
+
+test("jump restores follow and session switch resets follow state", () => {
+  const state = initialWorkflowSessionState();
+  selectWorkflowSession(state, "wc_sess_first");
+  updateWorkflowSessionFollowFromScroll(state, 100, 300, 1000);
+  assert.equal(shouldFollowWorkflowSessionLatest(state), false);
+
+  jumpWorkflowSessionToLatest(state);
+  assert.equal(shouldFollowWorkflowSessionLatest(state), true);
+
+  updateWorkflowSessionFollowFromScroll(state, 100, 300, 1000);
+  selectWorkflowSession(state, "wc_sess_second");
+  assert.equal(shouldFollowWorkflowSessionLatest(state), true);
+
+  updateWorkflowSessionFollowFromScroll(state, 100, 300, 1000);
+  clearWorkflowSessionSelection(state);
+  assert.equal(shouldFollowWorkflowSessionLatest(state), true);
 });

@@ -390,8 +390,35 @@ input[type="text"] {
   overflow-wrap: anywhere;
 }
 
-.workflow-session-timeline {
+.workflow-session-activity-preview {
+  display: flex;
+  gap: 6px;
+  margin-top: 5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-session-activity-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.workflow-session-timeline-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-top: 12px;
+  margin-bottom: 6px;
+}
+
+.workflow-session-jump-latest {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}
+
+.workflow-session-timeline {
   max-height: 360px;
 }
 
@@ -399,12 +426,22 @@ input[type="text"] {
   border-left-color: var(--accent);
 }
 
+.workflow-session-job,
+.workflow-session-uncertain {
+  border-left-color: var(--warn);
+}
+
 .workflow-session-failed {
   border-left-color: var(--fail);
 }
 
+.workflow-session-exploration {
+  border-left-color: var(--muted);
+}
+
 .workflow-session-progress {
-  border-left-color: var(--accent);
+  border-left-color: var(--muted);
+  opacity: 0.8;
 }
 
 .activity {

@@ -912,6 +912,114 @@ async fn local_job_status_keeps_completed_job_completed() {
 }
 
 #[tokio::test]
+async fn console_list_does_not_promote_stale_run_job_handoff_after_authoritative_completion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let session = runtime.sessions.start_session(
+        Some("demo".to_string()),
+        Some("completed async job".to_string()),
+    );
+    let job_id = "67676767-7878-8989-9090-101010101010";
+
+    let handoff = runtime.sessions.record_tool_call_started(
+        Some(&session.session_id),
+        crate::tool_runtime::sessions::SessionTransport::Api,
+        "run_job",
+        &json!({"project": "demo"}),
+    );
+    runtime.sessions.record_tool_call_finished(
+        handoff,
+        true,
+        &json!({
+            "execution_state": "started",
+            "job_id": job_id,
+            "status": "running",
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_lines": 0,
+            "stderr_lines": 0
+        }),
+        None,
+        None,
+    );
+
+    let past = chrono::Utc::now().timestamp() - 5;
+    let dir = write_fake_job(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "completed",
+        "",
+        "",
+        json!({
+            "started_at": past,
+            "max_runtime_secs": 60,
+            "session_id": session.session_id,
+        }),
+    );
+    seed_local_job(&runtime, job_id, "demo", dir).await;
+    let terminal = runtime.job_status(job_id.to_string()).await;
+    assert!(terminal.success, "{:?}", terminal.error);
+    assert_eq!(terminal.output["status"], "completed");
+
+    let detail = runtime
+        .sessions
+        .console_detail_for_project("demo", &session.session_id, Some(20))
+        .unwrap();
+    let stale_handoff = detail
+        .activity
+        .iter()
+        .find(|activity| activity.tool.as_deref() == Some("run_job"))
+        .unwrap();
+    assert_eq!(stale_handoff.execution_state.as_deref(), Some("started"));
+
+    let list = runtime.sessions.console_list_for_project("demo", Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert!(row.current_activity.is_none());
+    assert_eq!(
+        row.last_activity.as_ref().unwrap().tool.as_deref(),
+        Some("run_job")
+    );
+
+    let observed = runtime.sessions.record_tool_call_started(
+        Some(&session.session_id),
+        crate::tool_runtime::sessions::SessionTransport::Api,
+        "job_status",
+        &json!({"project": "demo", "job_id": job_id}),
+    );
+    runtime
+        .sessions
+        .record_tool_call_finished(observed, true, &terminal.output, None, None);
+    let list = runtime.sessions.console_list_for_project("demo", Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert!(row.current_activity.is_none());
+    assert_eq!(
+        row.last_activity.as_ref().unwrap().tool.as_deref(),
+        Some("job_status")
+    );
+
+    runtime.sessions.close_session(&session.session_id).unwrap();
+    let list = runtime.sessions.console_list_for_project("demo", Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert_eq!(row.lifecycle, "closed");
+    assert!(row.current_activity.is_none());
+}
+
+#[tokio::test]
 async fn run_job_rejects_server_configured_project_without_local_spawn() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();

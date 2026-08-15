@@ -253,18 +253,21 @@ function createReviewController(options) {
     };
 }
 
-// DOM-free selection and response fencing for Workflow Session Console detail.
+// DOM-free selection, response fencing, and timeline-follow state for Workflow Session detail.
+const FOLLOW_BOTTOM_THRESHOLD_PX = 24;
 function initialWorkflowSessionState() {
     return {
         selectedSessionId: "",
         detailGeneration: 0,
         snapshot: null,
+        followLatest: true,
     };
 }
 function selectWorkflowSession(state, sessionId) {
     state.selectedSessionId = sessionId;
     state.detailGeneration += 1;
     state.snapshot = null;
+    state.followLatest = true;
     return workflowSessionDetailRequest(state);
 }
 function refreshWorkflowSessionDetail(state) {
@@ -278,6 +281,7 @@ function clearWorkflowSessionSelection(state) {
     state.selectedSessionId = "";
     state.detailGeneration += 1;
     state.snapshot = null;
+    state.followLatest = true;
 }
 function workflowSessionDetailRequest(state) {
     if (!state.selectedSessionId) {
@@ -299,6 +303,23 @@ function adoptWorkflowSessionDetail(state, request, detail) {
     }
     state.snapshot = detail;
     return true;
+}
+function updateWorkflowSessionFollowFromScroll(state, scrollTop, clientHeight, scrollHeight) {
+    const distanceFromBottom = Math.max(0, scrollHeight - scrollTop - clientHeight);
+    state.followLatest = distanceFromBottom <= FOLLOW_BOTTOM_THRESHOLD_PX;
+    return state.followLatest;
+}
+function workflowSessionScrollTopAfterRender(state, previousScrollTop, clientHeight, scrollHeight) {
+    if (shouldFollowWorkflowSessionLatest(state)) {
+        return Math.max(0, scrollHeight - clientHeight);
+    }
+    return Math.min(Math.max(0, previousScrollTop), Math.max(0, scrollHeight - clientHeight));
+}
+function jumpWorkflowSessionToLatest(state) {
+    state.followLatest = true;
+}
+function shouldFollowWorkflowSessionLatest(state) {
+    return state.followLatest !== false;
 }
 
 // WebCodex host-local review console.
@@ -551,6 +572,8 @@ function renderWorkflowSessionList(sessions, payload) {
         appendChip(meta, updatedLabel(session.updated_at));
         item.appendChild(title);
         item.appendChild(meta);
+        appendWorkflowSessionActivityPreview(item, "Now", session.current_activity);
+        appendWorkflowSessionActivityPreview(item, "Last", session.last_activity);
         item.addEventListener("click", () => {
             const request = selectWorkflowSessionDetail(id);
             renderWorkflowSessionList(sessions, payload);
@@ -559,9 +582,100 @@ function renderWorkflowSessionList(sessions, payload) {
         node.appendChild(item);
     }
 }
+function workflowActivityKindLabel(activity) {
+    const kind = String((activity && activity.kind) || "Activity");
+    if (activity && activity.job_handoff) {
+        if (kind === "Tested") {
+            return "Test";
+        }
+        if (kind === "Ran") {
+            return "Command";
+        }
+    }
+    if (kind === "Explored" && activity && typeof activity.group_count === "number") {
+        return "Explored ×" + activity.group_count;
+    }
+    return kind;
+}
+function workflowActivityFacts(activity, includeTiming) {
+    const facts = [];
+    if (activity && typeof activity.group_count === "number") {
+        if (Array.isArray(activity.group_kinds) && activity.group_kinds.length) {
+            facts.push(activity.group_kinds.map((kind) => String(kind)).join(" / "));
+        }
+        if (Array.isArray(activity.group_tools) && activity.group_tools.length) {
+            facts.push(activity.group_tools.map((tool) => String(tool)).join(", "));
+        }
+    }
+    else if (activity && activity.tool) {
+        facts.push(String(activity.tool));
+    }
+    if (activity && activity.kind === "Progress") {
+        facts.push("informational");
+    }
+    else if (activity && activity.job_handoff) {
+        facts.push("handed off");
+        if (activity.execution_state) {
+            facts.push("execution " + String(activity.execution_state));
+        }
+    }
+    else if (activity && activity.state) {
+        facts.push(String(activity.state));
+    }
+    if (includeTiming && activity && typeof activity.duration_ms === "number") {
+        facts.push(durationLabel(activity.duration_ms));
+    }
+    if (activity && typeof activity.exit_code === "number") {
+        facts.push("exit " + activity.exit_code);
+    }
+    if (activity && activity.job_id) {
+        facts.push("job " + String(activity.job_id));
+    }
+    if (includeTiming && activity && typeof activity.started_at === "number") {
+        facts.push(new Date(activity.started_at * 1000).toLocaleTimeString());
+    }
+    return facts;
+}
+function workflowActivityDescription(activity) {
+    if (!activity) {
+        return "";
+    }
+    const parts = [workflowActivityKindLabel(activity), ...workflowActivityFacts(activity, false)];
+    if (activity.summary && !activity.job_handoff) {
+        parts.push(String(activity.summary));
+    }
+    return parts.join(" · ");
+}
+function appendWorkflowSessionActivityPreview(parent, label, activity) {
+    if (!activity) {
+        return;
+    }
+    const row = document.createElement("div");
+    row.className = "workflow-session-activity-preview muted small";
+    const prefix = document.createElement("span");
+    prefix.className = "workflow-session-activity-label";
+    prefix.textContent = label;
+    const text = document.createElement("span");
+    text.textContent = workflowActivityDescription(activity);
+    row.appendChild(prefix);
+    row.appendChild(text);
+    parent.appendChild(row);
+}
+function syncWorkflowSessionFollowUi() {
+    const selected = !!workflowSessionState.selectedSessionId;
+    show("workflow-session-jump-latest", selected && !shouldFollowWorkflowSessionLatest(workflowSessionState));
+}
+function scrollWorkflowSessionTimelineToLatest() {
+    const node = el("workflow-session-timeline");
+    if (node) {
+        node.scrollTop = node.scrollHeight;
+    }
+    syncWorkflowSessionFollowUi();
+}
 function hideWorkflowSessionDetail() {
     show("workflow-session-detail", false);
     show("workflow-session-detail-empty", true);
+    show("workflow-session-jump-latest", false);
 }
 function abortWorkflowSessionDetailRequest() {
     if (workflowSessionDetailAbort) {
@@ -621,53 +735,43 @@ function renderWorkflowSessionDetail(detail) {
     setText("workflow-session-updated", updatedLabel(detail.updated_at));
     const activities = Array.isArray(detail.activity) ? detail.activity : [];
     const node = el("workflow-session-timeline");
+    const previousScrollTop = node ? node.scrollTop : 0;
     clearNode(node);
     show("workflow-session-timeline-empty", activities.length === 0);
     if (!node) {
+        syncWorkflowSessionFollowUi();
         return;
     }
     for (const activity of activities) {
         const item = document.createElement("li");
         item.className = "timeline-event";
-        if (activity && activity.state === "running") {
-            item.classList.add("workflow-session-running");
+        if (activity && activity.kind === "Progress") {
+            item.classList.add("workflow-session-progress");
         }
-        else if (activity && activity.state === "failed") {
+        else if (activity && (activity.state === "failed" || activity.state === "timed_out")) {
             item.classList.add("workflow-session-failed");
         }
-        else if (activity && activity.kind === "Progress") {
-            item.classList.add("workflow-session-progress");
+        else if (activity &&
+            ["outcome_unknown", "cancelled", "not_started"].includes(String(activity.state || ""))) {
+            item.classList.add("workflow-session-uncertain");
+        }
+        else if (activity && activity.job_handoff) {
+            item.classList.add("workflow-session-job");
+        }
+        else if (activity && ["queued", "running"].includes(String(activity.state || ""))) {
+            item.classList.add("workflow-session-running");
+        }
+        else if (activity && activity.kind === "Explored") {
+            item.classList.add("workflow-session-exploration");
         }
         const head = document.createElement("div");
         head.className = "timeline-head";
         const kind = document.createElement("span");
         kind.className = "timeline-kind";
-        kind.textContent = String((activity && activity.kind) || "Activity");
+        kind.textContent = workflowActivityKindLabel(activity);
         const meta = document.createElement("span");
         meta.className = "muted small";
-        const facts = [];
-        if (activity && activity.tool) {
-            facts.push(String(activity.tool));
-        }
-        if (activity && activity.state) {
-            facts.push(String(activity.state));
-        }
-        if (activity && typeof activity.duration_ms === "number") {
-            facts.push(durationLabel(activity.duration_ms));
-        }
-        if (activity && typeof activity.exit_code === "number") {
-            facts.push("exit " + activity.exit_code);
-        }
-        if (activity && activity.job_id) {
-            facts.push("job " + String(activity.job_id));
-        }
-        const started = activity && typeof activity.started_at === "number"
-            ? new Date(activity.started_at * 1000).toLocaleTimeString()
-            : "";
-        if (started) {
-            facts.push(started);
-        }
-        meta.textContent = facts.join(" · ");
+        meta.textContent = workflowActivityFacts(activity, true).join(" · ");
         head.appendChild(kind);
         head.appendChild(meta);
         item.appendChild(head);
@@ -686,6 +790,8 @@ function renderWorkflowSessionDetail(detail) {
         }
         node.appendChild(item);
     }
+    node.scrollTop = workflowSessionScrollTopAfterRender(workflowSessionState, previousScrollTop, node.clientHeight, node.scrollHeight);
+    syncWorkflowSessionFollowUi();
 }
 function durationLabel(durationMs) {
     if (durationMs < 1000) {
@@ -1616,6 +1722,18 @@ function init() {
     });
     el("activity-filter-clear")?.addEventListener("click", () => {
         setActivityClientFilter(activityClientFilter);
+    });
+    el("workflow-session-timeline")?.addEventListener("scroll", () => {
+        const timeline = el("workflow-session-timeline");
+        if (!timeline) {
+            return;
+        }
+        updateWorkflowSessionFollowFromScroll(workflowSessionState, timeline.scrollTop, timeline.clientHeight, timeline.scrollHeight);
+        syncWorkflowSessionFollowUi();
+    });
+    el("workflow-session-jump-latest")?.addEventListener("click", () => {
+        jumpWorkflowSessionToLatest(workflowSessionState);
+        scrollWorkflowSessionTimelineToLatest();
     });
     el("guide-btn")?.addEventListener("click", () => {
         void sendGuidance();

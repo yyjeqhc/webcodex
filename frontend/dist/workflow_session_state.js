@@ -1,15 +1,18 @@
-// DOM-free selection and response fencing for Workflow Session Console detail.
+// DOM-free selection, response fencing, and timeline-follow state for Workflow Session detail.
+const FOLLOW_BOTTOM_THRESHOLD_PX = 24;
 export function initialWorkflowSessionState() {
     return {
         selectedSessionId: "",
         detailGeneration: 0,
         snapshot: null,
+        followLatest: true,
     };
 }
 export function selectWorkflowSession(state, sessionId) {
     state.selectedSessionId = sessionId;
     state.detailGeneration += 1;
     state.snapshot = null;
+    state.followLatest = true;
     return workflowSessionDetailRequest(state);
 }
 export function refreshWorkflowSessionDetail(state) {
@@ -23,6 +26,7 @@ export function clearWorkflowSessionSelection(state) {
     state.selectedSessionId = "";
     state.detailGeneration += 1;
     state.snapshot = null;
+    state.followLatest = true;
 }
 export function workflowSessionDetailRequest(state) {
     if (!state.selectedSessionId) {
@@ -44,4 +48,21 @@ export function adoptWorkflowSessionDetail(state, request, detail) {
     }
     state.snapshot = detail;
     return true;
+}
+export function updateWorkflowSessionFollowFromScroll(state, scrollTop, clientHeight, scrollHeight) {
+    const distanceFromBottom = Math.max(0, scrollHeight - scrollTop - clientHeight);
+    state.followLatest = distanceFromBottom <= FOLLOW_BOTTOM_THRESHOLD_PX;
+    return state.followLatest;
+}
+export function workflowSessionScrollTopAfterRender(state, previousScrollTop, clientHeight, scrollHeight) {
+    if (shouldFollowWorkflowSessionLatest(state)) {
+        return Math.max(0, scrollHeight - clientHeight);
+    }
+    return Math.min(Math.max(0, previousScrollTop), Math.max(0, scrollHeight - clientHeight));
+}
+export function jumpWorkflowSessionToLatest(state) {
+    state.followLatest = true;
+}
+export function shouldFollowWorkflowSessionLatest(state) {
+    return state.followLatest !== false;
 }

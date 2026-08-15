@@ -825,7 +825,7 @@ impl SessionStore {
             .filter_map(|(session_id, _)| {
                 self.with_record_for_query(&session_id, |record, _| {
                     (record.project.as_deref() == Some(project))
-                        .then(|| build_console_list_item(record))
+                        .then(|| build_console_list_item(record, project))
                 })
                 .flatten()
             })

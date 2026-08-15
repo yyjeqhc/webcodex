@@ -1085,9 +1085,9 @@ fn openapi_call_runtime_tool_declares_flattened_action_fields() {
 
     assert!(properties.contains_key(TOOL_CALL_PARAMS_FIELD));
     assert!(properties.contains_key(TOOL_CALL_ARGUMENTS_FIELD));
-    assert_eq!(
-        properties[ALLOW_CROSS_PROJECT_SESSION_FIELD]["type"],
-        "boolean"
+    assert!(
+        !properties.contains_key("allow_cross_project_session"),
+        "ToolCallRequest must not publish the cross-project debug escape as a flattened Action field"
     );
     for field in [
         "expected_failure",

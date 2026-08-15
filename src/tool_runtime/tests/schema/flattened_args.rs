@@ -58,7 +58,7 @@ fn accepted_flattened_args_appends_recorder_field_once() {
 }
 
 #[test]
-fn model_facing_flattened_args_exclude_testing_metadata() {
+fn model_facing_flattened_args_exclude_testing_and_debug_metadata() {
     let mut accepted_fields = BTreeSet::new();
     for spec in registered_tool_specs() {
         accepted_fields
@@ -81,10 +81,11 @@ fn model_facing_flattened_args_exclude_testing_metadata() {
         "expected_failure_kind",
         "assertion_name",
         "test_expect_failure_kind",
+        "allow_cross_project_session",
     ] {
         assert!(
             !accepted_fields.contains(field),
-            "model-facing flattened args must not advertise testing metadata field {field}"
+            "model-facing flattened args must not advertise non-business metadata field {field}"
         );
     }
 }

@@ -44,8 +44,6 @@ pub(crate) fn session_project_mismatch_result(
             "tool_name": tool_name,
             "session_project": mismatch.session_project,
             "request_project": mismatch.request_project,
-            "allow_cross_project_session_required": true,
-            "allow_cross_project_session": false,
             "command_started": false,
         }),
     )
@@ -82,14 +80,16 @@ pub(crate) fn session_project_mismatch_warning(
     mismatch: &SessionProjectMismatch,
     allow_cross_project_session: bool,
 ) -> Value {
-    json!({
+    let mut warning = json!({
         "kind": SESSION_PROJECT_MISMATCH_KIND,
         "warning_kind": SESSION_PROJECT_MISMATCH_KIND,
         "session_project": mismatch.session_project,
         "request_project": mismatch.request_project,
-        "allow_cross_project_session_required": true,
-        "allow_cross_project_session": allow_cross_project_session,
-    })
+    });
+    if allow_cross_project_session {
+        warning[ALLOW_CROSS_PROJECT_SESSION_FIELD] = Value::Bool(true);
+    }
+    warning
 }
 
 pub(crate) fn add_session_project_mismatch_warning(
@@ -119,14 +119,12 @@ pub(crate) fn add_session_project_mismatch_warning(
         "request_project".to_string(),
         Value::String(mismatch.request_project.clone()),
     );
-    output.insert(
-        "allow_cross_project_session_required".to_string(),
-        Value::Bool(true),
-    );
-    output.insert(
-        "allow_cross_project_session".to_string(),
-        Value::Bool(allow_cross_project_session),
-    );
+    if allow_cross_project_session {
+        output.insert(
+            ALLOW_CROSS_PROJECT_SESSION_FIELD.to_string(),
+            Value::Bool(true),
+        );
+    }
     match output.get_mut("warnings") {
         Some(Value::Array(warnings)) => warnings.push(warning),
         _ => {

@@ -282,7 +282,6 @@ fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
         "timeout_secs",
         "purpose",
         "session_id",
-        "allow_cross_project_session",
     ] {
         assert!(properties.contains_key(field), "missing {field}");
     }
@@ -298,6 +297,7 @@ fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
         "temp_file",
         "profile",
         "pty",
+        "allow_cross_project_session",
     ] {
         assert!(
             !properties.contains_key(forbidden),

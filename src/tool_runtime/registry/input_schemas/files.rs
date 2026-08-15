@@ -171,7 +171,7 @@ pub(crate) fn search_project_texts_input_schema() -> Value {
         .as_object()
         .expect("search_project_text properties")
         .clone();
-    for outer_field in ["project", "session_id", "allow_cross_project_session"] {
+    for outer_field in ["project", "session_id"] {
         query_properties.remove(outer_field);
     }
     query_properties

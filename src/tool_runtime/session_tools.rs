@@ -422,8 +422,6 @@ impl ToolRuntime {
                     "project": project,
                     "resolved_project": resolved.resolved_id.clone(),
                     "request_project": resolved.resolved_id,
-                    "allow_cross_project_session_required": true,
-                    "allow_cross_project_session": false,
                 }),
             );
         }

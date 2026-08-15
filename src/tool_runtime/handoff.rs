@@ -219,8 +219,6 @@ impl ToolRuntime {
             output["warning_kind"] = json!(SESSION_PROJECT_MISMATCH_KIND);
             output["session_project"] = json!(mismatch.session_project);
             output["request_project"] = json!(mismatch.request_project);
-            output["allow_cross_project_session_required"] = json!(true);
-            output["allow_cross_project_session"] = json!(false);
         }
 
         // --- optional workspace summary ---

@@ -184,14 +184,26 @@ async fn read_only_cross_project_session_succeeds_with_structured_warning() {
     assert_eq!(result.output["warning_kind"], "session_project_mismatch");
     assert_eq!(result.output["session_project"], alpha);
     assert_eq!(result.output["request_project"], bravo);
-    assert_eq!(result.output["allow_cross_project_session_required"], true);
-    assert_eq!(result.output["allow_cross_project_session"], false);
+    for hidden in [
+        "allow_cross_project_session_required",
+        "allow_cross_project_session",
+    ] {
+        assert!(
+            result.output.get(hidden).is_none(),
+            "ordinary mismatch output must not advertise {hidden}: {}",
+            result.output
+        );
+    }
     let warning = result.output["warnings"]
         .as_array()
         .unwrap()
         .last()
         .unwrap();
     assert_eq!(warning["warning_kind"], "session_project_mismatch");
+    assert!(warning
+        .get("allow_cross_project_session_required")
+        .is_none());
+    assert!(warning.get("allow_cross_project_session").is_none());
 
     let summary = runtime
         .sessions
@@ -235,7 +247,11 @@ async fn mutation_cross_project_session_fails_before_write() {
     assert_eq!(result.output["failure_kind"], "session_project_mismatch");
     assert_eq!(result.output["session_project"], alpha);
     assert_eq!(result.output["request_project"], bravo);
-    assert_eq!(result.output["allow_cross_project_session_required"], true);
+    assert!(result
+        .output
+        .get("allow_cross_project_session_required")
+        .is_none());
+    assert!(result.output.get("allow_cross_project_session").is_none());
     assert_eq!(result.output["command_started"], false);
     assert!(result.output.get("permission").is_none());
     assert!(!tmp_b.path().join("blocked.txt").exists());
@@ -273,20 +289,26 @@ async fn allow_cross_project_session_allows_mutation_and_records_warning() {
         let auth = auth.clone();
         async move {
             runtime
-                .dispatch_with_auth_transport_options(
-                    ToolCall::WriteProjectFile {
-                        project: bravo,
-                        path: "allowed.txt".to_string(),
-                        content: "allowed\n".to_string(),
-                        session_id: Some(session_id),
-                        overwrite: None,
-                        expected_sha256: None,
-                        expected_content_prefix: None,
+                .call_tool_with_context(
+                    ToolCallRequest {
+                        tool_name: "write_project_file".to_string(),
+                        arguments: json!({
+                            "project": bravo,
+                            "path": "allowed.txt",
+                            "content": "allowed\n",
+                            "session_id": session_id,
+                            "allow_cross_project_session": true
+                        }),
                     },
-                    Some(&auth),
-                    sessions::SessionTransport::Api,
-                    true,
-                    true,
+                    ToolCallContext {
+                        transport: ToolTransport::Api,
+                        session_id: None,
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: true,
+                        host_file_import_trust:
+                            crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+                    },
                 )
                 .await
         }
@@ -308,10 +330,16 @@ async fn allow_cross_project_session_allows_mutation_and_records_warning() {
         "",
     )
     .await;
-    let result = task.await.unwrap();
+    let outcome = task.await.unwrap();
 
+    assert!(outcome.success);
+    let result = outcome.result.expect("tool result");
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["warning_kind"], "session_project_mismatch");
+    assert!(result
+        .output
+        .get("allow_cross_project_session_required")
+        .is_none());
     assert_eq!(result.output["allow_cross_project_session"], true);
     let summary = runtime
         .sessions
@@ -1321,9 +1349,9 @@ fn project_tool_schemas_include_optional_session_id() {
         );
         assert!(
             spec.input_schema["properties"]
-                .get(ALLOW_CROSS_PROJECT_SESSION_FIELD)
-                .is_some(),
-            "{name} schema missing allow_cross_project_session"
+                .get("allow_cross_project_session")
+                .is_none(),
+            "{name} model-facing schema must hide the cross-project debug escape"
         );
         assert!(
             !spec.input_schema["required"]
@@ -1332,14 +1360,6 @@ fn project_tool_schemas_include_optional_session_id() {
                 .iter()
                 .any(|field| field == "session_id"),
             "{name} schema must not require session_id"
-        );
-        assert!(
-            !spec.input_schema["required"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|field| field == ALLOW_CROSS_PROJECT_SESSION_FIELD),
-            "{name} schema must not require allow_cross_project_session"
         );
     }
     for name in ["read_file", "run_shell", "write_project_file"] {

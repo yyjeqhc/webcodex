@@ -179,6 +179,11 @@ async fn bind_current_session_rejects_project_mismatch() {
     assert_eq!(result.output["error_kind"], "session_project_mismatch");
     assert_eq!(result.output["session_project"], project_a);
     assert_eq!(result.output["resolved_project"], project_b);
+    assert!(result
+        .output
+        .get("allow_cross_project_session_required")
+        .is_none());
+    assert!(result.output.get("allow_cross_project_session").is_none());
 }
 
 #[tokio::test]

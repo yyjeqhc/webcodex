@@ -160,6 +160,12 @@ A missing Session leaves execution unchanged. A mismatched Session fails or,
 on an explicitly authorized cross-project escape path, executes without
 inheriting its context.
 
+The cross-project escape is a low-level compatibility/debug control. It remains
+auditable when explicitly used, but model-facing ToolSpecs and flattened Action
+arguments do not advertise it. Read-only mismatches may continue with a factual
+warning and without inheriting Session context; write/shell boundaries that
+require the escape fail closed on ordinary model paths.
+
 ### Explicit persistent shell
 
 The full operator runtime has a separate, command-oriented `PersistentShell`

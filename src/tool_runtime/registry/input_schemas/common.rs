@@ -1,9 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::tool_runtime::ALLOW_CROSS_PROJECT_SESSION_FIELD;
-
 pub(super) const OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session ledger and wins over any current-session binding.";
-const ALLOW_CROSS_PROJECT_SESSION_DESCRIPTION: &str = "Advanced/debug escape hatch. When true, allow recording a project tool call into a session whose associated project differs from the request project; the runtime still emits session_project_mismatch warning metadata.";
 
 pub(super) const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 
@@ -43,12 +40,6 @@ pub(super) fn with_optional_session_id(
         "session_id",
         "string",
         OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION,
-        false,
-    ));
-    fields.push((
-        ALLOW_CROSS_PROJECT_SESSION_FIELD,
-        "boolean",
-        ALLOW_CROSS_PROJECT_SESSION_DESCRIPTION,
         false,
     ));
     fields

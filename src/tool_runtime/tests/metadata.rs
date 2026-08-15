@@ -9,7 +9,7 @@ use crate::shell_protocol::{
 use crate::tool_runtime::sessions::{
     TOOL_CALL_EXPECTATION_METADATA_FIELDS, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
 };
-use crate::tool_runtime::{ALLOW_CROSS_PROJECT_SESSION_FIELD, TOOL_CALL_WRAPPER_FIELDS};
+use crate::tool_runtime::TOOL_CALL_WRAPPER_FIELDS;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -1218,15 +1218,11 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     ] {
         assert!(accepted("finish_coding_task").contains(&field.to_string()));
     }
-    for field in [
-        "project",
-        "path",
-        "allow_missing",
-        "session_id",
-        ALLOW_CROSS_PROJECT_SESSION_FIELD,
-    ] {
+    for field in ["project", "path", "allow_missing", "session_id"] {
         assert!(accepted("read_project_artifact_metadata").contains(&field.to_string()));
     }
+    assert!(!accepted("read_project_artifact_metadata")
+        .contains(&"allow_cross_project_session".to_string()));
     for (tool, fields) in [
         (
             "artifact_upload_begin",

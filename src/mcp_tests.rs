@@ -2323,9 +2323,10 @@ async fn complete_mcp_import_save(
         .unwrap();
 }
 
-async fn mcp_export_runtime(
+async fn mcp_export_runtime_with_optimized_chunk(
     root: &std::path::Path,
     owner: Option<&str>,
+    optimized_chunk: bool,
 ) -> (
     Arc<ToolRuntime>,
     Arc<crate::shell_client::ShellClientRegistry>,
@@ -2347,6 +2348,7 @@ async fn mcp_export_runtime(
             hostname: None,
             capabilities: Some(ShellClientCapabilities {
                 file_read: true,
+                artifact_export_chunk_read: optimized_chunk,
                 ..Default::default()
             }),
             projects: Some(vec![ShellAgentProjectSummary {
@@ -2377,6 +2379,16 @@ async fn mcp_export_runtime(
     (runtime, registry)
 }
 
+async fn mcp_export_runtime(
+    root: &std::path::Path,
+    owner: Option<&str>,
+) -> (
+    Arc<ToolRuntime>,
+    Arc<crate::shell_client::ShellClientRegistry>,
+) {
+    mcp_export_runtime_with_optimized_chunk(root, owner, true).await
+}
+
 fn mcp_export_api_auth(api_key_id: &str, username: &str) -> crate::auth::AuthContext {
     let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::ApiToken);
     auth.username = Some(username.to_string());
@@ -2384,6 +2396,47 @@ fn mcp_export_api_auth(api_key_id: &str, username: &str) -> crate::auth::AuthCon
     auth.token_kind = Some("user".to_string());
     auth.scopes = vec![crate::auth::SCOPE_PROJECT_READ.to_string()];
     auth
+}
+
+async fn poll_mcp_export_request(
+    registry: &Arc<crate::shell_client::ShellClientRegistry>,
+) -> crate::shell_protocol::ShellAgentShellRequest {
+    use crate::shell_protocol::ShellAgentPollRequest;
+    loop {
+        if let Some(request) = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "exporter".to_string(),
+                agent_instance_id: "inst-export".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+        {
+            return request;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
+async fn complete_mcp_export_request(
+    registry: &Arc<crate::shell_client::ShellClientRegistry>,
+    request: crate::shell_protocol::ShellAgentShellRequest,
+    stdout: Value,
+) {
+    use crate::shell_protocol::ShellAgentResultRequest;
+    registry
+        .complete(ShellAgentResultRequest {
+            client_id: "exporter".to_string(),
+            agent_instance_id: "inst-export".to_string(),
+            request_id: request.request_id,
+            exit_code: Some(0),
+            stdout: Some(stdout.to_string()),
+            stderr: None,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
 }
 
 async fn complete_mcp_export_metadata(
@@ -2442,6 +2495,8 @@ enum McpExportChunkFault {
     InvalidBase64,
     Offset,
     Eof,
+    MutateFirstChunk,
+    MutateLaterChunk,
 }
 
 async fn complete_mcp_export_resource_read(
@@ -2470,16 +2525,27 @@ async fn complete_mcp_export_resource_read(
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         };
-        assert_eq!(request.kind, "file_read_project_artifact");
+        assert_eq!(
+            request.kind, "file_read_project_artifact_export_chunk",
+            "optimized-capable Runner must receive the internal export chunk request"
+        );
         let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
         assert_eq!(payload["path"], path);
-        assert_eq!(payload["max_file_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
+        assert_eq!(payload["expected_file_bytes"], bytes.len());
+        assert!(payload.get("max_file_bytes").is_none());
         let offset = payload["offset"].as_u64().unwrap() as usize;
         let length = payload["length"].as_u64().unwrap() as usize;
         assert_eq!(offset, expected_offset);
         assert!(length <= MAX_READ_PROJECT_ARTIFACT_LENGTH);
         let end = offset.saturating_add(length).min(bytes.len());
-        let chunk = &bytes[offset..end];
+        let mut chunk = bytes[offset..end].to_vec();
+        if (fault == McpExportChunkFault::MutateFirstChunk && offset == 0)
+            || (fault == McpExportChunkFault::MutateLaterChunk && offset > 0)
+        {
+            if let Some(first) = chunk.first_mut() {
+                *first ^= 0xff;
+            }
+        }
         let eof = end == bytes.len();
         let reported_offset = if fault == McpExportChunkFault::Offset && offset == 0 {
             1
@@ -2494,13 +2560,11 @@ async fn complete_mcp_export_resource_read(
         let content_base64 = if fault == McpExportChunkFault::InvalidBase64 && offset == 0 {
             "***not-base64***".to_string()
         } else {
-            general_purpose::STANDARD.encode(chunk)
+            general_purpose::STANDARD.encode(&chunk)
         };
         let stdout = json!({
             "path": path,
-            "mime_type": mime_type,
             "file_bytes": bytes.len(),
-            "sha256": sha256,
             "offset": reported_offset,
             "bytes_returned": chunk.len(),
             "content_base64": content_base64,
@@ -2522,9 +2586,81 @@ async fn complete_mcp_export_resource_read(
             })
             .await
             .unwrap();
-        if fault != McpExportChunkFault::None && offset == 0 {
+        if matches!(
+            fault,
+            McpExportChunkFault::InvalidBase64
+                | McpExportChunkFault::Offset
+                | McpExportChunkFault::Eof
+        ) && offset == 0
+        {
             return;
         }
+        expected_offset = end;
+    }
+}
+
+async fn complete_mcp_export_resource_read_legacy(
+    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    path: &str,
+    bytes: Vec<u8>,
+    mime_type: &str,
+    sha256: &str,
+) {
+    use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+    complete_mcp_export_metadata(registry.clone(), path, bytes.len(), sha256, mime_type).await;
+    let mut expected_offset = 0usize;
+    while expected_offset < bytes.len() {
+        let request = loop {
+            if let Some(request) = registry
+                .poll(ShellAgentPollRequest {
+                    client_id: "exporter".to_string(),
+                    agent_instance_id: "inst-export".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap()
+            {
+                break request;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        };
+        assert_eq!(request.kind, "file_read_project_artifact");
+        let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["path"], path);
+        assert_eq!(payload["max_file_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
+        let offset = payload["offset"].as_u64().unwrap() as usize;
+        let length = payload["length"].as_u64().unwrap() as usize;
+        assert_eq!(offset, expected_offset);
+        let end = offset.saturating_add(length).min(bytes.len());
+        let chunk = &bytes[offset..end];
+        let eof = end == bytes.len();
+        registry
+            .complete(ShellAgentResultRequest {
+                client_id: "exporter".to_string(),
+                agent_instance_id: "inst-export".to_string(),
+                request_id: request.request_id,
+                exit_code: Some(0),
+                stdout: Some(
+                    json!({
+                        "path": path,
+                        "mime_type": mime_type,
+                        "file_bytes": bytes.len(),
+                        "sha256": sha256,
+                        "offset": offset,
+                        "bytes_returned": chunk.len(),
+                        "content_base64": general_purpose::STANDARD.encode(chunk),
+                        "next_offset": end,
+                        "truncated": !eof,
+                        "eof": eof,
+                    })
+                    .to_string(),
+                ),
+                stderr: None,
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
         expected_offset = end;
     }
 }
@@ -2923,6 +3059,289 @@ async fn mcp_artifact_export_resource_link_and_binary_round_trip() {
 }
 
 #[tokio::test]
+async fn mcp_artifact_export_old_runner_uses_safe_legacy_fallback() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) =
+        mcp_export_runtime_with_optimized_chunk(tmp.path(), Some("alice"), false).await;
+    let auth = mcp_export_api_auth("key-legacy", "alice");
+    let bytes = vec![0x41; 70 * 1024];
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let export = issue_mcp_artifact_export(
+        runtime.clone(),
+        registry.clone(),
+        auth.clone(),
+        "paper/legacy.pdf",
+        &bytes,
+        "application/pdf",
+    )
+    .await;
+    let uri = export["result"]["content"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let read = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let uri = uri.clone();
+        async move {
+            handle_mcp_request(
+                &runtime,
+                rpc(
+                    "resources/read",
+                    Some(json!(3120)),
+                    mcp_2026_params(json!({"uri": uri})),
+                ),
+                Some(&auth),
+            )
+            .await
+        }
+    });
+    complete_mcp_export_resource_read_legacy(
+        registry,
+        "paper/legacy.pdf",
+        bytes.clone(),
+        "application/pdf",
+        &sha256,
+    )
+    .await;
+    let McpOutcome::Ok(value) = read.await.unwrap() else {
+        panic!("old Runner must use the explicit legacy fallback");
+    };
+    let decoded = general_purpose::STANDARD
+        .decode(value["result"]["contents"][0]["blob"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(decoded, bytes);
+}
+
+#[tokio::test]
+async fn mcp_artifact_export_same_size_mutations_fail_final_sha() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_export_runtime(tmp.path(), Some("alice")).await;
+    let auth = mcp_export_api_auth("key-mutation", "alice");
+    let bytes = vec![0x5a; 70 * 1024];
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    for fault in [
+        McpExportChunkFault::MutateFirstChunk,
+        McpExportChunkFault::MutateLaterChunk,
+    ] {
+        let export = issue_mcp_artifact_export(
+            runtime.clone(),
+            registry.clone(),
+            auth.clone(),
+            "paper/mutation.pdf",
+            &bytes,
+            "application/pdf",
+        )
+        .await;
+        let uri = export["result"]["content"][0]["uri"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let read = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            async move {
+                handle_mcp_request(
+                    &runtime,
+                    rpc(
+                        "resources/read",
+                        Some(json!(3121)),
+                        mcp_2026_params(json!({"uri": uri})),
+                    ),
+                    Some(&auth),
+                )
+                .await
+            }
+        });
+        complete_mcp_export_resource_read(
+            registry.clone(),
+            "paper/mutation.pdf",
+            bytes.clone(),
+            "application/pdf",
+            &sha256,
+            fault,
+        )
+        .await;
+        match read.await.unwrap() {
+            McpOutcome::BadRequest(value) => {
+                assert_eq!(value["error"]["code"], -32602, "fault: {fault:?}");
+                assert_eq!(
+                    value["error"]["message"], "Exported artifact no longer matches its snapshot",
+                    "fault: {fault:?}"
+                );
+            }
+            other => panic!("same-size mutation {fault:?} must fail closed, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_artifact_export_backpressure_is_two_way_bounded_and_retryable() {
+    use crate::shell_protocol::ShellAgentPollRequest;
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_export_runtime(tmp.path(), Some("alice")).await;
+    let auth = mcp_export_api_auth("key-gate", "alice");
+    let bytes = b"%PDF-1.7\nconcurrent export\n%%EOF\n".to_vec();
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let stable = ToolResult::ok(json!({
+        "project": "agent:exporter:demo",
+        "path": "paper/gate.pdf",
+        "bytes": bytes.len(),
+        "sha256": sha256,
+        "mime_type": "application/pdf",
+        "name": "gate.pdf",
+    }));
+    let caller = mcp_artifact_export_caller_binding(Some(&auth)).unwrap();
+    let (uri, _) = mcp_issue_artifact_export(caller, &stable).unwrap();
+    let gate = Arc::new(Semaphore::new(2));
+
+    let spawn_read = |id: i64| {
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let uri = uri.clone();
+        let gate = gate.clone();
+        tokio::spawn(async move {
+            let _ = id;
+            mcp_artifact_export_resource_read_with_gate(
+                &runtime,
+                &uri,
+                Some(&auth),
+                gate.as_ref(),
+                Duration::from_secs(1),
+            )
+            .await
+        })
+    };
+    let first = spawn_read(1);
+    let second = spawn_read(2);
+    let first_metadata = poll_mcp_export_request(&registry).await;
+    let second_metadata = poll_mcp_export_request(&registry).await;
+    assert_eq!(first_metadata.kind, "file_read_project_artifact_metadata");
+    assert_eq!(second_metadata.kind, "file_read_project_artifact_metadata");
+    assert_eq!(gate.available_permits(), 0);
+
+    let busy = mcp_artifact_export_resource_read_with_gate(
+        &runtime,
+        &uri,
+        Some(&auth),
+        gate.as_ref(),
+        Duration::from_millis(25),
+    )
+    .await;
+    assert!(matches!(busy, Err(McpArtifactExportReadError::Busy)));
+    assert!(
+        registry
+            .poll(ShellAgentPollRequest {
+                client_id: "exporter".to_string(),
+                agent_instance_id: "inst-export".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "busy admission must not start a Runner read"
+    );
+
+    for request in [first_metadata, second_metadata] {
+        complete_mcp_export_request(
+            &registry,
+            request,
+            json!({
+                "path": "paper/gate.pdf",
+                "bytes": bytes.len(),
+                "sha256": sha256,
+                "mime_type": "application/pdf",
+            }),
+        )
+        .await;
+    }
+    for _ in 0..2 {
+        let request = poll_mcp_export_request(&registry).await;
+        assert_eq!(request.kind, "file_read_project_artifact_export_chunk");
+        let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+        let offset = payload["offset"].as_u64().unwrap() as usize;
+        let length = payload["length"].as_u64().unwrap() as usize;
+        let end = offset.saturating_add(length).min(bytes.len());
+        complete_mcp_export_request(
+            &registry,
+            request,
+            json!({
+                "path": "paper/gate.pdf",
+                "file_bytes": bytes.len(),
+                "offset": offset,
+                "bytes_returned": end - offset,
+                "content_base64": general_purpose::STANDARD.encode(&bytes[offset..end]),
+                "next_offset": end,
+                "truncated": end < bytes.len(),
+                "eof": end == bytes.len(),
+            }),
+        )
+        .await;
+    }
+    assert!(first.await.unwrap().is_ok());
+    assert!(second.await.unwrap().is_ok());
+    assert_eq!(gate.available_permits(), 2);
+
+    // The busy attempt did not consume the handle: the same authenticated
+    // caller can retry it after capacity returns.
+    let retry = spawn_read(3);
+    let metadata = poll_mcp_export_request(&registry).await;
+    complete_mcp_export_request(
+        &registry,
+        metadata,
+        json!({
+            "path": "paper/gate.pdf",
+            "bytes": bytes.len(),
+            "sha256": sha256,
+            "mime_type": "application/pdf",
+        }),
+    )
+    .await;
+    let chunk = poll_mcp_export_request(&registry).await;
+    let payload: Value = serde_json::from_str(chunk.content.as_deref().unwrap()).unwrap();
+    let offset = payload["offset"].as_u64().unwrap() as usize;
+    let length = payload["length"].as_u64().unwrap() as usize;
+    let end = offset.saturating_add(length).min(bytes.len());
+    complete_mcp_export_request(
+        &registry,
+        chunk,
+        json!({
+            "path": "paper/gate.pdf",
+            "file_bytes": bytes.len(),
+            "offset": offset,
+            "bytes_returned": end - offset,
+            "content_base64": general_purpose::STANDARD.encode(&bytes[offset..end]),
+            "next_offset": end,
+            "truncated": false,
+            "eof": true,
+        }),
+    )
+    .await;
+    assert!(retry.await.unwrap().is_ok());
+    assert_eq!(gate.available_permits(), 2);
+
+    // A terminal snapshot failure also releases its RAII permit.
+    let failed = spawn_read(4);
+    let metadata = poll_mcp_export_request(&registry).await;
+    complete_mcp_export_request(
+        &registry,
+        metadata,
+        json!({
+            "path": "paper/gate.pdf",
+            "bytes": bytes.len(),
+            "sha256": "b".repeat(64),
+            "mime_type": "application/pdf",
+        }),
+    )
+    .await;
+    assert!(matches!(
+        failed.await.unwrap(),
+        Err(McpArtifactExportReadError::SnapshotChanged)
+    ));
+    assert_eq!(gate.available_permits(), 2);
+}
+
+#[tokio::test]
 async fn mcp_artifact_export_resource_is_caller_bound_and_rechecks_project_authorization() {
     let tmp = tempfile::tempdir().unwrap();
     let (runtime, registry) = mcp_export_runtime(tmp.path(), Some("alice")).await;
@@ -3188,7 +3607,7 @@ fn mcp_artifact_export_preserves_ten_mib_bound_and_durable_projection_has_no_han
 }
 
 #[test]
-fn mcp_artifact_export_registry_is_bounded_and_cleans_expired_entries() {
+fn mcp_artifact_export_registry_is_bounded_fair_and_cleans_expired_entries() {
     let snapshot = ProjectArtifactExportSnapshot {
         path: "paper/report.pdf".to_string(),
         bytes: 1,
@@ -3196,32 +3615,86 @@ fn mcp_artifact_export_registry_is_bounded_and_cleans_expired_entries() {
         mime_type: "application/pdf".to_string(),
         name: "report.pdf".to_string(),
     };
-    let caller = McpArtifactExportCallerBinding::ApiToken {
-        api_key_id: "key-registry".to_string(),
+    let caller_a = McpArtifactExportCallerBinding::ApiToken {
+        api_key_id: "key-registry-a".to_string(),
+    };
+    let caller_b = McpArtifactExportCallerBinding::ApiToken {
+        api_key_id: "key-registry-b".to_string(),
     };
     let mut registry = McpArtifactExportRegistry::default();
     let expired_uri = registry.insert(McpArtifactExportRecord {
-        caller: caller.clone(),
+        caller: caller_a.clone(),
         project: "agent:exporter:demo".to_string(),
         snapshot: snapshot.clone(),
         expires_at: Instant::now(),
     });
-    assert!(registry.get_for_caller(&expired_uri, &caller).is_none());
+    assert!(registry.get_for_caller(&expired_uri, &caller_a).is_none());
     assert!(registry.entries.is_empty());
 
-    let mut uris = std::collections::HashSet::new();
-    for _ in 0..(MAX_MCP_ARTIFACT_EXPORTS + 7) {
-        let uri = registry.insert(McpArtifactExportRecord {
-            caller: caller.clone(),
+    let b_uri = registry.insert(McpArtifactExportRecord {
+        caller: caller_b.clone(),
+        project: "agent:exporter:demo".to_string(),
+        snapshot: snapshot.clone(),
+        expires_at: Instant::now() + MCP_ARTIFACT_EXPORT_TTL,
+    });
+    let mut a_uris = Vec::new();
+    for _ in 0..MAX_MCP_ARTIFACT_EXPORTS_PER_CALLER {
+        a_uris.push(registry.insert(McpArtifactExportRecord {
+            caller: caller_a.clone(),
             project: "agent:exporter:demo".to_string(),
             snapshot: snapshot.clone(),
             expires_at: Instant::now() + MCP_ARTIFACT_EXPORT_TTL,
-        });
-        assert!(uris.insert(uri.clone()), "export handles must be unique");
-        assert!(mcp_artifact_export_id_from_uri(&uri).is_some());
+        }));
     }
-    assert_eq!(registry.entries.len(), MAX_MCP_ARTIFACT_EXPORTS);
-    assert_eq!(registry.order.len(), MAX_MCP_ARTIFACT_EXPORTS);
+    let a_oldest = a_uris[0].clone();
+    let a_17th = registry.insert(McpArtifactExportRecord {
+        caller: caller_a.clone(),
+        project: "agent:exporter:demo".to_string(),
+        snapshot: snapshot.clone(),
+        expires_at: Instant::now() + MCP_ARTIFACT_EXPORT_TTL,
+    });
+    assert!(registry.get_for_caller(&a_oldest, &caller_a).is_none());
+    assert!(registry.get_for_caller(&a_17th, &caller_a).is_some());
+    assert!(
+        registry.get_for_caller(&b_uri, &caller_b).is_some(),
+        "caller A churn must not evict caller B while A is constrained by its own quota"
+    );
+    assert_eq!(
+        registry
+            .entries
+            .values()
+            .filter(|record| record.caller == caller_a)
+            .count(),
+        MAX_MCP_ARTIFACT_EXPORTS_PER_CALLER
+    );
+
+    let mut global = McpArtifactExportRegistry::default();
+    for caller_index in 0..(MAX_MCP_ARTIFACT_EXPORTS / MAX_MCP_ARTIFACT_EXPORTS_PER_CALLER) {
+        let caller = McpArtifactExportCallerBinding::ApiToken {
+            api_key_id: format!("key-global-{caller_index}"),
+        };
+        for _ in 0..MAX_MCP_ARTIFACT_EXPORTS_PER_CALLER {
+            global.insert(McpArtifactExportRecord {
+                caller: caller.clone(),
+                project: "agent:exporter:demo".to_string(),
+                snapshot: snapshot.clone(),
+                expires_at: Instant::now() + MCP_ARTIFACT_EXPORT_TTL,
+            });
+        }
+    }
+    assert_eq!(global.entries.len(), MAX_MCP_ARTIFACT_EXPORTS);
+    assert_eq!(global.order.len(), MAX_MCP_ARTIFACT_EXPORTS);
+    let extra_caller = McpArtifactExportCallerBinding::ApiToken {
+        api_key_id: "key-global-extra".to_string(),
+    };
+    global.insert(McpArtifactExportRecord {
+        caller: extra_caller,
+        project: "agent:exporter:demo".to_string(),
+        snapshot,
+        expires_at: Instant::now() + MCP_ARTIFACT_EXPORT_TTL,
+    });
+    assert_eq!(global.entries.len(), MAX_MCP_ARTIFACT_EXPORTS);
+    assert_eq!(global.order.len(), MAX_MCP_ARTIFACT_EXPORTS);
 }
 
 #[tokio::test]

@@ -9,13 +9,14 @@ use base64::{engine::general_purpose, Engine as _};
 use flate2::read::DeflateDecoder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use xml::reader::{EventReader, XmlEvent};
 
 const DEFAULT_MAX_ARTIFACT_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_ARTIFACT_READ_LENGTH: usize = 32 * 1024;
+const MAX_ARTIFACT_EXPORT_CHUNK_BYTES: usize = 64 * 1024;
 const DEFAULT_MAX_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_OOXML_ZIP_ENTRIES: usize = 4096;
 const MAX_OOXML_CENTRAL_DIRECTORY_BYTES: usize = 2 * 1024 * 1024;
@@ -30,6 +31,7 @@ pub(crate) fn is_artifact_request_kind(kind: &str) -> bool {
         "file_save_project_artifact"
             | "file_read_project_artifact_metadata"
             | "file_read_project_artifact"
+            | "file_read_project_artifact_export_chunk"
             | "file_artifact_upload_begin"
             | "file_artifact_upload_chunk"
             | "file_artifact_upload_finish"
@@ -837,6 +839,9 @@ pub(crate) fn handle_artifact_file_request(
             handle_read_project_artifact_metadata(request, resolved, start)
         }
         "file_read_project_artifact" => handle_read_project_artifact(request, resolved, start),
+        "file_read_project_artifact_export_chunk" => {
+            handle_read_project_artifact_export_chunk(request, resolved, start)
+        }
         "file_artifact_upload_begin" => handle_artifact_upload_begin(request, resolved, start),
         "file_artifact_upload_chunk" => handle_artifact_upload_chunk(request, resolved, start),
         "file_artifact_upload_finish" => handle_artifact_upload_finish(request, resolved, start),
@@ -1644,6 +1649,147 @@ fn handle_read_project_artifact_metadata(
         out["archive_entries_count"] = json!(zip_entry_count(&data));
     }
     line_edit_stdout(out, start)
+}
+
+fn handle_read_project_artifact_export_chunk(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let payload = match parse_json_payload(request) {
+        Ok(payload) => payload,
+        Err(e) => return line_edit_stdout(read_error(None, e), start),
+    };
+    if let Err(e) = validate_artifact_agent_path(path) {
+        return line_edit_stdout(read_error(Some(path), e), start);
+    }
+    let root = match project_root(request) {
+        Ok(root) => root,
+        Err(e) => return line_edit_stdout(read_error(Some(path), e), start),
+    };
+    if let Err(e) = ensure_existing_target_in_project_root(resolved, &root) {
+        let msg = e.replacen("read failed", "stat failed", 1);
+        return line_edit_stdout(read_error(Some(path), msg), start);
+    }
+    if payload.get("expected_file_bytes").is_none() {
+        return line_edit_stdout(
+            read_error(Some(path), "expected_file_bytes is required"),
+            start,
+        );
+    }
+    let expected_file_bytes = match parse_usize_field(&payload, "expected_file_bytes", 0) {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(read_error(Some(path), e), start),
+    };
+    if expected_file_bytes > DEFAULT_MAX_ARTIFACT_BYTES {
+        return line_edit_stdout(
+            read_error(
+                Some(path),
+                format!(
+                    "artifact is too large to export; maximum is {} bytes",
+                    DEFAULT_MAX_ARTIFACT_BYTES
+                ),
+            ),
+            start,
+        );
+    }
+    let offset = match parse_usize_field(&payload, "offset", 0) {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(read_error(Some(path), e), start),
+    };
+    let length = match parse_usize_field(&payload, "length", DEFAULT_ARTIFACT_READ_LENGTH) {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(read_error(Some(path), e), start),
+    };
+    if length == 0 || length > MAX_ARTIFACT_EXPORT_CHUNK_BYTES {
+        return line_edit_stdout(
+            read_error(
+                Some(path),
+                format!(
+                    "length must be between 1 and {} bytes",
+                    MAX_ARTIFACT_EXPORT_CHUNK_BYTES
+                ),
+            ),
+            start,
+        );
+    }
+    let mut file = match std::fs::File::open(resolved) {
+        Ok(file) => file,
+        Err(e) => {
+            return line_edit_stdout(read_error(Some(path), format!("read failed: {e}")), start)
+        }
+    };
+    let metadata = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            return line_edit_stdout(read_error(Some(path), format!("stat failed: {e}")), start)
+        }
+    };
+    let file_bytes = match usize::try_from(metadata.len()) {
+        Ok(value) => value,
+        Err(_) => {
+            return line_edit_stdout(
+                read_error(Some(path), "artifact size does not fit this platform"),
+                start,
+            )
+        }
+    };
+    if file_bytes > DEFAULT_MAX_ARTIFACT_BYTES {
+        return line_edit_stdout(
+            read_error(
+                Some(path),
+                format!(
+                    "artifact is too large to export; maximum is {} bytes",
+                    DEFAULT_MAX_ARTIFACT_BYTES
+                ),
+            ),
+            start,
+        );
+    }
+    if file_bytes != expected_file_bytes {
+        let mut output = read_error(
+            Some(path),
+            format!(
+                "artifact size changed during export; expected {expected_file_bytes} bytes, found {file_bytes}"
+            ),
+        );
+        output["error_kind"] = json!("snapshot_changed");
+        return line_edit_stdout(output, start);
+    }
+    if offset > file_bytes {
+        return line_edit_stdout(
+            read_error(Some(path), "offset exceeds artifact size"),
+            start,
+        );
+    }
+    let requested_end = match offset.checked_add(length) {
+        Some(value) => value,
+        None => return line_edit_stdout(read_error(Some(path), "offset + length overflow"), start),
+    };
+    let next_offset = requested_end.min(file_bytes);
+    let bytes_to_read = next_offset - offset;
+    if let Err(e) = file.seek(SeekFrom::Start(offset as u64)) {
+        return line_edit_stdout(read_error(Some(path), format!("seek failed: {e}")), start);
+    }
+    let mut segment = vec![0_u8; bytes_to_read];
+    if let Err(e) = file.read_exact(&mut segment) {
+        return line_edit_stdout(read_error(Some(path), format!("read failed: {e}")), start);
+    }
+    let truncated = next_offset < file_bytes;
+    line_edit_stdout(
+        json!({
+            "path": path,
+            "file_bytes": file_bytes,
+            "offset": offset,
+            "bytes_returned": segment.len(),
+            "content_base64": general_purpose::STANDARD.encode(segment),
+            "next_offset": next_offset,
+            "truncated": truncated,
+            "eof": !truncated,
+        }),
+        start,
+    )
 }
 
 fn handle_read_project_artifact(

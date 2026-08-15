@@ -1814,6 +1814,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.jobs = true;
     capabilities.file_read = true;
     capabilities.file_write = true;
+    // This binary implements the narrow internal seek/read export-chunk path.
+    // Older binaries omit the field so Control uses the existing slow fallback.
+    capabilities.artifact_export_chunk_read = true;
     // This binary implements the complete bounded structured delete contract.
     // Older binaries omit the field and therefore keep using the Server's legacy path.
     capabilities.structured_file_delete = true;
@@ -2158,6 +2161,7 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         "file_save_project_artifact"
         | "file_read_project_artifact_metadata"
         | "file_read_project_artifact"
+        | "file_read_project_artifact_export_chunk"
         | "file_artifact_upload_begin"
         | "file_artifact_upload_chunk"
         | "file_artifact_upload_finish"

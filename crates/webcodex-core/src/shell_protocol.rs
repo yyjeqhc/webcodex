@@ -104,6 +104,10 @@ pub const AGENT_QUIC_ALPN_V1: &str = "webcodex-runner/1";
 pub const SHELL_CLIENT_CAPABILITY_SHELL: &str = "shell";
 pub const SHELL_CLIENT_CAPABILITY_FILE_READ: &str = "file_read";
 pub const SHELL_CLIENT_CAPABILITY_FILE_WRITE: &str = "file_write";
+/// The Runner implements a narrow internal project-artifact export chunk read
+/// that seeks and reads only the requested bounded segment. Missing on older
+/// Runners is false and must never be inferred from ordinary file_read.
+pub const SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ: &str = "artifact_export_chunk_read";
 /// The Runner implements bounded, project-root-enforced structured file deletion.
 /// Missing on older Runners and false; never inferred from file_write, shell,
 /// protocol version, transport, or operating system.
@@ -203,6 +207,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_SHELL,
     SHELL_CLIENT_CAPABILITY_FILE_READ,
     SHELL_CLIENT_CAPABILITY_FILE_WRITE,
+    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_JOBS,
@@ -256,6 +261,10 @@ pub struct ShellClientCapabilities {
     pub file_read: bool,
     #[serde(default)]
     pub file_write: bool,
+    /// Internal bounded export-segment read that does not recompute whole-file
+    /// MIME/SHA metadata. Missing on older Runners is false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub artifact_export_chunk_read: bool,
     /// Bounded structured file deletion with Runner-authoritative project-root
     /// containment and file-only semantics. Missing on older Runners is false.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -386,6 +395,7 @@ impl Default for ShellClientCapabilities {
             shell: true,
             file_read: false,
             file_write: false,
+            artifact_export_chunk_read: false,
             structured_file_delete: false,
             git: false,
             jobs: false,

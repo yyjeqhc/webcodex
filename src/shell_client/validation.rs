@@ -237,6 +237,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "save_project_artifact"
         | "read_project_artifact_metadata"
         | "read_project_artifact"
+        | "read_project_artifact_export_chunk"
         | "artifact_upload_begin"
         | "artifact_upload_chunk"
         | "artifact_upload_finish"
@@ -245,7 +246,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "checkpoint_restore" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, project_overview, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore"
+                "op must be one of read, write, list, project_overview, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_project_artifact_export_chunk, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore"
                     .to_string(),
             )
         }
@@ -257,6 +258,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         "save_project_artifact"
             | "read_project_artifact_metadata"
             | "read_project_artifact"
+            | "read_project_artifact_export_chunk"
             | "artifact_upload_begin"
             | "artifact_upload_chunk"
             | "artifact_upload_finish"

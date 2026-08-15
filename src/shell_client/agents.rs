@@ -194,6 +194,19 @@ impl ShellClientRegistry {
                     .to_string(),
             );
         }
+        // This optimized export request kind is process-lifetime binary support.
+        // Reject same-instance downgrade so a request already admitted for this
+        // process is never handed to a registration claiming it cannot decode it.
+        if inner.clients.get(&client_id).is_some_and(|existing| {
+            existing.agent_instance_id == agent_instance_id
+                && existing.capabilities.artifact_export_chunk_read
+                && !capabilities.artifact_export_chunk_read
+        }) {
+            return Err(
+                "same runner instance cannot downgrade artifact_export_chunk_read capability"
+                    .to_string(),
+            );
+        }
         // Enforce the agent instance lease. `client_id` is the unique active
         // agent identity: at most one agent process may be online for it at a
         // time.

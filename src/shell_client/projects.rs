@@ -3,7 +3,8 @@ use super::auth::assert_shell_client_access;
 use super::validation::validate_id;
 use super::ShellClientRegistry;
 use crate::shell_protocol::{
-    ShellAgentProjectSummary, ShellClientCapabilities, SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
+    ShellAgentProjectSummary, ShellClientCapabilities,
+    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ, SHELL_CLIENT_CAPABILITY_ASYNC_JOBS,
     SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
@@ -47,6 +48,7 @@ pub(super) fn capability_enabled(caps: &ShellClientCapabilities, capability: &st
         SHELL_CLIENT_CAPABILITY_SHELL => caps.shell,
         SHELL_CLIENT_CAPABILITY_FILE_READ => caps.file_read,
         SHELL_CLIENT_CAPABILITY_FILE_WRITE => caps.file_write,
+        SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ => caps.artifact_export_chunk_read,
         SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE => caps.structured_file_delete,
         SHELL_CLIENT_CAPABILITY_GIT => caps.git,
         SHELL_CLIENT_CAPABILITY_JOBS => caps.jobs,

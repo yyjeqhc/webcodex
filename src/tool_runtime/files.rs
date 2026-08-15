@@ -25,6 +25,7 @@ use crate::artifact_policy::{
     has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error,
     ooxml_extension_for_mime, MAX_MCP_IMAGE_BYTES,
 };
+use crate::auth::AuthContext;
 use crate::project_overview::{
     effective_project_overview_limit, effective_project_overview_max_depth,
     normalize_project_overview_path,
@@ -2924,6 +2925,123 @@ impl ToolRuntime {
                 &stdout[..stdout.len().min(200)]
             )
         })
+    }
+
+    /// Internal-only optimized segment transport for MCP artifact export. This
+    /// is not a ToolCall and has no model schema. Project ownership and Runner
+    /// access are re-resolved for the authenticated caller before each enqueue;
+    /// the registry then atomically fences file_read plus the additive optimized
+    /// capability with request admission. `Ok(None)` means only that the current
+    /// Runner predates the optimized request and the caller may use the existing
+    /// public read_project_artifact compatibility path.
+    pub(crate) async fn read_project_artifact_export_chunk_internal(
+        &self,
+        project: &str,
+        path: &str,
+        expected_file_bytes: usize,
+        offset: usize,
+        length: usize,
+        auth: Option<&AuthContext>,
+    ) -> Result<Option<Value>, String> {
+        if let Err(error) = validate_artifact_file_path(path) {
+            return Err(error);
+        }
+        if expected_file_bytes > MAX_PROJECT_ARTIFACT_BYTES {
+            return Err(format!(
+                "artifact is too large to export; maximum is {} bytes",
+                MAX_PROJECT_ARTIFACT_BYTES
+            ));
+        }
+        if length == 0 || length > MAX_READ_PROJECT_ARTIFACT_LENGTH {
+            return Err(format!(
+                "artifact export chunk length must be between 1 and {} bytes",
+                MAX_READ_PROJECT_ARTIFACT_LENGTH
+            ));
+        }
+        offset
+            .checked_add(length)
+            .ok_or_else(|| "artifact export offset + length overflow".to_string())?;
+        let resolved = self
+            .resolve_project_for_auth(project, auth)
+            .await
+            .map_err(|error| error.to_message())?;
+        if !resolved.is_agent() {
+            return Err("artifact export chunks require an agent-registered project".to_string());
+        }
+        let client_id = resolved.agent_client_id()?.to_string();
+        let payload = json!({
+            "path": path,
+            "expected_file_bytes": expected_file_bytes,
+            "offset": offset,
+            "length": length,
+        });
+        let serialized = serde_json::to_string(&payload).map_err(|error| {
+            format!("failed to serialize artifact export chunk payload: {error}")
+        })?;
+        let wait_timeout = 60_u64;
+        let request = ShellFileOpRequest {
+            op: "read_project_artifact_export_chunk".to_string(),
+            client_id,
+            path: path.to_string(),
+            cwd: Some(resolved.path.clone()),
+            content: Some(serialized),
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            wait_timeout_secs: wait_timeout,
+        };
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_artifact_export_chunk(request, "mcp_artifact_export".to_string(), auth)
+            .await
+        {
+            Ok(request) => request,
+            Err(error)
+                if error.contains(
+                    crate::shell_protocol::SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
+                ) =>
+            {
+                return Ok(None)
+            }
+            Err(error) => return Err(error),
+        };
+        let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return Err("agent artifact export chunk request was dropped".to_string());
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return Err("timed out waiting for agent artifact export chunk".to_string());
+            }
+        };
+        if let Some(error) = response.error {
+            return Err(error);
+        }
+        if response.exit_code != Some(0) {
+            return Err(response.stderr.unwrap_or_else(|| {
+                format!(
+                    "agent artifact export chunk failed with code {:?}",
+                    response.exit_code
+                )
+            }));
+        }
+        let stdout = response.stdout.unwrap_or_default();
+        let stdout = stdout.trim();
+        let output = serde_json::from_str(stdout).map_err(|error| {
+            format!(
+                "agent artifact export chunk returned invalid JSON: {error} (got: {})",
+                &stdout[..stdout.len().min(200)]
+            )
+        })?;
+        Ok(Some(output))
     }
 
     pub(crate) async fn write_project_file(

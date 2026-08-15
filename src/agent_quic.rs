@@ -576,6 +576,7 @@ mod tests {
                     shell: true,
                     file_read: true,
                     file_write: true,
+                    artifact_export_chunk_read: false,
                     structured_file_delete: true,
                     git: false,
                     jobs: true,

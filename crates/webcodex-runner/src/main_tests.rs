@@ -3223,6 +3223,10 @@ fn file_read_project_artifact_reads_binary_chunks() {
         ),
     ));
     assert_eq!(first["file_bytes"], bytes.len());
+    assert!(first["sha256"]
+        .as_str()
+        .is_some_and(|value| value.len() == 64));
+    assert!(first.get("mime_type").is_some());
     assert_eq!(first["offset"], 0);
     assert_eq!(first["bytes_returned"], 4);
     assert_eq!(first["next_offset"], 4);
@@ -3266,6 +3270,127 @@ fn file_read_project_artifact_reads_binary_chunks() {
     assert_eq!(at_eof["next_offset"], bytes.len());
     assert_eq!(at_eof["truncated"], false);
     assert_eq!(at_eof["eof"], true);
+}
+
+#[test]
+fn file_read_project_artifact_export_chunk_reads_only_requested_segments() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let bytes = vec![0x5a; 70 * 1024];
+    std::fs::write(tmp.path().join("export.bin"), &bytes).unwrap();
+
+    let first = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_export_chunk",
+            "export.bin",
+            serde_json::json!({
+                "path": "export.bin",
+                "expected_file_bytes": bytes.len(),
+                "offset": 0,
+                "length": 64 * 1024
+            }),
+        ),
+    ));
+    assert_eq!(first["file_bytes"], bytes.len());
+    assert_eq!(first["offset"], 0);
+    assert_eq!(first["bytes_returned"], 64 * 1024);
+    assert_eq!(first["next_offset"], 64 * 1024);
+    assert_eq!(first["truncated"], true);
+    assert_eq!(first["eof"], false);
+    assert!(first.get("sha256").is_none());
+    assert!(first.get("mime_type").is_none());
+    let first_bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        first["content_base64"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first_bytes, bytes[..64 * 1024]);
+
+    let final_chunk = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_export_chunk",
+            "export.bin",
+            serde_json::json!({
+                "path": "export.bin",
+                "expected_file_bytes": bytes.len(),
+                "offset": 64 * 1024,
+                "length": 64 * 1024
+            }),
+        ),
+    ));
+    assert_eq!(final_chunk["offset"], 64 * 1024);
+    assert_eq!(final_chunk["bytes_returned"], 6 * 1024);
+    assert_eq!(final_chunk["next_offset"], bytes.len());
+    assert_eq!(final_chunk["truncated"], false);
+    assert_eq!(final_chunk["eof"], true);
+    let final_bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        final_chunk["content_base64"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(final_bytes, bytes[64 * 1024..]);
+
+    let wrong_size = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_export_chunk",
+            "export.bin",
+            serde_json::json!({
+                "path": "export.bin",
+                "expected_file_bytes": bytes.len() - 1,
+                "offset": 0,
+                "length": 1
+            }),
+        ),
+    ));
+    assert_eq!(wrong_size["error_kind"], "snapshot_changed");
+
+    let ten_mib = 10 * 1024 * 1024;
+    let boundary = std::fs::File::create(tmp.path().join("boundary.bin")).unwrap();
+    boundary.set_len(ten_mib as u64).unwrap();
+    let boundary_read = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_export_chunk",
+            "boundary.bin",
+            serde_json::json!({
+                "path": "boundary.bin",
+                "expected_file_bytes": ten_mib,
+                "offset": ten_mib - 1,
+                "length": 64 * 1024
+            }),
+        ),
+    ));
+    assert_eq!(boundary_read["bytes_returned"], 1);
+    assert_eq!(boundary_read["next_offset"], ten_mib);
+    assert_eq!(boundary_read["eof"], true);
+
+    let oversized = std::fs::File::create(tmp.path().join("oversized.bin")).unwrap();
+    oversized.set_len((ten_mib + 1) as u64).unwrap();
+    let oversized_read = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_export_chunk",
+            "oversized.bin",
+            serde_json::json!({
+                "path": "oversized.bin",
+                "expected_file_bytes": ten_mib + 1,
+                "offset": 0,
+                "length": 1
+            }),
+        ),
+    ));
+    assert!(oversized_read["error"]
+        .as_str()
+        .unwrap()
+        .contains("maximum"));
 }
 
 #[test]
@@ -4066,6 +4191,23 @@ fn file_project_artifact_ops_reject_symlink_escape() {
     ));
     assert_eq!(read["error"], "artifact path escapes project root");
     assert!(!read.to_string().contains("outside-secret-content"));
+
+    let export_chunk = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            root.path(),
+            "file_read_project_artifact_export_chunk",
+            "leak.bin",
+            serde_json::json!({
+                "path":"leak.bin",
+                "expected_file_bytes":8,
+                "offset":0,
+                "length":8
+            }),
+        ),
+    ));
+    assert_eq!(export_chunk["error"], "artifact path escapes project root");
+    assert!(!export_chunk.to_string().contains("outside-secret-content"));
 
     let metadata = line_edit_json(handle_file_request(
         &policy,
@@ -6528,6 +6670,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     assert!(caps.shell);
     assert!(caps.file_read);
     assert!(caps.file_write);
+    assert!(caps.artifact_export_chunk_read);
     assert!(caps.structured_file_delete);
     assert!(caps.async_jobs);
     assert!(caps.async_shell_jobs);

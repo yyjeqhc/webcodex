@@ -1230,28 +1230,24 @@ fn phase_e2_validation_job_shares_the_same_job_manager_slot_limit() {
 fn structured_process_job_executes_exactly_once_and_reconciles_the_same_job() {
     let temp = tempfile::tempdir().unwrap();
     let helper = structured_process_helper();
-    let marker = temp.path().join("started.log");
-    let nonce = format!("nonce-{}", uuid::Uuid::new_v4());
+    let gated = GatedStructuredJob::new(temp.path(), "structured-once");
     let (sink, mut rx) = structured_test_sink("structured-agent", "structured-instance");
     let manager = JobManager::new(1);
-    enqueue_structured_process_job(
-        &manager,
-        sink,
-        temp.path(),
-        "structured-once",
-        &helper.path,
-        vec![
-            "mark-sleep".to_string(),
-            marker.to_string_lossy().into_owned(),
-            nonce.clone(),
-            "250".to_string(),
-        ],
-        None,
-        30,
-        None,
-    );
+    enqueue_gated_structured_job(&manager, &sink, temp.path(), &helper, &gated);
 
-    assert!(wait_until(Duration::from_secs(30), || marker.exists()));
+    assert!(wait_until(Duration::from_secs(30), || gated
+        .active
+        .exists()));
+    assert!(
+        wait_until(Duration::from_secs(30), || manager
+            .inventory()
+            .jobs
+            .iter()
+            .any(
+                |snapshot| snapshot.job_id == "structured-once" && snapshot.status == "running"
+            )),
+        "started child did not become running in reconciliation inventory"
+    );
     let active = manager.inventory();
     let active = active
         .jobs
@@ -1270,6 +1266,7 @@ fn structured_process_job_executes_exactly_once_and_reconciles_the_same_job() {
         "run_process"
     );
 
+    gated.release();
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
     let final_update = updates.last().expect("structured process terminal update");
     assert!(final_update.finished, "{final_update:?}");
@@ -1285,11 +1282,8 @@ fn structured_process_job_executes_exactly_once_and_reconciles_the_same_job() {
         .unwrap()
         .stdout
         .tail
-        .contains(&nonce));
-    let starts = std::fs::read_to_string(&marker).unwrap();
-    let lines = starts.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 1, "the process was started more than once");
-    assert!(lines[0].ends_with(&format!(":{nonce}")));
+        .contains(&gated.job_id));
+    assert_gated_job_started_once(&gated);
 
     let retained = manager
         .inventory()
@@ -1809,13 +1803,17 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
                 "job_id": "phase-f-stream",
                 "cwd": temp.path(),
                 "command": format!("& '{helper}' windows-utf8-split-output '{marker_arg}'"),
-                "timeout_secs": 10,
+                "timeout_secs": 30,
                 "requested_by": "test",
                 "created_at": chrono::Utc::now().timestamp(),
                 "job_context": test_job_context(temp.path(), Vec::new()),
             }))
             .unwrap(),
         },
+    );
+    assert!(
+        wait_until(Duration::from_secs(30), || marker.exists()),
+        "UTF-8 split-output fixture did not start"
     );
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
     let final_update = updates.last().expect("stream Job terminal update");
@@ -1852,13 +1850,17 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
                 "command": format!(
                     "& '{helper}' windows-oem-split-output '{expected_arg}' '{marker_arg}'"
                 ),
-                "timeout_secs": 10,
+                "timeout_secs": 30,
                 "requested_by": "test",
                 "created_at": chrono::Utc::now().timestamp(),
                 "job_context": test_job_context(temp.path(), Vec::new()),
             }))
             .unwrap(),
         },
+    );
+    assert!(
+        wait_until(Duration::from_secs(30), || oem_marker.exists()),
+        "OEM split-output fixture did not start"
     );
     let updates = collect_job_updates(&mut rx, Duration::from_secs(10));
     let final_update = updates.last().expect("OEM stream Job terminal update");

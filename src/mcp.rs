@@ -1334,12 +1334,13 @@ async fn mcp_artifact_export_resource_read_inner(
     }))
 }
 
-async fn mcp_artifact_export_resource_read_with_gate(
+async fn mcp_artifact_export_resource_read_with_gate_timeout(
     runtime: &ToolRuntime,
     uri: &str,
     auth: Option<&AuthContext>,
     gate: &Semaphore,
     admission_timeout: Duration,
+    read_timeout: Duration,
 ) -> Result<Value, McpArtifactExportReadError> {
     let record = mcp_artifact_export_lookup(uri, auth)?;
     if auth.is_some_and(|auth| auth.is_oauth_token())
@@ -1357,15 +1358,40 @@ async fn mcp_artifact_export_resource_read_with_gate(
         Ok(Ok(permit)) => permit,
         Ok(Err(_)) | Err(_) => return Err(McpArtifactExportReadError::Busy),
     };
-    match tokio::time::timeout(
+    let outcome = {
+        let read = mcp_artifact_export_resource_read_inner(runtime, uri, auth, record);
+        tokio::pin!(read);
+        tokio::time::timeout(read_timeout, &mut read).await
+    };
+    match outcome {
+        Ok(result) => result,
+        Err(_) => {
+            // `outcome` is observed only after the aggregate read future above
+            // has been dropped. Any Runner-backed synchronous request still in
+            // the registry therefore has a closed oneshot receiver and can be
+            // removed without guessing whether a live caller still needs it.
+            runtime.shell_clients.cancel_abandoned_sync_requests().await;
+            Err(McpArtifactExportReadError::Timeout)
+        }
+    }
+}
+
+async fn mcp_artifact_export_resource_read_with_gate(
+    runtime: &ToolRuntime,
+    uri: &str,
+    auth: Option<&AuthContext>,
+    gate: &Semaphore,
+    admission_timeout: Duration,
+) -> Result<Value, McpArtifactExportReadError> {
+    mcp_artifact_export_resource_read_with_gate_timeout(
+        runtime,
+        uri,
+        auth,
+        gate,
+        admission_timeout,
         MCP_ARTIFACT_EXPORT_READ_TIMEOUT,
-        mcp_artifact_export_resource_read_inner(runtime, uri, auth, record),
     )
     .await
-    {
-        Ok(result) => result,
-        Err(_) => Err(McpArtifactExportReadError::Timeout),
-    }
 }
 
 async fn mcp_artifact_export_resource_read(

@@ -721,6 +721,31 @@ impl ShellClientRegistry {
             .unwrap_or(false)
     }
 
+    /// Remove synchronous pending requests whose response receiver has already
+    /// been dropped by the caller. A closed waiter proves there is no remaining
+    /// observer for the response, so retaining the queue/registry entry can only
+    /// consume bounded pending-request capacity until a late result or disconnect.
+    pub(crate) async fn cancel_abandoned_sync_requests(&self) -> usize {
+        let mut inner = self.inner.lock().await;
+        let abandoned = inner
+            .pending_by_id
+            .iter()
+            .filter(|(_, pending)| {
+                pending.job_id.is_none()
+                    && pending
+                        .waiter
+                        .as_ref()
+                        .is_some_and(tokio::sync::oneshot::Sender::is_closed)
+            })
+            .map(|(request_id, _)| request_id.clone())
+            .collect::<Vec<_>>();
+        for request_id in &abandoned {
+            inner.persistent_waiters.remove(request_id);
+            remove_pending_request_locked(&mut inner, request_id);
+        }
+        abandoned.len()
+    }
+
     /// Cancel a pending synchronous request while preserving the distinction
     /// between an undispatched request and one whose registry record was
     /// already consumed. A missing record cannot prove that execution did not

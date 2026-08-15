@@ -3422,6 +3422,115 @@ async fn mcp_artifact_export_optimized_pipeline_is_four_way_bounded_and_offset_o
 }
 
 #[tokio::test]
+async fn mcp_artifact_export_total_timeout_cleans_abandoned_pending_reads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_export_runtime(tmp.path(), Some("alice")).await;
+    let auth = mcp_export_api_auth("key-pipeline-timeout", "alice");
+    let path = "paper/pipeline-timeout.pdf";
+    let bytes: Vec<u8> = (0..MAX_READ_PROJECT_ARTIFACT_LENGTH * 5)
+        .map(|index| (index % 233) as u8)
+        .collect();
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let export = issue_mcp_artifact_export(
+        runtime.clone(),
+        registry.clone(),
+        auth.clone(),
+        path,
+        &bytes,
+        "application/pdf",
+    )
+    .await;
+    let uri = export["result"]["content"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let gate = Arc::new(Semaphore::new(1));
+    let read = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let gate = gate.clone();
+        async move {
+            mcp_artifact_export_resource_read_with_gate_timeout(
+                &runtime,
+                &uri,
+                Some(&auth),
+                gate.as_ref(),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .await
+        }
+    });
+
+    complete_mcp_export_metadata(
+        registry.clone(),
+        path,
+        bytes.len(),
+        &sha256,
+        "application/pdf",
+    )
+    .await;
+    let first = poll_mcp_export_request(&registry).await;
+    complete_mcp_export_optimized_chunk(&registry, first, path, &bytes).await;
+
+    let mut inflight = Vec::new();
+    for _ in 0..MAX_MCP_ARTIFACT_EXPORT_CHUNK_READS {
+        inflight.push(poll_mcp_export_request(&registry).await);
+    }
+    assert!(matches!(
+        read.await.unwrap(),
+        Err(McpArtifactExportReadError::Timeout)
+    ));
+    assert_eq!(gate.available_permits(), 1);
+    for request in inflight {
+        assert!(
+            !registry.cancel_request(&request.request_id).await,
+            "resource timeout must remove every abandoned optimized chunk request"
+        );
+    }
+
+    let export = issue_mcp_artifact_export(
+        runtime.clone(),
+        registry.clone(),
+        auth.clone(),
+        "paper/metadata-timeout.pdf",
+        &bytes,
+        "application/pdf",
+    )
+    .await;
+    let uri = export["result"]["content"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let read = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let gate = gate.clone();
+        async move {
+            mcp_artifact_export_resource_read_with_gate_timeout(
+                &runtime,
+                &uri,
+                Some(&auth),
+                gate.as_ref(),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .await
+        }
+    });
+    let metadata = poll_mcp_export_request(&registry).await;
+    assert_eq!(metadata.kind, "file_read_project_artifact_metadata");
+    assert!(matches!(
+        read.await.unwrap(),
+        Err(McpArtifactExportReadError::Timeout)
+    ));
+    assert!(
+        !registry.cancel_request(&metadata.request_id).await,
+        "resource timeout must also remove an abandoned metadata recheck"
+    );
+}
+
+#[tokio::test]
 async fn mcp_artifact_export_optimized_batch_drains_before_offset_ordered_error() {
     let tmp = tempfile::tempdir().unwrap();
     let (runtime, registry) = mcp_export_runtime(tmp.path(), Some("alice")).await;

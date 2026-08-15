@@ -6264,6 +6264,15 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
         "start_coding_task must not grow a role wire field"
     );
     let work_schema = &tool("work_on_project")["inputSchema"];
+    for (name, schema) in [
+        ("start_coding_task", start_schema),
+        ("work_on_project", work_schema),
+    ] {
+        assert!(
+            schema["properties"]["path"].get("pattern").is_none(),
+            "{name} path schema must not encode Control-host POSIX path semantics"
+        );
+    }
     let work_props = work_schema["properties"]
         .as_object()
         .expect("work_on_project MCP properties");

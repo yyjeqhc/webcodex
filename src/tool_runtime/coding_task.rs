@@ -179,9 +179,9 @@ fn resolve_project_source(
                 json!({"conflicting_fields": ["path", "temporary_project_name"]}),
             ));
         }
-        if !Path::new(&path).is_absolute() {
+        if let Err(error) = super::projects::validate_project_op_path(&path) {
             return Err(invalid_project_source(
-                "path must be an absolute path",
+                error,
                 json!({"field": "path", "expected": "absolute_path"}),
             ));
         }

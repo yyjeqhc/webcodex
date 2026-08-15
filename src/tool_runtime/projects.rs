@@ -577,7 +577,7 @@ fn validate_project_op_description(desc: &str) -> Result<(), String> {
 /// both POSIX and Windows absolute-path shapes without applying host-local path
 /// semantics. The agent remains authoritative for existence, policy (including
 /// current UNC support), and canonicalization.
-fn validate_project_op_path(path: &str) -> Result<(), String> {
+pub(super) fn validate_project_op_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("path cannot be empty".to_string());
     }

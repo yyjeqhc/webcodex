@@ -19,7 +19,6 @@ pub(crate) fn start_coding_task_input_schema() -> Value {
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "pattern": "^/",
                 "description": "Existing absolute directory path on the selected Runner. The Runner authoritatively canonicalizes and policy-checks it, reuses a unique enabled canonical-path registration, or permanently writes a new projects.d entry. Mutually exclusive with project and temporary_project_name."
             },
             "temporary_project_name": {
@@ -124,7 +123,6 @@ pub(crate) fn work_on_project_input_schema() -> Value {
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "pattern": "^/",
                 "description": "Runner-owned absolute directory path for the path form. Use with client_id + instruction; do not combine with project. The Runner authoritatively resolves or permanently registers it before exact Workflow Session handling."
             },
             "instruction": {

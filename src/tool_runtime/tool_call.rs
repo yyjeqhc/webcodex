@@ -1502,15 +1502,10 @@ fn validate_coding_project_source_shape(
             ));
         }
     }
-    if path
-        && arguments
-            .get("path")
-            .and_then(Value::as_str)
-            .is_some_and(|path| !std::path::Path::new(path).is_absolute())
-    {
-        return Err(format!(
-            "invalid arguments for tool '{tool_name}': path must be absolute"
-        ));
+    if let Some(path) = arguments.get("path").and_then(Value::as_str) {
+        if let Err(error) = super::projects::validate_project_op_path(path) {
+            return Err(format!("invalid arguments for tool '{tool_name}': {error}"));
+        }
     }
     if project {
         let mut conflicts = Vec::new();

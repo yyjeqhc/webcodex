@@ -704,6 +704,24 @@ fn coding_task_entries_parse_path_source_and_reject_ambiguous_sources() {
     assert!(work_audit.get("path").is_none());
     assert!(!work_audit.to_string().contains("/root/git/example"));
 
+    for path in [
+        r"C:\repo",
+        "c:/repo",
+        r"\\?\C:\repo",
+        r"\\server\share\repo",
+    ] {
+        ToolCall::from_tool_name(
+            "start_coding_task",
+            json!({"client_id": "runner-1", "path": path}),
+        )
+        .unwrap_or_else(|error| panic!("start_coding_task rejected {path:?}: {error}"));
+        ToolCall::from_tool_name(
+            "work_on_project",
+            json!({"client_id": "runner-1", "path": path, "instruction": "implement it"}),
+        )
+        .unwrap_or_else(|error| panic!("work_on_project rejected {path:?}: {error}"));
+    }
+
     for (tool, arguments) in [
         (
             "start_coding_task",
@@ -717,6 +735,10 @@ fn coding_task_entries_parse_path_source_and_reject_ambiguous_sources() {
         (
             "start_coding_task",
             json!({"client_id": "x", "path": "relative/repo"}),
+        ),
+        (
+            "start_coding_task",
+            json!({"client_id": "x", "path": r"C:repo"}),
         ),
         ("start_coding_task", json!({"client_id": "x", "path": ""})),
         (
@@ -733,6 +755,10 @@ fn coding_task_entries_parse_path_source_and_reject_ambiguous_sources() {
         ),
         (
             "work_on_project",
+            json!({"client_id": "x", "path": r"\repo", "instruction": "x"}),
+        ),
+        (
+            "work_on_project",
             json!({"client_id": "", "path": "/tmp/y", "instruction": "x"}),
         ),
     ] {
@@ -740,7 +766,7 @@ fn coding_task_entries_parse_path_source_and_reject_ambiguous_sources() {
         assert!(
             error.contains("conflicting fields")
                 || error.contains("missing ")
-                || error.contains("must be absolute")
+                || error.contains("must be an absolute")
                 || error.contains("must not be empty"),
             "{error}"
         );

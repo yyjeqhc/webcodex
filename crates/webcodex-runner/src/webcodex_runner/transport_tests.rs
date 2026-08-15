@@ -507,6 +507,12 @@ fn start_concurrent_polling_server(
         while !server_done.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // The listener is nonblocking only so this fixture can poll
+                    // its shutdown flag. Accepted connections use the blocking
+                    // read_http_request helper with a bounded read timeout; make
+                    // that contract explicit because Windows may inherit the
+                    // listener's nonblocking mode onto accepted sockets.
+                    stream.set_nonblocking(false).unwrap();
                     let handler = Arc::clone(&handler);
                     connections.push(thread::spawn(move || {
                         let request = read_http_request(&mut stream);

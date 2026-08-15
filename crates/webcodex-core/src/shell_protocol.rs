@@ -2482,6 +2482,7 @@ mod envelope_tests {
                 shell: true,
                 file_read: true,
                 file_write: false,
+                artifact_export_chunk_read: false,
                 structured_file_delete: false,
                 git: false,
                 jobs: true,

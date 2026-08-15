@@ -178,6 +178,16 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ("job_tail", "job", "none"),
         ("write_project_file", "edit", "current_session_fallback"),
         (
+            "import_conversation_files_to_project",
+            "artifact",
+            "current_session_fallback",
+        ),
+        (
+            "export_project_artifact",
+            "artifact",
+            "current_session_fallback",
+        ),
+        (
             "save_project_artifact",
             "artifact",
             "current_session_fallback",
@@ -213,6 +223,10 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             "current_session_fallback",
         ),
         ("apply_text_edits", "edit", "current_session_fallback"),
+        ("computer_list_windows", "computer", "none"),
+        ("computer_accessibility_status", "computer", "none"),
+        ("computer_accessibility_tree", "computer", "none"),
+        ("computer_snapshot", "computer", "none"),
         ("list_projects", "project", "none"),
         ("register_project", "project", "none"),
         ("create_project", "project", "none"),

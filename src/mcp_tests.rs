@@ -1845,7 +1845,11 @@ async fn mcp_tools_list_parity_with_rest_tools_list() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let mcp_outcome = handle_mcp_request(
         &runtime,
-        rpc("tools/list", Some(Value::from(8)), json!({})),
+        rpc(
+            "tools/list",
+            Some(Value::from(8)),
+            mcp_2026_params(json!({})),
+        ),
         None,
     )
     .await;
@@ -6739,7 +6743,11 @@ async fn full_operator_explicit_surface_lists_full_runtime_and_dispatches() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let listed = handle_mcp_request(
         &runtime,
-        rpc("tools/list", Some(Value::from(72)), json!({})),
+        rpc(
+            "tools/list",
+            Some(Value::from(72)),
+            mcp_2026_params(json!({})),
+        ),
         None,
     )
     .await;
@@ -6883,8 +6891,12 @@ async fn selected_surface_is_immutable_after_environment_changes() {
     with_model_surface_env(Some("broken-after-startup"), || {
         assert_eq!(full.model_surface(), ModelSurface::FullOperatorRuntime);
     });
-    let listed =
-        handle_mcp_request(&full, rpc("tools/list", Some(json!(82)), json!({})), None).await;
+    let listed = handle_mcp_request(
+        &full,
+        rpc("tools/list", Some(json!(82)), mcp_2026_params(json!({}))),
+        None,
+    )
+    .await;
     let McpOutcome::Ok(value) = listed else {
         panic!("full operator tools/list must remain available");
     };

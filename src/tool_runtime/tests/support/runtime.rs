@@ -87,6 +87,10 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "content" => json!("fn main() {}\n"),
         "instruction" => json!("implement the requested change"),
         "content_base64" => json!("AA=="),
+        "openaiFileIdRefs" => json!([{
+            "download_url": "https://files.oaiusercontent.com/test",
+            "file_id": "file_test"
+        }]),
         "start_line" | "end_line" | "line" | "column" | "offset" => json!(1),
         "upload_id" => json!("wc_upload_test_1"),
         "edits" => json!([{"kind": "replace_exact", "old_text": "a", "new_text": "b"}]),

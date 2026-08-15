@@ -17,7 +17,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "import_conversation_files_to_project",
-            "Import 1..10 attachments selected from the current ChatGPT conversation into an agent-registered project. ChatGPT supplies openaiFileIdRefs through the host file-reference mechanism; do not read/base64-transfer the files, construct download URLs, or use local /mnt/data paths. Downloads stay on the Control side and final writes use save_project_artifact semantics.",
+            "Import 1..10 current ChatGPT attachments into an agent project using openaiFileIdRefs from the host file-reference mechanism. Do not base64-transfer files, construct download URLs, or use local /mnt/data paths; Control downloads and saves them as project artifacts.",
             import_conversation_files_to_project_input_schema(),
         ),
         tool_spec(

@@ -343,7 +343,10 @@ fn work_on_project_schema_and_registration() {
         );
     }
     assert_eq!(props["project"]["minLength"], 1);
-    assert_eq!(props["path"]["pattern"], "^/");
+    assert!(
+        props["path"].get("pattern").is_none(),
+        "path portability is enforced by ToolCall/runtime parsing, not a POSIX-only schema pattern"
+    );
     assert_eq!(props["instruction"]["minLength"], 1);
     assert_eq!(
         props["instruction"]["maxLength"],

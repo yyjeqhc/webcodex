@@ -860,7 +860,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let host_file_import_trust =
         if tool_name.as_deref() == Some("import_conversation_files_to_project") {
-            mcp_host_file_import_trust(depot, auth.as_ref())
+            let decision = mcp_host_file_import_trust_decision(depot, auth.as_ref());
+            log_mcp_host_file_import_trust_decision(auth.as_ref(), &decision);
+            decision.trust
         } else {
             HostFileImportTrust::Untrusted
         };
@@ -1381,51 +1383,246 @@ async fn handle_mcp_request_with_lifecycle(
     McpOutcome::Ok(response)
 }
 
-fn mcp_host_file_import_trust_from_state(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostFileImportTrustReason {
+    Trusted,
+    MissingConfig,
+    MissingDatabase,
+    MissingAuth,
+    NotOAuthToken,
+    MissingAllowedClientId,
+    OAuthDisabled,
+    ClientIdNotConfigured,
+    ClientRegistrationMissingOrRevoked,
+    ClientRegistrationLookupFailed,
+}
+
+impl HostFileImportTrustReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Trusted => "trusted",
+            Self::MissingConfig => "missing_config",
+            Self::MissingDatabase => "missing_database",
+            Self::MissingAuth => "missing_auth",
+            Self::NotOAuthToken => "not_oauth_token",
+            Self::MissingAllowedClientId => "missing_allowed_client_id",
+            Self::OAuthDisabled => "oauth_disabled",
+            Self::ClientIdNotConfigured => "client_id_not_configured",
+            Self::ClientRegistrationMissingOrRevoked => "client_registration_missing_or_revoked",
+            Self::ClientRegistrationLookupFailed => "client_registration_lookup_failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HostFileImportTrustDecision {
+    trust: HostFileImportTrust,
+    reason: HostFileImportTrustReason,
+    config_present: bool,
+    database_present: bool,
+    oauth_enabled: bool,
+    configured_trusted_client_count: usize,
+    client_id_configured: Option<bool>,
+    active_client_registration_found: Option<bool>,
+}
+
+#[cfg(test)]
+static LAST_MCP_HOST_FILE_IMPORT_TRUST_DECISION: std::sync::OnceLock<
+    std::sync::Mutex<Option<HostFileImportTrustDecision>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn take_last_mcp_host_file_import_trust_decision() -> Option<HostFileImportTrustDecision> {
+    LAST_MCP_HOST_FILE_IMPORT_TRUST_DECISION
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap()
+        .take()
+}
+
+impl HostFileImportTrustDecision {
+    fn unavailable(reason: HostFileImportTrustReason) -> Self {
+        Self {
+            trust: HostFileImportTrust::Untrusted,
+            reason,
+            config_present: false,
+            database_present: false,
+            oauth_enabled: false,
+            configured_trusted_client_count: 0,
+            client_id_configured: None,
+            active_client_registration_found: None,
+        }
+    }
+
+    fn from_config(reason: HostFileImportTrustReason, config: &crate::Config) -> Self {
+        Self {
+            trust: HostFileImportTrust::Untrusted,
+            reason,
+            config_present: true,
+            database_present: false,
+            oauth_enabled: config.oauth2.enabled,
+            configured_trusted_client_count: config.oauth2.trusted_mcp_file_client_ids.len(),
+            client_id_configured: None,
+            active_client_registration_found: None,
+        }
+    }
+}
+
+fn mcp_host_file_import_trust_decision_from_state(
     config: &crate::Config,
     db: &crate::Database,
     auth: Option<&AuthContext>,
-) -> HostFileImportTrust {
-    let Some(auth) = auth.filter(|auth| auth.is_oauth_token()) else {
-        return HostFileImportTrust::Untrusted;
+) -> HostFileImportTrustDecision {
+    let base = HostFileImportTrustDecision {
+        trust: HostFileImportTrust::Untrusted,
+        reason: HostFileImportTrustReason::MissingAuth,
+        config_present: true,
+        database_present: true,
+        oauth_enabled: config.oauth2.enabled,
+        configured_trusted_client_count: config.oauth2.trusted_mcp_file_client_ids.len(),
+        client_id_configured: None,
+        active_client_registration_found: None,
     };
+    let Some(auth) = auth else {
+        return base;
+    };
+    if !auth.is_oauth_token() {
+        return HostFileImportTrustDecision {
+            reason: HostFileImportTrustReason::NotOAuthToken,
+            ..base
+        };
+    }
     let Some(client_id) = auth
         .allowed_client_id
         .as_deref()
         .map(str::trim)
         .filter(|client_id| !client_id.is_empty())
     else {
-        return HostFileImportTrust::Untrusted;
+        return HostFileImportTrustDecision {
+            reason: HostFileImportTrustReason::MissingAllowedClientId,
+            ..base
+        };
     };
     if !config.oauth2.enabled {
-        return HostFileImportTrust::Untrusted;
+        return HostFileImportTrustDecision {
+            reason: HostFileImportTrustReason::OAuthDisabled,
+            ..base
+        };
     }
-    if !config
+    let client_id_configured = config
         .oauth2
         .trusted_mcp_file_client_ids
         .iter()
-        .any(|trusted_client_id| trusted_client_id == client_id)
-    {
-        return HostFileImportTrust::Untrusted;
+        .any(|trusted_client_id| trusted_client_id == client_id);
+    if !client_id_configured {
+        return HostFileImportTrustDecision {
+            reason: HostFileImportTrustReason::ClientIdNotConfigured,
+            client_id_configured: Some(false),
+            ..base
+        };
     }
-    let Ok(Some(client)) = db.get_oauth_client_by_client_id(client_id) else {
-        // Active lookup intentionally excludes revoked clients.
-        return HostFileImportTrust::Untrusted;
-    };
-    if client.client_id != client_id {
-        return HostFileImportTrust::Untrusted;
+    match db.get_oauth_client_by_client_id(client_id) {
+        Ok(Some(client)) if client.client_id == client_id => HostFileImportTrustDecision {
+            trust: HostFileImportTrust::TrustedOAuthClient,
+            reason: HostFileImportTrustReason::Trusted,
+            client_id_configured: Some(true),
+            active_client_registration_found: Some(true),
+            ..base
+        },
+        Ok(_) => HostFileImportTrustDecision {
+            reason: HostFileImportTrustReason::ClientRegistrationMissingOrRevoked,
+            client_id_configured: Some(true),
+            active_client_registration_found: Some(false),
+            ..base
+        },
+        Err(_) => HostFileImportTrustDecision {
+            reason: HostFileImportTrustReason::ClientRegistrationLookupFailed,
+            client_id_configured: Some(true),
+            active_client_registration_found: None,
+            ..base
+        },
     }
-    HostFileImportTrust::TrustedOAuthClient
 }
 
-fn mcp_host_file_import_trust(depot: &Depot, auth: Option<&AuthContext>) -> HostFileImportTrust {
+#[cfg(test)]
+fn mcp_host_file_import_trust_from_state(
+    config: &crate::Config,
+    db: &crate::Database,
+    auth: Option<&AuthContext>,
+) -> HostFileImportTrust {
+    mcp_host_file_import_trust_decision_from_state(config, db, auth).trust
+}
+
+fn mcp_host_file_import_trust_decision(
+    depot: &Depot,
+    auth: Option<&AuthContext>,
+) -> HostFileImportTrustDecision {
     let Some(config) = crate::auth::get_config(depot) else {
-        return HostFileImportTrust::Untrusted;
+        return HostFileImportTrustDecision::unavailable(HostFileImportTrustReason::MissingConfig);
     };
     let Some(db) = crate::auth::get_db(depot) else {
-        return HostFileImportTrust::Untrusted;
+        return HostFileImportTrustDecision::from_config(
+            HostFileImportTrustReason::MissingDatabase,
+            config.as_ref(),
+        );
     };
-    mcp_host_file_import_trust_from_state(config.as_ref(), db.as_ref(), auth)
+    mcp_host_file_import_trust_decision_from_state(config.as_ref(), db.as_ref(), auth)
+}
+
+fn mcp_auth_kind_classification(auth: Option<&AuthContext>) -> &'static str {
+    match auth.map(|auth| auth.kind) {
+        None => "none",
+        Some(crate::auth::AuthKind::OAuth2Token) => "oauth2",
+        Some(crate::auth::AuthKind::ApiToken) => "api_token",
+        Some(crate::auth::AuthKind::Bootstrap) => "bootstrap",
+        Some(crate::auth::AuthKind::AgentToken) => "agent_token",
+        Some(crate::auth::AuthKind::AccountCredential) => "account_credential",
+        Some(crate::auth::AuthKind::SharedKey) => "shared_key",
+        Some(crate::auth::AuthKind::ProjectCredential) => "project_credential",
+        Some(crate::auth::AuthKind::OpenAnonymous) => "open_anonymous",
+    }
+}
+
+fn mcp_token_kind_classification(auth: Option<&AuthContext>) -> &'static str {
+    match auth.and_then(|auth| auth.token_kind.as_deref()) {
+        None => "none",
+        Some("oauth2") => "oauth2",
+        Some("oauth2_shared_key") => "oauth2_shared_key",
+        Some("user") => "user",
+        Some("agent") => "agent",
+        Some(_) => "other",
+    }
+}
+
+fn log_mcp_host_file_import_trust_decision(
+    auth: Option<&AuthContext>,
+    decision: &HostFileImportTrustDecision,
+) {
+    #[cfg(test)]
+    {
+        *LAST_MCP_HOST_FILE_IMPORT_TRUST_DECISION
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .unwrap() = Some(*decision);
+    }
+    let allowed_client_id_present = auth
+        .and_then(|auth| auth.allowed_client_id.as_deref())
+        .is_some_and(|client_id| !client_id.trim().is_empty());
+    tracing::info!(
+        target: "webcodex::mcp",
+        trust = decision.trust.is_trusted(),
+        reason = decision.reason.as_str(),
+        auth_kind = mcp_auth_kind_classification(auth),
+        token_kind = mcp_token_kind_classification(auth),
+        allowed_client_id_present,
+        config_present = decision.config_present,
+        database_present = decision.database_present,
+        oauth_enabled = decision.oauth_enabled,
+        configured_trusted_client_count = decision.configured_trusted_client_count,
+        client_id_configured = ?decision.client_id_configured,
+        active_client_registration_found = ?decision.active_client_registration_found,
+        "mcp_host_file_import_trust_decision"
+    );
 }
 
 fn require_mcp_oauth_scope(auth: Option<&AuthContext>, scope: &'static str) -> Option<McpOutcome> {

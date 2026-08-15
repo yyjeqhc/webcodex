@@ -1969,6 +1969,88 @@ fn oauth_mcp_service(scopes: &str) -> (tempfile::TempDir, Service, String) {
 
 const MCP_IMPORT_TRUSTED_REDIRECT: &str = "https://chatgpt.example/connector/oauth/webcodex-test";
 
+struct McpImportStartupEnvGuard {
+    _env_lock: std::sync::MutexGuard<'static, ()>,
+    previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl McpImportStartupEnvGuard {
+    fn new() -> Self {
+        const NAMES: &[&str] = &[
+            "WEBCODEX_ENV_FILE",
+            "WEBCODEX_TOKEN",
+            "WEBCODEX_OAUTH2_ENABLED",
+            "WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS",
+        ];
+        let env_lock = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let previous = NAMES
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect();
+        Self {
+            _env_lock: env_lock,
+            previous,
+        }
+    }
+
+    fn set(&self, name: &'static str, value: impl AsRef<std::ffi::OsStr>) {
+        std::env::set_var(name, value);
+    }
+}
+
+impl Drop for McpImportStartupEnvGuard {
+    fn drop(&mut self) {
+        for (name, value) in &self.previous {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}
+
+fn mcp_import_config_from_startup_env(
+    trusted_client_id: &str,
+    env_file_client_id: &str,
+) -> Arc<crate::Config> {
+    let guard = McpImportStartupEnvGuard::new();
+    let dir = tempfile::tempdir().unwrap();
+    let env_file = dir.path().join("webcodex.env");
+    std::fs::write(
+        &env_file,
+        format!(
+            "WEBCODEX_OAUTH2_ENABLED=false\nWEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS={env_file_client_id}\n"
+        ),
+    )
+    .unwrap();
+
+    // Production startup loads env files first, but an already-present process
+    // environment is authoritative and load_env_file deliberately does not
+    // replace it. This matches the live deployment shape being debugged.
+    guard.set("WEBCODEX_ENV_FILE", &env_file);
+    guard.set("WEBCODEX_TOKEN", "startup-env-bootstrap-token");
+    guard.set("WEBCODEX_OAUTH2_ENABLED", "true");
+    guard.set(
+        "WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS",
+        trusted_client_id,
+    );
+    let loads = crate::config::load_startup_env_files().unwrap();
+    assert_eq!(loads.len(), 1);
+    assert_eq!(loads[0].path, env_file);
+    assert_eq!(
+        loads[0].loaded_count, 0,
+        "explicit env file must not override already-present OAuth trust settings"
+    );
+
+    let config = Arc::new(crate::Config::from_env());
+    assert!(config.oauth2.enabled);
+    assert_eq!(
+        config.oauth2.trusted_mcp_file_client_ids,
+        vec![trusted_client_id.to_string()]
+    );
+    config
+}
+
 async fn lock_mcp_import_test() -> tokio::sync::MutexGuard<'static, ()> {
     crate::tool_runtime::conversation_import::lock_import_test_network().await
 }
@@ -2261,6 +2343,181 @@ async fn pat_created_replacement_client_with_same_redirect_remains_untrusted() {
         mcp_host_file_import_trust_from_state(&config, &db, Some(&replacement_auth)),
         HostFileImportTrust::Untrusted
     );
+}
+
+#[test]
+fn mcp_file_import_trust_decision_reports_exact_failure_stage() {
+    let mut config = (*test_config_oauth2(Some("secret"))).clone();
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let client =
+        seed_mcp_import_client(&db, &user, "ChatGPT WebCodex", MCP_IMPORT_TRUSTED_REDIRECT);
+    config.oauth2.trusted_mcp_file_client_ids = vec![client.client_id.clone()];
+
+    let missing_auth = mcp_host_file_import_trust_decision_from_state(&config, &db, None);
+    assert_eq!(missing_auth.reason, HostFileImportTrustReason::MissingAuth);
+
+    let api_auth = crate::auth::AuthContext::new(crate::auth::AuthKind::ApiToken);
+    let not_oauth = mcp_host_file_import_trust_decision_from_state(&config, &db, Some(&api_auth));
+    assert_eq!(not_oauth.reason, HostFileImportTrustReason::NotOAuthToken);
+
+    let mut missing_id = mcp_import_oauth_auth(&client.client_id);
+    missing_id.allowed_client_id = None;
+    assert_eq!(
+        mcp_host_file_import_trust_decision_from_state(&config, &db, Some(&missing_id)).reason,
+        HostFileImportTrustReason::MissingAllowedClientId
+    );
+
+    let mut disabled = config.clone();
+    disabled.oauth2.enabled = false;
+    assert_eq!(
+        mcp_host_file_import_trust_decision_from_state(
+            &disabled,
+            &db,
+            Some(&mcp_import_oauth_auth(&client.client_id))
+        )
+        .reason,
+        HostFileImportTrustReason::OAuthDisabled
+    );
+
+    let other_client_id = crate::auth::generate_oauth_client_id();
+    assert_eq!(
+        mcp_host_file_import_trust_decision_from_state(
+            &config,
+            &db,
+            Some(&mcp_import_oauth_auth(&other_client_id))
+        )
+        .reason,
+        HostFileImportTrustReason::ClientIdNotConfigured
+    );
+
+    let unknown_configured_id = crate::auth::generate_oauth_client_id();
+    let mut unknown_config = config.clone();
+    unknown_config.oauth2.trusted_mcp_file_client_ids = vec![unknown_configured_id.clone()];
+    assert_eq!(
+        mcp_host_file_import_trust_decision_from_state(
+            &unknown_config,
+            &db,
+            Some(&mcp_import_oauth_auth(&unknown_configured_id))
+        )
+        .reason,
+        HostFileImportTrustReason::ClientRegistrationMissingOrRevoked
+    );
+
+    let trusted = mcp_host_file_import_trust_decision_from_state(
+        &config,
+        &db,
+        Some(&mcp_import_oauth_auth(&client.client_id)),
+    );
+    assert_eq!(trusted.reason, HostFileImportTrustReason::Trusted);
+    assert_eq!(trusted.trust, HostFileImportTrust::TrustedOAuthClient);
+    assert_eq!(trusted.client_id_configured, Some(true));
+    assert_eq!(trusted.active_client_registration_found, Some(true));
+}
+
+#[tokio::test]
+async fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gate() {
+    use crate::auth::{OAuth2Verifier, TokenVerifier};
+    use sha2::{Digest, Sha256};
+
+    let _lock = lock_mcp_import_test().await;
+    let pptx = b"startup-env-stateless-trusted-pptx".to_vec();
+    let expected_sha256 = format!("{:x}", Sha256::digest(&pptx));
+    let server = start_mcp_import_mock_server(mcp_import_http_response(
+        "200 OK",
+        &[("Content-Length", pptx.len().to_string())],
+        &pptx,
+    ))
+    .await;
+    let _network = McpImportNetworkOverride::set(server.base_url.clone());
+
+    let (_db_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let client =
+        seed_mcp_import_client(&db, &user, "ChatGPT WebCodex", MCP_IMPORT_TRUSTED_REDIRECT);
+    let token = seed_oauth_access_token(&db, &client, &user, "project:write");
+    let env_file_other_client_id = crate::auth::generate_oauth_client_id();
+    let config = mcp_import_config_from_startup_env(&client.client_id, &env_file_other_client_id);
+
+    // Stage A: the same verifier used by AuthMiddleware preserves the exact
+    // OAuth client id on the authenticated context.
+    let verifier = OAuth2Verifier;
+    let verified = verifier
+        .verify(config.as_ref(), Some(&db), &token)
+        .await
+        .unwrap()
+        .expect("seeded OAuth access token must authenticate");
+    assert_eq!(verified.kind, crate::auth::AuthKind::OAuth2Token);
+    assert_eq!(verified.token_kind.as_deref(), Some("oauth2"));
+    assert_eq!(
+        verified.allowed_client_id.as_deref(),
+        Some(client.client_id.as_str())
+    );
+
+    // Stage B: the parsed startup Config + active DB registration grants only
+    // the exact configured OAuth client.
+    let decision = mcp_host_file_import_trust_decision_from_state(
+        config.as_ref(),
+        db.as_ref(),
+        Some(&verified),
+    );
+    assert_eq!(decision.reason, HostFileImportTrustReason::Trusted);
+    assert_eq!(decision.trust, HostFileImportTrust::TrustedOAuthClient);
+
+    let project_tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_import_runtime(project_tmp.path(), Some("alice")).await;
+    let service = Service::new(build_test_router(config, db, runtime));
+    let agent = tokio::spawn(complete_mcp_import_save(registry, pptx.clone()));
+    let temporary_url = "https://download.example/temporary-secret-token/stateless-import.pptx";
+    let (status, body, _) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        mcp_2026_params(json!({
+            "name": "import_conversation_files_to_project",
+            "arguments": {
+                "project": "agent:importer:demo",
+                "openaiFileIdRefs": [{
+                    "download_url": temporary_url,
+                    "file_id": "file_stateless_host_rewritten",
+                    "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "file_name": "source.pptx"
+                }],
+                "output_dir": "paper/export",
+                "targets": ["stateless-import.pptx"],
+                "overwrite": false,
+                "trusted_mcp_host_file_import": false
+            }
+        })),
+    )
+    .await;
+    // Stage C: observe the exact mcp_post trust decision after AuthMiddleware.
+    let mcp_decision = take_last_mcp_host_file_import_trust_decision()
+        .expect("mcp_post must evaluate host-file trust for the import tool");
+    assert_eq!(mcp_decision.reason, HostFileImportTrustReason::Trusted);
+    assert_eq!(mcp_decision.trust, HostFileImportTrust::TrustedOAuthClient);
+
+    // Stages D-E: the kernel injects the internal provenance bit after JSON
+    // deserialization and dispatch crosses the pre-network provenance gate to
+    // SaveProjectArtifact.
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert_eq!(body["result"]["resultType"], "complete", "body: {body:?}");
+    assert_eq!(body["result"]["isError"], false, "body: {body:?}");
+    tokio::time::timeout(std::time::Duration::from_secs(5), agent)
+        .await
+        .unwrap_or_else(|_| panic!("save_project_artifact fixture timed out; body: {body:?}"))
+        .unwrap();
+    let imported = &body["result"]["structuredContent"]["output"]["imported"][0];
+    assert_eq!(imported["path"], "paper/export/stateless-import.pptx");
+    assert_eq!(imported["bytes_written"], pptx.len());
+    assert_eq!(imported["sha256"], expected_sha256);
+    assert_eq!(
+        crate::tool_runtime::conversation_import::import_test_dns_resolution_count(),
+        1
+    );
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(!serialized.contains(temporary_url));
+    assert!(!serialized.contains("file_stateless_host_rewritten"));
 }
 
 #[tokio::test]

@@ -227,6 +227,8 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ("computer_list_windows", "computer", "none"),
         ("computer_accessibility_status", "computer", "none"),
         ("computer_accessibility_tree", "computer", "none"),
+        ("computer_control", "computer", "none"),
+        ("computer_input_text", "computer", "none"),
         ("computer_snapshot", "computer", "none"),
         ("list_projects", "project", "none"),
         ("register_project", "project", "none"),

@@ -55,6 +55,8 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "computer_list_windows",
             "computer_accessibility_status",
             "computer_accessibility_tree",
+            "computer_control",
+            "computer_input_text",
             "computer_snapshot",
         ],
     },

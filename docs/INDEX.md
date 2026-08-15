@@ -24,6 +24,7 @@
 ## Understanding WebCodex
 
 - [Architecture](ARCHITECTURE.md) — how the pieces fit together
+- [Computer Use roadmap](COMPUTER_USE.md) — semantic-first desktop automation direction and dogfood priorities
 - [Security](../SECURITY.md) — security model and policy
 
 ## Help

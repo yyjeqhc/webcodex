@@ -22,6 +22,7 @@ const DEFAULT_ACCESSIBILITY_NODES: usize = 128;
 const MAX_ACCESSIBILITY_CHILD_COUNT: u64 = 1_000_000;
 const MAX_IMAGE_DIMENSION: u64 = 4096;
 const COMPUTER_WAIT_SECS: u64 = 30;
+const MAX_COMPUTER_TARGETS: usize = 64;
 
 fn validate_input_text(text: &str) -> Result<usize, &'static str> {
     let text_bytes = text.len();
@@ -40,6 +41,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         match call {
+            ToolCall::ComputerListTargets => self.computer_list_targets(auth).await,
             ToolCall::ComputerListWindows { client_id, limit } => {
                 let limit = limit.unwrap_or(MAX_WINDOWS).clamp(1, MAX_WINDOWS);
                 self.dispatch_computer_request(
@@ -181,6 +183,39 @@ impl ToolRuntime {
             }
             _ => ToolResult::err("invalid computer tool dispatch".to_string()),
         }
+    }
+
+    async fn computer_list_targets(&self, auth: Option<&AuthContext>) -> ToolResult {
+        let clients = self.shell_clients.list_clients_for_auth(auth).await;
+        let mut total_count = 0usize;
+        let mut targets = Vec::new();
+        for client in clients {
+            let computer_observe = client.capabilities.computer_observe;
+            let computer_accessibility_observe = client.capabilities.computer_accessibility_observe;
+            if !computer_observe && !computer_accessibility_observe {
+                continue;
+            }
+            total_count = total_count.saturating_add(1);
+            if targets.len() >= MAX_COMPUTER_TARGETS {
+                continue;
+            }
+            targets.push(json!({
+                "client_id": client.client_id,
+                "display_name": client.display_name,
+                "connected": client.connected,
+                "capabilities": {
+                    "computer_observe": computer_observe,
+                    "computer_accessibility_observe": computer_accessibility_observe,
+                },
+            }));
+        }
+        let count = targets.len();
+        ToolResult::ok(json!({
+            "targets": targets,
+            "count": count,
+            "total_count": total_count,
+            "truncated": total_count > count,
+        }))
     }
 
     async fn dispatch_computer_request(

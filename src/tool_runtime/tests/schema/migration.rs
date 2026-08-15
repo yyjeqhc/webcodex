@@ -223,6 +223,7 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
             "current_session_fallback",
         ),
         ("apply_text_edits", "edit", "current_session_fallback"),
+        ("computer_list_targets", "computer", "none"),
         ("computer_list_windows", "computer", "none"),
         ("computer_accessibility_status", "computer", "none"),
         ("computer_accessibility_tree", "computer", "none"),

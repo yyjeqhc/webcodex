@@ -677,7 +677,8 @@ impl ToolRuntime {
                 self.dispatch_workspace_checkpoint_tool(call).await
             }
 
-            call @ (ToolCall::ComputerListWindows { .. }
+            call @ (ToolCall::ComputerListTargets
+            | ToolCall::ComputerListWindows { .. }
             | ToolCall::ComputerAccessibilityStatus { .. }
             | ToolCall::ComputerAccessibilityTree { .. }
             | ToolCall::ComputerControl { .. }

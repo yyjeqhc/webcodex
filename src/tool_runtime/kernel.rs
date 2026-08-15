@@ -662,6 +662,17 @@ mod tests {
             check_oauth_runtime_tool_scope(Some(&allowed), "computer_list_windows"),
             Ok(())
         );
+        assert_eq!(
+            check_oauth_runtime_tool_scope(Some(&allowed), "computer_list_targets"),
+            Ok(())
+        );
+        assert_eq!(
+            check_oauth_runtime_tool_scope(Some(&allowed), "list_agents"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_RUNTIME_READ),
+                description: "missing required scope: runtime:read".to_string(),
+            })
+        );
     }
 
     #[test]

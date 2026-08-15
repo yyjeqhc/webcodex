@@ -16,6 +16,29 @@ mod projects_tests;
 
 #[test]
 fn computer_action_audit_projection_omits_sensitive_observation_payloads() {
+    let targets_output = serde_json::json!({
+        "targets": [{
+            "client_id": "private-runner",
+            "display_name": "Private Desktop",
+            "connected": true,
+            "capabilities": {
+                "computer_observe": true,
+                "computer_accessibility_observe": true
+            }
+        }],
+        "count": 1,
+        "total_count": 1,
+        "truncated": false
+    });
+    let targets_audit = action_audit_output_for_tool("computer_list_targets", &targets_output);
+    assert_eq!(
+        targets_audit,
+        serde_json::json!({"count": 1, "total_count": 1, "truncated": false})
+    );
+    let targets_serialized = serde_json::to_string(&targets_audit).unwrap();
+    assert!(!targets_serialized.contains("private-runner"));
+    assert!(!targets_serialized.contains("Private Desktop"));
+
     let list_output = serde_json::json!({
         "windows": [{
             "surface_id": "surface_secret",

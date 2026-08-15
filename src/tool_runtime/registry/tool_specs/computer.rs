@@ -1,13 +1,18 @@
 use super::super::input_schemas::{
     computer_accessibility_status_input_schema, computer_accessibility_tree_input_schema,
     computer_control_input_schema, computer_input_text_input_schema,
-    computer_list_windows_input_schema, computer_snapshot_input_schema,
+    computer_list_windows_input_schema, computer_snapshot_input_schema, empty_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
 
 pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
+        tool_spec(
+            "computer_list_targets",
+            "List caller-visible Runner targets that advertise read-only Computer observation capabilities. Use this when client_id is unknown. Returns only minimal target identity, connection state, and Computer capability facts; no projects, policy, jobs, host details, or observation content.",
+            empty_input_schema(),
+        ),
         tool_spec(
             "computer_list_windows",
             "List a bounded set of observable top-level windows on an exact Runner. surface_id values are opaque, process-local, and ephemeral. focused is exact-window focus when reliably known; active is the platform active/frontmost signal and may be application-level on macOS.",

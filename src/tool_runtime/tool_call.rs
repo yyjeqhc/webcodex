@@ -1306,6 +1306,9 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// List caller-visible Runner targets that advertise a Computer observation capability.
+    ComputerListTargets,
+
     /// Enumerate bounded top-level windows on one exact Runner.
     ComputerListWindows {
         client_id: String,
@@ -1817,6 +1820,7 @@ impl ToolCall {
             Self::GotoDefinition { .. } => "goto_definition",
             Self::FindReferences { .. } => "find_references",
             Self::CallHierarchy { .. } => "call_hierarchy",
+            Self::ComputerListTargets => "computer_list_targets",
             Self::ComputerListWindows { .. } => "computer_list_windows",
             Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
             Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",

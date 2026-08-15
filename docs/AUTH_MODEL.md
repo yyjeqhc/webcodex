@@ -175,10 +175,17 @@ device-code flow are not implemented. OAuth setup steps are in
 ## Computer observation and control authorization
 
 `computer:read` is the dedicated scope for read-only desktop/window observation.
-It authorizes the model-facing `computer_list_windows`, `computer_snapshot`,
-`computer_accessibility_status`, and `computer_accessibility_tree` tools; it is
-separate from `runtime:read`, `project:read`, `job:run`, and `computer:control`,
-and none of those scopes imply it.
+It authorizes the model-facing `computer_list_targets`, `computer_list_windows`,
+`computer_accessibility_status`, `computer_accessibility_tree`, and
+`computer_snapshot` tools; it is separate from `runtime:read`, `project:read`,
+`job:run`, and `computer:control`, and none of those scopes imply it.
+
+`computer_list_targets` closes the target-discovery loop without widening
+`runtime:read`: it returns only caller-visible Runners that advertise
+`computer_observe` and/or `computer_accessibility_observe`, projected to the
+minimum client identity, connection state, and those two capability facts. It
+does not expose the broader projects, policy, jobs, host, or provider inventory
+from `list_agents`.
 
 `computer:control` is the separate effect scope for `computer_control` and
 `computer_input_text`. `computer_control` is deliberately closed to native macOS
@@ -190,13 +197,13 @@ paste, or synthetic-keystroke fallback in this contract. A lost response after
 an effect may have been dispatched is reported as an unknown outcome and must be
 reconciled by observing current UI state before any retry.
 
-Scopes are only one layer of the check. Every Computer call names one exact
-Runner `client_id`, and the Server also requires caller access/ownership for that
-Runner plus the independently advertised capability for the requested operation:
-`computer_observe` for window observation/snapshot,
-`computer_accessibility_observe` for Accessibility observation,
-`computer_control` for press/focus, and `computer_text_input` for bounded text
-input. The existing shared-key OAuth bridge/default Connector scope
+Scopes are only one layer of the check. After target discovery, observation and
+effect calls name one exact Runner `client_id`, and the Server also requires
+caller access/ownership for that Runner plus the independently advertised
+capability for the requested operation: `computer_observe` for window
+observation/snapshot, `computer_accessibility_observe` for Accessibility
+observation, `computer_control` for press/focus, and `computer_text_input` for
+bounded text input. The existing shared-key OAuth bridge/default Connector scope
 intentionally grants neither Computer scope, and these Computer tools are
 exposed only on `full_operator_runtime`, not the canonical Connector surface.
 

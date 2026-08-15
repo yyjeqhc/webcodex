@@ -1,6 +1,28 @@
 use super::common::wrapped_output_schema;
 use serde_json::{json, Value};
 
+fn target_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "display_name": {"anyOf": [{"type": "string", "maxLength": 200}, {"type": "null"}]},
+            "connected": {"type": "boolean"},
+            "capabilities": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "computer_observe": {"type": "boolean"},
+                    "computer_accessibility_observe": {"type": "boolean"}
+                },
+                "required": ["computer_observe", "computer_accessibility_observe"]
+            }
+        },
+        "required": ["client_id", "display_name", "connected", "capabilities"]
+    })
+}
+
 fn surface_schema() -> Value {
     json!({
         "type": "object",
@@ -48,6 +70,18 @@ fn accessibility_node_schema() -> Value {
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
+        "computer_list_targets" => Some(wrapped_output_schema(vec![
+            (
+                "targets",
+                json!({"type": "array", "maxItems": 64, "items": target_schema()}),
+            ),
+            (
+                "count",
+                json!({"type": "integer", "minimum": 0, "maximum": 64}),
+            ),
+            ("total_count", json!({"type": "integer", "minimum": 0})),
+            ("truncated", json!({"type": "boolean"})),
+        ])),
         "computer_list_windows" => Some(wrapped_output_schema(vec![
             (
                 "windows",

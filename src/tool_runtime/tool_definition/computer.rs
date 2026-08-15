@@ -2,14 +2,27 @@ use super::AgentCapability::{
     ComputerAccessibilityObserve, ComputerControl, ComputerObserve, ComputerTextInput,
 };
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition, TOOL_CATEGORY_COMPUTER};
+use super::{def, unit_arguments, ToolDefinition, TOOL_CATEGORY_COMPUTER};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None,
     ToolRisk::{ComputerControl as ComputerControlRisk, ReadOnly},
-    COMPUTER_CONTROL, COMPUTER_READ, TOOL_PROVIDER_AGENT,
+    COMPUTER_CONTROL, COMPUTER_READ, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_CONTROL,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
+    unit_arguments(def(
+        "computer_list_targets",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        std::option::Option::None,
+        TOOL_PROVIDER_CONTROL,
+        ReadOnly,
+        Some(COMPUTER_READ),
+        false,
+        None,
+        false,
+        false,
+    )),
     def(
         "computer_list_windows",
         ModelVisible,

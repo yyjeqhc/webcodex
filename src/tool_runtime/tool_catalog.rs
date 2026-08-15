@@ -270,6 +270,19 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         ],
     },
     ToolRecommendedFlow {
+        name: "computer_observe",
+        summary: "Computer observe: discover a caller-visible capable Runner, list its exact windows, then inspect accessibility or capture one exact surface. Read-only; no control actions.",
+        manifest_purpose:
+            "Discover a Computer-capable Runner, list its windows, then inspect accessibility or capture one exact surface.",
+        tools: &[
+            "computer_list_targets",
+            "computer_list_windows",
+            "computer_accessibility_status",
+            "computer_accessibility_tree",
+            "computer_snapshot",
+        ],
+    },
+    ToolRecommendedFlow {
         name: "review",
         summary: "Review: use show_changes / git_diff_hunks / workspace_hygiene_check before final response.",
         manifest_purpose: "Review diffs and workspace hygiene before the final response.",

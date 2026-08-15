@@ -88,6 +88,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "session_shell_status" | "close_session_shell" => {
             copy_keys(obj, &mut out, &["session_id", "shell_id"]);
         }
+        "computer_list_targets" => {}
         "computer_list_windows" => {
             copy_keys(obj, &mut out, &["client_id", "limit"]);
         }
@@ -411,6 +412,11 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
 
 pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Value {
     match tool_name {
+        "computer_list_targets" => serde_json::json!({
+            "count": output.get("count").cloned().unwrap_or(Value::Null),
+            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+        }),
         "computer_list_windows" => serde_json::json!({
             "count": output.get("count").cloned().unwrap_or(Value::Null),
             "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
@@ -744,6 +750,7 @@ impl ToolCall {
                 "session_id": session_id,
                 "shell_id": shell_id,
             }),
+            Self::ComputerListTargets => serde_json::json!({}),
             Self::ComputerListWindows { client_id, limit } => serde_json::json!({
                 "client_id": client_id,
                 "limit": limit,

@@ -134,6 +134,7 @@ mod tests {
             .map(|spec| spec.name.as_str())
             .collect::<Vec<_>>();
         for name in [
+            "computer_list_targets",
             "computer_list_windows",
             "computer_accessibility_status",
             "computer_accessibility_tree",

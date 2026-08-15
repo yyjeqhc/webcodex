@@ -83,6 +83,45 @@ fn runtime_status_call() -> ToolCall {
     }
 }
 
+async fn register_computer_target_for_auth(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    display_name: &str,
+    auth: &crate::auth::AuthContext,
+    computer_observe: bool,
+    computer_accessibility_observe: bool,
+) {
+    runtime
+        .shell_clients
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{client_id}"),
+                display_name: Some(display_name.to_string()),
+                owner: None,
+                hostname: Some(format!("host-{client_id}")),
+                capabilities: Some(ShellClientCapabilities {
+                    computer_observe,
+                    computer_accessibility_observe,
+                    ..Default::default()
+                }),
+                projects: Some(vec![registered_project(
+                    &format!("private-{client_id}"),
+                    &format!("/tmp/private-{client_id}"),
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+            Some(auth),
+        )
+        .await
+        .unwrap();
+}
+
 async fn register_agent_projects_for_auth(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -2172,6 +2211,103 @@ async fn runtime_status_policy_summary_is_null_for_older_agents() {
         clients[0]["job_concurrency"],
         json!({"limit": null, "running": 0, "queued": 0})
     );
+}
+
+#[tokio::test]
+async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() {
+    let runtime = test_runtime();
+    let shared_a = shared_key_auth_context("computer-targets-a");
+    let shared_b = shared_key_auth_context("computer-targets-b");
+
+    register_computer_target_for_auth(
+        &runtime,
+        "a-accessibility",
+        "Alice Accessibility",
+        &shared_a,
+        false,
+        true,
+    )
+    .await;
+    register_computer_target_for_auth(
+        &runtime,
+        "a-none",
+        "Alice No Computer",
+        &shared_a,
+        false,
+        false,
+    )
+    .await;
+    register_computer_target_for_auth(
+        &runtime,
+        "a-observe",
+        "Alice Desktop",
+        &shared_a,
+        true,
+        false,
+    )
+    .await;
+    register_computer_target_for_auth(
+        &runtime,
+        "b-private",
+        "Bob Private Desktop",
+        &shared_b,
+        true,
+        true,
+    )
+    .await;
+
+    let result = runtime
+        .dispatch_with_auth(ToolCall::ComputerListTargets, Some(&shared_a))
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["count"], 2);
+    assert_eq!(result.output["total_count"], 2);
+    assert_eq!(result.output["truncated"], false);
+    let targets = result.output["targets"].as_array().unwrap();
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0]["client_id"], "a-accessibility");
+    assert_eq!(targets[0]["display_name"], "Alice Accessibility");
+    assert_eq!(targets[0]["connected"], true);
+    assert_eq!(targets[0]["capabilities"]["computer_observe"], false);
+    assert_eq!(
+        targets[0]["capabilities"]["computer_accessibility_observe"],
+        true
+    );
+    assert_eq!(targets[1]["client_id"], "a-observe");
+    assert_eq!(targets[1]["capabilities"]["computer_observe"], true);
+    assert_eq!(
+        targets[1]["capabilities"]["computer_accessibility_observe"],
+        false
+    );
+    for target in targets {
+        let object = target.as_object().unwrap();
+        assert_eq!(
+            object.len(),
+            4,
+            "target projection must stay minimal: {object:?}"
+        );
+        for forbidden in [
+            "owner",
+            "hostname",
+            "projects",
+            "policy",
+            "pending_requests",
+            "transport",
+            "active_jobs",
+            "job_concurrency",
+            "tool_providers",
+        ] {
+            assert!(
+                !object.contains_key(forbidden),
+                "Computer target projection leaked {forbidden}: {target}"
+            );
+        }
+    }
+    let serialized = result.output.to_string();
+    assert!(!serialized.contains("a-none"));
+    assert!(!serialized.contains("Bob Private Desktop"));
+    assert!(!serialized.contains("b-private"));
+    assert!(!serialized.contains("/tmp/private"));
 }
 
 #[tokio::test]

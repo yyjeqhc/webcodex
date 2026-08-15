@@ -115,6 +115,9 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 );
             }
         }
+        "computer_element_state" => {
+            copy_keys(obj, &mut out, &["client_id", "surface_id", "element_id"]);
+        }
         "computer_activate_window" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id"]);
         }
@@ -450,6 +453,7 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
         }),
         "computer_accessibility_tree" => serde_json::json!({
             "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "observation_generation": output.get("observation_generation").cloned().unwrap_or(Value::Null),
             "node_count": output.get("node_count").cloned().unwrap_or(Value::Null),
             "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
             "max_depth": output.get("max_depth").cloned().unwrap_or(Value::Null),
@@ -457,9 +461,15 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
         }),
         "computer_find_elements" => serde_json::json!({
             "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "observation_generation": output.get("observation_generation").cloned().unwrap_or(Value::Null),
             "count": output.get("count").cloned().unwrap_or(Value::Null),
             "scanned_nodes": output.get("scanned_nodes").cloned().unwrap_or(Value::Null),
             "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+        }),
+        "computer_element_state" => serde_json::json!({
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
+            "observation_generation": output.get("observation_generation").cloned().unwrap_or(Value::Null),
         }),
         "computer_activate_window" => serde_json::json!({
             "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
@@ -624,6 +634,47 @@ mod computer_privacy_tests {
         assert!(!result_serialized.contains(secret));
         assert!(!result_serialized.contains("element_secret"));
         assert!(!result_serialized.contains("Private Search"));
+    }
+
+    #[test]
+    fn computer_element_state_ledger_omits_content_derived_state() {
+        let request = json!({
+            "client_id": "mini",
+            "surface_id": "surface_safe",
+            "element_id": "element_safe",
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_element_state", &request);
+        assert_eq!(request_summary, request);
+
+        let output = json!({
+            "platform": "macos",
+            "surface_id": "surface_safe",
+            "element_id": "element_safe",
+            "observation_generation": 9,
+            "enabled": true,
+            "focused": true,
+            "protected": false,
+            "value_empty": false,
+            "can_press": true,
+            "can_focus": true,
+            "can_input_text": false
+        });
+        let summary = session_log_result_for_tool("computer_element_state", &output);
+        assert_eq!(summary["surface_id"], "surface_safe");
+        assert_eq!(summary["element_id"], "element_safe");
+        assert_eq!(summary["observation_generation"], 9);
+        for field in [
+            "enabled",
+            "focused",
+            "protected",
+            "value_empty",
+            "can_press",
+            "can_focus",
+            "can_input_text",
+        ] {
+            assert!(summary.get(field).is_none(), "audit leaked {field}");
+        }
     }
 
     #[test]
@@ -910,6 +961,15 @@ impl ToolCall {
                 "focused": focused,
                 "enabled": enabled,
                 "limit": limit,
+            }),
+            Self::ComputerElementState {
+                client_id,
+                surface_id,
+                element_id,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "element_id": element_id,
             }),
             Self::ComputerActivateWindow {
                 client_id,

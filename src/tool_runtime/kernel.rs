@@ -680,6 +680,10 @@ mod tests {
             Ok(())
         );
         assert_eq!(
+            check_runtime_tool_scope(Some(&allowed), "computer_element_state"),
+            Ok(())
+        );
+        assert_eq!(
             check_runtime_tool_scope(Some(&allowed), "list_agents"),
             Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(crate::auth::SCOPE_RUNTIME_READ),

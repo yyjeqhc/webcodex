@@ -139,6 +139,7 @@ mod tests {
             "computer_accessibility_status",
             "computer_accessibility_tree",
             "computer_find_elements",
+            "computer_element_state",
             "computer_activate_window",
             "computer_control",
             "computer_input_text",

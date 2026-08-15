@@ -2,8 +2,9 @@ use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
 };
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
@@ -170,6 +171,31 @@ impl ToolRuntime {
                     limit,
                 )
             }
+            ToolCall::ComputerElementState {
+                client_id,
+                surface_id,
+                element_id,
+            } => {
+                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+                    return computer_error("invalid_surface", "surface_id is invalid");
+                }
+                if !element_id.starts_with("element_")
+                    || element_id.len() <= "element_".len()
+                    || element_id.len() > MAX_ELEMENT_ID_BYTES
+                {
+                    return computer_error("invalid_element", "element_id is invalid");
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_element_state",
+                    json!({"surface_id": surface_id, "element_id": element_id}),
+                    auth,
+                    None,
+                    Some(surface_id.as_str()),
+                    None,
+                )
+                .await
+            }
             ToolCall::ComputerActivateWindow {
                 client_id,
                 surface_id,
@@ -329,6 +355,7 @@ impl ToolRuntime {
             "computer_accessibility_status" | "computer_accessibility_tree" => {
                 crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
+            "computer_element_state" => SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
             "computer_control" => SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
             "computer_activate_window" => SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
             "computer_input_text" => SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
@@ -429,7 +456,10 @@ impl ToolRuntime {
             if is_effect && error_kind == "runner_error" {
                 return computer_effect_delivery_failure(error, response.request_dispatched);
             }
-            return computer_error(error_kind, error);
+            return computer_error(
+                error_kind,
+                &computer_error_recovery_message(error_kind, error),
+            );
         }
         if response.exit_code != Some(0) {
             if is_effect {
@@ -477,6 +507,11 @@ impl ToolRuntime {
                     max_nodes,
                 )
             }
+            "computer_element_state" => validate_computer_element_state(
+                output,
+                expected_surface_id.unwrap_or_default(),
+                expected_element_id.as_deref().unwrap_or_default(),
+            ),
             "computer_activate_window" => computer_effect_validated_result(
                 validate_computer_activate_window(
                     output,
@@ -504,6 +539,18 @@ impl ToolRuntime {
             ),
             _ => computer_error("invalid_request", "unsupported computer request kind"),
         }
+    }
+}
+
+fn computer_error_recovery_message(error_kind: &str, error: &str) -> String {
+    match error_kind {
+        "stale_element" => format!(
+            "{error}; reacquire a fresh element_id with computer_find_elements on the same surface"
+        ),
+        "stale_surface" => format!(
+            "{error}; reacquire a fresh surface_id with computer_list_windows before continuing"
+        ),
+        _ => error.to_string(),
     }
 }
 
@@ -573,6 +620,15 @@ fn filter_accessibility_tree(
         .get("truncated")
         .and_then(Value::as_bool)
         .unwrap_or(true);
+    let observation_generation = match tree.get("observation_generation").and_then(Value::as_u64) {
+        Some(value) if value > 0 && value <= u32::MAX as u64 => value,
+        _ => {
+            return computer_error(
+                "invalid_runner_response",
+                "validated Accessibility tree is missing observation_generation",
+            )
+        }
+    };
     let mut total_matches = 0usize;
     let mut elements = Vec::with_capacity(limit.min(nodes.len()));
     for node in nodes {
@@ -598,6 +654,7 @@ fn filter_accessibility_tree(
     ToolResult::ok(json!({
         "platform": "macos",
         "surface_id": expected_surface_id,
+        "observation_generation": observation_generation,
         "elements": elements,
         "count": count,
         "scanned_nodes": nodes.len(),
@@ -942,6 +999,7 @@ fn validate_accessibility_tree(
         "truncated",
         "max_depth",
         "max_nodes",
+        "observation_generation",
     ];
     if object.len() != allowed.len() || object.keys().any(|key| !allowed.contains(&key.as_str())) {
         return computer_error(
@@ -954,6 +1012,10 @@ fn validate_accessibility_tree(
         || output.get("max_depth").and_then(Value::as_u64) != Some(max_depth as u64)
         || output.get("max_nodes").and_then(Value::as_u64) != Some(max_nodes as u64)
         || output.get("truncated").and_then(Value::as_bool).is_none()
+        || !output
+            .get("observation_generation")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value > 0 && value <= u32::MAX as u64)
     {
         return computer_error(
             "invalid_runner_response",
@@ -981,6 +1043,78 @@ fn validate_accessibility_tree(
         .find_map(|node| validate_accessibility_node(node, max_depth, &mut seen).err())
     {
         return computer_error("invalid_runner_response", &error);
+    }
+    ToolResult::ok(output)
+}
+
+fn validate_computer_element_state(
+    output: Value,
+    expected_surface_id: &str,
+    expected_element_id: &str,
+) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "computer element state is not an object",
+            )
+        }
+    };
+    let allowed = [
+        "platform",
+        "surface_id",
+        "element_id",
+        "observation_generation",
+        "enabled",
+        "focused",
+        "protected",
+        "value_empty",
+        "can_press",
+        "can_focus",
+        "can_input_text",
+    ];
+    let bool_or_null = |field: &str| {
+        output
+            .get(field)
+            .is_some_and(|value| value.is_boolean() || value.is_null())
+    };
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
+        || output.get("element_id").and_then(Value::as_str) != Some(expected_element_id)
+        || !output
+            .get("observation_generation")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value > 0 && value <= u32::MAX as u64)
+        || !bool_or_null("enabled")
+        || !bool_or_null("focused")
+        || output.get("protected").and_then(Value::as_bool).is_none()
+        || !bool_or_null("value_empty")
+        || output.get("can_press").and_then(Value::as_bool).is_none()
+        || output.get("can_focus").and_then(Value::as_bool).is_none()
+        || output
+            .get("can_input_text")
+            .and_then(Value::as_bool)
+            .is_none()
+        || (output.get("protected").and_then(Value::as_bool) == Some(true)
+            && (output.get("value_empty") != Some(&Value::Null)
+                || output.get("can_press").and_then(Value::as_bool) != Some(false)
+                || output.get("can_focus").and_then(Value::as_bool) != Some(false)
+                || output.get("can_input_text").and_then(Value::as_bool) != Some(false)))
+        || (output.get("enabled").and_then(Value::as_bool) == Some(false)
+            && (output.get("can_press").and_then(Value::as_bool) != Some(false)
+                || output.get("can_focus").and_then(Value::as_bool) != Some(false)
+                || output.get("can_input_text").and_then(Value::as_bool) != Some(false)))
+        || (output.get("can_input_text").and_then(Value::as_bool) == Some(true)
+            && (output.get("focused").and_then(Value::as_bool) != Some(true)
+                || output.get("value_empty").and_then(Value::as_bool) != Some(true)))
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "computer element state metadata is inconsistent",
+        );
     }
     ToolResult::ok(output)
 }
@@ -1222,7 +1356,8 @@ mod tests {
             "node_count": 2,
             "truncated": false,
             "max_depth": 2,
-            "max_nodes": 8
+            "max_nodes": 8,
+            "observation_generation": 7
         })
     }
 
@@ -1307,11 +1442,80 @@ mod tests {
         );
         assert!(result.success, "{:?}", result.output);
         assert_eq!(result.output["surface_id"], "surface_test");
+        assert_eq!(result.output["observation_generation"], 7);
         assert_eq!(result.output["scanned_nodes"], 2);
         assert_eq!(result.output["count"], 1);
         assert_eq!(result.output["truncated"], true);
         assert_eq!(result.output["elements"][0]["element_id"], "element_root");
         assert!(result.output["elements"][0].get("value").is_none());
+    }
+
+    #[test]
+    fn computer_element_state_validator_enforces_normalized_privacy_and_affordances() {
+        let valid = validate_computer_element_state(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "observation_generation": 7,
+                "enabled": true,
+                "focused": true,
+                "protected": false,
+                "value_empty": true,
+                "can_press": false,
+                "can_focus": true,
+                "can_input_text": true
+            }),
+            "surface_test",
+            "element_child",
+        );
+        assert!(valid.success, "{:?}", valid.output);
+
+        let protected_leak = validate_computer_element_state(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "observation_generation": 7,
+                "enabled": true,
+                "focused": true,
+                "protected": true,
+                "value_empty": true,
+                "can_press": false,
+                "can_focus": false,
+                "can_input_text": false
+            }),
+            "surface_test",
+            "element_child",
+        );
+        assert!(!protected_leak.success);
+        assert_eq!(
+            protected_leak.output["error_kind"],
+            "invalid_runner_response"
+        );
+
+        let disabled_action = validate_computer_element_state(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "observation_generation": 7,
+                "enabled": false,
+                "focused": false,
+                "protected": false,
+                "value_empty": null,
+                "can_press": true,
+                "can_focus": false,
+                "can_input_text": false
+            }),
+            "surface_test",
+            "element_child",
+        );
+        assert!(!disabled_action.success);
+        assert_eq!(
+            disabled_action.output["error_kind"],
+            "invalid_runner_response"
+        );
     }
 
     #[test]

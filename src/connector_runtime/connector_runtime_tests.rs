@@ -90,6 +90,7 @@ async fn register_agent_with_lsp_capabilities(
                     project_path_registration: false,
                     computer_observe: false,
                     computer_accessibility_observe: false,
+                    computer_element_state: false,
                     computer_control: false,
                     computer_window_activate: false,
                     computer_text_input: false,

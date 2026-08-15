@@ -214,6 +214,9 @@ pub const SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE: &str = "computer_observe";
 /// is false and is never inferred from screenshot/window observation.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE: &str =
     "computer_accessibility_observe";
+/// Native read-only normalized state for one exact observed Accessibility element.
+/// Missing on older Runners is false and is never inferred from tree observation.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE: &str = "computer_element_state";
 /// Native bounded accessibility control. Missing on older Runners is false and
 /// is never inferred from either observation capability.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL: &str = "computer_control";
@@ -264,6 +267,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
     SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
@@ -386,6 +390,10 @@ pub struct ShellClientCapabilities {
     /// Runners is false; future computer control requires a distinct capability.
     #[serde(default, skip_serializing_if = "is_false")]
     pub computer_accessibility_observe: bool,
+    /// The Runner can revalidate one exact element and return normalized read-only
+    /// affordances without exposing its true value. Missing on older Runners is false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_element_state: bool,
     /// The runner retains bounded active and recent terminal job snapshots and
     /// Native bounded accessibility control. Missing on older Runners is false
     /// and never follows from desktop or accessibility observation authority.
@@ -457,6 +465,7 @@ impl Default for ShellClientCapabilities {
             project_path_registration: false,
             computer_observe: false,
             computer_accessibility_observe: false,
+            computer_element_state: false,
             computer_control: false,
             computer_window_activate: false,
             computer_text_input: false,
@@ -2702,6 +2711,7 @@ mod envelope_tests {
                 project_path_registration: false,
                 computer_observe: false,
                 computer_accessibility_observe: false,
+                computer_element_state: false,
                 computer_control: false,
                 computer_window_activate: false,
                 computer_text_input: false,
@@ -2781,6 +2791,7 @@ mod envelope_tests {
         assert!(!capabilities.structured_file_delete);
         assert!(!capabilities.computer_observe);
         assert!(!capabilities.computer_accessibility_observe);
+        assert!(!capabilities.computer_element_state);
         assert!(!capabilities.computer_control);
         assert!(!capabilities.computer_window_activate);
         assert!(!ShellClientCapabilities::default().ssh_persistent_shell);
@@ -2788,6 +2799,7 @@ mod envelope_tests {
         assert!(!ShellClientCapabilities::default().project_path_registration);
         assert!(!ShellClientCapabilities::default().computer_observe);
         assert!(!ShellClientCapabilities::default().computer_accessibility_observe);
+        assert!(!ShellClientCapabilities::default().computer_element_state);
         assert!(!ShellClientCapabilities::default().computer_control);
         assert!(!ShellClientCapabilities::default().computer_window_activate);
         assert!(!ShellClientCapabilities::default().computer_text_input);
@@ -2823,6 +2835,20 @@ mod envelope_tests {
             serde_json::from_str(r#"{"computer_accessibility_observe":true}"#).unwrap();
         assert!(capabilities.computer_accessibility_observe);
         assert!(!capabilities.computer_observe);
+    }
+
+    #[test]
+    fn computer_element_state_capability_deserializes_only_when_present() {
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_accessibility_observe":true}"#).unwrap();
+        assert!(capabilities.computer_accessibility_observe);
+        assert!(!capabilities.computer_element_state);
+
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_element_state":true}"#).unwrap();
+        assert!(capabilities.computer_element_state);
+        assert!(!capabilities.computer_accessibility_observe);
+        assert!(!capabilities.computer_control);
     }
 
     #[test]

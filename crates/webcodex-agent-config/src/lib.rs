@@ -237,6 +237,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // Semantic accessibility inspection is also a runtime/platform
             // capability and remains distinct from screenshot observation.
             computer_accessibility_observe: false,
+            // The running binary advertises normalized element-state support
+            // only after installing the native handler.
+            computer_element_state: false,
             // Control authority is runtime/platform-specific and is never
             // implied by either observation capability in generated config.
             computer_control: false,

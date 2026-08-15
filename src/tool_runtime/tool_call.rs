@@ -1349,6 +1349,13 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Revalidate one exact observed element and return normalized read-only state.
+    ComputerElementState {
+        client_id: String,
+        surface_id: String,
+        element_id: String,
+    },
+
     /// Activate and raise one exact previously observed macOS window surface.
     ComputerActivateWindow {
         client_id: String,
@@ -1849,6 +1856,7 @@ impl ToolCall {
             Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
             Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",
             Self::ComputerFindElements { .. } => "computer_find_elements",
+            Self::ComputerElementState { .. } => "computer_element_state",
             Self::ComputerActivateWindow { .. } => "computer_activate_window",
             Self::ComputerControl { .. } => "computer_control",
             Self::ComputerInputText { .. } => "computer_input_text",

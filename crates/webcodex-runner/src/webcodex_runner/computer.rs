@@ -260,6 +260,20 @@ fn validate_text_input_target(element: &ElementRecord) -> Result<&ElementFingerp
 }
 
 #[cfg(any(test, target_os = "macos"))]
+fn validate_element_state_target(element: &ElementRecord) -> Result<&ElementFingerprint, String> {
+    let target = element
+        .target_fingerprint()
+        .ok_or_else(|| "stale_element: AX element correlation lineage is incomplete".to_string())?;
+    if !target.has_positive_evidence() {
+        return Err(
+            "stale_element: AX element lacks positive correlation evidence for state observation"
+                .to_string(),
+        );
+    }
+    Ok(target)
+}
+
+#[cfg(any(test, target_os = "macos"))]
 fn validate_text_input_preflight(
     enabled: Option<bool>,
     focused: Option<bool>,
@@ -309,19 +323,40 @@ struct AccessibilityTreeResult {
 struct ElementRegistry {
     entries: HashMap<String, ElementRecord>,
     order: VecDeque<String>,
+    surface_generations: HashMap<String, u32>,
 }
 
 impl ElementRegistry {
     fn clear(&mut self) {
         self.entries.clear();
         self.order.clear();
+        self.surface_generations.clear();
     }
 
     fn get(&self, element_id: &str) -> Option<ElementRecord> {
         self.entries.get(element_id).cloned()
     }
 
-    fn replace_surface(&mut self, surface_id: &str, elements: Vec<(String, ElementRecord)>) {
+    fn get_with_generation(&self, element_id: &str) -> Option<(ElementRecord, u32)> {
+        let record = self.entries.get(element_id)?.clone();
+        let generation = *self.surface_generations.get(&record.surface_id)?;
+        Some((record, generation))
+    }
+
+    fn replace_surface(
+        &mut self,
+        surface_id: &str,
+        elements: Vec<(String, ElementRecord)>,
+    ) -> Result<u32, String> {
+        // Compute the next generation before mutating the registry so an exhausted
+        // counter fails without invalidating the currently usable handles.
+        let generation = self
+            .surface_generations
+            .get(surface_id)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| "computer_state_error: observation generation exhausted".to_string())?;
         let stale_ids: Vec<String> = self
             .entries
             .iter()
@@ -346,6 +381,9 @@ impl ElementRegistry {
             };
             self.entries.remove(&oldest);
         }
+        self.surface_generations
+            .insert(surface_id.to_string(), generation);
+        Ok(generation)
     }
 }
 
@@ -440,7 +478,10 @@ impl ComputerObserver {
             .get(surface_id)
             .cloned()
             .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
-        let tree = platform::accessibility_tree(surface_id, &record, max_depth, max_nodes)?;
+        let AccessibilityTreeResult {
+            mut output,
+            elements,
+        } = platform::accessibility_tree(surface_id, &record, max_depth, max_nodes)?;
         let surface_registry = self
             .surfaces
             .lock()
@@ -451,12 +492,60 @@ impl ComputerObserver {
                     .to_string(),
             );
         }
+        let Some(object) = output.as_object_mut() else {
+            return Err(
+                "computer_state_error: Accessibility tree output is not an object".to_string(),
+            );
+        };
         let mut element_registry = self
             .elements
             .lock()
             .map_err(|_| "computer_state_error: element registry lock poisoned".to_string())?;
-        element_registry.replace_surface(surface_id, tree.elements);
-        Ok(tree.output)
+        let observation_generation = element_registry.replace_surface(surface_id, elements)?;
+        object.insert(
+            "observation_generation".to_string(),
+            json!(observation_generation),
+        );
+        Ok(output)
+    }
+
+    fn element_state(&self, surface_id: &str, element_id: &str) -> Result<Value, String> {
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return Err("invalid_request: surface_id is invalid".to_string());
+        }
+        if !element_id.starts_with("element_")
+            || element_id.len() <= "element_".len()
+            || element_id.len() > MAX_ELEMENT_ID_BYTES
+        {
+            return Err("invalid_request: element_id is invalid".to_string());
+        }
+        // Hold the surface registry guard through native re-resolution. Tree/list
+        // observations take the same guard before replacing element generations,
+        // so this state read cannot return a handle that was concurrently retired.
+        let surface_registry = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?;
+        let record = surface_registry
+            .get(surface_id)
+            .cloned()
+            .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        let (element, observation_generation) = self
+            .elements
+            .lock()
+            .map_err(|_| "computer_state_error: element registry lock poisoned".to_string())?
+            .get_with_generation(element_id)
+            .ok_or_else(|| "stale_element: unknown, evicted, or stale element_id".to_string())?;
+        if element.surface_id != surface_id {
+            return Err("stale_element: element_id belongs to a different surface".to_string());
+        }
+        platform::element_state(
+            surface_id,
+            element_id,
+            observation_generation,
+            &record,
+            &element,
+        )
     }
 
     fn activate_window(&self, surface_id: &str) -> Result<Value, String> {
@@ -844,6 +933,19 @@ mod element_registry_tests {
     }
 
     #[test]
+    fn computer_element_state_requires_positive_correlation_evidence() {
+        let element = ElementRecord {
+            surface_id: "surface_test".to_string(),
+            path: Vec::new(),
+            lineage: vec![fingerprint("")],
+        };
+        assert_eq!(
+            validate_element_state_target(&element).unwrap_err(),
+            "stale_element: AX element lacks positive correlation evidence for state observation"
+        );
+    }
+
+    #[test]
     fn computer_element_registry_is_bounded_and_evicts_oldest() {
         let mut registry = ElementRegistry::default();
         let elements = (0..=MAX_ELEMENT_REGISTRY)
@@ -855,7 +957,10 @@ mod element_registry_tests {
                 )
             })
             .collect();
-        registry.replace_surface("surface_test", elements);
+        assert_eq!(
+            registry.replace_surface("surface_test", elements).unwrap(),
+            1
+        );
         assert_eq!(registry.entries.len(), MAX_ELEMENT_REGISTRY);
         assert!(registry.get("element_0").is_none());
         assert!(registry
@@ -866,37 +971,82 @@ mod element_registry_tests {
     #[test]
     fn computer_element_registry_replaces_same_surface_generation() {
         let mut registry = ElementRegistry::default();
-        registry.replace_surface(
-            "surface_test",
-            vec![(
-                "element_old".to_string(),
-                record("surface_test", "old", vec![0]),
-            )],
-        );
-        registry.replace_surface(
-            "surface_test",
-            vec![(
-                "element_new".to_string(),
-                record("surface_test", "new", vec![1]),
-            )],
-        );
+        let first = registry
+            .replace_surface(
+                "surface_test",
+                vec![(
+                    "element_old".to_string(),
+                    record("surface_test", "old", vec![0]),
+                )],
+            )
+            .unwrap();
+        let second = registry
+            .replace_surface(
+                "surface_test",
+                vec![(
+                    "element_new".to_string(),
+                    record("surface_test", "new", vec![1]),
+                )],
+            )
+            .unwrap();
+        assert_eq!((first, second), (1, 2));
         assert!(registry.get("element_old").is_none());
-        assert!(registry.get("element_new").is_some());
+        assert_eq!(registry.get_with_generation("element_new").unwrap().1, 2);
+    }
+
+    #[test]
+    fn computer_element_registry_generation_exhaustion_preserves_current_handles() {
+        let mut registry = ElementRegistry::default();
+        registry
+            .replace_surface(
+                "surface_test",
+                vec![(
+                    "element_old".to_string(),
+                    record("surface_test", "old", vec![0]),
+                )],
+            )
+            .unwrap();
+        registry
+            .surface_generations
+            .insert("surface_test".to_string(), u32::MAX);
+
+        let error = registry
+            .replace_surface(
+                "surface_test",
+                vec![(
+                    "element_new".to_string(),
+                    record("surface_test", "new", vec![1]),
+                )],
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "computer_state_error: observation generation exhausted"
+        );
+        assert!(registry.get("element_old").is_some());
+        assert!(registry.get("element_new").is_none());
+        assert_eq!(
+            registry.surface_generations.get("surface_test"),
+            Some(&u32::MAX)
+        );
     }
 
     #[test]
     fn computer_element_registry_clear_invalidates_all_handles() {
         let mut registry = ElementRegistry::default();
-        registry.replace_surface(
-            "surface_test",
-            vec![(
-                "element_test".to_string(),
-                record("surface_test", "test", vec![]),
-            )],
-        );
+        registry
+            .replace_surface(
+                "surface_test",
+                vec![(
+                    "element_test".to_string(),
+                    record("surface_test", "test", vec![]),
+                )],
+            )
+            .unwrap();
         registry.clear();
         assert!(registry.entries.is_empty());
         assert!(registry.order.is_empty());
+        assert!(registry.surface_generations.is_empty());
     }
 
     #[test]
@@ -931,6 +1081,22 @@ mod element_registry_tests {
         assert!(element.contains_protected_content());
         element.lineage.pop();
         assert!(element.target_fingerprint().is_none());
+    }
+
+    #[test]
+    fn computer_element_state_payload_is_exact_surface_and_element_only() {
+        let exact = json!({
+            "surface_id": "surface_test",
+            "element_id": "element_test"
+        });
+        assert!(ensure_exact_payload_fields(&exact, &["surface_id", "element_id"]).is_ok());
+        for extra in [
+            json!({"surface_id": "surface_test", "element_id": "element_test", "value": true}),
+            json!({"surface_id": "surface_test", "element_id": "element_test", "action": "focus"}),
+            json!({"surface_id": "surface_test", "element_id": "element_test", "refresh": true}),
+        ] {
+            assert!(ensure_exact_payload_fields(&extra, &["surface_id", "element_id"]).is_err());
+        }
     }
 
     #[test]
@@ -1086,6 +1252,7 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
             | "computer_snapshot"
             | "computer_accessibility_status"
             | "computer_accessibility_tree"
+            | "computer_element_state"
             | "computer_activate_window"
             | "computer_control"
             | "computer_input_text"
@@ -1169,6 +1336,19 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 .unwrap_or(DEFAULT_ACCESSIBILITY_NODES);
             surface_id.and_then(|surface_id| {
                 ComputerObserver::global().accessibility_tree(surface_id, max_depth, max_nodes)
+            })
+        }
+        "computer_element_state" => {
+            ensure_exact_payload_fields(&payload, &["surface_id", "element_id"]).and_then(|()| {
+                let surface_id = payload
+                    .get("surface_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_request: surface_id is required".to_string())?;
+                let element_id = payload
+                    .get("element_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_request: element_id is required".to_string())?;
+                ComputerObserver::global().element_state(surface_id, element_id)
             })
         }
         "computer_activate_window" => ensure_exact_payload_fields(&payload, &["surface_id"])
@@ -1284,6 +1464,19 @@ mod platform {
     ) -> Result<AccessibilityTreeResult, String> {
         Err(
             "unsupported_platform: computer accessibility observation is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    pub(super) fn element_state(
+        _surface_id: &str,
+        _element_id: &str,
+        _observation_generation: u32,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+    ) -> Result<serde_json::Value, String> {
+        Err(
+            "unsupported_platform: computer element state is unavailable on this platform"
                 .to_string(),
         )
     }
@@ -1423,9 +1616,10 @@ mod platform {
     };
     #[cfg(target_os = "macos")]
     use super::{
-        ensure_correlated_fingerprint, select_exact_ax_window_index, validate_input_text,
-        validate_text_input_preflight, validate_text_input_target, AxObservationDeadline,
-        ElementFingerprint,
+        ensure_correlated_fingerprint, is_secure_text_fingerprint,
+        is_supported_text_input_fingerprint, select_exact_ax_window_index,
+        validate_element_state_target, validate_input_text, validate_text_input_preflight,
+        validate_text_input_target, AxObservationDeadline, ElementFingerprint,
     };
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
@@ -2151,6 +2345,61 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
+    pub(super) fn element_state(
+        surface_id: &str,
+        element_id: &str,
+        observation_generation: u32,
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
+    ) -> Result<Value, String> {
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(
+                "permission_denied: macOS Accessibility permission is not granted".to_string(),
+            );
+        }
+        let target = validate_element_state_target(element)?;
+        let deadline = AxObservationDeadline::new();
+        let current = resolve_correlated_element(surface, element, &deadline)?;
+        let enabled = optional_ax_bool(&deadline, &current, "AXEnabled")?;
+        let focused = optional_ax_bool(&deadline, &current, "AXFocused")?;
+        let protected = element.contains_protected_content()
+            || element.lineage.iter().any(is_secure_text_fingerprint);
+        let enabled_for_effect = enabled != Some(false);
+        let can_press =
+            !protected && enabled_for_effect && ax_supports_action(&deadline, &current, "AXPress")?;
+        let can_focus = !protected
+            && enabled_for_effect
+            && ax_attribute_settable(&deadline, &current, "AXFocused")?;
+
+        let supported_text = !protected && is_supported_text_input_fingerprint(target);
+        let (value_empty, can_input_text) = if supported_text {
+            let value_settable = ax_attribute_settable(&deadline, &current, "AXValue")?;
+            let current_value = optional_ax_string(&deadline, &current, "AXValue")?;
+            let value_empty = current_value.as_deref().map(str::is_empty);
+            let can_input_text = enabled != Some(false)
+                && focused == Some(true)
+                && value_settable
+                && value_empty == Some(true);
+            (value_empty, can_input_text)
+        } else {
+            (None, false)
+        };
+        Ok(json!({
+            "platform": "macos",
+            "surface_id": surface_id,
+            "element_id": element_id,
+            "observation_generation": observation_generation,
+            "enabled": enabled,
+            "focused": focused,
+            "protected": protected,
+            "value_empty": value_empty,
+            "can_press": can_press,
+            "can_focus": can_focus,
+            "can_input_text": can_input_text,
+        }))
+    }
+
+    #[cfg(target_os = "macos")]
     pub(super) fn activate_window(
         surface_id: &str,
         surface: &SurfaceRecord,
@@ -2343,6 +2592,20 @@ mod platform {
     ) -> Result<AccessibilityTreeResult, String> {
         Err(
             "unsupported_platform: computer accessibility observation is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    #[cfg(windows)]
+    pub(super) fn element_state(
+        _surface_id: &str,
+        _element_id: &str,
+        _observation_generation: u32,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+    ) -> Result<Value, String> {
+        Err(
+            "unsupported_platform: computer element state is unavailable on this platform"
                 .to_string(),
         )
     }

@@ -122,6 +122,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({"type": "string", "minLength": 1, "maxLength": 128}),
             ),
             (
+                "observation_generation",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
                 "nodes",
                 json!({"type": "array", "maxItems": 256, "items": accessibility_node_schema()}),
             ),
@@ -146,6 +150,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({"type": "string", "minLength": 1, "maxLength": 128}),
             ),
             (
+                "observation_generation",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
                 "elements",
                 json!({"type": "array", "maxItems": 32, "items": accessibility_match_schema()}),
             ),
@@ -158,6 +166,37 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({"type": "integer", "minimum": 1, "maximum": 256}),
             ),
             ("truncated", json!({"type": "boolean"})),
+        ])),
+        "computer_element_state" => Some(wrapped_output_schema(vec![
+            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "surface_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
+            (
+                "element_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
+            (
+                "observation_generation",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
+                "enabled",
+                json!({"anyOf": [{"type": "boolean"}, {"type": "null"}]}),
+            ),
+            (
+                "focused",
+                json!({"anyOf": [{"type": "boolean"}, {"type": "null"}]}),
+            ),
+            ("protected", json!({"type": "boolean"})),
+            (
+                "value_empty",
+                json!({"anyOf": [{"type": "boolean"}, {"type": "null"}]}),
+            ),
+            ("can_press", json!({"type": "boolean"})),
+            ("can_focus", json!({"type": "boolean"})),
+            ("can_input_text", json!({"type": "boolean"})),
         ])),
         "computer_activate_window" => Some(wrapped_output_schema(vec![
             ("platform", json!({"type": "string", "enum": ["macos"]})),

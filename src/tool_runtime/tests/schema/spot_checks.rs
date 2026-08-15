@@ -132,11 +132,54 @@ fn tool_specs_computer_find_elements_is_bounded_semantic_observation() {
     assert_schema_fields!(
         output,
         "computer_find_elements output schema",
-        present: ["platform", "surface_id", "elements", "count", "scanned_nodes", "truncated"]
+        present: ["platform", "surface_id", "observation_generation", "elements", "count", "scanned_nodes", "truncated"]
     );
     let element = &output["elements"]["items"];
     assert!(element["properties"].get("value").is_none());
     assert_eq!(output["elements"]["maxItems"], 32);
+}
+
+#[test]
+fn tool_specs_computer_element_state_is_exact_read_only_normalized_state() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "computer_element_state");
+    assert_eq!(
+        required_fields(spec),
+        vec![
+            "client_id".to_string(),
+            "surface_id".to_string(),
+            "element_id".to_string(),
+        ]
+    );
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_element_state input schema",
+        present: ["client_id", "surface_id", "element_id"]
+    );
+
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_element_state output schema",
+        present: [
+            "platform",
+            "surface_id",
+            "element_id",
+            "observation_generation",
+            "enabled",
+            "focused",
+            "protected",
+            "value_empty",
+            "can_press",
+            "can_focus",
+            "can_input_text"
+        ],
+        absent: ["value", "title", "description", "placeholder"]
+    );
+    assert_eq!(output["observation_generation"]["minimum"], 1);
 }
 
 #[test]

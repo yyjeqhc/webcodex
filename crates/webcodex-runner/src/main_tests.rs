@@ -6690,6 +6690,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         sandbox_inspect_commands: true,
         computer_observe: true,
         computer_accessibility_observe: true,
+        computer_element_state: true,
         computer_control: true,
         computer_window_activate: true,
         computer_text_input: true,
@@ -6751,6 +6752,11 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         caps.computer_accessibility_observe,
         cfg!(target_os = "macos"),
         "computer accessibility observation is advertised only by the macOS native implementation"
+    );
+    assert_eq!(
+        caps.computer_element_state,
+        cfg!(target_os = "macos"),
+        "computer element state is independently advertised only by the macOS native implementation"
     );
     assert_eq!(
         caps.computer_control,

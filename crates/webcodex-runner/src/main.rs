@@ -1865,6 +1865,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // It is currently implemented only by the macOS Runner and never implies
     // future computer-control authority.
     capabilities.computer_accessibility_observe = cfg!(target_os = "macos");
+    // Normalized element-state observation is a separate rolling-upgrade wire
+    // capability and is currently implemented only on macOS.
+    capabilities.computer_element_state = cfg!(target_os = "macos");
     // Accessibility control is independently fenced and currently implemented
     // only by the macOS Runner; observation authority never implies it.
     capabilities.computer_control = cfg!(target_os = "macos");

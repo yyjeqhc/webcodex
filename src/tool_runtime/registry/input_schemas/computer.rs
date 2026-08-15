@@ -55,6 +55,19 @@ pub(crate) fn computer_find_elements_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_element_state_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose observed element is revalidated."},
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque process-local surface_id that owns the element."},
+            "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact ephemeral element_id returned by computer_accessibility_tree or computer_find_elements."}
+        },
+        "required": ["client_id", "surface_id", "element_id"]
+    })
+}
+
 pub(crate) fn computer_activate_window_input_schema() -> Value {
     json!({
         "type": "object",

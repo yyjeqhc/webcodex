@@ -682,6 +682,7 @@ impl ToolRuntime {
             | ToolCall::ComputerAccessibilityStatus { .. }
             | ToolCall::ComputerAccessibilityTree { .. }
             | ToolCall::ComputerFindElements { .. }
+            | ToolCall::ComputerElementState { .. }
             | ToolCall::ComputerActivateWindow { .. }
             | ToolCall::ComputerControl { .. }
             | ToolCall::ComputerInputText { .. }

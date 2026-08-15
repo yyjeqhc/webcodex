@@ -25,36 +25,29 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "counts",
-                open_object_schema("Bounded finding counts: findings, critical, high, medium, low, untracked, tracked, large_files, secret_like_paths, cache_paths."),
+                open_object_schema("Sparse non-zero finding counts: findings, critical, high, medium, low, untracked, tracked, large_files, secret_like_paths, cache_paths. Omitted count fields mean zero; the counts object is omitted when every count is zero."),
             ),
             (
                 "findings",
                 array_schema(
                     open_object_schema("Hygiene finding: path, kind, severity, tracked_status, reason, recommendation. Never includes file contents."),
-                    "Bounded hygiene findings. Path is project-relative. Secret-like files are identified by name only.",
+                    "Bounded hygiene findings. Path is project-relative. Secret-like files are identified by name only. Omitted when there are no findings.",
                 ),
             ),
             (
                 "truncated",
-                schema_type("boolean", "True when findings were truncated to max_findings."),
+                schema_type("boolean", "Present as true when findings were truncated to max_findings; omitted otherwise."),
             ),
             (
                 "warnings",
                 array_schema(
                     schema_type("string", "Warning code."),
-                    "Warning codes such as non_git_project.",
-                ),
-            ),
-            (
-                "suggested_next_actions",
-                array_schema(
-                    schema_type("string", "Short suggested action."),
-                    "Bounded suggested next actions.",
+                    "Warning codes such as non_git_project. Omitted when there are no warnings.",
                 ),
             ),
             (
                 "verdict",
-                open_object_schema("Operator-friendly hygiene verdict: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. Additive UX summary only; does not change safety semantics."),
+                open_object_schema("Operator-friendly hygiene verdict: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. The action list is empty for a clean pass and contains only actionable guidance otherwise. Does not change safety semantics."),
             ),
         ])),
         "git_restore_paths" => Some(wrapped_output_schema(vec![

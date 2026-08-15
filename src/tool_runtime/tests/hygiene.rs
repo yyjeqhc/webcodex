@@ -107,6 +107,13 @@ fn workspace_hygiene_check_is_known_and_in_specs() {
         output_props.contains_key("verdict"),
         "workspace_hygiene_check output schema should expose verdict"
     );
+    assert!(
+        !output_props.contains_key("suggested_next_actions"),
+        "action guidance should have one canonical home under verdict"
+    );
+    assert!(output_props["counts"]["description"]
+        .as_str()
+        .is_some_and(|description| description.contains("Sparse non-zero")));
 
     // OpenAPI ToolCallRequest.tool description includes the name.
     let openapi_spec = crate::openapi::build_openapi_spec();
@@ -150,12 +157,34 @@ async fn workspace_hygiene_check_clean_git_repo() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["git_available"], true);
     assert_eq!(result.output["clean"], true);
-    assert_eq!(result.output["counts"]["findings"], 0);
-    assert!(result.output["findings"].as_array().unwrap().is_empty());
-    assert_eq!(result.output["truncated"], false);
+    for omitted in [
+        "counts",
+        "findings",
+        "truncated",
+        "warnings",
+        "suggested_next_actions",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "clean hygiene output must omit default field {omitted}: {}",
+            result.output
+        );
+    }
     assert_review_verdict_shape(&result.output["verdict"]);
-    assert_ne!(result.output["verdict"]["status"], "fail");
+    assert_eq!(result.output["verdict"]["status"], "pass");
     assert_eq!(result.output["verdict"]["blocking"], false);
+    assert!(result.output["verdict"]["blocking_reasons"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(result.output["verdict"]["warning_reasons"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(result.output["verdict"]["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 // =========================================================================
@@ -360,13 +389,10 @@ async fn workspace_hygiene_check_include_tracked_false_by_default() {
         dispatch_hygiene_with_agent(&runtime, "hyc-tracked", project.clone(), None, None, None)
             .await;
     assert!(result.success, "{:?}", result.error);
-    let findings = result.output["findings"].as_array().unwrap();
-    let has_tracked_secret = findings.iter().any(|f| {
-        f["path"] == ".env" && f["tracked_status"] == "tracked" && f["kind"] == "secret_like_path"
-    });
     assert!(
-        !has_tracked_secret,
-        "tracked suspicious path should not be reported by default: {findings:?}"
+        result.output.get("findings").is_none(),
+        "default tracked-file exclusion should leave sparse clean output: {}",
+        result.output
     );
 
     // include_tracked=true → tracked .env should be reported.
@@ -505,6 +531,13 @@ async fn workspace_hygiene_check_non_git_project_does_not_fail() {
         "warning_reasons",
         "git_unavailable",
     );
+    for omitted in ["counts", "findings", "truncated", "suggested_next_actions"] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "non-git hygiene output must omit empty/default field {omitted}: {}",
+            result.output
+        );
+    }
     let warnings = result.output["warnings"].as_array().unwrap();
     assert!(
         warnings.iter().any(|w| w == "non_git_project"),

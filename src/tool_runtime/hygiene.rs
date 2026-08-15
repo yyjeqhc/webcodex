@@ -340,20 +340,11 @@ fn hygiene_recommendation(kind: HygieneKind) -> String {
     }
 }
 
-/// Build the bounded suggested_next_actions list from the findings and git
-/// availability.
-fn suggested_hygiene_actions(findings: &[HygieneFinding], git_available: bool) -> Vec<Value> {
+/// Build bounded actionable guidance from actual findings. A clean workspace
+/// intentionally has no suggested action; the pass verdict already carries
+/// the authoritative clean state without repeating prose.
+fn suggested_hygiene_actions(findings: &[HygieneFinding]) -> Vec<Value> {
     let mut actions: Vec<Value> = Vec::new();
-    if !git_available {
-        actions.push(Value::String(
-            "project is not a git repository; git-backed hygiene checks unavailable".to_string(),
-        ));
-    }
-    if findings.is_empty() && git_available {
-        actions.push(Value::String(
-            "workspace is clean; no hygiene risks detected".to_string(),
-        ));
-    }
     if !findings.is_empty() {
         actions.push(Value::String(
             "review findings before continuing".to_string(),
@@ -374,9 +365,6 @@ fn suggested_hygiene_actions(findings: &[HygieneFinding], git_available: bool) -
         actions.push(Value::String(
             "use discard_untracked only for files you intentionally created".to_string(),
         ));
-    }
-    if actions.is_empty() {
-        actions.push(Value::String("no action needed".to_string()));
     }
     actions
 }
@@ -437,32 +425,48 @@ pub(crate) fn build_hygiene_summary(
         })
         .collect();
 
-    let suggested_next_actions = suggested_hygiene_actions(findings, git_available);
+    let suggested_next_actions = suggested_hygiene_actions(findings);
     let verdict = hygiene_verdict(git_available, findings, truncated, &suggested_next_actions);
+    let counts = [
+        ("findings", findings.len() as u64),
+        ("critical", critical),
+        ("high", high),
+        ("medium", medium),
+        ("low", low),
+        ("untracked", untracked_count),
+        ("tracked", tracked_count),
+        ("large_files", large_files),
+        ("secret_like_paths", secret_like),
+        ("cache_paths", cache_paths),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count > 0)
+    .map(|(name, count)| (name.to_string(), Value::from(count)))
+    .collect::<serde_json::Map<_, _>>();
 
-    json!({
+    // Successful hygiene output is sparse by default: omitted evidence means
+    // zero/empty/false. Positive findings, warnings, and truncation always stay
+    // explicit so payload reduction cannot hide actionable risk.
+    let mut summary = json!({
         "project": project,
         "resolved_project": resolved_project,
         "git_available": git_available,
         "clean": clean,
-        "counts": {
-            "findings": findings.len(),
-            "critical": critical,
-            "high": high,
-            "medium": medium,
-            "low": low,
-            "untracked": untracked_count,
-            "tracked": tracked_count,
-            "large_files": large_files,
-            "secret_like_paths": secret_like,
-            "cache_paths": cache_paths,
-        },
-        "findings": findings_json,
-        "truncated": truncated,
-        "warnings": warnings,
-        "suggested_next_actions": suggested_next_actions,
         "verdict": verdict,
-    })
+    });
+    if !counts.is_empty() {
+        summary["counts"] = Value::Object(counts);
+    }
+    if !findings_json.is_empty() {
+        summary["findings"] = Value::Array(findings_json);
+    }
+    if truncated {
+        summary["truncated"] = Value::Bool(true);
+    }
+    if !warnings.is_empty() {
+        summary["warnings"] = json!(warnings);
+    }
+    summary
 }
 
 fn hygiene_verdict(
@@ -507,9 +511,6 @@ fn hygiene_verdict(
         );
     }
 
-    if actions.is_empty() {
-        actions.push("no action needed".to_string());
-    }
     let status = if blocking_reasons.is_empty() {
         if warning_reasons.is_empty() {
             "pass"
@@ -1088,9 +1089,24 @@ mod tests {
         );
         assert_eq!(summary["git_available"], true);
         assert_eq!(summary["clean"], true);
-        assert_eq!(summary["counts"]["findings"], 0);
-        assert_eq!(summary["truncated"], false);
-        assert!(summary["warnings"].as_array().unwrap().is_empty());
+        for omitted in [
+            "counts",
+            "findings",
+            "truncated",
+            "warnings",
+            "suggested_next_actions",
+        ] {
+            assert!(
+                summary.get(omitted).is_none(),
+                "clean hygiene summary must omit default field {omitted}: {summary}"
+            );
+        }
+        assert_eq!(summary["verdict"]["status"], "pass");
+        assert_eq!(summary["verdict"]["blocking"], false);
+        assert!(summary["verdict"]["suggested_next_actions"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1106,6 +1122,12 @@ mod tests {
         assert_eq!(summary["git_available"], false);
         assert_eq!(summary["clean"], false);
         assert!(!summary["warnings"].as_array().unwrap().is_empty());
+        for omitted in ["counts", "findings", "truncated", "suggested_next_actions"] {
+            assert!(
+                summary.get(omitted).is_none(),
+                "non-git summary must omit empty/default field {omitted}: {summary}"
+            );
+        }
     }
 
     #[test]
@@ -1143,5 +1165,20 @@ mod tests {
         assert_eq!(summary["counts"]["secret_like_paths"], 1);
         assert_eq!(summary["counts"]["untracked"], 2);
         assert_eq!(summary["findings"].as_array().unwrap().len(), 2);
+        for zero_count in [
+            "critical",
+            "medium",
+            "tracked",
+            "large_files",
+            "cache_paths",
+        ] {
+            assert!(
+                summary["counts"].get(zero_count).is_none(),
+                "zero count {zero_count} must be omitted: {summary}"
+            );
+        }
+        assert!(summary.get("truncated").is_none());
+        assert!(summary.get("warnings").is_none());
+        assert!(summary.get("suggested_next_actions").is_none());
     }
 }

@@ -404,6 +404,98 @@ input[type="text"] {
   color: var(--muted);
 }
 
+.workflow-session-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.workflow-session-summary-fact {
+  font-size: 0.68rem;
+}
+
+.workflow-session-summary-runtime {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.workflow-session-summary-pass {
+  color: var(--pass);
+  border-color: var(--pass);
+}
+
+.workflow-session-summary-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.workflow-session-summary-fail {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+
+.workflow-session-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.workflow-session-overview-card {
+  min-width: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--border);
+  background: var(--bg);
+}
+
+.workflow-session-overview-runtime {
+  border-left-color: var(--accent);
+}
+
+.workflow-session-overview-validation {
+  border-left-color: var(--border);
+}
+
+.workflow-session-overview-pass {
+  border-left-color: var(--pass);
+}
+
+.workflow-session-overview-warn {
+  border-left-color: var(--warn);
+}
+
+.workflow-session-overview-fail {
+  border-left-color: var(--fail);
+}
+
+.workflow-session-overview-muted,
+.workflow-session-overview-progress-card {
+  border-left-color: var(--muted);
+}
+
+.workflow-session-overview-progress-card {
+  opacity: 0.82;
+}
+
+.workflow-session-overview-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.workflow-session-overview-value {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+
+.workflow-session-overview-note {
+  margin: 2px 0 0;
+}
+
 .workflow-session-timeline-controls {
   display: flex;
   align-items: center;
@@ -583,6 +675,10 @@ input[type="text"] {
 
   .workflow-sessions-grid,
   .workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-session-overview {
     grid-template-columns: 1fr;
   }
 

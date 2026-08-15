@@ -56,6 +56,14 @@ async function assertRequiredAssets(outputDirectory) {
   assert.equal(/\.innerHTML\b|\binnerHTML\s*=/.test(app), false);
   assert.match(app, /workflow-session/);
   assert.match(app, /textContent/);
+  assert.match(app, /workflow-session-overview-validation/);
+  assert.match(app, /workflow-session-overview-progress/);
+  const consoleHtml = await readFile(resolve(outputDirectory, "console.html"), "utf8");
+  assert.match(consoleHtml, /workflow-session-overview-work/);
+  assert.match(consoleHtml, /Reported progress/);
+  assert.match(consoleHtml, /Model-reported; informational only\./);
+  const styles = await readFile(resolve(outputDirectory, "styles.css"), "utf8");
+  assert.match(styles, /workflow-session-summary-runtime/);
   await exec(process.execPath, ["--check", resolve(outputDirectory, "app.js")]);
   const admin = await readFile(resolve(outputDirectory, "admin.js"), "utf8");
   await exec(process.execPath, ["--check", resolve(outputDirectory, "admin.js")]);

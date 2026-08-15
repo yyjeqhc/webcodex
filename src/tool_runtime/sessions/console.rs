@@ -8,8 +8,12 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
 use super::super::helpers::is_safe_job_id;
+use super::super::validation_events::{
+    event_observes_validation_activity, validation_summary_from_events,
+};
 use super::events::normalize_observed_project_path;
 use super::model::{SessionEvent, SessionMessageKind, SessionRecord};
+use super::query::build_messages_summary;
 use super::util::{bound_chars, looks_like_secret_string};
 
 pub(crate) const DEFAULT_CONSOLE_SESSION_LIST_LIMIT: usize = 20;
@@ -42,6 +46,55 @@ pub(crate) struct WorkflowSessionConsoleListItem {
     pub(crate) current_activity: Option<WorkflowSessionConsoleActivityPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) last_activity: Option<WorkflowSessionConsoleActivityPreview>,
+    pub(crate) overview: WorkflowSessionConsoleOverview,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowSessionConsoleOverview {
+    pub(crate) work: WorkflowSessionConsoleWorkOverview,
+    pub(crate) validation: WorkflowSessionConsoleValidationOverview,
+    pub(crate) attention: WorkflowSessionConsoleAttentionOverview,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reported_progress: Option<WorkflowSessionConsoleReportedProgress>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowSessionConsoleWorkOverview {
+    pub(crate) exploration: usize,
+    pub(crate) edits: usize,
+    pub(crate) reviews: usize,
+    pub(crate) validations: usize,
+    pub(crate) runs: usize,
+    pub(crate) history_complete: bool,
+    pub(crate) history_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowSessionConsoleValidationOverview {
+    pub(crate) state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) latest_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) latest_at: Option<i64>,
+    pub(crate) unresolved_failure_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tests_run_count: Option<u64>,
+    pub(crate) history_complete: bool,
+    pub(crate) history_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowSessionConsoleAttentionOverview {
+    pub(crate) open_guidance: usize,
+    pub(crate) open_questions: usize,
+    pub(crate) open_risks: usize,
+    pub(crate) open_todos: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowSessionConsoleReportedProgress {
+    pub(crate) reported_at: i64,
+    pub(crate) text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,6 +123,7 @@ pub(crate) struct WorkflowSessionConsoleDetail {
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
     pub(crate) running_call: bool,
+    pub(crate) overview: WorkflowSessionConsoleOverview,
     pub(crate) activity: Vec<WorkflowSessionConsoleActivity>,
     pub(crate) activity_total: usize,
     pub(crate) activity_returned: usize,
@@ -157,6 +211,7 @@ pub(super) fn build_list_item(
                 .or(interaction.start)
                 .is_some_and(|event| !interaction_is_progress_metadata(event))
     });
+    let overview = build_overview(record, &interactions, false);
     WorkflowSessionConsoleListItem {
         session_id: record.session_id.clone(),
         title: console_title(record.title.as_deref()),
@@ -166,6 +221,7 @@ pub(super) fn build_list_item(
         running_call,
         current_activity: current.map(|interaction| activity_preview(interaction, project)),
         last_activity: last.map(|interaction| activity_preview(interaction, project)),
+        overview,
     }
 }
 
@@ -178,6 +234,7 @@ pub(super) fn build_detail(
     let running_call = interactions
         .iter()
         .any(|interaction| interaction.finish.is_none() && interaction.start.is_some());
+    let overview = build_overview(record, &interactions, true);
     let mut ordered_activity = interactions
         .into_iter()
         .map(|interaction| OrderedActivity {
@@ -233,11 +290,147 @@ pub(super) fn build_detail(
         created_at: record.created_at,
         updated_at: record.updated_at,
         running_call,
+        overview,
         activity,
         activity_total,
         activity_returned,
         activity_truncated: activity_total > activity_returned,
     }
+}
+
+fn build_overview(
+    record: &SessionRecord,
+    interactions: &[Interaction<'_>],
+    include_reported_progress: bool,
+) -> WorkflowSessionConsoleOverview {
+    let history_truncated = event_history_truncated(record);
+    let mut work = WorkflowSessionConsoleWorkOverview {
+        exploration: 0,
+        edits: 0,
+        reviews: 0,
+        validations: 0,
+        runs: 0,
+        history_complete: !history_truncated,
+        history_truncated,
+    };
+    for interaction in interactions
+        .iter()
+        .copied()
+        .filter(|interaction| interaction.finish.is_some())
+    {
+        let evidence = interaction
+            .finish
+            .or(interaction.start)
+            .expect("finished interaction evidence");
+        match semantic_kind(evidence) {
+            "Read" | "Searched" | "Navigated" => {
+                work.exploration = work.exploration.saturating_add(1)
+            }
+            "Edited" => work.edits = work.edits.saturating_add(1),
+            "Reviewed" => work.reviews = work.reviews.saturating_add(1),
+            "Tested" => work.validations = work.validations.saturating_add(1),
+            "Ran" => work.runs = work.runs.saturating_add(1),
+            _ => {}
+        }
+    }
+
+    let validation_activity_observed = interactions.iter().any(|interaction| {
+        interaction
+            .start
+            .is_some_and(event_observes_validation_activity)
+            || interaction
+                .finish
+                .is_some_and(event_observes_validation_activity)
+    });
+
+    let retained_events = record
+        .events
+        .iter()
+        .map(|event| event.as_ref().clone())
+        .collect::<Vec<_>>();
+    // The validation module owns validation identity, parser, terminality, and
+    // historical failure resolution. Console deliberately narrows that existing
+    // aggregate instead of interpreting validation output itself.
+    let validation_summary = validation_summary_from_events(&retained_events, 1);
+    let validation_available = validation_summary
+        .get("available")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let latest_status = validation_summary
+        .get("latest_status")
+        .and_then(serde_json::Value::as_str);
+    let unresolved_failure_count = validation_summary
+        .get("unresolved_failures")
+        .and_then(|value| value.get("count"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or(0);
+    let latest = validation_summary.get("latest");
+    let latest_kind = latest
+        .and_then(|value| value.get("validation_kind"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(safe_atom);
+    let latest_at = latest.and_then(|value| {
+        value
+            .get("completed_at")
+            .and_then(serde_json::Value::as_i64)
+            .or_else(|| value.get("started_at").and_then(serde_json::Value::as_i64))
+    });
+    let tests_run_count = latest
+        .and_then(|value| value.get("tests_run_count"))
+        .and_then(serde_json::Value::as_u64);
+    let validation_state = if !validation_available {
+        if !history_truncated && latest_status == Some("not_run") && !validation_activity_observed {
+            "not_run"
+        } else {
+            "unavailable"
+        }
+    } else if unresolved_failure_count > 0 || latest_status == Some("failed") {
+        "failed"
+    } else if latest_status == Some("passed") {
+        "passed"
+    } else {
+        "unavailable"
+    };
+    let validation = WorkflowSessionConsoleValidationOverview {
+        state: validation_state.to_string(),
+        latest_kind,
+        latest_at,
+        unresolved_failure_count,
+        tests_run_count,
+        history_complete: !history_truncated,
+        history_truncated,
+    };
+
+    let messages = build_messages_summary(record);
+    let attention = WorkflowSessionConsoleAttentionOverview {
+        open_guidance: messages.pending_guidance,
+        open_questions: messages.open_questions,
+        open_risks: messages.open_risks,
+        open_todos: messages.open_todos,
+    };
+    let reported_progress = include_reported_progress
+        .then(|| {
+            messages
+                .recent_progress
+                .first()
+                .map(|message| WorkflowSessionConsoleReportedProgress {
+                    reported_at: message.created_at,
+                    text: console_safe_text(&message.message, MAX_CONSOLE_TEXT_CHARS),
+                })
+        })
+        .flatten();
+
+    WorkflowSessionConsoleOverview {
+        work,
+        validation,
+        attention,
+        reported_progress,
+    }
+}
+
+fn event_history_truncated(record: &SessionRecord) -> bool {
+    record.events_observed.max(record.events.len() as u64) > record.events.len() as u64
 }
 
 fn sort_ordered_activity(activity: &mut [OrderedActivity]) {

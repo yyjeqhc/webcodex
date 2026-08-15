@@ -140,6 +140,25 @@
                 <span class="chip" id="workflow-session-running">—</span>
               </div>
               <p class="muted small" id="workflow-session-updated">—</p>
+              <div class="workflow-session-overview" aria-label="Workflow session overview">
+                <div class="workflow-session-overview-card workflow-session-overview-runtime">
+                  <div class="workflow-session-overview-label">Work</div>
+                  <p id="workflow-session-overview-work" class="workflow-session-overview-value">—</p>
+                </div>
+                <div id="workflow-session-overview-validation-card" class="workflow-session-overview-card workflow-session-overview-validation">
+                  <div class="workflow-session-overview-label">Validation</div>
+                  <p id="workflow-session-overview-validation" class="workflow-session-overview-value">—</p>
+                </div>
+                <div id="workflow-session-overview-attention-card" class="workflow-session-overview-card workflow-session-overview-attention">
+                  <div class="workflow-session-overview-label">Attention</div>
+                  <p id="workflow-session-overview-attention" class="workflow-session-overview-value">—</p>
+                </div>
+                <div class="workflow-session-overview-card workflow-session-overview-progress-card">
+                  <div class="workflow-session-overview-label">Reported progress</div>
+                  <p class="muted small workflow-session-overview-note">Model-reported; informational only.</p>
+                  <p id="workflow-session-overview-progress" class="workflow-session-overview-value muted">—</p>
+                </div>
+              </div>
               <div class="workflow-session-timeline-controls">
                 <span class="muted small">Activity</span>
                 <button id="workflow-session-jump-latest" class="btn workflow-session-jump-latest" type="button" hidden>Jump to latest</button>

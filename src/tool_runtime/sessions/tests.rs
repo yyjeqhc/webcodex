@@ -1186,6 +1186,396 @@ fn legacy_session_events_without_call_id_restore() {
     assert!(!detail.running_call);
 }
 
+fn record_console_tool(
+    store: &SessionStore,
+    session_id: &str,
+    project: &str,
+    tool: &str,
+    input: Value,
+    success: bool,
+    output: Value,
+) {
+    let start =
+        store.record_tool_call_started(Some(session_id), SessionTransport::Api, tool, &input);
+    store.record_tool_call_finished(
+        start,
+        success,
+        &output,
+        (!success).then_some("tool failed"),
+        (!success).then_some("validation_failed"),
+    );
+    debug_assert_eq!(input.get("project").and_then(Value::as_str), Some(project));
+}
+
+fn record_console_validation(
+    store: &SessionStore,
+    session_id: &str,
+    project: &str,
+    success: bool,
+    tests_run_count: u64,
+) {
+    record_console_tool(
+        store,
+        session_id,
+        project,
+        "cargo_test",
+        json!({"project": project}),
+        success,
+        json!({
+            "exit_code": if success { 0 } else { 101 },
+            "execution_state": "completed",
+            "command_started": true,
+            "command_completed": true,
+            "tests_detected": true,
+            "tests_run_count": tests_run_count,
+            "zero_tests_run": tests_run_count == 0,
+            "stdout_tail": if success { "test result: ok" } else { "test result: FAILED" },
+            "stderr_tail": "",
+            "stdout_lines": 1,
+            "stderr_lines": 0,
+            "failure_kind": if success { Value::Null } else { json!("test_failure") }
+        }),
+    );
+}
+
+#[test]
+fn console_overview_counts_runtime_work_attention_and_sanitizes_reported_progress() {
+    let store = SessionStore::new_in_memory(10, 80);
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), Some("overview".to_string()));
+
+    for (tool, input, output) in [
+        (
+            "read_file",
+            json!({"project": project, "path": "src/lib.rs"}),
+            json!({"content": "RAW_FILE_CONTENT"}),
+        ),
+        (
+            "search_project_text",
+            json!({"project": project, "pattern": "SECRET_PATTERN", "path": "src"}),
+            json!({"matches": [{"path": "src/lib.rs"}]}),
+        ),
+        (
+            "goto_definition",
+            json!({"project": project, "path": "src/lib.rs", "line": 1, "column": 1}),
+            json!({"locations": [{"path": "src/lib.rs"}]}),
+        ),
+        (
+            "apply_text_edits",
+            json!({"project": project, "changes": [{"kind": "edit", "path": "src/lib.rs", "text": "SECRET_DIFF"}]}),
+            json!({"changed_paths": ["src/lib.rs"]}),
+        ),
+        (
+            "git_status",
+            json!({"project": project}),
+            json!({"status": "clean"}),
+        ),
+    ] {
+        record_console_tool(
+            &store,
+            &session.session_id,
+            project,
+            tool,
+            input,
+            true,
+            output,
+        );
+    }
+    record_console_validation(&store, &session.session_id, project, true, 3);
+    record_console_tool(
+        &store,
+        &session.session_id,
+        project,
+        "run_shell",
+        json!({"project": project, "command": "printf SECRET_COMMAND"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "execution_state": "completed",
+            "command_started": true,
+            "command_completed": true,
+            "stdout_tail": "SECRET_STDOUT",
+            "stderr_tail": "",
+            "stdout_lines": 1,
+            "stderr_lines": 0
+        }),
+    );
+
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Guidance,
+        "PRIVATE_GUIDANCE_BODY",
+    );
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Question,
+        "PRIVATE_QUESTION_BODY",
+    );
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Risk,
+        "PRIVATE_RISK_BODY",
+    );
+    let resolved_todo = post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "PRIVATE_RESOLVED_TODO_BODY",
+    );
+    store
+        .resolve_message(&session.session_id, &resolved_todo.message_id, None)
+        .unwrap();
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        "PRIVATE_OPEN_TODO_BODY",
+    );
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Progress,
+        "working in /root/private/work.rs",
+    );
+
+    let list = store.console_list_for_project(project, Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert_eq!(row.overview.work.exploration, 3);
+    assert_eq!(row.overview.work.edits, 1);
+    assert_eq!(row.overview.work.reviews, 1);
+    assert_eq!(row.overview.work.validations, 1);
+    assert_eq!(row.overview.work.runs, 1);
+    assert!(row.overview.work.history_complete);
+    assert!(!row.overview.work.history_truncated);
+    assert_eq!(row.overview.validation.state, "passed");
+    assert_eq!(row.overview.validation.latest_kind.as_deref(), Some("test"));
+    assert_eq!(row.overview.validation.tests_run_count, Some(3));
+    assert_eq!(row.overview.validation.unresolved_failure_count, 0);
+    assert_eq!(row.overview.attention.open_guidance, 1);
+    assert_eq!(row.overview.attention.open_questions, 1);
+    assert_eq!(row.overview.attention.open_risks, 1);
+    assert_eq!(row.overview.attention.open_todos, 1);
+    assert!(row.overview.reported_progress.is_none());
+    let list_serialized = serde_json::to_string(&list).unwrap();
+    for hidden in [
+        "PRIVATE_GUIDANCE_BODY",
+        "PRIVATE_QUESTION_BODY",
+        "PRIVATE_RISK_BODY",
+        "PRIVATE_RESOLVED_TODO_BODY",
+        "PRIVATE_OPEN_TODO_BODY",
+        "working in /root/private/work.rs",
+    ] {
+        assert!(
+            !list_serialized.contains(hidden),
+            "list leaked message body {hidden}: {list_serialized}"
+        );
+    }
+
+    let detail = store
+        .console_detail_for_project(project, &session.session_id, Some(100))
+        .unwrap();
+    let progress = detail.overview.reported_progress.as_ref().unwrap();
+    assert!(
+        progress.text.contains("[private path]"),
+        "{}",
+        progress.text
+    );
+    assert_eq!(detail.overview.validation.state, "passed");
+
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Progress,
+        "token=SUPER_SECRET_VALUE",
+    );
+    let detail = store
+        .console_detail_for_project(project, &session.session_id, Some(100))
+        .unwrap();
+    assert_eq!(
+        detail
+            .overview
+            .reported_progress
+            .as_ref()
+            .map(|progress| progress.text.as_str()),
+        Some("[redacted]")
+    );
+    assert_eq!(detail.overview.validation.state, "passed");
+
+    let serialized = serde_json::to_string(&detail).unwrap();
+    for hidden in [
+        "RAW_FILE_CONTENT",
+        "SECRET_PATTERN",
+        "SECRET_DIFF",
+        "SECRET_COMMAND",
+        "SECRET_STDOUT",
+        "SUPER_SECRET_VALUE",
+        "stdout_tail",
+        "stderr_tail",
+        "command_summary",
+        "validation_output_summary",
+    ] {
+        assert!(
+            !serialized.contains(hidden),
+            "{hidden} leaked: {serialized}"
+        );
+    }
+}
+
+#[test]
+fn console_overview_marks_retained_event_history_truncated_without_claiming_totals() {
+    let store = SessionStore::new_in_memory(10, 4);
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), Some("recent work".to_string()));
+    for path in ["src/a.rs", "src/b.rs", "src/c.rs"] {
+        record_console_tool(
+            &store,
+            &session.session_id,
+            project,
+            "read_file",
+            json!({"project": project, "path": path}),
+            true,
+            json!({"content": "omitted"}),
+        );
+    }
+
+    let detail = store
+        .console_detail_for_project(project, &session.session_id, Some(100))
+        .unwrap();
+    assert!(detail.overview.work.history_truncated);
+    assert!(!detail.overview.work.history_complete);
+    assert_eq!(detail.overview.work.exploration, 2);
+    assert_eq!(detail.overview.validation.state, "unavailable");
+    assert!(detail.overview.validation.history_truncated);
+    assert!(!detail.overview.validation.history_complete);
+}
+
+#[test]
+fn console_overview_validation_reuses_terminal_and_failure_resolution_semantics() {
+    let store = SessionStore::new_in_memory(10, 80);
+    let project = "agent:eval:demo";
+
+    let not_run = store.start_session(Some(project.to_string()), Some("not run".to_string()));
+    let detail = store
+        .console_detail_for_project(project, &not_run.session_id, Some(20))
+        .unwrap();
+    assert_eq!(detail.overview.validation.state, "not_run");
+    assert_eq!(detail.overview.validation.unresolved_failure_count, 0);
+
+    let passed = store.start_session(Some(project.to_string()), Some("passed".to_string()));
+    record_console_validation(&store, &passed.session_id, project, true, 4);
+    let detail = store
+        .console_detail_for_project(project, &passed.session_id, Some(20))
+        .unwrap();
+    assert_eq!(detail.overview.validation.state, "passed");
+    assert_eq!(
+        detail.overview.validation.latest_kind.as_deref(),
+        Some("test")
+    );
+    assert_eq!(detail.overview.validation.tests_run_count, Some(4));
+    assert!(detail.overview.validation.latest_at.is_some());
+
+    let failed = store.start_session(Some(project.to_string()), Some("failed".to_string()));
+    record_console_validation(&store, &failed.session_id, project, false, 1);
+    let detail = store
+        .console_detail_for_project(project, &failed.session_id, Some(20))
+        .unwrap();
+    assert_eq!(detail.overview.validation.state, "failed");
+    assert_eq!(detail.overview.validation.unresolved_failure_count, 1);
+
+    let resolved = store.start_session(Some(project.to_string()), Some("resolved".to_string()));
+    record_console_validation(&store, &resolved.session_id, project, false, 1);
+    record_console_validation(&store, &resolved.session_id, project, true, 5);
+    let detail = store
+        .console_detail_for_project(project, &resolved.session_id, Some(20))
+        .unwrap();
+    assert_eq!(detail.overview.validation.state, "passed");
+    assert_eq!(detail.overview.validation.unresolved_failure_count, 0);
+    assert_eq!(detail.overview.validation.tests_run_count, Some(5));
+}
+
+#[test]
+fn console_overview_running_validation_job_handoff_is_work_not_validation_outcome() {
+    let store = SessionStore::new_in_memory(10, 40);
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), Some("handoff".to_string()));
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_test",
+        &json!({"project": project}),
+    );
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({
+            "execution_state": "running",
+            "job_id": "11111111-2222-3333-4444-555555555555",
+            "job_status": "running",
+            "promoted_to_job": true,
+            "command_started": true,
+            "command_completed": false,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_lines": 0,
+            "stderr_lines": 0
+        }),
+        None,
+        None,
+    );
+    post_message(
+        &store,
+        &session.session_id,
+        SessionMessageKind::Progress,
+        "validation passed according to the model",
+    );
+
+    let detail = store
+        .console_detail_for_project(project, &session.session_id, Some(20))
+        .unwrap();
+    assert_eq!(detail.overview.work.validations, 1);
+    assert_eq!(detail.overview.validation.state, "unavailable");
+    assert_eq!(detail.overview.validation.unresolved_failure_count, 0);
+    assert!(detail.overview.reported_progress.is_some());
+}
+
+#[test]
+fn console_overview_unfinished_validation_call_is_current_without_terminal_evidence() {
+    let store = SessionStore::new_in_memory(10, 40);
+    let project = "agent:eval:demo";
+    let session = store.start_session(
+        Some(project.to_string()),
+        Some("unfinished validation".to_string()),
+    );
+    let start = store.record_tool_call_started(
+        Some(&session.session_id),
+        SessionTransport::Api,
+        "cargo_test",
+        &json!({"project": project}),
+    );
+    assert!(start.is_some());
+
+    let list = store.console_list_for_project(project, Some(10));
+    let row = list
+        .sessions
+        .iter()
+        .find(|row| row.session_id == session.session_id)
+        .unwrap();
+    assert!(row.running_call);
+    let current = row.current_activity.as_ref().unwrap();
+    assert_eq!(current.kind, "Tested");
+    assert_eq!(current.state, "running");
+    assert_eq!(row.overview.work.validations, 0);
+    assert_eq!(row.overview.validation.state, "unavailable");
+    assert_eq!(row.overview.validation.unresolved_failure_count, 0);
+}
+
 #[test]
 fn console_projection_is_bounded_semantic_and_progress_is_informational() {
     let store = SessionStore::new_in_memory(20, 80);

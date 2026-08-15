@@ -612,6 +612,10 @@ fn execution_purpose(event: &SessionEvent) -> Option<String> {
     .then(|| purpose.to_string())
 }
 
+pub(crate) fn event_observes_validation_activity(event: &SessionEvent) -> bool {
+    execution_purpose(event).is_some()
+}
+
 fn validation_event_from_finished(
     finished: &SessionEvent,
     started: Option<&SessionEvent>,

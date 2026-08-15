@@ -35,6 +35,8 @@ import {
   workflowSessionScrollTopAfterRender,
   jumpWorkflowSessionToLatest,
   shouldFollowWorkflowSessionLatest,
+  workflowSessionListOverviewFacts,
+  workflowSessionOverviewPresentation,
 } from "./workflow_session_state";
 
 const CONSOLE_BASE = "/api/console/";
@@ -296,6 +298,18 @@ function renderWorkflowSessionList(sessions: any[], payload: any) {
     appendChip(meta, updatedLabel(session.updated_at));
     item.appendChild(title);
     item.appendChild(meta);
+    const summaryFacts = workflowSessionListOverviewFacts(session.overview);
+    if (summaryFacts.length) {
+      const summary = document.createElement("div");
+      summary.className = "workflow-session-summary";
+      for (const fact of summaryFacts) {
+        const chip = document.createElement("span");
+        chip.className = "chip workflow-session-summary-fact workflow-session-summary-" + fact.tone;
+        chip.textContent = fact.text;
+        summary.appendChild(chip);
+      }
+      item.appendChild(summary);
+    }
     appendWorkflowSessionActivityPreview(item, "Now", session.current_activity);
     appendWorkflowSessionActivityPreview(item, "Last", session.last_activity);
     item.addEventListener("click", () => {
@@ -387,6 +401,38 @@ function appendWorkflowSessionActivityPreview(parent: HTMLElement, label: string
   parent.appendChild(row);
 }
 
+function setWorkflowSessionOverviewTone(id: string, tone: string) {
+  const node = el(id);
+  if (!node) {
+    return;
+  }
+  for (const name of ["pass", "warn", "fail", "muted"]) {
+    node.classList.toggle("workflow-session-overview-" + name, tone === name);
+  }
+}
+
+function renderWorkflowSessionOverview(overview: any) {
+  const view = workflowSessionOverviewPresentation(overview);
+  setText("workflow-session-overview-work", view.workText);
+  setText(
+    "workflow-session-overview-validation",
+    view.validationText +
+      (typeof view.validationAt === "number"
+        ? " · " + new Date(view.validationAt * 1000).toLocaleTimeString()
+        : "")
+  );
+  setWorkflowSessionOverviewTone("workflow-session-overview-validation-card", view.validationTone);
+  setText("workflow-session-overview-attention", view.attentionText);
+  setWorkflowSessionOverviewTone("workflow-session-overview-attention-card", view.attentionTone);
+  setText(
+    "workflow-session-overview-progress",
+    view.progressText +
+      (typeof view.progressAt === "number"
+        ? " · reported " + new Date(view.progressAt * 1000).toLocaleTimeString()
+        : "")
+  );
+}
+
 function syncWorkflowSessionFollowUi() {
   const selected = !!workflowSessionState.selectedSessionId;
   show(
@@ -473,6 +519,7 @@ function renderWorkflowSessionDetail(detail: any) {
   setText("workflow-session-mode", "mode " + String(detail.mode || "unknown"));
   setText("workflow-session-running", detail.running_call ? "running call" : "no running call");
   setText("workflow-session-updated", updatedLabel(detail.updated_at));
+  renderWorkflowSessionOverview(detail.overview);
   const activities = Array.isArray(detail.activity) ? detail.activity : [];
   const node = el("workflow-session-timeline");
   const previousScrollTop = node ? node.scrollTop : 0;

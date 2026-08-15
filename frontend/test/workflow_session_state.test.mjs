@@ -10,7 +10,71 @@ import {
   workflowSessionScrollTopAfterRender,
   jumpWorkflowSessionToLatest,
   shouldFollowWorkflowSessionLatest,
+  workflowSessionListOverviewFacts,
+  workflowSessionOverviewPresentation,
 } from "../dist/workflow_session_state.js";
+
+test("workflow session list overview stays compact and labels retained evidence", () => {
+  const facts = workflowSessionListOverviewFacts({
+    work: { edits: 2, validations: 3, exploration: 7, reviews: 1, runs: 2, history_truncated: true },
+    validation: { state: "passed", history_truncated: true, unresolved_failure_count: 0 },
+    attention: { open_guidance: 1, open_questions: 0, open_risks: 1, open_todos: 2 },
+  });
+  assert.equal(facts.length, 3);
+  assert.deepEqual(facts[0], { text: "Latest retained validation passed", tone: "pass" });
+  assert.deepEqual(facts[1], { text: "Retained: 1 risk · 2 todos", tone: "fail" });
+  assert.deepEqual(facts[2], { text: "Recent 2 edits · 3 validations", tone: "runtime" });
+
+  const failed = workflowSessionListOverviewFacts({
+    work: { history_truncated: true },
+    validation: { state: "failed", history_truncated: true, unresolved_failure_count: 2 },
+    attention: {},
+  });
+  assert.deepEqual(failed[0], {
+    text: "Retained: 2 unresolved validation failures",
+    tone: "fail",
+  });
+});
+
+test("workflow session detail overview separates runtime validation attention and reported progress", () => {
+  const view = workflowSessionOverviewPresentation({
+    work: { edits: 1, validations: 2, exploration: 3, reviews: 1, runs: 1, history_truncated: false },
+    validation: {
+      state: "failed",
+      latest_kind: "test",
+      latest_at: 123,
+      unresolved_failure_count: 1,
+      tests_run_count: 4,
+      history_truncated: false,
+    },
+    attention: { open_guidance: 0, open_questions: 1, open_risks: 1, open_todos: 0 },
+    reported_progress: { reported_at: 124, text: "model says it is nearly done" },
+  });
+  assert.match(view.workText, /^Observed work:/);
+  assert.match(view.validationText, /1 unresolved validation failure/);
+  assert.match(view.validationText, /latest test/);
+  assert.match(view.validationText, /4 tests/);
+  assert.equal(view.validationTone, "fail");
+  assert.match(view.attentionText, /Retained open messages: 1 risk · 1 question/);
+  assert.equal(view.attentionTone, "fail");
+  assert.equal(view.progressText, "model says it is nearly done");
+  assert.equal(view.progressAt, 124);
+
+  const guidanceOnly = workflowSessionOverviewPresentation({
+    work: {},
+    validation: { state: "not_run", unresolved_failure_count: 0, history_truncated: false },
+    attention: { open_guidance: 1, open_questions: 0, open_risks: 0, open_todos: 0 },
+  });
+  assert.equal(guidanceOnly.attentionTone, "warn");
+
+  const unavailable = workflowSessionOverviewPresentation({
+    work: { validations: 1, history_truncated: false },
+    validation: { state: "unavailable", unresolved_failure_count: 0, history_truncated: false },
+    attention: {},
+  });
+  assert.equal(unavailable.validationText, "Terminal validation evidence unavailable");
+  assert.equal(unavailable.progressText, "No retained model-reported progress.");
+});
 
 test("stale same-session detail response cannot overwrite newer snapshot", () => {
   const state = initialWorkflowSessionState();

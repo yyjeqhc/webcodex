@@ -107,6 +107,39 @@ fn tool_specs_structured_validation_schema_and_output() {
 }
 
 #[test]
+fn tool_specs_computer_find_elements_is_bounded_semantic_observation() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "computer_find_elements");
+    assert_eq!(
+        required_fields(spec),
+        vec!["client_id".to_string(), "surface_id".to_string()]
+    );
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_find_elements input schema",
+        present: ["client_id", "surface_id", "role", "subrole", "label", "focused", "enabled", "limit"]
+    );
+    assert_eq!(props["limit"]["minimum"], 1);
+    assert_eq!(props["limit"]["maximum"], 32);
+    assert!(props["label"]["description"]
+        .as_str()
+        .is_some_and(|description| description.contains("AXValue is never searched")));
+
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_find_elements output schema",
+        present: ["platform", "surface_id", "elements", "count", "scanned_nodes", "truncated"]
+    );
+    let element = &output["elements"]["items"];
+    assert!(element["properties"].get("value").is_none());
+    assert_eq!(output["elements"]["maxItems"], 32);
+}
+
+#[test]
 fn tool_specs_schema_spot_checks() {
     // Table-driven: (tool_name, required_fields, forbidden_fields).
     // Required fields are checked via exact equality to catch unexpected additions.

@@ -1331,6 +1331,24 @@ pub enum ToolCall {
         max_nodes: Option<usize>,
     },
 
+    /// Find a bounded set of semantic elements on one exact macOS surface.
+    ComputerFindElements {
+        client_id: String,
+        surface_id: String,
+        #[serde(default)]
+        role: Option<String>,
+        #[serde(default)]
+        subrole: Option<String>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        focused: Option<bool>,
+        #[serde(default)]
+        enabled: Option<bool>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
     /// Perform one bounded control action on an exact registered AX element.
     ComputerControl {
         client_id: String,
@@ -1824,6 +1842,7 @@ impl ToolCall {
             Self::ComputerListWindows { .. } => "computer_list_windows",
             Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
             Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",
+            Self::ComputerFindElements { .. } => "computer_find_elements",
             Self::ComputerControl { .. } => "computer_control",
             Self::ComputerInputText { .. } => "computer_input_text",
             Self::ComputerSnapshot { .. } => "computer_snapshot",

@@ -23,6 +23,8 @@ const MAX_ACCESSIBILITY_CHILD_COUNT: u64 = 1_000_000;
 const MAX_IMAGE_DIMENSION: u64 = 4096;
 const COMPUTER_WAIT_SECS: u64 = 30;
 const MAX_COMPUTER_TARGETS: usize = 64;
+const DEFAULT_FIND_ELEMENTS_LIMIT: usize = 8;
+const MAX_FIND_ELEMENTS_LIMIT: usize = 32;
 
 fn validate_input_text(text: &str) -> Result<usize, &'static str> {
     let text_bytes = text.len();
@@ -96,6 +98,77 @@ impl ToolRuntime {
                     Some((max_depth, max_nodes)),
                 )
                 .await
+            }
+            ToolCall::ComputerFindElements {
+                client_id,
+                surface_id,
+                role,
+                subrole,
+                label,
+                focused,
+                enabled,
+                limit,
+            } => {
+                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+                    return computer_error("invalid_surface", "surface_id is invalid");
+                }
+                for (name, value) in [
+                    ("role", role.as_deref()),
+                    ("subrole", subrole.as_deref()),
+                    ("label", label.as_deref()),
+                ] {
+                    if let Some(value) = value {
+                        if value.is_empty() || value.len() > MAX_TEXT_BYTES || value.contains('\0')
+                        {
+                            return computer_error(
+                                "invalid_request",
+                                &format!("computer element finder {name} filter is invalid"),
+                            );
+                        }
+                    }
+                }
+                if role.is_none()
+                    && subrole.is_none()
+                    && label.is_none()
+                    && focused.is_none()
+                    && enabled.is_none()
+                {
+                    return computer_error(
+                        "invalid_request",
+                        "computer element finder requires at least one semantic or state filter",
+                    );
+                }
+                let limit = limit
+                    .unwrap_or(DEFAULT_FIND_ELEMENTS_LIMIT)
+                    .clamp(1, MAX_FIND_ELEMENTS_LIMIT);
+                let tree = self
+                    .dispatch_computer_request(
+                        &client_id,
+                        "computer_accessibility_tree",
+                        json!({
+                            "surface_id": surface_id,
+                            "max_depth": MAX_ACCESSIBILITY_DEPTH,
+                            "max_nodes": MAX_ACCESSIBILITY_NODES,
+                        }),
+                        auth,
+                        None,
+                        Some(surface_id.as_str()),
+                        Some((MAX_ACCESSIBILITY_DEPTH, MAX_ACCESSIBILITY_NODES)),
+                    )
+                    .await;
+                if !tree.success {
+                    return tree;
+                }
+                filter_accessibility_tree(
+                    tree.output,
+                    &surface_id,
+                    role.as_deref(),
+                    subrole.as_deref(),
+                    label.as_deref(),
+                    focused,
+                    enabled,
+                    limit,
+                )
             }
             ToolCall::ComputerControl {
                 client_id,
@@ -406,6 +479,97 @@ impl ToolRuntime {
             _ => computer_error("invalid_request", "unsupported computer request kind"),
         }
     }
+}
+
+fn node_matches_find_query(
+    node: &Value,
+    role: Option<&str>,
+    subrole: Option<&str>,
+    label: Option<&str>,
+    focused: Option<bool>,
+    enabled: Option<bool>,
+) -> bool {
+    if role.is_some_and(|expected| node.get("role").and_then(Value::as_str) != Some(expected)) {
+        return false;
+    }
+    if subrole.is_some_and(|expected| node.get("subrole").and_then(Value::as_str) != Some(expected))
+    {
+        return false;
+    }
+    if label.is_some_and(|expected| {
+        !["title", "description", "placeholder"]
+            .into_iter()
+            .filter_map(|field| node.get(field).and_then(Value::as_str))
+            .any(|value| value.contains(expected))
+    }) {
+        return false;
+    }
+    if focused
+        .is_some_and(|expected| node.get("focused").and_then(Value::as_bool) != Some(expected))
+    {
+        return false;
+    }
+    if enabled
+        .is_some_and(|expected| node.get("enabled").and_then(Value::as_bool) != Some(expected))
+    {
+        return false;
+    }
+    true
+}
+
+fn filter_accessibility_tree(
+    tree: Value,
+    expected_surface_id: &str,
+    role: Option<&str>,
+    subrole: Option<&str>,
+    label: Option<&str>,
+    focused: Option<bool>,
+    enabled: Option<bool>,
+    limit: usize,
+) -> ToolResult {
+    let nodes = match tree.get("nodes").and_then(Value::as_array) {
+        Some(nodes) => nodes,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "validated Accessibility tree is missing nodes",
+            )
+        }
+    };
+    let source_truncated = tree
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let mut total_matches = 0usize;
+    let mut elements = Vec::with_capacity(limit.min(nodes.len()));
+    for node in nodes {
+        if !node_matches_find_query(node, role, subrole, label, focused, enabled) {
+            continue;
+        }
+        total_matches = total_matches.saturating_add(1);
+        if elements.len() >= limit {
+            continue;
+        }
+        elements.push(json!({
+            "element_id": node.get("element_id").cloned().unwrap_or(Value::Null),
+            "role": node.get("role").cloned().unwrap_or(Value::Null),
+            "subrole": node.get("subrole").cloned().unwrap_or(Value::Null),
+            "title": node.get("title").cloned().unwrap_or(Value::Null),
+            "description": node.get("description").cloned().unwrap_or(Value::Null),
+            "placeholder": node.get("placeholder").cloned().unwrap_or(Value::Null),
+            "enabled": node.get("enabled").cloned().unwrap_or(Value::Null),
+            "focused": node.get("focused").cloned().unwrap_or(Value::Null),
+        }));
+    }
+    let count = elements.len();
+    ToolResult::ok(json!({
+        "platform": "macos",
+        "surface_id": expected_surface_id,
+        "elements": elements,
+        "count": count,
+        "scanned_nodes": nodes.len(),
+        "truncated": source_truncated || total_matches > count,
+    }))
 }
 
 fn computer_error(kind: &str, message: &str) -> ToolResult {
@@ -1018,6 +1182,78 @@ mod tests {
         let result = validate_accessibility_tree(tree, "surface_test", 2, 8);
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], "invalid_runner_response");
+    }
+
+    #[test]
+    fn computer_find_elements_matches_closed_semantic_fields_without_value_search() {
+        let mut node = accessibility_tree()["nodes"][1].clone();
+        node["subrole"] = json!("AXSearchField");
+        node["description"] = json!("Find messages");
+        node["placeholder"] = json!("Search conversations");
+        node["value"] = json!("SUPER_SECRET_VALUE");
+        node["focused"] = Value::Null;
+
+        assert!(node_matches_find_query(
+            &node,
+            Some("AXButton"),
+            Some("AXSearchField"),
+            Some("Search"),
+            None,
+            Some(true),
+        ));
+        assert!(node_matches_find_query(
+            &node,
+            None,
+            None,
+            Some("messages"),
+            None,
+            None,
+        ));
+        assert!(!node_matches_find_query(
+            &node,
+            None,
+            None,
+            Some("SUPER_SECRET_VALUE"),
+            None,
+            None,
+        ));
+        assert!(!node_matches_find_query(
+            &node,
+            None,
+            None,
+            None,
+            Some(false),
+            None,
+        ));
+        assert!(!node_matches_find_query(
+            &node,
+            Some("AXTextField"),
+            None,
+            None,
+            None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn computer_find_elements_is_ordered_bounded_and_omits_ax_value() {
+        let result = filter_accessibility_tree(
+            accessibility_tree(),
+            "surface_test",
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+            1,
+        );
+        assert!(result.success, "{:?}", result.output);
+        assert_eq!(result.output["surface_id"], "surface_test");
+        assert_eq!(result.output["scanned_nodes"], 2);
+        assert_eq!(result.output["count"], 1);
+        assert_eq!(result.output["truncated"], true);
+        assert_eq!(result.output["elements"][0]["element_id"], "element_root");
+        assert!(result.output["elements"][0].get("value").is_none());
     }
 
     #[test]

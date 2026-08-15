@@ -68,6 +68,24 @@ fn accessibility_node_schema() -> Value {
     })
 }
 
+fn accessibility_match_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "element_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "role": {"type": "string", "minLength": 1, "maxLength": 256},
+            "subrole": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "title": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "description": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "placeholder": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+            "enabled": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+            "focused": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}
+        },
+        "required": ["element_id", "role", "subrole", "title", "description", "placeholder", "enabled", "focused"]
+    })
+}
+
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "computer_list_targets" => Some(wrapped_output_schema(vec![
@@ -120,6 +138,26 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "max_nodes",
                 json!({"type": "integer", "minimum": 1, "maximum": 256}),
             ),
+        ])),
+        "computer_find_elements" => Some(wrapped_output_schema(vec![
+            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "surface_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
+            (
+                "elements",
+                json!({"type": "array", "maxItems": 32, "items": accessibility_match_schema()}),
+            ),
+            (
+                "count",
+                json!({"type": "integer", "minimum": 0, "maximum": 32}),
+            ),
+            (
+                "scanned_nodes",
+                json!({"type": "integer", "minimum": 1, "maximum": 256}),
+            ),
+            ("truncated", json!({"type": "boolean"})),
         ])),
         "computer_control" => Some(wrapped_output_schema(vec![
             ("platform", json!({"type": "string", "enum": ["macos"]})),

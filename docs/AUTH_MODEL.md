@@ -210,8 +210,9 @@ an OAuth error. This changes only response framing, not the required scope.
 
 `computer:read` is the dedicated scope for read-only desktop/window observation.
 It authorizes the model-facing `computer_list_targets`, `computer_list_windows`,
-`computer_accessibility_status`, `computer_accessibility_tree`, and
-`computer_snapshot` tools; it is separate from `runtime:read`, `project:read`,
+`computer_accessibility_status`, `computer_accessibility_tree`,
+`computer_find_elements`, and `computer_snapshot` tools; it is separate from
+`runtime:read`, `project:read`,
 `job:run`, and `computer:control`, and none of those scopes imply it.
 
 `computer_list_targets` closes the target-discovery loop without widening

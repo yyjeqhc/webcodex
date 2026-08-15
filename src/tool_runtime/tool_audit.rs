@@ -102,6 +102,19 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 &["client_id", "surface_id", "max_depth", "max_nodes"],
             );
         }
+        "computer_find_elements" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["client_id", "surface_id", "focused", "enabled", "limit"],
+            );
+            for field in ["role", "subrole", "label"] {
+                out.insert(
+                    format!("{field}_present"),
+                    Value::Bool(obj.get(field).and_then(Value::as_str).is_some()),
+                );
+            }
+        }
         "computer_control" => {
             copy_keys(
                 obj,
@@ -439,6 +452,12 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "max_depth": output.get("max_depth").cloned().unwrap_or(Value::Null),
             "max_nodes": output.get("max_nodes").cloned().unwrap_or(Value::Null),
         }),
+        "computer_find_elements" => serde_json::json!({
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "count": output.get("count").cloned().unwrap_or(Value::Null),
+            "scanned_nodes": output.get("scanned_nodes").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+        }),
         "computer_control" => serde_json::json!({
             "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
             "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
@@ -526,6 +545,78 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("SUPER_SECRET"));
         assert!(!serialized.contains("Private Chat"));
         assert!(!serialized.contains("element_secret"));
+    }
+
+    #[test]
+    fn computer_find_elements_audit_omits_label_and_semantic_result_content() {
+        let secret = "PRIVATE SEARCH TERM";
+        let private_role = "PRIVATE ROLE FILTER";
+        let private_subrole = "PRIVATE SUBROLE FILTER";
+        let request = json!({
+            "client_id": "mini",
+            "surface_id": "surface_safe",
+            "role": private_role,
+            "subrole": private_subrole,
+            "label": secret,
+            "focused": false,
+            "limit": 4,
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_find_elements", &request);
+        let request_serialized = serde_json::to_string(&request_summary).unwrap();
+        assert_eq!(request_summary["client_id"], "mini");
+        assert_eq!(request_summary["surface_id"], "surface_safe");
+        assert_eq!(request_summary["role_present"], true);
+        assert_eq!(request_summary["subrole_present"], true);
+        assert_eq!(request_summary["label_present"], true);
+        assert!(!request_serialized.contains(secret));
+        assert!(!request_serialized.contains(private_role));
+        assert!(!request_serialized.contains(private_subrole));
+
+        let parsed_summary = ToolCall::ComputerFindElements {
+            client_id: "mini".to_string(),
+            surface_id: "surface_safe".to_string(),
+            role: Some(private_role.to_string()),
+            subrole: Some(private_subrole.to_string()),
+            label: Some(secret.to_string()),
+            focused: Some(false),
+            enabled: None,
+            limit: Some(4),
+        }
+        .session_log_arguments();
+        let parsed_serialized = serde_json::to_string(&parsed_summary).unwrap();
+        assert_eq!(parsed_summary["role_present"], true);
+        assert_eq!(parsed_summary["subrole_present"], true);
+        assert_eq!(parsed_summary["label_present"], true);
+        assert!(!parsed_serialized.contains(secret));
+        assert!(!parsed_serialized.contains(private_role));
+        assert!(!parsed_serialized.contains(private_subrole));
+
+        let output = json!({
+            "platform": "macos",
+            "surface_id": "surface_safe",
+            "elements": [{
+                "element_id": "element_secret",
+                "role": "AXTextField",
+                "subrole": "AXSearchField",
+                "title": "Private Search",
+                "description": "Confidential",
+                "placeholder": secret,
+                "enabled": true,
+                "focused": false
+            }],
+            "count": 1,
+            "scanned_nodes": 18,
+            "truncated": false
+        });
+        let result_summary = session_log_result_for_tool("computer_find_elements", &output);
+        let result_serialized = serde_json::to_string(&result_summary).unwrap();
+        assert_eq!(result_summary["surface_id"], "surface_safe");
+        assert_eq!(result_summary["count"], 1);
+        assert_eq!(result_summary["scanned_nodes"], 18);
+        assert!(!result_serialized.contains(secret));
+        assert!(!result_serialized.contains("element_secret"));
+        assert!(!result_serialized.contains("Private Search"));
     }
 
     #[test]
@@ -768,6 +859,25 @@ impl ToolCall {
                 "surface_id": surface_id,
                 "max_depth": max_depth,
                 "max_nodes": max_nodes,
+            }),
+            Self::ComputerFindElements {
+                client_id,
+                surface_id,
+                role,
+                subrole,
+                label,
+                focused,
+                enabled,
+                limit,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "role_present": role.is_some(),
+                "subrole_present": subrole.is_some(),
+                "label_present": label.is_some(),
+                "focused": focused,
+                "enabled": enabled,
+                "limit": limit,
             }),
             Self::ComputerControl {
                 client_id,

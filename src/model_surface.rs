@@ -138,6 +138,7 @@ mod tests {
             "computer_list_windows",
             "computer_accessibility_status",
             "computer_accessibility_tree",
+            "computer_find_elements",
             "computer_control",
             "computer_input_text",
             "computer_snapshot",

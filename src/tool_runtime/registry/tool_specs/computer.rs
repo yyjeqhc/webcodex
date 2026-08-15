@@ -1,7 +1,8 @@
 use super::super::input_schemas::{
     computer_accessibility_status_input_schema, computer_accessibility_tree_input_schema,
-    computer_control_input_schema, computer_input_text_input_schema,
-    computer_list_windows_input_schema, computer_snapshot_input_schema, empty_input_schema,
+    computer_control_input_schema, computer_find_elements_input_schema,
+    computer_input_text_input_schema, computer_list_windows_input_schema,
+    computer_snapshot_input_schema, empty_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -27,6 +28,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "computer_accessibility_tree",
             "Inspect an exact macOS window as a bounded read-only Accessibility tree. element_id values are ephemeral process-local handles for computer_control; this tool performs no control action and has no AppleScript or shell fallback.",
             computer_accessibility_tree_input_schema(),
+        ),
+        tool_spec(
+            "computer_find_elements",
+            "Find a small bounded set of semantic elements on an exact macOS window without making the model parse the full Accessibility tree. At least one role, subrole, label, focused, or enabled filter is required. Matching is deterministic and read-only; returned element_id values are fresh ephemeral handles from the same bounded observation path.",
+            computer_find_elements_input_schema(),
         ),
         tool_spec(
             "computer_control",

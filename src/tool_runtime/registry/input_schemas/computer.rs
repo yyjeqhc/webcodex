@@ -37,6 +37,24 @@ pub(crate) fn computer_accessibility_tree_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_find_elements_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose Accessibility surface is searched."},
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local surface_id returned by computer_list_windows."},
+            "role": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Optional exact Accessibility role match."},
+            "subrole": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Optional exact Accessibility subrole match."},
+            "label": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Optional case-sensitive literal substring matched only against title, description, or placeholder; AXValue is never searched."},
+            "focused": {"type": "boolean", "description": "Optional exact focused-state match; unknown/null state does not match."},
+            "enabled": {"type": "boolean", "description": "Optional exact enabled-state match; unknown/null state does not match."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 32, "description": "Maximum matching elements returned; defaults to 8."}
+        },
+        "required": ["client_id", "surface_id"]
+    })
+}
+
 pub(crate) fn computer_control_input_schema() -> Value {
     json!({
         "type": "object",
@@ -44,7 +62,7 @@ pub(crate) fn computer_control_input_schema() -> Value {
         "properties": {
             "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose macOS Accessibility element is controlled."},
             "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque surface_id used to obtain the element."},
-            "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local element_id returned by computer_accessibility_tree."},
+            "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local element_id returned by computer_accessibility_tree or computer_find_elements."},
             "action": {"type": "string", "enum": ["press", "focus"], "description": "Bounded control action. CU-AX2 supports only press and focus."}
         },
         "required": ["client_id", "surface_id", "element_id", "action"]
@@ -58,7 +76,7 @@ pub(crate) fn computer_input_text_input_schema() -> Value {
         "properties": {
             "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose already-focused macOS Accessibility text element is mutated."},
             "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque surface_id used to obtain the element."},
-            "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local element_id returned by computer_accessibility_tree."},
+            "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local element_id returned by computer_accessibility_tree or computer_find_elements."},
             "text": {"type": "string", "minLength": 1, "maxLength": 2048, "description": "Caller text written verbatim with AXValue. Runtime enforces a 2048-byte UTF-8 ceiling and rejects NUL; the target must already be focused and empty."}
         },
         "required": ["client_id", "surface_id", "element_id", "text"]

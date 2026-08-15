@@ -227,20 +227,18 @@ fn resolve_project_source(
 }
 
 fn registration_scope_denied(auth: Option<&AuthContext>, operation: &str) -> Option<ToolResult> {
-    auth.is_some_and(|auth| {
-        auth.is_oauth_token() && !auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE)
-    })
-    .then(|| {
-        ToolResult::err_with_output(
-            format!("{operation} requires project:write"),
-            json!({
-                "error_kind": "insufficient_scope",
-                "failure_kind": "insufficient_scope",
-                "required_scope": crate::auth::SCOPE_PROJECT_WRITE,
-                "state_changed": false,
-            }),
-        )
-    })
+    auth.is_some_and(|auth| !auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE))
+        .then(|| {
+            ToolResult::err_with_output(
+                format!("{operation} requires project:write"),
+                json!({
+                    "error_kind": "insufficient_scope",
+                    "failure_kind": "insufficient_scope",
+                    "required_scope": crate::auth::SCOPE_PROJECT_WRITE,
+                    "state_changed": false,
+                }),
+            )
+        })
 }
 
 fn attach_permission(
@@ -741,9 +739,8 @@ impl ToolRuntime {
             append_workspace_warnings(&workspace_payload_from_git_summary(&git), &mut warnings);
         }
         let binding_available = bind_current && continuity_key.is_some();
-        let write_scope_verified = auth.is_none_or(|auth| {
-            !auth.is_oauth_token() || auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE)
-        });
+        let write_scope_verified =
+            auth.is_none_or(|auth| auth.has_scope(crate::auth::SCOPE_PROJECT_WRITE));
         let session_outcome = match self.sessions.ensure_coding_session(
             sessions::CodingSessionRequest {
                 key: continuity_key.clone(),

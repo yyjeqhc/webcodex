@@ -44,9 +44,9 @@ pub(crate) struct ToolCallContext<'a> {
     pub(crate) session_id: Option<&'a str>,
     pub(crate) auth: Option<&'a AuthContext>,
     pub(crate) window: Option<&'a crate::client_window::ClientWindow>,
-    /// REST already recorded OAuth scope denials with session metadata before
-    /// this facade existed. MCP rejected scope denials before `_session_id`
-    /// became recorder metadata. Keep both adapter-visible behaviors stable.
+    /// REST records scope denials with session metadata. MCP rejects scope
+    /// denials before `_session_id` becomes recorder metadata. Keep both
+    /// adapter-visible behaviors stable.
     pub(crate) record_oauth_scope_denials: bool,
     /// Server-derived provenance for ChatGPT host file references. Raw tool
     /// arguments cannot set this value.
@@ -78,16 +78,13 @@ pub(crate) struct ToolCallOutcome {
     pub(crate) project: Option<String>,
 }
 
-pub(crate) fn check_oauth_runtime_tool_scope(
+pub(crate) fn check_runtime_tool_scope(
     auth: Option<&AuthContext>,
     tool_name: &str,
 ) -> Result<(), ToolCallErrorStatus> {
     let Some(auth) = auth else {
         return Ok(());
     };
-    if !auth.is_oauth_token() {
-        return Ok(());
-    }
 
     match crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name) {
         OAuthToolScopePolicy::Require(scope) => {
@@ -100,14 +97,30 @@ pub(crate) fn check_oauth_runtime_tool_scope(
                 })
             }
         }
-        OAuthToolScopePolicy::FirstPartyOnly => Err(ToolCallErrorStatus::InsufficientScope {
-            required_scope: None,
-            description: "OAuth2 access tokens cannot call first-party-only tools".to_string(),
-        }),
-        OAuthToolScopePolicy::Unknown => Err(ToolCallErrorStatus::InsufficientScope {
-            required_scope: None,
-            description: "OAuth2 access tokens cannot call unknown runtime tools".to_string(),
-        }),
+        OAuthToolScopePolicy::FirstPartyOnly => {
+            if matches!(
+                auth.kind,
+                crate::auth::AuthKind::Bootstrap | crate::auth::AuthKind::ApiToken
+            ) {
+                Ok(())
+            } else {
+                Err(ToolCallErrorStatus::InsufficientScope {
+                    required_scope: None,
+                    description: "tool requires a first-party bootstrap or personal API token"
+                        .to_string(),
+                })
+            }
+        }
+        OAuthToolScopePolicy::Unknown => {
+            if auth.is_bootstrap() {
+                Ok(())
+            } else {
+                Err(ToolCallErrorStatus::InsufficientScope {
+                    required_scope: None,
+                    description: "runtime tool has no declared scope policy".to_string(),
+                })
+            }
+        }
     }
 }
 
@@ -332,9 +345,7 @@ impl ToolRuntime {
         }
 
         if !context.record_oauth_scope_denials {
-            if let Err(error_status) =
-                check_oauth_runtime_tool_scope(context.auth, &request.tool_name)
-            {
+            if let Err(error_status) = check_runtime_tool_scope(context.auth, &request.tool_name) {
                 return ToolCallOutcome {
                     success: false,
                     result: None,
@@ -356,9 +367,7 @@ impl ToolRuntime {
         );
 
         if context.record_oauth_scope_denials {
-            if let Err(error_status) =
-                check_oauth_runtime_tool_scope(context.auth, &request.tool_name)
-            {
+            if let Err(error_status) = check_runtime_tool_scope(context.auth, &request.tool_name) {
                 let error_message = match &error_status {
                     ToolCallErrorStatus::InsufficientScope { description, .. } => {
                         description.as_str()
@@ -648,10 +657,10 @@ mod tests {
     }
 
     #[test]
-    fn computer_tools_require_independent_oauth_scope() {
+    fn computer_tools_require_independent_scope() {
         let denied = oauth(&["runtime:read", "project:read"]);
         assert_eq!(
-            check_oauth_runtime_tool_scope(Some(&denied), "computer_snapshot"),
+            check_runtime_tool_scope(Some(&denied), "computer_snapshot"),
             Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(crate::auth::SCOPE_COMPUTER_READ),
                 description: "missing required scope: computer:read".to_string(),
@@ -659,15 +668,15 @@ mod tests {
         );
         let allowed = oauth(&["computer:read"]);
         assert_eq!(
-            check_oauth_runtime_tool_scope(Some(&allowed), "computer_list_windows"),
+            check_runtime_tool_scope(Some(&allowed), "computer_list_windows"),
             Ok(())
         );
         assert_eq!(
-            check_oauth_runtime_tool_scope(Some(&allowed), "computer_list_targets"),
+            check_runtime_tool_scope(Some(&allowed), "computer_list_targets"),
             Ok(())
         );
         assert_eq!(
-            check_oauth_runtime_tool_scope(Some(&allowed), "list_agents"),
+            check_runtime_tool_scope(Some(&allowed), "list_agents"),
             Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(crate::auth::SCOPE_RUNTIME_READ),
                 description: "missing required scope: runtime:read".to_string(),
@@ -676,17 +685,17 @@ mod tests {
     }
 
     #[test]
-    fn computer_control_requires_its_own_oauth_scope() {
+    fn computer_control_requires_its_own_scope() {
         let observe_only = oauth(&["computer:read"]);
         assert_eq!(
-            check_oauth_runtime_tool_scope(Some(&observe_only), "computer_control"),
+            check_runtime_tool_scope(Some(&observe_only), "computer_control"),
             Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(crate::auth::SCOPE_COMPUTER_CONTROL),
                 description: "missing required scope: computer:control".to_string(),
             })
         );
         assert_eq!(
-            check_oauth_runtime_tool_scope(Some(&observe_only), "computer_input_text"),
+            check_runtime_tool_scope(Some(&observe_only), "computer_input_text"),
             Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(crate::auth::SCOPE_COMPUTER_CONTROL),
                 description: "missing required scope: computer:control".to_string(),
@@ -694,17 +703,44 @@ mod tests {
         );
         let control = oauth(&["computer:control"]);
         assert_eq!(
-            check_oauth_runtime_tool_scope(Some(&control), "computer_control"),
+            check_runtime_tool_scope(Some(&control), "computer_control"),
             Ok(())
         );
         assert_eq!(
-            check_oauth_runtime_tool_scope(Some(&control), "computer_input_text"),
+            check_runtime_tool_scope(Some(&control), "computer_input_text"),
             Ok(())
         );
     }
 
+    #[test]
+    fn tool_scope_enforcement_applies_to_pat_and_direct_shared_key() {
+        let mut pat = AuthContext::new(crate::auth::AuthKind::ApiToken);
+        pat.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.to_string()];
+        assert_eq!(
+            check_runtime_tool_scope(Some(&pat), "read_file"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_PROJECT_READ),
+                description: "missing required scope: project:read".to_string(),
+            })
+        );
+        assert_eq!(
+            check_runtime_tool_scope(Some(&pat), "runtime_status"),
+            Ok(())
+        );
+
+        let shared = crate::auth::shared_key_context("kernel-scope-matrix");
+        assert_eq!(check_runtime_tool_scope(Some(&shared), "read_file"), Ok(()));
+        assert_eq!(
+            check_runtime_tool_scope(Some(&shared), "computer_snapshot"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_READ),
+                description: "missing required scope: computer:read".to_string(),
+            })
+        );
+    }
+
     #[tokio::test]
-    async fn tool_kernel_rejects_missing_oauth_scope() {
+    async fn tool_kernel_rejects_missing_scope() {
         let runtime = test_runtime();
         let auth = oauth(&["runtime:read"]);
         let outcome = runtime

@@ -150,7 +150,11 @@ fn gate_mint_agent_token(
 }
 
 /// Create a user token for `username` via the DB layer directly.
-fn gate_mint_user_token(db: &crate::Database, user: &crate::models::UserRecord) -> String {
+fn gate_mint_user_token_with_scopes(
+    db: &crate::Database,
+    user: &crate::models::UserRecord,
+    scopes: &str,
+) -> String {
     let plaintext = generate_api_token();
     let prefix = token_prefix(&plaintext);
     let hash = hash_token(&plaintext);
@@ -163,13 +167,17 @@ fn gate_mint_user_token(db: &crate::Database, user: &crate::models::UserRecord) 
         created_at: now,
         last_used_at: None,
         revoked_at: None,
-        scopes: "runtime:read project:read project:write job:run".to_string(),
+        scopes: scopes.to_string(),
         expires_at: None,
         kind: crate::models::TOKEN_KIND_USER.to_string(),
         allowed_client_id: None,
     };
     db.insert_api_key(&record, &hash).unwrap();
     plaintext
+}
+
+fn gate_mint_user_token(db: &crate::Database, user: &crate::models::UserRecord) -> String {
+    gate_mint_user_token_with_scopes(db, user, "runtime:read project:read project:write job:run")
 }
 
 fn gate_mint_account_credential(db: &crate::Database, user: &crate::models::UserRecord) -> String {
@@ -287,6 +295,8 @@ fn gate_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
                 .push(Router::with_path("projects/run_job").post(echo_ok))
                 .push(Router::with_path("jobs/list").post(echo_ok))
                 .push(Router::with_path("audit/sessions").post(echo_ok))
+                .push(Router::with_path("audit/session").post(echo_ok))
+                .push(Router::with_path("audit/stats").post(echo_ok))
                 .push(Router::with_path("users/me").post(echo_ok))
                 .push(Router::with_path("users/list").post(echo_ok))
                 .push(Router::with_path("tokens/list").post(echo_ok))
@@ -1939,21 +1949,123 @@ async fn managed_oauth2_token_with_account_manage_can_call_users_me() {
 }
 
 #[tokio::test]
-async fn api_token_still_works_on_representative_routes() {
+async fn api_token_obeys_declared_scope_and_unknown_route_policy() {
     let config = gate_test_config(Some("secret"));
     let (_tmp, db) = gate_test_db();
     let user = gate_seed_user(&db, "alice");
     let user_token = gate_mint_user_token(&db, &user);
+    let runtime_only_token = gate_mint_user_token_with_scopes(&db, &user, SCOPE_RUNTIME_READ);
     let service = Service::new(gate_router(config, db));
+
     for path in [
         "/api/runtime/status",
         "/api/projects/read_file",
         "/api/projects/run_job",
-        "/api/users/me",
-        "/api/future/authenticated-route",
     ] {
         let (status, body) = gate_send(&service, path, Some(&user_token)).await;
         assert_eq!(status, StatusCode::OK, "{} body: {:?}", path, body);
+    }
+
+    let (status, body) = gate_send(
+        &service,
+        "/api/projects/read_file",
+        Some(&runtime_only_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body:?}");
+    assert_ne!(body["error"], "insufficient_scope");
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains(SCOPE_PROJECT_READ));
+
+    let (status, body) = gate_send(&service, "/api/users/me", Some(&runtime_only_token)).await;
+    assert_eq!(status, StatusCode::OK, "PAT self-service body: {body:?}");
+
+    let (status, body) = gate_send(
+        &service,
+        "/api/future/authenticated-route",
+        Some(&runtime_only_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body:?}");
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("no declared scope policy"));
+}
+
+#[tokio::test]
+async fn api_token_without_account_manage_cannot_read_audit_routes() {
+    let config = gate_test_config(Some("secret"));
+    let (_tmp, db) = gate_test_db();
+    let user = gate_seed_user(&db, "alice");
+    let runtime_only_token = gate_mint_user_token_with_scopes(&db, &user, SCOPE_RUNTIME_READ);
+    let service = Service::new(gate_router(config, db));
+
+    for path in [
+        "/api/audit/sessions",
+        "/api/audit/session",
+        "/api/audit/stats",
+    ] {
+        let mut resp = TestClient::post(format!("http://localhost{path}"))
+            .bearer_auth(&runtime_only_token)
+            .send(&service)
+            .await;
+        assert_eq!(gate_status(&resp), StatusCode::FORBIDDEN, "path: {path}");
+        assert!(
+            !resp.headers.contains_key("www-authenticate"),
+            "PAT scope denial must not use OAuth challenge framing on {path}"
+        );
+        let body = resp.take_json::<serde_json::Value>().await.unwrap();
+        assert_ne!(body["error"], "insufficient_scope", "path: {path}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains(SCOPE_ACCOUNT_MANAGE),
+            "path: {path}, body: {body:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn managed_oauth2_without_account_manage_gets_audit_scope_challenge() {
+    let config = gate_test_config_oauth2(Some("secret"));
+    let (_tmp, db) = gate_test_db();
+    let user = gate_seed_user(&db, "alice");
+    let (client, _secret) = gate_seed_oauth_client(&db, &user, "Audit Scope App");
+    let (_at, token) = gate_seed_oauth_access_token(&db, &client, &user, SCOPE_RUNTIME_READ);
+    let service = Service::new(gate_router(config, db));
+
+    for path in [
+        "/api/audit/sessions",
+        "/api/audit/session",
+        "/api/audit/stats",
+    ] {
+        let mut resp = TestClient::post(format!("http://localhost{path}"))
+            .bearer_auth(&token)
+            .send(&service)
+            .await;
+        assert_eq!(gate_status(&resp), StatusCode::FORBIDDEN, "path: {path}");
+        let challenge = resp
+            .headers
+            .get("www-authenticate")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            challenge.contains("error=\"insufficient_scope\""),
+            "OAuth audit scope denial must use insufficient_scope on {path}: {challenge}"
+        );
+        let body = resp.take_json::<serde_json::Value>().await.unwrap();
+        assert_eq!(body["error"], "insufficient_scope", "path: {path}");
+        assert!(
+            body["error_description"]
+                .as_str()
+                .unwrap_or("")
+                .contains(SCOPE_ACCOUNT_MANAGE),
+            "path: {path}, body: {body:?}"
+        );
     }
 }
 
@@ -2116,6 +2228,21 @@ async fn auth_middleware_direct_shared_key_and_oauth_bridge_flags_are_independen
         "direct shared-key fallback should not require OAuth bridge: {:?}",
         body
     );
+    let mut resp = TestClient::post("http://localhost/api/future/authenticated-route")
+        .bearer_auth("my-key")
+        .send(&service)
+        .await;
+    assert_eq!(gate_status(&resp), StatusCode::FORBIDDEN);
+    assert!(
+        !resp.headers.contains_key("www-authenticate"),
+        "direct shared-key denial must not emit an OAuth insufficient_scope challenge"
+    );
+    let body = resp.take_json::<serde_json::Value>().await.unwrap();
+    assert_ne!(body["error"], "insufficient_scope");
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("no declared scope policy"));
 }
 
 #[tokio::test]

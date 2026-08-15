@@ -1,8 +1,8 @@
 //! Scope definitions and validation for the WebCodex auth system.
 //!
-//! Scopes are string-based permissions attached to tokens. Bootstrap auth is
-//! treated as holding every scope. PAT (personal API token) and future OAuth2
-//! tokens carry an explicit set of granted scopes.
+//! Scopes are string-based permissions carried by authenticated principals.
+//! Bootstrap auth is treated as holding every scope; managed tokens, delegated
+//! OAuth access tokens, and lightweight contexts carry explicit granted scopes.
 
 use std::collections::HashSet;
 
@@ -123,8 +123,11 @@ pub(crate) fn scopes_to_string(scopes: &[String]) -> String {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// OAuth delegated scope policy
+// Authenticated route/tool scope policy
 // ---------------------------------------------------------------------------
+// The OAuth-prefixed type/function names below are retained for compatibility
+// with the existing policy registry. Enforcement is principal-neutral; OAuth
+// remains special only for delegated-scope issuance and wire error framing.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OAuthRouteScopePolicy {
@@ -285,36 +288,73 @@ pub(crate) fn required_oauth_scope_for_path_method(
     }
 }
 
-pub(crate) fn enforce_oauth_route_scope(
+fn pat_account_manage_compatibility_route(method: &str, path: &str) -> bool {
+    matches!(
+        (method, path),
+        ("POST", "/api/users/create")
+            | ("POST", "/api/users/list")
+            | ("POST", "/api/users/me")
+            | ("POST", "/api/tokens/create")
+            | ("POST", "/api/tokens/register_hash")
+            | ("POST", "/api/tokens/list")
+            | ("POST", "/api/tokens/revoke")
+            | ("POST", "/api/agent-tokens/create")
+            | ("POST", "/api/agent-tokens/register_hash")
+            | ("POST", "/api/agent-tokens/list")
+            | ("POST", "/api/agent-tokens/revoke")
+            | ("POST", "/api/pairing/create")
+    )
+}
+
+pub(crate) fn enforce_route_scope(
     ctx: &AuthContext,
     method: &str,
     path: &str,
 ) -> Result<(), (Option<&'static str>, String)> {
-    if !ctx.is_oauth_token() {
-        return Ok(());
-    }
-
     match oauth_route_scope_policy_for_path_method(method, path) {
         OAuthRouteScopePolicy::Public | OAuthRouteScopePolicy::BodyAware(_) => Ok(()),
         OAuthRouteScopePolicy::Require(scope) => {
-            if ctx.has_scope(scope) {
+            // A narrow set of account-management routes predates delegated
+            // scopes and already enforces admin/self or admin-only identity in
+            // its handler. Preserve PAT compatibility only for those exact
+            // routes; other account:manage surfaces (notably global audit
+            // reads) must carry the scope explicitly.
+            let first_party_pat_account_route = scope == SCOPE_ACCOUNT_MANAGE
+                && matches!(ctx.kind, super::context::AuthKind::ApiToken)
+                && pat_account_manage_compatibility_route(method, path);
+            if first_party_pat_account_route || ctx.has_scope(scope) {
                 Ok(())
             } else {
                 Err((Some(scope), format!("missing required scope: {}", scope)))
             }
         }
-        OAuthRouteScopePolicy::FirstPartyOnly => Err((
-            None,
-            "OAuth2 access tokens cannot call first-party-only routes".to_string(),
-        )),
-        OAuthRouteScopePolicy::AgentSurface => Err((
-            None,
-            "OAuth2 access tokens cannot call agent transport routes".to_string(),
-        )),
-        OAuthRouteScopePolicy::Unknown => Err((
-            None,
-            "OAuth2 access tokens cannot call unknown authenticated routes".to_string(),
-        )),
+        OAuthRouteScopePolicy::FirstPartyOnly => {
+            if matches!(
+                ctx.kind,
+                super::context::AuthKind::Bootstrap | super::context::AuthKind::ApiToken
+            ) {
+                Ok(())
+            } else {
+                Err((
+                    None,
+                    "route requires a first-party bootstrap or personal API token".to_string(),
+                ))
+            }
+        }
+        // Agent transport identity and exact agent:* scopes are enforced by the
+        // dedicated surface gate and transport handlers. Do not reinterpret
+        // those credentials as ordinary runtime principals here.
+        OAuthRouteScopePolicy::AgentSurface => Ok(()),
+        OAuthRouteScopePolicy::Unknown => {
+            if ctx.is_bootstrap() {
+                Ok(())
+            } else {
+                Err((
+                    None,
+                    "authenticated route has no declared scope policy".to_string(),
+                ))
+            }
+        }
     }
 }
 
@@ -465,6 +505,94 @@ mod tests {
                 required_oauth_scope_for_path_method(method, path),
                 Some(scope),
                 "{method} {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn route_scope_enforcement_is_principal_neutral() {
+        let mut pat = AuthContext::new(super::super::context::AuthKind::ApiToken);
+        pat.scopes = vec![SCOPE_RUNTIME_READ.to_string()];
+        let mut oauth = AuthContext::new(super::super::context::AuthKind::OAuth2Token);
+        oauth.scopes = vec![SCOPE_RUNTIME_READ.to_string()];
+        let shared = crate::auth::shared_key_context("scope-matrix");
+        let bootstrap = crate::auth::bootstrap_context();
+
+        for (label, auth) in [("pat", &pat), ("oauth", &oauth), ("shared", &shared)] {
+            assert!(
+                enforce_route_scope(auth, "POST", "/api/runtime/status").is_ok(),
+                "{label} should honor runtime:read"
+            );
+        }
+        for (label, auth) in [("pat", &pat), ("oauth", &oauth)] {
+            assert_eq!(
+                enforce_route_scope(auth, "POST", "/api/projects/read_file"),
+                Err((
+                    Some(SCOPE_PROJECT_READ),
+                    "missing required scope: project:read".to_string()
+                )),
+                "{label} must not bypass missing project:read"
+            );
+        }
+        assert!(
+            enforce_route_scope(&shared, "POST", "/api/projects/read_file").is_ok(),
+            "direct shared key should use its declared project:read scope"
+        );
+        assert!(
+            enforce_route_scope(&pat, "POST", "/api/oauth/clients/list").is_ok(),
+            "PAT remains an allowed first-party identity"
+        );
+        assert!(
+            enforce_route_scope(&oauth, "POST", "/api/oauth/clients/list").is_err(),
+            "OAuth delegation cannot become first-party client management"
+        );
+        assert!(
+            enforce_route_scope(&shared, "POST", "/api/future/authenticated-route").is_err(),
+            "ordinary principals must fail closed on undeclared routes"
+        );
+        assert!(
+            enforce_route_scope(&bootstrap, "POST", "/api/future/authenticated-route").is_ok(),
+            "bootstrap keeps explicit superuser compatibility"
+        );
+    }
+
+    #[test]
+    fn pat_account_manage_compatibility_is_route_bounded() {
+        let mut pat = AuthContext::new(super::super::context::AuthKind::ApiToken);
+        pat.scopes = vec![SCOPE_RUNTIME_READ.to_string()];
+
+        for path in [
+            "/api/users/create",
+            "/api/users/list",
+            "/api/users/me",
+            "/api/tokens/create",
+            "/api/tokens/register_hash",
+            "/api/tokens/list",
+            "/api/tokens/revoke",
+            "/api/agent-tokens/create",
+            "/api/agent-tokens/register_hash",
+            "/api/agent-tokens/list",
+            "/api/agent-tokens/revoke",
+            "/api/pairing/create",
+        ] {
+            assert!(
+                enforce_route_scope(&pat, "POST", path).is_ok(),
+                "legacy PAT account compatibility should remain on {path}"
+            );
+        }
+
+        for path in [
+            "/api/audit/sessions",
+            "/api/audit/session",
+            "/api/audit/stats",
+        ] {
+            assert_eq!(
+                enforce_route_scope(&pat, "POST", path),
+                Err((
+                    Some(SCOPE_ACCOUNT_MANAGE),
+                    "missing required scope: account:manage".to_string()
+                )),
+                "PAT audit access must require account:manage on {path}"
             );
         }
     }

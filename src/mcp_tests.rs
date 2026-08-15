@@ -2486,7 +2486,10 @@ fn mcp_export_api_auth(api_key_id: &str, username: &str) -> crate::auth::AuthCon
     auth.username = Some(username.to_string());
     auth.api_key_id = Some(api_key_id.to_string());
     auth.token_kind = Some("user".to_string());
-    auth.scopes = vec![crate::auth::SCOPE_PROJECT_READ.to_string()];
+    auth.scopes = vec![
+        crate::auth::SCOPE_RUNTIME_READ.to_string(),
+        crate::auth::SCOPE_PROJECT_READ.to_string(),
+    ];
     auth
 }
 
@@ -6030,6 +6033,35 @@ fn assert_mcp_oauth_scope_rejected(
             body
         );
         assert!(challenge.contains(scope), "challenge: {}", challenge);
+    }
+}
+
+#[tokio::test]
+async fn pat_mcp_tools_list_requires_runtime_read_without_oauth_framing() {
+    let runtime = test_runtime();
+    let mut auth = mcp_export_api_auth("pat-project-read-only", "alice");
+    auth.scopes = vec![crate::auth::SCOPE_PROJECT_READ.to_string()];
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc("tools/list", Some(json!(41)), json!({})),
+        Some(&auth),
+    )
+    .await;
+
+    match outcome {
+        McpOutcome::Forbidden {
+            body,
+            required_scope,
+        } => {
+            assert_eq!(required_scope, Some(crate::auth::SCOPE_RUNTIME_READ));
+            assert_eq!(body["status"], StatusCode::FORBIDDEN.as_u16());
+            assert_ne!(body["error"], "insufficient_scope");
+            assert!(body["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains(crate::auth::SCOPE_RUNTIME_READ));
+        }
+        other => panic!("PAT without runtime:read must fail closed, got {other:?}"),
     }
 }
 

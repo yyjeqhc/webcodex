@@ -78,6 +78,36 @@ pub(crate) fn render_oauth_insufficient_scope(
     res.render(Json(oauth_insufficient_scope_body(description)));
 }
 
+pub(crate) fn scope_forbidden_body(
+    auth: Option<&AuthContext>,
+    description: impl Into<String>,
+) -> serde_json::Value {
+    let description = description.into();
+    if auth.is_some_and(AuthContext::is_oauth_token) {
+        oauth_insufficient_scope_body(description)
+    } else {
+        serde_json::json!({
+            "status": StatusCode::FORBIDDEN.as_u16(),
+            "error": description,
+        })
+    }
+}
+
+pub(crate) fn render_scope_forbidden(
+    res: &mut Response,
+    auth: Option<&AuthContext>,
+    required_scope: Option<&str>,
+    description: impl Into<String>,
+) {
+    let description = description.into();
+    if auth.is_some_and(AuthContext::is_oauth_token) {
+        render_oauth_insufficient_scope(res, required_scope, description);
+        return;
+    }
+    res.status_code(StatusCode::FORBIDDEN);
+    res.render(Json(scope_forbidden_body(auth, description)));
+}
+
 pub(crate) fn bearer_or_allowed_query_token(req: &Request) -> Option<String> {
     bearer_token(req).or_else(|| {
         if allow_query_token_for_path(req.uri().path()) {
@@ -291,7 +321,7 @@ impl Handler for AuthMiddleware {
                 }
                 if allow_anonymous_enabled() {
                     // Explicit --open: anonymous callers get a non-admin open
-                    // context. Surface restrictions still apply.
+                    // context. Surface restrictions and declared scopes still apply.
                     let ctx = open_anonymous_context();
                     if let Err((status, msg)) = enforce_request_surface(
                         project_connector_enabled(depot),
@@ -299,6 +329,13 @@ impl Handler for AuthMiddleware {
                         req.uri().path(),
                     ) {
                         reject(res, ctrl, status, msg);
+                        return;
+                    }
+                    if let Err((scope, description)) =
+                        scopes::enforce_route_scope(&ctx, req.method().as_str(), req.uri().path())
+                    {
+                        render_scope_forbidden(res, Some(&ctx), scope, description);
+                        ctrl.skip_rest();
                         return;
                     }
                     depot.inject(ctx);
@@ -326,6 +363,9 @@ impl Handler for AuthMiddleware {
                     reject(res, ctrl, status, msg);
                     return;
                 }
+                // Project credentials are a specialized Connector capability.
+                // Their exact surface and operation authorization stay owned by
+                // the project Connector instead of the ordinary route registry.
                 depot.inject(ctx);
                 ctrl.call_next(req, depot, res).await;
                 return;
@@ -335,6 +375,8 @@ impl Handler for AuthMiddleware {
                     reject(res, ctrl, status, msg);
                     return;
                 }
+                // Project Agent Tokens remain governed by the exact Agent
+                // transport surface and its agent:* scope checks.
                 depot.inject(ctx);
                 ctrl.call_next(req, depot, res).await;
                 return;
@@ -369,9 +411,9 @@ impl Handler for AuthMiddleware {
                     return;
                 }
                 if let Err((scope, description)) =
-                    scopes::enforce_oauth_route_scope(&ctx, req.method().as_str(), req.uri().path())
+                    scopes::enforce_route_scope(&ctx, req.method().as_str(), req.uri().path())
                 {
-                    render_oauth_insufficient_scope(res, scope, description);
+                    render_scope_forbidden(res, Some(&ctx), scope, description);
                     ctrl.skip_rest();
                     return;
                 }
@@ -400,12 +442,10 @@ impl Handler for AuthMiddleware {
                         reject(res, ctrl, status, msg);
                         return;
                     }
-                    if let Err((scope, description)) = scopes::enforce_oauth_route_scope(
-                        &ctx,
-                        req.method().as_str(),
-                        req.uri().path(),
-                    ) {
-                        render_oauth_insufficient_scope(res, scope, description);
+                    if let Err((scope, description)) =
+                        scopes::enforce_route_scope(&ctx, req.method().as_str(), req.uri().path())
+                    {
+                        render_scope_forbidden(res, Some(&ctx), scope, description);
                         ctrl.skip_rest();
                         return;
                     }

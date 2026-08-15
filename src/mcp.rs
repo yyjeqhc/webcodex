@@ -1343,9 +1343,7 @@ async fn mcp_artifact_export_resource_read_with_gate_timeout(
     read_timeout: Duration,
 ) -> Result<Value, McpArtifactExportReadError> {
     let record = mcp_artifact_export_lookup(uri, auth)?;
-    if auth.is_some_and(|auth| auth.is_oauth_token())
-        && !auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_PROJECT_READ))
-    {
+    if auth.is_some_and(|auth| !auth.has_scope(crate::auth::SCOPE_PROJECT_READ)) {
         return Err(McpArtifactExportReadError::Forbidden {
             required_scope: Some(crate::auth::SCOPE_PROJECT_READ),
             description: format!(
@@ -1742,9 +1740,11 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(403, estimated, Some(false), None, "forbidden");
             res.status_code(StatusCode::FORBIDDEN);
-            let challenge = crate::auth::oauth_insufficient_scope_challenge(required_scope);
-            if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
-                res.headers_mut().insert("www-authenticate", val);
+            if auth.as_ref().is_some_and(AuthContext::is_oauth_token) {
+                let challenge = crate::auth::oauth_insufficient_scope_challenge(required_scope);
+                if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
+                    res.headers_mut().insert("www-authenticate", val);
+                }
             }
             res.render(Json(body));
             guard.handler_returned(403, estimated, Some(false), None, "forbidden");
@@ -1795,7 +1795,6 @@ async fn handle_mcp_request_with_lifecycle(
     window: Option<&crate::client_window::ClientWindow>,
     mut lifecycle: Option<&mut ToolRequestLifecycle>,
 ) -> McpOutcome {
-    let is_oauth2 = auth.is_some_and(|ctx| ctx.is_oauth_token());
     let stateless_2026 = protocol_era == McpProtocolEra::Stateless2026;
     let artifact_export_resource_read = stateless_2026
         && request.method == "resources/read"
@@ -1808,7 +1807,7 @@ async fn handle_mcp_request_with_lifecycle(
         && model_surface_supports_computer_app(runtime.model_surface())
         && request_supports_mcp_apps(&request.params);
 
-    if is_oauth2
+    if auth.is_some()
         && (matches!(
             request.method.as_str(),
             "server/discover" | "tools/list" | "resources/list"
@@ -1819,12 +1818,12 @@ async fn handle_mcp_request_with_lifecycle(
                     "initialize" | "ping" | "notifications/initialized"
                 )))
     {
-        if let Some(outcome) = require_mcp_oauth_scope(auth, crate::auth::SCOPE_RUNTIME_READ) {
+        if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_RUNTIME_READ) {
             return outcome;
         }
     }
 
-    if is_oauth2
+    if auth.is_some_and(|auth| !auth.is_bootstrap())
         && !stateless_2026
         && !matches!(
             request.method.as_str(),
@@ -1836,7 +1835,11 @@ async fn handle_mcp_request_with_lifecycle(
                 | "notifications/initialized"
         )
     {
-        return oauth_forbidden(None, "OAuth2 access tokens cannot call unknown MCP methods");
+        return scope_forbidden(
+            auth,
+            None,
+            "authenticated caller cannot call unknown MCP methods",
+        );
     }
 
     // A JSON-RPC request without an `id` member is a notification. Per the
@@ -1953,7 +1956,7 @@ async fn handle_mcp_request_with_lifecycle(
                     Err(McpArtifactExportReadError::Forbidden {
                         required_scope,
                         description,
-                    }) => return oauth_forbidden(required_scope, description),
+                    }) => return scope_forbidden(auth, required_scope, description),
                     Err(McpArtifactExportReadError::Unavailable) => {
                         return McpOutcome::BadRequest(rpc_error(
                             id,
@@ -2103,7 +2106,7 @@ async fn handle_mcp_request_with_lifecycle(
                         .and_then(Value::as_str)
                         .unwrap_or("connector credential lacks the required scope")
                         .to_string();
-                    return oauth_forbidden(Some(required_scope), description);
+                    return scope_forbidden(auth, Some(required_scope), description);
                 }
                 if outcome.protocol_error {
                     if let Some(lc) = lifecycle.as_deref() {
@@ -2166,7 +2169,7 @@ async fn handle_mcp_request_with_lifecycle(
                         lc.dispatch_failed("forbidden");
                         lc.dispatch_finished(false, Some(false), "forbidden");
                     }
-                    return oauth_forbidden(required_scope, description);
+                    return scope_forbidden(auth, required_scope, description);
                 }
                 Some(ToolCallErrorStatus::InvalidArguments { message }) => {
                     if let Some(lc) = lifecycle.as_deref() {
@@ -2466,12 +2469,13 @@ fn log_mcp_host_file_import_trust_decision(
     );
 }
 
-fn require_mcp_oauth_scope(auth: Option<&AuthContext>, scope: &'static str) -> Option<McpOutcome> {
+fn require_mcp_scope(auth: Option<&AuthContext>, scope: &'static str) -> Option<McpOutcome> {
     let auth = auth?;
-    if !auth.is_oauth_token() || auth.has_scope(scope) {
+    if auth.has_scope(scope) {
         return None;
     }
-    Some(oauth_forbidden(
+    Some(scope_forbidden(
+        Some(auth),
         Some(scope),
         format!("missing required scope: {}", scope),
     ))
@@ -2486,12 +2490,13 @@ fn strip_reserved_session_id(arguments: &mut Value) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn oauth_forbidden(
+fn scope_forbidden(
+    auth: Option<&AuthContext>,
     required_scope: Option<&'static str>,
     description: impl Into<String>,
 ) -> McpOutcome {
     McpOutcome::Forbidden {
-        body: crate::auth::oauth_insufficient_scope_body(description),
+        body: crate::auth::scope_forbidden_body(auth, description),
         required_scope,
     }
 }

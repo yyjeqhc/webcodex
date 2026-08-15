@@ -85,6 +85,11 @@ A shared key is not an admin credential, not a managed user identity, and not
 production IAM. It has no independent per-device revocation: rotate the shared
 secret for the whole group, or use managed credentials.
 
+Its default principal carries `runtime:read`, `project:read`, `project:write`,
+`job:run`, and the bounded Agent-transport scopes `agent:register`, `agent:poll`,
+`agent:result`, and `agent:job_update`. It does not carry Computer, account
+management, or admin scopes.
+
 `WEBCODEX_SHARED_KEY_ENABLED=true` enables direct Bearer shared-key fallback on
 an ordinary server. Managed `wc_*` values and empty/whitespace Bearer values
 never fall back to shared-key mode. `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE` is a
@@ -171,6 +176,35 @@ The server supports the authorization-code grant, token revocation, and OAuth
 metadata. Dynamic client registration, OIDC, JWKS/JWT ID tokens, and the
 device-code flow are not implemented. OAuth setup steps are in
 [Deployment](DEPLOYMENT.md#oauth2).
+
+## Scope enforcement and credential surfaces
+
+WebCodex treats scope permission and credential identity as separate checks.
+For ordinary runtime principals, a declared runtime/project/job/Computer scope is
+enforced from the authenticated `AuthContext` whether the caller arrived through
+a PAT, OAuth access token, direct shared key, or open-anonymous mode.
+Bootstrap/admin remains the explicit superuser exception. Credential-specific
+capabilities keep their own narrower authorization layer: Runner tokens remain
+Agent-transport-only, account credentials remain account-control-only, OAuth
+access tokens cannot use Agent transport, and project credentials remain bounded
+to the Connector/project surface and its operation-level authorization.
+
+`account:manage` remains a delegated OAuth/account-credential permission, while
+first-party PAT account self-service keeps the existing handler-level identity
+and role checks rather than requiring that scope merely to manage the PAT's own
+account resources.
+
+The direct shared-key profile uses the default scopes listed above; it does not
+implicitly gain `computer:read`, `computer:control`, `account:manage`, or
+`admin`. Consequently, a Computer tool
+cannot be reached merely because the caller used a direct shared key. Unknown
+authenticated routes and runtime tools fail closed for ordinary principals until
+a scope policy is declared; bootstrap retains setup/superuser compatibility.
+
+Scope-denial wire formatting remains credential-aware. OAuth access tokens use
+the OAuth `insufficient_scope` response and `WWW-Authenticate` challenge. Other
+Bearer principals receive a normal WebCodex `403` without being represented as
+an OAuth error. This changes only response framing, not the required scope.
 
 ## Computer observation and control authorization
 

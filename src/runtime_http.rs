@@ -260,9 +260,9 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
         }) => {
             guard.dispatch_failed("insufficient_scope");
             guard.dispatch_finished(false, Some(false), "insufficient_scope");
-            // oauth insufficient-scope body is rendered by helper; size not measured.
+            // Scope-denial body is rendered by the credential-aware helper; size not measured.
             guard.response_serialized(403, None, Some(false), Some(false), "insufficient_scope");
-            crate::auth::render_oauth_insufficient_scope(res, required_scope, description);
+            crate::auth::render_scope_forbidden(res, auth.as_ref(), required_scope, description);
             guard.handler_returned(403, None, Some(false), Some(false), "insufficient_scope");
         }
         Some(ToolCallErrorStatus::InvalidArguments { message }) => {

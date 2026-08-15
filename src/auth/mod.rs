@@ -78,9 +78,9 @@ pub(crate) use middleware::{
     is_agent_transport_path, ACCOUNT_CONTROL_PATHS, AGENT_TRANSPORT_PATHS,
 };
 pub(crate) use middleware::{
-    bearer_token, get_config, get_db, json_error, oauth_insufficient_scope_body,
-    oauth_insufficient_scope_challenge, render_oauth_insufficient_scope, require_json_same_origin,
-    require_same_origin, AuthMiddleware,
+    bearer_token, get_config, get_db, json_error, oauth_insufficient_scope_challenge,
+    render_scope_forbidden, require_json_same_origin, require_same_origin, scope_forbidden_body,
+    AuthMiddleware,
 };
 
 pub(crate) use pat::{

@@ -370,6 +370,43 @@ input[type="text"] {
   overflow-wrap: anywhere;
 }
 
+.workflow-sessions-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.workflow-session-detail {
+  min-width: 0;
+}
+
+.workflow-session-title {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 1rem;
+  text-transform: none;
+  letter-spacing: normal;
+  overflow-wrap: anywhere;
+}
+
+.workflow-session-timeline {
+  margin-top: 12px;
+  max-height: 360px;
+}
+
+.workflow-session-running {
+  border-left-color: var(--accent);
+}
+
+.workflow-session-failed {
+  border-left-color: var(--fail);
+}
+
+.workflow-session-progress {
+  border-left-color: var(--accent);
+}
+
 .activity {
   max-height: 320px;
 }
@@ -507,6 +544,7 @@ input[type="text"] {
     align-items: flex-start;
   }
 
+  .workflow-sessions-grid,
   .workbench {
     grid-template-columns: 1fr;
   }

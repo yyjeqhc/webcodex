@@ -121,6 +121,32 @@
         </section>
       </div>
 
+      <section class="panel" id="workflow-sessions-panel">
+        <div class="panel-head">
+          <h2>Workflow Sessions <span class="muted small" id="workflow-sessions-count"></span></h2>
+        </div>
+        <div class="workflow-sessions-grid">
+          <div>
+            <ul id="workflow-session-list" class="task-list"></ul>
+            <p id="workflow-sessions-empty" class="muted small" hidden>No workflow sessions recorded for this project.</p>
+          </div>
+          <div class="workflow-session-detail">
+            <div id="workflow-session-detail-empty" class="muted">Select a workflow session to inspect its activity.</div>
+            <div id="workflow-session-detail" hidden>
+              <h3 id="workflow-session-title" class="workflow-session-title">—</h3>
+              <div class="detail-facts">
+                <span class="chip" id="workflow-session-lifecycle">—</span>
+                <span class="chip" id="workflow-session-mode">—</span>
+                <span class="chip" id="workflow-session-running">—</span>
+              </div>
+              <p class="muted small" id="workflow-session-updated">—</p>
+              <ol id="workflow-session-timeline" class="timeline workflow-session-timeline"></ol>
+              <p id="workflow-session-timeline-empty" class="muted small" hidden>No bounded activity is available.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="panel" id="devices-panel" hidden>
         <div class="panel-head">
           <h2>Devices <span class="muted small" id="devices-count"></span></h2>

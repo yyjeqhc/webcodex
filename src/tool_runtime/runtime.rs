@@ -116,6 +116,24 @@ impl ToolRuntime {
         self
     }
 
+    pub(crate) fn workflow_sessions_console_list(
+        &self,
+        project: &str,
+        limit: Option<usize>,
+    ) -> sessions::WorkflowSessionConsoleList {
+        self.sessions.console_list_for_project(project, limit)
+    }
+
+    pub(crate) fn workflow_session_console_detail(
+        &self,
+        project: &str,
+        session_id: &str,
+        limit: Option<usize>,
+    ) -> Option<sessions::WorkflowSessionConsoleDetail> {
+        self.sessions
+            .console_detail_for_project(project, session_id, limit)
+    }
+
     #[cfg(test)]
     pub(crate) fn with_semantic_navigation_probe_timeout(mut self, timeout: Duration) -> Self {
         self.semantic_navigation_probe_timeout = timeout;

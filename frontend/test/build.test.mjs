@@ -20,6 +20,7 @@ const buildScript = resolve(frontendRoot, "scripts/build.mjs");
 const requiredAssets = [
   "console.html",
   "app.js",
+  "workflow_session_state.js",
   "styles.css",
   "admin.html",
   "admin.js",
@@ -52,6 +53,9 @@ async function assertRequiredAssets(outputDirectory) {
   }
   const app = await readFile(resolve(outputDirectory, "app.js"), "utf8");
   assert.equal(app.includes("interface Review"), false);
+  assert.equal(/\.innerHTML\b|\binnerHTML\s*=/.test(app), false);
+  assert.match(app, /workflow-session/);
+  assert.match(app, /textContent/);
   await exec(process.execPath, ["--check", resolve(outputDirectory, "app.js")]);
   const admin = await readFile(resolve(outputDirectory, "admin.js"), "utf8");
   await exec(process.execPath, ["--check", resolve(outputDirectory, "admin.js")]);
@@ -65,6 +69,7 @@ async function copySources(sourceDirectory) {
   for (const source of [
     "app.ts",
     "review_state.ts",
+    "workflow_session_state.ts",
     "styles.css",
     "console.html",
     "admin.ts",

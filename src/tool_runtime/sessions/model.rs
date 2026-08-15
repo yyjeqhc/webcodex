@@ -13,6 +13,7 @@ use std::time::Instant;
 
 pub(crate) const SESSION_ID_PREFIX: &str = "wc_sess_";
 pub(super) const EVENT_ID_PREFIX: &str = "evt_";
+pub(super) const CALL_ID_PREFIX: &str = "wc_call_";
 pub(crate) const DEFAULT_MAX_SESSIONS: usize = 100;
 pub(crate) const DEFAULT_MAX_EVENTS_PER_SESSION: usize = 200;
 /// Maximum project-relative exploration paths retained on one ledger event.
@@ -656,6 +657,7 @@ pub(crate) struct SessionGuardDenial {
 #[derive(Debug, Clone)]
 pub(crate) struct ToolCallStart {
     pub(crate) event_id: String,
+    pub(crate) call_id: String,
     pub(crate) session_id: String,
     pub(crate) transport: SessionTransport,
     pub(crate) tool_name: String,
@@ -751,6 +753,11 @@ pub(crate) struct ToolEffectEventEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionEvent {
     pub(crate) event_id: String,
+    /// Additive correlation only: it joins one tool-call start/finish pair and
+    /// never participates in authority, retry, outcome, or lifecycle semantics.
+    /// Legacy ledger rows omit it and restore as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) call_id: Option<String>,
     pub(crate) session_id: String,
     pub(crate) kind: String,
     pub(crate) timestamp: i64,

@@ -14,6 +14,8 @@ pub(crate) const CONSOLE_ROUTES: &[&str] = &[
     "/api/console/readiness",
     "/api/console/tasks",
     "/api/console/activity",
+    "/api/console/workflow-sessions",
+    "/api/console/workflow-session",
     "/api/console/task/review",
     "/api/console/task/cancel",
     "/api/console/task/guide",
@@ -30,6 +32,8 @@ pub(crate) fn routes() -> Router {
         .push(Router::with_path("readiness").post(readiness))
         .push(Router::with_path("tasks").post(tasks))
         .push(Router::with_path("activity").post(activity))
+        .push(Router::with_path("workflow-sessions").post(workflow_sessions))
+        .push(Router::with_path("workflow-session").post(workflow_session))
         .push(Router::with_path("task/review").post(task_review))
         .push(Router::with_path("task/cancel").post(task_cancel))
         .push(Router::with_path("task/guide").post(task_guide))
@@ -114,6 +118,21 @@ struct ActivityInput {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct WorkflowSessionsInput {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkflowSessionInput {
+    session_id: String,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DecideInput {
     task_id: String,
     result_id: Option<String>,
@@ -165,6 +184,33 @@ async fn activity(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     {
         Ok(rows) => res.render(Json(json!({ "activity": rows }))),
         Err(error) => render(res, failure(500, "activity_store_error", error.to_string())),
+    }
+}
+
+#[handler]
+async fn workflow_sessions(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, _) = prepare!(req, depot, res);
+    let input = parse!(WorkflowSessionsInput, req, res);
+    res.render(Json(runtime.workflow_sessions_console_list(input.limit)));
+}
+
+#[handler]
+async fn workflow_session(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let (runtime, _) = prepare!(req, depot, res);
+    let input = parse!(WorkflowSessionInput, req, res);
+    if validate_opaque_id(&input.session_id, "wc_sess_", "session_id").is_err() {
+        return invalid(res, "invalid workflow session input");
+    }
+    match runtime.workflow_session_console_detail(&input.session_id, input.limit) {
+        Some(detail) => res.render(Json(detail)),
+        None => render(
+            res,
+            failure(
+                404,
+                "workflow_session_not_found",
+                "workflow session not found",
+            ),
+        ),
     }
 }
 
@@ -567,6 +613,99 @@ mod tests {
         let rows = mine["activity"].as_array().expect("activity list");
         assert_eq!(rows.len(), 1, "{mine}");
         assert_eq!(rows[0]["command_preview"], "grant-a-command");
+    }
+
+    #[tokio::test]
+    async fn workflow_session_console_is_project_scoped_and_request_cannot_choose_project() {
+        let fixture = crate::connector_runtime::execution_tests::console_fixture().await;
+        let auth = crate::connector_runtime::tests::auth("u1");
+        let project = fixture.runtime.context().project_id.clone();
+        let sessions = &fixture.runtime.tool_runtime_for_test().sessions;
+        let visible =
+            sessions.start_session(Some(project.clone()), Some("visible workflow".to_string()));
+        let hidden = sessions.start_session(
+            Some("agent:elsewhere:hidden".to_string()),
+            Some("HIDDEN_SECRET_TITLE".to_string()),
+        );
+        let start = sessions.record_tool_call_started(
+            Some(&visible.session_id),
+            crate::tool_runtime::sessions::SessionTransport::Api,
+            "read_file",
+            &serde_json::json!({
+                "project": project,
+                "path": "src/lib.rs",
+                "authorization": "Bearer SHOULD_NOT_LEAK"
+            }),
+        );
+        sessions.record_tool_call_finished(
+            start,
+            true,
+            &serde_json::json!({"content": "PRIVATE_FILE_CONTENT"}),
+            None,
+            None,
+        );
+
+        let service = service(fixture.runtime.clone(), auth.clone());
+        let mut list_response = TestClient::post("http://127.0.0.1/console/workflow-sessions")
+            .add_header("host", "127.0.0.1", true)
+            .add_header("origin", "http://127.0.0.1", true)
+            .add_header("content-type", "application/json", true)
+            .json(&serde_json::json!({"limit": 20}))
+            .send(&service)
+            .await;
+        let list: serde_json::Value = list_response.take_json().await.unwrap();
+        let serialized = serde_json::to_string(&list).unwrap();
+        assert!(serialized.contains(&visible.session_id), "{list}");
+        assert!(!serialized.contains(&hidden.session_id), "{list}");
+        assert!(!serialized.contains("HIDDEN_SECRET_TITLE"), "{list}");
+
+        let mut detail_response = TestClient::post("http://127.0.0.1/console/workflow-session")
+            .add_header("host", "127.0.0.1", true)
+            .add_header("origin", "http://127.0.0.1", true)
+            .add_header("content-type", "application/json", true)
+            .json(&serde_json::json!({"session_id": visible.session_id, "limit": 100}))
+            .send(&service)
+            .await;
+        let detail: serde_json::Value = detail_response.take_json().await.unwrap();
+        assert_eq!(detail["activity"][0]["kind"], "Read", "{detail}");
+        let detail_text = serde_json::to_string(&detail).unwrap();
+        for secret in ["SHOULD_NOT_LEAK", "PRIVATE_FILE_CONTENT", "authorization"] {
+            assert!(
+                !detail_text.contains(secret),
+                "{secret} leaked: {detail_text}"
+            );
+        }
+
+        for session_id in [
+            &hidden.session_id,
+            "wc_sess_unknown000000000000000000000000",
+        ] {
+            let mut response = TestClient::post("http://127.0.0.1/console/workflow-session")
+                .add_header("host", "127.0.0.1", true)
+                .add_header("origin", "http://127.0.0.1", true)
+                .add_header("content-type", "application/json", true)
+                .json(&serde_json::json!({"session_id": session_id}))
+                .send(&service)
+                .await;
+            assert_eq!(
+                response.status_code.map(|status| status.as_u16()),
+                Some(404)
+            );
+            let body: serde_json::Value = response.take_json().await.unwrap();
+            assert_eq!(body["error"]["code"], "workflow_session_not_found");
+            assert!(!serde_json::to_string(&body)
+                .unwrap()
+                .contains("HIDDEN_SECRET_TITLE"));
+        }
+
+        let spoofed = TestClient::post("http://127.0.0.1/console/workflow-sessions")
+            .add_header("host", "127.0.0.1", true)
+            .add_header("origin", "http://127.0.0.1", true)
+            .add_header("content-type", "application/json", true)
+            .json(&serde_json::json!({"project": "agent:elsewhere:hidden"}))
+            .send(&service)
+            .await;
+        assert_eq!(spoofed.status_code.map(|status| status.as_u16()), Some(400));
     }
 
     #[tokio::test]

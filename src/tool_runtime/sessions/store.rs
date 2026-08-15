@@ -11,6 +11,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
+use super::console::{
+    build_detail as build_console_detail, build_list_item as build_console_list_item,
+    normalize_console_activity_limit, normalize_console_session_limit,
+    WorkflowSessionConsoleDetail, WorkflowSessionConsoleList,
+};
 use super::events::{
     actual_failure_kind_for_tool_result, changed_paths_for_tool, classify_failure_expectation,
     diff_review_like_for_tool, extract_job_id, extract_project, is_valid_session_id,
@@ -29,10 +34,10 @@ use super::model::{
     SessionGuards, SessionLifecycle, SessionLifecycleDenial, SessionMessage, SessionMessageError,
     SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary, SessionTransport,
     StoredSession, ToolCallRecorderMetadata, ToolCallStart, ToolEffectEventEvidence,
-    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS,
-    DEFAULT_SUMMARY_LIMIT, DURABLE_CURRENT_BINDINGS_PER_SESSION, EVENT_ID_PREFIX,
-    MAX_CODING_INSTRUCTION_CHARS, MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX, SESSION_ID_PREFIX,
-    SESSION_LEDGER_VERSION,
+    CALL_ID_PREFIX, DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION,
+    DEFAULT_MAX_SESSIONS, DEFAULT_SUMMARY_LIMIT, DURABLE_CURRENT_BINDINGS_PER_SESSION,
+    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_SUMMARY_LIMIT, MESSAGE_ID_PREFIX,
+    SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
 use super::persistence::{
     cold_session_from_persisted, load_persisted_ledger, materialize_cold_session,
@@ -793,6 +798,72 @@ impl SessionStore {
         })
     }
 
+    /// Bounded, read-only Workflow Session rows for one exact runtime project.
+    /// The project is authoritative caller context, never request-controlled UI state.
+    pub(crate) fn console_list_for_project(
+        &self,
+        project: &str,
+        limit: Option<usize>,
+    ) -> WorkflowSessionConsoleList {
+        let limit = normalize_console_session_limit(limit);
+        let (candidates, total) = {
+            let inner = self.inner.lock().expect("session store mutex poisoned");
+            let mut candidates = inner
+                .sessions
+                .values()
+                .filter(|session| session.project() == Some(project))
+                .map(|session| (session.session_id().to_string(), session.updated_at()))
+                .collect::<Vec<_>>();
+            candidates
+                .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
+            let total = candidates.len();
+            candidates.truncate(limit);
+            (candidates, total)
+        };
+        let sessions = candidates
+            .into_iter()
+            .filter_map(|(session_id, _)| {
+                self.with_record_for_query(&session_id, |record, _| {
+                    (record.project.as_deref() == Some(project))
+                        .then(|| build_console_list_item(record))
+                })
+                .flatten()
+            })
+            .collect::<Vec<_>>();
+        WorkflowSessionConsoleList {
+            returned: sessions.len(),
+            truncated: total > limit,
+            total,
+            sessions,
+        }
+    }
+
+    /// Bounded, read-only human timeline for one exact project-scoped Session.
+    /// Unknown and wrong-project ids intentionally collapse to the same `None`.
+    pub(crate) fn console_detail_for_project(
+        &self,
+        project: &str,
+        session_id: &str,
+        limit: Option<usize>,
+    ) -> Option<WorkflowSessionConsoleDetail> {
+        let allowed = {
+            let inner = self.inner.lock().expect("session store mutex poisoned");
+            inner
+                .sessions
+                .get(session_id)
+                .is_some_and(|session| session.project() == Some(project))
+        };
+        if !allowed {
+            return None;
+        }
+        let limit = normalize_console_activity_limit(limit);
+        self.with_record_for_query(session_id, |record, _| {
+            (record.project.as_deref() == Some(project))
+                .then(|| build_console_detail(record, project, limit))
+        })
+        .flatten()
+    }
+
     pub(super) fn with_record_for_query<T>(
         &self,
         session_id: &str,
@@ -1092,6 +1163,7 @@ impl SessionStore {
         let now = now_ts();
         let event_id = format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let project = extract_project(arguments);
+        let call_id = format!("{CALL_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let classification = SessionToolClassification::for_tool(tool_name);
         let risk_class = classification.risk_class.to_string();
         let changed_paths = changed_paths_for_tool(tool_name, arguments);
@@ -1101,6 +1173,7 @@ impl SessionStore {
         let expectation = metadata.expectation;
         let start = ToolCallStart {
             event_id: event_id.clone(),
+            call_id: call_id.clone(),
             session_id: session_id.to_string(),
             transport,
             tool_name: tool_name.to_string(),
@@ -1124,6 +1197,7 @@ impl SessionStore {
             event_id,
             session_id: session_id.to_string(),
             kind: "tool_call_started".to_string(),
+            call_id: Some(call_id),
             timestamp: now,
             transport: transport.as_str().to_string(),
             tool_name: tool_name.to_string(),
@@ -1312,6 +1386,7 @@ impl SessionStore {
             event_id: event_id.clone(),
             session_id: start.session_id,
             kind: "tool_call_finished".to_string(),
+            call_id: Some(start.call_id),
             timestamp: finished_at,
             transport: start.transport.as_str().to_string(),
             tool_name: start.tool_name,
@@ -1660,6 +1735,7 @@ fn coding_instruction_event(
         event_id: event_id.to_string(),
         session_id: session_id.to_string(),
         kind: "task_instruction".to_string(),
+        call_id: None,
         timestamp: now,
         transport: transport.as_str().to_string(),
         tool_name: "start_coding_task".to_string(),
@@ -1728,6 +1804,7 @@ fn session_closed_system_event(session_id: &str, now: i64) -> SessionEvent {
         event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
         session_id: session_id.to_string(),
         kind: "session_closed".to_string(),
+        call_id: None,
         timestamp: now,
         transport: "system".to_string(),
         tool_name: "close_session".to_string(),
@@ -1792,6 +1869,7 @@ fn session_execution_context_updated_event(
         event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
         session_id: session_id.to_string(),
         kind: "session_execution_context_updated".to_string(),
+        call_id: None,
         timestamp: now,
         transport: transport.as_str().to_string(),
         tool_name: "update_session_context".to_string(),

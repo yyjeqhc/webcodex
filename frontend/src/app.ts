@@ -24,6 +24,14 @@ import {
   reset,
   createReviewController,
 } from "./review_state";
+import {
+  initialWorkflowSessionState,
+  selectWorkflowSession,
+  refreshWorkflowSessionDetail,
+  clearWorkflowSessionSelection,
+  isCurrentWorkflowSessionDetailRequest,
+  adoptWorkflowSessionDetail,
+} from "./workflow_session_state";
 
 const CONSOLE_BASE = "/api/console/";
 const REFRESH_MS = 8000;
@@ -38,10 +46,12 @@ let showCompleted = false;
 let timer = 0;
 let reviewLoop: any = null;
 let projectName = "";
+let workflowSessionDetailAbort: AbortController | null = null;
 
-// The single review-identity/concurrency state object (pure logic in the
-// review_state module operates on it).
+// Connector Task review and Workflow Session observability remain separate
+// state machines. Neither identity is inferred from the other.
 const state = initialState();
+const workflowSessionState = initialWorkflowSessionState();
 
 function el(id: string) {
   return document.getElementById(id);
@@ -116,6 +126,7 @@ function hideError() {
 function lock(message: string) {
   token = "";
   reset(state);
+  clearWorkflowSessionDetailSelection();
   if (reviewLoop) {
     reviewLoop.stop();
   }
@@ -220,6 +231,217 @@ function renderReadiness(readiness: any) {
   setText("capabilities", readiness.capabilities);
   setText("coding", readiness.ready ? "Ready" : "Needs action");
   setText("next-action", readiness.next_action || "No action needed");
+}
+
+async function fetchWorkflowSessions() {
+  const res = await api("workflow-sessions", { limit: 20 });
+  if (!res) {
+    return;
+  }
+  if (res.status === 401) {
+    lock("Credential rejected. Re-enter it.");
+    return;
+  }
+  if (!res.ok || !res.data) {
+    return;
+  }
+  const sessions = Array.isArray(res.data.sessions) ? res.data.sessions : [];
+  renderWorkflowSessionList(sessions, res.data);
+  const request = refreshWorkflowSessionDetail(workflowSessionState);
+  if (request) {
+    await fetchWorkflowSessionDetail(request);
+  }
+}
+
+function renderWorkflowSessionList(sessions: any[], payload: any) {
+  const node = el("workflow-session-list");
+  if (!node) {
+    return;
+  }
+  clearNode(node);
+  show("workflow-sessions-empty", sessions.length === 0);
+  const total = typeof payload.total === "number" ? payload.total : sessions.length;
+  setText(
+    "workflow-sessions-count",
+    total ? "(" + sessions.length + (payload.truncated ? " of " + total : "") + ")" : ""
+  );
+  const selectedWorkflowSessionId = String(workflowSessionState.selectedSessionId || "");
+  if (
+    selectedWorkflowSessionId &&
+    !sessions.some((session) => String(session.session_id || "") === selectedWorkflowSessionId)
+  ) {
+    clearWorkflowSessionDetailSelection();
+  }
+  for (const session of sessions) {
+    const id = String(session.session_id || "");
+    if (!id) {
+      continue;
+    }
+    const item = document.createElement("li");
+    item.className = "task" + (id === selectedWorkflowSessionId ? " task-selected" : "");
+    const title = document.createElement("div");
+    title.className = "task-goal";
+    title.textContent = session.title ? String(session.title) : id;
+    const meta = document.createElement("div");
+    meta.className = "task-meta muted small";
+    appendChip(meta, String(session.lifecycle || "unknown"));
+    appendChip(meta, "mode " + String(session.mode || "unknown"));
+    if (session.running_call) {
+      appendChip(meta, "running");
+    }
+    appendChip(meta, updatedLabel(session.updated_at));
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.addEventListener("click", () => {
+      const request = selectWorkflowSessionDetail(id);
+      renderWorkflowSessionList(sessions, payload);
+      void fetchWorkflowSessionDetail(request);
+    });
+    node.appendChild(item);
+  }
+}
+
+function hideWorkflowSessionDetail() {
+  show("workflow-session-detail", false);
+  show("workflow-session-detail-empty", true);
+}
+
+function abortWorkflowSessionDetailRequest() {
+  if (workflowSessionDetailAbort) {
+    workflowSessionDetailAbort.abort();
+    workflowSessionDetailAbort = null;
+  }
+}
+
+function clearWorkflowSessionDetailSelection() {
+  abortWorkflowSessionDetailRequest();
+  clearWorkflowSessionSelection(workflowSessionState);
+  hideWorkflowSessionDetail();
+}
+
+function selectWorkflowSessionDetail(sessionId: string) {
+  abortWorkflowSessionDetailRequest();
+  const request = selectWorkflowSession(workflowSessionState, sessionId);
+  // Never present the previous Session detail under the newly selected row.
+  hideWorkflowSessionDetail();
+  return request;
+}
+
+async function fetchWorkflowSessionDetail(request: any) {
+  if (!request) {
+    return;
+  }
+  abortWorkflowSessionDetailRequest();
+  const controller = new AbortController();
+  workflowSessionDetailAbort = controller;
+  const res = await api(
+    "workflow-session",
+    { session_id: request.sessionId, limit: 100 },
+    controller.signal
+  );
+  if (workflowSessionDetailAbort === controller) {
+    workflowSessionDetailAbort = null;
+  }
+  if (!res || !isCurrentWorkflowSessionDetailRequest(workflowSessionState, request)) {
+    return;
+  }
+  if (res.status === 401) {
+    lock("Credential rejected. Re-enter it.");
+    return;
+  }
+  if (res.status === 404) {
+    clearWorkflowSessionDetailSelection();
+    return;
+  }
+  if (!res.ok || !res.data) {
+    return;
+  }
+  if (!adoptWorkflowSessionDetail(workflowSessionState, request, res.data)) {
+    return;
+  }
+  renderWorkflowSessionDetail(res.data);
+}
+
+function renderWorkflowSessionDetail(detail: any) {
+  show("workflow-session-detail-empty", false);
+  show("workflow-session-detail", true);
+  setText("workflow-session-title", detail.title);
+  setText("workflow-session-lifecycle", detail.lifecycle);
+  setText("workflow-session-mode", "mode " + String(detail.mode || "unknown"));
+  setText("workflow-session-running", detail.running_call ? "running call" : "no running call");
+  setText("workflow-session-updated", updatedLabel(detail.updated_at));
+  const activities = Array.isArray(detail.activity) ? detail.activity : [];
+  const node = el("workflow-session-timeline");
+  clearNode(node);
+  show("workflow-session-timeline-empty", activities.length === 0);
+  if (!node) {
+    return;
+  }
+  for (const activity of activities) {
+    const item = document.createElement("li");
+    item.className = "timeline-event";
+    if (activity && activity.state === "running") {
+      item.classList.add("workflow-session-running");
+    } else if (activity && activity.state === "failed") {
+      item.classList.add("workflow-session-failed");
+    } else if (activity && activity.kind === "Progress") {
+      item.classList.add("workflow-session-progress");
+    }
+    const head = document.createElement("div");
+    head.className = "timeline-head";
+    const kind = document.createElement("span");
+    kind.className = "timeline-kind";
+    kind.textContent = String((activity && activity.kind) || "Activity");
+    const meta = document.createElement("span");
+    meta.className = "muted small";
+    const facts = [];
+    if (activity && activity.tool) {
+      facts.push(String(activity.tool));
+    }
+    if (activity && activity.state) {
+      facts.push(String(activity.state));
+    }
+    if (activity && typeof activity.duration_ms === "number") {
+      facts.push(durationLabel(activity.duration_ms));
+    }
+    if (activity && typeof activity.exit_code === "number") {
+      facts.push("exit " + activity.exit_code);
+    }
+    if (activity && activity.job_id) {
+      facts.push("job " + String(activity.job_id));
+    }
+    const started = activity && typeof activity.started_at === "number"
+      ? new Date(activity.started_at * 1000).toLocaleTimeString()
+      : "";
+    if (started) {
+      facts.push(started);
+    }
+    meta.textContent = facts.join(" · ");
+    head.appendChild(kind);
+    head.appendChild(meta);
+    item.appendChild(head);
+    const bodyParts = [];
+    if (activity && activity.summary) {
+      bodyParts.push(String(activity.summary));
+    }
+    if (activity && Array.isArray(activity.paths) && activity.paths.length) {
+      bodyParts.push(activity.paths.map((path: any) => String(path)).join(", "));
+    }
+    if (bodyParts.length) {
+      const body = document.createElement("div");
+      body.className = "timeline-payload muted small";
+      body.textContent = bodyParts.join(" — ");
+      item.appendChild(body);
+    }
+    node.appendChild(item);
+  }
+}
+
+function durationLabel(durationMs: number): string {
+  if (durationMs < 1000) {
+    return durationMs + " ms";
+  }
+  return (durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0) + " s";
 }
 
 async function fetchTasks() {
@@ -821,6 +1043,7 @@ async function tick() {
   try {
     await fetchReadiness();
     await fetchTasks();
+    await fetchWorkflowSessions();
     await fetchApprovals();
     await fetchActivity();
     await fetchDevices();

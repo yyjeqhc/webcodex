@@ -17,6 +17,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const watchedSources = new Set([
   "app.ts",
   "review_state.ts",
+  "workflow_session_state.ts",
   "styles.css",
   "console.html",
   "admin.ts",
@@ -108,14 +109,25 @@ export function createOutputs(
     transpileTypeScript(sourceDirectory, "review_state.ts")
   );
   const reviewStateClassic = stripModuleExports(reviewStateModule);
+  const workflowSessionStateModule = buildJs(
+    transpileTypeScript(sourceDirectory, "workflow_session_state.ts")
+  );
+  const workflowSessionStateClassic = stripModuleExports(workflowSessionStateModule);
   const appModule = transpileTypeScript(sourceDirectory, "app.ts");
   const appScript = stripModuleExports(
-    appModule.replace(
-      /^import\s*\{[\s\S]*?\}\s*from\s*["']\.\/review_state(?:\.js)?["'];?\s*\n/m,
-      ""
-    )
+    appModule
+      .replace(
+        /^import\s*\{[\s\S]*?\}\s*from\s*["']\.\/review_state(?:\.js)?["'];?\s*\n/m,
+        ""
+      )
+      .replace(
+        /^import\s*\{[\s\S]*?\}\s*from\s*["']\.\/workflow_session_state(?:\.js)?["'];?\s*\n/m,
+        ""
+      )
   );
-  const appInlined = buildJs(reviewStateClassic + "\n" + appScript);
+  const appInlined = buildJs(
+    reviewStateClassic + "\n" + workflowSessionStateClassic + "\n" + appScript
+  );
   assertClassicScript(resolve(outputDirectory, "app.js"), appInlined);
   const adminControllerModule = buildJs(
     transpileTypeScript(sourceDirectory, "admin_controller.ts")
@@ -167,6 +179,7 @@ export function createOutputs(
 
   return new Map([
     ["review_state.js", reviewStateModule],
+    ["workflow_session_state.js", workflowSessionStateModule],
     ["admin_controller.js", adminControllerModule],
     ["admin_mutation_controller.js", adminMutationControllerModule],
     ["admin_mutation_view.js", adminMutationViewModule],

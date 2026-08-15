@@ -244,6 +244,28 @@ impl ConnectorRuntime {
         &self.context
     }
 
+    pub(crate) fn workflow_sessions_console_list(
+        &self,
+        limit: Option<usize>,
+    ) -> crate::tool_runtime::sessions::WorkflowSessionConsoleList {
+        self.tools
+            .workflow_sessions_console_list(&self.context.project_id, limit)
+    }
+
+    pub(crate) fn workflow_session_console_detail(
+        &self,
+        session_id: &str,
+        limit: Option<usize>,
+    ) -> Option<crate::tool_runtime::sessions::WorkflowSessionConsoleDetail> {
+        self.tools
+            .workflow_session_console_detail(&self.context.project_id, session_id, limit)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tool_runtime_for_test(&self) -> &ToolRuntime {
+        self.tools.as_ref()
+    }
+
     pub(crate) fn authenticate_project_credential(&self, token: &str) -> Option<AuthContext> {
         self.credential.authenticate(token)
     }

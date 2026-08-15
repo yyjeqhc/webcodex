@@ -1819,6 +1819,15 @@ fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
 /// owning agent as base64 in a JSON file-op payload.
 pub(crate) const MAX_PROJECT_ARTIFACT_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectArtifactExportSnapshot {
+    pub(crate) path: String,
+    pub(crate) bytes: usize,
+    pub(crate) sha256: String,
+    pub(crate) mime_type: String,
+    pub(crate) name: String,
+}
+
 /// Default returned segment size for `read_project_artifact`. This tool returns
 /// base64 content in the JSON response, so keep chunks small for GPT Actions.
 pub(crate) const DEFAULT_READ_PROJECT_ARTIFACT_LENGTH: usize = 32 * 1024; // 32 KiB
@@ -2048,6 +2057,60 @@ pub(crate) fn is_hex_sha256(s: &str) -> bool {
     s.len() == 64
         && s.bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+pub(crate) fn validate_project_artifact_export_snapshot(
+    path: &str,
+    output: &Value,
+) -> Result<ProjectArtifactExportSnapshot, String> {
+    validate_artifact_file_path(path)?;
+    if output.get("path").and_then(Value::as_str) != Some(path) {
+        return Err("artifact metadata path does not match the requested export path".to_string());
+    }
+    let bytes = output
+        .get("bytes")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| "artifact metadata did not report a valid byte count".to_string())?;
+    if bytes > MAX_PROJECT_ARTIFACT_BYTES {
+        return Err(format!(
+            "artifact is too large to export; maximum is {} bytes",
+            MAX_PROJECT_ARTIFACT_BYTES
+        ));
+    }
+    let sha256 = output
+        .get("sha256")
+        .and_then(Value::as_str)
+        .filter(|value| is_hex_sha256(value))
+        .ok_or_else(|| "artifact metadata did not report a valid sha256".to_string())?
+        .to_string();
+    let reported_mime = output
+        .get("mime_type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "artifact export requires a detected or inferred MIME type".to_string())?;
+    let mime_type = validate_artifact_mime_for_path(path, Some(reported_mime))?
+        .ok_or_else(|| "artifact export requires a validated MIME type".to_string())?;
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty() && *value != "." && *value != "..")
+        .ok_or_else(|| "artifact export path does not have a safe basename".to_string())?;
+    if name.len() > 255
+        || name
+            .chars()
+            .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
+    {
+        return Err("artifact export basename is not safe for MCP presentation".to_string());
+    }
+    Ok(ProjectArtifactExportSnapshot {
+        path: path.to_string(),
+        bytes,
+        sha256,
+        mime_type,
+        name: name.to_string(),
+    })
 }
 
 fn validate_apply_text_edit(
@@ -3075,6 +3138,74 @@ impl ToolRuntime {
             };
         }
         ToolResult::ok(obj)
+    }
+
+    pub(crate) async fn export_project_artifact_metadata_resolved(
+        &self,
+        resolved: &ResolvedProject,
+        path: String,
+    ) -> ToolResult {
+        if let Err(error) = validate_artifact_file_path(&path) {
+            return artifact_policy_rejected_result(&path, error);
+        }
+        if !resolved.config.is_agent() {
+            return ToolResult::err("export_project_artifact requires an agent-registered project");
+        }
+        let client_id = match resolved.config.agent_client_id() {
+            Ok(client_id) => client_id.to_string(),
+            Err(error) => return ToolResult::err(error),
+        };
+        let payload = json!({
+            "path": path.clone(),
+            "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
+            "allow_missing": false,
+        });
+        let output = match self
+            .run_agent_json_file_op(
+                client_id,
+                resolved.config.path.clone(),
+                path.clone(),
+                "read_project_artifact_metadata",
+                payload,
+                "export_project_artifact",
+            )
+            .await
+        {
+            Ok(output) => output,
+            Err(error) => return ToolResult::err(error),
+        };
+        if let Some(error) = output
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output,
+                error: Some(error),
+            };
+        }
+        let snapshot = match validate_project_artifact_export_snapshot(&path, &output) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return ToolResult::err_with_output(
+                    error,
+                    json!({
+                        "project": resolved.resolved_id,
+                        "path": path,
+                        "error_kind": "invalid_artifact_export_metadata",
+                    }),
+                )
+            }
+        };
+        ToolResult::ok(json!({
+            "project": resolved.resolved_id,
+            "path": snapshot.path,
+            "bytes": snapshot.bytes,
+            "sha256": snapshot.sha256,
+            "mime_type": snapshot.mime_type,
+            "name": snapshot.name,
+        }))
     }
 
     pub(crate) async fn read_project_artifact(

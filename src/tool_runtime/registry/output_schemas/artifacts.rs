@@ -37,6 +37,29 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
+        "export_project_artifact" => Some(wrapped_output_schema(vec![
+            (
+                "project",
+                schema_type("string", "Canonical agent-registered project id."),
+            ),
+            (
+                "path",
+                schema_type("string", "Project-relative artifact path."),
+            ),
+            ("bytes", schema_type("integer", "Artifact size in bytes.")),
+            (
+                "sha256",
+                schema_type("string", "sha256 digest of the full artifact file."),
+            ),
+            (
+                "mime_type",
+                schema_type("string", "Validated artifact MIME type."),
+            ),
+            (
+                "name",
+                schema_type("string", "Safe basename presented by the MCP ResourceLink."),
+            ),
+        ])),
         "read_project_artifact_metadata" => Some(wrapped_output_schema(vec![
             (
                 "path",

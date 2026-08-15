@@ -153,6 +153,28 @@ impl ToolRuntime {
                 self.save_project_artifact(project, path, content_base64, mime_type, overwrite)
                     .await
             }
+            ToolCall::ExportProjectArtifact {
+                project: _,
+                path,
+                session_id: _,
+            } => {
+                if !matches!(transport, SessionTransport::Mcp) {
+                    ToolResult::err(
+                        "export_project_artifact is MCP-only; use read_project_artifact for bounded inspection outside MCP",
+                    )
+                } else {
+                    match project_resolution {
+                        Some(Ok(resolved)) => {
+                            self.export_project_artifact_metadata_resolved(&resolved, path)
+                                .await
+                        }
+                        Some(Err(error)) => error.into_tool_result(),
+                        None => ToolResult::err(
+                            "export_project_artifact requires an exact resolved agent project",
+                        ),
+                    }
+                }
+            }
             ToolCall::ReadProjectArtifactMetadata {
                 project,
                 path,

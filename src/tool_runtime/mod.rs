@@ -75,6 +75,10 @@ pub(crate) mod validation_profile;
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[cfg(test)]
 pub(crate) use agent_authorization::required_agent_capability;
+pub(crate) use files::{
+    validate_project_artifact_export_snapshot, ProjectArtifactExportSnapshot,
+    MAX_PROJECT_ARTIFACT_BYTES, MAX_READ_PROJECT_ARTIFACT_LENGTH,
+};
 pub(crate) use local_jobs::ACTIVE_JOB_STATUSES;
 #[cfg(test)]
 pub(crate) use local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller, TerminateOutcome};

@@ -1093,6 +1093,16 @@ pub enum ToolCall {
         trusted_mcp_host_file_import: bool,
     },
 
+    /// Prepare one project artifact for standards-native MCP resource export.
+    /// The runtime returns only stable metadata; the MCP transport owns the
+    /// short-lived resource handle and complete binary framing.
+    ExportProjectArtifact {
+        project: String,
+        path: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Read bounded metadata for a binary project artifact. Zip files are
     /// counted but never extracted.
     ReadProjectArtifactMetadata {
@@ -1796,6 +1806,7 @@ impl ToolCall {
             Self::WriteProjectFile { .. } => "write_project_file",
             Self::SaveProjectArtifact { .. } => "save_project_artifact",
             Self::ImportConversationFilesToProject { .. } => "import_conversation_files_to_project",
+            Self::ExportProjectArtifact { .. } => "export_project_artifact",
             Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",
             Self::ReadProjectArtifact { .. } => "read_project_artifact",
             Self::ArtifactUploadBegin { .. } => "artifact_upload_begin",
@@ -1858,6 +1869,7 @@ impl ToolCall {
             | Self::ShowChanges { session_id, .. }
             | Self::WriteProjectFile { session_id, .. }
             | Self::SaveProjectArtifact { session_id, .. }
+            | Self::ExportProjectArtifact { session_id, .. }
             | Self::ReadProjectArtifactMetadata { session_id, .. }
             | Self::ReadProjectArtifact { session_id, .. }
             | Self::ArtifactUploadBegin { session_id, .. }
@@ -1922,6 +1934,7 @@ impl ToolCall {
             | Self::ShowChanges { session_id, .. }
             | Self::WriteProjectFile { session_id, .. }
             | Self::SaveProjectArtifact { session_id, .. }
+            | Self::ExportProjectArtifact { session_id, .. }
             | Self::ReadProjectArtifactMetadata { session_id, .. }
             | Self::ReadProjectArtifact { session_id, .. }
             | Self::ArtifactUploadBegin { session_id, .. }
@@ -2017,6 +2030,7 @@ impl ToolCall {
             | Self::WriteProjectFile { project, .. }
             | Self::SaveProjectArtifact { project, .. }
             | Self::ImportConversationFilesToProject { project, .. }
+            | Self::ExportProjectArtifact { project, .. }
             | Self::ReadProjectArtifactMetadata { project, .. }
             | Self::ReadProjectArtifact { project, .. }
             | Self::ArtifactUploadBegin { project, .. }

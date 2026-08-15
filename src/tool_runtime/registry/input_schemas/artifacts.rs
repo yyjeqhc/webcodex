@@ -82,6 +82,19 @@ pub(crate) fn import_conversation_files_to_project_input_schema() -> Value {
     schema
 }
 
+pub(crate) fn export_project_artifact_input_schema() -> Value {
+    object_schema(vec![
+        ("project", "string", "Agent-registered project id.", true),
+        ("path", "string", "Project-relative artifact path.", true),
+        (
+            "session_id",
+            "string",
+            "Optional explicit wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session ledger and wins over any current-session binding.",
+            false,
+        ),
+    ])
+}
+
 pub(crate) fn read_project_artifact_metadata_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![
         ("project", "string", "Agent-registered project id.", true),

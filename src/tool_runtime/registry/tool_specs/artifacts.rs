@@ -1,8 +1,9 @@
 use super::super::input_schemas::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
-    import_conversation_files_to_project_input_schema, read_project_artifact_input_schema,
-    read_project_artifact_metadata_input_schema, save_project_artifact_input_schema,
+    export_project_artifact_input_schema, import_conversation_files_to_project_input_schema,
+    read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
+    save_project_artifact_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -18,6 +19,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "import_conversation_files_to_project",
             "Import 1..10 attachments selected from the current ChatGPT conversation into an agent-registered project. ChatGPT supplies openaiFileIdRefs through the host file-reference mechanism; do not read/base64-transfer the files, construct download URLs, or use local /mnt/data paths. Downloads stay on the Control side and final writes use save_project_artifact semantics.",
             import_conversation_files_to_project_input_schema(),
+        ),
+        tool_spec(
+            "export_project_artifact",
+            "Create one short-lived authenticated MCP resource link for a bounded project artifact. The tool result contains metadata only; use resources/read on the returned ResourceLink to fetch the complete binary without routing base64 through model output.",
+            export_project_artifact_input_schema(),
         ),
         tool_spec(
             "read_project_artifact_metadata",

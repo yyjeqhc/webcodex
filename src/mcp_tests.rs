@@ -2439,6 +2439,47 @@ async fn complete_mcp_export_request(
         .unwrap();
 }
 
+fn mcp_export_optimized_chunk_range(
+    request: &crate::shell_protocol::ShellAgentShellRequest,
+    path: &str,
+    file_bytes: usize,
+) -> (usize, usize) {
+    assert_eq!(request.kind, "file_read_project_artifact_export_chunk");
+    let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["path"], path);
+    assert_eq!(payload["expected_file_bytes"], file_bytes);
+    let offset = payload["offset"].as_u64().unwrap() as usize;
+    let length = payload["length"].as_u64().unwrap() as usize;
+    assert!(length <= MAX_READ_PROJECT_ARTIFACT_LENGTH);
+    let end = offset.saturating_add(length).min(file_bytes);
+    (offset, end)
+}
+
+async fn complete_mcp_export_optimized_chunk(
+    registry: &Arc<crate::shell_client::ShellClientRegistry>,
+    request: crate::shell_protocol::ShellAgentShellRequest,
+    path: &str,
+    bytes: &[u8],
+) -> usize {
+    let (offset, end) = mcp_export_optimized_chunk_range(&request, path, bytes.len());
+    complete_mcp_export_request(
+        registry,
+        request,
+        json!({
+            "path": path,
+            "file_bytes": bytes.len(),
+            "offset": offset,
+            "bytes_returned": end - offset,
+            "content_base64": general_purpose::STANDARD.encode(&bytes[offset..end]),
+            "next_offset": end,
+            "truncated": end < bytes.len(),
+            "eof": end == bytes.len(),
+        }),
+    )
+    .await;
+    offset
+}
+
 async fn complete_mcp_export_metadata(
     registry: Arc<crate::shell_client::ShellClientRegistry>,
     path: &str,
@@ -2625,6 +2666,18 @@ async fn complete_mcp_export_resource_read_legacy(
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         };
         assert_eq!(request.kind, "file_read_project_artifact");
+        assert!(
+            registry
+                .poll(ShellAgentPollRequest {
+                    client_id: "exporter".to_string(),
+                    agent_instance_id: "inst-export".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap()
+                .is_none(),
+            "legacy fallback must keep at most one public artifact read in flight"
+        );
         let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
         assert_eq!(payload["path"], path);
         assert_eq!(payload["max_file_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
@@ -3111,6 +3164,288 @@ async fn mcp_artifact_export_old_runner_uses_safe_legacy_fallback() {
         .decode(value["result"]["contents"][0]["blob"].as_str().unwrap())
         .unwrap();
     assert_eq!(decoded, bytes);
+}
+
+#[tokio::test]
+async fn mcp_artifact_export_optimized_pipeline_is_four_way_bounded_and_offset_ordered() {
+    use crate::shell_protocol::ShellAgentPollRequest;
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_export_runtime(tmp.path(), Some("alice")).await;
+    let auth = mcp_export_api_auth("key-pipeline", "alice");
+    let path = "paper/pipeline.pdf";
+    let size = MAX_READ_PROJECT_ARTIFACT_LENGTH * 9 + 123;
+    let bytes: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let export = issue_mcp_artifact_export(
+        runtime.clone(),
+        registry.clone(),
+        auth.clone(),
+        path,
+        &bytes,
+        "application/pdf",
+    )
+    .await;
+    let uri = export["result"]["content"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let read = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let uri = uri.clone();
+        async move {
+            handle_mcp_request(
+                &runtime,
+                rpc(
+                    "resources/read",
+                    Some(json!(3130)),
+                    mcp_2026_params(json!({"uri": uri})),
+                ),
+                Some(&auth),
+            )
+            .await
+        }
+    });
+
+    complete_mcp_export_metadata(
+        registry.clone(),
+        path,
+        bytes.len(),
+        &sha256,
+        "application/pdf",
+    )
+    .await;
+    let first = poll_mcp_export_request(&registry).await;
+    assert_eq!(
+        mcp_export_optimized_chunk_range(&first, path, bytes.len()).0,
+        0
+    );
+    complete_mcp_export_optimized_chunk(&registry, first, path, &bytes).await;
+
+    let mut first_batch = Vec::new();
+    for _ in 0..MAX_MCP_ARTIFACT_EXPORT_CHUNK_READS {
+        first_batch.push(poll_mcp_export_request(&registry).await);
+    }
+    first_batch
+        .sort_by_key(|request| mcp_export_optimized_chunk_range(request, path, bytes.len()).0);
+    let first_offsets: Vec<usize> = first_batch
+        .iter()
+        .map(|request| mcp_export_optimized_chunk_range(request, path, bytes.len()).0)
+        .collect();
+    assert_eq!(
+        first_offsets,
+        (1..=4)
+            .map(|index| index * MAX_READ_PROJECT_ARTIFACT_LENGTH)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        registry
+            .poll(ShellAgentPollRequest {
+                client_id: "exporter".to_string(),
+                agent_instance_id: "inst-export".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "the optimized batch must not dispatch a fifth chunk"
+    );
+
+    let mut batch = first_batch.into_iter();
+    let b0 = batch.next().unwrap();
+    let b1 = batch.next().unwrap();
+    let b2 = batch.next().unwrap();
+    let b3 = batch.next().unwrap();
+    for request in [b3, b1, b2] {
+        complete_mcp_export_optimized_chunk(&registry, request, path, &bytes).await;
+    }
+    assert!(
+        registry
+            .poll(ShellAgentPollRequest {
+                client_id: "exporter".to_string(),
+                agent_instance_id: "inst-export".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "the next batch must wait until every request in the current batch is drained"
+    );
+    complete_mcp_export_optimized_chunk(&registry, b0, path, &bytes).await;
+
+    let mut second_batch = Vec::new();
+    for _ in 0..MAX_MCP_ARTIFACT_EXPORT_CHUNK_READS {
+        second_batch.push(poll_mcp_export_request(&registry).await);
+    }
+    second_batch
+        .sort_by_key(|request| mcp_export_optimized_chunk_range(request, path, bytes.len()).0);
+    assert_eq!(
+        second_batch
+            .iter()
+            .map(|request| mcp_export_optimized_chunk_range(request, path, bytes.len()).0)
+            .collect::<Vec<_>>(),
+        (5..=8)
+            .map(|index| index * MAX_READ_PROJECT_ARTIFACT_LENGTH)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        registry
+            .poll(ShellAgentPollRequest {
+                client_id: "exporter".to_string(),
+                agent_instance_id: "inst-export".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "a later optimized batch must keep the same four-request bound"
+    );
+    while let Some(request) = second_batch.pop() {
+        complete_mcp_export_optimized_chunk(&registry, request, path, &bytes).await;
+    }
+
+    let final_chunk = poll_mcp_export_request(&registry).await;
+    assert_eq!(
+        mcp_export_optimized_chunk_range(&final_chunk, path, bytes.len()).0,
+        9 * MAX_READ_PROJECT_ARTIFACT_LENGTH
+    );
+    complete_mcp_export_optimized_chunk(&registry, final_chunk, path, &bytes).await;
+
+    let McpOutcome::Ok(value) = read.await.unwrap() else {
+        panic!("optimized pipelined resource read must succeed");
+    };
+    let decoded = general_purpose::STANDARD
+        .decode(value["result"]["contents"][0]["blob"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(decoded, bytes);
+    assert_eq!(format!("{:x}", Sha256::digest(&decoded)), sha256);
+    assert_eq!(
+        registry
+            .get_client_view("exporter")
+            .await
+            .unwrap()
+            .pending_requests,
+        0
+    );
+}
+
+#[tokio::test]
+async fn mcp_artifact_export_optimized_batch_drains_before_offset_ordered_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_export_runtime(tmp.path(), Some("alice")).await;
+    let auth = mcp_export_api_auth("key-pipeline-error", "alice");
+    let path = "paper/pipeline-error.pdf";
+    let bytes: Vec<u8> = (0..MAX_READ_PROJECT_ARTIFACT_LENGTH * 5)
+        .map(|index| (index % 239) as u8)
+        .collect();
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let export = issue_mcp_artifact_export(
+        runtime.clone(),
+        registry.clone(),
+        auth.clone(),
+        path,
+        &bytes,
+        "application/pdf",
+    )
+    .await;
+    let uri = export["result"]["content"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut read = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move {
+            handle_mcp_request(
+                &runtime,
+                rpc(
+                    "resources/read",
+                    Some(json!(3131)),
+                    mcp_2026_params(json!({"uri": uri})),
+                ),
+                Some(&auth),
+            )
+            .await
+        }
+    });
+
+    complete_mcp_export_metadata(
+        registry.clone(),
+        path,
+        bytes.len(),
+        &sha256,
+        "application/pdf",
+    )
+    .await;
+    let first = poll_mcp_export_request(&registry).await;
+    complete_mcp_export_optimized_chunk(&registry, first, path, &bytes).await;
+
+    let mut batch = Vec::new();
+    for _ in 0..MAX_MCP_ARTIFACT_EXPORT_CHUNK_READS {
+        batch.push(poll_mcp_export_request(&registry).await);
+    }
+    batch.sort_by_key(|request| mcp_export_optimized_chunk_range(request, path, bytes.len()).0);
+    let mut batch = batch.into_iter();
+    let earliest = batch.next().unwrap();
+    let later_unsafe = batch.next().unwrap();
+    let good_two = batch.next().unwrap();
+    let good_three = batch.next().unwrap();
+
+    let (unsafe_offset, unsafe_end) =
+        mcp_export_optimized_chunk_range(&later_unsafe, path, bytes.len());
+    complete_mcp_export_request(
+        &registry,
+        later_unsafe,
+        json!({
+            "path": path,
+            "file_bytes": bytes.len(),
+            "offset": unsafe_offset + 1,
+            "bytes_returned": unsafe_end - unsafe_offset,
+            "content_base64": general_purpose::STANDARD.encode(&bytes[unsafe_offset..unsafe_end]),
+            "next_offset": unsafe_end,
+            "truncated": unsafe_end < bytes.len(),
+            "eof": unsafe_end == bytes.len(),
+        }),
+    )
+    .await;
+    complete_mcp_export_optimized_chunk(&registry, good_three, path, &bytes).await;
+    complete_mcp_export_optimized_chunk(&registry, good_two, path, &bytes).await;
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(25), &mut read)
+            .await
+            .is_err(),
+        "one completed batch error must not short-circuit and drop another dispatched request"
+    );
+
+    complete_mcp_export_request(
+        &registry,
+        earliest,
+        json!({
+            "error_kind": "snapshot_changed",
+            "error": Value::Null,
+        }),
+    )
+    .await;
+
+    match read.await.unwrap() {
+        McpOutcome::BadRequest(value) => {
+            assert_eq!(value["error"]["code"], -32602);
+            assert_eq!(
+                value["error"]["message"],
+                "Exported artifact no longer matches its snapshot"
+            );
+        }
+        other => panic!("earliest requested-offset batch error must win, got {other:?}"),
+    }
+    assert_eq!(
+        registry
+            .get_client_view("exporter")
+            .await
+            .unwrap()
+            .pending_requests,
+        0
+    );
 }
 
 #[tokio::test]

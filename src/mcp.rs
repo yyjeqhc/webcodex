@@ -17,6 +17,7 @@ use crate::tool_runtime::{
     MAX_READ_PROJECT_ARTIFACT_LENGTH,
 };
 use base64::{engine::general_purpose, Engine as _};
+use futures_util::future::join_all;
 use salvo::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -37,6 +38,7 @@ const MCP_ARTIFACT_EXPORT_TTL: Duration = Duration::from_secs(5 * 60);
 const MCP_ARTIFACT_EXPORT_ADMISSION_TIMEOUT: Duration = Duration::from_secs(5);
 const MCP_ARTIFACT_EXPORT_READ_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_MCP_ARTIFACT_EXPORT_READS: usize = 2;
+const MAX_MCP_ARTIFACT_EXPORT_CHUNK_READS: usize = 4;
 const MAX_MCP_ARTIFACT_EXPORTS: usize = 128;
 const MAX_MCP_ARTIFACT_EXPORTS_PER_CALLER: usize = 16;
 const MCP_ARTIFACT_EXPORT_BUSY_CODE: i64 = -32029;
@@ -1108,13 +1110,19 @@ fn mcp_artifact_export_decode_chunk(
     Ok(decoded)
 }
 
-async fn mcp_artifact_export_read_chunk(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpArtifactExportChunkRoute {
+    Optimized,
+    Legacy,
+}
+
+async fn mcp_artifact_export_read_optimized_chunk(
     runtime: &ToolRuntime,
     record: &McpArtifactExportRecord,
     auth: Option<&AuthContext>,
     offset: usize,
     length: usize,
-) -> Result<Vec<u8>, McpArtifactExportReadError> {
+) -> Result<Option<Vec<u8>>, McpArtifactExportReadError> {
     match runtime
         .read_project_artifact_export_chunk_internal(
             &record.project,
@@ -1127,15 +1135,20 @@ async fn mcp_artifact_export_read_chunk(
         .await
     {
         Ok(Some(output)) => {
-            return mcp_artifact_export_decode_chunk(record, offset, length, &output, false)
+            mcp_artifact_export_decode_chunk(record, offset, length, &output, false).map(Some)
         }
-        Ok(None) => {}
-        Err(_) => return Err(McpArtifactExportReadError::Unavailable),
+        Ok(None) => Ok(None),
+        Err(_) => Err(McpArtifactExportReadError::Unavailable),
     }
+}
 
-    // Rolling-upgrade compatibility: an old Runner cannot receive the new
-    // request kind because capability check + enqueue are atomic. Only that
-    // explicit capability miss reaches this existing slower public read path.
+async fn mcp_artifact_export_read_legacy_chunk(
+    runtime: &ToolRuntime,
+    record: &McpArtifactExportRecord,
+    auth: Option<&AuthContext>,
+    offset: usize,
+    length: usize,
+) -> Result<Vec<u8>, McpArtifactExportReadError> {
     let outcome = runtime
         .call_tool_with_context(
             KernelToolCallRequest {
@@ -1178,6 +1191,29 @@ async fn mcp_artifact_export_read_chunk(
     mcp_artifact_export_decode_chunk(record, offset, length, &result.output, true)
 }
 
+async fn mcp_artifact_export_read_chunk(
+    runtime: &ToolRuntime,
+    record: &McpArtifactExportRecord,
+    auth: Option<&AuthContext>,
+    offset: usize,
+    length: usize,
+) -> Result<(Vec<u8>, McpArtifactExportChunkRoute), McpArtifactExportReadError> {
+    if let Some(chunk) =
+        mcp_artifact_export_read_optimized_chunk(runtime, record, auth, offset, length).await?
+    {
+        return Ok((chunk, McpArtifactExportChunkRoute::Optimized));
+    }
+
+    // Rolling-upgrade compatibility: an old Runner cannot receive the optimized
+    // request kind because capability check + enqueue are atomic. Observe that
+    // route once on the first chunk; the resource read then stays sequential on
+    // this public compatibility path rather than amplifying legacy whole-file
+    // work with Control-side concurrency.
+    let chunk =
+        mcp_artifact_export_read_legacy_chunk(runtime, record, auth, offset, length).await?;
+    Ok((chunk, McpArtifactExportChunkRoute::Legacy))
+}
+
 async fn mcp_artifact_export_resource_read_inner(
     runtime: &ToolRuntime,
     uri: &str,
@@ -1191,13 +1227,13 @@ async fn mcp_artifact_export_resource_read_inner(
         .saturating_add(1);
     let mut offset = 0usize;
     let mut chunks = 0usize;
-    while offset < snapshot.bytes {
-        chunks = chunks.saturating_add(1);
-        if chunks > max_chunks {
-            return Err(McpArtifactExportReadError::Unsafe);
-        }
-        let length = (snapshot.bytes - offset).min(MAX_READ_PROJECT_ARTIFACT_LENGTH);
-        let chunk = mcp_artifact_export_read_chunk(runtime, &record, auth, offset, length).await?;
+    let mut route = None;
+
+    if offset < snapshot.bytes {
+        chunks = 1;
+        let length = snapshot.bytes.min(MAX_READ_PROJECT_ARTIFACT_LENGTH);
+        let (chunk, first_route) =
+            mcp_artifact_export_read_chunk(runtime, &record, auth, offset, length).await?;
         offset = offset
             .checked_add(chunk.len())
             .ok_or(McpArtifactExportReadError::Unsafe)?;
@@ -1205,6 +1241,82 @@ async fn mcp_artifact_export_resource_read_inner(
         if bytes.len() > snapshot.bytes {
             return Err(McpArtifactExportReadError::Unsafe);
         }
+        route = Some(first_route);
+    }
+
+    match route {
+        Some(McpArtifactExportChunkRoute::Legacy) => {
+            while offset < snapshot.bytes {
+                if chunks >= max_chunks {
+                    return Err(McpArtifactExportReadError::Unsafe);
+                }
+                chunks = chunks.saturating_add(1);
+                let length = (snapshot.bytes - offset).min(MAX_READ_PROJECT_ARTIFACT_LENGTH);
+                let chunk =
+                    mcp_artifact_export_read_legacy_chunk(runtime, &record, auth, offset, length)
+                        .await?;
+                offset = offset
+                    .checked_add(chunk.len())
+                    .ok_or(McpArtifactExportReadError::Unsafe)?;
+                bytes.extend_from_slice(&chunk);
+                if bytes.len() > snapshot.bytes {
+                    return Err(McpArtifactExportReadError::Unsafe);
+                }
+            }
+        }
+        Some(McpArtifactExportChunkRoute::Optimized) => {
+            while offset < snapshot.bytes {
+                let mut batch = Vec::with_capacity(MAX_MCP_ARTIFACT_EXPORT_CHUNK_READS);
+                let mut batch_offset = offset;
+                while batch.len() < MAX_MCP_ARTIFACT_EXPORT_CHUNK_READS
+                    && batch_offset < snapshot.bytes
+                {
+                    if chunks >= max_chunks {
+                        return Err(McpArtifactExportReadError::Unsafe);
+                    }
+                    chunks = chunks.saturating_add(1);
+                    let length =
+                        (snapshot.bytes - batch_offset).min(MAX_READ_PROJECT_ARTIFACT_LENGTH);
+                    batch.push((batch_offset, length));
+                    batch_offset = batch_offset
+                        .checked_add(length)
+                        .ok_or(McpArtifactExportReadError::Unsafe)?;
+                }
+
+                let runtime = runtime;
+                let record = &record;
+                let results = join_all(batch.iter().map(|&(batch_offset, length)| async move {
+                    mcp_artifact_export_read_optimized_chunk(
+                        runtime,
+                        record,
+                        auth,
+                        batch_offset,
+                        length,
+                    )
+                    .await
+                }))
+                .await;
+
+                // `join_all` drains every already-dispatched request in this
+                // bounded batch and preserves input order. Only after the full
+                // batch is drained do we surface the first deterministic error
+                // in requested-offset order or append successful bytes.
+                for ((requested_offset, _), result) in batch.into_iter().zip(results) {
+                    if requested_offset != offset {
+                        return Err(McpArtifactExportReadError::Unsafe);
+                    }
+                    let chunk = result?.ok_or(McpArtifactExportReadError::Unavailable)?;
+                    offset = offset
+                        .checked_add(chunk.len())
+                        .ok_or(McpArtifactExportReadError::Unsafe)?;
+                    bytes.extend_from_slice(&chunk);
+                    if bytes.len() > snapshot.bytes {
+                        return Err(McpArtifactExportReadError::Unsafe);
+                    }
+                }
+            }
+        }
+        None => {}
     }
     if bytes.len() != snapshot.bytes {
         return Err(McpArtifactExportReadError::Unsafe);

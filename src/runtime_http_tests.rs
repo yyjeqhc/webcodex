@@ -1294,7 +1294,7 @@ async fn api_tools_call_records_success_event_with_session_id() {
 }
 
 #[tokio::test]
-async fn api_tools_call_records_failure_event_with_session_id() {
+async fn api_tools_call_accepts_hidden_testing_metadata_and_records_expectation() {
     let (_tmp, service) = phase2_service();
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
@@ -1307,9 +1307,12 @@ async fn api_tools_call_records_failure_event_with_session_id() {
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
         .json(&json!({
-            "tool": "read_file",
+            "tool": "job_status",
             TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_id,
-            "params": {"project": "demo", "path": "missing.txt"}
+            "job_id": "missing-job",
+            "expected_failure": true,
+            "expected_failure_kind": "job_not_found",
+            "assertion_name": "api hidden metadata compatibility"
         }))
         .send(&service)
         .await;
@@ -1325,10 +1328,16 @@ async fn api_tools_call_records_failure_event_with_session_id() {
     assert_eq!(body["output"]["counts"]["tool_calls"], 1);
     assert_eq!(body["output"]["counts"]["failed"], 1);
     let event = &body["output"]["events"].as_array().unwrap()[1];
-    assert_eq!(event["tool_name"], "read_file");
+    assert_eq!(event["tool_name"], "job_status");
     assert_eq!(event["status"], "failed");
-    assert_eq!(event["error_kind"], "runtime_error");
-    assert!(event["error_message_summary"].as_str().unwrap().len() <= 243);
+    assert_eq!(event["expected_failure"], true);
+    assert_eq!(event["expected_failure_kind"], "job_not_found");
+    assert_eq!(event["assertion_name"], "api hidden metadata compatibility");
+    assert_eq!(event["actual_failure_kind"], "job_not_found");
+    assert_eq!(
+        event["failure_expectation_result"],
+        "matched_expected_failure"
+    );
 }
 
 #[tokio::test]

@@ -1089,12 +1089,16 @@ fn openapi_call_runtime_tool_declares_flattened_action_fields() {
         properties[ALLOW_CROSS_PROJECT_SESSION_FIELD]["type"],
         "boolean"
     );
-    assert_eq!(properties[TOOL_EXPECTED_FAILURE_FIELD]["type"], "boolean");
-    assert_eq!(
-        properties[TOOL_EXPECTED_FAILURE_KIND_FIELD]["type"],
-        "string"
-    );
-    assert_eq!(properties[TOOL_ASSERTION_NAME_FIELD]["type"], "string");
+    for field in [
+        "expected_failure",
+        "expected_failure_kind",
+        "assertion_name",
+    ] {
+        assert!(
+            !properties.contains_key(field),
+            "ToolCallRequest must not publish recorder metadata field {field}"
+        );
+    }
     let required = tool_call["required"].as_array().unwrap();
     assert_eq!(required, &vec![json!(TOOL_CALL_TOOL_FIELD)]);
     assert_eq!(tool_call["additionalProperties"], false);

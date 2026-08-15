@@ -14,7 +14,6 @@ mod lsp;
 mod patches;
 mod projects;
 mod sessions;
-mod testing;
 mod text_edits;
 mod validation;
 
@@ -81,7 +80,6 @@ pub(super) use sessions::{
     session_mode_schema, session_summary_input_schema, update_session_context_input_schema,
     validation_summary_input_schema,
 };
-pub(super) use testing::with_common_testing_metadata;
 pub(super) use text_edits::write_project_file_input_schema;
 pub(super) use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,

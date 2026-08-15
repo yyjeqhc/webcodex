@@ -58,7 +58,7 @@ fn accepted_flattened_args_appends_recorder_field_once() {
 }
 
 #[test]
-fn critical_call_runtime_tool_flattened_args_remain_accepted() {
+fn model_facing_flattened_args_exclude_testing_metadata() {
     let mut accepted_fields = BTreeSet::new();
     for spec in registered_tool_specs() {
         accepted_fields
@@ -66,9 +66,6 @@ fn critical_call_runtime_tool_flattened_args_remain_accepted() {
     }
 
     for field in [
-        "expected_failure",
-        "expected_failure_kind",
-        "assertion_name",
         "summary_only",
         "include_command_preview",
         "detail",
@@ -79,7 +76,17 @@ fn critical_call_runtime_tool_flattened_args_remain_accepted() {
             "critical callRuntimeTool flattened arg {field} must remain accepted"
         );
     }
-    assert!(!accepted_fields.contains("test_expect_failure_kind"));
+    for field in [
+        "expected_failure",
+        "expected_failure_kind",
+        "assertion_name",
+        "test_expect_failure_kind",
+    ] {
+        assert!(
+            !accepted_fields.contains(field),
+            "model-facing flattened args must not advertise testing metadata field {field}"
+        );
+    }
 }
 
 #[test]

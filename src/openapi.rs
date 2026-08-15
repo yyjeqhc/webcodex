@@ -2,10 +2,7 @@ use salvo::prelude::*;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-use crate::tool_runtime::sessions::{
-    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_EXPECTED_FAILURE_FIELD,
-    TOOL_EXPECTED_FAILURE_KIND_FIELD,
-};
+use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
     accepted_flattened_args_for_spec, registered_tool_specs, ALLOW_CROSS_PROJECT_SESSION_FIELD,
     TOOL_CALL_ARGUMENTS_FIELD, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
@@ -2098,27 +2095,6 @@ fn insert_tool_call_request_reserved_properties(schemas: &mut Value) {
         json!({
             "type": "string",
             "description": "Optional recorder metadata for the generic wrapper call. Pass an explicit wc_sess_* id from start_session to record this call in the session ledger and enforce that recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id or post_session_message.session_id."
-        }),
-    );
-    properties.insert(
-        TOOL_EXPECTED_FAILURE_FIELD.to_string(),
-        json!({
-            "type": "boolean",
-            "description": "Flattened testing/smoke metadata only. When true, a failed runtime tool call is classified as an expected failure in session_handoff_summary/finish_coding_task. Does not change authorization, permission decisions, execution, hard guards, command_started, or the immediate success/error result."
-        }),
-    );
-    properties.insert(
-        TOOL_EXPECTED_FAILURE_KIND_FIELD.to_string(),
-        json!({
-            "type": "string",
-            "description": "Flattened testing/smoke metadata only. Expected structured failure_kind or error_kind when expected_failure=true. Mismatches are surfaced in handoff/finish summaries and do not change tool behavior."
-        }),
-    );
-    properties.insert(
-        TOOL_ASSERTION_NAME_FIELD.to_string(),
-        json!({
-            "type": "string",
-            "description": "Flattened testing/smoke assertion label recorded in the session ledger. Does not change tool behavior or safety decisions."
         }),
     );
 }

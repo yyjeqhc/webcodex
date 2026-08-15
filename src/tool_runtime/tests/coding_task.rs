@@ -171,13 +171,20 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "include_validation_summary",
         "include_validation",
         "summary_only",
+    ] {
+        assert!(
+            properties.contains_key(field),
+            "ToolCallRequest missing flattened field {field}"
+        );
+    }
+    for field in [
         "expected_failure",
         "expected_failure_kind",
         "assertion_name",
     ] {
         assert!(
-            properties.contains_key(field),
-            "ToolCallRequest missing flattened field {field}"
+            !properties.contains_key(field),
+            "ToolCallRequest must not publish recorder metadata field {field}"
         );
     }
     let operation_count: usize = openapi["paths"]

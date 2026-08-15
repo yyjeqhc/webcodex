@@ -1474,6 +1474,94 @@ async fn mcp_tools_call_records_event_with_session_id() {
 }
 
 #[tokio::test]
+async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
+    let runtime = test_runtime();
+    let listed = handle_mcp_request(
+        &runtime,
+        rpc("tools/list", Some(Value::from(330)), json!({})),
+        None,
+    )
+    .await;
+    let listed = match listed {
+        McpOutcome::Ok(value) => value,
+        other => panic!("expected tools/list Ok, got {other:?}"),
+    };
+    let job_status = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "job_status")
+        .expect("job_status must be model-visible on local_coding");
+    let properties = job_status["inputSchema"]["properties"].as_object().unwrap();
+    for field in [
+        "expected_failure",
+        "expected_failure_kind",
+        "assertion_name",
+    ] {
+        assert!(
+            !properties.contains_key(field),
+            "MCP tools/list must not publish recorder metadata field {field}"
+        );
+    }
+
+    let session = runtime
+        .sessions
+        .start_session(None, Some("hidden metadata compatibility".to_string()));
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(Value::from(331)),
+            json!({
+                "name": "job_status",
+                "arguments": {
+                    MCP_RESERVED_SESSION_ID_FIELD: &session.session_id,
+                    "job_id": "missing-job",
+                    "expected_failure": true,
+                    "expected_failure_kind": "job_not_found",
+                    "assertion_name": "mcp hidden metadata compatibility"
+                }
+            }),
+        ),
+        None,
+    )
+    .await;
+    let value = match outcome {
+        McpOutcome::Ok(value) => value,
+        other => panic!("expected tools/call result, got {other:?}"),
+    };
+    assert_eq!(value["result"]["isError"], true);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(10))
+        .unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished")
+        .expect("raw MCP call must be recorded");
+    assert_eq!(finished.tool_name, "job_status");
+    assert_eq!(finished.expected_failure, Some(true));
+    assert_eq!(
+        finished.expected_failure_kind.as_deref(),
+        Some("job_not_found")
+    );
+    assert_eq!(
+        finished.assertion_name.as_deref(),
+        Some("mcp hidden metadata compatibility")
+    );
+    assert_eq!(
+        finished.actual_failure_kind.as_deref(),
+        Some("job_not_found")
+    );
+    assert_eq!(
+        finished.failure_expectation_result.as_deref(),
+        Some("matched_expected_failure")
+    );
+}
+
+#[tokio::test]
 async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_id() {
     use crate::shell_protocol::{
         ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,

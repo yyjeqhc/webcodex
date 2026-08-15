@@ -2987,15 +2987,18 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         tool_props.contains_key("include_checkpoints"),
         "OpenAPI ToolCallRequest should expose flattened include_checkpoints"
     );
+    assert!(
+        tool_props.contains_key("summary_only"),
+        "OpenAPI ToolCallRequest should expose flattened summary_only"
+    );
     for field in [
-        "summary_only",
         "expected_failure",
         "expected_failure_kind",
         "assertion_name",
     ] {
         assert!(
-            tool_props.contains_key(field),
-            "OpenAPI ToolCallRequest should expose flattened {field}"
+            !tool_props.contains_key(field),
+            "OpenAPI ToolCallRequest must not publish recorder metadata field {field}"
         );
     }
     let count: usize = spec["paths"]

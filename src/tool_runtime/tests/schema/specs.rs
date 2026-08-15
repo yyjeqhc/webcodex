@@ -458,7 +458,7 @@ fn tool_specs_required_fields_match_declared_properties() {
 }
 
 #[test]
-fn tool_specs_expose_common_testing_metadata() {
+fn tool_specs_hide_common_testing_metadata() {
     use crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS;
 
     for spec in registered_tool_specs() {
@@ -467,22 +467,8 @@ fn tool_specs_expose_common_testing_metadata() {
             .unwrap_or_else(|| panic!("{} input schema properties", spec.name));
         for &field in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
             assert!(
-                props.contains_key(field),
-                "{} input schema should expose common testing metadata field {field}",
-                spec.name
-            );
-            let desc = props[field]["description"]
-                .as_str()
-                .unwrap_or("")
-                .to_lowercase();
-            assert!(
-                desc.contains("testing") || desc.contains("smoke"),
-                "{}.{field} should be documented as testing/smoke metadata: {desc}",
-                spec.name
-            );
-            assert!(
-                desc.contains("does not change"),
-                "{}.{field} should document that behavior is unchanged: {desc}",
+                !props.contains_key(field),
+                "{} model-facing input schema must not expose recorder metadata field {field}",
                 spec.name
             );
         }
@@ -713,18 +699,15 @@ fn assert_schema_property_names_are_safe(tool_name: &str, schema: &Value, path: 
                 !SENSITIVE_INPUT_FIELD_NAMES.contains(&lower.as_str()),
                 "{tool_name} {path}.{field} looks like a sensitive input field; stop and review before exposing it"
             );
-            if field.starts_with("test_")
-                || matches!(
-                    field.as_str(),
-                    "expected_failure" | "expected_failure_kind" | "assertion_name"
-                )
-            {
-                assert!(
-                    crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS
-                        .contains(&field.as_str()),
-                    "{tool_name} {path}.{field} must use the shared testing metadata field allowlist"
-                );
-            }
+            assert!(
+                !field.starts_with("test_"),
+                "{tool_name} {path}.{field} must not expose testing-only input fields"
+            );
+            assert!(
+                !crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS
+                    .contains(&field.as_str()),
+                "{tool_name} {path}.{field} must not expose recorder metadata in model-facing schemas"
+            );
 
             let nested_path = format!("{path}.properties.{field}");
             assert_schema_property_names_are_safe(tool_name, property_schema, &nested_path);

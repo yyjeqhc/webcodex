@@ -62,8 +62,8 @@ fn from_tool_name_parses_bounded_list_tools_options() {
 }
 
 #[test]
-fn from_tool_name_strips_testing_metadata_before_parsing() {
-    let call = ToolCall::from_tool_name(
+fn from_tool_name_records_and_strips_testing_metadata_before_parsing() {
+    let (call, metadata) = ToolCall::from_tool_name_with_recorder_metadata(
         "job_status",
         json!({
             "job_id": "abc",
@@ -80,6 +80,15 @@ fn from_tool_name_strips_testing_metadata_before_parsing() {
             include_command_preview: false,
         } if job_id == "abc"
     ));
+    assert!(metadata.expectation.expected_failure);
+    assert_eq!(
+        metadata.expectation.expected_failure_kind.as_deref(),
+        Some("job_not_found")
+    );
+    assert_eq!(
+        metadata.expectation.assertion_name.as_deref(),
+        Some("missing job negative path")
+    );
 }
 
 #[test]

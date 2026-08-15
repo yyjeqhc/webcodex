@@ -18,7 +18,6 @@ use super::super::tool_definition::{
     is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
 };
 use super::super::tool_spec::ToolSpec;
-use super::input_schemas::with_common_testing_metadata;
 use super::{output_schema_for_tool, tool_annotations};
 use std::collections::BTreeMap;
 
@@ -35,7 +34,6 @@ pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
                     )
                 })
         })
-        .map(with_common_testing_metadata)
         .collect::<Vec<_>>();
     if let Some(extra_name) = declarations_by_name.keys().next() {
         panic!("{extra_name} ToolSpec declaration has no model-visible ToolDefinition");

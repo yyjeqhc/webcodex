@@ -176,16 +176,20 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
         schema["properties"]["queries"]["items"]["additionalProperties"],
         false
     );
+    for metadata in ["session_id", "allow_cross_project_session"] {
+        assert!(
+            schema["properties"].get(metadata).is_some(),
+            "missing outer business metadata field {metadata}"
+        );
+    }
     for metadata in [
-        "session_id",
-        "allow_cross_project_session",
         "expected_failure",
         "expected_failure_kind",
         "assertion_name",
     ] {
         assert!(
-            schema["properties"].get(metadata).is_some(),
-            "missing outer metadata field {metadata}"
+            schema["properties"].get(metadata).is_none(),
+            "model-facing schema must not publish recorder metadata field {metadata}"
         );
     }
 

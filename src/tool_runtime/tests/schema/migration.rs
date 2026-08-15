@@ -638,9 +638,6 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
         .as_object()
         .expect("ToolCallRequest properties");
     for field in [
-        "expected_failure",
-        "expected_failure_kind",
-        "assertion_name",
         "summary_only",
         "include_command_preview",
         "detail",
@@ -651,7 +648,17 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
             "callRuntimeTool must keep flattened GPT Action field {field}"
         );
     }
-    assert!(!tool_call_properties.contains_key("test_expect_failure_kind"));
+    for field in [
+        "expected_failure",
+        "expected_failure_kind",
+        "assertion_name",
+        "test_expect_failure_kind",
+    ] {
+        assert!(
+            !tool_call_properties.contains_key(field),
+            "callRuntimeTool model-facing schema must not publish testing metadata field {field}"
+        );
+    }
     let tool_description = tool_call_properties["tool"]["description"]
         .as_str()
         .unwrap();

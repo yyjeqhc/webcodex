@@ -1132,6 +1132,14 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
             "tool_manifest entry must expose accepted_flattened_args: {tool:?}"
         );
         assert_eq!(tool["deprecated_or_unsupported_args"], json!([]));
+        let accepted = tool["accepted_flattened_args"].as_array().unwrap();
+        for &field in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
+            assert!(
+                !accepted.iter().any(|value| value.as_str() == Some(field)),
+                "{} manifest entry must not advertise recorder metadata field {field}",
+                tool["name"].as_str().unwrap_or("unknown")
+            );
+        }
     }
 
     let accepted = |name: &str| -> Vec<String> {
@@ -1160,20 +1168,6 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     }
     for field in ["compact", "summary_only"] {
         assert!(accepted("runtime_status").contains(&field.to_string()));
-    }
-    for tool in [
-        "stop_job",
-        "job_status",
-        "session_handoff_summary",
-        "finish_coding_task",
-    ] {
-        let accepted = accepted(tool);
-        for &field in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
-            assert!(
-                accepted.contains(&field.to_string()),
-                "{tool} missing testing metadata flattened arg {field}: {accepted:?}"
-            );
-        }
     }
     for field in [
         "project",

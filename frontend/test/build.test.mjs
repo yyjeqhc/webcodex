@@ -70,6 +70,7 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(consoleHtml, /Project review console/);
   const runtimeHtml = await readFile(resolve(outputDirectory, "runtime.html"), "utf8");
   assert.match(runtimeHtml, /WebCodex Runtime Console/);
+  assert.match(runtimeHtml, /runtime-device-select/);
   assert.match(runtimeHtml, /runtime-project-select/);
   assert.match(runtimeHtml, /runtime-token-form/);
   assert.match(runtimeHtml, /Jump to latest/);
@@ -77,6 +78,9 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtimeHtml, /Model-reported; informational only\./);
   const runtime = await readFile(resolve(outputDirectory, "runtime.js"), "utf8");
   assert.match(runtime, /\/api\/runtime-console\//);
+  assert.match(runtime, /runtimeDeviceIds/);
+  assert.match(runtime, /runtimeProjectsForDevice/);
+  assert.match(runtime, /preferredRuntimeProjectSelection/);
   assert.match(runtime, /workflowSessionListOverviewFacts/);
   assert.match(runtime, /isCurrentRuntimeWorkflowSessionRequest/);
   assert.match(runtime, /appendPreview\(item, "Now"/);

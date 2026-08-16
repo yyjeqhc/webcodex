@@ -16,6 +16,7 @@ const DEFAULT_PROJECT_LIMIT: usize = 50;
 const MAX_PROJECT_LIMIT: usize = 100;
 const MAX_PROJECT_ID_CHARS: usize = 512;
 const MAX_PROJECT_NAME_CHARS: usize = 160;
+const MAX_CLIENT_ID_CHARS: usize = 160;
 const MAX_STATUS_CHARS: usize = 64;
 
 pub(crate) fn routes() -> Router {
@@ -58,6 +59,7 @@ struct RuntimeConsoleProjects {
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleProject {
     id: String,
+    client_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     connected: bool,
@@ -115,6 +117,17 @@ fn valid_project_id(project: &str) -> bool {
         && !project.chars().any(char::is_control)
 }
 
+fn bounded_client_id(value: &Value) -> Option<String> {
+    let client_id = value.as_str()?;
+    if client_id.is_empty()
+        || client_id.chars().count() > MAX_CLIENT_ID_CHARS
+        || client_id.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(client_id.to_string())
+}
+
 async fn prepared(
     req: &Request,
     depot: &Depot,
@@ -155,8 +168,10 @@ fn project_selector_row(value: &Value) -> Option<RuntimeConsoleProject> {
     if !valid_project_id(&id) {
         return None;
     }
+    let client_id = bounded_client_id(value.get("client_id")?)?;
     Some(RuntimeConsoleProject {
         id,
+        client_id,
         name: value
             .get("name")
             .and_then(|value| bounded_text(value, MAX_PROJECT_NAME_CHARS)),
@@ -380,6 +395,34 @@ mod tests {
         (tmp, Service::new(router))
     }
 
+    #[test]
+    fn selector_uses_bounded_authoritative_client_id_without_parsing_project_id() {
+        let projected = project_selector_row(&serde_json::json!({
+            "id": "agent:not-the-device:project",
+            "client_id": "device-real",
+            "name": "Demo",
+            "connected": true,
+            "agent_status": "online"
+        }))
+        .unwrap();
+        assert_eq!(projected.client_id, "device-real");
+        assert_ne!(projected.client_id, "not-the-device");
+
+        let overlong = "x".repeat(MAX_CLIENT_ID_CHARS + 1);
+        assert!(project_selector_row(&serde_json::json!({
+            "id": "agent:looks-valid:project",
+            "client_id": overlong,
+            "connected": true
+        }))
+        .is_none());
+        assert!(project_selector_row(&serde_json::json!({
+            "id": "agent:looks-valid:project",
+            "client_id": "bad\nclient",
+            "connected": true
+        }))
+        .is_none());
+    }
+
     #[tokio::test]
     async fn hosted_runtime_console_works_without_connector_runtime_and_projects_are_safe() {
         let runtime = test_runtime();
@@ -399,10 +442,12 @@ mod tests {
         assert_eq!(response.status_code, Some(StatusCode::OK));
         let body: Value = response.take_json().await.unwrap();
         assert_eq!(body["projects"][0]["id"], "agent:special:webcodex");
+        assert_eq!(body["projects"][0]["client_id"], "special");
         let selector = body["projects"][0].as_object().unwrap();
-        assert!(selector
-            .keys()
-            .all(|key| matches!(key.as_str(), "id" | "name" | "connected" | "agent_status")));
+        assert!(selector.keys().all(|key| matches!(
+            key.as_str(),
+            "id" | "client_id" | "name" | "connected" | "agent_status"
+        )));
         let serialized = serde_json::to_string(&body).unwrap();
         for private in [
             "/root/private/webcodex",
@@ -468,6 +513,11 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(projected_ids, direct_ids);
         assert_eq!(projected_ids, vec!["agent:client-a:proj-a"]);
+        assert_eq!(projected.projects[0].client_id, "client-a");
+        assert_eq!(
+            projected.projects[0].client_id,
+            direct.output["projects"][0]["client_id"].as_str().unwrap()
+        );
 
         let foreign = runtime.sessions.start_session(
             Some("agent:client-b:proj-b".to_string()),

@@ -9,10 +9,54 @@ import {
 
 export {};
 
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function runtimeDeviceIds(projects: any[]): string[] {
+  const devices = new Set<string>();
+  for (const project of Array.isArray(projects) ? projects : []) {
+    const clientId = typeof project?.client_id === "string" ? project.client_id : "";
+    if (clientId) devices.add(clientId);
+  }
+  return Array.from(devices).sort(compareText);
+}
+
+export function runtimeProjectsForDevice(projects: any[], clientId: string): any[] {
+  return (Array.isArray(projects) ? projects : [])
+    .filter((project) => project && project.client_id === clientId && typeof project.id === "string" && project.id)
+    .slice()
+    .sort((left, right) => {
+      const leftName = typeof left.name === "string" && left.name ? left.name : left.id;
+      const rightName = typeof right.name === "string" && right.name ? right.name : right.id;
+      return compareText(leftName, rightName) || compareText(left.id, right.id);
+    });
+}
+
+export function preferredRuntimeProjectSelection(
+  projects: any[],
+  selectedDevice: string,
+  selectedProject: string
+): any {
+  const rows = Array.isArray(projects) ? projects : [];
+  if (selectedProject) {
+    const retained = rows.find(
+      (project) => project && project.id === selectedProject && typeof project.client_id === "string" && project.client_id
+    );
+    if (retained) return { device: retained.client_id, project: retained.id };
+  }
+
+  const devices = runtimeDeviceIds(rows);
+  const device = devices.includes(selectedDevice) ? selectedDevice : devices[0] || "";
+  const project = runtimeProjectsForDevice(rows, device)[0];
+  return { device, project: project ? project.id : "" };
+}
+
 export function initialRuntimeConsoleState(): any {
   return {
     credentialGeneration: 0,
     projectsGeneration: 0,
+    selectedDevice: "",
     selectedProject: "",
     projectGeneration: 0,
     sessionListGeneration: 0,
@@ -23,6 +67,7 @@ export function initialRuntimeConsoleState(): any {
 export function invalidateRuntimeCredential(state: any): void {
   state.credentialGeneration += 1;
   state.projectsGeneration += 1;
+  state.selectedDevice = "";
   state.selectedProject = "";
   state.projectGeneration += 1;
   state.sessionListGeneration += 1;
@@ -50,7 +95,8 @@ export function isCurrentRuntimeProjectsRequest(state: any, request: any): boole
     request.generation === state.projectsGeneration;
 }
 
-export function selectRuntimeProject(state: any, project: string): any {
+export function selectRuntimeProject(state: any, device: string, project: string): any {
+  state.selectedDevice = device;
   state.selectedProject = project;
   state.projectGeneration += 1;
   state.sessionListGeneration += 1;

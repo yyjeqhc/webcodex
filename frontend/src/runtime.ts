@@ -8,6 +8,9 @@ import {
 } from "./workflow_session_state.js";
 import {
   initialRuntimeConsoleState,
+  runtimeDeviceIds,
+  runtimeProjectsForDevice,
+  preferredRuntimeProjectSelection,
   invalidateRuntimeCredential,
   beginRuntimeCredential,
   refreshRuntimeProjects,
@@ -30,6 +33,8 @@ let timer = 0;
 let projectsAbort: AbortController | null = null;
 let sessionsAbort: AbortController | null = null;
 let detailAbort: AbortController | null = null;
+let projectRows: any[] = [];
+let projectRowsTruncated = false;
 let sessionRows: any[] = [];
 const state = initialRuntimeConsoleState();
 
@@ -123,6 +128,8 @@ function lock(message = ""): void {
   token = "";
   abortAll();
   invalidateRuntimeCredential(state);
+  projectRows = [];
+  projectRowsTruncated = false;
   clearSessionSurface();
   show("runtime-token-gate", true);
   show("runtime-console", false);
@@ -175,60 +182,81 @@ async function fetchProjects(request: any, unlocking = false): Promise<void> {
     else showError("Could not refresh projects.");
     return;
   }
-  const projects = Array.isArray(response.data.projects) ? response.data.projects : [];
-  renderProjects(projects, !!response.data.truncated);
+  projectRows = Array.isArray(response.data.projects) ? response.data.projects : [];
+  projectRowsTruncated = !!response.data.truncated;
   unlockUi();
   showError("");
 
-  const current = String(state.selectedProject || "");
-  const target = projects.some((project: any) => String(project.id || "") === current)
-    ? current
-    : projects.length
-      ? String(projects[0].id || "")
-      : "";
-  if (!target) {
-    if (current) {
+  const currentDevice = String(state.selectedDevice || "");
+  const currentProject = String(state.selectedProject || "");
+  const selection = preferredRuntimeProjectSelection(
+    projectRows,
+    currentDevice,
+    currentProject
+  );
+  if (!selection.project) {
+    if (currentDevice || currentProject) {
       abortProjectWork();
-      selectRuntimeProject(state, "");
+      selectRuntimeProject(state, "", "");
     }
+    renderProjectSelectors(projectRows, projectRowsTruncated);
     clearSessionSurface();
+    setText("runtime-selected-project", "No project selected");
     return;
   }
-  if (target !== current) {
-    switchProject(target);
+  if (selection.device !== currentDevice || selection.project !== currentProject) {
+    switchProject(selection.device, selection.project);
   } else {
+    renderProjectSelectors(projectRows, projectRowsTruncated);
     const listRequest = refreshRuntimeSessionList(state);
     if (listRequest) void fetchSessions(listRequest);
   }
 }
 
-function renderProjects(projects: any[], truncated: boolean): void {
-  const select = el("runtime-project-select") as HTMLSelectElement | null;
-  if (!select) return;
-  clearNode(select);
-  for (const project of projects) {
-    const id = String(project && project.id || "");
-    if (!id) continue;
+function renderProjectSelectors(projects: any[], truncated: boolean): void {
+  const deviceSelect = el("runtime-device-select") as HTMLSelectElement | null;
+  const projectSelect = el("runtime-project-select") as HTMLSelectElement | null;
+  if (!deviceSelect || !projectSelect) return;
+
+  const devices = runtimeDeviceIds(projects);
+  clearNode(deviceSelect);
+  for (const clientId of devices) {
     const option = document.createElement("option");
-    option.value = id;
-    option.textContent = projectLabel(project);
-    select.appendChild(option);
+    option.value = clientId;
+    option.textContent = clientId;
+    deviceSelect.appendChild(option);
   }
-  if (state.selectedProject) select.value = state.selectedProject;
+  if (state.selectedDevice) deviceSelect.value = state.selectedDevice;
+
+  const deviceProjects = runtimeProjectsForDevice(projects, String(state.selectedDevice || ""));
+  clearNode(projectSelect);
+  for (const project of deviceProjects) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = projectLabel(project);
+    projectSelect.appendChild(option);
+  }
+  if (state.selectedProject) projectSelect.value = state.selectedProject;
+
+  setText(
+    "runtime-device-status",
+    devices.length
+      ? devices.length + " device" + (devices.length === 1 ? "" : "s") + " shown" + (truncated ? " · bounded project list" : "")
+      : "No authorized devices"
+  );
   setText(
     "runtime-project-status",
-    projects.length
-      ? projects.length + " authorized project" + (projects.length === 1 ? "" : "s") + (truncated ? " · bounded list" : "")
+    state.selectedDevice
+      ? deviceProjects.length + " authorized project" + (deviceProjects.length === 1 ? "" : "s") + " on this device" + (truncated ? " · from bounded list" : "")
       : "No authorized projects"
   );
 }
 
-function switchProject(project: string): void {
+function switchProject(device: string, project: string): void {
   abortProjectWork();
   clearSessionSurface();
-  const request = selectRuntimeProject(state, project);
-  const select = el("runtime-project-select") as HTMLSelectElement | null;
-  if (select) select.value = project;
+  const request = selectRuntimeProject(state, device, project);
+  renderProjectSelectors(projectRows, projectRowsTruncated);
   setText("runtime-selected-project", project || "No project selected");
   if (request) void fetchSessions(request);
 }
@@ -529,9 +557,16 @@ el("runtime-token-form")?.addEventListener("submit", (event) => {
   void fetchProjects(request, true);
 });
 
+el("runtime-device-select")?.addEventListener("change", () => {
+  const select = el("runtime-device-select") as HTMLSelectElement | null;
+  if (!select) return;
+  const projects = runtimeProjectsForDevice(projectRows, select.value);
+  switchProject(select.value, projects.length ? String(projects[0].id) : "");
+});
+
 el("runtime-project-select")?.addEventListener("change", () => {
   const select = el("runtime-project-select") as HTMLSelectElement | null;
-  if (select) switchProject(select.value);
+  if (select) switchProject(String(state.selectedDevice || ""), select.value);
 });
 
 el("runtime-refresh")?.addEventListener("click", () => void refreshAll());

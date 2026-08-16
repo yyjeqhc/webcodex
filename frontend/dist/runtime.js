@@ -207,10 +207,45 @@ function shouldFollowWorkflowSessionLatest(state) {
     return state.followLatest !== false;
 }
 
+function compareText(left, right) {
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+function runtimeDeviceIds(projects) {
+    const devices = new Set();
+    for (const project of Array.isArray(projects) ? projects : []) {
+        const clientId = typeof project?.client_id === "string" ? project.client_id : "";
+        if (clientId)
+            devices.add(clientId);
+    }
+    return Array.from(devices).sort(compareText);
+}
+function runtimeProjectsForDevice(projects, clientId) {
+    return (Array.isArray(projects) ? projects : [])
+        .filter((project) => project && project.client_id === clientId && typeof project.id === "string" && project.id)
+        .slice()
+        .sort((left, right) => {
+        const leftName = typeof left.name === "string" && left.name ? left.name : left.id;
+        const rightName = typeof right.name === "string" && right.name ? right.name : right.id;
+        return compareText(leftName, rightName) || compareText(left.id, right.id);
+    });
+}
+function preferredRuntimeProjectSelection(projects, selectedDevice, selectedProject) {
+    const rows = Array.isArray(projects) ? projects : [];
+    if (selectedProject) {
+        const retained = rows.find((project) => project && project.id === selectedProject && typeof project.client_id === "string" && project.client_id);
+        if (retained)
+            return { device: retained.client_id, project: retained.id };
+    }
+    const devices = runtimeDeviceIds(rows);
+    const device = devices.includes(selectedDevice) ? selectedDevice : devices[0] || "";
+    const project = runtimeProjectsForDevice(rows, device)[0];
+    return { device, project: project ? project.id : "" };
+}
 function initialRuntimeConsoleState() {
     return {
         credentialGeneration: 0,
         projectsGeneration: 0,
+        selectedDevice: "",
         selectedProject: "",
         projectGeneration: 0,
         sessionListGeneration: 0,
@@ -220,6 +255,7 @@ function initialRuntimeConsoleState() {
 function invalidateRuntimeCredential(state) {
     state.credentialGeneration += 1;
     state.projectsGeneration += 1;
+    state.selectedDevice = "";
     state.selectedProject = "";
     state.projectGeneration += 1;
     state.sessionListGeneration += 1;
@@ -243,7 +279,8 @@ function isCurrentRuntimeProjectsRequest(state, request) {
         request.projectGeneration === state.projectGeneration &&
         request.generation === state.projectsGeneration;
 }
-function selectRuntimeProject(state, project) {
+function selectRuntimeProject(state, device, project) {
+    state.selectedDevice = device;
     state.selectedProject = project;
     state.projectGeneration += 1;
     state.sessionListGeneration += 1;
@@ -314,6 +351,8 @@ let timer = 0;
 let projectsAbort = null;
 let sessionsAbort = null;
 let detailAbort = null;
+let projectRows = [];
+let projectRowsTruncated = false;
 let sessionRows = [];
 const state = initialRuntimeConsoleState();
 function el(id) {
@@ -399,6 +438,8 @@ function lock(message = "") {
     token = "";
     abortAll();
     invalidateRuntimeCredential(state);
+    projectRows = [];
+    projectRowsTruncated = false;
     clearSessionSurface();
     show("runtime-token-gate", true);
     show("runtime-console", false);
@@ -451,60 +492,70 @@ async function fetchProjects(request, unlocking = false) {
             showError("Could not refresh projects.");
         return;
     }
-    const projects = Array.isArray(response.data.projects) ? response.data.projects : [];
-    renderProjects(projects, !!response.data.truncated);
+    projectRows = Array.isArray(response.data.projects) ? response.data.projects : [];
+    projectRowsTruncated = !!response.data.truncated;
     unlockUi();
     showError("");
-    const current = String(state.selectedProject || "");
-    const target = projects.some((project) => String(project.id || "") === current)
-        ? current
-        : projects.length
-            ? String(projects[0].id || "")
-            : "";
-    if (!target) {
-        if (current) {
+    const currentDevice = String(state.selectedDevice || "");
+    const currentProject = String(state.selectedProject || "");
+    const selection = preferredRuntimeProjectSelection(projectRows, currentDevice, currentProject);
+    if (!selection.project) {
+        if (currentDevice || currentProject) {
             abortProjectWork();
-            selectRuntimeProject(state, "");
+            selectRuntimeProject(state, "", "");
         }
+        renderProjectSelectors(projectRows, projectRowsTruncated);
         clearSessionSurface();
+        setText("runtime-selected-project", "No project selected");
         return;
     }
-    if (target !== current) {
-        switchProject(target);
+    if (selection.device !== currentDevice || selection.project !== currentProject) {
+        switchProject(selection.device, selection.project);
     }
     else {
+        renderProjectSelectors(projectRows, projectRowsTruncated);
         const listRequest = refreshRuntimeSessionList(state);
         if (listRequest)
             void fetchSessions(listRequest);
     }
 }
-function renderProjects(projects, truncated) {
-    const select = el("runtime-project-select");
-    if (!select)
+function renderProjectSelectors(projects, truncated) {
+    const deviceSelect = el("runtime-device-select");
+    const projectSelect = el("runtime-project-select");
+    if (!deviceSelect || !projectSelect)
         return;
-    clearNode(select);
-    for (const project of projects) {
-        const id = String(project && project.id || "");
-        if (!id)
-            continue;
+    const devices = runtimeDeviceIds(projects);
+    clearNode(deviceSelect);
+    for (const clientId of devices) {
         const option = document.createElement("option");
-        option.value = id;
+        option.value = clientId;
+        option.textContent = clientId;
+        deviceSelect.appendChild(option);
+    }
+    if (state.selectedDevice)
+        deviceSelect.value = state.selectedDevice;
+    const deviceProjects = runtimeProjectsForDevice(projects, String(state.selectedDevice || ""));
+    clearNode(projectSelect);
+    for (const project of deviceProjects) {
+        const option = document.createElement("option");
+        option.value = project.id;
         option.textContent = projectLabel(project);
-        select.appendChild(option);
+        projectSelect.appendChild(option);
     }
     if (state.selectedProject)
-        select.value = state.selectedProject;
-    setText("runtime-project-status", projects.length
-        ? projects.length + " authorized project" + (projects.length === 1 ? "" : "s") + (truncated ? " · bounded list" : "")
+        projectSelect.value = state.selectedProject;
+    setText("runtime-device-status", devices.length
+        ? devices.length + " device" + (devices.length === 1 ? "" : "s") + " shown" + (truncated ? " · bounded project list" : "")
+        : "No authorized devices");
+    setText("runtime-project-status", state.selectedDevice
+        ? deviceProjects.length + " authorized project" + (deviceProjects.length === 1 ? "" : "s") + " on this device" + (truncated ? " · from bounded list" : "")
         : "No authorized projects");
 }
-function switchProject(project) {
+function switchProject(device, project) {
     abortProjectWork();
     clearSessionSurface();
-    const request = selectRuntimeProject(state, project);
-    const select = el("runtime-project-select");
-    if (select)
-        select.value = project;
+    const request = selectRuntimeProject(state, device, project);
+    renderProjectSelectors(projectRows, projectRowsTruncated);
     setText("runtime-selected-project", project || "No project selected");
     if (request)
         void fetchSessions(request);
@@ -797,10 +848,17 @@ el("runtime-token-form")?.addEventListener("submit", (event) => {
     const request = beginRuntimeCredential(state);
     void fetchProjects(request, true);
 });
+el("runtime-device-select")?.addEventListener("change", () => {
+    const select = el("runtime-device-select");
+    if (!select)
+        return;
+    const projects = runtimeProjectsForDevice(projectRows, select.value);
+    switchProject(select.value, projects.length ? String(projects[0].id) : "");
+});
 el("runtime-project-select")?.addEventListener("change", () => {
     const select = el("runtime-project-select");
     if (select)
-        switchProject(select.value);
+        switchProject(String(state.selectedDevice || ""), select.value);
 });
 el("runtime-refresh")?.addEventListener("click", () => void refreshAll());
 el("runtime-lock")?.addEventListener("click", () => lock());

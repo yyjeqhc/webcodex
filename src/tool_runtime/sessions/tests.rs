@@ -1705,6 +1705,70 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
 }
 
 #[test]
+fn console_list_orders_recent_activity_first_with_deterministic_session_id_ties() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let project = "agent:eval:ordering";
+    let older = "wc_sess_order_old";
+    let tie_a = "wc_sess_order_tie_a";
+    let tie_z = "wc_sess_order_tie_z";
+    let record = |session_id: &str, created_at: i64, updated_at: i64| {
+        json!({
+            "session_id": session_id,
+            "project": project,
+            "title": session_id,
+            "mode": "normal",
+            "guards": {"deny_write_tools": false, "deny_shell_tools": false},
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "events": [],
+            "messages": []
+        })
+    };
+    std::fs::write(
+        &ledger,
+        serde_json::to_vec_pretty(&json!({
+            "version": SESSION_LEDGER_VERSION,
+            "sessions": [
+                record(older, 1, 10),
+                record(tie_a, 2, 20),
+                record(tie_z, 3, 20)
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let store = persistent_store(ledger);
+
+    let initial = store.console_list_for_project(project, Some(10));
+    assert_eq!(
+        initial
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![tie_z, tie_a, older],
+        "equal updated_at must keep the existing descending session-id tie-break"
+    );
+
+    let activity = store
+        .record_tool_call_started(
+            Some(older),
+            SessionTransport::Api,
+            "read_file",
+            &json!({"project": project, "path": "src/lib.rs"}),
+        )
+        .expect("older Session activity should be recorded");
+    assert_eq!(activity.session_id, older);
+
+    let refreshed = store.console_list_for_project(project, Some(10));
+    assert_eq!(refreshed.sessions[0].session_id, older);
+    assert!(refreshed.sessions[0].updated_at > refreshed.sessions[1].updated_at);
+    assert_eq!(refreshed.sessions[1].session_id, tie_z);
+    assert_eq!(refreshed.sessions[2].session_id, tie_a);
+}
+
+#[test]
 fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last() {
     let store = SessionStore::new_in_memory(10, 40);
     let project = "agent:eval:demo";

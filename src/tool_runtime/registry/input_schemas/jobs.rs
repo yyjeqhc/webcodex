@@ -270,7 +270,7 @@ pub(crate) fn open_session_shell_input_schema() -> Value {
         (
             "cwd",
             "string",
-            "Optional project-relative initial cwd. Omission uses the Session execution context and then the project default.",
+            "Optional initial cwd. Without a named Session SSH resource it is project-relative; with one it is a remote path. Omission uses the Session default, then the project or SSH-resource default.",
             false,
         ),
         (

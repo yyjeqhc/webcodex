@@ -96,10 +96,11 @@ handoff, and finish can reason about the same unit of work.
 | Durability | JSON-oriented session ledger (bounded events/messages per session) |
 | Current-session binding | In-memory exact-key cache plus a bounded durable projection in the same JSON ledger; isolated by client window, principal, transport, resolved project, and canonical repository-root hash |
 
-### Persistent execution context
+### Persistent execution defaults
 
-An existing registered-project-bound Workflow Session may persist this
-strongly typed execution context:
+An existing registered-project-bound Workflow Session may persist a closed set
+of strongly typed execution defaults. The wire/type name remains
+`SessionExecutionContext` for compatibility:
 
 ```text
 SessionExecutionContext {
@@ -109,11 +110,12 @@ SessionExecutionContext {
 }
 ```
 
-It is not an arbitrary context bag. It cannot contain environment variables,
-credentials, SSH host/configuration, keys, passwords, SSH state, shell input,
-connection data, or custom options. `resource` is only a safe named resource
-configured on the Runner that owns the Session project. It is persisted as a
-name, never as an SSH transport or authentication material.
+These fields are execution defaults, not arbitrary model context. They cannot
+contain environment variables, credentials, SSH host/configuration, keys,
+passwords, SSH state, shell input, connection data, or custom options.
+`resource` is only a safe named resource configured on the Runner that owns the
+Session project. It is persisted as a name, never as an SSH transport or
+authentication material.
 
 Without `resource`, `default_cwd` is validated and normalized as a
 project-relative path: absolute paths, URI forms, control characters, and
@@ -128,7 +130,7 @@ unenterable cwd explicitly.
 when creating a Session; on automatic continuation or explicit resume,
 omitting `execution_context` preserves the stored value, while an explicit
 object commits with the instruction/capability/binding update under the
-in-memory store lock. An explicit `{}` clears both defaults.
+in-memory store lock. An explicit `{}` clears all execution defaults.
 `update_session_context` requires a project input that the caller may access and
 that resolves exactly to the explicit known active Session project. It never
 uses current-session fallback, never creates an unknown Session, rejects closed,
@@ -138,11 +140,26 @@ ledger is then queued to the existing background writer. Persistence failures
 are reported through existing status and logs, and success does not mean a
 synchronous disk flush or promise rollback on a later writer failure.
 
-`run_shell`, `run_job`, and `open_session_shell` inherit these defaults.
+Inheritance is intentionally closed and per field:
+
+| Tool | `default_cwd` | `default_shell` | named `resource` |
+|---|---|---|---|
+| `run_process` | inherited when `cwd` is omitted | not applicable | unsupported; fails before process start |
+| `run_script` | inherited when `cwd` is omitted | not applicable | unsupported; fails before script start |
+| `run_shell` | inherited when `cwd` is omitted | inherited when `shell` is omitted | routes this call through the named SSH resource |
+| `run_job` | inherited when `cwd` is omitted | inherited when `shell` is omitted | routes this Job through the named SSH resource |
+| `open_session_shell` | inherited when `cwd` is omitted | inherited when `shell` is omitted | opens the persistent shell through the named SSH resource |
+
+Structured Cargo/Go tools (`cargo_fmt`, `cargo_check`, `cargo_test`, `go_test`)
+do not inherit `default_cwd` or `default_shell`; a named `resource` is also
+rejected for those tools rather
+than silently falling back to the Runner-host project. File, Git, LSP, and
+checkpoint tools do not inherit any execution default.
+
 `run_shell` and `run_job` remain independent-process tools. When an SSH
-resource is selected, only those two tools execute remotely; file, Git, LSP,
-checkpoint, and persistent-shell tools remain bound to the registered project
-host. Remote cwd precedence for one-shot SSH commands is:
+resource is selected, `run_shell`, `run_job`, and a newly opened
+`open_session_shell` execute through that remote resource. Remote cwd
+precedence for one-shot SSH commands is:
 
 ```text
 per-call cwd
@@ -191,20 +208,25 @@ close_session_shell
 ```
 
 Opening creates one real long-lived `sh` or `bash` process, at most one active
-shell per Workflow Session. For an `agent:<client>:<project>` it is owned by
-that project's Runner process. The process manager also has a Server-owned
-executor branch for a hosting surface that supplies a Server-local project,
-although the current built-in public project registry advertises Agent projects
-only. It never executes through
-`execution_context.resource`: an SSH resource is rejected with
-`persistent_shell_ssh_resource_unsupported` rather than falling back locally.
-`inspect` and `read_only` Sessions cannot open or execute a persistent shell.
+shell per Workflow Session. For an `agent:<client>:<project>` the Runner owns
+and controls the shell. Without `execution_context.resource`, it runs against
+the registered project host. With a named resource, the Runner opens a remote
+persistent shell through that SSH resource; this requires the Runner's SSH and
+SSH-persistent-shell capabilities and never silently falls back locally. The
+process manager also has a Server-owned executor branch for a hosting surface
+that supplies a Server-local project, although the current built-in public
+project registry advertises Agent projects only. `inspect` and `read_only`
+Sessions cannot open or execute a persistent shell.
 
-Open resolution is explicit `cwd`/`shell`, then the exact Session's
-`default_cwd`/`default_shell`, then the project/Runner defaults. Profile
+Local open resolution is explicit `cwd`/`shell`, then the exact Session's
+`default_cwd`/`default_shell`, then the project/Runner defaults. For an SSH
+persistent shell, cwd precedence is explicit open `cwd`, Session `default_cwd`,
+the named resource's default cwd, then the remote login default; the selected
+Session `default_shell` is also inherited when `shell` is omitted. Profile
 environment and initialization run once at open. Later commands retain the
 same process's cwd, exports, unset state, umask, functions, and ordinary shell
-variables. Updating Session execution context never moves, restarts, or
+variables. The shell record retains the execution location selected at open, so
+updating Session execution defaults never redirects, moves, restarts, or
 changes an already-open shell; close and reopen it to apply new defaults.
 `run_shell` and `run_job` never reuse this process.
 

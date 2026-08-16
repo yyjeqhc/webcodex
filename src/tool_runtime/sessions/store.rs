@@ -990,7 +990,7 @@ impl SessionStore {
 
     /// Replace the complete execution context and append one safe metadata
     /// event together under the in-memory store lock. Persistent stores then
-    /// queue the JSON ledger to the background writer. `{}` clears both defaults.
+    /// queue the JSON ledger to the background writer. `{}` clears all execution defaults.
     pub(crate) fn update_execution_context(
         &self,
         session_id: &str,

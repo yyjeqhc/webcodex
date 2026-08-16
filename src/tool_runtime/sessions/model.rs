@@ -55,8 +55,8 @@ pub(crate) const TOOL_CALL_EXPECTATION_METADATA_FIELDS: &[&str] = &[
     TOOL_ASSERTION_NAME_FIELD,
 ];
 
-/// Durable defaults inherited by shell-like tools attached to a
-/// project-scoped Workflow Session.
+/// Durable execution defaults inherited by a closed set of execution tools
+/// attached to a project-scoped Workflow Session.
 ///
 /// This intentionally contains no environment, credential, connection, or
 /// arbitrary option bag. `resource` is only a named Runner-local SSH resource;
@@ -69,7 +69,8 @@ pub(crate) struct SessionExecutionContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) default_shell: Option<ExecutionShell>,
     /// Optional named SSH resource on the Runner that owns this Session's
-    /// project. It changes only `run_shell` and `run_job` execution location.
+    /// project. It changes `run_shell`, `run_job`, and newly opened
+    /// `open_session_shell` execution location.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) resource: Option<String>,
 }
@@ -443,7 +444,7 @@ pub(crate) struct CodingSessionRequest {
     pub(crate) mode: SessionMode,
     pub(crate) guards: SessionGuards,
     /// `None` preserves an existing Session value during continuation.
-    /// `Some({})` explicitly clears both defaults.
+    /// `Some({})` explicitly clears all execution defaults.
     pub(crate) execution_context: Option<SessionExecutionContext>,
     pub(crate) project_instructions: Option<ProjectInstructionsSnapshot>,
     pub(crate) transport: SessionTransport,

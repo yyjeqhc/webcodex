@@ -41,7 +41,7 @@ pub(crate) fn start_coding_task_input_schema() -> Value {
                 "description": "Optional task guard for the created session. Defaults to false unless mode=read_only."
             },
             "execution_context": session_execution_context_schema(
-                "Optional complete Workflow Session execution defaults. On creation this becomes the initial context. On continuation or explicit resume, omission preserves the existing context while an explicit object replaces it atomically; `{}` clears both defaults."
+                "Optional complete Workflow Session execution defaults. On creation this becomes the initial context. On continuation or explicit resume, omission preserves the existing context while an explicit object replaces it atomically; `{}` clears all execution defaults."
             ),
             "detail": {
                 "type": "string",

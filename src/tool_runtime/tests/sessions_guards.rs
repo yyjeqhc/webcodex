@@ -534,73 +534,56 @@ async fn read_only_current_session_guard_blocks_write_before_enqueue() {
 }
 
 #[tokio::test]
-async fn start_session_defaults_to_normal_without_guards() {
-    let runtime = test_runtime();
-    let result = runtime
-        .dispatch(ToolCall::from_tool_name("start_session", json!({})).unwrap())
-        .await;
+async fn start_session_mode_effective_guards_matrix() {
+    for (case, input, expected_mode, deny_write_tools, deny_shell_tools) in [
+        (
+            "normal defaults",
+            json!({}),
+            SessionMode::Normal,
+            false,
+            false,
+        ),
+        (
+            "read_only fixed profile overrides caller shell guard",
+            json!({"mode": "read_only", "deny_shell_tools": false}),
+            SessionMode::ReadOnly,
+            true,
+            true,
+        ),
+        (
+            "inspect fixed profile overrides caller guards",
+            json!({
+                "mode": "inspect",
+                "deny_write_tools": false,
+                "deny_shell_tools": true
+            }),
+            SessionMode::Inspect,
+            true,
+            false,
+        ),
+    ] {
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::from_tool_name("start_session", input).unwrap())
+            .await;
 
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["mode"], "normal");
-    assert_eq!(result.output["guards"]["deny_write_tools"], false);
-    assert_eq!(result.output["guards"]["deny_shell_tools"], false);
-    let session_id = result.output["session_id"].as_str().unwrap();
-    let summary = runtime.sessions.summary(session_id, None).unwrap();
-    assert_eq!(summary.mode, SessionMode::Normal);
-    assert!(!summary.guards.deny_write_tools);
-    assert!(!summary.guards.deny_shell_tools);
-}
+        assert!(result.success, "{case}: {:?}", result.error);
+        assert_eq!(result.output["mode"], expected_mode.as_str(), "{case}");
+        assert_eq!(
+            result.output["guards"]["deny_write_tools"], deny_write_tools,
+            "{case}"
+        );
+        assert_eq!(
+            result.output["guards"]["deny_shell_tools"], deny_shell_tools,
+            "{case}"
+        );
 
-#[tokio::test]
-async fn start_session_read_only_enables_write_and_shell_guards() {
-    let runtime = test_runtime();
-    let result = runtime
-        .dispatch(
-            ToolCall::from_tool_name(
-                "start_session",
-                json!({"mode": "read_only", "deny_shell_tools": false}),
-            )
-            .unwrap(),
-        )
-        .await;
-
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["mode"], "read_only");
-    assert_eq!(result.output["guards"]["deny_write_tools"], true);
-    assert_eq!(result.output["guards"]["deny_shell_tools"], true);
-    let session_id = result.output["session_id"].as_str().unwrap();
-    let summary = runtime.sessions.summary(session_id, None).unwrap();
-    assert_eq!(summary.mode, SessionMode::ReadOnly);
-    assert!(summary.guards.deny_write_tools);
-    assert!(summary.guards.deny_shell_tools);
-}
-
-#[tokio::test]
-async fn start_session_inspect_enables_write_guard_but_keeps_shell_enabled() {
-    let runtime = test_runtime();
-    let result = runtime
-        .dispatch(
-            ToolCall::from_tool_name(
-                "start_session",
-                json!({
-                    "mode": "inspect",
-                    "deny_write_tools": false,
-                    "deny_shell_tools": true
-                }),
-            )
-            .unwrap(),
-        )
-        .await;
-
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["mode"], "inspect");
-    assert_eq!(result.output["guards"]["deny_write_tools"], true);
-    assert_eq!(result.output["guards"]["deny_shell_tools"], false);
-    let session_id = result.output["session_id"].as_str().unwrap();
-    let summary = runtime.sessions.summary(session_id, None).unwrap();
-    assert_eq!(summary.mode, SessionMode::Inspect);
-    assert!(summary.guards.deny_write_tools);
-    assert!(!summary.guards.deny_shell_tools);
+        let session_id = result.output["session_id"].as_str().unwrap();
+        let summary = runtime.sessions.summary(session_id, None).unwrap();
+        assert_eq!(summary.mode, expected_mode, "{case}");
+        assert_eq!(summary.guards.deny_write_tools, deny_write_tools, "{case}");
+        assert_eq!(summary.guards.deny_shell_tools, deny_shell_tools, "{case}");
+    }
 }
 
 #[tokio::test]

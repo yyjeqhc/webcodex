@@ -1723,6 +1723,10 @@ fn validate_computer_element_state(
     ToolResult::ok(output)
 }
 
+fn is_native_window_activation_platform(value: Option<&str>) -> bool {
+    matches!(value, Some("macos" | "windows"))
+}
+
 fn validate_computer_activate_window(output: Value, expected_surface_id: &str) -> ToolResult {
     let object = match output.as_object() {
         Some(object) => object,
@@ -1736,7 +1740,7 @@ fn validate_computer_activate_window(output: Value, expected_surface_id: &str) -
     let allowed = ["platform", "surface_id", "success"];
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || !is_native_window_activation_platform(output.get("platform").and_then(Value::as_str))
         || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
         || output.get("success").and_then(Value::as_bool) != Some(true)
     {
@@ -2362,6 +2366,26 @@ mod tests {
             "surface_test",
         );
         assert!(valid.success, "{:?}", valid.output);
+
+        let windows = validate_computer_activate_window(
+            json!({
+                "platform": "windows",
+                "surface_id": "surface_test",
+                "success": true
+            }),
+            "surface_test",
+        );
+        assert!(windows.success, "{:?}", windows.output);
+
+        let wrong_platform = validate_computer_activate_window(
+            json!({
+                "platform": "linux",
+                "surface_id": "surface_test",
+                "success": true
+            }),
+            "surface_test",
+        );
+        assert!(!wrong_platform.success);
 
         let invalid = validate_computer_activate_window(
             json!({

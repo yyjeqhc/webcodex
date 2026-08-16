@@ -226,7 +226,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("can_input_text", json!({"type": "boolean"})),
         ])),
         "computer_activate_window" => Some(wrapped_output_schema(vec![
-            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "platform",
+                json!({"type": "string", "enum": ["macos", "windows"]}),
+            ),
             (
                 "surface_id",
                 json!({"type": "string", "minLength": 1, "maxLength": 128}),

@@ -1883,9 +1883,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Closed key input is a separate effect/wire capability. It is currently
     // implemented only by the macOS Runner and is never implied by control.
     capabilities.computer_key_input = cfg!(target_os = "macos");
-    // Exact window activation is a separate effect/wire capability. Old macOS
-    // Runners that only advertise computer_control must fail closed.
-    capabilities.computer_window_activate = cfg!(target_os = "macos");
+    // Exact window activation is a separate effect/wire capability. It is
+    // independently advertised by native macOS and Windows implementations.
+    capabilities.computer_window_activate = cfg!(any(target_os = "macos", windows));
     // Bounded Accessibility text input is a separate rolling-upgrade fence;
     // older macOS Runners with computer_control must not be treated as capable.
     capabilities.computer_text_input = cfg!(target_os = "macos");

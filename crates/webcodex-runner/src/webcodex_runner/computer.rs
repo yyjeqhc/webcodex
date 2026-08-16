@@ -2250,6 +2250,7 @@ mod platform {
                 UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId,
                 UIA_CONTROLTYPE_ID, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_NOTSUPPORTED, UIA_PATTERN_ID,
             },
+            UI::WindowsAndMessaging::{GetForegroundWindow, IsIconic, ShowWindowAsync, SW_RESTORE},
         },
     };
     #[cfg(windows)]
@@ -3252,7 +3253,7 @@ mod platform {
     }
 
     #[cfg(windows)]
-    fn win_hwnd(native_id: u32) -> Result<WinHwnd, String> {
+    pub(super) fn win_hwnd(native_id: u32) -> Result<WinHwnd, String> {
         let hwnd = WinHwnd(native_id as i32 as isize as *mut std::ffi::c_void);
         if hwnd.0.is_null() {
             Err("stale_surface: window handle is invalid".to_string())
@@ -4052,14 +4053,92 @@ mod platform {
     }
 
     #[cfg(windows)]
-    pub(super) fn activate_window(
-        _surface_id: &str,
-        _surface: &SurfaceRecord,
-    ) -> Result<Value, String> {
-        Err(
-            "unsupported_platform: computer window activation is unavailable on this platform"
-                .to_string(),
+    pub(super) fn windows_window_activation_attempt_error(operation: &str) -> String {
+        format!(
+            "outcome_unknown: {operation} did not establish the exact foreground-window postcondition after the native activation attempt"
         )
+    }
+
+    #[cfg(windows)]
+    pub(super) fn activate_window(
+        surface_id: &str,
+        surface: &SurfaceRecord,
+    ) -> Result<Value, String> {
+        // Resolve the exact xcap identity immediately before the first native
+        // effect. This never falls back to an application name, PID, or title.
+        let _window = resolve_surface_window(surface)?;
+        let hwnd = win_hwnd(surface.native_id)?;
+        let already_foreground = unsafe { GetForegroundWindow() == hwnd };
+        let minimized = unsafe { IsIconic(hwnd).as_bool() };
+        if already_foreground && !minimized {
+            return Ok(json!({
+                "platform": "windows",
+                "surface_id": surface_id,
+                "success": true,
+            }));
+        }
+
+        // Obtain the exact UIA root before the first effect. This revalidates
+        // the same HWND/PID lineage used by read-only Windows observation.
+        let context = UiaContext::new()?;
+        let root = exact_uia_window(&context, surface)?;
+        context.deadline.ensure_remaining()?;
+        let control_type = unsafe { root.CurrentControlType() }
+            .map_err(|error| uia_error("IUIAutomationElement::CurrentControlType", &error))?;
+        if control_type != UIA_WindowControlTypeId {
+            return Err(
+                "control_failed: exact Windows UIA root is not an activatable Window control"
+                    .to_string(),
+            );
+        }
+        let mut prior_effect = false;
+        if minimized {
+            // Restoring a foreign UI thread must not synchronously wait on a
+            // stalled target. Queue the exact restore request asynchronously,
+            // then observe only the local window-state predicate for a bounded
+            // interval before proceeding.
+            let restore_expires_at = Instant::now() + Duration::from_secs(2);
+            let _ = unsafe { ShowWindowAsync(hwnd, SW_RESTORE) };
+            prior_effect = true;
+            while unsafe { IsIconic(hwnd).as_bool() } {
+                if let Err(error) = context.deadline.ensure_remaining() {
+                    return Err(windows_window_activation_attempt_error(&error));
+                }
+                if Instant::now() >= restore_expires_at {
+                    return Err(windows_window_activation_attempt_error(
+                        "ShowWindowAsync(SW_RESTORE) timeout",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        // A background Runner is normally denied by SetForegroundWindow.
+        // UI Automation's exact SetFocus is the native automation primitive;
+        // once attempted, any error or mismatched postcondition is uncertain.
+        if let Err(error) = context.deadline.ensure_remaining() {
+            if prior_effect {
+                return Err(windows_window_activation_attempt_error(&error));
+            }
+            return Err(error);
+        }
+        if let Err(error) = unsafe { root.SetFocus() } {
+            return Err(windows_window_activation_attempt_error(&format!(
+                "IUIAutomationElement::SetFocus HRESULT(0x{:08X})",
+                error.code().0 as u32
+            )));
+        }
+        if unsafe { GetForegroundWindow() != hwnd } {
+            return Err(windows_window_activation_attempt_error(
+                "IUIAutomationElement::SetFocus postcondition",
+            ));
+        }
+
+        Ok(json!({
+            "platform": "windows",
+            "surface_id": surface_id,
+            "success": true,
+        }))
     }
 
     #[cfg(windows)]
@@ -4499,6 +4578,7 @@ mod windows_uia_tests {
         UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_DocumentControlTypeId,
         UIA_EditControlTypeId, UIA_HyperlinkControlTypeId, UIA_WindowControlTypeId,
     };
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
     fn surface_record(candidate: PlatformWindow) -> SurfaceRecord {
         SurfaceRecord {
@@ -4537,6 +4617,74 @@ mod windows_uia_tests {
         assert_eq!(
             platform::uia_control_role(UIA_CheckBoxControlTypeId),
             "AXCheckBox"
+        );
+    }
+
+    #[test]
+    fn computer_windows_window_activation_attempt_failure_is_unknown() {
+        let error =
+            platform::windows_window_activation_attempt_error("IUIAutomationElement::SetFocus");
+        assert!(error.starts_with("outcome_unknown:"), "{error}");
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop with two observable UIA-backed windows; leaves the activated test window foreground"]
+    fn computer_windows_window_activation_live_smoke() {
+        let candidates = platform::list_windows(MAX_WINDOWS).expect("list live Windows windows");
+        let foreground = unsafe { GetForegroundWindow() };
+        let original_native_id = candidates
+            .iter()
+            .find(|candidate| platform::win_hwnd(candidate.native_id).ok() == Some(foreground))
+            .map(|candidate| candidate.native_id)
+            .expect("current foreground window must have an exact xcap surface");
+        let mut failures = Vec::new();
+
+        for candidate in candidates {
+            if candidate.native_id == original_native_id {
+                continue;
+            }
+            let target_hwnd = match platform::win_hwnd(candidate.native_id) {
+                Ok(hwnd) if hwnd != foreground => hwnd,
+                _ => continue,
+            };
+            let target_record = surface_record(candidate);
+            match platform::accessibility_tree(
+                "surface_windows_activation_probe",
+                &target_record,
+                1,
+                8,
+            ) {
+                Ok(tree)
+                    if tree.output["nodes"]
+                        .as_array()
+                        .and_then(|nodes| nodes.first())
+                        .and_then(|node| node["role"].as_str())
+                        == Some("AXWindow") => {}
+                Ok(_) => continue,
+                Err(error)
+                    if error.starts_with("stale_surface:")
+                        || error.starts_with("accessibility_failed:") =>
+                {
+                    if failures.len() < 8 {
+                        failures.push(error);
+                    }
+                    continue;
+                }
+                Err(error) => panic!("unexpected Windows activation preflight error: {error}"),
+            }
+
+            let output =
+                platform::activate_window("surface_windows_activation_live", &target_record)
+                    .expect("activate one exact Windows UIA-backed surface");
+            assert_eq!(output["platform"], "windows");
+            assert_eq!(output["surface_id"], "surface_windows_activation_live");
+            assert_eq!(output["success"], true);
+            assert_eq!(unsafe { GetForegroundWindow() }, target_hwnd);
+            return;
+        }
+
+        panic!(
+            "no alternate exact UIA-backed Windows surface was available; failures={failures:?}"
         );
     }
 

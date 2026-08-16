@@ -271,9 +271,9 @@ Then build, sign into the dedicated development path, and restart a hosted
 `connect` profile with that exact binary:
 
 ```bash
-cargo build --release --bin webcodex --bin webcodex-runner
+cargo build --profile dogfood --bin webcodex --bin webcodex-runner
 scripts/macos_sign_local_runner.sh
-target/release/webcodex agent restart --profile <profile> \
+target/dogfood/webcodex agent restart --profile <profile> \
   --bin "$HOME/.local/lib/webcodex-dev/webcodex-runner"
 ```
 

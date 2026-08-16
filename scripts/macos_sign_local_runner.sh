@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="${1:-$ROOT/target/release/webcodex-runner}"
+SOURCE="${1:-$ROOT/target/dogfood/webcodex-runner}"
 DEST="${2:-${WEBCODEX_MACOS_LOCAL_RUNNER_PATH:-$HOME/.local/lib/webcodex-dev/webcodex-runner}}"
 IDENTITY_NAME="${WEBCODEX_MACOS_LOCAL_SIGNING_IDENTITY:-WebCodex Local Development}"
 IDENTIFIER="${WEBCODEX_MACOS_LOCAL_RUNNER_IDENTIFIER:-dev.webcodex.runner.local}"

@@ -1,9 +1,10 @@
 //! Bounded Control-side import of ChatGPT conversation attachments.
 //!
 //! ChatGPT supplies temporary OpenAI-hosted file references. WebCodex validates
-//! and consumes those references immediately on the Control side, then routes
-//! the downloaded bytes through the existing SaveProjectArtifact mutation path.
+//! and consumes those references immediately on the Control side, then streams
+//! the download through the existing bounded artifact upload mutation path.
 
+use super::files::MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES;
 use super::sessions::SessionTransport;
 use super::tool_call::OpenAiHostFileRef;
 use super::{ToolCall, ToolResult, ToolRuntime};
@@ -13,7 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(crate) const MAX_IMPORT_FILES: usize = 10;
 pub(crate) const MAX_IMPORT_FILE_BYTES: usize = 10 * 1024 * 1024;
@@ -333,7 +334,6 @@ fn build_download_client(
 ) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .no_proxy()
-        .timeout(IMPORT_DOWNLOAD_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none());
     if let Some(target) = trusted_target {
         if let Some(host) = target.resolver_host.as_deref() {
@@ -394,34 +394,104 @@ fn request_url_for_download(validated_url: reqwest::Url) -> reqwest::Url {
     validated_url
 }
 
-async fn read_bounded_download(
-    response: &mut reqwest::Response,
-    source_name: &str,
-) -> Result<Vec<u8>, String> {
-    if let Some(len) = response.content_length() {
-        if len > MAX_IMPORT_FILE_BYTES as u64 {
-            return Err(format!(
-                "download for '{source_name}' exceeds {MAX_IMPORT_FILE_BYTES} bytes"
-            ));
-        }
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| format!("failed to read download for '{source_name}'"))?
-    {
-        if bytes.len().saturating_add(chunk.len()) > MAX_IMPORT_FILE_BYTES {
-            return Err(format!(
-                "download for '{source_name}' exceeds {MAX_IMPORT_FILE_BYTES} bytes"
-            ));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
+fn import_upload_failure_is_definite(result: &ToolResult, upload_id: &str) -> bool {
+    result
+        .output
+        .get("upload_id")
+        .and_then(Value::as_str)
+        .is_some_and(|returned| returned == upload_id)
 }
 
 impl ToolRuntime {
+    async fn dispatch_import_artifact_call(
+        &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+        transport: SessionTransport,
+    ) -> ToolResult {
+        Box::pin(self.dispatch_with_auth_transport_options(call, auth, transport, false, false))
+            .await
+    }
+
+    async fn abort_import_upload(
+        &self,
+        project: &str,
+        path: &str,
+        upload_id: &str,
+        session_id: Option<&str>,
+        auth: Option<&AuthContext>,
+        transport: SessionTransport,
+    ) {
+        let _ = self
+            .dispatch_import_artifact_call(
+                ToolCall::ArtifactUploadAbort {
+                    project: project.to_string(),
+                    path: path.to_string(),
+                    upload_id: upload_id.to_string(),
+                    session_id: session_id.map(str::to_string),
+                },
+                auth,
+                transport,
+            )
+            .await;
+    }
+
+    async fn append_import_upload_chunk(
+        &self,
+        input: &ImportConversationFilesInput,
+        path: &str,
+        upload_id: &str,
+        offset: usize,
+        bytes: &[u8],
+        auth: Option<&AuthContext>,
+        transport: SessionTransport,
+    ) -> Result<usize, ToolResult> {
+        let next_offset = offset + bytes.len();
+        let result = self
+            .dispatch_import_artifact_call(
+                ToolCall::ArtifactUploadChunk {
+                    project: input.project.clone(),
+                    path: path.to_string(),
+                    upload_id: upload_id.to_string(),
+                    offset,
+                    content_base64: general_purpose::STANDARD.encode(bytes),
+                    session_id: input.session_id.clone(),
+                },
+                auth,
+                transport.clone(),
+            )
+            .await;
+        if !result.success {
+            if import_upload_failure_is_definite(&result, upload_id) {
+                self.abort_import_upload(
+                    &input.project,
+                    path,
+                    upload_id,
+                    input.session_id.as_deref(),
+                    auth,
+                    transport,
+                )
+                .await;
+            }
+            return Err(result);
+        }
+        if result.output.get("next_offset").and_then(Value::as_u64) != Some(next_offset as u64) {
+            self.abort_import_upload(
+                &input.project,
+                path,
+                upload_id,
+                input.session_id.as_deref(),
+                auth,
+                transport,
+            )
+            .await;
+            return Err(ToolResult::err(
+                "artifact upload chunk returned inconsistent next_offset",
+            ));
+        }
+        Ok(next_offset)
+    }
+
     pub(crate) async fn import_conversation_files(
         &self,
         input: ImportConversationFilesInput,
@@ -468,9 +538,19 @@ impl ToolRuntime {
                     Ok(prepared) => prepared,
                     Err(e) => return ToolResult::err(e),
                 };
-            let mut response = match client.get(request_url).send().await {
-                Ok(response) => response,
-                Err(_) => {
+            // Preserve the previous 30-second download bound without charging
+            // time spent waiting for Runner upload round-trips against the
+            // network budget. Each actual network wait consumes from the same
+            // cumulative budget; remote-controlled stalls therefore remain
+            // bounded while upload backpressure does not create false timeouts.
+            let mut download_budget = IMPORT_DOWNLOAD_TIMEOUT;
+            let send_started = Instant::now();
+            let send_result =
+                tokio::time::timeout(download_budget, client.get(request_url).send()).await;
+            download_budget = download_budget.saturating_sub(send_started.elapsed());
+            let mut response = match send_result {
+                Ok(Ok(response)) => response,
+                Ok(Err(_)) | Err(_) => {
                     // reqwest error text can include the request URL. Keep the
                     // temporary host URL out of durable/model-visible errors.
                     return ToolResult::err(format!("failed to download '{source_name}'"));
@@ -482,26 +562,176 @@ impl ToolRuntime {
                     response.status()
                 ));
             }
-            let bytes = match read_bounded_download(&mut response, source_name).await {
-                Ok(bytes) => bytes,
-                Err(e) => return ToolResult::err(e),
+            let expected_bytes = match response.content_length() {
+                Some(len) if len > MAX_IMPORT_FILE_BYTES as u64 => {
+                    return ToolResult::err(format!(
+                        "download for '{source_name}' exceeds {MAX_IMPORT_FILE_BYTES} bytes"
+                    ));
+                }
+                Some(len) => Some(len as usize),
+                None => None,
             };
-            let result = Box::pin(self.dispatch_with_auth_transport_options(
-                ToolCall::SaveProjectArtifact {
-                    project: input.project.clone(),
-                    path: path.clone(),
-                    content_base64: general_purpose::STANDARD.encode(&bytes),
-                    session_id: input.session_id.clone(),
-                    mime_type: Some(mime.to_string()),
-                    overwrite: input.overwrite,
-                },
-                auth,
-                transport.clone(),
-                false,
-                false,
-            ))
-            .await;
+            let begin = self
+                .dispatch_import_artifact_call(
+                    ToolCall::ArtifactUploadBegin {
+                        project: input.project.clone(),
+                        path: path.clone(),
+                        session_id: input.session_id.clone(),
+                        expected_bytes,
+                        expected_sha256: None,
+                        mime_type: Some(mime.to_string()),
+                        overwrite: input.overwrite,
+                    },
+                    auth,
+                    transport.clone(),
+                )
+                .await;
+            if !begin.success {
+                return begin;
+            }
+            let Some(upload_id) = begin
+                .output
+                .get("upload_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                return ToolResult::err("artifact upload begin returned no upload_id");
+            };
+
+            let mut downloaded_bytes = 0usize;
+            let mut uploaded_bytes = 0usize;
+            let mut pending = Vec::with_capacity(MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES);
+            loop {
+                if download_budget.is_zero() {
+                    self.abort_import_upload(
+                        &input.project,
+                        &path,
+                        &upload_id,
+                        input.session_id.as_deref(),
+                        auth,
+                        transport.clone(),
+                    )
+                    .await;
+                    return ToolResult::err(format!("failed to read download for '{source_name}'"));
+                }
+                let read_started = Instant::now();
+                let read_result = tokio::time::timeout(download_budget, response.chunk()).await;
+                download_budget = download_budget.saturating_sub(read_started.elapsed());
+                let chunk = match read_result {
+                    Ok(Ok(Some(chunk))) => chunk,
+                    Ok(Ok(None)) => break,
+                    Ok(Err(_)) | Err(_) => {
+                        self.abort_import_upload(
+                            &input.project,
+                            &path,
+                            &upload_id,
+                            input.session_id.as_deref(),
+                            auth,
+                            transport.clone(),
+                        )
+                        .await;
+                        return ToolResult::err(format!(
+                            "failed to read download for '{source_name}'"
+                        ));
+                    }
+                };
+                let Some(next_downloaded_bytes) = downloaded_bytes.checked_add(chunk.len()) else {
+                    self.abort_import_upload(
+                        &input.project,
+                        &path,
+                        &upload_id,
+                        input.session_id.as_deref(),
+                        auth,
+                        transport.clone(),
+                    )
+                    .await;
+                    return ToolResult::err(format!(
+                        "download for '{source_name}' exceeds {MAX_IMPORT_FILE_BYTES} bytes"
+                    ));
+                };
+                if next_downloaded_bytes > MAX_IMPORT_FILE_BYTES {
+                    self.abort_import_upload(
+                        &input.project,
+                        &path,
+                        &upload_id,
+                        input.session_id.as_deref(),
+                        auth,
+                        transport.clone(),
+                    )
+                    .await;
+                    return ToolResult::err(format!(
+                        "download for '{source_name}' exceeds {MAX_IMPORT_FILE_BYTES} bytes"
+                    ));
+                }
+                downloaded_bytes = next_downloaded_bytes;
+
+                let mut remaining = chunk.as_ref();
+                while !remaining.is_empty() {
+                    let available = MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES - pending.len();
+                    let take = available.min(remaining.len());
+                    pending.extend_from_slice(&remaining[..take]);
+                    remaining = &remaining[take..];
+                    if pending.len() == MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES {
+                        uploaded_bytes = match self
+                            .append_import_upload_chunk(
+                                &input,
+                                &path,
+                                &upload_id,
+                                uploaded_bytes,
+                                &pending,
+                                auth,
+                                transport.clone(),
+                            )
+                            .await
+                        {
+                            Ok(next_offset) => next_offset,
+                            Err(result) => return result,
+                        };
+                        pending.clear();
+                    }
+                }
+            }
+            if !pending.is_empty() {
+                if let Err(result) = self
+                    .append_import_upload_chunk(
+                        &input,
+                        &path,
+                        &upload_id,
+                        uploaded_bytes,
+                        &pending,
+                        auth,
+                        transport.clone(),
+                    )
+                    .await
+                {
+                    return result;
+                }
+            }
+
+            let result = self
+                .dispatch_import_artifact_call(
+                    ToolCall::ArtifactUploadFinish {
+                        project: input.project.clone(),
+                        path: path.clone(),
+                        upload_id: upload_id.clone(),
+                        session_id: input.session_id.clone(),
+                    },
+                    auth,
+                    transport.clone(),
+                )
+                .await;
             if !result.success {
+                if import_upload_failure_is_definite(&result, &upload_id) {
+                    self.abort_import_upload(
+                        &input.project,
+                        &path,
+                        &upload_id,
+                        input.session_id.as_deref(),
+                        auth,
+                        transport.clone(),
+                    )
+                    .await;
+                }
                 return result;
             }
             let mut obj = Map::new();
@@ -511,10 +741,7 @@ impl ToolRuntime {
             );
             obj.insert("project".to_string(), Value::String(input.project.clone()));
             obj.insert("path".to_string(), Value::String(path));
-            obj.insert(
-                "bytes_written".to_string(),
-                result.output["bytes_written"].clone(),
-            );
+            obj.insert("bytes_written".to_string(), result.output["bytes"].clone());
             obj.insert("mime_type".to_string(), Value::String(mime.to_string()));
             obj.insert("sha256".to_string(), result.output["sha256"].clone());
             imported.push(Value::Object(obj));

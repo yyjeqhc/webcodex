@@ -238,7 +238,12 @@ from `list_agents`.
 `computer_activate_window` may activate/raise only an exact previously observed
 `surface_id`; it cannot select or launch an application by name, PID, bundle,
 executable, path, or command. `computer_control` remains deliberately closed to
-native macOS Accessibility press and focus actions. `computer_scroll_to_element`
+native macOS Accessibility or Windows UI Automation press and focus actions. On
+Windows, press is only UIA `InvokePattern`; the first Windows focus slice is
+closed to an exact normalized `AXTextField` on an already-foreground surface and
+uses only exact-element `SetFocus`, with `GetFocusedElement`/`CompareElements`
+read-back. Unsupported roles, protected or disabled targets, and background-
+surface focus targets fail closed before the effect. `computer_scroll_to_element`
 is a separate semantic effect that revalidates one exact observed element and
 uses native AX scroll-to-visible only when that element supports it; callers do
 not supply wheel deltas, direction, distance, or coordinates. `computer_key_input`

@@ -1874,9 +1874,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Normalized element-state observation is a separate rolling-upgrade wire
     // capability implemented by the same native read-only backends.
     capabilities.computer_element_state = cfg!(any(target_os = "macos", windows));
-    // Accessibility control is independently fenced and currently implemented
-    // only by the macOS Runner; observation authority never implies it.
-    capabilities.computer_control = cfg!(target_os = "macos");
+    // Accessibility control is independently fenced and implemented by the
+    // native macOS AX and Windows UI Automation backends.
+    capabilities.computer_control = cfg!(any(target_os = "macos", windows));
     // Semantic AX scroll-to-visible is independently fenced for rolling upgrades;
     // existing computer_control support never implies it.
     capabilities.computer_scroll_to_element = cfg!(target_os = "macos");

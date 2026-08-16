@@ -48,7 +48,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_control",
-            "Perform native macOS Accessibility press or focus on an exact reusable element_id. Stale or mismatched targets fail closed; no AppleScript or shell fallback. If delivery may have occurred but the response is lost, outcome is unknown; observe current UI state before retrying.",
+            "Perform native macOS Accessibility or Windows UI Automation press/focus on an exact reusable element_id. Stale, protected, disabled, or unsupported targets fail closed. There is no script, shell, coordinate, or generic fallback; uncertain post-dispatch outcomes require re-observation.",
             computer_control_input_schema(),
         ),
         tool_spec(

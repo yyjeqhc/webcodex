@@ -1770,7 +1770,7 @@ fn validate_computer_control(
     let allowed = ["platform", "surface_id", "element_id", "action", "success"];
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || !is_native_window_activation_platform(output.get("platform").and_then(Value::as_str))
         || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
         || output.get("element_id").and_then(Value::as_str) != Some(expected_element_id)
         || output.get("action").and_then(Value::as_str) != Some(expected_action)
@@ -2423,6 +2423,20 @@ mod tests {
             "focus",
         );
         assert!(result.success, "{:?}", result.output);
+
+        let windows = validate_computer_control(
+            json!({
+                "platform": "windows",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "action": "press",
+                "success": true
+            }),
+            "surface_test",
+            "element_child",
+            "press",
+        );
+        assert!(windows.success, "{:?}", windows.output);
     }
 
     #[test]

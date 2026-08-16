@@ -648,6 +648,7 @@ pub(super) fn build_router_with_session(
                 .hoop(crate::AuthMiddleware)
                 .push(Router::with_path("create").post(oauth_clients_create))
                 .push(Router::with_path("list").post(oauth_clients_list))
+                .push(Router::with_path("update_scopes").post(oauth_clients_update_scopes))
                 .push(Router::with_path("revoke").post(oauth_clients_revoke)),
         )
         .push(

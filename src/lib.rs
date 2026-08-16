@@ -330,6 +330,10 @@ only for local/trusted-network demos."
         // tokens are rejected even with account:manage.
         .push(Router::with_path("oauth/clients/create").post(oauth_http::oauth_clients_create))
         .push(Router::with_path("oauth/clients/list").post(oauth_http::oauth_clients_list))
+        .push(
+            Router::with_path("oauth/clients/update_scopes")
+                .post(oauth_http::oauth_clients_update_scopes),
+        )
         .push(Router::with_path("oauth/clients/revoke").post(oauth_http::oauth_clients_revoke))
         // Phase 2 multi-user auth: user + personal API token management.
         // REST-only admin/self-management surface; intentionally NOT

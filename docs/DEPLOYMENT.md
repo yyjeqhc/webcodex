@@ -267,6 +267,25 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
   -d '{"name":"ChatGPT MCP","redirect_uris":["https://chatgpt.com/connector/oauth/<callback-id>"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
 ```
 
+`allowed_scopes` is the client's persistent delegation ceiling. Computer observation
+requires `computer:read`; effectful Computer tools additionally require
+`computer:control`. Existing clients are never silently widened when a new scope is
+introduced. To explicitly add Computer control to an existing client, send the
+**complete** desired non-empty allow-list to the first-party management endpoint:
+
+```bash
+curl -fsS -X POST https://your-domain.example/api/oauth/clients/update_scopes \
+  -H "Authorization: Bearer $WEBCODEX_PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"client_id":"wc_client_<server-generated-id>","allowed_scopes":["runtime:read","project:read","project:write","job:run","computer:read","computer:control"]}'
+```
+
+A changed allow-list atomically revokes that client's existing access tokens, refresh
+tokens, and outstanding authorization codes. The OAuth host must then authorize
+again and obtain a new token; this is intentional for any permission expansion or
+reduction. Re-sending the same canonical allow-list is a no-op and does not revoke
+existing grants.
+
 ChatGPT MCP host-file imports use a separate operator trust anchor because their
 host-provided temporary download URLs are not restricted to the GPT Action
 `files.oaiusercontent.com` hostname policy. After creating the ChatGPT OAuth

@@ -180,6 +180,63 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// Replace one active OAuth client's explicit permission allow-list and
+    /// revoke every still-active grant issued under the previous allow-list in
+    /// the same transaction. `expected_allowed_scopes` is a compare-and-swap
+    /// guard so concurrent client-management changes fail closed.
+    ///
+    /// Returns `Ok(None)` when the client is no longer active or its allow-list
+    /// changed since the caller read it. A successful no-op still passes through
+    /// the compare-and-swap guard but preserves every existing grant. On a real
+    /// change the tuple contains revoked access-token, refresh-token, and
+    /// authorization-code counts.
+    pub fn update_oauth_client_allowed_scopes_and_revoke_grants(
+        &self,
+        client_id: &str,
+        expected_allowed_scopes: &str,
+        allowed_scopes: &str,
+        ts: i64,
+    ) -> anyhow::Result<Option<(bool, usize, usize, usize)>> {
+        let changed = expected_allowed_scopes != allowed_scopes;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let updated = tx.execute(
+            "UPDATE oauth_clients SET allowed_scopes = ?3
+             WHERE client_id = ?1 AND allowed_scopes = ?2 AND revoked_at IS NULL",
+            params![client_id, expected_allowed_scopes, allowed_scopes],
+        )?;
+        if updated != 1 {
+            return Ok(None);
+        }
+        if !changed {
+            tx.commit()?;
+            return Ok(Some((false, 0, 0, 0)));
+        }
+
+        let access_tokens = tx.execute(
+            "UPDATE oauth_access_tokens SET revoked_at = ?2
+             WHERE client_id = ?1 AND revoked_at IS NULL",
+            params![client_id, ts],
+        )?;
+        let refresh_tokens = tx.execute(
+            "UPDATE oauth_refresh_tokens SET revoked_at = ?2
+             WHERE client_id = ?1 AND revoked_at IS NULL",
+            params![client_id, ts],
+        )?;
+        let authorization_codes = tx.execute(
+            "UPDATE oauth_authorization_codes SET revoked_at = ?2
+             WHERE client_id = ?1 AND revoked_at IS NULL",
+            params![client_id, ts],
+        )?;
+        tx.commit()?;
+        Ok(Some((
+            true,
+            access_tokens,
+            refresh_tokens,
+            authorization_codes,
+        )))
+    }
+
     /// Revoke an OAuth client by its public `client_id` (e.g. `wc_client_*`).
     /// Idempotent: already-revoked clients are left untouched and still count
     /// as success. Returns `true` when a row matched the `client_id`.

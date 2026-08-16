@@ -34,7 +34,9 @@ mod scope_registry;
 mod shared_key_bridge;
 mod token;
 
-pub(crate) use clients::{oauth_clients_create, oauth_clients_list, oauth_clients_revoke};
+pub(crate) use clients::{
+    oauth_clients_create, oauth_clients_list, oauth_clients_revoke, oauth_clients_update_scopes,
+};
 use html::authorize_bridge_html;
 #[cfg(test)]
 use managed_authorize::AUTHORIZE_SESSION_COOKIE;

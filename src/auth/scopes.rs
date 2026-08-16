@@ -183,6 +183,7 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         // `account:manage`.
         ("POST", "/api/oauth/clients/create")
         | ("POST", "/api/oauth/clients/list")
+        | ("POST", "/api/oauth/clients/update_scopes")
         | ("POST", "/api/oauth/clients/revoke") => OAuthRouteScopePolicy::FirstPartyOnly,
 
         ("GET", "/mcp") => OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ),
@@ -453,6 +454,7 @@ mod tests {
         for path in [
             "/api/oauth/clients/create",
             "/api/oauth/clients/list",
+            "/api/oauth/clients/update_scopes",
             "/api/oauth/clients/revoke",
         ] {
             assert_eq!(
@@ -751,6 +753,7 @@ mod tests {
             ("POST", "/oauth/authorize/consent"),
             ("POST", "/api/oauth/clients/create"),
             ("POST", "/api/oauth/clients/list"),
+            ("POST", "/api/oauth/clients/update_scopes"),
             ("POST", "/api/oauth/clients/revoke"),
         ] {
             assert_ne!(

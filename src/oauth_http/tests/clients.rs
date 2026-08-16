@@ -237,6 +237,247 @@ async fn oauth_client_create_defaults_to_full_delegable_scopes() {
 }
 
 #[tokio::test]
+async fn oauth_client_update_scopes_adds_control_and_revokes_prior_grants() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let token = seed_user_token(&db, &user);
+    let client = seed_client_with_redirects_and_scopes(
+        &db,
+        &user,
+        "https://example.com/callback",
+        "runtime:read computer:read",
+    );
+    let (_access, access_plaintext) =
+        seed_access_token(&db, &client, &user, "runtime:read computer:read");
+    let (_refresh, refresh_plaintext) =
+        seed_refresh_token(&db, &client, &user, "runtime:read computer:read");
+    let (_code, code_plaintext) = seed_auth_code(
+        &db,
+        &client,
+        &user,
+        "https://example.com/callback",
+        "runtime:read computer:read",
+        None,
+        None,
+    );
+    let service = Service::new(build_router(config, db.clone()));
+
+    let mut resp = authorized_post_json(
+        "http://localhost/api/oauth/clients/update_scopes",
+        serde_json::json!({
+            "client_id": client.client_id,
+            "allowed_scopes": ["computer:control", "computer:read", "runtime:read"]
+        })
+        .to_string(),
+        &token,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let body: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(body["success"], true);
+    assert_eq!(body["changed"], true);
+    assert_eq!(body["reauthorization_required"], true);
+    assert_eq!(body["revoked_grants"]["access_tokens"], 1);
+    assert_eq!(body["revoked_grants"]["refresh_tokens"], 1);
+    assert_eq!(body["revoked_grants"]["authorization_codes"], 1);
+    assert_eq!(
+        body["client"]["allowed_scopes"],
+        serde_json::json!(["runtime:read", "computer:read", "computer:control"])
+    );
+    assert!(body.get("client_secret").is_none());
+    assert!(body["client"].get("client_secret_hash").is_none());
+
+    let stored = db
+        .get_oauth_client_by_client_id(&client.client_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.allowed_scopes,
+        "runtime:read computer:read computer:control"
+    );
+    assert!(db
+        .get_oauth_access_token_by_hash(&hash_token(&access_plaintext))
+        .unwrap()
+        .is_none());
+    assert!(db
+        .get_oauth_refresh_token_by_hash(&hash_token(&refresh_plaintext))
+        .unwrap()
+        .is_none());
+    assert!(db
+        .get_oauth_authorization_code_by_hash(&hash_token(&code_plaintext))
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn oauth_client_update_scopes_noop_preserves_existing_grants() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let token = seed_user_token(&db, &user);
+    let client = seed_client_with_redirects_and_scopes(
+        &db,
+        &user,
+        "https://example.com/callback",
+        "runtime:read computer:read",
+    );
+    let (_access, access_plaintext) =
+        seed_access_token(&db, &client, &user, "runtime:read computer:read");
+    let service = Service::new(build_router(config, db.clone()));
+
+    let mut resp = authorized_post_json(
+        "http://localhost/api/oauth/clients/update_scopes",
+        serde_json::json!({
+            "client_id": client.client_id,
+            "allowed_scopes": ["computer:read", "runtime:read"]
+        })
+        .to_string(),
+        &token,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let body: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(body["changed"], false);
+    assert_eq!(body["reauthorization_required"], false);
+    assert_eq!(body["revoked_grants"]["access_tokens"], 0);
+    assert!(db
+        .get_oauth_access_token_by_hash(&hash_token(&access_plaintext))
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn oauth_client_scope_update_stale_expected_scope_fails_without_revoking_grants() {
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let client = seed_client_with_redirects_and_scopes(
+        &db,
+        &user,
+        "https://example.com/callback",
+        "runtime:read computer:read computer:control",
+    );
+    let (_access, access_plaintext) = seed_access_token(
+        &db,
+        &client,
+        &user,
+        "runtime:read computer:read computer:control",
+    );
+
+    let result = db
+        .update_oauth_client_allowed_scopes_and_revoke_grants(
+            &client.client_id,
+            "runtime:read computer:read",
+            "runtime:read computer:read",
+            chrono::Utc::now().timestamp(),
+        )
+        .unwrap();
+    assert!(result.is_none());
+
+    let stored = db
+        .get_oauth_client_by_client_id(&client.client_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.allowed_scopes,
+        "runtime:read computer:read computer:control"
+    );
+    assert!(db
+        .get_oauth_access_token_by_hash(&hash_token(&access_plaintext))
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
+async fn oauth_client_update_scopes_rejects_implicit_or_unknown_scope_expansion() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let token = seed_user_token(&db, &user);
+    let client = seed_client_with_redirects_and_scopes(
+        &db,
+        &user,
+        "https://example.com/callback",
+        "runtime:read computer:read",
+    );
+    let (_access, access_plaintext) =
+        seed_access_token(&db, &client, &user, "runtime:read computer:read");
+    let service = Service::new(build_router(config, db.clone()));
+
+    for allowed_scopes in [
+        serde_json::json!([]),
+        serde_json::json!(["runtime:read", "bogus:scope"]),
+    ] {
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/update_scopes",
+            serde_json::json!({
+                "client_id": client.client_id,
+                "allowed_scopes": allowed_scopes
+            })
+            .to_string(),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    }
+
+    let stored = db
+        .get_oauth_client_by_client_id(&client.client_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.allowed_scopes, "runtime:read computer:read");
+    assert!(db
+        .get_oauth_access_token_by_hash(&hash_token(&access_plaintext))
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
+async fn oauth_client_update_scopes_is_first_party_only() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let client = seed_client_with_redirects_and_scopes(
+        &db,
+        &user,
+        "https://example.com/callback",
+        "runtime:read computer:read computer:control account:manage",
+    );
+    let (_access, access_plaintext) = seed_access_token(
+        &db,
+        &client,
+        &user,
+        "runtime:read computer:read computer:control account:manage",
+    );
+    let service = Service::new(build_router(config, db.clone()));
+
+    let resp = authorized_post_json(
+        "http://localhost/api/oauth/clients/update_scopes",
+        serde_json::json!({
+            "client_id": client.client_id,
+            "allowed_scopes": ["runtime:read"]
+        })
+        .to_string(),
+        &access_plaintext,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+
+    let stored = db
+        .get_oauth_client_by_client_id(&client.client_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.allowed_scopes,
+        "runtime:read computer:read computer:control account:manage"
+    );
+}
+
+#[tokio::test]
 async fn oauth_client_create_rejects_unknown_scopes() {
     let config = test_config(oauth2_enabled());
     let (_tmp, db) = test_db();

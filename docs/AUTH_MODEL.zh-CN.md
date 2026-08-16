@@ -144,6 +144,13 @@ Server 支持 authorization-code grant、token 撤销与 OAuth metadata。动态
 注册、OIDC、JWKS/JWT ID token 与 device-code 流程未实现。OAuth 设置步骤见
 [部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
+OAuth client 的 `allowed_scopes` 是 client 注册时确定的委派权限上限；WebCodex 后续
+增加 `computer:control` 之类的新权限时，不会自动给历史 client 扩权。first-party
+operator 可以通过 `POST /api/oauth/clients/update_scopes` 显式替换 active client 的
+完整 allowlist。allowlist 真正变化时，Server 会在同一事务里撤销该 client 现有的
+access token、refresh token 与尚存 authorization code，因此 client 必须重新完成
+OAuth 授权，才能使用新的 scope 集合。
+
 ## `client_id`
 
 `client_id` 是一个 Runner/设备的稳定逻辑标识，例如：

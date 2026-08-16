@@ -22,6 +22,12 @@ struct RevokeOAuthClientRequest {
     client_id: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct UpdateOAuthClientScopesRequest {
+    client_id: String,
+    allowed_scopes: Vec<String>,
+}
+
 /// The full default delegable OAuth scope set, used when `allowed_scopes` is
 /// omitted or empty on client creation.
 fn default_client_allowed_scopes() -> Vec<&'static str> {
@@ -288,6 +294,134 @@ pub(crate) async fn oauth_clients_list(depot: &mut Depot, res: &mut Response) {
     res.render(Json(serde_json::json!({
         "success": true,
         "clients": clients_json,
+    })));
+}
+
+#[handler]
+pub(crate) async fn oauth_clients_update_scopes(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(Json(
+            serde_json::json!({"error": "authenticated user required"}),
+        ));
+        return;
+    };
+    if !is_authorize_identity_allowed(auth) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(serde_json::json!({
+            "error": "OAuth2 access tokens cannot manage OAuth clients"
+        })));
+        return;
+    }
+    let Some(db) = crate::auth::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "DB not available"})));
+        return;
+    };
+
+    let body: UpdateOAuthClientScopesRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(serde_json::json!({
+                "error": "invalid request body",
+                "detail": e.to_string()
+            })));
+            return;
+        }
+    };
+    let client_id = body.client_id.trim().to_string();
+    if client_id.is_empty() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(serde_json::json!({"error": "client_id is required"})));
+        return;
+    }
+    if !body
+        .allowed_scopes
+        .iter()
+        .any(|scope| !scope.trim().is_empty())
+    {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(serde_json::json!({
+            "error": "allowed_scopes must be a non-empty array"
+        })));
+        return;
+    }
+    let allowed_scopes = match normalize_client_allowed_scopes(Some(&body.allowed_scopes)) {
+        Ok(scopes) => scopes,
+        Err(message) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(serde_json::json!({"error": message})));
+            return;
+        }
+    };
+    let allowed_scopes_str = allowed_scopes.join(" ");
+
+    let current = match db.get_oauth_client_by_client_id(&client_id) {
+        Ok(Some(client)) => client,
+        Ok(None) => {
+            res.status_code(StatusCode::NOT_FOUND);
+            res.render(Json(serde_json::json!({"error": "OAuth client not found"})));
+            return;
+        }
+        Err(e) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(Json(serde_json::json!({
+                "error": "failed to read client",
+                "detail": e.to_string()
+            })));
+            return;
+        }
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let (changed, access_tokens, refresh_tokens, authorization_codes) = match db
+        .update_oauth_client_allowed_scopes_and_revoke_grants(
+            &client_id,
+            &current.allowed_scopes,
+            &allowed_scopes_str,
+            now,
+        ) {
+        Ok(Some(result)) => result,
+        Ok(None) => {
+            res.status_code(StatusCode::CONFLICT);
+            res.render(Json(serde_json::json!({
+                "error": "OAuth client changed or is no longer active"
+            })));
+            return;
+        }
+        Err(e) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(Json(serde_json::json!({
+                "error": "failed to update client scopes",
+                "detail": e.to_string()
+            })));
+            return;
+        }
+    };
+
+    apply_oauth_no_store_headers(res);
+    res.render(Json(serde_json::json!({
+        "success": true,
+        "changed": changed,
+        "reauthorization_required": changed,
+        "client": {
+            "client_id": current.client_id,
+            "name": current.name,
+            "redirect_uris": current.redirect_uris_vec(),
+            "allowed_scopes": allowed_scopes,
+            "created_at": current.created_at,
+            "revoked_at": current.revoked_at,
+        },
+        "revoked_grants": {
+            "access_tokens": access_tokens,
+            "refresh_tokens": refresh_tokens,
+            "authorization_codes": authorization_codes,
+        }
     })));
 }
 

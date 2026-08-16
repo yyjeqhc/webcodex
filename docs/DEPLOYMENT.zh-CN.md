@@ -241,6 +241,24 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
   -d '{"name":"ChatGPT MCP","redirect_uris":["https://chatgpt.com/connector/oauth/<callback-id>"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
 ```
 
+`allowed_scopes` 是该 OAuth client 持久化的委派权限上限。Computer 只读观察需要
+`computer:read`；会产生 UI effect 的 Computer 工具还需要 `computer:control`。新增
+scope 时，Server **不会**静默扩大历史 client 的 allowlist。若要给既有 client 显式
+增加 Computer control，请把期望保留的**完整、非空** scope 列表提交到 first-party
+管理接口：
+
+```bash
+curl -fsS -X POST https://your-domain.example/api/oauth/clients/update_scopes \
+  -H "Authorization: Bearer $WEBCODEX_PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"client_id":"wc_client_<server-generated-id>","allowed_scopes":["runtime:read","project:read","project:write","job:run","computer:read","computer:control"]}'
+```
+
+allowlist 真正变化时，Server 会在同一事务中撤销该 client 现有的 access token、
+refresh token 与尚存的 authorization code；OAuth 宿主随后必须重新授权并取得新
+令牌。这对扩权和降权都适用。重复提交相同的 canonical allowlist 是 no-op，不会
+撤销现有 grants。
+
 ChatGPT MCP 的宿主文件导入使用独立的 operator trust anchor，因为宿主提供的临时
 下载 URL 不受 GPT Action `files.oaiusercontent.com` hostname policy 限制。正常创建
 ChatGPT OAuth client 后，取创建接口返回的 server-generated `wc_client_*` ID，并把

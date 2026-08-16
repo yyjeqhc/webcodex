@@ -177,6 +177,14 @@ metadata. Dynamic client registration, OIDC, JWKS/JWT ID tokens, and the
 device-code flow are not implemented. OAuth setup steps are in
 [Deployment](DEPLOYMENT.md#oauth2).
 
+An OAuth client's `allowed_scopes` is a registration-time delegation ceiling and
+is never automatically widened when WebCodex adds a new permission such as
+`computer:control`. First-party operators may explicitly replace an active client's
+complete allow-list with `POST /api/oauth/clients/update_scopes`. A real change
+atomically revokes that client's existing access tokens, refresh tokens, and
+outstanding authorization codes, so the client must complete OAuth authorization
+again before using the new scope set.
+
 ## Scope enforcement and credential surfaces
 
 WebCodex treats scope permission and credential identity as separate checks.

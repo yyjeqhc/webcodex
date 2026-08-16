@@ -2717,7 +2717,10 @@ async fn transient_check_status_recovers_within_grace() {
 
 #[tokio::test]
 async fn check_transport_failure_becomes_unknown_only_after_grace() {
-    let fixture = fixture_configured(5, |service| service.with_monitor_timing(80, 5)).await;
+    // Grace must comfortably exceed scheduler starvation under full-suite
+    // parallelism so the test can observe the degraded active state before the
+    // monitor legitimately finishes the execution as unknown.
+    let fixture = fixture_configured(5, |service| service.with_monitor_timing(2_000, 5)).await;
     let arguments = checks(&fixture, "transport-grace-1", &["test"]);
     let connector = fixture.connector.clone();
     let owner = fixture.owner.clone();
@@ -2742,18 +2745,28 @@ async fn check_transport_failure_becomes_unknown_only_after_grace() {
         .registry
         .reconcile_disconnect("hosted", "instance")
         .await;
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    let degraded = fixture
-        .connector
-        .db
-        .connector_execution(execution_id)
-        .unwrap();
+    // The degraded observation is asynchronous. Poll for the recorded failure
+    // instead of assuming a fixed sleep lands inside the grace window.
+    let mut observed = None;
+    for _ in 0..400 {
+        let current = fixture
+            .connector
+            .db
+            .connector_execution(execution_id)
+            .unwrap();
+        if current.status_failure_code.as_deref() == Some("executor_status_unavailable") {
+            observed = Some(current);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let degraded = observed.expect("monitor never recorded the executor transport failure");
     assert!(degraded.is_active());
     assert_eq!(
         degraded.status_failure_code.as_deref(),
         Some("executor_status_unavailable")
     );
-    for _ in 0..100 {
+    for _ in 0..600 {
         let current = fixture
             .connector
             .db

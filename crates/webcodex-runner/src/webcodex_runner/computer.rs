@@ -19,6 +19,44 @@ const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
 const MAX_ELEMENT_REGISTRY: usize = 1024;
 const MAX_INPUT_TEXT_BYTES: usize = 2048;
+const COMPUTER_KEY_INPUT_KEYS: &[&str] = &[
+    "enter",
+    "escape",
+    "tab",
+    "arrow_up",
+    "arrow_down",
+    "arrow_left",
+    "arrow_right",
+    "page_up",
+    "page_down",
+    "home",
+    "end",
+];
+const COMPUTER_KEY_INPUT_MODIFIERS: &[&str] = &["shift", "control", "option", "command"];
+
+fn validate_key_modifiers(modifiers: &[String]) -> Result<(), String> {
+    if modifiers.len() > COMPUTER_KEY_INPUT_MODIFIERS.len() {
+        return Err("invalid_request: computer key input has too many modifiers".to_string());
+    }
+    for (index, modifier) in modifiers.iter().enumerate() {
+        if !COMPUTER_KEY_INPUT_MODIFIERS.contains(&modifier.as_str())
+            || modifiers[..index].contains(modifier)
+        {
+            return Err(
+                "invalid_request: computer key input modifiers are invalid or duplicated"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_key_input(key: &str, modifiers: &[String]) -> Result<(), String> {
+    if !COMPUTER_KEY_INPUT_KEYS.contains(&key) {
+        return Err("invalid_request: computer key is outside the closed vocabulary".to_string());
+    }
+    validate_key_modifiers(modifiers)
+}
 const MAX_ACCESSIBILITY_DEPTH: usize = 8;
 const MAX_ACCESSIBILITY_NODES: usize = 256;
 const DEFAULT_ACCESSIBILITY_DEPTH: usize = 6;
@@ -635,6 +673,27 @@ impl ComputerObserver {
             return Err("stale_element: element_id belongs to a different surface".to_string());
         }
         platform::scroll_to_element(surface_id, element_id, &record, &element)
+    }
+
+    fn key_input(
+        &self,
+        surface_id: &str,
+        key: &str,
+        modifiers: &[String],
+    ) -> Result<Value, String> {
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return Err("invalid_request: surface_id is invalid".to_string());
+        }
+        validate_key_input(key, modifiers)?;
+        let surface_registry = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?;
+        let record = surface_registry
+            .get(surface_id)
+            .cloned()
+            .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        platform::key_input(surface_id, &record, key, modifiers)
     }
 
     fn input_text(&self, surface_id: &str, element_id: &str, text: &str) -> Result<Value, String> {
@@ -1616,6 +1675,7 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
             | "computer_activate_window"
             | "computer_control"
             | "computer_scroll_to_element"
+            | "computer_key_input"
             | "computer_input_text"
     )
 }
@@ -1653,6 +1713,37 @@ mod scroll_wire_contract_tests {
         )
         .unwrap_err();
         assert!(error.contains("unsupported fields"));
+    }
+}
+
+#[cfg(test)]
+mod key_input_wire_contract_tests {
+    use super::*;
+
+    #[test]
+    fn key_input_is_a_distinct_strict_closed_request_kind() {
+        assert!(is_computer_request_kind("computer_key_input"));
+        let exact = json!({
+            "surface_id": "surface_test",
+            "key": "tab",
+            "modifiers": ["shift"]
+        });
+        assert!(ensure_exact_payload_fields(&exact, &["surface_id", "key", "modifiers"]).is_ok());
+        assert!(validate_key_input("tab", &["shift".to_string()]).is_ok());
+        assert!(validate_key_input("a", &[]).is_err());
+        assert!(validate_key_input("enter", &["shift".to_string(), "shift".to_string()]).is_err());
+        for extra in ["text", "keycode", "repeat", "held", "element_id"] {
+            let mut extra_payload = exact.clone();
+            extra_payload
+                .as_object_mut()
+                .unwrap()
+                .insert(extra.to_string(), Value::from(1));
+            assert!(
+                ensure_exact_payload_fields(&extra_payload, &["surface_id", "key", "modifiers"])
+                    .is_err(),
+                "extra field {extra}"
+            );
+        }
     }
 }
 
@@ -1804,6 +1895,33 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 ComputerObserver::global().scroll_to_element(surface_id, element_id)
             })
         }
+        "computer_key_input" => {
+            ensure_exact_payload_fields(&payload, &["surface_id", "key", "modifiers"]).and_then(
+                |()| {
+                    let surface_id = payload
+                        .get("surface_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: surface_id is required".to_string())?;
+                    let key = payload
+                        .get("key")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: key is required".to_string())?;
+                    let modifier_values = payload
+                        .get("modifiers")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| "invalid_request: modifiers must be an array".to_string())?;
+                    let modifiers = modifier_values
+                        .iter()
+                        .map(|value| {
+                            value.as_str().map(str::to_string).ok_or_else(|| {
+                                "invalid_request: each modifier must be a string".to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    ComputerObserver::global().key_input(surface_id, key, &modifiers)
+                },
+            )
+        }
         "computer_input_text" => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "text"]).and_then(
                 |()| {
@@ -1954,6 +2072,15 @@ mod platform {
         Err("unsupported_platform: computer scroll is unavailable on this platform".to_string())
     }
 
+    pub(super) fn key_input(
+        _surface_id: &str,
+        _surface: &SurfaceRecord,
+        _key: &str,
+        _modifiers: &[String],
+    ) -> Result<serde_json::Value, String> {
+        Err("unsupported_platform: computer key input is unavailable on this platform".to_string())
+    }
+
     pub(super) fn input_text(
         _surface_id: &str,
         _element_id: &str,
@@ -2071,8 +2198,9 @@ mod platform {
     use super::{
         ensure_correlated_fingerprint, is_secure_text_fingerprint,
         is_supported_text_input_fingerprint, select_exact_ax_window_index,
-        validate_element_state_target, validate_input_text, validate_text_input_preflight,
-        validate_text_input_target, AxObservationDeadline, ElementFingerprint,
+        validate_element_state_target, validate_input_text, validate_key_input,
+        validate_key_modifiers, validate_text_input_preflight, validate_text_input_target,
+        AxObservationDeadline, ElementFingerprint,
     };
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
@@ -2086,6 +2214,8 @@ mod platform {
     use objc2_core_foundation::{
         CFArray, CFBoolean, CFIndex, CFRetained, CFString, CFType, CGPoint, CGSize,
     };
+    #[cfg(target_os = "macos")]
+    use objc2_core_graphics::{CGEvent, CGEventFlags, CGKeyCode, CGPreflightPostEventAccess};
     #[cfg(target_os = "macos")]
     use std::collections::VecDeque;
     #[cfg(target_os = "macos")]
@@ -2145,6 +2275,91 @@ mod platform {
                 "accessibility_failed: {operation} failed with AXError({})",
                 error.0
             )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn checked_surface_pid(surface: &SurfaceRecord) -> Result<libc::pid_t, String> {
+        libc::pid_t::try_from(surface.pid)
+            .map_err(|_| "stale_surface: surface PID exceeds native range".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn key_code(key: &str) -> Result<CGKeyCode, String> {
+        match key {
+            "enter" => Ok(0x24),
+            "tab" => Ok(0x30),
+            "escape" => Ok(0x35),
+            "home" => Ok(0x73),
+            "page_up" => Ok(0x74),
+            "end" => Ok(0x77),
+            "page_down" => Ok(0x79),
+            "arrow_left" => Ok(0x7b),
+            "arrow_right" => Ok(0x7c),
+            "arrow_down" => Ok(0x7d),
+            "arrow_up" => Ok(0x7e),
+            _ => Err("invalid_request: computer key is outside the closed vocabulary".to_string()),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn key_modifier_flags(modifiers: &[String]) -> Result<CGEventFlags, String> {
+        validate_key_modifiers(modifiers)?;
+        let mut flags = CGEventFlags::empty();
+        for modifier in modifiers {
+            flags |= match modifier.as_str() {
+                "shift" => CGEventFlags::MaskShift,
+                "control" => CGEventFlags::MaskControl,
+                "option" => CGEventFlags::MaskAlternate,
+                "command" => CGEventFlags::MaskCommand,
+                _ => unreachable!("validate_key_input closed modifier vocabulary"),
+            };
+        }
+        Ok(flags)
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    mod key_input_native_contract_tests {
+        use super::*;
+
+        #[test]
+        fn closed_key_codes_and_modifier_flags_are_stable() {
+            for (key, expected) in [
+                ("enter", 0x24),
+                ("tab", 0x30),
+                ("escape", 0x35),
+                ("home", 0x73),
+                ("page_up", 0x74),
+                ("end", 0x77),
+                ("page_down", 0x79),
+                ("arrow_left", 0x7b),
+                ("arrow_right", 0x7c),
+                ("arrow_down", 0x7d),
+                ("arrow_up", 0x7e),
+            ] {
+                assert_eq!(key_code(key).unwrap(), expected, "{key}");
+            }
+            assert!(key_code("a").is_err());
+
+            let flags = key_modifier_flags(&["shift".to_string(), "command".to_string()]).unwrap();
+            assert!(flags.contains(CGEventFlags::MaskShift));
+            assert!(flags.contains(CGEventFlags::MaskCommand));
+            assert!(!flags.contains(CGEventFlags::MaskAlternate));
+
+            let mut surface = SurfaceRecord {
+                native_id: 1,
+                pid: 1,
+                identity_hash: [0; 32],
+                application: "test".to_string(),
+                title: "test".to_string(),
+                width: 1,
+                height: 1,
+            };
+            assert_eq!(checked_surface_pid(&surface).unwrap(), 1);
+            surface.pid = u32::MAX;
+            assert!(checked_surface_pid(&surface)
+                .unwrap_err()
+                .starts_with("stale_surface:"));
         }
     }
 
@@ -2635,7 +2850,8 @@ mod platform {
         let y = native_window.y().map_err(map_error)?;
         let width = native_window.width().map_err(map_error)?;
         let height = native_window.height().map_err(map_error)?;
-        let application = unsafe { AXUIElement::new_application(surface.pid as _) };
+        let pid = checked_surface_pid(surface)?;
+        let application = unsafe { AXUIElement::new_application(pid) };
         let window_count = ax_array_count(deadline, &application, "AXWindows")?;
         if window_count == 0 || window_count > MAX_AX_WINDOWS {
             return Err(
@@ -3089,6 +3305,98 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
+    fn validate_key_input_target(
+        deadline: &AxObservationDeadline,
+        application: &AXUIElement,
+        exact_window: &CFRetained<AXUIElement>,
+    ) -> Result<(), String> {
+        if optional_ax_bool(deadline, application, "AXFrontmost")? != Some(true) {
+            return Err(
+                "key_input_failed: exact surface application must already be frontmost".to_string(),
+            );
+        }
+        let focused_window = optional_ax_value(deadline, application, "AXFocusedWindow")?
+            .ok_or_else(|| {
+                "key_input_failed: exact surface application has no focused window".to_string()
+            })?
+            .downcast::<AXUIElement>()
+            .map_err(|_| {
+                "accessibility_failed: AXFocusedWindow is not an AXUIElement".to_string()
+            })?;
+        if &focused_window != exact_window {
+            return Err(
+                "key_input_failed: exact surface must already be the focused window".to_string(),
+            );
+        }
+
+        if let Some(focused_value) = optional_ax_value(deadline, application, "AXFocusedUIElement")?
+        {
+            let focused_element = focused_value.downcast::<AXUIElement>().map_err(|_| {
+                "accessibility_failed: AXFocusedUIElement is not an AXUIElement".to_string()
+            })?;
+            let fingerprint = element_fingerprint(deadline, &focused_element, false)?;
+            if fingerprint.protected || is_secure_text_fingerprint(&fingerprint) {
+                return Err(
+                    "permission_denied: protected or secure Accessibility content cannot receive key input"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn key_input(
+        surface_id: &str,
+        surface: &SurfaceRecord,
+        key: &str,
+        modifiers: &[String],
+    ) -> Result<Value, String> {
+        validate_key_input(key, modifiers)?;
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(
+                "permission_denied: macOS Accessibility permission is not granted".to_string(),
+            );
+        }
+        if !CGPreflightPostEventAccess() {
+            return Err(
+                "permission_denied: macOS event-posting permission is not granted".to_string(),
+            );
+        }
+
+        let pid = checked_surface_pid(surface)?;
+        let deadline = AxObservationDeadline::new();
+        let exact_window = exact_ax_window(surface, &deadline)?;
+        let application = unsafe { AXUIElement::new_application(pid) };
+
+        let key_code = key_code(key)?;
+        let flags = key_modifier_flags(modifiers)?;
+        let key_down = CGEvent::new_keyboard_event(None, key_code, true).ok_or_else(|| {
+            "key_input_failed: could not create native key-down event".to_string()
+        })?;
+        let key_up = CGEvent::new_keyboard_event(None, key_code, false)
+            .ok_or_else(|| "key_input_failed: could not create native key-up event".to_string())?;
+        CGEvent::set_flags(Some(&key_down), flags);
+        CGEvent::set_flags(Some(&key_up), flags);
+
+        // This is the final authority/privacy check before the first effect. Quartz
+        // posts keyboard events to a process rather than a specific window, so keep
+        // the exact focused-window check as close to dispatch as possible.
+        validate_key_input_target(&deadline, &application, &exact_window)?;
+        deadline.ensure_remaining()?;
+
+        CGEvent::post_to_pid(pid, Some(&key_down));
+        CGEvent::post_to_pid(pid, Some(&key_up));
+        Ok(json!({
+            "platform": "macos",
+            "surface_id": surface_id,
+            "key": key,
+            "modifiers": modifiers,
+            "success": true,
+        }))
+    }
+
+    #[cfg(target_os = "macos")]
     pub(super) fn input_text(
         surface_id: &str,
         element_id: &str,
@@ -3189,6 +3497,16 @@ mod platform {
         _element: &ElementRecord,
     ) -> Result<Value, String> {
         Err("unsupported_platform: computer scroll is unavailable on this platform".to_string())
+    }
+
+    #[cfg(windows)]
+    pub(super) fn key_input(
+        _surface_id: &str,
+        _surface: &SurfaceRecord,
+        _key: &str,
+        _modifiers: &[String],
+    ) -> Result<Value, String> {
+        Err("unsupported_platform: computer key input is unavailable on this platform".to_string())
     }
 
     #[cfg(windows)]

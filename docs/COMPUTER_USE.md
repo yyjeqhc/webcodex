@@ -97,20 +97,25 @@ On macOS the Runner keeps the existing exact surface/element correlation and pro
 
 No lower-level wheel fallback is added in this slice. If later dogfood demonstrates a real need for one, it must remain separately bounded and tied to an exactly revalidated active/focused surface rather than widening this semantic contract.
 
+### CU-10 — closed key input
+
+Add `computer_key_input(client_id, surface_id, key, modifiers?)` as a distinct effect with its own additive Runner capability and wire kind. It is not another `computer_control` action, and an older Runner that only advertises `computer_control` fails closed. The model-facing vocabulary is deliberately limited to Enter, Escape, Tab, arrows, PageUp/PageDown, Home/End plus the bounded `shift`, `control`, `option`, and `command` modifier set. Ordinary text continues through `computer_input_text`; callers cannot supply characters, virtual keycodes, repeat counts, held-key state, or modifier key-down/up sequences.
+
+On macOS the Runner revalidates the exact surface through the existing native window identity path, then requires its application to already be frontmost and `AXFocusedWindow` to equal that exact window. It never activates or focuses the surface implicitly. When an `AXFocusedUIElement` is available, explicitly protected or secure content fails closed. Accessibility and event-posting permission checks are preflight-only and do not request permission UI. Both key-down and key-up events are constructed and flagged before the first effect, then posted only to the exact surface PID. Quartz exposes no atomic/batch post for the pair, so the two posts are adjacent with no fallible work between them; if the Runner process terminates in that narrow interval, the result is a partial `outcome_unknown`, not a supported held-key state.
+
+The effect keeps the existing Computer delivery fence: definite non-dispatch is `not_started`; possible dispatch, lost response, partial key-pair delivery, or inconsistent success metadata is `outcome_unknown` and requires UI re-observation before retry. There is no clipboard, paste, AppleScript, shell, pointer, or global-key fallback.
+
 ## Next capability sequence
 
 After the near-term slices are dogfooded, the expected order is:
 
 ```text
-closed key input
--> Windows UIA parity
+Windows UIA parity
 -> application discovery / bounded launch
 -> full-display discovery and snapshot
 -> coordinate pointer
 -> clipboard
 ```
-
-Key input remains a closed navigation/action vocabulary (for example Enter, Escape, Tab, arrows, paging/home/end and bounded modifiers); ordinary text continues through `computer_input_text`.
 
 Windows parity should map UI Automation patterns into the same WebCodex semantic action/affordance vocabulary instead of exposing a second OS-specific model API.
 

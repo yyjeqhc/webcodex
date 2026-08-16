@@ -1877,6 +1877,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Semantic AX scroll-to-visible is independently fenced for rolling upgrades;
     // existing computer_control support never implies it.
     capabilities.computer_scroll_to_element = cfg!(target_os = "macos");
+    // Closed key input is a separate effect/wire capability. It is currently
+    // implemented only by the macOS Runner and is never implied by control.
+    capabilities.computer_key_input = cfg!(target_os = "macos");
     // Exact window activation is a separate effect/wire capability. Old macOS
     // Runners that only advertise computer_control must fail closed.
     capabilities.computer_window_activate = cfg!(target_os = "macos");

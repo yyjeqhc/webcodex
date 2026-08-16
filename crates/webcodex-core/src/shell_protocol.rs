@@ -226,6 +226,9 @@ pub const SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL: &str = "computer_control";
 /// Native semantic scroll-to-visible on one exact observed Accessibility element.
 /// Missing on older Runners is false and is never inferred from computer_control.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT: &str = "computer_scroll_to_element";
+/// Native closed-vocabulary key input to one exact already-focused window surface.
+/// Missing on older Runners is false and is never inferred from computer_control.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT: &str = "computer_key_input";
 /// Native exact-window activation/raise. Missing on older Runners is false and
 /// is never inferred from accessibility control, observation, or platform.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE: &str = "computer_window_activate";
@@ -278,6 +281,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
 ];
@@ -415,6 +419,10 @@ pub struct ShellClientCapabilities {
     /// into view. Missing on older Runners is false and never follows from control.
     #[serde(default, skip_serializing_if = "is_false")]
     pub computer_scroll_to_element: bool,
+    /// The Runner can post one closed navigation/action key to one exact already-focused
+    /// native window. Missing on older Runners is false and never follows from control.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_key_input: bool,
     /// The Runner can activate/raise one exact previously observed native window.
     /// Missing on older Runners is false and never follows from computer_control.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -485,6 +493,7 @@ impl Default for ShellClientCapabilities {
             computer_element_state: false,
             computer_control: false,
             computer_scroll_to_element: false,
+            computer_key_input: false,
             computer_window_activate: false,
             computer_text_input: false,
             job_state_reconciliation: false,
@@ -2733,6 +2742,7 @@ mod envelope_tests {
                 computer_element_state: false,
                 computer_control: false,
                 computer_scroll_to_element: false,
+                computer_key_input: false,
                 computer_window_activate: false,
                 computer_text_input: false,
                 job_state_reconciliation: false,
@@ -2813,6 +2823,7 @@ mod envelope_tests {
         assert!(!capabilities.computer_accessibility_observe);
         assert!(!capabilities.computer_element_state);
         assert!(!capabilities.computer_control);
+        assert!(!capabilities.computer_key_input);
         assert!(!capabilities.computer_window_activate);
         assert!(!ShellClientCapabilities::default().ssh_persistent_shell);
         assert!(!capabilities.computer_text_input);
@@ -2821,6 +2832,7 @@ mod envelope_tests {
         assert!(!ShellClientCapabilities::default().computer_accessibility_observe);
         assert!(!ShellClientCapabilities::default().computer_element_state);
         assert!(!ShellClientCapabilities::default().computer_control);
+        assert!(!ShellClientCapabilities::default().computer_key_input);
         assert!(!ShellClientCapabilities::default().computer_window_activate);
         assert!(!ShellClientCapabilities::default().computer_text_input);
     }
@@ -2904,6 +2916,20 @@ mod envelope_tests {
         let capabilities: ShellClientCapabilities =
             serde_json::from_str(r#"{"computer_scroll_to_element":true}"#).unwrap();
         assert!(capabilities.computer_scroll_to_element);
+        assert!(!capabilities.computer_control);
+        assert!(!capabilities.computer_observe);
+    }
+
+    #[test]
+    fn computer_key_input_capability_is_distinct_from_control() {
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_control":true}"#).unwrap();
+        assert!(capabilities.computer_control);
+        assert!(!capabilities.computer_key_input);
+
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_key_input":true}"#).unwrap();
+        assert!(capabilities.computer_key_input);
         assert!(!capabilities.computer_control);
         assert!(!capabilities.computer_observe);
     }

@@ -60,6 +60,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "computer_activate_window",
             "computer_control",
             "computer_scroll_to_element",
+            "computer_key_input",
             "computer_input_text",
             "computer_snapshot",
             "computer_save_snapshot",

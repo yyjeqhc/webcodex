@@ -6,8 +6,8 @@ use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
     ShellCommandExecutionState, ShellFileOpRequest, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
 };
@@ -32,6 +32,47 @@ const COMPUTER_WAIT_SECS: u64 = 30;
 const MAX_COMPUTER_TARGETS: usize = 64;
 const DEFAULT_FIND_ELEMENTS_LIMIT: usize = 8;
 const MAX_FIND_ELEMENTS_LIMIT: usize = 32;
+const COMPUTER_KEY_INPUT_KEYS: &[&str] = &[
+    "enter",
+    "escape",
+    "tab",
+    "arrow_up",
+    "arrow_down",
+    "arrow_left",
+    "arrow_right",
+    "page_up",
+    "page_down",
+    "home",
+    "end",
+];
+const COMPUTER_KEY_INPUT_MODIFIERS: &[&str] = &["shift", "control", "option", "command"];
+
+fn normalize_computer_key_input(
+    key: &str,
+    modifiers: Option<Vec<String>>,
+) -> Result<Vec<String>, &'static str> {
+    if !COMPUTER_KEY_INPUT_KEYS.contains(&key) {
+        return Err("computer key input key is outside the closed vocabulary");
+    }
+    let mut modifiers = modifiers.unwrap_or_default();
+    if modifiers.len() > COMPUTER_KEY_INPUT_MODIFIERS.len() {
+        return Err("computer key input has too many modifiers");
+    }
+    for (index, modifier) in modifiers.iter().enumerate() {
+        if !COMPUTER_KEY_INPUT_MODIFIERS.contains(&modifier.as_str())
+            || modifiers[..index].contains(modifier)
+        {
+            return Err("computer key input modifiers are invalid or duplicated");
+        }
+    }
+    modifiers.sort_by_key(|modifier| {
+        COMPUTER_KEY_INPUT_MODIFIERS
+            .iter()
+            .position(|allowed| *allowed == modifier)
+            .unwrap_or(COMPUTER_KEY_INPUT_MODIFIERS.len())
+    });
+    Ok(modifiers)
+}
 
 fn validate_input_text(text: &str) -> Result<usize, &'static str> {
     let text_bytes = text.len();
@@ -271,6 +312,30 @@ impl ToolRuntime {
                     &client_id,
                     "computer_scroll_to_element",
                     json!({"surface_id": surface_id, "element_id": element_id}),
+                    auth,
+                    None,
+                    Some(surface_id.as_str()),
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerKeyInput {
+                client_id,
+                surface_id,
+                key,
+                modifiers,
+            } => {
+                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+                    return computer_error("invalid_surface", "surface_id is invalid");
+                }
+                let modifiers = match normalize_computer_key_input(&key, modifiers) {
+                    Ok(modifiers) => modifiers,
+                    Err(message) => return computer_error("invalid_request", message),
+                };
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_key_input",
+                    json!({"surface_id": surface_id, "key": key, "modifiers": modifiers}),
                     auth,
                     None,
                     Some(surface_id.as_str()),
@@ -776,6 +841,7 @@ impl ToolRuntime {
             "computer_element_state" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE],
             "computer_control" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL],
             "computer_scroll_to_element" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT],
+            "computer_key_input" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT],
             "computer_activate_window" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE],
             "computer_input_text" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT],
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
@@ -804,6 +870,14 @@ impl ToolRuntime {
             .get("action")
             .and_then(Value::as_str)
             .map(str::to_string);
+        let expected_key = payload
+            .get("key")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let expected_key_modifiers = payload
+            .get("modifiers")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
         let expected_text_bytes = payload.get("text").and_then(Value::as_str).map(str::len);
         let snapshot_advanced = kind == "computer_snapshot_region";
         let expected_snapshot_region = payload
@@ -970,6 +1044,15 @@ impl ToolRuntime {
                 ),
                 "Runner reported successful computer scroll but returned inconsistent metadata; inspect current UI state before retrying",
             ),
+            "computer_key_input" => computer_effect_validated_result(
+                validate_computer_key_input(
+                    output,
+                    expected_surface_id.unwrap_or_default(),
+                    expected_key.as_deref().unwrap_or_default(),
+                    &expected_key_modifiers,
+                ),
+                "Runner reported successful computer key input but returned inconsistent metadata; inspect current UI state before retrying",
+            ),
             "computer_input_text" => computer_effect_validated_result(
                 validate_computer_input_text(
                     output,
@@ -1070,6 +1153,7 @@ fn computer_request_is_effect(kind: &str) -> bool {
         "computer_activate_window"
             | "computer_control"
             | "computer_scroll_to_element"
+            | "computer_key_input"
             | "computer_input_text"
     )
 }
@@ -1262,6 +1346,7 @@ fn classify_runner_error(error: &str) -> &'static str {
         "accessibility_failed",
         "control_failed",
         "scroll_failed",
+        "key_input_failed",
         "input_failed",
         "outcome_unknown",
         "image_too_large",
@@ -1715,6 +1800,38 @@ fn validate_computer_scroll_to_element(
         return computer_error(
             "invalid_runner_response",
             "computer scroll result is inconsistent",
+        );
+    }
+    ToolResult::ok(output)
+}
+
+fn validate_computer_key_input(
+    output: Value,
+    expected_surface_id: &str,
+    expected_key: &str,
+    expected_modifiers: &Value,
+) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "computer key input result is not an object",
+            )
+        }
+    };
+    let allowed = ["platform", "surface_id", "key", "modifiers", "success"];
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
+        || output.get("key").and_then(Value::as_str) != Some(expected_key)
+        || output.get("modifiers") != Some(expected_modifiers)
+        || output.get("success").and_then(Value::as_bool) != Some(true)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "computer key input result is inconsistent",
         );
     }
     ToolResult::ok(output)
@@ -2309,6 +2426,69 @@ mod tests {
     }
 
     #[test]
+    fn computer_key_input_normalizes_closed_vocabulary_and_modifiers() {
+        assert_eq!(
+            normalize_computer_key_input(
+                "tab",
+                Some(vec!["command".to_string(), "shift".to_string()]),
+            )
+            .unwrap(),
+            vec!["shift".to_string(), "command".to_string()]
+        );
+        assert!(normalize_computer_key_input("a", None).is_err());
+        assert!(normalize_computer_key_input(
+            "enter",
+            Some(vec!["shift".to_string(), "shift".to_string()]),
+        )
+        .is_err());
+        assert!(
+            normalize_computer_key_input("enter", Some(vec!["caps_lock".to_string()]),).is_err()
+        );
+    }
+
+    #[test]
+    fn computer_key_input_validator_is_exact_and_post_dispatch_mismatch_is_unknown() {
+        let expected_modifiers = json!(["shift", "command"]);
+        let valid = validate_computer_key_input(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "key": "tab",
+                "modifiers": ["shift", "command"],
+                "success": true
+            }),
+            "surface_test",
+            "tab",
+            &expected_modifiers,
+        );
+        assert!(valid.success, "{:?}", valid.output);
+
+        let invalid = validate_computer_key_input(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "key": "tab",
+                "modifiers": ["command", "shift"],
+                "success": true,
+                "text": "MUST_NOT_SURVIVE"
+            }),
+            "surface_test",
+            "tab",
+            &expected_modifiers,
+        );
+        assert!(!invalid.success);
+        let unknown = computer_effect_validated_result(
+            invalid,
+            "inconsistent key input result; observe before retrying",
+        );
+        assert_eq!(unknown.output["error_kind"], "outcome_unknown");
+        assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+        assert!(!serde_json::to_string(&unknown.output)
+            .unwrap()
+            .contains("MUST_NOT_SURVIVE"));
+    }
+
+    #[test]
     fn computer_input_text_validator_is_exact_and_post_dispatch_mismatch_is_unknown() {
         let valid = validate_computer_input_text(
             json!({
@@ -2416,6 +2596,7 @@ mod tests {
         assert!(computer_request_is_effect("computer_activate_window"));
         assert!(computer_request_is_effect("computer_control"));
         assert!(computer_request_is_effect("computer_scroll_to_element"));
+        assert!(computer_request_is_effect("computer_key_input"));
         assert!(computer_request_is_effect("computer_input_text"));
         for read_only in [
             "computer_list_windows",
@@ -2429,7 +2610,7 @@ mod tests {
 
     #[test]
     fn computer_control_transport_failure_is_retryable_only_when_undispatched() {
-        // The same narrow delivery fence is shared by activate-window, scroll-to-element, and text input.
+        // The same narrow delivery fence is shared by activate-window, scroll-to-element, key input, and text input.
         let not_started = computer_effect_delivery_failure("transport lost", Some(false));
         assert!(!not_started.success);
         assert_eq!(not_started.output["error_kind"], "not_started");
@@ -2467,6 +2648,10 @@ mod tests {
         }
         let unknown = "outcome_unknown: AXPress messaging failed after dispatch";
         assert_eq!(classify_runner_error(unknown), "outcome_unknown");
+        assert_eq!(
+            classify_runner_error("key_input_failed: exact surface is not focused"),
+            "key_input_failed"
+        );
         let result = computer_effect_outcome_unknown(unknown);
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], "outcome_unknown");

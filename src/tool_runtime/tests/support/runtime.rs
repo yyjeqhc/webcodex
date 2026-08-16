@@ -111,6 +111,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "surface_id" => json!("surface_test"),
         "element_id" => json!("element_test"),
         "action" => json!("focus"),
+        "key" => json!("tab"),
         "id" => json!("private-drop"),
         "name" => json!("Private Drop"),
         "kind" => json!("note"),

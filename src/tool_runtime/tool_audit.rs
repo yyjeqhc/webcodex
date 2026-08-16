@@ -131,6 +131,13 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "computer_scroll_to_element" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id", "element_id"]);
         }
+        "computer_key_input" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["client_id", "surface_id", "key", "modifiers"],
+            );
+        }
         "computer_input_text" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id", "element_id"]);
             out.insert(
@@ -533,6 +540,12 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
             "success": output.get("success").cloned().unwrap_or(Value::Null),
         }),
+        "computer_key_input" => serde_json::json!({
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "key": output.get("key").cloned().unwrap_or(Value::Null),
+            "modifiers": output.get("modifiers").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+        }),
         "computer_input_text" => serde_json::json!({
             "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
             "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
@@ -801,6 +814,43 @@ mod computer_privacy_tests {
         assert_eq!(summary["element_id"], "element_safe");
         assert_eq!(summary["success"], true);
         assert!(!serialized.contains("PRIVATE SCROLLED TARGET"));
+        assert!(!serialized.contains("SUPER_SECRET_VALUE"));
+    }
+
+    #[test]
+    fn computer_key_input_ledger_is_closed_metadata_only() {
+        let request = json!({
+            "client_id": "mini",
+            "surface_id": "surface_safe",
+            "key": "tab",
+            "modifiers": ["shift"],
+            "text": "MUST_NOT_PERSIST",
+            "keycode": 123
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_key_input", &request);
+        let request_serialized = serde_json::to_string(&request_summary).unwrap();
+        assert_eq!(request_summary["key"], "tab");
+        assert_eq!(request_summary["modifiers"], json!(["shift"]));
+        assert!(!request_serialized.contains("MUST_NOT_PERSIST"));
+        assert!(request_summary.get("keycode").is_none());
+
+        let output = json!({
+            "platform": "macos",
+            "surface_id": "surface_safe",
+            "key": "tab",
+            "modifiers": ["shift"],
+            "success": true,
+            "title": "PRIVATE FOCUSED TARGET",
+            "value": "SUPER_SECRET_VALUE"
+        });
+        let summary = session_log_result_for_tool("computer_key_input", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["surface_id"], "surface_safe");
+        assert_eq!(summary["key"], "tab");
+        assert_eq!(summary["modifiers"], json!(["shift"]));
+        assert_eq!(summary["success"], true);
+        assert!(!serialized.contains("PRIVATE FOCUSED TARGET"));
         assert!(!serialized.contains("SUPER_SECRET_VALUE"));
     }
 
@@ -1184,6 +1234,17 @@ impl ToolCall {
                 "client_id": client_id,
                 "surface_id": surface_id,
                 "element_id": element_id,
+            }),
+            Self::ComputerKeyInput {
+                client_id,
+                surface_id,
+                key,
+                modifiers,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "key": key,
+                "modifiers": modifiers,
             }),
             Self::ComputerInputText {
                 client_id,

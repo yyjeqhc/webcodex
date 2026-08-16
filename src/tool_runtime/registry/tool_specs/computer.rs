@@ -2,9 +2,9 @@ use super::super::input_schemas::{
     computer_accessibility_status_input_schema, computer_accessibility_tree_input_schema,
     computer_activate_window_input_schema, computer_control_input_schema,
     computer_element_state_input_schema, computer_find_elements_input_schema,
-    computer_input_text_input_schema, computer_list_windows_input_schema,
-    computer_save_snapshot_input_schema, computer_scroll_to_element_input_schema,
-    computer_snapshot_input_schema, empty_input_schema,
+    computer_input_text_input_schema, computer_key_input_input_schema,
+    computer_list_windows_input_schema, computer_save_snapshot_input_schema,
+    computer_scroll_to_element_input_schema, computer_snapshot_input_schema, empty_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -55,6 +55,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "computer_scroll_to_element",
             "Scroll one exact macOS Accessibility element into view with native AX scroll-to-visible. Stale, mismatched, unsupported, or protected targets fail closed; no wheel, coordinate, AppleScript, or shell fallback. Lost post-dispatch responses are outcome-unknown; observe UI state before retrying.",
             computer_scroll_to_element_input_schema(),
+        ),
+        tool_spec(
+            "computer_key_input",
+            "Post one closed navigation/action key to an exact macOS window that must already be frontmost and focused. Supports only Enter, Escape, Tab, arrows, PageUp/PageDown, Home/End plus bounded modifiers. Ordinary text remains computer_input_text. No arbitrary characters/keycodes, repeat/held state, implicit focus, paste, AppleScript, shell, or pointer fallback. Lost post-dispatch responses are outcome-unknown; observe UI state before retrying.",
+            computer_key_input_input_schema(),
         ),
         tool_spec(
             "computer_input_text",

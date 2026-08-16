@@ -1386,6 +1386,15 @@ pub enum ToolCall {
         element_id: String,
     },
 
+    /// Post one closed navigation/action key to one exact already-focused window.
+    ComputerKeyInput {
+        client_id: String,
+        surface_id: String,
+        key: String,
+        #[serde(default)]
+        modifiers: Option<Vec<String>>,
+    },
+
     /// Set bounded text on an already-focused, empty exact registered AX text element.
     ComputerInputText {
         client_id: String,
@@ -1898,6 +1907,7 @@ impl ToolCall {
             Self::ComputerActivateWindow { .. } => "computer_activate_window",
             Self::ComputerControl { .. } => "computer_control",
             Self::ComputerScrollToElement { .. } => "computer_scroll_to_element",
+            Self::ComputerKeyInput { .. } => "computer_key_input",
             Self::ComputerInputText { .. } => "computer_input_text",
             Self::ComputerSnapshot { .. } => "computer_snapshot",
             Self::ComputerSaveSnapshot { .. } => "computer_save_snapshot",

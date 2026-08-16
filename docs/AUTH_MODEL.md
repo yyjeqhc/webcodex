@@ -226,21 +226,28 @@ does not expose the broader projects, policy, jobs, host, or provider inventory
 from `list_agents`.
 
 `computer:control` is the separate effect scope for `computer_activate_window`,
-`computer_control`, `computer_scroll_to_element`, and `computer_input_text`.
+`computer_control`, `computer_scroll_to_element`, `computer_key_input`, and `computer_input_text`.
 `computer_activate_window` may activate/raise only an exact previously observed
 `surface_id`; it cannot select or launch an application by name, PID, bundle,
 executable, path, or command. `computer_control` remains deliberately closed to
 native macOS Accessibility press and focus actions. `computer_scroll_to_element`
 is a separate semantic effect that revalidates one exact observed element and
 uses native AX scroll-to-visible only when that element supports it; callers do
-not supply wheel deltas, direction, distance, or coordinates. `computer_input_text`
-writes bounded text through native AXValue only to an already focused, enabled
-when known, empty, non-secure, unprotected supported text element. There is no
-coordinate-click, generic wheel, keypress, dragging, clipboard, app-launch,
-AppleScript, shell, paste, or synthetic-keystroke fallback in this contract. A
+not supply wheel deltas, direction, distance, or coordinates. `computer_key_input`
+is a separate closed effect for Enter, Escape, Tab, arrows, paging/home/end plus
+bounded modifiers. The exact `surface_id` must still be the frontmost focused
+window, and the Runner does not focus or activate it implicitly. Ordinary text,
+arbitrary characters/keycodes, repeat counts, or held-key state are not accepted.
+`computer_input_text` writes bounded text through native AXValue only to an already
+focused, enabled when known, empty, non-secure, unprotected supported text element.
+There is no coordinate-click, generic wheel, open-ended key input, dragging,
+clipboard, app-launch, AppleScript, shell, paste, or implicit-focus fallback in this contract. A
 lost response after an effect may have been dispatched is reported as an
 unknown outcome and must be reconciled by observing current UI state before any
-retry.
+retry. A native key press is delivered as two adjacent PID-targeted key-down and
+key-up posts after all preflight work is complete; Quartz exposes no batch post,
+so Runner termination in the narrow interval between them is a partial
+`outcome_unknown`, not a caller-controlled held-key mode.
 
 Scopes are only one layer of the check. After target discovery, observation and
 effect calls name one exact Runner `client_id`, and the Server also requires
@@ -252,7 +259,8 @@ and/or output dimension bound; `computer_accessibility_observe` for Accessibilit
 `computer_element_state` for normalized state of one exact observed
 element, `computer_window_activate` for exact window activation/raise,
 `computer_control` for press/focus, `computer_scroll_to_element` for native
-semantic scroll-to-visible, and `computer_text_input` for bounded text input.
+semantic scroll-to-visible, `computer_key_input` for closed focused-window key
+input, and `computer_text_input` for bounded text input.
 Element-state observation re-resolves the existing ephemeral handle and
 returns no AXValue; protected/secure elements suppress even `value_empty`. The existing shared-key OAuth bridge/default Connector scope
 intentionally grants neither Computer scope, and these Computer tools are

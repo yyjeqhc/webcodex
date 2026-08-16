@@ -356,6 +356,56 @@ fn tool_specs_computer_scroll_to_element_is_semantic_and_exact() {
 }
 
 #[test]
+fn tool_specs_computer_key_input_is_closed_and_exact() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "computer_key_input");
+    assert_eq!(
+        required_fields(spec),
+        vec![
+            "client_id".to_string(),
+            "surface_id".to_string(),
+            "key".to_string(),
+        ]
+    );
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_key_input input schema",
+        present: ["client_id", "surface_id", "key", "modifiers"],
+        absent: ["element_id", "text", "keycode", "repeat", "held", "action", "x", "y"]
+    );
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+    assert_eq!(props["modifiers"]["maxItems"], 4);
+    assert_eq!(props["modifiers"]["uniqueItems"], true);
+    assert_eq!(
+        props["key"]["enum"],
+        json!([
+            "enter",
+            "escape",
+            "tab",
+            "arrow_up",
+            "arrow_down",
+            "arrow_left",
+            "arrow_right",
+            "page_up",
+            "page_down",
+            "home",
+            "end"
+        ])
+    );
+
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_key_input output schema",
+        present: ["platform", "surface_id", "key", "modifiers", "success"],
+        absent: ["element_id", "text", "keycode", "repeat", "held", "title", "value"]
+    );
+}
+
+#[test]
 fn tool_specs_schema_spot_checks() {
     // Table-driven: (tool_name, required_fields, forbidden_fields).
     // Required fields are checked via exact equality to catch unexpected additions.

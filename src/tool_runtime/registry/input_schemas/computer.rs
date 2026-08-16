@@ -108,6 +108,20 @@ pub(crate) fn computer_scroll_to_element_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_key_input_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose already-focused macOS window receives the key."},
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque process-local surface_id that must still be the frontmost focused window."},
+            "key": {"type": "string", "enum": ["enter", "escape", "tab", "arrow_up", "arrow_down", "arrow_left", "arrow_right", "page_up", "page_down", "home", "end"], "description": "Closed navigation/action key vocabulary. Ordinary text must use computer_input_text."},
+            "modifiers": {"type": "array", "maxItems": 4, "uniqueItems": true, "items": {"type": "string", "enum": ["shift", "control", "option", "command"]}, "description": "Optional bounded modifier set. Modifiers apply only to this one key event pair and are never held across calls."}
+        },
+        "required": ["client_id", "surface_id", "key"]
+    })
+}
+
 pub(crate) fn computer_input_text_input_schema() -> Value {
     json!({
         "type": "object",

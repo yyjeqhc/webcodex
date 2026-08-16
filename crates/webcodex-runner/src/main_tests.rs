@@ -6694,6 +6694,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         computer_element_state: true,
         computer_control: true,
         computer_scroll_to_element: true,
+        computer_key_input: true,
         computer_window_activate: true,
         computer_text_input: true,
         project_lifecycle: false,
@@ -6774,6 +6775,11 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         caps.computer_scroll_to_element,
         cfg!(target_os = "macos"),
         "computer scroll-to-element is independently advertised only by the macOS native implementation"
+    );
+    assert_eq!(
+        caps.computer_key_input,
+        cfg!(target_os = "macos"),
+        "computer key input is independently advertised only by the macOS native implementation"
     );
     assert_eq!(
         caps.computer_window_activate,

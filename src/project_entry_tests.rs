@@ -218,6 +218,7 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
                 display_name: Some("configured project Agent".to_string()),
                 owner: Some("local-owner".to_string()),
                 hostname: Some("private-host".to_string()),
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     file_read: true,

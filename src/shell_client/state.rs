@@ -1,9 +1,10 @@
 use super::auth::ShellClientAuthGroup;
 use crate::shell_protocol::{
-    AgentBuildInfo, AgentPolicySummary, PersistentShellResult, ShellAgentProjectSummary,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellCommandExecutionState,
-    ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata, ShellJobValidationProgress,
-    ShellRunResponse, JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
+    AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
+    ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
+    ShellCommandExecutionState, ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata,
+    ShellJobValidationProgress, ShellRunResponse, JOB_INVENTORY_MAX_TERMINAL_JOBS,
+    JOB_TERMINAL_RETENTION_SECS,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicU64;
@@ -20,6 +21,9 @@ pub(super) struct ShellClientRecord {
     pub(super) display_name: Option<String>,
     pub(super) owner: Option<String>,
     pub(super) hostname: Option<String>,
+    /// Bounded Runner-configured planning metadata. This is not policy or live
+    /// state and is replaced by each successful registration.
+    pub(super) host_context: Option<AgentHostContext>,
     pub(super) capabilities: ShellClientCapabilities,
     pub(super) projects: Vec<ShellAgentProjectSummary>,
     pub(super) last_seen: i64,

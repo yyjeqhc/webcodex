@@ -799,6 +799,7 @@ mod tests {
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     jobs: true,
                     async_jobs: true,

@@ -6,7 +6,8 @@ use crate::agent_init::{
     TRANSPORT_WEBSOCKET,
 };
 use crate::shell_protocol::{
-    AgentConfigReloadStatus, ShellClientCapabilities, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    AgentConfigReloadStatus, AgentHostContext, ShellClientCapabilities,
+    JOB_INVENTORY_MAX_ACTIVE_JOBS,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -31,6 +32,10 @@ pub(crate) struct AgentConfig {
     pub(crate) owner: Option<String>,
     #[serde(default)]
     pub(crate) hostname: Option<String>,
+    /// Stable, bounded planning context for this host. This is registration
+    /// metadata only and never changes Runner authority or capability.
+    #[serde(default)]
+    pub(crate) host_context: Option<AgentHostContext>,
     #[serde(default)]
     pub(crate) projects_dir: Option<PathBuf>,
     /// Optional Runner-owned root for managed temporary projects. When absent,
@@ -484,6 +489,7 @@ pub(crate) fn restart_required_fields(
         client_id,
         display_name,
         hostname,
+        host_context,
         max_concurrent_jobs,
         owner,
         poll_interval_ms,
@@ -902,6 +908,9 @@ pub(crate) fn load_config(path: &Path) -> Result<AgentConfig, String> {
     }
     if cfg.websocket_connect_timeout_secs == 0 {
         return Err("websocket_connect_timeout_secs must be > 0".to_string());
+    }
+    if let Some(host_context) = cfg.host_context.take() {
+        cfg.host_context = Some(host_context.normalized()?);
     }
     if let Some(root) = cfg.temporary_projects_root.as_ref() {
         if root.as_os_str().is_empty() || !root.is_absolute() {

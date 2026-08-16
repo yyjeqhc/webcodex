@@ -63,6 +63,11 @@ impl ShellClientRegistry {
         let agent_instance_id = body.agent_instance_id.trim().to_string();
         let capabilities = body.capabilities.clone().unwrap_or_default();
         let job_inventory = body.job_inventory.clone();
+        let host_context = body
+            .host_context
+            .clone()
+            .map(crate::shell_protocol::AgentHostContext::normalized)
+            .transpose()?;
         let mut policy = body.policy;
         if let Some(policy) = policy.as_mut() {
             policy.tool_providers = normalize_tool_providers(policy.tool_providers.take());
@@ -74,6 +79,7 @@ impl ShellClientRegistry {
             display_name: trim_string(body.display_name),
             owner: trim_string(body.owner),
             hostname: trim_string(body.hostname),
+            host_context,
             capabilities: capabilities.clone(),
             projects: normalize_project_summaries(body.projects),
             last_seen: now,
@@ -896,6 +902,7 @@ impl ShellClientRegistry {
             display_name: client.display_name.clone(),
             owner: client.owner.clone(),
             hostname: client.hostname.clone(),
+            host_context: client.host_context.clone(),
             status: if connected { "online" } else { "stale" }.to_string(),
             connected,
             last_seen: client.last_seen,

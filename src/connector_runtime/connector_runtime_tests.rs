@@ -62,6 +62,7 @@ async fn register_agent_with_lsp_capabilities(
                 display_name: None,
                 owner: Some("owner".to_string()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     file_read: true,

@@ -1915,6 +1915,7 @@ async fn register_job_agent_for_auth(
                 display_name: None,
                 owner: None,
                 hostname: None,
+                host_context: None,
                 capabilities: Some(caps),
                 projects: Some(vec![registered_project(
                     project_id,

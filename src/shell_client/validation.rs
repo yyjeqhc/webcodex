@@ -31,7 +31,7 @@ pub(super) fn normalize_config_reload(
     let mut status = status?;
     const RESULTS: &str = "not_attempted success partial failure unsupported";
     const ERRORS: &str = "config_read_failed config_parse_failed config_validation_failed provider_config_invalid reload_unsupported";
-    const FIELDS: &str = "capabilities client_id display_name hostname max_concurrent_jobs owner poll_interval_ms projects_dir temporary_projects_root quic server_url token transport websocket_connect_timeout_secs";
+    const FIELDS: &str = "capabilities client_id display_name host_context hostname max_concurrent_jobs owner poll_interval_ms projects_dir temporary_projects_root quic server_url token transport websocket_connect_timeout_secs";
     if status.generation == 0
         || !RESULTS
             .split_whitespace()

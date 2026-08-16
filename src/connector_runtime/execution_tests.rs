@@ -110,6 +110,7 @@ pub(crate) async fn console_fixture() -> ConsoleFixture {
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities::default()),
                 projects: None,
                 agent_protocol_version: Some("test".into()),
@@ -172,6 +173,7 @@ async fn fixture_built(
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     file_read: true,
@@ -562,6 +564,7 @@ async fn connector_readiness_uses_registered_agent_capabilities() {
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     file_read: true,
@@ -1871,6 +1874,7 @@ async fn go_json_execution_replay_does_not_require_current_runner_capability() {
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     file_read: true,
@@ -2136,6 +2140,7 @@ async fn old_agent_cannot_receive_a_structured_validation_job() {
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     jobs: true,
                     async_jobs: true,
@@ -3453,6 +3458,7 @@ async fn read_only_commands_run_is_denied_even_when_agent_advertises_sandbox() {
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     sandbox_inspect_commands: true,
@@ -3510,6 +3516,7 @@ async fn enable_inspect_sandbox(fixture: &Fixture) {
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     file_read: true,
@@ -4009,6 +4016,7 @@ async fn manifestless_python_unittest_checks_finish_with_clean_result() {
                 display_name: None,
                 owner: Some("owner".into()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     file_read: true,

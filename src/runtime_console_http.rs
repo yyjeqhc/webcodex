@@ -359,6 +359,7 @@ mod tests {
                     display_name: Some(format!("Device {client_id}")),
                     owner: None,
                     hostname: Some(format!("private-host-{client_id}")),
+                    host_context: None,
                     capabilities: Some(ShellClientCapabilities::default()),
                     projects: Some(vec![project(project_id, private_path)]),
                     agent_protocol_version: Some("polling-v1".to_string()),

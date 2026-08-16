@@ -273,14 +273,15 @@ No alias or dual shape is kept for the removed flags (consistent with §2).
 ## 9. Mixed-version diagnostics without compatibility fallback
 
 Runner registration reports `process_started_at` and
-`build {version, git_commit}`; `runtime_status` projects
-`version_compatibility`.
+`build {version, git_commit, git_dirty}`; `runtime_status` projects
+package/protocol compatibility separately from exact source alignment.
 
 | Decision | Choice |
 |---|---|
-| Shape | `{status: compatible \| version_mismatch \| capability_mismatch \| no_runners, server: {version, build}, runners: [{client_id, agent_protocol_version, protocol_supported, build_version, build_git_commit, build_matches_server, status, reason_code, action}]}` |
-| Connected ≠ compatible | Transport liveness never implies protocol/build compatibility |
-| Direction | Per-runner facts say which side to upgrade (`action`); no fallback shims or version-translation layers |
+| Compatibility shape | `version_compatibility.status` is `compatible \| version_mismatch \| capability_mismatch \| no_runners`; each Runner reports `version_matches_server`, protocol facts, and compatibility reason/action. Package-version compatibility is not exact source identity. |
+| Source alignment | `version_compatibility.source_alignment.status` is `aligned \| different \| unknown \| no_runners`; per-Runner source alignment reports `git_commit_matches_server` and `source_matches_server`. Exact alignment is true only when commits match and both builds explicitly report `git_dirty=false`; differing commits or a dirty side are different, incomplete build facts are unknown. |
+| Connected ≠ compatible | Transport liveness never implies protocol/package compatibility or exact source alignment. |
+| Direction | Compatibility and source-alignment facts provide separate actions; there are no fallback shims or version-translation layers. |
 | Shell dialects | `ShellProfilesSummary` reports `default_dialect` (`sh` \| `bash` \| `custom`) and `available_dialects`; each profile entry reports `dialect`. The server never guesses the remote shell; custom profiles that do not map to sh/bash report `custom`, and agents needing deterministic syntax must pass an explicit `shell=sh\|bash`. No PATH/env/init-script contents are ever sent |
 
 ---

@@ -70,7 +70,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "list_agents" => Some(wrapped_output_schema(vec![
             (
                 "agents",
-                array_schema(open_object_schema("Agent summary including job_concurrency limit/running/queued facts."), "Agent summaries."),
+                array_schema(open_object_schema("Agent summary including bounded host_context planning metadata and job_concurrency limit/running/queued facts."), "Agent summaries."),
             ),
             (
                 "clients",

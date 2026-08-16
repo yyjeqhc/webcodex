@@ -346,6 +346,7 @@ async fn register_lsp_agent_capabilities(
             display_name: None,
             owner: None,
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 shell: true,
                 file_read: true,
@@ -1521,6 +1522,7 @@ async fn capability_default_false_on_old_registration() {
             display_name: None,
             owner: None,
             hostname: None,
+            host_context: None,
             capabilities: Some(serde_json::from_value(json!({"shell": true})).unwrap()),
             projects: None,
             agent_protocol_version: Some("polling-v1".into()),

@@ -256,6 +256,7 @@ async fn register_import_agent_with_capabilities(
             display_name: None,
             owner: None,
             hostname: None,
+            host_context: None,
             capabilities,
             projects: Some(vec![ShellAgentProjectSummary {
                 id: "demo".to_string(),

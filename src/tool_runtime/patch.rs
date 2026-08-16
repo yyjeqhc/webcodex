@@ -494,6 +494,7 @@ mod tests {
                 display_name: None,
                 owner: None,
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     ..ShellClientCapabilities::default()

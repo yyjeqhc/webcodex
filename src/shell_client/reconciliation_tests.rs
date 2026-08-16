@@ -72,6 +72,7 @@ fn register_request(instance: &str, inventory: ShellJobInventory) -> ShellClient
         display_name: Some("reconciliation test runner".to_string()),
         owner: Some("tester".to_string()),
         hostname: None,
+        host_context: None,
         capabilities: Some(reconciliation_capabilities()),
         projects: Some(vec![project_summary()]),
         agent_protocol_version: Some("polling-v1".to_string()),

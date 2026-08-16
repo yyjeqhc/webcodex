@@ -6,7 +6,8 @@ use super::support::*;
 use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::shell_protocol::{
-    AgentBuildInfo, ShellClientCapabilities, ShellClientRegisterRequest, ShellJobOpRequest,
+    AgentBuildInfo, AgentHostContext, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellJobOpRequest,
 };
 use crate::tool_runtime::tool_inputs::{SessionMode, StartupDetail};
 use crate::tool_runtime::{ToolCall, ToolRuntime};
@@ -25,6 +26,7 @@ fn register_request(
         display_name: None,
         owner: None,
         hostname: None,
+        host_context: None,
         capabilities: Some(ShellClientCapabilities {
             shell: true,
             git: true,
@@ -812,16 +814,23 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
     let runtime = test_runtime();
     let server_version = env!("CARGO_PKG_VERSION");
 
-    // Matching build + supported protocol → compatible.
+    // Same package version + supported protocol remains compatible even when
+    // exact source differs. Source alignment is a separate diagnostic axis.
+    let server_build = crate::build_info::runtime_build_info();
+    let different_commit = format!(
+        "{}-different",
+        server_build.git_commit.unwrap_or("server-source")
+    );
     runtime
         .shell_clients
         .register(register_request(
-            "same-build",
+            "same-version-different-source",
             "inst-1",
             None,
             Some(AgentBuildInfo {
                 version: Some(server_version.to_string()),
-                git_commit: Some("abc123".to_string()),
+                git_commit: Some(different_commit),
+                git_dirty: Some(false),
             }),
             "polling-v1",
         ))
@@ -837,6 +846,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
             Some(AgentBuildInfo {
                 version: Some("0.0.1".to_string()),
                 git_commit: None,
+                git_dirty: None,
             }),
             "websocket-v1",
         ))
@@ -867,11 +877,21 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
             .find(|runner| runner["client_id"] == id)
             .unwrap_or_else(|| panic!("runner {id} missing"))
     };
-    assert_eq!(by_id("same-build")["status"], "compatible");
+    let different_source = by_id("same-version-different-source");
+    assert_eq!(different_source["status"], "compatible");
+    assert_eq!(different_source["version_matches_server"], true);
+    assert_eq!(different_source["source_alignment"]["status"], "different");
+    assert_eq!(
+        different_source["source_alignment"]["reason_code"],
+        "runner_git_commit_differs_from_server"
+    );
+    assert_eq!(compat["source_alignment"]["status"], "different");
+    assert!(different_source.get("build_matches_server").is_none());
+
     assert_eq!(by_id("old-build")["status"], "version_mismatch");
     assert_eq!(
         by_id("old-build")["reason_code"],
-        "runner_build_differs_from_server"
+        "runner_version_differs_from_server"
     );
     assert!(by_id("old-build")["action"]
         .as_str()
@@ -882,10 +902,115 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
         by_id("legacy")["reason_code"],
         "agent_protocol_version_unsupported"
     );
+    let compact = crate::tool_runtime::runtime_info::compact_runtime_status(&status.output);
+    let compact_runner = compact["agents"]["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|runner| runner["client_id"] == "same-version-different-source")
+        .unwrap();
+    assert_eq!(compact_runner["version_matches_server"], true);
+    assert_eq!(compact_runner["source_alignment"]["status"], "different");
+    assert!(compact_runner.get("build_matches_server").is_none());
+    assert_eq!(
+        compact["version_compatibility"]["source_alignment"]["status"],
+        "different"
+    );
+
     // No secrets/paths in the diagnostics.
     let text = compat.to_string().to_lowercase();
     assert!(!text.contains("token"));
     assert!(!text.contains("/root/"));
+}
+
+#[tokio::test]
+async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
+    let runtime = test_runtime();
+    let mut request = register_request("sf", "inst-host-context", None, None, "polling-v1");
+    request.host_context = Some(AgentHostContext {
+        role: Some("server_host".to_string()),
+        runtime: Some("Prefer this Runner for operations on its own host.".to_string()),
+        service: Some("Use the ordinary host-local service mechanism.".to_string()),
+        network: None,
+        architecture: Some("Hosts the WebCodex Server/control plane.".to_string()),
+    });
+    runtime.shell_clients.register(request).await.unwrap();
+
+    let status = runtime.runtime_status(None).await;
+    assert!(status.success);
+    let full = status.output["agents"]["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|client| client["client_id"] == "sf")
+        .unwrap();
+    assert_eq!(full["host_context"]["source"], "runner_config");
+    assert_eq!(full["host_context"]["role"], "server_host");
+    assert_eq!(
+        full["host_context"]["architecture"],
+        "Hosts the WebCodex Server/control plane."
+    );
+
+    let compact = crate::tool_runtime::runtime_info::compact_runtime_status(&status.output);
+    let compact_sf = compact["agents"]["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|client| client["client_id"] == "sf")
+        .unwrap();
+    assert_eq!(compact_sf["agent_instance_id"], "inst-host-context");
+    assert_eq!(compact_sf["host_context"]["role"], "server_host");
+    assert!(compact_sf.get("capabilities").is_none());
+    assert!(compact_sf.get("policy").is_none());
+
+    let listed = runtime.list_agents(None).await;
+    assert!(listed.success);
+    let listed_sf = listed.output["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|client| client["client_id"] == "sf")
+        .unwrap();
+    assert_eq!(listed_sf["host_context"]["source"], "runner_config");
+    assert_eq!(listed_sf["host_context"]["role"], "server_host");
+
+    // Same-instance reconnect republishes the current startup context; it does
+    // not depend on the previous transport record for this descriptive fact.
+    let mut reconnect = register_request("sf", "inst-host-context", None, None, "websocket-v1");
+    reconnect.host_context = Some(AgentHostContext {
+        role: Some("server_host".to_string()),
+        network: Some("Internal destinations normally use the direct path.".to_string()),
+        ..Default::default()
+    });
+    runtime.shell_clients.register(reconnect).await.unwrap();
+    let after_reconnect = runtime.runtime_status(None).await;
+    let sf = after_reconnect.output["agents"]["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|client| client["client_id"] == "sf")
+        .unwrap();
+    assert_eq!(
+        sf["host_context"]["network"],
+        "Internal destinations normally use the direct path."
+    );
+}
+
+#[tokio::test]
+async fn runner_host_context_is_revalidated_at_server_registration() {
+    let runtime = test_runtime();
+    let mut request = register_request("bad-context", "inst-bad", None, None, "polling-v1");
+    request.host_context = Some(AgentHostContext {
+        role: Some("Server Host".to_string()),
+        ..Default::default()
+    });
+    let err = runtime.shell_clients.register(request).await.unwrap_err();
+    assert!(err.contains("host_context.role"), "{err}");
+    assert!(runtime
+        .shell_clients
+        .get_client_view("bad-context")
+        .await
+        .is_none());
 }
 
 /// Drive a `start_coding_task` dispatch while servicing the fake agent's git

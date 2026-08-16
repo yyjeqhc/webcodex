@@ -366,6 +366,7 @@ mod tests {
                 display_name: Some("ws-test".to_string()),
                 owner: Some("tester".to_string()),
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     shell: true,
                     file_read: true,

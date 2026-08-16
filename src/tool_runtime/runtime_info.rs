@@ -69,6 +69,7 @@ impl ToolRuntime {
                     "display_name": c.display_name,
                     "owner": c.owner,
                     "hostname": c.hostname,
+                    "host_context": host_context_projection(c.host_context.as_ref()),
                     "status": c.status,
                     "connected": c.connected,
                     "agent_protocol_version": c.agent_protocol_version,
@@ -169,6 +170,7 @@ impl ToolRuntime {
                     "display_name": c.display_name,
                     "owner": c.owner,
                     "status": c.status,
+                    "host_context": host_context_projection(c.host_context.as_ref()),
                     "connected": c.connected,
                     "agent_protocol_version": c.agent_protocol_version,
                     "transport": c.transport,
@@ -373,6 +375,7 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "count": status.pointer("/agents/count").cloned().unwrap_or_else(|| json!(0)),
             "online_count": status.pointer("/agents/online_count").cloned().unwrap_or_else(|| json!(0)),
             "stale_count": status.pointer("/agents/stale_count").cloned().unwrap_or_else(|| json!(0)),
+            "clients": compact_runner_clients(status),
             "summary": status.pointer("/agents/summary").cloned().unwrap_or_else(|| json!({
                 "count": 0,
                 "online": 0,
@@ -403,9 +406,58 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
         })),
         "version_compatibility": {
             "status": status.pointer("/version_compatibility/status").cloned().unwrap_or_else(|| json!("unknown")),
+            "source_alignment": status.pointer("/version_compatibility/source_alignment").cloned().unwrap_or_else(|| json!({"status": "unknown"})),
         },
         "authority": status.get("authority").cloned().unwrap_or(Value::Null),
     })
+}
+
+fn compact_runner_clients(status: &Value) -> Vec<Value> {
+    let agents = status
+        .pointer("/agents/clients")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let compatibility = status
+        .pointer("/version_compatibility/runners")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    agents
+        .iter()
+        .filter_map(|agent| {
+            let client_id = agent.get("client_id")?.as_str()?;
+            let compat = compatibility
+                .iter()
+                .find(|candidate| candidate.get("client_id").and_then(Value::as_str) == Some(client_id));
+            Some(json!({
+                "client_id": client_id,
+                "agent_instance_id": agent.get("agent_instance_id").cloned().unwrap_or(Value::Null),
+                "status": agent.get("status").cloned().unwrap_or(Value::Null),
+                "transport": agent.get("transport").cloned().unwrap_or(Value::Null),
+                "host_context": agent.get("host_context").cloned().unwrap_or(Value::Null),
+                "build_git_commit": compat.and_then(|value| value.get("build_git_commit")).cloned().unwrap_or(Value::Null),
+                "build_git_dirty": compat.and_then(|value| value.get("build_git_dirty")).cloned().unwrap_or(Value::Null),
+                "version_matches_server": compat.and_then(|value| value.get("version_matches_server")).cloned().unwrap_or(Value::Null),
+                "source_alignment": compat.and_then(|value| value.get("source_alignment")).cloned().unwrap_or_else(|| json!({"status": "unknown"})),
+            }))
+        })
+        .collect()
+}
+
+fn host_context_projection(context: Option<&crate::shell_protocol::AgentHostContext>) -> Value {
+    match context {
+        Some(context) => json!({
+            "source": "runner_config",
+            "role": context.role,
+            "runtime": context.runtime,
+            "service": context.service,
+            "network": context.network,
+            "architecture": context.architecture,
+        }),
+        None => Value::Null,
+    }
 }
 
 /// Stale threshold for runner-derived layers (heartbeat window).
@@ -750,26 +802,71 @@ fn version_compatibility(clients: &[ShellClientView]) -> Value {
     } else {
         "compatible"
     };
+    let mut source_overall = if clients.is_empty() {
+        "no_runners"
+    } else {
+        "aligned"
+    };
     let runners: Vec<Value> = clients
         .iter()
         .map(|client| {
             let protocol_supported =
                 SUPPORTED_AGENT_PROTOCOL_VERSIONS.contains(&client.agent_protocol_version.as_str());
             let build_version = client.build.as_ref().and_then(|b| b.version.clone());
-            let build_matches_server = build_version
+            let build_git_commit = client.build.as_ref().and_then(|b| b.git_commit.clone());
+            let build_git_dirty = client.build.as_ref().and_then(|b| b.git_dirty);
+            let version_matches_server = build_version
                 .as_deref()
                 .map(|version| version == server_version);
+            let git_commit_matches_server = match (build_git_commit.as_deref(), build.git_commit) {
+                (Some(runner), Some(server)) => Some(runner == server),
+                _ => None,
+            };
+            let source_matches_server = match (
+                git_commit_matches_server,
+                build_git_dirty,
+                build.git_dirty,
+            ) {
+                (Some(false), _, _) => Some(false),
+                (Some(true), Some(false), Some(false)) => Some(true),
+                (Some(true), Some(true), _) | (Some(true), _, Some(true)) => Some(false),
+                _ => None,
+            };
+            let (source_status, source_reason_code, source_action) = match source_matches_server {
+                Some(true) => ("aligned", None, None),
+                Some(false) if git_commit_matches_server == Some(false) => (
+                    "different",
+                    Some("runner_git_commit_differs_from_server"),
+                    Some("redeploy the older side when exact dogfood source alignment is required"),
+                ),
+                Some(false) => (
+                    "different",
+                    Some("dirty_build_prevents_exact_source_alignment"),
+                    Some("rebuild clean artifacts before relying on exact source alignment"),
+                ),
+                None => (
+                    "unknown",
+                    Some("build_source_identity_incomplete"),
+                    Some("use builds that report git commit and dirty state for exact source alignment"),
+                ),
+            };
+            match (source_status, source_overall) {
+                ("different", _) => source_overall = "different",
+                ("unknown", "aligned") => source_overall = "unknown",
+                _ => {}
+            }
+
             let (status, reason_code, action) = if !protocol_supported {
                 (
                     "capability_mismatch",
                     Some("agent_protocol_version_unsupported"),
                     Some("upgrade the runner to a build announcing a supported protocol version"),
                 )
-            } else if build_matches_server == Some(false) {
+            } else if version_matches_server == Some(false) {
                 (
                     "version_mismatch",
-                    Some("runner_build_differs_from_server"),
-                    Some("align server and runner builds (redeploy the older side)"),
+                    Some("runner_version_differs_from_server"),
+                    Some("align server and runner package versions (redeploy the older side)"),
                 )
             } else {
                 ("compatible", None, None)
@@ -786,16 +883,27 @@ fn version_compatibility(clients: &[ShellClientView]) -> Value {
                 "agent_protocol_version": client.agent_protocol_version,
                 "protocol_supported": protocol_supported,
                 "build_version": build_version,
-                "build_git_commit": client.build.as_ref().and_then(|b| b.git_commit.clone()),
-                "build_matches_server": build_matches_server,
+                "build_git_commit": build_git_commit,
+                "build_git_dirty": build_git_dirty,
+                "version_matches_server": version_matches_server,
                 "status": status,
                 "reason_code": reason_code,
                 "action": action,
+                "source_alignment": {
+                    "status": source_status,
+                    "git_commit_matches_server": git_commit_matches_server,
+                    "source_matches_server": source_matches_server,
+                    "reason_code": source_reason_code,
+                    "action": source_action,
+                },
             })
         })
         .collect();
     json!({
         "status": overall,
+        "source_alignment": {
+            "status": source_overall,
+        },
         "server": {
             "version": server_version,
             "build": build,
@@ -1049,6 +1157,7 @@ mod phase_e2_status_tests {
             display_name: None,
             owner: None,
             hostname: None,
+            host_context: None,
             status: "online".to_string(),
             connected: true,
             last_seen: 0,

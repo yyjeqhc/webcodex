@@ -36,6 +36,7 @@
 - [Testing](TESTING.md) — testing strategy
 - [Release checklist](RELEASE_CHECKLIST.md) — release readiness
 - [Architecture decisions](agent/architecture-decisions.md)
+- [Runtime host context](agent/runtime-host-context.md) — bounded Runner-configured planning context and exact-source runtime diagnostics
 - [Job reliability and Runner concurrency](agent/job-reliability-and-concurrency.md) — Control restart recovery, observation semantics, shared Job capacity, and tool-description requirements
 - [Authority model](agent/permission-model.md)
 - [Session model](agent/session-model.md)

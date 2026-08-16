@@ -70,6 +70,7 @@ fn test_config(projects_dir: PathBuf) -> AgentConfig {
         display_name: None,
         owner: Some("alice".to_string()),
         hostname: None,
+        host_context: None,
         projects_dir: Some(projects_dir),
         temporary_projects_root: None,
         poll_interval_ms: 1000,
@@ -435,6 +436,11 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     changed.display_name = Some("changed".to_string());
     changed.owner = Some("changed".to_string());
     changed.hostname = Some("changed".to_string());
+    changed.host_context = Some(shell_protocol::AgentHostContext {
+        role: Some("primary_development".to_string()),
+        runtime: Some("Prefer this Runner for ordinary development.".to_string()),
+        ..Default::default()
+    });
     changed.projects_dir = Some(PathBuf::from("projects-b"));
     changed.temporary_projects_root = Some(PathBuf::from("/tmp/webcodex-temporary"));
     changed.poll_interval_ms += 1;
@@ -445,7 +451,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     changed.quic = Some(quic_client_config());
     assert_eq!(
             webcodex_runner::config::restart_required_fields(&startup, &changed).join(" "),
-            "capabilities client_id display_name hostname max_concurrent_jobs owner poll_interval_ms projects_dir temporary_projects_root quic server_url token transport websocket_connect_timeout_secs"
+            "capabilities client_id display_name hostname host_context max_concurrent_jobs owner poll_interval_ms projects_dir temporary_projects_root quic server_url token transport websocket_connect_timeout_secs"
         );
 }
 
@@ -952,6 +958,56 @@ fn empty_tokens_config_parser_accepts_empty_and_whitespace_token() {
         assert_eq!(cfg.token, token);
         assert_eq!(non_empty_token(&cfg.token), None);
     }
+}
+
+#[test]
+fn agent_config_host_context_is_normalized_closed_and_restart_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("agent.toml");
+    std::fs::write(
+        &path,
+        r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+projects_dir = "projects.d"
+
+[host_context]
+role = " server_host "
+runtime = " Prefer this Runner for Server-host operations. "
+service = "Use the ordinary host-local service mechanism."
+
+[policy]
+allow_cwd_anywhere = true
+"#,
+    )
+    .unwrap();
+    let cfg = load_config(&path).unwrap();
+    let context = cfg.host_context.as_ref().expect("host context");
+    assert_eq!(context.role.as_deref(), Some("server_host"));
+    assert_eq!(
+        context.runtime.as_deref(),
+        Some("Prefer this Runner for Server-host operations.")
+    );
+
+    std::fs::write(
+        &path,
+        r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+projects_dir = "projects.d"
+[host_context]
+role = "server_host"
+arbitrary = "not allowed"
+[policy]
+allow_cwd_anywhere = true
+"#,
+    )
+    .unwrap();
+    let err = load_config(&path).unwrap_err();
+    assert!(err.contains("failed to parse config"), "{err}");
+    assert!(err.contains("arbitrary"), "{err}");
 }
 
 #[test]

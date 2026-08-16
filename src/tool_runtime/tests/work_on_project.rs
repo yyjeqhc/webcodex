@@ -57,6 +57,7 @@ async fn register_legacy_031_runner(
             build: Some(AgentBuildInfo {
                 version: Some("0.3.1".to_string()),
                 git_commit: None,
+                git_dirty: None,
             }),
             job_concurrency_limit: None,
             job_inventory: None,
@@ -65,6 +66,7 @@ async fn register_legacy_031_runner(
             display_name: Some("legacy v0.3.1 runner".to_string()),
             owner: None,
             hostname: None,
+            host_context: None,
             capabilities: Some(capabilities),
             projects: Some(projects),
             agent_protocol_version: Some("polling-v1".to_string()),

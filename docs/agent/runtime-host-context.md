@@ -1,10 +1,9 @@
-# Runtime Host Context — Design Direction
+# Runtime Host Context
 
-Status: design direction only; not implemented yet.
+Status: implemented in the runtime/Runner contract; host-specific dogfood configuration is still operator-managed.
 
-This note defines a small future extension to Runner registration and
-`runtime_status`: bounded host context that helps a model or operator choose the
-right execution path for a known machine.
+This note defines the bounded Runner-registration host context that helps a
+model or operator choose the right execution path for a known machine.
 
 The need is practical rather than a new inventory system. WebCodex already knows
 which Runner is online, what it can do, which projects it owns, and its live
@@ -74,13 +73,16 @@ Proposed fields:
 | `network` | Stable network-routing expectation; never proxy credentials or live reachability. |
 | `architecture` | Stable topology/workload description useful for choosing where work should run. |
 
-All fields except `source` are optional. The object should be omitted when the
-Runner has no configured context.
+All fields except `source` are optional; a configured object must contain at
+least one field. Runtime projections use `null` when a Runner has no configured
+context.
 
-The exact byte limits can be chosen during implementation, but the contract
-should be deliberately small: one short role plus short bounded strings, with a
-bounded total serialized size. Unknown fields should fail configuration
-validation rather than silently becoming an extension mechanism.
+The implemented bounds are deliberately small: `role` is at most 64 UTF-8 bytes
+and uses lowercase ASCII letters, digits, `_`, or `-`; each prose field is at
+most 512 UTF-8 bytes; all configured field contents together are at most 1536
+UTF-8 bytes. Prose is trimmed and control characters are rejected. Unknown
+fields fail configuration/deserialization rather than silently becoming an
+extension mechanism.
 
 ## 3. Concrete examples
 
@@ -162,14 +164,19 @@ runtime_status
     host_context?       <- declarative planning context
 ```
 
-`host_context` should also be available wherever the full Runner view is
-already intentionally exposed. It does not need a new top-level resource, new
-session identity, or durable Server table.
+`host_context` is also projected in full `list_agents` entries. Compact
+`runtime_status` carries a deliberately small per-Runner client list with
+`client_id`, `agent_instance_id`, status/transport, host context, and exact-build
+alignment facts; it does not copy full capabilities or policy into that compact
+view. No new top-level resource, session identity, or durable Server table is
+needed.
 
-A Runner can send the validated context as part of registration. The Server can
-retain it with the current Runner registration and discard it when that live
-registration is replaced. The source of truth remains the Runner's local
-configuration; Server restart or Runner reconnect simply republishes it.
+A Runner sends locally validated context as part of registration, and the
+Server validates it again before retaining it with the current Runner record.
+The source of truth remains the Runner's startup configuration; same-instance
+transport reconnect republishes it and a replacement Runner process replaces
+it. `host_context` is restart-required rather than a hot-reload field so the
+local config snapshot and Server registration cannot intentionally diverge.
 
 This keeps two classes visibly separate:
 
@@ -245,19 +252,19 @@ If a repeated concrete need later requires a machine-readable field (for example
 an exact local-vs-remote execution preference), promote that one concept into a
 closed typed field. Do not preemptively turn every prose hint into enums.
 
-## 9. Suggested implementation slice
+## 9. Implementation and dogfood boundary
 
-A later implementation can remain small:
+The implemented slice is intentionally limited to:
 
-1. add an optional bounded `host_context` object to Runner configuration;
-2. validate it locally and include it in Runner registration;
-3. retain it in the current Server-side Runner view;
-4. project it in full `runtime_status` / `list_agents` Runner entries;
-5. add focused registration, schema, redaction/bounds, reconnect, and projection
-   tests;
-6. configure the first real dogfood examples on `sf` and `special` only after the
-   product change is reviewed.
+1. optional closed/bounded `host_context` in Runner startup configuration;
+2. local validation plus Server-side registration revalidation;
+3. current-registration storage with reconnect/replacement semantics;
+4. full `runtime_status` / `list_agents` projection plus a bounded compact
+   Runner summary;
+5. focused bounds, config, restart-required, registration, reconnect, and
+   projection tests.
 
-No model-routing code is required in the first slice. Exposing accurate context
-first lets dogfood show whether models consume it naturally before adding more
-mechanism.
+There is still no model-routing code. Configure real host descriptions such as
+`sf` and `special` only as an operator/dogfood step after deploying a reviewed
+Runner build, then observe whether models consume the context naturally before
+adding any automatic placement mechanism.

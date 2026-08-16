@@ -938,6 +938,7 @@ async fn mcp_image_call_returns_native_image_for_remote_agent_project() {
             display_name: None,
             owner: None,
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 file_read: true,
                 ..Default::default()
@@ -1620,6 +1621,7 @@ async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_i
             display_name: None,
             owner: None,
             hostname: None,
+            host_context: None,
             capabilities: None,
             projects: Some(vec![ShellAgentProjectSummary {
                 id: "demo".to_string(),
@@ -2369,6 +2371,7 @@ async fn mcp_import_runtime(
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 file_write: true,
                 ..Default::default()
@@ -2477,6 +2480,7 @@ async fn mcp_export_runtime_with_optimized_chunk(
             display_name: None,
             owner: owner.map(str::to_string),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 file_read: true,
                 artifact_export_chunk_read: optimized_chunk,

@@ -346,6 +346,7 @@ async fn open_anonymous_can_bind_current_session_and_record_project_read() {
                 display_name: None,
                 owner: None,
                 hostname: None,
+                host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     file_read: true,
                     ..Default::default()

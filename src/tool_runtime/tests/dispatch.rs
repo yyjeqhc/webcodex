@@ -606,6 +606,7 @@ async fn apply_patch_agent_does_not_require_server_local_project_root() {
             display_name: None,
             owner: None,
             hostname: None,
+            host_context: None,
             capabilities: Some(caps),
             projects: Some(vec![registered_project(
                 "agent-proj",

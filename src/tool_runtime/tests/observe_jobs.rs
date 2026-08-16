@@ -777,6 +777,7 @@ async fn observe_jobs_recovering_lost_and_stop_requested_match_job_log_semantics
             display_name: None,
             owner: None,
             hostname: None,
+            host_context: None,
             capabilities: Some(recovering_caps),
             projects: Some(vec![registered_project(
                 "agent-proj",

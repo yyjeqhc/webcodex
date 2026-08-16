@@ -614,6 +614,11 @@ pub struct ShellClientRegisterRequest {
     pub hostname: Option<String>,
     #[serde(default)]
     pub capabilities: Option<ShellClientCapabilities>,
+    /// Optional bounded planning context declared by the Runner configuration.
+    /// This is descriptive metadata only: it never grants authority or proves
+    /// current host/service/network state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_context: Option<AgentHostContext>,
     #[serde(default)]
     pub projects: Option<Vec<ShellAgentProjectSummary>>,
     /// Protocol version announced by the agent during registration. Older
@@ -653,6 +658,112 @@ pub struct AgentBuildInfo {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_commit: Option<String>,
+    /// Whether the build workspace contained source changes when build metadata
+    /// was captured. `None` means exact source alignment is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_dirty: Option<bool>,
+}
+
+pub const AGENT_HOST_CONTEXT_ROLE_MAX_BYTES: usize = 64;
+pub const AGENT_HOST_CONTEXT_TEXT_MAX_BYTES: usize = 512;
+pub const AGENT_HOST_CONTEXT_TOTAL_MAX_BYTES: usize = 1_536;
+
+/// Small, closed planning context attached to one Runner registration.
+///
+/// These values are human-authored hints for choosing between already-valid
+/// execution paths. They are not capabilities, policy, connection state, or
+/// authorization. `source = runner_config` is added by model-facing
+/// projections rather than accepted from Runner configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHostContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<String>,
+}
+
+impl AgentHostContext {
+    /// Validate and canonicalize untrusted/configured host guidance. Errors name
+    /// only the invalid field and bound; they never echo configured values.
+    pub fn normalized(mut self) -> Result<Self, String> {
+        self.role = normalize_host_role(self.role)?;
+        self.runtime = normalize_host_context_text("runtime", self.runtime)?;
+        self.service = normalize_host_context_text("service", self.service)?;
+        self.network = normalize_host_context_text("network", self.network)?;
+        self.architecture = normalize_host_context_text("architecture", self.architecture)?;
+
+        let fields = [
+            self.role.as_deref(),
+            self.runtime.as_deref(),
+            self.service.as_deref(),
+            self.network.as_deref(),
+            self.architecture.as_deref(),
+        ];
+        if fields.iter().all(|value| value.is_none()) {
+            return Err("host_context must contain at least one field".to_string());
+        }
+        let total = fields
+            .iter()
+            .flatten()
+            .map(|value| value.len())
+            .sum::<usize>();
+        if total > AGENT_HOST_CONTEXT_TOTAL_MAX_BYTES {
+            return Err(format!(
+                "host_context content must be at most {AGENT_HOST_CONTEXT_TOTAL_MAX_BYTES} UTF-8 bytes total"
+            ));
+        }
+        Ok(self)
+    }
+}
+
+fn normalize_host_role(value: Option<String>) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() || value.len() > AGENT_HOST_CONTEXT_ROLE_MAX_BYTES {
+        return Err(format!(
+            "host_context.role must be 1..={AGENT_HOST_CONTEXT_ROLE_MAX_BYTES} UTF-8 bytes"
+        ));
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
+    {
+        return Err(
+            "host_context.role may only contain lowercase ASCII letters, digits, '_' and '-'"
+                .to_string(),
+        );
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn normalize_host_context_text(
+    field: &str,
+    value: Option<String>,
+) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() || value.len() > AGENT_HOST_CONTEXT_TEXT_MAX_BYTES {
+        return Err(format!(
+            "host_context.{field} must be 1..={AGENT_HOST_CONTEXT_TEXT_MAX_BYTES} UTF-8 bytes"
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!(
+            "host_context.{field} must not contain control characters"
+        ));
+    }
+    Ok(Some(value.to_string()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -669,6 +780,9 @@ pub struct ShellClientView {
     #[serde(default)]
     pub hostname: Option<String>,
     pub status: String,
+    /// Bounded descriptive planning context from Runner configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_context: Option<AgentHostContext>,
     pub connected: bool,
     pub last_seen: i64,
     pub capabilities: ShellClientCapabilities,
@@ -2469,6 +2583,48 @@ mod envelope_tests {
         request
     }
 
+    #[test]
+    fn agent_host_context_is_closed_normalized_and_bounded() {
+        let context = AgentHostContext {
+            role: Some(" server_host ".to_string()),
+            runtime: Some(" Prefer the local Runner for host operations. ".to_string()),
+            service: None,
+            network: None,
+            architecture: None,
+        }
+        .normalized()
+        .unwrap();
+        assert_eq!(context.role.as_deref(), Some("server_host"));
+        assert_eq!(
+            context.runtime.as_deref(),
+            Some("Prefer the local Runner for host operations.")
+        );
+
+        let unknown = serde_json::from_value::<AgentHostContext>(serde_json::json!({
+            "role": "server_host",
+            "arbitrary": "not an extension point"
+        }));
+        assert!(unknown.is_err());
+        assert!(AgentHostContext {
+            role: Some("Server Host".to_string()),
+            ..Default::default()
+        }
+        .normalized()
+        .unwrap_err()
+        .contains("host_context.role"));
+        assert!(AgentHostContext {
+            runtime: Some("x".repeat(AGENT_HOST_CONTEXT_TEXT_MAX_BYTES + 1)),
+            ..Default::default()
+        }
+        .normalized()
+        .unwrap_err()
+        .contains("host_context.runtime"));
+        assert!(AgentHostContext::default()
+            .normalized()
+            .unwrap_err()
+            .contains("at least one field"));
+    }
+
     fn sample_register() -> ShellClientRegisterRequest {
         ShellClientRegisterRequest {
             process_started_at: None,
@@ -2478,6 +2634,7 @@ mod envelope_tests {
             display_name: Some("WS Agent".to_string()),
             owner: Some("alice".to_string()),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 shell: true,
                 file_read: true,
@@ -3601,6 +3758,7 @@ mod envelope_tests {
                 owner: None,
                 hostname: None,
                 capabilities: None,
+                host_context: None,
                 projects: None,
                 agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
                 policy: None,

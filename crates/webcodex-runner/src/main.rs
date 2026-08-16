@@ -1935,6 +1935,7 @@ fn build_register_request_with_provider_status(
             display_name: cfg.display_name.clone(),
             owner: cfg.owner.clone(),
             hostname: cfg.hostname.clone().or_else(hostname),
+            host_context: cfg.host_context.clone(),
             capabilities: Some(capabilities),
             projects: Some(projects),
             agent_protocol_version: Some(protocol_version.to_string()),
@@ -1974,6 +1975,7 @@ fn runner_build_info() -> shell_protocol::AgentBuildInfo {
     shell_protocol::AgentBuildInfo {
         version: Some(info.version.to_string()),
         git_commit: info.git_commit.map(str::to_string),
+        git_dirty: info.git_dirty,
     }
 }
 

@@ -242,6 +242,7 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ),
         ("list_projects", "project", "none"),
         ("register_project", "project", "none"),
+        ("unregister_project", "project", "none"),
         ("create_project", "project", "none"),
         ("list_agents", "runtime", "none"),
         ("runtime_status", "runtime", "none"),

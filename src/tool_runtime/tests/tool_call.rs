@@ -433,14 +433,22 @@ fn from_tool_name_error_includes_tool_name() {
 fn tool_call_project_accessor_covers_project_tool_specs() {
     for spec in registered_tool_specs() {
         let args = sample_tool_args(&spec.name);
-        let expected_project = if spec.name == "start_session" {
-            // start_session project is task association metadata, not an
-            // execution target exposed by the project accessor.
-            None
-        } else {
-            args.get("project")
+        let expected_project = match spec.name.as_str() {
+            "start_session" => {
+                // start_session project is task association metadata, not an
+                // execution target exposed by the project accessor.
+                None
+            }
+            "unregister_project" => {
+                // unregister_project carries an exact lifecycle target, but it
+                // must bypass generic project pre-resolution so a terminal
+                // already_unregistered outcome remains representable.
+                None
+            }
+            _ => args
+                .get("project")
                 .and_then(Value::as_str)
-                .map(str::to_string)
+                .map(str::to_string),
         };
         let call = ToolCall::from_tool_name(&spec.name, args)
             .unwrap_or_else(|e| panic!("{} should deserialize: {}", spec.name, e));

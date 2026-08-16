@@ -201,6 +201,8 @@ struct ElementFingerprint {
     description: Option<String>,
     placeholder: Option<String>,
     protected: bool,
+    #[cfg(windows)]
+    native_runtime_id: Vec<i32>,
 }
 
 impl ElementFingerprint {
@@ -1334,6 +1336,8 @@ mod element_registry_tests {
             subrole: None,
             identifier: None,
             title: Some(label.to_string()),
+            #[cfg(windows)]
+            native_runtime_id: Vec::new(),
             description: None,
             placeholder: None,
             protected: false,
@@ -2217,13 +2221,21 @@ mod platform {
     use objc2_core_graphics::{CGEvent, CGEventFlags, CGKeyCode, CGPreflightPostEventAccess};
     #[cfg(any(target_os = "macos", windows))]
     use std::collections::VecDeque;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     use std::ptr::NonNull;
     #[cfg(windows)]
     use std::time::{Duration, Instant};
     #[cfg(any(target_os = "macos", windows))]
     use uuid::Uuid;
 
+    #[cfg(windows)]
+    use windows::Win32::System::{
+        Com::SAFEARRAY,
+        Ole::{
+            SafeArrayDestroy, SafeArrayGetDim, SafeArrayGetElement, SafeArrayGetElemsize,
+            SafeArrayGetLBound, SafeArrayGetUBound,
+        },
+    };
     #[cfg(windows)]
     use windows::{
         core::{IUnknown, Interface},
@@ -2932,6 +2944,8 @@ mod platform {
     #[cfg(windows)]
     const UIA_OBSERVATION_TIMEOUT_ERROR: &str =
         "accessibility_failed: Windows UI Automation observation deadline exceeded";
+    #[cfg(windows)]
+    const MAX_UIA_RUNTIME_ID_ELEMENTS: usize = 64;
 
     #[cfg(windows)]
     struct UiaObservationDeadline {
@@ -3021,6 +3035,31 @@ mod platform {
                 deadline: UiaObservationDeadline::new(),
                 _com: com,
             })
+        }
+    }
+
+    #[cfg(windows)]
+    struct OwnedSafeArray(NonNull<SAFEARRAY>);
+
+    #[cfg(windows)]
+    impl OwnedSafeArray {
+        fn new(array: *mut SAFEARRAY) -> Result<Self, String> {
+            NonNull::new(array)
+                .map(Self)
+                .ok_or_else(|| "stale_element: UI Automation runtime id is missing".to_string())
+        }
+
+        fn as_ptr(&self) -> *mut SAFEARRAY {
+            self.0.as_ptr()
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for OwnedSafeArray {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = SafeArrayDestroy(self.as_ptr());
+            }
         }
     }
 
@@ -3187,6 +3226,65 @@ mod platform {
     }
 
     #[cfg(windows)]
+    fn uia_runtime_id(
+        context: &UiaContext,
+        element: &IUIAutomationElement,
+    ) -> Result<Vec<i32>, String> {
+        context.deadline.ensure_remaining()?;
+        let array = unsafe { element.GetRuntimeId() }.map_err(|error| {
+            if uia_error_code(&error) == UIA_E_ELEMENTNOTAVAILABLE {
+                "stale_element: UI Automation element is no longer available".to_string()
+            } else {
+                uia_error("IUIAutomationElement::GetRuntimeId", &error)
+            }
+        })?;
+        let array = OwnedSafeArray::new(array)?;
+        if unsafe { SafeArrayGetDim(array.as_ptr()) } != 1
+            || unsafe { SafeArrayGetElemsize(array.as_ptr()) } != std::mem::size_of::<i32>() as u32
+        {
+            return Err(
+                "stale_element: UI Automation runtime id has an invalid SAFEARRAY shape"
+                    .to_string(),
+            );
+        }
+        let lower = unsafe { SafeArrayGetLBound(array.as_ptr(), 1) }
+            .map_err(|error| uia_error("SafeArrayGetLBound(runtime id)", &error))?;
+        let upper = unsafe { SafeArrayGetUBound(array.as_ptr(), 1) }
+            .map_err(|error| uia_error("SafeArrayGetUBound(runtime id)", &error))?;
+        let length = upper
+            .checked_sub(lower)
+            .and_then(|span| span.checked_add(1))
+            .and_then(|length| usize::try_from(length).ok())
+            .filter(|length| (1..=MAX_UIA_RUNTIME_ID_ELEMENTS).contains(length))
+            .ok_or_else(|| {
+                "stale_element: UI Automation runtime id length is invalid or exceeds the bound"
+                    .to_string()
+            })?;
+        let mut runtime_id = Vec::with_capacity(length);
+        for offset in 0..length {
+            context.deadline.ensure_remaining()?;
+            let index = lower
+                .checked_add(i32::try_from(offset).map_err(|_| {
+                    "stale_element: UI Automation runtime id index exceeds the bound".to_string()
+                })?)
+                .ok_or_else(|| {
+                    "stale_element: UI Automation runtime id index overflow".to_string()
+                })?;
+            let mut value = 0i32;
+            unsafe {
+                SafeArrayGetElement(
+                    array.as_ptr(),
+                    &index,
+                    (&mut value as *mut i32).cast::<std::ffi::c_void>(),
+                )
+            }
+            .map_err(|error| uia_error("SafeArrayGetElement(runtime id)", &error))?;
+            runtime_id.push(value);
+        }
+        Ok(runtime_id)
+    }
+
+    #[cfg(windows)]
     fn uia_fingerprint(
         context: &UiaContext,
         element: &IUIAutomationElement,
@@ -3200,6 +3298,7 @@ mod platform {
             .map_err(|error| uia_error("IUIAutomationElement::CurrentIsPassword", &error))?
             .as_bool();
         let protected = inherited_protected || is_password;
+        let native_runtime_id = uia_runtime_id(context, element)?;
         context.deadline.ensure_remaining()?;
         let identifier = uia_string(
             unsafe { element.CurrentAutomationId() },
@@ -3225,6 +3324,7 @@ mod platform {
         };
         Ok(ElementFingerprint {
             role: uia_control_role(control_type),
+            native_runtime_id,
             subrole: None,
             identifier,
             title,
@@ -4898,7 +4998,7 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = 'WebCodex Windows UIA Control Smoke'
 $form.StartPosition = 'Manual'
 $form.Location = New-Object System.Drawing.Point(120, 120)
-$form.Size = New-Object System.Drawing.Size(520, 260)
+$form.Size = New-Object System.Drawing.Size(700, 300)
 $input = New-Object System.Windows.Forms.TextBox
 $input.Name = 'SmokeInput'
 $input.AccessibleName = 'Smoke input'
@@ -4914,10 +5014,65 @@ $status.Name = 'SmokeStatus'
 $status.Text = 'ready'
 $status.Location = New-Object System.Drawing.Point(24, 148)
 $status.Size = New-Object System.Drawing.Size(140, 24)
+$script:twinPrimary = New-Object System.Windows.Forms.Button
+$script:twinPrimary.Name = 'TwinAction'
+$script:twinPrimary.Text = 'Twin action'
+$script:twinPrimary.AccessibleName = 'Twin action'
+$script:twinPrimary.Location = New-Object System.Drawing.Point(210, 96)
+$script:twinPrimary.Size = New-Object System.Drawing.Size(120, 32)
+$script:twinPrimary.TabIndex = 10
+$script:twinPrimary.Add_Click({ param($sender, $eventArgs) $sender.Text = 'wrong target invoked' })
+$script:twinSecondary = New-Object System.Windows.Forms.Button
+$script:twinSecondary.Name = 'TwinAction'
+$script:twinSecondary.Text = 'Twin action'
+$script:twinSecondary.AccessibleName = 'Twin action'
+$script:twinSecondary.Location = New-Object System.Drawing.Point(350, 96)
+$script:twinSecondary.Size = New-Object System.Drawing.Size(120, 32)
+$script:twinSecondary.TabIndex = 11
+$script:twinSecondary.Add_Click({ param($sender, $eventArgs) $sender.Text = 'wrong target invoked' })
+$replaceTwins = New-Object System.Windows.Forms.Button
+$replaceTwins.Name = 'ReplaceTwins'
+$replaceTwins.Text = 'Replace twins'
+$replaceTwins.AccessibleName = 'Replace twins'
+$replaceTwins.Location = New-Object System.Drawing.Point(210, 148)
+$replaceTwins.Size = New-Object System.Drawing.Size(140, 32)
+$replaceTwins.TabIndex = 12
+$replaceTwins.Add_Click({
+    param($sender, $eventArgs)
+    $primaryIndex = $form.Controls.GetChildIndex($script:twinPrimary)
+    $secondaryIndex = $form.Controls.GetChildIndex($script:twinSecondary)
+    $form.Controls.Remove($script:twinPrimary)
+    $form.Controls.Remove($script:twinSecondary)
+    $script:twinPrimary.Dispose()
+    $script:twinSecondary.Dispose()
+    $script:twinPrimary = New-Object System.Windows.Forms.Button
+    $script:twinPrimary.Name = 'TwinAction'
+    $script:twinPrimary.Text = 'Twin action'
+    $script:twinPrimary.AccessibleName = 'Twin action'
+    $script:twinPrimary.Location = New-Object System.Drawing.Point(210, 96)
+    $script:twinPrimary.Size = New-Object System.Drawing.Size(120, 32)
+    $script:twinPrimary.TabIndex = 10
+    $script:twinPrimary.Add_Click({ param($replacementSender, $replacementEventArgs) $replacementSender.Text = 'wrong target invoked' })
+    $script:twinSecondary = New-Object System.Windows.Forms.Button
+    $script:twinSecondary.Name = 'TwinAction'
+    $script:twinSecondary.Text = 'Twin action'
+    $script:twinSecondary.AccessibleName = 'Twin action'
+    $script:twinSecondary.Location = New-Object System.Drawing.Point(350, 96)
+    $script:twinSecondary.Size = New-Object System.Drawing.Size(120, 32)
+    $script:twinSecondary.TabIndex = 11
+    $script:twinSecondary.Add_Click({ param($replacementSender, $replacementEventArgs) $replacementSender.Text = 'wrong target invoked' })
+    $form.Controls.Add($script:twinPrimary)
+    $form.Controls.Add($script:twinSecondary)
+    $form.Controls.SetChildIndex($script:twinPrimary, $primaryIndex)
+    $form.Controls.SetChildIndex($script:twinSecondary, $secondaryIndex)
+})
 $button.Add_Click({ param($sender, $eventArgs) $sender.Text = 'clicked' })
 $form.Controls.Add($input)
 $form.Controls.Add($button)
 $form.Controls.Add($status)
+$form.Controls.Add($script:twinPrimary)
+$form.Controls.Add($script:twinSecondary)
+$form.Controls.Add($replaceTwins)
 [System.Windows.Forms.Application]::Run($form)
 "#;
             let child = Command::new("powershell.exe")
@@ -5189,6 +5344,139 @@ $form.Controls.Add($status)
         assert!(
             clicked,
             "UIA InvokePattern did not update the private fixture"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop; creates and replaces indistinguishable private WinForms controls"]
+    fn computer_windows_uia_stale_identity_rejects_indistinguishable_replacement_live() {
+        let mut fixture = WindowsControlFixture::start();
+        let candidate = (0..500)
+            .find_map(|_| {
+                if let Some(status) = fixture
+                    .child
+                    .try_wait()
+                    .expect("query private WinForms fixture process")
+                {
+                    panic!("private WinForms fixture exited before discovery: {status}");
+                }
+                let candidate = platform::list_windows(4096)
+                    .expect("list Windows windows for identity fixture")
+                    .into_iter()
+                    .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE);
+                if candidate.is_none() {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                candidate
+            })
+            .expect("discover private WinForms identity fixture");
+        let record = surface_record(candidate);
+        platform::activate_window("surface_windows_identity_fixture_activate", &record)
+            .expect("activate private WinForms identity fixture");
+
+        let candidate = platform::list_windows(4096)
+            .expect("re-list Windows windows after identity fixture activation")
+            .into_iter()
+            .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE)
+            .expect("re-observe private WinForms identity fixture");
+        let record = surface_record(candidate);
+        let surface_id = "surface_windows_identity_fixture";
+        let tree = platform::accessibility_tree(surface_id, &record, 4, 96)
+            .expect("read private WinForms identity fixture UIA tree");
+        let twins = tree
+            .elements
+            .iter()
+            .filter(|(_, element)| {
+                element.target_fingerprint().is_some_and(|fingerprint| {
+                    fingerprint.role == "AXButton"
+                        && fingerprint.identifier.as_deref() == Some("TwinAction")
+                        && fingerprint.title.as_deref() == Some("Twin action")
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            twins.len(),
+            2,
+            "fixture must expose two indistinguishable twins"
+        );
+        let (old_twin_id, old_twin) = twins[0];
+        let old_twin_id = old_twin_id.clone();
+        let old_twin = old_twin.clone();
+        let old_target = old_twin
+            .target_fingerprint()
+            .expect("old twin has complete lineage")
+            .clone();
+        let (replace_id, replace) = tree
+            .elements
+            .iter()
+            .find(|(_, element)| {
+                element.target_fingerprint().is_some_and(|fingerprint| {
+                    fingerprint.role == "AXButton"
+                        && fingerprint.identifier.as_deref() == Some("ReplaceTwins")
+                })
+            })
+            .expect("fixture exposes the replace-twins trigger");
+        platform::control(
+            surface_id,
+            replace_id,
+            &record,
+            replace,
+            ComputerAction::Press,
+        )
+        .expect("replace both indistinguishable twins through the private fixture");
+
+        let replacement_deadline = Instant::now() + Duration::from_secs(1);
+        let mut replacement_observed = false;
+        while Instant::now() < replacement_deadline {
+            let refreshed = platform::accessibility_tree(surface_id, &record, 4, 96)
+                .expect("re-observe private fixture after twin replacement");
+            replacement_observed = refreshed.elements.iter().any(|(_, element)| {
+                if element.path != old_twin.path {
+                    return false;
+                }
+                element.target_fingerprint().is_some_and(|fingerprint| {
+                    fingerprint.role == old_target.role
+                        && fingerprint.subrole == old_target.subrole
+                        && fingerprint.identifier == old_target.identifier
+                        && fingerprint.title == old_target.title
+                        && fingerprint.description == old_target.description
+                        && fingerprint.placeholder == old_target.placeholder
+                        && fingerprint.protected == old_target.protected
+                        && fingerprint.native_runtime_id != old_target.native_runtime_id
+                })
+            });
+            if replacement_observed {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            replacement_observed,
+            "replacement must preserve the old semantic path while changing native UIA identity"
+        );
+
+        let stale_state = platform::element_state(surface_id, &old_twin_id, 1, &record, &old_twin)
+            .expect_err("old element state handle must not retarget the replacement twin");
+        assert!(stale_state.starts_with("stale_element:"), "{stale_state}");
+        let stale_control = platform::control(
+            surface_id,
+            &old_twin_id,
+            &record,
+            &old_twin,
+            ComputerAction::Press,
+        )
+        .expect_err("old effect handle must fail before invoking the replacement twin");
+        assert!(
+            stale_control.starts_with("stale_element:"),
+            "{stale_control}"
+        );
+        let after = platform::accessibility_tree(surface_id, &record, 4, 96)
+            .expect("re-observe fixture after rejected stale control");
+        assert!(
+            after.output["nodes"].as_array().is_some_and(|nodes| nodes
+                .iter()
+                .all(|node| node["title"] != "wrong target invoked")),
+            "stale control must not invoke either indistinguishable replacement"
         );
     }
 

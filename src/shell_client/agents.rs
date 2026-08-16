@@ -213,6 +213,16 @@ impl ShellClientRegistry {
                     .to_string(),
             );
         }
+        if inner.clients.get(&client_id).is_some_and(|existing| {
+            existing.agent_instance_id == agent_instance_id
+                && existing.capabilities.artifact_export_streaming_metadata
+                && !capabilities.artifact_export_streaming_metadata
+        }) {
+            return Err(
+                "same runner instance cannot downgrade artifact_export_streaming_metadata capability"
+                    .to_string(),
+            );
+        }
         // Enforce the agent instance lease. `client_id` is the unique active
         // agent identity: at most one agent process may be online for it at a
         // time.

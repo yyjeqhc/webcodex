@@ -401,6 +401,7 @@ async fn read_project_artifact_image_mode_is_rejected_outside_mcp() {
             },
             SessionTransport::Api,
             None,
+            None,
         )
         .await;
     assert!(!result.success);

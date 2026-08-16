@@ -1817,6 +1817,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // This binary implements the narrow internal seek/read export-chunk path.
     // Older binaries omit the field so Control uses the existing slow fallback.
     capabilities.artifact_export_chunk_read = true;
+    // Large export metadata (size/SHA/MIME) is verified with bounded streaming
+    // I/O. Keep this separate from chunk-read support for rolling upgrades.
+    capabilities.artifact_export_streaming_metadata = true;
     // This binary implements the complete bounded structured delete contract.
     // Older binaries omit the field and therefore keep using the Server's legacy path.
     capabilities.structured_file_delete = true;

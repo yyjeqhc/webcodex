@@ -68,6 +68,7 @@ async fn register_agent_with_lsp_capabilities(
                     file_read: true,
                     file_write: true,
                     artifact_export_chunk_read: false,
+                    artifact_export_streaming_metadata: false,
                     structured_file_delete: false,
                     git: true,
                     jobs: true,

@@ -139,6 +139,12 @@ pub const SHELL_CLIENT_CAPABILITY_FILE_WRITE: &str = "file_write";
 /// that seeks and reads only the requested bounded segment. Missing on older
 /// Runners is false and must never be inferred from ordinary file_read.
 pub const SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ: &str = "artifact_export_chunk_read";
+/// The Runner computes artifact-export metadata for files above the whole-payload
+/// limit with bounded streaming I/O. This is separate from chunk-read support:
+/// older optimized-export Runners may advertise chunk reads while still
+/// materializing metadata up to the caller-provided bound.
+pub const SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA: &str =
+    "artifact_export_streaming_metadata";
 /// The Runner implements bounded, project-root-enforced structured file deletion.
 /// Missing on older Runners and false; never inferred from file_write, shell,
 /// protocol version, transport, or operating system.
@@ -254,6 +260,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_FILE_READ,
     SHELL_CLIENT_CAPABILITY_FILE_WRITE,
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
+    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_GIT,
     SHELL_CLIENT_CAPABILITY_JOBS,
@@ -316,6 +323,11 @@ pub struct ShellClientCapabilities {
     /// MIME/SHA metadata. Missing on older Runners is false.
     #[serde(default, skip_serializing_if = "is_false")]
     pub artifact_export_chunk_read: bool,
+    /// Whole-file export metadata (size/SHA/MIME) is computed without loading
+    /// the complete artifact into memory. Missing on older Runners is false and
+    /// is never inferred from `artifact_export_chunk_read`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub artifact_export_streaming_metadata: bool,
     /// Bounded structured file deletion with Runner-authoritative project-root
     /// containment and file-only semantics. Missing on older Runners is false.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -467,6 +479,7 @@ impl Default for ShellClientCapabilities {
             file_read: false,
             file_write: false,
             artifact_export_chunk_read: false,
+            artifact_export_streaming_metadata: false,
             structured_file_delete: false,
             git: false,
             jobs: false,
@@ -2716,6 +2729,7 @@ mod envelope_tests {
                 file_read: true,
                 file_write: false,
                 artifact_export_chunk_read: false,
+                artifact_export_streaming_metadata: false,
                 structured_file_delete: false,
                 git: false,
                 jobs: true,
@@ -2819,6 +2833,7 @@ mod envelope_tests {
         assert!(!capabilities.structured_execution_jobs);
         assert!(!capabilities.project_path_registration);
         assert!(!capabilities.structured_file_delete);
+        assert!(!capabilities.artifact_export_streaming_metadata);
         assert!(!capabilities.computer_observe);
         assert!(!capabilities.computer_accessibility_observe);
         assert!(!capabilities.computer_element_state);
@@ -2835,6 +2850,20 @@ mod envelope_tests {
         assert!(!ShellClientCapabilities::default().computer_key_input);
         assert!(!ShellClientCapabilities::default().computer_window_activate);
         assert!(!ShellClientCapabilities::default().computer_text_input);
+        assert!(!ShellClientCapabilities::default().artifact_export_streaming_metadata);
+    }
+
+    #[test]
+    fn artifact_export_streaming_metadata_capability_deserializes_only_when_present() {
+        let missing: ShellClientCapabilities =
+            serde_json::from_str(r#"{"artifact_export_chunk_read":true}"#).unwrap();
+        assert!(missing.artifact_export_chunk_read);
+        assert!(!missing.artifact_export_streaming_metadata);
+        let present: ShellClientCapabilities = serde_json::from_str(
+            r#"{"artifact_export_chunk_read":true,"artifact_export_streaming_metadata":true}"#,
+        )
+        .unwrap();
+        assert!(present.artifact_export_streaming_metadata);
     }
 
     #[test]

@@ -1685,6 +1685,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 file_read: true,
                 file_write: true,
                 artifact_export_chunk_read: true,
+                artifact_export_streaming_metadata: true,
                 structured_file_delete: true,
                 git: true,
                 jobs: true,

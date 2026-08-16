@@ -738,7 +738,7 @@ impl ToolRuntime {
             | ToolCall::ArtifactUploadFinish { .. }
             | ToolCall::ArtifactUploadAbort { .. }
             | ToolCall::ApplyTextEdits { .. }) => {
-                self.dispatch_file_tool(call, transport, project_resolution)
+                self.dispatch_file_tool(call, transport, project_resolution, auth)
                     .await
             }
 

@@ -2695,10 +2695,11 @@ async fn complete_mcp_import_until_abort(
     }
 }
 
-async fn mcp_export_runtime_with_optimized_chunk(
+async fn mcp_export_runtime_with_capabilities(
     root: &std::path::Path,
     owner: Option<&str>,
     optimized_chunk: bool,
+    streaming_metadata: bool,
 ) -> (
     Arc<ToolRuntime>,
     Arc<crate::shell_client::ShellClientRegistry>,
@@ -2722,6 +2723,7 @@ async fn mcp_export_runtime_with_optimized_chunk(
             capabilities: Some(ShellClientCapabilities {
                 file_read: true,
                 artifact_export_chunk_read: optimized_chunk,
+                artifact_export_streaming_metadata: streaming_metadata,
                 ..Default::default()
             }),
             projects: Some(vec![ShellAgentProjectSummary {
@@ -2750,6 +2752,17 @@ async fn mcp_export_runtime_with_optimized_chunk(
             .with_model_surface(ModelSurface::FullOperatorRuntime),
     );
     (runtime, registry)
+}
+
+async fn mcp_export_runtime_with_optimized_chunk(
+    root: &std::path::Path,
+    owner: Option<&str>,
+    optimized_chunk: bool,
+) -> (
+    Arc<ToolRuntime>,
+    Arc<crate::shell_client::ShellClientRegistry>,
+) {
+    mcp_export_runtime_with_capabilities(root, owner, optimized_chunk, optimized_chunk).await
 }
 
 async fn mcp_export_runtime(
@@ -2856,12 +2869,13 @@ async fn complete_mcp_export_optimized_chunk(
     offset
 }
 
-async fn complete_mcp_export_metadata(
+async fn complete_mcp_export_metadata_with_max(
     registry: Arc<crate::shell_client::ShellClientRegistry>,
     path: &str,
     bytes: usize,
     sha256: &str,
     mime_type: &str,
+    max_bytes: usize,
 ) {
     use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
     let request = loop {
@@ -2881,7 +2895,7 @@ async fn complete_mcp_export_metadata(
     assert_eq!(request.kind, "file_read_project_artifact_metadata");
     let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
     assert_eq!(payload["path"], path);
-    assert_eq!(payload["max_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
+    assert_eq!(payload["max_bytes"], max_bytes);
     assert_eq!(payload["allow_missing"], false);
     registry
         .complete(ShellAgentResultRequest {
@@ -2904,6 +2918,24 @@ async fn complete_mcp_export_metadata(
         })
         .await
         .unwrap();
+}
+
+async fn complete_mcp_export_metadata(
+    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    path: &str,
+    bytes: usize,
+    sha256: &str,
+    mime_type: &str,
+) {
+    complete_mcp_export_metadata_with_max(
+        registry,
+        path,
+        bytes,
+        sha256,
+        mime_type,
+        MAX_PROJECT_ARTIFACT_EXPORT_BYTES,
+    )
+    .await;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3024,7 +3056,15 @@ async fn complete_mcp_export_resource_read_legacy(
     sha256: &str,
 ) {
     use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
-    complete_mcp_export_metadata(registry.clone(), path, bytes.len(), sha256, mime_type).await;
+    complete_mcp_export_metadata_with_max(
+        registry.clone(),
+        path,
+        bytes.len(),
+        sha256,
+        mime_type,
+        MAX_PROJECT_ARTIFACT_BYTES,
+    )
+    .await;
     let mut expected_offset = 0usize;
     while expected_offset < bytes.len() {
         let request = loop {
@@ -3094,13 +3134,14 @@ async fn complete_mcp_export_resource_read_legacy(
     }
 }
 
-async fn issue_mcp_artifact_export(
+async fn issue_mcp_artifact_export_with_metadata_max(
     runtime: Arc<ToolRuntime>,
     registry: Arc<crate::shell_client::ShellClientRegistry>,
     auth: crate::auth::AuthContext,
     path: &str,
     bytes: &[u8],
     mime_type: &str,
+    max_bytes: usize,
 ) -> Value {
     use sha2::{Digest, Sha256};
     let sha256 = format!("{:x}", Sha256::digest(bytes));
@@ -3127,12 +3168,40 @@ async fn issue_mcp_artifact_export(
             .await
         }
     });
-    complete_mcp_export_metadata(registry, path, bytes.len(), &sha256, mime_type).await;
+    complete_mcp_export_metadata_with_max(
+        registry,
+        path,
+        bytes.len(),
+        &sha256,
+        mime_type,
+        max_bytes,
+    )
+    .await;
     let outcome = call.await.unwrap();
     let McpOutcome::Ok(value) = outcome else {
         panic!("artifact export must succeed, got {outcome:?}");
     };
     value
+}
+
+async fn issue_mcp_artifact_export(
+    runtime: Arc<ToolRuntime>,
+    registry: Arc<crate::shell_client::ShellClientRegistry>,
+    auth: crate::auth::AuthContext,
+    path: &str,
+    bytes: &[u8],
+    mime_type: &str,
+) -> Value {
+    issue_mcp_artifact_export_with_metadata_max(
+        runtime,
+        registry,
+        auth,
+        path,
+        bytes,
+        mime_type,
+        MAX_PROJECT_ARTIFACT_EXPORT_BYTES,
+    )
+    .await
 }
 
 #[tokio::test]
@@ -3488,6 +3557,115 @@ async fn mcp_artifact_export_resource_link_and_binary_round_trip() {
 }
 
 #[tokio::test]
+async fn mcp_artifact_export_resource_link_accepts_above_whole_payload_bound() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_export_runtime(tmp.path(), Some("alice")).await;
+    let auth = mcp_export_api_auth("key-large-link", "alice");
+    let bytes = vec![0x5a; MAX_PROJECT_ARTIFACT_BYTES + 1];
+    let export = issue_mcp_artifact_export(
+        runtime,
+        registry,
+        auth,
+        "paper/above-whole-payload.dat",
+        &bytes,
+        "application/octet-stream",
+    )
+    .await;
+    assert_eq!(export["result"]["isError"], false, "export: {export:?}");
+    assert_eq!(
+        export["result"]["content"][0]["mimeType"],
+        "application/octet-stream"
+    );
+    assert!(export["result"]["content"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .starts_with(MCP_ARTIFACT_EXPORT_URI_PREFIX));
+}
+
+#[tokio::test]
+async fn http_mcp_artifact_export_resources_read_streams_valid_json_blob() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_export_runtime(tmp.path(), None).await;
+    let auth = crate::auth::AuthContext {
+        role: Some("admin".to_string()),
+        scopes: vec!["admin".to_string()],
+        is_bootstrap: true,
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
+    };
+    let mut bytes: Vec<u8> = (0..(96 * 1024 + 5))
+        .map(|index| (index % 251) as u8)
+        .collect();
+    bytes[..5].copy_from_slice(b"%PDF-");
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let path = "paper/http-stream.pdf";
+    let export = issue_mcp_artifact_export(
+        runtime.clone(),
+        registry.clone(),
+        auth,
+        path,
+        &bytes,
+        "application/pdf",
+    )
+    .await;
+    let uri = export["result"]["content"][0]["uri"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let config = test_config(Some("secret"));
+    let (_db_tmp, db) = test_db();
+    let service = Service::new(build_test_router(config, db, runtime));
+    let params = mcp_2026_params(json!({"uri": uri.clone()}));
+    let request = async {
+        let mut response = TestClient::post("http://localhost/mcp")
+            .bearer_auth("secret")
+            .add_header(
+                MCP_PROTOCOL_VERSION_HEADER,
+                MCP_STATELESS_PROTOCOL_VERSION,
+                true,
+            )
+            .add_header(MCP_METHOD_HEADER, "resources/read", true)
+            .add_header(MCP_NAME_HEADER, uri.as_str(), true)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 3190,
+                "method": "resources/read",
+                "params": params
+            }))
+            .send(&service)
+            .await;
+        let status = effective_status(&response);
+        let body: Value = response.take_json().await.unwrap();
+        (status, body)
+    };
+    let complete = complete_mcp_export_resource_read(
+        registry,
+        path,
+        bytes.clone(),
+        "application/pdf",
+        &sha256,
+        McpExportChunkFault::None,
+    );
+    let ((status, body), _) = tokio::join!(request, complete);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["jsonrpc"], "2.0");
+    assert_eq!(body["id"], 3190);
+    assert_eq!(body["result"]["resultType"], "complete");
+    assert!(body["result"].get("ttlMs").is_none());
+    assert!(body["result"].get("cacheScope").is_none());
+    assert_eq!(body["result"]["contents"][0]["uri"], uri);
+    assert_eq!(body["result"]["contents"][0]["mimeType"], "application/pdf");
+    let decoded = general_purpose::STANDARD
+        .decode(body["result"]["contents"][0]["blob"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(decoded, bytes);
+    assert_eq!(
+        body["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "webcodex"
+    );
+}
+
+#[tokio::test]
 async fn mcp_artifact_export_old_runner_uses_safe_legacy_fallback() {
     let tmp = tempfile::tempdir().unwrap();
     let (runtime, registry) =
@@ -3495,13 +3673,14 @@ async fn mcp_artifact_export_old_runner_uses_safe_legacy_fallback() {
     let auth = mcp_export_api_auth("key-legacy", "alice");
     let bytes = vec![0x41; 70 * 1024];
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
-    let export = issue_mcp_artifact_export(
+    let export = issue_mcp_artifact_export_with_metadata_max(
         runtime.clone(),
         registry.clone(),
         auth.clone(),
         "paper/legacy.pdf",
         &bytes,
         "application/pdf",
+        MAX_PROJECT_ARTIFACT_BYTES,
     )
     .await;
     let uri = export["result"]["content"][0]["uri"]
@@ -3540,6 +3719,76 @@ async fn mcp_artifact_export_old_runner_uses_safe_legacy_fallback() {
         .decode(value["result"]["contents"][0]["blob"].as_str().unwrap())
         .unwrap();
     assert_eq!(decoded, bytes);
+}
+
+#[tokio::test]
+async fn mcp_artifact_export_previous_optimized_runner_uses_legacy_metadata_bound() {
+    use crate::shell_protocol::ShellAgentPollRequest;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) =
+        mcp_export_runtime_with_capabilities(tmp.path(), Some("alice"), true, false).await;
+    let auth = mcp_export_api_auth("key-pre-streaming-metadata", "alice");
+    let path = "paper/previous-runner-large.pdf";
+    let call = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let path = path.to_string();
+        async move {
+            handle_mcp_request(
+                &runtime,
+                rpc(
+                    "tools/call",
+                    Some(json!(3121)),
+                    mcp_2026_params(json!({
+                        "name": "export_project_artifact",
+                        "arguments": {
+                            "project": "agent:exporter:demo",
+                            "path": path,
+                        }
+                    })),
+                ),
+                Some(&auth),
+            )
+            .await
+        }
+    });
+
+    let request = poll_mcp_export_request(&registry).await;
+    assert_eq!(request.kind, "file_read_project_artifact_metadata");
+    let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["path"], path);
+    assert_eq!(payload["max_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
+    complete_mcp_export_request(
+        &registry,
+        request,
+        json!({
+            "path": path,
+            "error": "artifact too large to inspect",
+        }),
+    )
+    .await;
+
+    let McpOutcome::Ok(value) = call.await.unwrap() else {
+        panic!("metadata rejection must remain a normal tool result");
+    };
+    assert_eq!(value["result"]["isError"], true, "result: {value:?}");
+    assert!(value["result"]["structuredContent"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("too large"));
+    assert!(
+        registry
+            .poll(ShellAgentPollRequest {
+                client_id: "exporter".to_string(),
+                agent_instance_id: "inst-export".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .is_none(),
+        "large export must fail during 10 MiB legacy metadata without queuing a chunk read"
+    );
 }
 
 #[tokio::test]
@@ -3738,7 +3987,7 @@ async fn mcp_artifact_export_total_timeout_cleans_abandoned_pending_reads() {
                 &runtime,
                 &uri,
                 Some(&auth),
-                gate.as_ref(),
+                gate,
                 Duration::from_secs(1),
                 Duration::from_secs(1),
             )
@@ -3795,7 +4044,7 @@ async fn mcp_artifact_export_total_timeout_cleans_abandoned_pending_reads() {
                 &runtime,
                 &uri,
                 Some(&auth),
-                gate.as_ref(),
+                gate,
                 Duration::from_secs(1),
                 Duration::from_secs(1),
             )
@@ -4026,7 +4275,7 @@ async fn mcp_artifact_export_backpressure_is_two_way_bounded_and_retryable() {
                 &runtime,
                 &uri,
                 Some(&auth),
-                gate.as_ref(),
+                gate,
                 Duration::from_secs(1),
             )
             .await
@@ -4044,7 +4293,7 @@ async fn mcp_artifact_export_backpressure_is_two_way_bounded_and_retryable() {
         &runtime,
         &uri,
         Some(&auth),
-        gate.as_ref(),
+        gate.clone(),
         Duration::from_millis(25),
     )
     .await;
@@ -4397,11 +4646,11 @@ async fn mcp_artifact_export_malformed_chunk_fails_closed() {
 }
 
 #[test]
-fn mcp_artifact_export_preserves_ten_mib_bound_and_durable_projection_has_no_handle_or_blob() {
+fn mcp_artifact_export_preserves_streaming_bound_and_durable_projection_has_no_handle_or_blob() {
     let output = json!({
         "project": "agent:exporter:demo",
         "path": "paper/too-large.pdf",
-        "bytes": MAX_PROJECT_ARTIFACT_BYTES + 1,
+        "bytes": MAX_PROJECT_ARTIFACT_EXPORT_BYTES + 1,
         "sha256": "a".repeat(64),
         "mime_type": "application/pdf",
         "name": "too-large.pdf",
@@ -4409,6 +4658,18 @@ fn mcp_artifact_export_preserves_ten_mib_bound_and_durable_projection_has_no_han
     let error =
         validate_project_artifact_export_snapshot("paper/too-large.pdf", &output).unwrap_err();
     assert!(error.contains("maximum"));
+    let exact_max = json!({
+        "project": "agent:exporter:demo",
+        "path": "paper/exact-max.pdf",
+        "bytes": MAX_PROJECT_ARTIFACT_EXPORT_BYTES,
+        "sha256": "a".repeat(64),
+        "mime_type": "application/pdf",
+        "name": "exact-max.pdf",
+    });
+    let snapshot =
+        validate_project_artifact_export_snapshot("paper/exact-max.pdf", &exact_max).unwrap();
+    assert_eq!(snapshot.bytes, MAX_PROJECT_ARTIFACT_EXPORT_BYTES);
+    assert_eq!(MAX_PROJECT_ARTIFACT_BYTES, 10 * 1024 * 1024);
 
     let stable = ToolResult::ok(json!({
         "project": "agent:exporter:demo",
@@ -4424,6 +4685,29 @@ fn mcp_artifact_export_preserves_ten_mib_bound_and_durable_projection_has_no_han
     assert!(!serialized.contains(MCP_ARTIFACT_EXPORT_URI_PREFIX));
     assert!(!serialized.contains("content_base64"));
     assert!(!serialized.contains("\"blob\""));
+}
+
+#[test]
+fn mcp_artifact_export_incremental_base64_matches_whole_encoding() {
+    let bytes: Vec<u8> = (0..(2 * MAX_READ_PROJECT_ARTIFACT_LENGTH + 17))
+        .map(|index| (index % 251) as u8)
+        .collect();
+    let mut encoder = McpArtifactExportBase64Encoder::default();
+    let mut encoded = String::new();
+    let mut offset = 0usize;
+    for length in [1usize, 2, 7, MAX_READ_PROJECT_ARTIFACT_LENGTH, 11, 65531] {
+        if offset >= bytes.len() {
+            break;
+        }
+        let end = offset.saturating_add(length).min(bytes.len());
+        encoded.push_str(&encoder.push(&bytes[offset..end]));
+        offset = end;
+    }
+    if offset < bytes.len() {
+        encoded.push_str(&encoder.push(&bytes[offset..]));
+    }
+    encoded.push_str(&encoder.finish());
+    assert_eq!(encoded, general_purpose::STANDARD.encode(&bytes));
 }
 
 #[test]

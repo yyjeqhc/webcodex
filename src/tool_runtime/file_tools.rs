@@ -3,6 +3,7 @@
 use super::files::SearchRequest;
 use super::project_resolution::{ProjectResolverError, ResolvedProject};
 use super::{sessions::SessionTransport, ToolCall, ToolResult, ToolRuntime};
+use crate::auth::AuthContext;
 
 impl ToolRuntime {
     pub(crate) async fn dispatch_file_tool(
@@ -10,6 +11,7 @@ impl ToolRuntime {
         call: ToolCall,
         transport: SessionTransport,
         project_resolution: Option<Result<ResolvedProject, ProjectResolverError>>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
         match call {
             ToolCall::DeleteProjectFiles {
@@ -165,7 +167,7 @@ impl ToolRuntime {
                 } else {
                     match project_resolution {
                         Some(Ok(resolved)) => {
-                            self.export_project_artifact_metadata_resolved(&resolved, path)
+                            self.export_project_artifact_metadata_resolved(&resolved, path, auth)
                                 .await
                         }
                         Some(Err(error)) => error.into_tool_result(),

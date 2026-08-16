@@ -19,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use xml::reader::{EventReader, XmlEvent};
 
 const DEFAULT_MAX_ARTIFACT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_ARTIFACT_EXPORT_BYTES: usize = 256 * 1024 * 1024;
 const MAX_ARTIFACT_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 const DEFAULT_ARTIFACT_READ_LENGTH: usize = 32 * 1024;
 const MAX_ARTIFACT_EXPORT_CHUNK_BYTES: usize = 64 * 1024;
@@ -2203,6 +2204,83 @@ fn handle_read_project_artifact_metadata(
         Ok(value) => value,
         Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
     };
+    if max_bytes > MAX_ARTIFACT_EXPORT_BYTES {
+        return line_edit_stdout(
+            metadata_error(
+                Some(path),
+                format!("artifact metadata maximum exceeds {MAX_ARTIFACT_EXPORT_BYTES} bytes"),
+            ),
+            start,
+        );
+    }
+    if max_bytes > DEFAULT_MAX_ARTIFACT_BYTES {
+        let initial_bytes = match std::fs::metadata(resolved)
+            .ok()
+            .and_then(|metadata| usize::try_from(metadata.len()).ok())
+        {
+            Some(bytes) => bytes,
+            None => {
+                return line_edit_stdout(
+                    metadata_error(Some(path), "artifact size does not fit this platform"),
+                    start,
+                )
+            }
+        };
+        if initial_bytes > max_bytes {
+            return line_edit_stdout(
+                metadata_error(Some(path), "artifact too large to inspect"),
+                start,
+            );
+        }
+        let (bytes, sha256) = match verify_upload_file(resolved, max_bytes) {
+            Ok(verification) => verification,
+            Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
+        };
+        let final_metadata = match std::fs::metadata(resolved) {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                return line_edit_stdout(
+                    metadata_error(Some(path), format!("stat failed: {e}")),
+                    start,
+                )
+            }
+        };
+        let final_bytes = match usize::try_from(final_metadata.len()) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return line_edit_stdout(
+                    metadata_error(Some(path), "artifact size does not fit this platform"),
+                    start,
+                )
+            }
+        };
+        if bytes != initial_bytes || bytes != final_bytes {
+            return line_edit_stdout(
+                metadata_error(
+                    Some(path),
+                    "artifact size changed during metadata inspection",
+                ),
+                start,
+            );
+        }
+        let mime_type = artifact_mime_from_file(path, resolved, false);
+        let mut out = json!({
+            "path": path,
+            "exists": true,
+            "missing": false,
+            "bytes": bytes,
+            "sha256": sha256,
+            "mime_type": mime_type,
+        });
+        if let Ok(modified) = final_metadata.modified().and_then(|modified| {
+            modified
+                .duration_since(UNIX_EPOCH)
+                .map_err(std::io::Error::other)
+        }) {
+            out["modified_at"] = json!(modified.as_secs());
+        }
+        return line_edit_stdout(out, start);
+    }
     let data = match read_limited(resolved, max_bytes) {
         Ok(data) => data,
         Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
@@ -2267,13 +2345,13 @@ fn handle_read_project_artifact_export_chunk(
         Ok(value) => value,
         Err(e) => return line_edit_stdout(read_error(Some(path), e), start),
     };
-    if expected_file_bytes > DEFAULT_MAX_ARTIFACT_BYTES {
+    if expected_file_bytes > MAX_ARTIFACT_EXPORT_BYTES {
         return line_edit_stdout(
             read_error(
                 Some(path),
                 format!(
                     "artifact is too large to export; maximum is {} bytes",
-                    DEFAULT_MAX_ARTIFACT_BYTES
+                    MAX_ARTIFACT_EXPORT_BYTES
                 ),
             ),
             start,
@@ -2320,13 +2398,13 @@ fn handle_read_project_artifact_export_chunk(
             )
         }
     };
-    if file_bytes > DEFAULT_MAX_ARTIFACT_BYTES {
+    if file_bytes > MAX_ARTIFACT_EXPORT_BYTES {
         return line_edit_stdout(
             read_error(
                 Some(path),
                 format!(
                     "artifact is too large to export; maximum is {} bytes",
-                    DEFAULT_MAX_ARTIFACT_BYTES
+                    MAX_ARTIFACT_EXPORT_BYTES
                 ),
             ),
             start,

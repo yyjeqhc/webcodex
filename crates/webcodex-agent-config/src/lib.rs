@@ -199,6 +199,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // The running binary advertises the internal optimized export read
             // only after installing that request handler.
             artifact_export_chunk_read: false,
+            // Large export metadata is likewise a running-binary capability;
+            // generated config must not make mixed-version Servers infer it.
+            artifact_export_streaming_metadata: false,
             // The running binary advertises structured deletion only after its
             // complete project-root-enforced handler is installed.
             structured_file_delete: false,

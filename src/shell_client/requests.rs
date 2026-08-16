@@ -378,6 +378,87 @@ impl ShellClientRegistry {
         Ok((request_id, rx))
     }
 
+    /// Enqueue the export-only large-file metadata read. Capability checks and
+    /// admission share the registry lock so a mixed-version replacement cannot
+    /// receive a caller-provided large metadata bound unless it explicitly
+    /// advertises both optimized export chunks and bounded streaming metadata.
+    pub(crate) async fn enqueue_artifact_export_metadata(
+        &self,
+        body: ShellFileOpRequest,
+        requested_by: String,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        validate_file_request(&body)?;
+        if body.op != "read_project_artifact_metadata" {
+            return Err(format!(
+                "artifact export metadata enqueue only accepts op=read_project_artifact_metadata (got {})",
+                body.op
+            ));
+        }
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: body.client_id.clone(),
+            kind: "file_read_project_artifact_metadata".to_string(),
+            job_id: None,
+            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
+            path: Some(body.path.trim().to_string()),
+            content: body.content.clone(),
+            max_bytes: body.max_bytes,
+            expected_sha256: body.expected_sha256.clone(),
+            expected_prefix: body.expected_prefix.clone(),
+            start_line: body.start_line,
+            end_line: body.end_line,
+            create_dirs: body.create_dirs,
+            command: String::new(),
+            process: None,
+            script: None,
+            stdin: None,
+            timeout_secs: 30,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            sandbox: None,
+            job_context: None,
+            persistent_shell: None,
+        };
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get(&body.client_id) else {
+            return Err(format!("unknown shell client: {}", body.client_id));
+        };
+        assert_shell_client_access(auth, client)?;
+        if !client.capabilities.file_read {
+            return Err(format!(
+                "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_FILE_READ}",
+                body.client_id
+            ));
+        }
+        if !client.capabilities.artifact_export_chunk_read {
+            return Err(format!(
+                "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ}",
+                body.client_id
+            ));
+        }
+        if !client.capabilities.artifact_export_streaming_metadata {
+            return Err(format!(
+                "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA}",
+                body.client_id
+            ));
+        }
+        enqueue_pending_request_locked(
+            &mut inner,
+            &body.client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        notify_client_locked(&inner, &body.client_id);
+        Ok((request_id, rx))
+    }
+
     /// Enqueue the internal artifact-export segment read. Capability checks and
     /// pending admission share the registry lock so a mixed-version replacement
     /// can never receive an unsupported request. Only an explicit capability

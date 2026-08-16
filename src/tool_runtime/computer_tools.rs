@@ -3,11 +3,12 @@ use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
 };
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -283,14 +284,49 @@ impl ToolRuntime {
             ToolCall::ComputerSnapshot {
                 client_id,
                 surface_id,
+                region,
+                max_width,
+                max_height,
             } => {
                 if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
                     return computer_error("invalid_surface", "surface_id is invalid");
                 }
+                if let Some(region) = region.as_ref() {
+                    if region.width == 0
+                        || region.height == 0
+                        || region.x.checked_add(region.width).is_none()
+                        || region.y.checked_add(region.height).is_none()
+                    {
+                        return computer_error("invalid_request", "snapshot region is invalid");
+                    }
+                }
+                if max_width.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION as u32)
+                    || max_height
+                        .is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION as u32)
+                {
+                    return computer_error(
+                        "invalid_request",
+                        "snapshot output dimension bound is invalid",
+                    );
+                }
+                let advanced = region.is_some() || max_width.is_some() || max_height.is_some();
+                let (kind, payload) = if advanced {
+                    (
+                        "computer_snapshot_region",
+                        json!({
+                            "surface_id": surface_id,
+                            "region": region,
+                            "max_width": max_width,
+                            "max_height": max_height,
+                        }),
+                    )
+                } else {
+                    ("computer_snapshot", json!({"surface_id": surface_id}))
+                };
                 self.dispatch_computer_request(
                     &client_id,
-                    "computer_snapshot",
-                    json!({"surface_id": surface_id}),
+                    kind,
+                    payload,
                     auth,
                     None,
                     Some(surface_id.as_str()),
@@ -308,6 +344,7 @@ impl ToolRuntime {
         let mut targets = Vec::new();
         for client in clients {
             let computer_observe = client.capabilities.computer_observe;
+            let computer_snapshot_region = client.capabilities.computer_snapshot_region;
             let computer_accessibility_observe = client.capabilities.computer_accessibility_observe;
             if !computer_observe && !computer_accessibility_observe {
                 continue;
@@ -322,6 +359,7 @@ impl ToolRuntime {
                 "connected": client.connected,
                 "capabilities": {
                     "computer_observe": computer_observe,
+                    "computer_snapshot_region": computer_snapshot_region,
                     "computer_accessibility_observe": computer_accessibility_observe,
                 },
             }));
@@ -348,32 +386,38 @@ impl ToolRuntime {
         if client_id.is_empty() || client_id.len() > 128 {
             return computer_error("invalid_client", "client_id is invalid");
         }
-        let required_capability = match kind {
+        let required_capabilities: &[&str] = match kind {
             "computer_list_windows" | "computer_snapshot" => {
-                SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE]
             }
+            "computer_snapshot_region" => &[
+                SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+                SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
+            ],
             "computer_accessibility_status" | "computer_accessibility_tree" => {
-                crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
+                &[crate::shell_protocol::SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]
             }
-            "computer_element_state" => SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
-            "computer_control" => SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
-            "computer_activate_window" => SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-            "computer_input_text" => SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
+            "computer_element_state" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE],
+            "computer_control" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL],
+            "computer_activate_window" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE],
+            "computer_input_text" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT],
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
         };
-        match self
-            .shell_clients
-            .client_supports_for_auth(client_id, required_capability, auth)
-            .await
-        {
-            Ok(true) => {}
-            Ok(false) => {
-                return computer_error(
-                    "capability_unavailable",
-                    &format!("target Runner does not support {required_capability}"),
-                )
+        for required_capability in required_capabilities {
+            match self
+                .shell_clients
+                .client_supports_for_auth(client_id, required_capability, auth)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    return computer_error(
+                        "capability_unavailable",
+                        &format!("target Runner does not support {required_capability}"),
+                    )
+                }
+                Err(error) => return computer_error("client_access_denied", &error),
             }
-            Err(error) => return computer_error("client_access_denied", &error),
         }
         let expected_element_id = payload
             .get("element_id")
@@ -384,6 +428,13 @@ impl ToolRuntime {
             .and_then(Value::as_str)
             .map(str::to_string);
         let expected_text_bytes = payload.get("text").and_then(Value::as_str).map(str::len);
+        let snapshot_advanced = kind == "computer_snapshot_region";
+        let expected_snapshot_region = payload
+            .get("region")
+            .filter(|value| !value.is_null())
+            .cloned();
+        let expected_snapshot_max_width = payload.get("max_width").and_then(Value::as_u64);
+        let expected_snapshot_max_height = payload.get("max_height").and_then(Value::as_u64);
         let payload = match serde_json::to_string(&payload) {
             Ok(payload) => payload,
             Err(_) => {
@@ -494,9 +545,15 @@ impl ToolRuntime {
             "computer_list_windows" => {
                 validate_window_list(output, list_limit.unwrap_or(MAX_WINDOWS))
             }
-            "computer_snapshot" => {
-                validate_snapshot(output, expected_surface_id.unwrap_or_default(), client_id)
-            }
+            "computer_snapshot" | "computer_snapshot_region" => validate_snapshot(
+                output,
+                expected_surface_id.unwrap_or_default(),
+                client_id,
+                snapshot_advanced,
+                expected_snapshot_region.as_ref(),
+                expected_snapshot_max_width,
+                expected_snapshot_max_height,
+            ),
             "computer_accessibility_status" => validate_accessibility_status(output),
             "computer_accessibility_tree" => {
                 let (max_depth, max_nodes) = accessibility_bounds.unwrap_or((0, 0));
@@ -1226,7 +1283,69 @@ fn sniff_mime(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn validate_snapshot(mut output: Value, expected_surface_id: &str, client_id: &str) -> ToolResult {
+fn snapshot_region_values(region: &Value) -> Option<(u64, u64, u64, u64)> {
+    let object = region.as_object()?;
+    let allowed = ["x", "y", "width", "height"];
+    if object.len() != allowed.len() || object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return None;
+    }
+    Some((
+        region.get("x")?.as_u64()?,
+        region.get("y")?.as_u64()?,
+        region.get("width")?.as_u64()?,
+        region.get("height")?.as_u64()?,
+    ))
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    Sha256::digest(data)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn validate_snapshot(
+    mut output: Value,
+    expected_surface_id: &str,
+    client_id: &str,
+    advanced: bool,
+    expected_region: Option<&Value>,
+    expected_max_width: Option<u64>,
+    expected_max_height: Option<u64>,
+) -> ToolResult {
+    let Some(object) = output.as_object() else {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner snapshot output is not an object",
+        );
+    };
+    let metadata_fields = [
+        "source_width",
+        "source_height",
+        "region",
+        "sha256",
+        "captured_at_unix_ms",
+    ];
+    let metadata_present = metadata_fields
+        .iter()
+        .any(|field| object.contains_key(*field));
+    if advanced && !metadata_present {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner advanced snapshot metadata is missing",
+        );
+    }
+    if metadata_present
+        && metadata_fields
+            .iter()
+            .any(|field| !object.contains_key(*field))
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner snapshot metadata is incomplete",
+        );
+    }
+
     let surface = match output.get("surface") {
         Some(surface) => surface,
         None => {
@@ -1239,6 +1358,8 @@ fn validate_snapshot(mut output: Value, expected_surface_id: &str, client_id: &s
     if let Err(error) = validate_surface(surface, Some(expected_surface_id)) {
         return computer_error("invalid_runner_response", &error);
     }
+    let surface_width = surface.get("width").and_then(Value::as_u64).unwrap_or(0);
+    let surface_height = surface.get("height").and_then(Value::as_u64).unwrap_or(0);
     let width = output.get("width").and_then(Value::as_u64).unwrap_or(0);
     let height = output.get("height").and_then(Value::as_u64).unwrap_or(0);
     if width == 0 || height == 0 || width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION {
@@ -1247,6 +1368,15 @@ fn validate_snapshot(mut output: Value, expected_surface_id: &str, client_id: &s
             "Runner snapshot dimensions exceed bound",
         );
     }
+    if expected_max_width.is_some_and(|bound| width > bound)
+        || expected_max_height.is_some_and(|bound| height > bound)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner snapshot exceeds requested output dimensions",
+        );
+    }
+
     let mime = output
         .get("mime_type")
         .and_then(Value::as_str)
@@ -1293,11 +1423,59 @@ fn validate_snapshot(mut output: Value, expected_surface_id: &str, client_id: &s
             "Runner snapshot byte count is inconsistent",
         );
     }
+
+    if metadata_present {
+        if output.get("source_width").and_then(Value::as_u64) != Some(surface_width)
+            || output.get("source_height").and_then(Value::as_u64) != Some(surface_height)
+        {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner snapshot source dimensions are inconsistent",
+            );
+        }
+        let actual_region = output.get("region").and_then(snapshot_region_values);
+        let expected_region = expected_region
+            .and_then(snapshot_region_values)
+            .or_else(|| Some((0, 0, surface_width, surface_height)));
+        let Some((x, y, region_width, region_height)) = actual_region else {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner snapshot region metadata is invalid",
+            );
+        };
+        if region_width == 0
+            || region_height == 0
+            || x.checked_add(region_width)
+                .is_none_or(|right| right > surface_width)
+            || y.checked_add(region_height)
+                .is_none_or(|bottom| bottom > surface_height)
+            || actual_region != expected_region
+        {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner snapshot region metadata is inconsistent",
+            );
+        }
+        if output.get("sha256").and_then(Value::as_str) != Some(sha256_hex(&decoded).as_str()) {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner snapshot SHA-256 is inconsistent",
+            );
+        }
+        const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+        if !matches!(
+            output.get("captured_at_unix_ms").and_then(Value::as_u64),
+            Some(value) if value > 0 && value <= MAX_SAFE_JSON_INTEGER
+        ) {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner snapshot capture timestamp is invalid",
+            );
+        }
+    }
+
     let Some(object) = output.as_object_mut() else {
-        return computer_error(
-            "invalid_runner_response",
-            "Runner snapshot output is not an object",
-        );
+        unreachable!("snapshot object shape checked above")
     };
     object.insert("client_id".to_string(), json!(client_id));
     ToolResult::ok(output)
@@ -1718,6 +1896,7 @@ mod tests {
             "computer_list_windows",
             "computer_accessibility_tree",
             "computer_snapshot",
+            "computer_snapshot_region",
         ] {
             assert!(!computer_request_is_effect(read_only), "{read_only}");
         }
@@ -1792,6 +1971,72 @@ mod tests {
     }
 
     #[test]
+    fn computer_snapshot_validator_accepts_advanced_region_metadata_and_rejects_mismatch() {
+        let image = [0xff, 0xd8, 0xff, 0xe0];
+        let region = json!({"x": 10, "y": 20, "width": 100, "height": 80});
+        let output = json!({
+            "surface": surface("surface_test"),
+            "source_width": 1280,
+            "source_height": 720,
+            "region": region.clone(),
+            "width": 50,
+            "height": 40,
+            "mime_type": "image/jpeg",
+            "file_bytes": image.len(),
+            "sha256": sha256_hex(&image),
+            "captured_at_unix_ms": 1_700_000_000_000u64,
+            "content_base64": general_purpose::STANDARD.encode(image)
+        });
+        let result = validate_snapshot(
+            output.clone(),
+            "surface_test",
+            "mini",
+            true,
+            Some(&region),
+            Some(60),
+            Some(50),
+        );
+        assert!(result.success, "{:?}", result.output);
+        assert_eq!(result.output["client_id"], "mini");
+
+        let wrong_region = json!({"x": 11, "y": 20, "width": 100, "height": 80});
+        let result = validate_snapshot(
+            output,
+            "surface_test",
+            "mini",
+            true,
+            Some(&wrong_region),
+            Some(60),
+            Some(50),
+        );
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "invalid_runner_response");
+    }
+
+    #[test]
+    fn computer_snapshot_validator_requires_complete_advanced_metadata() {
+        let image = [0xff, 0xd8, 0xff, 0xe0];
+        let result = validate_snapshot(
+            json!({
+                "surface": surface("surface_test"),
+                "width": 40,
+                "height": 30,
+                "mime_type": "image/jpeg",
+                "file_bytes": image.len(),
+                "content_base64": general_purpose::STANDARD.encode(image)
+            }),
+            "surface_test",
+            "mini",
+            true,
+            None,
+            Some(40),
+            Some(30),
+        );
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "invalid_runner_response");
+    }
+
+    #[test]
     fn computer_snapshot_validator_rejects_decoded_image_over_mcp_bound() {
         let encoded = "AAAA".repeat((MAX_MCP_IMAGE_BYTES / 3) + 1);
         let result = validate_snapshot(
@@ -1805,6 +2050,10 @@ mod tests {
             }),
             "surface_test",
             "msi",
+            false,
+            None,
+            None,
+            None,
         );
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], "image_too_large");
@@ -1824,6 +2073,10 @@ mod tests {
             }),
             "surface_test",
             "msi",
+            false,
+            None,
+            None,
+            None,
         );
         assert!(result.success);
         assert_eq!(result.output["client_id"], "msi");

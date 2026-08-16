@@ -1861,6 +1861,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Native read-only desktop observation is implemented only on macOS and
     // Windows. Unsupported platforms advertise false and fail closed.
     capabilities.computer_observe = cfg!(any(target_os = "macos", windows));
+    // Region/downscale snapshot requests use a distinct additive wire fence so
+    // old Runners that support only whole-window snapshots fail closed.
+    capabilities.computer_snapshot_region = cfg!(any(target_os = "macos", windows));
     // Accessibility inspection is a separate read-only semantic capability.
     // It is currently implemented only by the macOS Runner and never implies
     // future computer-control authority.

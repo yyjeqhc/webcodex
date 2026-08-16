@@ -210,6 +210,9 @@ pub const SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_pat
 /// Read-only native desktop/window observation. Missing on older Runners and
 /// false; never inferred from shell or file capabilities.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE: &str = "computer_observe";
+/// Bounded surface-relative region/downscale snapshot requests. Missing on older
+/// Runners is false and is never inferred from whole-window observation support.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION: &str = "computer_snapshot_region";
 /// Native read-only semantic accessibility inspection. Missing on older Runners
 /// is false and is never inferred from screenshot/window observation.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE: &str =
@@ -266,6 +269,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
     SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
     SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION,
@@ -386,6 +390,10 @@ pub struct ShellClientCapabilities {
     /// and therefore fail-closed.
     #[serde(default, skip_serializing_if = "is_false")]
     pub computer_observe: bool,
+    /// The Runner supports bounded region/max-output snapshot transforms while
+    /// preserving the existing whole-window snapshot wire for older Runners.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_snapshot_region: bool,
     /// Native read-only semantic accessibility inspection. Missing on older
     /// Runners is false; future computer control requires a distinct capability.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -464,6 +472,7 @@ impl Default for ShellClientCapabilities {
             project_lifecycle: false,
             project_path_registration: false,
             computer_observe: false,
+            computer_snapshot_region: false,
             computer_accessibility_observe: false,
             computer_element_state: false,
             computer_control: false,
@@ -2710,6 +2719,7 @@ mod envelope_tests {
                 project_lifecycle: false,
                 project_path_registration: false,
                 computer_observe: false,
+                computer_snapshot_region: false,
                 computer_accessibility_observe: false,
                 computer_element_state: false,
                 computer_control: false,
@@ -2827,6 +2837,20 @@ mod envelope_tests {
             serde_json::from_str(r#"{"computer_observe":true}"#).unwrap();
         assert!(capabilities.computer_observe);
         assert!(!capabilities.file_read);
+    }
+
+    #[test]
+    fn computer_snapshot_region_capability_deserializes_only_when_present() {
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_observe":true}"#).unwrap();
+        assert!(capabilities.computer_observe);
+        assert!(!capabilities.computer_snapshot_region);
+
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_snapshot_region":true}"#).unwrap();
+        assert!(capabilities.computer_snapshot_region);
+        assert!(!capabilities.computer_observe);
+        assert!(!capabilities.computer_accessibility_observe);
     }
 
     #[test]

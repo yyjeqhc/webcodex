@@ -141,7 +141,15 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             );
         }
         "computer_snapshot" => {
-            copy_keys(obj, &mut out, &["client_id", "surface_id"]);
+            copy_keys(
+                obj,
+                &mut out,
+                &["client_id", "surface_id", "max_width", "max_height"],
+            );
+            out.insert(
+                "region_present".to_string(),
+                Value::Bool(obj.get("region").is_some_and(|value| !value.is_null())),
+            );
         }
         "observe_jobs" => {
             let items = obj.get("items").and_then(Value::as_array);
@@ -442,10 +450,14 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
         }),
         "computer_snapshot" => serde_json::json!({
             "surface_id": output.pointer("/surface/surface_id").cloned().unwrap_or(Value::Null),
+            "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
+            "source_height": output.get("source_height").cloned().unwrap_or(Value::Null),
+            "region_present": output.get("region").is_some(),
             "width": output.get("width").cloned().unwrap_or(Value::Null),
             "height": output.get("height").cloned().unwrap_or(Value::Null),
             "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
             "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
+            "captured_at_unix_ms": output.get("captured_at_unix_ms").cloned().unwrap_or(Value::Null),
         }),
         "computer_accessibility_status" => serde_json::json!({
             "platform": output.get("platform").cloned().unwrap_or(Value::Null),
@@ -774,6 +786,27 @@ mod computer_privacy_tests {
     }
 
     #[test]
+    fn computer_snapshot_ledger_request_omits_region_coordinates() {
+        let request = json!({
+            "client_id": "mini",
+            "surface_id": "surface_safe",
+            "region": {"x": 111, "y": 222, "width": 333, "height": 444},
+            "max_width": 800,
+            "max_height": 600
+        });
+        let summary = session_log_arguments_for_tool_request("computer_snapshot", &request);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["region_present"], true);
+        assert_eq!(summary["max_width"], 800);
+        assert_eq!(summary["max_height"], 600);
+        assert!(summary.get("region").is_none());
+        assert!(!serialized.contains("111"));
+        assert!(!serialized.contains("222"));
+        assert!(!serialized.contains("333"));
+        assert!(!serialized.contains("444"));
+    }
+
+    #[test]
     fn computer_snapshot_ledger_result_omits_image_and_titles() {
         // Snapshot privacy remains unchanged.
         let output = json!({
@@ -786,10 +819,15 @@ mod computer_privacy_tests {
                 "focused": null,
                 "active": null
             },
+            "source_width": 1200,
+            "source_height": 800,
+            "region": {"x": 111, "y": 222, "width": 900, "height": 600},
             "width": 900,
             "height": 600,
             "mime_type": "image/jpeg",
             "file_bytes": 12345,
+            "sha256": "PRIVATE_SCREENSHOT_DIGEST",
+            "captured_at_unix_ms": 1700000000000u64,
             "content_base64": "SUPER_SECRET_SCREENSHOT_BYTES"
         });
         let summary = session_log_result_for_tool("computer_snapshot", &output);
@@ -798,6 +836,9 @@ mod computer_privacy_tests {
         assert_eq!(summary["width"], 900);
         assert_eq!(summary["height"], 600);
         assert_eq!(summary["file_bytes"], 12345);
+        assert_eq!(summary["region_present"], true);
+        assert!(summary.get("sha256").is_none());
+        assert!(summary.get("region").is_none());
         assert!(!serialized.contains("SUPER_SECRET"));
         assert!(!serialized.contains("Confidential"));
         assert!(!serialized.contains("Private App"));
@@ -1003,9 +1044,15 @@ impl ToolCall {
             Self::ComputerSnapshot {
                 client_id,
                 surface_id,
+                region,
+                max_width,
+                max_height,
             } => serde_json::json!({
                 "client_id": client_id,
                 "surface_id": surface_id,
+                "region_present": region.is_some(),
+                "max_width": max_width,
+                "max_height": max_height,
             }),
             Self::StopJob {
                 project,

@@ -14,9 +14,10 @@ fn target_schema() -> Value {
                 "additionalProperties": false,
                 "properties": {
                     "computer_observe": {"type": "boolean"},
+                    "computer_snapshot_region": {"type": "boolean"},
                     "computer_accessibility_observe": {"type": "boolean"}
                 },
-                "required": ["computer_observe", "computer_accessibility_observe"]
+                "required": ["computer_observe", "computer_snapshot_region", "computer_accessibility_observe"]
             }
         },
         "required": ["client_id", "display_name", "connected", "capabilities"]
@@ -83,6 +84,20 @@ fn accessibility_match_schema() -> Value {
             "focused": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}
         },
         "required": ["element_id", "role", "subrole", "title", "description", "placeholder", "enabled", "focused"]
+    })
+}
+
+fn snapshot_region_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "x": {"type": "integer", "minimum": 0, "maximum": 4294967295u64},
+            "y": {"type": "integer", "minimum": 0, "maximum": 4294967295u64},
+            "width": {"type": "integer", "minimum": 1, "maximum": 4294967295u64},
+            "height": {"type": "integer", "minimum": 1, "maximum": 4294967295u64}
+        },
+        "required": ["x", "y", "width", "height"]
     })
 }
 
@@ -245,6 +260,15 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("surface", surface_schema()),
             (
+                "source_width",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
+                "source_height",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            ("region", snapshot_region_schema()),
+            (
                 "width",
                 json!({"type": "integer", "minimum": 1, "maximum": 4096}),
             ),
@@ -259,6 +283,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "file_bytes",
                 json!({"type": "integer", "minimum": 1, "maximum": 1048576}),
+            ),
+            (
+                "sha256",
+                json!({"type": "string", "pattern": "^[0-9a-f]{64}$"}),
+            ),
+            (
+                "captured_at_unix_ms",
+                json!({"type": "integer", "minimum": 1, "maximum": 9007199254740991u64}),
             ),
             ("content_base64", json!({"type": "string"})),
         ])),

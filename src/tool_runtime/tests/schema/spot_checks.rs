@@ -183,6 +183,53 @@ fn tool_specs_computer_element_state_is_exact_read_only_normalized_state() {
 }
 
 #[test]
+fn tool_specs_computer_snapshot_has_bounded_region_without_format_controls() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "computer_snapshot");
+    assert_eq!(
+        required_fields(spec),
+        vec!["client_id".to_string(), "surface_id".to_string()]
+    );
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_snapshot input schema",
+        present: ["client_id", "surface_id", "region", "max_width", "max_height"],
+        absent: ["format", "quality", "save", "display_id"]
+    );
+    assert_eq!(props["max_width"]["maximum"], 4096);
+    assert_eq!(props["max_height"]["maximum"], 4096);
+    let region = props["region"]["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        region,
+        "computer_snapshot region schema",
+        present: ["x", "y", "width", "height"]
+    );
+    assert_eq!(props["region"]["additionalProperties"], false);
+
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_snapshot output schema",
+        present: [
+            "surface",
+            "source_width",
+            "source_height",
+            "region",
+            "width",
+            "height",
+            "mime_type",
+            "file_bytes",
+            "sha256",
+            "captured_at_unix_ms",
+            "content_base64"
+        ]
+    );
+}
+
+#[test]
 fn tool_specs_computer_activate_window_is_exact_surface_only() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "computer_activate_window");

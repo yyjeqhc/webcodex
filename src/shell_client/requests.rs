@@ -18,11 +18,12 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE, SHELL_CLIENT_CAPABILITY_FILE_READ,
-    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
-    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
+    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
+    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
+    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
@@ -940,8 +941,8 @@ impl ShellClientRegistry {
 
     /// Enqueue one typed bounded computer request. The payload is bounded JSON
     /// in stdin and command is always empty. Owner/auth and the exact per-kind
-    /// computer capability are rechecked under the registry lock so a concurrent
-    /// re-registration cannot create a TOCTOU escape.
+    /// computer capability requirements are rechecked under the registry lock so a
+    /// concurrent re-registration cannot create a TOCTOU escape.
     pub async fn enqueue_computer(
         &self,
         client_id: String,
@@ -952,17 +953,21 @@ impl ShellClientRegistry {
         timeout_secs: u64,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_id(&client_id, "client_id")?;
-        let required_capability = match kind {
+        let required_capabilities: &[&str] = match kind {
             "computer_list_windows" | "computer_snapshot" => {
-                SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE]
             }
+            "computer_snapshot_region" => &[
+                SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+                SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
+            ],
             "computer_accessibility_status" | "computer_accessibility_tree" => {
-                SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]
             }
-            "computer_element_state" => SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
-            "computer_control" => SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
-            "computer_activate_window" => SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-            "computer_input_text" => SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
+            "computer_element_state" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE],
+            "computer_control" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL],
+            "computer_activate_window" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE],
+            "computer_input_text" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT],
             _ => return Err("invalid computer request kind".to_string()),
         };
         if payload.len() > shell_computer_request_payload_max_bytes(kind) || payload.contains('\0')
@@ -1005,7 +1010,11 @@ impl ShellClientRegistry {
             .get(&client_id)
             .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
         assert_shell_client_access(auth, current)?;
-        if !capability_enabled(&current.capabilities, required_capability) {
+        if let Some(required_capability) = required_capabilities
+            .iter()
+            .copied()
+            .find(|capability| !capability_enabled(&current.capabilities, capability))
+        {
             return Err(format!(
                 "agent client {client_id} does not support {required_capability}"
             ));

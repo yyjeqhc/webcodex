@@ -57,7 +57,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_snapshot",
-            "Capture one previously listed opaque window surface as a bounded complete image. The surface may become stale and never falls back to another window.",
+            "Capture one exact previously listed window as a bounded image. Optional surface-relative region and max output dimensions require the Runner's additive region-snapshot capability; whole-window calls remain compatible with older observation-capable Runners. The region must fit fully inside the revalidated surface. Encoding format and quality are system-selected, and stale surfaces never fall back to another window.",
             computer_snapshot_input_schema(),
         ),
     ]

@@ -3,13 +3,14 @@ use super::{err_cmd, ok_cmd, CommandResult};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::shell_protocol::{shell_computer_request_payload_max_bytes, ShellAgentShellRequest};
 use base64::{engine::general_purpose, Engine as _};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 #[cfg(any(test, target_os = "macos"))]
 use std::time::Duration;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 const MAX_WINDOWS: usize = 64;
@@ -398,6 +399,15 @@ struct SurfaceOutput<'a> {
     active: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SnapshotRegion {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
 struct ComputerObserver {
     surfaces: Mutex<HashMap<String, SurfaceRecord>>,
     elements: Mutex<ElementRegistry>,
@@ -628,7 +638,13 @@ impl ComputerObserver {
         platform::input_text(surface_id, element_id, &record, &element, text)
     }
 
-    fn snapshot(&self, surface_id: &str) -> Result<Value, String> {
+    fn snapshot(
+        &self,
+        surface_id: &str,
+        region: Option<SnapshotRegion>,
+        max_width: Option<u32>,
+        max_height: Option<u32>,
+    ) -> Result<Value, String> {
         if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
             return Err("invalid_request: surface_id is invalid".to_string());
         }
@@ -639,9 +655,25 @@ impl ComputerObserver {
             .get(surface_id)
             .cloned()
             .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        if max_width.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION)
+            || max_height.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION)
+        {
+            return Err("invalid_request: snapshot output dimension bound is invalid".to_string());
+        }
+        let region = resolve_snapshot_region(record.width, record.height, region)?;
         let image = platform::capture_window(&record)?;
+        let captured_at_unix_ms = current_unix_ms()?;
+        let (image, region) = transform_snapshot_image(
+            image,
+            record.width,
+            record.height,
+            Some(region),
+            max_width,
+            max_height,
+        )?;
         let encoded = encode_bounded_jpeg(image)?;
         let file_bytes = encoded.bytes.len();
+        let sha256 = sha256_hex(&encoded.bytes);
         Ok(json!({
             "surface": SurfaceOutput {
                 surface_id,
@@ -652,10 +684,15 @@ impl ComputerObserver {
                 focused: None,
                 active: None,
             },
+            "source_width": record.width,
+            "source_height": record.height,
+            "region": region,
             "width": encoded.width,
             "height": encoded.height,
             "mime_type": "image/jpeg",
             "file_bytes": file_bytes,
+            "sha256": sha256,
+            "captured_at_unix_ms": captured_at_unix_ms,
             "content_base64": general_purpose::STANDARD.encode(encoded.bytes),
         }))
     }
@@ -665,6 +702,298 @@ struct EncodedImage {
     bytes: Vec<u8>,
     width: u32,
     height: u32,
+}
+
+fn current_unix_ms() -> Result<u64, String> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "computer_state_error: system clock is before Unix epoch".to_string())?
+        .as_millis();
+    let millis = u64::try_from(millis)
+        .map_err(|_| "computer_state_error: capture timestamp overflow".to_string())?;
+    if millis > 9_007_199_254_740_991 {
+        return Err(
+            "computer_state_error: capture timestamp exceeds exact JSON integer range".to_string(),
+        );
+    }
+    Ok(millis)
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    Sha256::digest(data)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn resolve_snapshot_region(
+    source_width: u32,
+    source_height: u32,
+    region: Option<SnapshotRegion>,
+) -> Result<SnapshotRegion, String> {
+    if source_width == 0 || source_height == 0 {
+        return Err("capture_failed: revalidated surface has zero dimensions".to_string());
+    }
+    let region = region.unwrap_or(SnapshotRegion {
+        x: 0,
+        y: 0,
+        width: source_width,
+        height: source_height,
+    });
+    if region.width == 0 || region.height == 0 {
+        return Err("invalid_request: snapshot region must have positive dimensions".to_string());
+    }
+    let right = region
+        .x
+        .checked_add(region.width)
+        .ok_or_else(|| "invalid_request: snapshot region horizontal bound overflow".to_string())?;
+    let bottom = region
+        .y
+        .checked_add(region.height)
+        .ok_or_else(|| "invalid_request: snapshot region vertical bound overflow".to_string())?;
+    if right > source_width || bottom > source_height {
+        return Err(
+            "invalid_request: snapshot region must fit fully inside the revalidated surface"
+                .to_string(),
+        );
+    }
+    Ok(region)
+}
+
+#[cfg(any(test, target_os = "macos", windows))]
+fn mapped_crop_bounds(
+    region: SnapshotRegion,
+    source_width: u32,
+    source_height: u32,
+    captured_width: u32,
+    captured_height: u32,
+) -> Result<(u32, u32, u32, u32), String> {
+    if captured_width == 0 || captured_height == 0 {
+        return Err("capture_failed: captured image has zero dimensions".to_string());
+    }
+    let floor_scaled = |value: u32, captured: u32, source: u32| -> u32 {
+        ((u64::from(value) * u64::from(captured)) / u64::from(source)) as u32
+    };
+    let ceil_scaled = |value: u32, captured: u32, source: u32| -> u32 {
+        let numerator = u64::from(value) * u64::from(captured);
+        let denominator = u64::from(source);
+        (numerator / denominator + u64::from(numerator % denominator != 0)) as u32
+    };
+    let right_source = region.x + region.width;
+    let bottom_source = region.y + region.height;
+    let left = floor_scaled(region.x, captured_width, source_width);
+    let top = floor_scaled(region.y, captured_height, source_height);
+    let right = ceil_scaled(right_source, captured_width, source_width).min(captured_width);
+    let bottom = ceil_scaled(bottom_source, captured_height, source_height).min(captured_height);
+    let width = right.saturating_sub(left);
+    let height = bottom.saturating_sub(top);
+    if width == 0 || height == 0 {
+        return Err("capture_failed: snapshot region maps to an empty captured image".to_string());
+    }
+    Ok((left, top, width, height))
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn transform_snapshot_image(
+    image: image::RgbaImage,
+    source_width: u32,
+    source_height: u32,
+    region: Option<SnapshotRegion>,
+    max_width: Option<u32>,
+    max_height: Option<u32>,
+) -> Result<(image::RgbaImage, SnapshotRegion), String> {
+    use image::imageops::FilterType;
+
+    if max_width.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION)
+        || max_height.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION)
+    {
+        return Err("invalid_request: snapshot output dimension bound is invalid".to_string());
+    }
+    let region = resolve_snapshot_region(source_width, source_height, region)?;
+    let (x, y, width, height) = mapped_crop_bounds(
+        region,
+        source_width,
+        source_height,
+        image.width(),
+        image.height(),
+    )?;
+    let mut image = if x == 0 && y == 0 && width == image.width() && height == image.height() {
+        image
+    } else {
+        image::imageops::crop_imm(&image, x, y, width, height).to_image()
+    };
+
+    let width_scale = max_width
+        .map(|bound| bound as f64 / image.width() as f64)
+        .unwrap_or(1.0);
+    let height_scale = max_height
+        .map(|bound| bound as f64 / image.height() as f64)
+        .unwrap_or(1.0);
+    let scale = 1.0f64.min(width_scale).min(height_scale);
+    if scale < 1.0 {
+        let target_width = ((image.width() as f64 * scale).floor() as u32)
+            .max(1)
+            .min(max_width.unwrap_or(u32::MAX));
+        let target_height = ((image.height() as f64 * scale).floor() as u32)
+            .max(1)
+            .min(max_height.unwrap_or(u32::MAX));
+        image = image::imageops::resize(&image, target_width, target_height, FilterType::Triangle);
+    }
+    Ok((image, region))
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn transform_snapshot_image(
+    _image: (),
+    _source_width: u32,
+    _source_height: u32,
+    _region: Option<SnapshotRegion>,
+    _max_width: Option<u32>,
+    _max_height: Option<u32>,
+) -> Result<((), SnapshotRegion), String> {
+    Err("unsupported_platform: computer observation is unavailable on this platform".to_string())
+}
+
+#[cfg(test)]
+mod snapshot_region_tests {
+    use super::*;
+
+    #[test]
+    fn computer_snapshot_region_is_surface_relative_and_fully_bounded() {
+        assert_eq!(
+            resolve_snapshot_region(100, 50, None).unwrap(),
+            SnapshotRegion {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 50,
+            }
+        );
+        assert!(resolve_snapshot_region(
+            100,
+            50,
+            Some(SnapshotRegion {
+                x: 90,
+                y: 0,
+                width: 11,
+                height: 10,
+            })
+        )
+        .is_err());
+        assert!(resolve_snapshot_region(
+            100,
+            50,
+            Some(SnapshotRegion {
+                x: u32::MAX,
+                y: 0,
+                width: 2,
+                height: 10,
+            })
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn computer_snapshot_region_maps_surface_coordinates_to_capture_pixels() {
+        let mapped = mapped_crop_bounds(
+            SnapshotRegion {
+                x: 10,
+                y: 5,
+                width: 20,
+                height: 10,
+            },
+            100,
+            50,
+            200,
+            100,
+        )
+        .unwrap();
+        assert_eq!(mapped, (20, 10, 40, 20));
+    }
+
+    #[test]
+    fn computer_snapshot_region_payload_is_closed_and_typed() {
+        let exact = json!({
+            "surface_id": "surface_test",
+            "region": {"x": 1, "y": 2, "width": 3, "height": 4},
+            "max_width": 100,
+            "max_height": null
+        });
+        assert!(ensure_exact_payload_fields(
+            &exact,
+            &["surface_id", "region", "max_width", "max_height"]
+        )
+        .is_ok());
+        assert_eq!(
+            optional_snapshot_region(&exact).unwrap(),
+            Some(SnapshotRegion {
+                x: 1,
+                y: 2,
+                width: 3,
+                height: 4,
+            })
+        );
+        assert_eq!(
+            optional_snapshot_dimension(&exact, "max_width").unwrap(),
+            Some(100)
+        );
+        assert_eq!(
+            optional_snapshot_dimension(&exact, "max_height").unwrap(),
+            None
+        );
+
+        let extra = json!({
+            "surface_id": "surface_test",
+            "region": {"x": 1, "y": 2, "width": 3, "height": 4},
+            "max_width": 100,
+            "max_height": null,
+            "quality": 99
+        });
+        assert!(ensure_exact_payload_fields(
+            &extra,
+            &["surface_id", "region", "max_width", "max_height"]
+        )
+        .is_err());
+        let nested_extra = json!({
+            "region": {"x": 1, "y": 2, "width": 3, "height": 4, "global": true}
+        });
+        assert!(optional_snapshot_region(&nested_extra).is_err());
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn computer_snapshot_region_downscale_preserves_aspect_and_never_upscales() {
+        let image = image::RgbaImage::new(200, 100);
+        let (image, region) = transform_snapshot_image(
+            image,
+            100,
+            50,
+            Some(SnapshotRegion {
+                x: 10,
+                y: 5,
+                width: 20,
+                height: 10,
+            }),
+            Some(20),
+            Some(20),
+        )
+        .unwrap();
+        assert_eq!((image.width(), image.height()), (20, 10));
+        assert_eq!(
+            region,
+            SnapshotRegion {
+                x: 10,
+                y: 5,
+                width: 20,
+                height: 10,
+            }
+        );
+
+        let image = image::RgbaImage::new(10, 5);
+        let (image, _) =
+            transform_snapshot_image(image, 10, 5, None, Some(100), Some(100)).unwrap();
+        assert_eq!((image.width(), image.height()), (10, 5));
+    }
 }
 
 #[cfg(any(target_os = "macos", windows))]
@@ -1250,6 +1579,7 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
         kind,
         "computer_list_windows"
             | "computer_snapshot"
+            | "computer_snapshot_region"
             | "computer_accessibility_status"
             | "computer_accessibility_tree"
             | "computer_element_state"
@@ -1268,6 +1598,26 @@ fn ensure_exact_payload_fields(payload: &Value, expected: &[&str]) -> Result<(),
         return Err("invalid_request: computer payload contains unsupported fields".to_string());
     }
     Ok(())
+}
+
+fn optional_snapshot_region(payload: &Value) -> Result<Option<SnapshotRegion>, String> {
+    match payload.get("region") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|_| "invalid_request: snapshot region is invalid".to_string()),
+    }
+}
+
+fn optional_snapshot_dimension(payload: &Value, field: &str) -> Result<Option<u32>, String> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .map(Some)
+            .ok_or_else(|| format!("invalid_request: snapshot {field} is invalid")),
+    }
 }
 
 pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> CommandResult {
@@ -1410,11 +1760,36 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 },
             )
         }
-        "computer_snapshot" => payload
-            .get("surface_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "invalid_request: surface_id is required".to_string())
-            .and_then(|surface_id| ComputerObserver::global().snapshot(surface_id)),
+        "computer_snapshot" => ensure_exact_payload_fields(&payload, &["surface_id"])
+            .and_then(|()| {
+                payload
+                    .get("surface_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_request: surface_id is required".to_string())
+            })
+            .and_then(|surface_id| {
+                ComputerObserver::global().snapshot(surface_id, None, None, None)
+            }),
+        "computer_snapshot_region" => ensure_exact_payload_fields(
+            &payload,
+            &["surface_id", "region", "max_width", "max_height"],
+        )
+        .and_then(|()| {
+            let surface_id = payload
+                .get("surface_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid_request: surface_id is required".to_string())?;
+            let region = optional_snapshot_region(&payload)?;
+            let max_width = optional_snapshot_dimension(&payload, "max_width")?;
+            let max_height = optional_snapshot_dimension(&payload, "max_height")?;
+            if region.is_none() && max_width.is_none() && max_height.is_none() {
+                return Err(
+                    "invalid_request: region snapshot requires a region or output dimension bound"
+                        .to_string(),
+                );
+            }
+            ComputerObserver::global().snapshot(surface_id, region, max_width, max_height)
+        }),
         _ => Err("invalid_request: unsupported computer request kind".to_string()),
     };
     match result {

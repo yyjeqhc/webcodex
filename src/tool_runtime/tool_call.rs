@@ -238,6 +238,15 @@ pub(crate) struct OpenAiHostFileRef {
     pub(crate) file_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ComputerSnapshotRegion {
+    pub(crate) x: u32,
+    pub(crate) y: u32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "params", rename_all = "snake_case")]
 pub enum ToolCall {
@@ -1378,10 +1387,16 @@ pub enum ToolCall {
         text: String,
     },
 
-    /// Capture one opaque process-local window surface on one exact Runner.
+    /// Capture one opaque process-local window surface, optionally narrowed to a bounded region.
     ComputerSnapshot {
         client_id: String,
         surface_id: String,
+        #[serde(default)]
+        region: Option<ComputerSnapshotRegion>,
+        #[serde(default)]
+        max_width: Option<u32>,
+        #[serde(default)]
+        max_height: Option<u32>,
     },
 
     ListProjects,

@@ -89,6 +89,7 @@ async fn register_computer_target_for_auth(
     display_name: &str,
     auth: &crate::auth::AuthContext,
     computer_observe: bool,
+    computer_snapshot_region: bool,
     computer_accessibility_observe: bool,
 ) {
     runtime
@@ -107,6 +108,7 @@ async fn register_computer_target_for_auth(
                 host_context: None,
                 capabilities: Some(ShellClientCapabilities {
                     computer_observe,
+                    computer_snapshot_region,
                     computer_accessibility_observe,
                     ..Default::default()
                 }),
@@ -169,6 +171,7 @@ async fn register_agent_projects_for_auth(
                     project_lifecycle: false,
                     project_path_registration: false,
                     computer_observe: false,
+                    computer_snapshot_region: false,
                     computer_accessibility_observe: false,
                     computer_element_state: false,
                     computer_control: false,
@@ -2234,6 +2237,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
         "Alice Accessibility",
         &shared_a,
         false,
+        false,
         true,
     )
     .await;
@@ -2244,6 +2248,17 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
         &shared_a,
         false,
         false,
+        false,
+    )
+    .await;
+    register_computer_target_for_auth(
+        &runtime,
+        "a-region-only",
+        "Alice Region Only",
+        &shared_a,
+        false,
+        true,
+        false,
     )
     .await;
     register_computer_target_for_auth(
@@ -2251,6 +2266,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
         "a-observe",
         "Alice Desktop",
         &shared_a,
+        true,
         true,
         false,
     )
@@ -2260,6 +2276,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
         "b-private",
         "Bob Private Desktop",
         &shared_b,
+        true,
         true,
         true,
     )
@@ -2279,11 +2296,16 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
     assert_eq!(targets[0]["connected"], true);
     assert_eq!(targets[0]["capabilities"]["computer_observe"], false);
     assert_eq!(
+        targets[0]["capabilities"]["computer_snapshot_region"],
+        false
+    );
+    assert_eq!(
         targets[0]["capabilities"]["computer_accessibility_observe"],
         true
     );
     assert_eq!(targets[1]["client_id"], "a-observe");
     assert_eq!(targets[1]["capabilities"]["computer_observe"], true);
+    assert_eq!(targets[1]["capabilities"]["computer_snapshot_region"], true);
     assert_eq!(
         targets[1]["capabilities"]["computer_accessibility_observe"],
         false
@@ -2314,6 +2336,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
     }
     let serialized = result.output.to_string();
     assert!(!serialized.contains("a-none"));
+    assert!(!serialized.contains("a-region-only"));
     assert!(!serialized.contains("Bob Private Desktop"));
     assert!(!serialized.contains("b-private"));
     assert!(!serialized.contains("/tmp/private"));

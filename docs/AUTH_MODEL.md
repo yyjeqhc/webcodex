@@ -218,7 +218,8 @@ It authorizes the model-facing `computer_list_targets`, `computer_list_windows`,
 `computer_list_targets` closes the target-discovery loop without widening
 `runtime:read`: it returns only caller-visible Runners that advertise
 `computer_observe` and/or `computer_accessibility_observe`, projected to the
-minimum client identity, connection state, and those two capability facts. It
+minimum client identity, connection state, plus the additive
+`computer_snapshot_region` capability fact. It
 does not expose the broader projects, policy, jobs, host, or provider inventory
 from `list_agents`.
 
@@ -238,9 +239,11 @@ reconciled by observing current UI state before any retry.
 Scopes are only one layer of the check. After target discovery, observation and
 effect calls name one exact Runner `client_id`, and the Server also requires
 caller access/ownership for that Runner plus the independently advertised
-capability for the requested operation: `computer_observe` for window
-observation/snapshot, `computer_accessibility_observe` for Accessibility tree
-observation, `computer_element_state` for normalized state of one exact observed
+capabilities for the requested operation: `computer_observe` for window
+observation and all window snapshots, with `computer_snapshot_region`
+additionally required for snapshot requests that add a surface-relative region
+and/or output dimension bound; `computer_accessibility_observe` for Accessibility tree observation,
+`computer_element_state` for normalized state of one exact observed
 element, `computer_window_activate` for exact window activation/raise,
 `computer_control` for press/focus, and `computer_text_input` for bounded text
 input. Element-state observation re-resolves the existing ephemeral handle and

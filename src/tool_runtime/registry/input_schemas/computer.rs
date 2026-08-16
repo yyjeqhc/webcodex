@@ -114,7 +114,21 @@ pub(crate) fn computer_snapshot_input_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose desktop is observed."},
-            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local surface_id returned by computer_list_windows."}
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local surface_id returned by computer_list_windows."},
+            "region": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Optional rectangle in the revalidated surface coordinate space. It must fit fully inside the exact surface.",
+                "properties": {
+                    "x": {"type": "integer", "minimum": 0, "maximum": 4294967295u64},
+                    "y": {"type": "integer", "minimum": 0, "maximum": 4294967295u64},
+                    "width": {"type": "integer", "minimum": 1, "maximum": 4294967295u64},
+                    "height": {"type": "integer", "minimum": 1, "maximum": 4294967295u64}
+                },
+                "required": ["x", "y", "width", "height"]
+            },
+            "max_width": {"type": "integer", "minimum": 1, "maximum": 4096, "description": "Optional upper bound on encoded output width. Never upscales."},
+            "max_height": {"type": "integer", "minimum": 1, "maximum": 4096, "description": "Optional upper bound on encoded output height. Never upscales."}
         },
         "required": ["client_id", "surface_id"]
     })

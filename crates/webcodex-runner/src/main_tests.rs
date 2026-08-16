@@ -6689,6 +6689,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     cfg.capabilities = Some(ShellClientCapabilities {
         sandbox_inspect_commands: true,
         computer_observe: true,
+        computer_snapshot_region: true,
         computer_accessibility_observe: true,
         computer_element_state: true,
         computer_control: true,
@@ -6747,6 +6748,11 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         caps.computer_observe,
         cfg!(any(target_os = "macos", windows)),
         "computer observation is advertised only when this Runner binary has a supported native implementation"
+    );
+    assert_eq!(
+        caps.computer_snapshot_region,
+        cfg!(any(target_os = "macos", windows)),
+        "computer region snapshot is independently advertised only when native window capture is supported"
     );
     assert_eq!(
         caps.computer_accessibility_observe,

@@ -79,6 +79,8 @@ Extend window snapshot observation with a bounded window-relative region and opt
 
 The first version does not need caller-controlled image quality or a general screenshot backend. Prefer bounded system-selected encoding for model observation. Return enough metadata to correlate the image with what was captured, including source/output dimensions, captured region, MIME type, byte count, digest, and capture time when available.
 
+The implementation keeps `computer_snapshot` as the single model-facing operation. Calls with only `client_id` + `surface_id` retain the existing `computer_snapshot` wire and `computer_observe` capability for rolling compatibility. Supplying `region`, `max_width`, or `max_height` switches internally to the additive `computer_snapshot_region` Runner wire and requires both the baseline `computer_observe` capability and the additive `computer_snapshot_region` capability, so an older Runner can still serve whole-window snapshots but fails closed for the new transform. Region coordinates remain in the revalidated surface coordinate space; the Runner maps them into captured pixels, crops inside the bounded image, applies aspect-preserving downscale only when requested, and keeps JPEG encoding/quality system-selected.
+
 ### CU-8 — snapshot to project artifact
 
 Add a separate `computer_save_snapshot` operation rather than a `save=true` flag on observation. Capture bytes should flow directly from the Computer/Runner path into existing project-artifact semantics; the model should not shuttle image bytes through Base64.

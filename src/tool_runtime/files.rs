@@ -1300,6 +1300,7 @@ struct SearchResult {
 struct SearchBackendStatus {
     backend: String,
     feature_unavailable: bool,
+    marker_present: bool,
 }
 
 fn parse_search_backend_status(stdout: &str) -> SearchBackendStatus {
@@ -1318,11 +1319,13 @@ fn parse_search_backend_status(stdout: &str) -> SearchBackendStatus {
                     .get("feature_unavailable")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                marker_present: true,
             })
         })
         .unwrap_or_else(|| SearchBackendStatus {
             backend: "grep".to_string(),
             feature_unavailable: false,
+            marker_present: false,
         })
 }
 
@@ -1673,6 +1676,24 @@ pub(crate) fn search_project_text_output_with_agent_error(
     agent_error: Option<&str>,
 ) -> ToolResult {
     let backend_status = parse_search_backend_status(stdout);
+    // Every canonical native or external-provider success path emits a trusted
+    // backend identity marker before search records. Missing identity is therefore
+    // an execution/protocol failure regardless of incidental stdout/stderr noise;
+    // accepting markerless output could turn a shell/parser failure into a false
+    // search result (observed with PowerShell on Windows).
+    if !backend_status.marker_present {
+        let message = "search_project_text backend did not emit its identity marker";
+        return ToolResult::err_with_output(
+            message,
+            json!({
+                "code": "search_execution_failed",
+                "backend": Value::Null,
+                "result_mode": options.result_mode.as_str(),
+                "effective_timeout_secs": options.timeout_secs,
+                "message": message,
+            }),
+        );
+    }
     if backend_status.feature_unavailable {
         let message = "ripgrep is required for the requested search_project_text features; grep fallback supports only basic matches requests";
         return ToolResult::err_with_output(

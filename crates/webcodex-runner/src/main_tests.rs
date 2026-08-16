@@ -7664,6 +7664,88 @@ fn dispatch_request_run_shell_sends_result_over_sink() {
 }
 
 #[test]
+fn dispatch_request_internal_search_uses_posix_runtime_not_configured_shell_parser() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    // The generated search program is POSIX shell. It must not inherit an
+    // arbitrary configured shell parser (PowerShell is the Windows production
+    // case); use a guaranteed-failing program here to prove the bypass.
+    cfg.shell.program = if cfg!(windows) {
+        "powershell".to_string()
+    } else {
+        "/bin/false".to_string()
+    };
+    let jobs = JobManager::new(max_concurrent_jobs(&cfg));
+    let pdir = projects_dir(&cfg).unwrap();
+    let hot = runtime_config(&cfg);
+    let persistent_shells = webcodex_runner::PersistentShellManager::new(
+        &cfg.shell,
+        webcodex_runner::SshConnectionPool::default(),
+    );
+    let (sink, mut rx) = ws_sink("ws-client");
+    let marker = r#"{"webcodex_search":{"backend":"grep","feature_unavailable":false}}"#;
+    let request = ShellAgentShellRequest {
+        request_id: "req-internal-search".to_string(),
+        client_id: "ws-client".to_string(),
+        kind: "run_shell".to_string(),
+        job_id: None,
+        cwd: Some(tmp.path().to_string_lossy().to_string()),
+        path: None,
+        content: None,
+        max_bytes: None,
+        expected_sha256: None,
+        expected_prefix: None,
+        start_line: None,
+        end_line: None,
+        create_dirs: false,
+        command: format!(
+            "{}\nprintf '%s\\n' '{}'\n",
+            shell_protocol::EXTERNAL_SEARCH_REQUEST_PREFIX,
+            marker
+        ),
+        process: None,
+        script: None,
+        stdin: Some("{}".to_string()),
+        timeout_secs: if cfg!(windows) { 30 } else { 10 },
+        requested_by: "tester".to_string(),
+        created_at: 0,
+        validation: None,
+        lsp: None,
+        sandbox: None,
+        job_context: None,
+        persistent_shell: None,
+    };
+
+    assert!(dispatch_request(
+        &sink,
+        &hot.snapshot(),
+        &hot,
+        &jobs,
+        &persistent_shells,
+        &pdir,
+        &webcodex_runner::LspSupervisor::default(),
+        request,
+    )
+    .unwrap());
+    match rx.try_recv().expect("internal search result") {
+        AgentEnvelope::Result { payload } => {
+            assert_eq!(payload.result.exit_code, Some(0));
+            assert!(payload
+                .result
+                .stdout
+                .as_deref()
+                .unwrap_or_default()
+                .contains("webcodex_search"));
+            assert_eq!(
+                payload.command_execution_state,
+                Some(ShellCommandExecutionState::Completed)
+            );
+        }
+        other => panic!("expected result, got {:?}", other.kind()),
+    }
+}
+
+#[test]
 fn dispatch_request_run_shell_rejects_oversized_wire_command_before_start() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));

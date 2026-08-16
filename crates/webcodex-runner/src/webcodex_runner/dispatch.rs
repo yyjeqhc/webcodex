@@ -5,7 +5,9 @@ use super::validation::{handle_validation_request, is_validation_request_kind};
 use super::{
     handle_computer_request, handle_project_lifecycle_op,
     handle_project_op_with_temporary_projects_root, handle_resolve_or_register_project,
-    is_computer_request_kind, run_process_with_profiles_in_sandbox_and_execution_state,
+    is_computer_request_kind,
+    run_internal_search_script_with_profiles_in_sandbox_and_execution_state,
+    run_process_with_profiles_in_sandbox_and_execution_state,
     run_script_with_profiles_in_sandbox_and_execution_state,
     run_shell_with_profiles_in_sandbox_and_execution_state, run_ssh_shell_with_execution_state,
     AgentSink, CommandResult, HotAgentConfig, PersistentShellManager, ReloadableAgentConfig,
@@ -13,12 +15,68 @@ use super::{
 };
 use crate::shell_protocol::{
     validate_process_argv, validate_raw_shell_wire_command, validate_script_request,
-    ShellAgentShellRequest, ShellProcessArgv, ShellScriptPayload, PROCESS_CWD_MAX_BYTES,
-    PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+    ShellAgentShellRequest, ShellProcessArgv, ShellScriptPayload, EXTERNAL_SEARCH_REQUEST_PREFIX,
+    PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
 };
 use crate::{handle_file_request, is_file_request_kind, JobManager, PendingJobStart};
 use std::path::Path;
 use std::sync::atomic::Ordering;
+
+fn internal_search_script(command: &str) -> Option<&str> {
+    let rest = command.strip_prefix(EXTERNAL_SEARCH_REQUEST_PREFIX)?;
+    let script = rest.strip_prefix('\n')?;
+    (!script.is_empty()).then_some(script)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_native_shell_or_internal_search(
+    config: &HotAgentConfig,
+    runtime: &ReloadableAgentConfig,
+    jobs: &JobManager,
+    projects_dir: &Path,
+    request: &ShellAgentShellRequest,
+) -> ShellCommandResult {
+    if request.command.lines().next() == Some(EXTERNAL_SEARCH_REQUEST_PREFIX) {
+        let Some(script) = internal_search_script(&request.command) else {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(
+                    "invalid_internal_search_request: generated search script is missing; command was not started"
+                        .to_string(),
+                ),
+            });
+        };
+        return run_internal_search_script_with_profiles_in_sandbox_and_execution_state(
+            config.generation,
+            &config.policy,
+            &config.shell,
+            projects_dir,
+            &jobs.prepared_profiles,
+            request.cwd.as_deref(),
+            script,
+            request.timeout_secs,
+            Some(runtime.shutdown_flag()),
+            request.sandbox.as_deref(),
+        );
+    }
+    run_shell_with_profiles_in_sandbox_and_execution_state(
+        config.generation,
+        &config.policy,
+        &config.shell,
+        projects_dir,
+        &jobs.prepared_profiles,
+        request.cwd.as_deref(),
+        &request.command,
+        request.stdin.as_deref(),
+        request.timeout_secs,
+        Some(runtime.shutdown_flag()),
+        request.sandbox.as_deref(),
+    )
+}
 
 /// Execute a single agent request (shell/file/job/lsp/validation) and send the
 /// result over the active transport. This is the shared dispatch path used by
@@ -263,19 +321,8 @@ pub(crate) fn dispatch_request(
                     .submit_result_with_metadata(request_id, result, config, runtime)
                     .map(|_| true);
             }
-            let result = run_shell_with_profiles_in_sandbox_and_execution_state(
-                config.generation,
-                policy,
-                shell,
-                projects_dir,
-                &jobs.prepared_profiles,
-                request.cwd.as_deref(),
-                &request.command,
-                request.stdin.as_deref(),
-                request.timeout_secs,
-                Some(runtime.shutdown_flag()),
-                request.sandbox.as_deref(),
-            );
+            let result =
+                run_native_shell_or_internal_search(config, runtime, jobs, projects_dir, &request);
             external_tools.complete_native_fallback(fallback, &result.result);
             return sink
                 .submit_shell_result_with_metadata(request_id, result, config, runtime)
@@ -395,18 +442,12 @@ pub(crate) fn dispatch_request(
                         "ssh_session_required: an SSH resource requires a Workflow Session id; command was not started".to_string(),
                     ),
                 }),
-                (None, _) => run_shell_with_profiles_in_sandbox_and_execution_state(
-                    config.generation,
-                    policy,
-                    shell,
+                (None, _) => run_native_shell_or_internal_search(
+                    config,
+                    runtime,
+                    jobs,
                     projects_dir,
-                    &jobs.prepared_profiles,
-                    request.cwd.as_deref(),
-                    &request.command,
-                    request.stdin.as_deref(),
-                    request.timeout_secs,
-                    Some(runtime.shutdown_flag()),
-                    request.sandbox.as_deref(),
+                    &request,
                 ),
             };
             sink.submit_shell_result_with_metadata(request_id, result, config, runtime)

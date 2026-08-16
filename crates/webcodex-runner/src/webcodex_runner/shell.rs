@@ -1719,6 +1719,188 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_star
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn run_internal_search_script_with_profiles_in_sandbox_and_execution_state(
+    generation: u64,
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    script: &str,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    sandbox: Option<&str>,
+) -> ShellCommandResult {
+    #[cfg(not(windows))]
+    {
+        let payload = ShellScriptPayload {
+            language: ShellScriptLanguage::Sh,
+            script: script.to_string(),
+            args: Vec::new(),
+        };
+        return run_script_with_profiles_in_sandbox_and_execution_state(
+            generation,
+            policy,
+            shell,
+            projects_dir,
+            cache,
+            cwd,
+            &payload,
+            None,
+            timeout_secs,
+            stop_requested,
+            sandbox,
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        // The native search program is a Runner-generated POSIX script. Do not
+        // hand it to the configured PowerShell parser, and do not materialize a
+        // Windows script-file path for an unrelated Bash runtime to interpret.
+        // Native Windows Bash launchers map the process cwd; `bash -s` consumes
+        // the generated script bytes directly from stdin.
+        if !policy.allow_raw_shell {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(
+                    "internal search script execution is disabled by local agent policy".into(),
+                ),
+            });
+        }
+        if script.is_empty() {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some("internal search script is empty; command was not started".into()),
+            });
+        }
+        let cwd_path = cwd
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        if let Err(error) = cwd_allowed(policy, &cwd_path) {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(error),
+            });
+        }
+        let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
+        let start = Instant::now();
+        let inspect_scratch = match sandbox {
+            None => None,
+            Some(crate::command_sandbox::INSPECT_SANDBOX_MODE) => {
+                match crate::command_sandbox::InspectScratch::create() {
+                    Ok(scratch) => Some(scratch),
+                    Err(error) => {
+                        return ShellCommandResult::not_started(CommandResult {
+                            exit_code: None,
+                            stdout: None,
+                            stderr: None,
+                            duration_ms: Some(start.elapsed().as_millis() as u64),
+                            error: Some(format!("inspect sandbox unavailable: {error}")),
+                        })
+                    }
+                }
+            }
+            Some(other) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!("unknown sandbox mode '{other}'")),
+                })
+            }
+        };
+        let profile = if inspect_scratch.is_none() {
+            match resolve_prepared_shell_profile(
+                generation,
+                shell,
+                projects_dir,
+                &cwd_path,
+                cwd.is_some(),
+                cache,
+                stop_requested,
+            ) {
+                Ok(profile) => profile,
+                Err(error) => {
+                    return ShellCommandResult::not_started(CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(start.elapsed().as_millis() as u64),
+                        error: Some(error),
+                    })
+                }
+            }
+        } else {
+            None
+        };
+        let interpreter = match configured_script_interpreter(
+            shell,
+            profile.as_deref(),
+            ShellScriptLanguage::Bash,
+        ) {
+            Ok(interpreter) => interpreter,
+            Err(error) => {
+                return ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(error),
+                })
+            }
+        };
+        let mut command = Command::new(interpreter);
+        command.arg("-s");
+        match profile.as_deref() {
+            Some(profile) => apply_env_snapshot(&mut command, &profile.env_snapshot),
+            None => {
+                if let Err(error) = apply_shell_environment(&mut command, shell) {
+                    return ShellCommandResult::not_started(CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(start.elapsed().as_millis() as u64),
+                        error: Some(error),
+                    });
+                }
+            }
+        }
+        // WSL/Git-Bash interop may expose a host ripgrep binary as `rg.exe`
+        // rather than `rg`. Keep the existing search script and its rg-first
+        // semantics unchanged by providing a process-local function only when
+        // no native `rg` command is already visible. Relative project paths are
+        // preserved across the Windows/Bash cwd mapping.
+        let script = format!(
+            "if ! command -v rg >/dev/null 2>&1 && command -v rg.exe >/dev/null 2>&1; then rg() {{ command rg.exe --path-separator / \"$@\"; }}; fi\n{script}"
+        );
+
+        execute_configured_command(
+            policy,
+            command,
+            &cwd_path,
+            Some(&script),
+            timeout_secs,
+            stop_requested,
+            inspect_scratch.as_ref(),
+            start,
+            "failed to spawn internal search interpreter",
+            None,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_script_with_profiles_in_sandbox_and_execution_state(
     generation: u64,
     policy: &AgentPolicy,

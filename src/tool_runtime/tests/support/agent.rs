@@ -4,7 +4,7 @@ use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
     AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
     ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellProfileSummaryEntry,
+    ShellProfileSummaryEntry, EXTERNAL_SEARCH_REQUEST_PREFIX,
 };
 use crate::tool_runtime::{RuntimeInfo, ToolCall, ToolResult, ToolRuntime};
 use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
@@ -100,12 +100,33 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
     if req.kind == "file_project_overview" {
         return run_agent_project_overview_request_locally(req);
     }
-    let mut command = std::process::Command::new("sh");
-    command.arg("-c").arg(&req.command);
+    let internal_search = req
+        .command
+        .strip_prefix(EXTERNAL_SEARCH_REQUEST_PREFIX)
+        .and_then(|rest| rest.strip_prefix('\n'));
+    let (mut command, stdin_payload) = if let Some(script) = internal_search {
+        #[cfg(windows)]
+        let mut command = std::process::Command::new("bash.exe");
+        #[cfg(not(windows))]
+        let mut command = std::process::Command::new("sh");
+        command.arg("-s");
+        let script = if cfg!(windows) {
+            format!(
+                "if ! command -v rg >/dev/null 2>&1 && command -v rg.exe >/dev/null 2>&1; then rg() {{ command rg.exe --path-separator / \"$@\"; }}; fi\n{script}"
+            )
+        } else {
+            script.to_string()
+        };
+        (command, Some(script))
+    } else {
+        let mut command = std::process::Command::new("sh");
+        command.arg("-c").arg(&req.command);
+        (command, req.stdin.clone())
+    };
     if let Some(cwd) = req.cwd.as_deref() {
         command.current_dir(cwd);
     }
-    if req.stdin.is_some() {
+    if stdin_payload.is_some() {
         command.stdin(std::process::Stdio::piped());
     }
     let mut child = command
@@ -113,7 +134,7 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn agent shell request");
-    if let Some(stdin) = req.stdin.as_deref() {
+    if let Some(stdin) = stdin_payload.as_deref() {
         use std::io::Write;
         let write_result = child
             .stdin

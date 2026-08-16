@@ -1817,6 +1817,26 @@ fn search_backend_exit_codes_map_to_results() {
     }
 }
 
+#[test]
+fn search_markerless_output_cannot_be_reported_as_a_search_result() {
+    let options = SearchOptions::normalize(raw_search_request()).unwrap();
+    for (stdout, exit_code, stderr) in [
+        (
+            "",
+            Some(1),
+            "PowerShell parser rejected the generated POSIX search script",
+        ),
+        ("src/lib.rs:1:startup noise\n", Some(0), ""),
+        ("src/lib.rs:1:partial output\n", Some(1), ""),
+    ] {
+        let result = search_project_text_output("demo", &options, stdout, exit_code, stderr);
+        assert!(!result.success, "stdout={stdout:?} exit_code={exit_code:?}");
+        assert_search_output_keys_are_declared(&result.output);
+        assert_eq!(result.output["code"], "search_execution_failed");
+        assert!(result.output["backend"].is_null());
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn search_command_preserves_rg_exit_2_despite_head() {

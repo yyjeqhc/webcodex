@@ -882,7 +882,10 @@ pub(crate) fn validate_project_relative_path(path: &str) -> Result<(), String> {
         return Ok(());
     }
     let p = Path::new(path);
-    if p.is_absolute() {
+    if p.has_root()
+        || p.components()
+            .any(|component| matches!(component, std::path::Component::Prefix(_)))
+    {
         return Err("path must be project-relative".to_string());
     }
     if p.components()

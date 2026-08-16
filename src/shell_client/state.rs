@@ -134,6 +134,12 @@ pub(super) struct PendingShellRequest {
     pub(super) request: ShellAgentShellRequest,
     pub(super) waiter: Option<oneshot::Sender<ShellRunResponse>>,
     pub(super) job_id: Option<String>,
+    /// Optional Control-side project-placement fence for synchronous requests
+    /// whose filesystem authority must still match the active registration at
+    /// the instant the request is handed to the Runner.
+    pub(super) expected_client_owner: Option<String>,
+    pub(super) expected_project_id: Option<String>,
+    pub(super) expected_project_cwd: Option<String>,
     pub(super) dispatched: bool,
 }
 

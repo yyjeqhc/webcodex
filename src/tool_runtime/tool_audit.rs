@@ -151,6 +151,24 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 Value::Bool(obj.get("region").is_some_and(|value| !value.is_null())),
             );
         }
+        "computer_save_snapshot" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "path",
+                    "client_id",
+                    "surface_id",
+                    "max_width",
+                    "max_height",
+                ],
+            );
+            out.insert(
+                "region_present".to_string(),
+                Value::Bool(obj.get("region").is_some_and(|value| !value.is_null())),
+            );
+        }
         "observe_jobs" => {
             let items = obj.get("items").and_then(Value::as_array);
             out.insert(
@@ -458,6 +476,20 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
             "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
             "captured_at_unix_ms": output.get("captured_at_unix_ms").cloned().unwrap_or(Value::Null),
+        }),
+        "computer_save_snapshot" => serde_json::json!({
+            "project": output.get("project").cloned().unwrap_or(Value::Null),
+            "path": output.get("path").cloned().unwrap_or(Value::Null),
+            "client_id": output.get("client_id").cloned().unwrap_or(Value::Null),
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
+            "source_height": output.get("source_height").cloned().unwrap_or(Value::Null),
+            "region_present": output.get("region").is_some(),
+            "width": output.get("width").cloned().unwrap_or(Value::Null),
+            "height": output.get("height").cloned().unwrap_or(Value::Null),
+            "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
+            "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
+            "saved": output.get("saved").cloned().unwrap_or(Value::Null),
         }),
         "computer_accessibility_status" => serde_json::json!({
             "platform": output.get("platform").cloned().unwrap_or(Value::Null),
@@ -843,6 +875,84 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("Confidential"));
         assert!(!serialized.contains("Private App"));
     }
+
+    #[test]
+    fn computer_save_snapshot_audit_omits_image_digest_region_coordinates_and_session() {
+        let request = json!({
+            "project": "agent:target:demo",
+            "path": "artifacts/ui.jpg",
+            "client_id": "source-mac",
+            "surface_id": "surface_safe",
+            "region": {"x": 111, "y": 222, "width": 333, "height": 444},
+            "max_width": 800,
+            "max_height": 600,
+            "session_id": "wc_sess_private"
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_save_snapshot", &request);
+        let request_serialized = serde_json::to_string(&request_summary).unwrap();
+        assert_eq!(request_summary["project"], "agent:target:demo");
+        assert_eq!(request_summary["path"], "artifacts/ui.jpg");
+        assert_eq!(request_summary["region_present"], true);
+        assert!(request_summary.get("region").is_none());
+        assert!(request_summary.get("session_id").is_none());
+        for secret in ["111", "222", "333", "444", "wc_sess_private"] {
+            assert!(!request_serialized.contains(secret));
+        }
+
+        let parsed_summary = ToolCall::ComputerSaveSnapshot {
+            project: "agent:target:demo".to_string(),
+            path: "artifacts/ui.jpg".to_string(),
+            client_id: "source-mac".to_string(),
+            surface_id: "surface_safe".to_string(),
+            region: Some(crate::tool_runtime::tool_call::ComputerSnapshotRegion {
+                x: 111,
+                y: 222,
+                width: 333,
+                height: 444,
+            }),
+            max_width: Some(800),
+            max_height: Some(600),
+            session_id: Some("wc_sess_private".to_string()),
+        }
+        .session_log_arguments();
+        let parsed_serialized = serde_json::to_string(&parsed_summary).unwrap();
+        assert_eq!(parsed_summary["region_present"], true);
+        assert!(parsed_summary.get("region").is_none());
+        assert!(parsed_summary.get("session_id").is_none());
+        for secret in ["111", "222", "333", "444", "wc_sess_private"] {
+            assert!(!parsed_serialized.contains(secret));
+        }
+
+        let output = json!({
+            "project": "agent:target:demo",
+            "path": "artifacts/ui.jpg",
+            "client_id": "source-mac",
+            "surface_id": "surface_safe",
+            "source_width": 1200,
+            "source_height": 800,
+            "region": {"x": 111, "y": 222, "width": 900, "height": 600},
+            "width": 900,
+            "height": 600,
+            "mime_type": "image/jpeg",
+            "file_bytes": 12345,
+            "sha256": "PRIVATE_SCREENSHOT_DIGEST",
+            "saved": true,
+            "content_base64": "SUPER_SECRET_SCREENSHOT_BYTES",
+            "surface": {"application": "Private App", "title": "Confidential"}
+        });
+        let result_summary = session_log_result_for_tool("computer_save_snapshot", &output);
+        let result_serialized = serde_json::to_string(&result_summary).unwrap();
+        assert_eq!(result_summary["saved"], true);
+        assert_eq!(result_summary["file_bytes"], 12345);
+        assert_eq!(result_summary["region_present"], true);
+        assert!(result_summary.get("sha256").is_none());
+        assert!(result_summary.get("region").is_none());
+        assert!(!result_serialized.contains("PRIVATE_SCREENSHOT_DIGEST"));
+        assert!(!result_serialized.contains("SUPER_SECRET"));
+        assert!(!result_serialized.contains("Private App"));
+        assert!(!result_serialized.contains("Confidential"));
+    }
 }
 
 impl ToolCall {
@@ -1048,6 +1158,24 @@ impl ToolCall {
                 max_width,
                 max_height,
             } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "region_present": region.is_some(),
+                "max_width": max_width,
+                "max_height": max_height,
+            }),
+            Self::ComputerSaveSnapshot {
+                project,
+                path,
+                client_id,
+                surface_id,
+                region,
+                max_width,
+                max_height,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
                 "client_id": client_id,
                 "surface_id": surface_id,
                 "region_present": region.is_some(),

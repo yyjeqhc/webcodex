@@ -89,6 +89,59 @@ impl ShellClientRegistry {
             let Some(request_id) = request_id else {
                 return Ok(None);
             };
+            let stale_project_error = inner.pending_by_id.get(&request_id).and_then(|pending| {
+                match (
+                    pending.expected_project_id.as_deref(),
+                    pending.expected_project_cwd.as_deref(),
+                ) {
+                    (Some(project_id), Some(project_cwd)) => match inner.clients.get(&body.client_id) {
+                        Some(client) if client.owner != pending.expected_client_owner => Some(
+                            "stale_authority: target Runner owner changed before dispatch".to_string(),
+                        ),
+                        Some(client) if !client.capabilities.file_write => Some(
+                            "stale_authority: target Runner no longer advertises file_write before dispatch"
+                                .to_string(),
+                        ),
+                        Some(client)
+                            if client.projects.iter().any(|project| {
+                                !project.disabled
+                                    && project.id == project_id
+                                    && project.path == project_cwd
+                            }) => None,
+                        Some(_) | None => Some(format!(
+                            "stale_project: target project {project_id} is no longer registered at the resolved path"
+                        )),
+                    },
+                    (None, None) => None,
+                    _ => Some(
+                        "stale_project: pending project placement fence is incomplete".to_string(),
+                    ),
+                }
+            });
+            if let Some(error) = stale_project_error {
+                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
+                    continue;
+                };
+                if let Some(waiter) = pending.waiter.take() {
+                    let response = ShellRunResponse {
+                        success: false,
+                        request_id: request_id.clone(),
+                        client_id: body.client_id.clone(),
+                        cwd: pending.request.cwd.clone(),
+                        command_preview: request_preview(&pending.request),
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: None,
+                        error: Some(error),
+                        request_dispatched: Some(false),
+                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
+                    };
+                    let _ = waiter.send(response);
+                }
+                inner.persistent_waiters.remove(&request_id);
+                continue;
+            }
             let Some((request, job_id)) = inner.pending_by_id.get_mut(&request_id).map(|pending| {
                 pending.dispatched = true;
                 (pending.request.clone(), pending.job_id.clone())

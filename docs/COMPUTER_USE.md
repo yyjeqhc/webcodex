@@ -83,9 +83,11 @@ The implementation keeps `computer_snapshot` as the single model-facing operatio
 
 ### CU-8 — snapshot to project artifact
 
-Add a separate `computer_save_snapshot` operation rather than a `save=true` flag on observation. Capture bytes should flow directly from the Computer/Runner path into existing project-artifact semantics; the model should not shuttle image bytes through Base64.
+Use a separate `computer_save_snapshot(project, path, client_id, surface_id, region?, max_width?, max_height?, session_id?)` operation rather than a `save=true` flag on observation. The Control reuses the exact CU-7 capture path and then sends the validated bounded image directly to the target project's existing artifact write path; the model never receives or resubmits the Base64 image body. Whole-window capture retains the existing rolling-compatible `computer_observe` path, while region/downscale capture still additionally requires `computer_snapshot_region`; CU-8 adds no new Runner Computer protocol capability.
 
-This operation crosses Computer observation and project artifact authority, so its authorization and lost-response/idempotency behavior must be defined as an effect even though image capture itself is observational.
+The artifact write is create-only: callers cannot request overwrite, encoding format, quality, or arbitrary content. The target path is validated by the existing project-artifact policy, and the target Runner must still advertise `file_write` when the request is admitted under the registry lock. The source Computer Runner and target project Runner may be different devices.
+
+This operation crosses Computer observation and project artifact authority and therefore requires both `computer:read` and `project:write`. Capture remains observational, but artifact persistence is an effect. A definite pre-dispatch rejection reports `not_started`; if a write may have been dispatched and its result is lost or inconsistent, the result is `outcome_unknown` and includes the exact project/path plus expected digest, byte count, and MIME. Reconcile with `read_project_artifact_metadata` before deciding whether another create-only attempt is safe; never blind-retry by overwriting the path.
 
 ### CU-9 — bounded scroll
 

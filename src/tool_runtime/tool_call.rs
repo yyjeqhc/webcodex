@@ -1399,6 +1399,22 @@ pub enum ToolCall {
         max_height: Option<u32>,
     },
 
+    /// Capture one exact window snapshot and persist it directly as a create-only project artifact.
+    ComputerSaveSnapshot {
+        project: String,
+        path: String,
+        client_id: String,
+        surface_id: String,
+        #[serde(default)]
+        region: Option<ComputerSnapshotRegion>,
+        #[serde(default)]
+        max_width: Option<u32>,
+        #[serde(default)]
+        max_height: Option<u32>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     ListProjects,
 
     /// Register an existing directory as a WebCodex project on a selected
@@ -1876,6 +1892,7 @@ impl ToolCall {
             Self::ComputerControl { .. } => "computer_control",
             Self::ComputerInputText { .. } => "computer_input_text",
             Self::ComputerSnapshot { .. } => "computer_snapshot",
+            Self::ComputerSaveSnapshot { .. } => "computer_save_snapshot",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",
             Self::CreateProject { .. } => "create_project",
@@ -1917,6 +1934,7 @@ impl ToolCall {
             | Self::ShowChanges { session_id, .. }
             | Self::WriteProjectFile { session_id, .. }
             | Self::SaveProjectArtifact { session_id, .. }
+            | Self::ComputerSaveSnapshot { session_id, .. }
             | Self::ExportProjectArtifact { session_id, .. }
             | Self::ReadProjectArtifactMetadata { session_id, .. }
             | Self::ReadProjectArtifact { session_id, .. }
@@ -1982,6 +2000,7 @@ impl ToolCall {
             | Self::ShowChanges { session_id, .. }
             | Self::WriteProjectFile { session_id, .. }
             | Self::SaveProjectArtifact { session_id, .. }
+            | Self::ComputerSaveSnapshot { session_id, .. }
             | Self::ExportProjectArtifact { session_id, .. }
             | Self::ReadProjectArtifactMetadata { session_id, .. }
             | Self::ReadProjectArtifact { session_id, .. }
@@ -2077,6 +2096,7 @@ impl ToolCall {
             | Self::ShowChanges { project, .. }
             | Self::WriteProjectFile { project, .. }
             | Self::SaveProjectArtifact { project, .. }
+            | Self::ComputerSaveSnapshot { project, .. }
             | Self::ImportConversationFilesToProject { project, .. }
             | Self::ExportProjectArtifact { project, .. }
             | Self::ReadProjectArtifactMetadata { project, .. }

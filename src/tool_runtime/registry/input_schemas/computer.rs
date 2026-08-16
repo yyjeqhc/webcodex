@@ -1,3 +1,4 @@
+use super::common::OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION;
 use serde_json::{json, Value};
 
 pub(crate) fn computer_list_windows_input_schema() -> Value {
@@ -131,5 +132,34 @@ pub(crate) fn computer_snapshot_input_schema() -> Value {
             "max_height": {"type": "integer", "minimum": 1, "maximum": 4096, "description": "Optional upper bound on encoded output height. Never upscales."}
         },
         "required": ["client_id", "surface_id"]
+    })
+}
+
+pub(crate) fn computer_save_snapshot_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "project": {"type": "string", "minLength": 1, "description": "Target project that will receive the create-only snapshot artifact."},
+            "path": {"type": "string", "minLength": 1, "maxLength": 4096, "description": "Project-relative artifact path. The first version is create-only and never overwrites an existing file."},
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose desktop is observed."},
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local surface_id returned by computer_list_windows."},
+            "region": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Optional rectangle in the revalidated surface coordinate space. It must fit fully inside the exact surface.",
+                "properties": {
+                    "x": {"type": "integer", "minimum": 0, "maximum": 4294967295u64},
+                    "y": {"type": "integer", "minimum": 0, "maximum": 4294967295u64},
+                    "width": {"type": "integer", "minimum": 1, "maximum": 4294967295u64},
+                    "height": {"type": "integer", "minimum": 1, "maximum": 4294967295u64}
+                },
+                "required": ["x", "y", "width", "height"]
+            },
+            "max_width": {"type": "integer", "minimum": 1, "maximum": 4096, "description": "Optional upper bound on encoded output width. Never upscales."},
+            "max_height": {"type": "integer", "minimum": 1, "maximum": 4096, "description": "Optional upper bound on encoded output height. Never upscales."},
+            "session_id": {"type": "string", "minLength": 1, "description": OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION}
+        },
+        "required": ["project", "path", "client_id", "surface_id"]
     })
 }

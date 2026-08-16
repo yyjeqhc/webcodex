@@ -1,10 +1,14 @@
+use super::files::{validate_artifact_file_path, validate_artifact_mime_for_path};
+use super::shell::{agent_command_lifecycle, dispatch_uncertainty_lifecycle};
+use super::tool_call::ComputerSnapshotRegion;
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
+    ShellCommandExecutionState, ShellFileOpRequest, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
 };
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
@@ -288,54 +292,400 @@ impl ToolRuntime {
                 max_width,
                 max_height,
             } => {
-                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
-                    return computer_error("invalid_surface", "surface_id is invalid");
-                }
-                if let Some(region) = region.as_ref() {
-                    if region.width == 0
-                        || region.height == 0
-                        || region.x.checked_add(region.width).is_none()
-                        || region.y.checked_add(region.height).is_none()
-                    {
-                        return computer_error("invalid_request", "snapshot region is invalid");
-                    }
-                }
-                if max_width.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION as u32)
-                    || max_height
-                        .is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION as u32)
-                {
-                    return computer_error(
-                        "invalid_request",
-                        "snapshot output dimension bound is invalid",
-                    );
-                }
-                let advanced = region.is_some() || max_width.is_some() || max_height.is_some();
-                let (kind, payload) = if advanced {
-                    (
-                        "computer_snapshot_region",
-                        json!({
-                            "surface_id": surface_id,
-                            "region": region,
-                            "max_width": max_width,
-                            "max_height": max_height,
-                        }),
-                    )
-                } else {
-                    ("computer_snapshot", json!({"surface_id": surface_id}))
-                };
-                self.dispatch_computer_request(
+                self.capture_computer_snapshot(
                     &client_id,
-                    kind,
-                    payload,
+                    &surface_id,
+                    region,
+                    max_width,
+                    max_height,
                     auth,
-                    None,
-                    Some(surface_id.as_str()),
-                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerSaveSnapshot {
+                project,
+                path,
+                client_id,
+                surface_id,
+                region,
+                max_width,
+                max_height,
+                ..
+            } => {
+                self.save_computer_snapshot_artifact(
+                    project, path, client_id, surface_id, region, max_width, max_height, auth,
                 )
                 .await
             }
             _ => ToolResult::err("invalid computer tool dispatch".to_string()),
         }
+    }
+
+    async fn capture_computer_snapshot(
+        &self,
+        client_id: &str,
+        surface_id: &str,
+        region: Option<ComputerSnapshotRegion>,
+        max_width: Option<u32>,
+        max_height: Option<u32>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return computer_error("invalid_surface", "surface_id is invalid");
+        }
+        if let Some(region) = region.as_ref() {
+            if region.width == 0
+                || region.height == 0
+                || region.x.checked_add(region.width).is_none()
+                || region.y.checked_add(region.height).is_none()
+            {
+                return computer_error("invalid_request", "snapshot region is invalid");
+            }
+        }
+        if max_width.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION as u32)
+            || max_height.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION as u32)
+        {
+            return computer_error(
+                "invalid_request",
+                "snapshot output dimension bound is invalid",
+            );
+        }
+        let advanced = region.is_some() || max_width.is_some() || max_height.is_some();
+        let (kind, payload) = if advanced {
+            (
+                "computer_snapshot_region",
+                json!({
+                    "surface_id": surface_id,
+                    "region": region,
+                    "max_width": max_width,
+                    "max_height": max_height,
+                }),
+            )
+        } else {
+            ("computer_snapshot", json!({"surface_id": surface_id}))
+        };
+        self.dispatch_computer_request(client_id, kind, payload, auth, None, Some(surface_id), None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn save_computer_snapshot_artifact(
+        &self,
+        project: String,
+        path: String,
+        client_id: String,
+        surface_id: String,
+        region: Option<ComputerSnapshotRegion>,
+        max_width: Option<u32>,
+        max_height: Option<u32>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        if let Err(error) = validate_artifact_file_path(&path) {
+            return ToolResult::err_with_output(
+                error.clone(),
+                json!({"error_kind": "artifact_policy", "project": project, "path": path, "message": bounded_text(&error)}),
+            );
+        }
+        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
+            Ok(resolved) => resolved,
+            Err(error) => return error.into_tool_result(),
+        };
+        if !resolved.config.is_agent() {
+            return ToolResult::err("computer_save_snapshot requires an agent-registered project");
+        }
+        let target_client_id = match resolved.config.agent_client_id() {
+            Ok(client_id) => client_id.to_string(),
+            Err(error) => return ToolResult::err(error),
+        };
+        let target_cwd = resolved.config.path.clone();
+        let project_id = resolved.resolved_id;
+        let expected_project_prefix = format!("agent:{target_client_id}:");
+        let target_agent_project_id = match project_id.strip_prefix(&expected_project_prefix) {
+            Some(project_id) if !project_id.is_empty() => project_id.to_string(),
+            _ => {
+                return ToolResult::err(
+                    "computer_save_snapshot resolved target project identity is invalid",
+                )
+            }
+        };
+
+        let capture = self
+            .capture_computer_snapshot(&client_id, &surface_id, region, max_width, max_height, auth)
+            .await;
+        if !capture.success {
+            return capture;
+        }
+        let snapshot = capture.output;
+        let content_base64 = match snapshot.get("content_base64").and_then(Value::as_str) {
+            Some(content) => content.to_string(),
+            None => {
+                return computer_error(
+                    "invalid_runner_response",
+                    "validated snapshot content is missing",
+                )
+            }
+        };
+        let decoded = match general_purpose::STANDARD.decode(content_base64.as_bytes()) {
+            Ok(bytes) if !bytes.is_empty() && bytes.len() <= MAX_MCP_IMAGE_BYTES => bytes,
+            _ => {
+                return computer_error(
+                    "invalid_runner_response",
+                    "validated snapshot content is inconsistent",
+                )
+            }
+        };
+        let mime_type = match snapshot.get("mime_type").and_then(Value::as_str) {
+            Some(mime) => mime.to_string(),
+            None => {
+                return computer_error(
+                    "invalid_runner_response",
+                    "validated snapshot MIME is missing",
+                )
+            }
+        };
+        if let Err(error) = validate_artifact_mime_for_path(&path, Some(&mime_type)) {
+            return ToolResult::err_with_output(
+                error.clone(),
+                json!({"error_kind": "artifact_policy", "project": project_id, "path": path, "message": bounded_text(&error)}),
+            );
+        }
+        let file_bytes = decoded.len();
+        let sha256 = snapshot
+            .get("sha256")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| sha256_hex(&decoded));
+        let Some(surface) = snapshot.get("surface") else {
+            return computer_error(
+                "invalid_runner_response",
+                "validated snapshot surface is missing",
+            );
+        };
+        let source_width = snapshot
+            .get("source_width")
+            .and_then(Value::as_u64)
+            .or_else(|| surface.get("width").and_then(Value::as_u64))
+            .unwrap_or_default();
+        let source_height = snapshot
+            .get("source_height")
+            .and_then(Value::as_u64)
+            .or_else(|| surface.get("height").and_then(Value::as_u64))
+            .unwrap_or_default();
+        let width = snapshot
+            .get("width")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let height = snapshot
+            .get("height")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let captured_region = snapshot.get("region").cloned().unwrap_or_else(
+            || json!({"x": 0, "y": 0, "width": source_width, "height": source_height}),
+        );
+
+        let payload = json!({
+            "path": path.clone(),
+            "content_base64": content_base64,
+            "mime_type": mime_type,
+            "overwrite": false,
+            "max_bytes": MAX_MCP_IMAGE_BYTES,
+        });
+        let serialized = match serde_json::to_string(&payload) {
+            Ok(serialized) => serialized,
+            Err(_) => {
+                return computer_error(
+                    "invalid_request",
+                    "could not encode snapshot artifact request",
+                )
+            }
+        };
+        let wait_timeout = 60_u64;
+        let request = ShellFileOpRequest {
+            op: "save_project_artifact".to_string(),
+            client_id: target_client_id,
+            path: path.clone(),
+            cwd: Some(target_cwd.clone()),
+            content: Some(serialized),
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            wait_timeout_secs: wait_timeout,
+        };
+        let requested_by = crate::shell_client::requested_by_from_auth(auth);
+        let (request_id, receiver) = match self
+            .shell_clients
+            .enqueue_computer_snapshot_artifact(
+                request,
+                &target_agent_project_id,
+                &target_cwd,
+                requested_by,
+                auth,
+            )
+            .await
+        {
+            Ok(request) => request,
+            Err(error) => {
+                return computer_snapshot_artifact_lifecycle_failure(
+                    &format!("snapshot artifact write was not dispatched: {error}"),
+                    ShellCommandExecutionState::NotStarted,
+                    &project_id,
+                    &path,
+                    &sha256,
+                    file_bytes,
+                    &mime_type,
+                )
+            }
+        };
+        let response = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), receiver)
+            .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => {
+                let state = dispatch_uncertainty_lifecycle(
+                    self.shell_clients
+                        .cancel_request_dispatch_state(&request_id)
+                        .await,
+                );
+                return computer_snapshot_artifact_lifecycle_failure(
+                    "snapshot artifact response channel closed before a terminal result was received",
+                    state,
+                    &project_id,
+                    &path,
+                    &sha256,
+                    file_bytes,
+                    &mime_type,
+                );
+            }
+            Err(_) => {
+                let state = dispatch_uncertainty_lifecycle(
+                    self.shell_clients
+                        .cancel_request_dispatch_state(&request_id)
+                        .await,
+                );
+                return computer_snapshot_artifact_lifecycle_failure(
+                    "timed out waiting for snapshot artifact write result",
+                    state,
+                    &project_id,
+                    &path,
+                    &sha256,
+                    file_bytes,
+                    &mime_type,
+                );
+            }
+        };
+        let state = agent_command_lifecycle(&response, wait_timeout);
+        if state == ShellCommandExecutionState::NotStarted {
+            return computer_snapshot_artifact_lifecycle_failure(
+                "snapshot artifact write did not start",
+                state,
+                &project_id,
+                &path,
+                &sha256,
+                file_bytes,
+                &mime_type,
+            );
+        }
+        if state != ShellCommandExecutionState::Completed {
+            return computer_snapshot_artifact_lifecycle_failure(
+                "snapshot artifact write did not return a definite terminal result",
+                ShellCommandExecutionState::OutcomeUnknown,
+                &project_id,
+                &path,
+                &sha256,
+                file_bytes,
+                &mime_type,
+            );
+        }
+        if let Some(error) = response.error.as_deref() {
+            return computer_snapshot_artifact_definite_failure(
+                error,
+                &project_id,
+                &path,
+                &sha256,
+                file_bytes,
+                &mime_type,
+            );
+        }
+        if response.exit_code != Some(0) {
+            return computer_snapshot_artifact_definite_failure(
+                response
+                    .stderr
+                    .as_deref()
+                    .unwrap_or("snapshot artifact write failed"),
+                &project_id,
+                &path,
+                &sha256,
+                file_bytes,
+                &mime_type,
+            );
+        }
+        let output: Value = match response
+            .stdout
+            .as_deref()
+            .map(str::trim)
+            .map(serde_json::from_str)
+            .transpose()
+        {
+            Ok(Some(output)) => output,
+            _ => {
+                return computer_snapshot_artifact_lifecycle_failure(
+                    "snapshot artifact write returned invalid JSON after possible commit",
+                    ShellCommandExecutionState::OutcomeUnknown,
+                    &project_id,
+                    &path,
+                    &sha256,
+                    file_bytes,
+                    &mime_type,
+                )
+            }
+        };
+        if let Some(error) = output.get("error").and_then(Value::as_str) {
+            return computer_snapshot_artifact_definite_failure(
+                error,
+                &project_id,
+                &path,
+                &sha256,
+                file_bytes,
+                &mime_type,
+            );
+        }
+        let metadata_matches = output.get("path").and_then(Value::as_str) == Some(path.as_str())
+            && output.get("bytes_written").and_then(Value::as_u64) == Some(file_bytes as u64)
+            && output.get("sha256").and_then(Value::as_str) == Some(sha256.as_str())
+            && output.get("mime_type").and_then(Value::as_str) == Some(mime_type.as_str());
+        if !metadata_matches {
+            return computer_snapshot_artifact_lifecycle_failure(
+                "snapshot artifact write returned inconsistent success metadata after possible commit",
+                ShellCommandExecutionState::OutcomeUnknown,
+                &project_id,
+                &path,
+                &sha256,
+                file_bytes,
+                &mime_type,
+            );
+        }
+
+        ToolResult::ok(json!({
+            "project": project_id,
+            "path": path,
+            "client_id": client_id,
+            "surface_id": surface_id,
+            "source_width": source_width,
+            "source_height": source_height,
+            "region": captured_region,
+            "width": width,
+            "height": height,
+            "mime_type": mime_type,
+            "file_bytes": file_bytes,
+            "sha256": sha256,
+            "saved": true,
+        }))
     }
 
     async fn computer_list_targets(&self, auth: Option<&AuthContext>) -> ToolResult {
@@ -597,6 +947,74 @@ impl ToolRuntime {
             _ => computer_error("invalid_request", "unsupported computer request kind"),
         }
     }
+}
+
+fn computer_snapshot_artifact_lifecycle_failure(
+    message: &str,
+    state: ShellCommandExecutionState,
+    project: &str,
+    path: &str,
+    sha256: &str,
+    file_bytes: usize,
+    mime_type: &str,
+) -> ToolResult {
+    if state == ShellCommandExecutionState::NotStarted {
+        return ToolResult::err_with_output(
+            message.to_string(),
+            json!({
+                "error_kind": "not_started",
+                "message": bounded_text(message),
+                "execution_state": "not_started",
+                "state_changed": false,
+                "project": project,
+                "path": path,
+                "expected_sha256": sha256,
+                "expected_file_bytes": file_bytes,
+                "expected_mime_type": mime_type,
+            }),
+        );
+    }
+    let message = format!(
+        "{message}; the create-only artifact may already exist. Read metadata for this exact project/path and compare SHA-256, byte count, and MIME before deciding whether another attempt is safe"
+    );
+    ToolResult::err_with_output(
+        message.clone(),
+        json!({
+            "error_kind": "outcome_unknown",
+            "message": bounded_text(&message),
+            "execution_state": "outcome_unknown",
+            "project": project,
+            "path": path,
+            "expected_sha256": sha256,
+            "expected_file_bytes": file_bytes,
+            "expected_mime_type": mime_type,
+            "reconcile_with": "read_project_artifact_metadata",
+        }),
+    )
+}
+
+fn computer_snapshot_artifact_definite_failure(
+    message: &str,
+    project: &str,
+    path: &str,
+    sha256: &str,
+    file_bytes: usize,
+    mime_type: &str,
+) -> ToolResult {
+    ToolResult::err_with_output(
+        message.to_string(),
+        json!({
+            "error_kind": "artifact_write_failed",
+            "message": bounded_text(message),
+            "execution_state": "completed",
+            "state_changed": false,
+            "project": project,
+            "path": path,
+            "expected_sha256": sha256,
+            "expected_file_bytes": file_bytes,
+            "expected_mime_type": mime_type,
+        }),
+    )
 }
 
 fn computer_error_recovery_message(error_kind: &str, error: &str) -> String {
@@ -2057,6 +2475,62 @@ mod tests {
         );
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], "image_too_large");
+    }
+
+    #[test]
+    fn computer_save_snapshot_lifecycle_distinguishes_not_started_from_unknown() {
+        let not_started = computer_snapshot_artifact_lifecycle_failure(
+            "not dispatched",
+            ShellCommandExecutionState::NotStarted,
+            "agent:target:demo",
+            "artifacts/ui.jpg",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            1234,
+            "image/jpeg",
+        );
+        assert!(!not_started.success);
+        assert_eq!(not_started.output["error_kind"], "not_started");
+        assert_eq!(not_started.output["execution_state"], "not_started");
+        assert_eq!(not_started.output["state_changed"], false);
+        assert!(not_started.output.get("reconcile_with").is_none());
+
+        let unknown = computer_snapshot_artifact_lifecycle_failure(
+            "response lost",
+            ShellCommandExecutionState::OutcomeUnknown,
+            "agent:target:demo",
+            "artifacts/ui.jpg",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            4321,
+            "image/jpeg",
+        );
+        assert!(!unknown.success);
+        assert_eq!(unknown.output["error_kind"], "outcome_unknown");
+        assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+        assert_eq!(
+            unknown.output["reconcile_with"],
+            "read_project_artifact_metadata"
+        );
+        assert_eq!(unknown.output["project"], "agent:target:demo");
+        assert_eq!(unknown.output["path"], "artifacts/ui.jpg");
+        assert_eq!(unknown.output["expected_file_bytes"], 4321);
+        assert_eq!(unknown.output["expected_mime_type"], "image/jpeg");
+    }
+
+    #[test]
+    fn computer_save_snapshot_definite_write_failure_is_not_retry_uncertainty() {
+        let result = computer_snapshot_artifact_definite_failure(
+            "file exists and overwrite is false",
+            "agent:target:demo",
+            "artifacts/ui.jpg",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            99,
+            "image/jpeg",
+        );
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "artifact_write_failed");
+        assert_eq!(result.output["execution_state"], "completed");
+        assert_eq!(result.output["state_changed"], false);
+        assert!(result.output.get("reconcile_with").is_none());
     }
 
     #[test]

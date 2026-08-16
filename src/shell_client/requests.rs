@@ -20,10 +20,10 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
+    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
+    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
+    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
@@ -138,6 +138,9 @@ pub(super) fn enqueue_pending_request_locked(
             request,
             waiter,
             job_id,
+            expected_client_owner: None,
+            expected_project_id: None,
+            expected_project_cwd: None,
             dispatched: false,
         },
     );
@@ -271,6 +274,104 @@ impl ShellClientRegistry {
             Some(tx),
             None,
         )?;
+        notify_client_locked(&inner, &body.client_id);
+        Ok((request_id, rx))
+    }
+
+    /// Enqueue the create-only artifact write used by computer_save_snapshot.
+    /// Target ownership and file_write are rechecked under the same registry
+    /// lock as pending admission so a concurrent Runner replacement cannot
+    /// receive a write it no longer advertises.
+    pub(crate) async fn enqueue_computer_snapshot_artifact(
+        &self,
+        body: ShellFileOpRequest,
+        expected_project_id: &str,
+        expected_project_cwd: &str,
+        requested_by: String,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        validate_file_request(&body)?;
+        if body.op != "save_project_artifact" {
+            return Err(format!(
+                "computer snapshot artifact enqueue only accepts op=save_project_artifact (got {})",
+                body.op
+            ));
+        }
+        if expected_project_id.is_empty()
+            || expected_project_cwd.is_empty()
+            || body.cwd.as_deref().map(str::trim) != Some(expected_project_cwd)
+        {
+            return Err(
+                "computer snapshot artifact target project identity is invalid".to_string(),
+            );
+        }
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: body.client_id.clone(),
+            kind: "file_save_project_artifact".to_string(),
+            job_id: None,
+            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
+            path: Some(body.path.trim().to_string()),
+            content: body.content.clone(),
+            max_bytes: body.max_bytes,
+            expected_sha256: body.expected_sha256.clone(),
+            expected_prefix: body.expected_prefix.clone(),
+            start_line: body.start_line,
+            end_line: body.end_line,
+            create_dirs: body.create_dirs,
+            command: String::new(),
+            process: None,
+            script: None,
+            stdin: None,
+            timeout_secs: 30,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            sandbox: None,
+            job_context: None,
+            persistent_shell: None,
+        };
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now_ts());
+        let current = inner
+            .clients
+            .get(&body.client_id)
+            .ok_or_else(|| format!("unknown shell client: {}", body.client_id))?;
+        assert_shell_client_access(auth, current)?;
+        if !current.capabilities.file_write {
+            return Err(format!(
+                "capability_unavailable: agent client {} does not support {SHELL_CLIENT_CAPABILITY_FILE_WRITE}",
+                body.client_id
+            ));
+        }
+        if !current.projects.iter().any(|project| {
+            !project.disabled
+                && project.id == expected_project_id
+                && project.path == expected_project_cwd
+        }) {
+            return Err(format!(
+                "stale_project: target project {expected_project_id} is no longer registered at the resolved path"
+            ));
+        }
+        let expected_client_owner = current.owner.clone();
+        enqueue_pending_request_locked(
+            &mut inner,
+            &body.client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        let pending = inner
+            .pending_by_id
+            .get_mut(&request_id)
+            .expect("computer snapshot artifact request was just enqueued");
+        pending.expected_client_owner = expected_client_owner;
+        pending.expected_project_id = Some(expected_project_id.to_string());
+        pending.expected_project_cwd = Some(expected_project_cwd.to_string());
         notify_client_locked(&inner, &body.client_id);
         Ok((request_id, rx))
     }

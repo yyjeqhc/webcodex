@@ -212,7 +212,7 @@ fn ensure_existing_parent_in_project_root(resolved: &Path, root: &Path) -> Resul
     Ok(())
 }
 
-fn write_bytes_atomic_strict(path: &Path, data: &[u8]) -> Result<(), String> {
+fn write_bytes_atomic_strict(path: &Path, data: &[u8], overwrite: bool) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "target path has no parent directory".to_string())?;
@@ -234,9 +234,27 @@ fn write_bytes_atomic_strict(path: &Path, data: &[u8]) -> Result<(), String> {
                     return Err(e.to_string());
                 }
                 drop(file);
-                if let Err(e) = std::fs::rename(&tmp, path) {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(e.to_string());
+                if overwrite {
+                    if let Err(e) = std::fs::rename(&tmp, path) {
+                        let _ = std::fs::remove_file(&tmp);
+                        return Err(e.to_string());
+                    }
+                } else {
+                    match std::fs::hard_link(&tmp, path) {
+                        Ok(()) => {
+                            // The target link is now committed atomically without replacing an
+                            // existing path. Cleanup failure may leave only the private temp link;
+                            // it cannot invalidate or change the committed target.
+                            let _ = std::fs::remove_file(&tmp);
+                        }
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&tmp);
+                            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                                return Err("file exists and overwrite is false".to_string());
+                            }
+                            return Err(e.to_string());
+                        }
+                    }
                 }
                 if let Ok(dir) = std::fs::File::open(parent) {
                     let _ = dir.sync_all();
@@ -939,7 +957,7 @@ fn handle_save_project_artifact(
             start,
         );
     }
-    if let Err(e) = write_bytes_atomic_strict(resolved, &data) {
+    if let Err(e) = write_bytes_atomic_strict(resolved, &data, overwrite) {
         return line_edit_stdout(save_error(Some(path), format!("write failed: {e}")), start);
     }
 
@@ -1934,6 +1952,20 @@ fn handle_read_project_artifact(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atomic_artifact_write_create_only_never_replaces_existing_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("artifact.bin");
+
+        write_bytes_atomic_strict(&path, b"first", false).unwrap();
+        let error = write_bytes_atomic_strict(&path, b"second", false).unwrap_err();
+        assert!(error.contains("overwrite is false"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+
+        write_bytes_atomic_strict(&path, b"third", true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"third");
+    }
 
     fn artifact_request(
         root: &Path,

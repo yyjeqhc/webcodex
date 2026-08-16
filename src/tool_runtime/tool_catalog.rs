@@ -61,6 +61,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "computer_control",
             "computer_input_text",
             "computer_snapshot",
+            "computer_save_snapshot",
         ],
     },
     ToolDiscoveryGroup {

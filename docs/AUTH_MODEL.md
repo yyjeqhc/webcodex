@@ -215,6 +215,8 @@ It authorizes the model-facing `computer_list_targets`, `computer_list_windows`,
 `runtime:read`, `project:read`,
 `job:run`, and `computer:control`, and none of those scopes imply it.
 
+`computer_save_snapshot` is intentionally not a read-only Computer tool even though its capture phase is observational. It persists a bounded image into a project and therefore requires **both** `computer:read` and `project:write`. The Server reuses the exact Computer snapshot capability checks for the source Runner and independently requires the target project Runner to retain `file_write` at write admission. The operation is create-only; a lost response after possible artifact dispatch is `outcome_unknown` and is reconciled against the exact project/path with `read_project_artifact_metadata` and the expected digest, byte count, and MIME before any retry.
+
 `computer_list_targets` closes the target-discovery loop without widening
 `runtime:read`: it returns only caller-visible Runners that advertise
 `computer_observe` and/or `computer_accessibility_observe`, projected to the

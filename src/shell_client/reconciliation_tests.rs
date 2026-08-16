@@ -1130,6 +1130,9 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
                 request: request.clone(),
                 waiter: None,
                 job_id: Some(job.job_id.clone()),
+                expected_client_owner: None,
+                expected_project_id: None,
+                expected_project_cwd: None,
                 dispatched: true,
             },
         );
@@ -1142,6 +1145,9 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
                 request: control_request,
                 waiter: None,
                 job_id: Some(job.job_id.clone()),
+                expected_client_owner: None,
+                expected_project_id: None,
+                expected_project_cwd: None,
                 dispatched: false,
             },
         );

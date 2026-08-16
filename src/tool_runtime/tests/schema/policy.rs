@@ -297,6 +297,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
     assert!(current_session_fallback_tools.contains("run_script"));
     assert!(current_session_fallback_tools.contains("run_shell"));
     assert!(current_session_fallback_tools.contains("workspace_hygiene_check"));
+    assert!(current_session_fallback_tools.contains("computer_save_snapshot"));
     for name in [
         "start_session",
         "start_coding_task",
@@ -323,6 +324,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("close_session_shell", PERMISSION_RISK_JOB),
         ("delete_project_files", PERMISSION_RISK_DESTRUCTIVE),
         ("save_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("computer_save_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),
         ("apply_patch", PERMISSION_RISK_PATCH),
         ("write_project_file", PERMISSION_RISK_WRITE),
     ] {
@@ -425,6 +427,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ),
         (
             "save_project_artifact",
+            ToolRisk::ProjectWrite,
+            AgentCapability::FileWrite,
+        ),
+        (
+            "computer_save_snapshot",
             ToolRisk::ProjectWrite,
             AgentCapability::FileWrite,
         ),
@@ -595,7 +602,8 @@ fn required_agent_capability_matches_metadata_risk_table() {
         .filter_map(|spec| {
             let metadata = lookup_tool_metadata(&spec.name).unwrap();
             ((metadata.provider_id == TOOL_PROVIDER_AGENT
-                || spec.name.starts_with("workspace_checkpoint_"))
+                || spec.name.starts_with("workspace_checkpoint_")
+                || spec.name == "computer_save_snapshot")
                 && metadata.requires_project)
                 .then_some(spec.name.as_str())
         })

@@ -1,13 +1,13 @@
 use super::AgentCapability::{
     ComputerAccessibilityObserve, ComputerControl, ComputerElementState, ComputerObserve,
-    ComputerTextInput, ComputerWindowActivate,
+    ComputerTextInput, ComputerWindowActivate, FileWrite,
 };
 use super::ToolVisibility::ModelVisible;
 use super::{def, unit_arguments, ToolDefinition, TOOL_CATEGORY_COMPUTER};
 use crate::tool_runtime::metadata::{
-    ToolPathHint::None,
-    ToolRisk::{ComputerControl as ComputerControlRisk, ReadOnly},
-    COMPUTER_CONTROL, COMPUTER_READ, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_CONTROL,
+    ToolPathHint::{Artifact, None},
+    ToolRisk::{ComputerControl as ComputerControlRisk, ProjectWrite, ReadOnly},
+    COMPUTER_CONTROL, COMPUTER_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_CONTROL,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -138,6 +138,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         Some(COMPUTER_READ),
         false,
         None,
+        false,
+        false,
+    ),
+    def(
+        "computer_save_snapshot",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(FileWrite),
+        TOOL_PROVIDER_CONTROL,
+        ProjectWrite,
+        Some(PROJECT_WRITE),
+        true,
+        Artifact,
         false,
         false,
     ),

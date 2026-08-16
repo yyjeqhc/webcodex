@@ -230,6 +230,62 @@ fn tool_specs_computer_snapshot_has_bounded_region_without_format_controls() {
 }
 
 #[test]
+fn tool_specs_computer_save_snapshot_is_create_only_and_returns_metadata_only() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "computer_save_snapshot");
+    assert_eq!(
+        required_fields(spec),
+        vec![
+            "project".to_string(),
+            "path".to_string(),
+            "client_id".to_string(),
+            "surface_id".to_string(),
+        ]
+    );
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_save_snapshot input schema",
+        present: [
+            "project",
+            "path",
+            "client_id",
+            "surface_id",
+            "region",
+            "max_width",
+            "max_height",
+            "session_id"
+        ],
+        absent: ["overwrite", "format", "quality", "mime_type", "content_base64", "save"]
+    );
+    assert_eq!(props["region"]["additionalProperties"], false);
+
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_save_snapshot output schema",
+        present: [
+            "project",
+            "path",
+            "client_id",
+            "surface_id",
+            "source_width",
+            "source_height",
+            "region",
+            "width",
+            "height",
+            "mime_type",
+            "file_bytes",
+            "sha256",
+            "saved"
+        ],
+        absent: ["content_base64", "surface", "captured_at_unix_ms"]
+    );
+}
+
+#[test]
 fn tool_specs_computer_activate_window_is_exact_surface_only() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "computer_activate_window");

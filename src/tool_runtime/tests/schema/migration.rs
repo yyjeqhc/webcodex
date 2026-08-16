@@ -233,6 +233,11 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ("computer_control", "computer", "none"),
         ("computer_input_text", "computer", "none"),
         ("computer_snapshot", "computer", "none"),
+        (
+            "computer_save_snapshot",
+            "computer",
+            "current_session_fallback",
+        ),
         ("list_projects", "project", "none"),
         ("register_project", "project", "none"),
         ("create_project", "project", "none"),

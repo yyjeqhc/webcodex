@@ -2003,7 +2003,7 @@ fn validate_artifact_mime(mime_type: Option<&str>) -> Result<Option<String>, Str
     }
 }
 
-fn validate_artifact_mime_for_path(
+pub(crate) fn validate_artifact_mime_for_path(
     path: &str,
     mime_type: Option<&str>,
 ) -> Result<Option<String>, String> {

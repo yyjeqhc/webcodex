@@ -140,7 +140,8 @@ mod tests {
     use super::*;
     use crate::auth::scopes::{oauth_scope_policy_for_runtime_tool, OAuthToolScopePolicy};
     use crate::auth::scopes::{
-        SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+        SCOPE_COMPUTER_READ, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
+        SCOPE_RUNTIME_READ,
     };
     use crate::tool_runtime::{is_known_tool_name, known_tool_names};
 
@@ -160,9 +161,14 @@ mod tests {
             let Some(scope) = metadata.oauth_scope else {
                 continue;
             };
+            let expected = if metadata.name == "computer_save_snapshot" {
+                OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ])
+            } else {
+                OAuthToolScopePolicy::Require(scope)
+            };
             assert_eq!(
                 oauth_scope_policy_for_runtime_tool(metadata.name),
-                OAuthToolScopePolicy::Require(scope),
+                expected,
                 "{} metadata scope should drive runtime tool OAuth policy",
                 metadata.name
             );

@@ -686,7 +686,10 @@ impl ToolRuntime {
             | ToolCall::ComputerActivateWindow { .. }
             | ToolCall::ComputerControl { .. }
             | ToolCall::ComputerInputText { .. }
-            | ToolCall::ComputerSnapshot { .. }) => self.dispatch_computer_tool(call, auth).await,
+            | ToolCall::ComputerSnapshot { .. }
+            | ToolCall::ComputerSaveSnapshot { .. }) => {
+                self.dispatch_computer_tool(call, auth).await
+            }
 
             call @ (ToolCall::ListProjects
             | ToolCall::RegisterProject { .. }

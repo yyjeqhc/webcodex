@@ -3,7 +3,7 @@ use super::super::input_schemas::{
     computer_activate_window_input_schema, computer_control_input_schema,
     computer_element_state_input_schema, computer_find_elements_input_schema,
     computer_input_text_input_schema, computer_list_windows_input_schema,
-    computer_snapshot_input_schema, empty_input_schema,
+    computer_save_snapshot_input_schema, computer_snapshot_input_schema, empty_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -59,6 +59,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "computer_snapshot",
             "Capture one exact previously listed window as a bounded image. Optional surface-relative region and max output dimensions require the Runner's additive region-snapshot capability; whole-window calls remain compatible with older observation-capable Runners. The region must fit fully inside the revalidated surface. Encoding format and quality are system-selected, and stale surfaces never fall back to another window.",
             computer_snapshot_input_schema(),
+        ),
+        tool_spec(
+            "computer_save_snapshot",
+            "Capture one exact window snapshot and persist it directly as a create-only project artifact without returning image bytes through the model. The same exact-surface, optional region, and downscale semantics as computer_snapshot apply. Requires both computer:read and project:write. There is no overwrite, format, quality, or arbitrary-content control. If the artifact write outcome is unknown, read_project_artifact_metadata on the exact project/path and compare digest, size, and MIME before deciding whether another attempt is safe.",
+            computer_save_snapshot_input_schema(),
         ),
     ]
 }

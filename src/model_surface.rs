@@ -144,6 +144,7 @@ mod tests {
             "computer_control",
             "computer_input_text",
             "computer_snapshot",
+            "computer_save_snapshot",
         ] {
             assert!(
                 full_names.contains(&name),

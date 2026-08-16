@@ -97,6 +97,16 @@ pub(crate) fn check_runtime_tool_scope(
                 })
             }
         }
+        OAuthToolScopePolicy::RequireAll(scopes) => {
+            if let Some(scope) = scopes.iter().copied().find(|scope| !auth.has_scope(scope)) {
+                Err(ToolCallErrorStatus::InsufficientScope {
+                    required_scope: Some(scope),
+                    description: format!("missing required scope: {}", scope),
+                })
+            } else {
+                Ok(())
+            }
+        }
         OAuthToolScopePolicy::FirstPartyOnly => {
             if matches!(
                 auth.kind,
@@ -689,6 +699,31 @@ mod tests {
                 required_scope: Some(crate::auth::SCOPE_RUNTIME_READ),
                 description: "missing required scope: runtime:read".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn computer_save_snapshot_requires_project_write_and_computer_read() {
+        let read_only = oauth(&["computer:read"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&read_only), "computer_save_snapshot"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_PROJECT_WRITE),
+                description: "missing required scope: project:write".to_string(),
+            })
+        );
+        let write_only = oauth(&["project:write"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&write_only), "computer_save_snapshot"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_READ),
+                description: "missing required scope: computer:read".to_string(),
+            })
+        );
+        let both = oauth(&["project:write", "computer:read"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&both), "computer_save_snapshot"),
+            Ok(())
         );
     }
 

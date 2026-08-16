@@ -1351,7 +1351,7 @@ fn validate_project_relative_path_rejects_absolute_and_parent_traversal() {
 
 #[test]
 fn parse_search_matches_is_bounded_and_strips_dot_slash() {
-    let stdout = "./src/main.rs:10:fn main() {}\n./src/lib.rs:3:pub fn x()\n./src/a:1:1\n";
+    let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\n./src/main.rs:10:fn main() {}\n./src/lib.rs:3:pub fn x()\n./src/a:1:1\n";
     let options = SearchOptions::normalize(SearchRequest {
         limit: Some(2),
         ..raw_search_request()
@@ -1372,7 +1372,7 @@ fn parse_search_matches_is_bounded_and_strips_dot_slash() {
 #[test]
 fn parse_search_matches_skips_lines_without_line_number() {
     // Binary file matches or malformed lines are skipped, not counted.
-    let stdout = "binary:file\nsrc/main.rs:5:hit\n";
+    let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nbinary:file\nsrc/main.rs:5:hit\n";
     let options = SearchOptions::normalize(SearchRequest {
         limit: Some(10),
         ..raw_search_request()

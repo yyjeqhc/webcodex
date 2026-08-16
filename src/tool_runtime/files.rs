@@ -1402,8 +1402,8 @@ fn parse_search_line_record(line: &str) -> Option<SearchLineRecord> {
 
 /// Return the byte offset immediately after the leading trusted backend marker,
 /// when present. The command always emits this marker outside the bounded search
-/// payload. Parser-only tests and legacy/transport-truncated responses may omit
-/// it, in which case the whole stdout string is treated as payload.
+/// payload. Low-level parser helpers still tolerate markerless input, but the
+/// public search result path rejects it before parsing.
 fn search_payload_start(stdout: &str) -> usize {
     let Some(newline) = stdout.find('\n') else {
         return 0;
@@ -5167,7 +5167,7 @@ mod tests {
         let result = search_project_text_output(
             "demo",
             &options,
-            "src/main.rs:42:fn main() {}\n",
+            "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/main.rs:42:fn main() {}\n",
             Some(0),
             "",
         );
@@ -5184,7 +5184,7 @@ mod tests {
 
     #[test]
     fn parse_search_context_matches_returns_context_line_numbers() {
-        let stdout = "src/lib.rs\x001-one\nsrc/lib.rs\x002-two\nsrc/lib.rs\x003:needle\nsrc/lib.rs\x004-four\nsrc/lib.rs\x005-five\n";
+        let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/lib.rs\x001-one\nsrc/lib.rs\x002-two\nsrc/lib.rs\x003:needle\nsrc/lib.rs\x004-four\nsrc/lib.rs\x005-five\n";
         let options = SearchOptions::normalize(SearchRequest {
             pattern: "needle".to_string(),
             path: None,
@@ -5238,7 +5238,7 @@ mod tests {
             timeout_secs: None,
         })
         .unwrap();
-        let stdout = "src/a.rs:1:needle one\nsrc/b.rs:2:needle tw";
+        let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:needle one\nsrc/b.rs:2:needle tw";
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
         let matches = result.output["matches"].as_array().unwrap();
 
@@ -5265,7 +5265,7 @@ mod tests {
             timeout_secs: None,
         })
         .unwrap();
-        let stdout = "src/a.rs:1:needle one\n";
+        let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:needle one\n";
         let result = search_project_text_output("demo", &options, stdout, Some(0), "");
         assert!(result.success);
         assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
@@ -5377,7 +5377,7 @@ mod tests {
             timeout_secs: None,
         })
         .unwrap();
-        let stdout = "src/a.rs:1:one\nsrc/b.rs:2:two\nsrc/c.rs:3:three\n";
+        let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:one\nsrc/b.rs:2:two\nsrc/c.rs:3:three\n";
         let result = search_project_text_output("demo", &options, stdout, Some(141), "");
         assert!(result.success, "{:?}", result.error);
         assert_eq!(result.output["matches"].as_array().unwrap().len(), 2);
@@ -5577,7 +5577,7 @@ mod tests {
             timeout_secs: None,
         })
         .unwrap();
-        let stdout = "src/a.rs:1:needle\n";
+        let stdout = "{\"webcodex_search\":{\"backend\":\"rg\"}}\nsrc/a.rs:1:needle\n";
         let result = search_project_text_output("demo", &options, stdout, Some(2), "");
         assert!(!result.success);
         assert_eq!(result.output["code"], "search_execution_failed");
@@ -5600,6 +5600,7 @@ mod tests {
         // Absolute path, parent traversal, and a temp-file path must be
         // dropped; only the trusted relative record survives.
         let stdout = concat!(
+            "{\"webcodex_search\":{\"backend\":\"rg\"}}\n",
             "/tmp/webcodex-x:1:secret\n",
             "src/../../etc/passwd:1:secret\n",
             "src/a.rs:1:needle\n",
@@ -5666,7 +5667,9 @@ mod tests {
         .unwrap();
 
         for marker in transport_truncation_markers() {
-            let stdout = format!("{marker}src/a.rs:1:needle one\nsrc/b.rs:2:needle two\n");
+            let stdout = format!(
+                "{marker}{{\"webcodex_search\":{{\"backend\":\"rg\"}}}}\nsrc/a.rs:1:needle one\nsrc/b.rs:2:needle two\n"
+            );
             let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
             assert!(result.success, "marker {marker:?}: {:?}", result.error);
             assert_eq!(result.output["truncated"], true, "marker {marker:?}");
@@ -5700,7 +5703,9 @@ mod tests {
         .unwrap();
 
         for marker in transport_truncation_markers() {
-            let stdout = format!("{marker}src/a.rs\nsrc/b.rs\n");
+            let stdout = format!(
+                "{marker}{{\"webcodex_search\":{{\"backend\":\"rg\"}}}}\nsrc/a.rs\nsrc/b.rs\n"
+            );
             let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
             assert!(result.success, "marker {marker:?}: {:?}", result.error);
             assert_eq!(result.output["truncated"], true, "marker {marker:?}");
@@ -5738,7 +5743,9 @@ mod tests {
         .unwrap();
 
         for marker in transport_truncation_markers() {
-            let stdout = format!("{marker}src/a.rs:2\nsrc/b.rs:3\n");
+            let stdout = format!(
+                "{marker}{{\"webcodex_search\":{{\"backend\":\"rg\"}}}}\nsrc/a.rs:2\nsrc/b.rs:3\n"
+            );
             let result = search_project_text_output("demo", &options, &stdout, Some(0), "");
             assert!(result.success, "marker {marker:?}: {:?}", result.error);
             assert_eq!(result.output["truncated"], true, "marker {marker:?}");
@@ -5775,6 +5782,7 @@ mod tests {
         })
         .unwrap();
         let stdout = concat!(
+            "{\"webcodex_search\":{\"backend\":\"rg\"}}\n",
             "src/a.rs:1:needle one\n",
             "[output truncated]\n",
             "src/b.rs:2:needle two\n",

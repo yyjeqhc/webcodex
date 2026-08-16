@@ -119,8 +119,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
             "{name} should be described as preferred structured validation: {validation_desc}"
         );
         assert!(
-            validation_desc.contains("before raw run_shell"),
-            "{name} should steer callers away from raw run_shell first: {validation_desc}"
+            !validation_desc.contains("run_shell"),
+            "{name} should express structured preference without sibling-tool name pollution: {validation_desc}"
         );
     }
 
@@ -142,10 +142,11 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let run_shell_desc = desc("run_shell");
     for phrase in [
-        "bounded command escape hatch",
-        "validation",
-        "diagnostics",
-        "do not use as the primary file editing path",
+        "bounded shell command",
+        "escape hatch",
+        "structured validation",
+        "edit tools",
+        "longer work",
     ] {
         assert!(
             run_shell_desc.contains(phrase),

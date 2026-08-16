@@ -4,10 +4,10 @@ use super::common::{object_schema, with_optional_session_id, PATCH_FIELD_DESCRIP
 
 /// `timeout_secs` for read-only structured validation tools is the total
 /// runtime budget of the command. Short validations return immediately; a
-/// long validation continues as a Job and returns `job_id`. The tool call
+/// long validation continues as the same execution and returns `job_id`. The tool call
 /// itself blocks only a short internal sync window.
 const VALIDATION_TIMEOUT_SECS_DESCRIPTION: &str =
-    "Total runtime budget for the validation command in seconds (minimum 1, maximum 3600). Short validations return immediately; a longer validation continues as a Job and returns job_id. Defaults vary per tool. Out-of-range values are rejected before the command starts.";
+    "Total validation runtime budget in seconds (1..=3600). Short validation returns immediately; longer validation keeps the same execution and returns job_id for observation. Defaults vary per tool; invalid values are rejected before start.";
 const VALIDATION_TIMEOUT_MIN: u64 = 1;
 const VALIDATION_TIMEOUT_MAX: u64 = 3600;
 
@@ -42,7 +42,7 @@ pub(crate) fn cargo_fmt_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Synchronous command timeout in seconds (minimum 1, maximum 120, default 120) for cargo fmt (mutating); out-of-range values are rejected before the command starts. When check=true, this is the total validation runtime budget (minimum 1, maximum 3600, default 120); a longer check continues as a Job and returns job_id.",
+            "For mutating format, synchronous timeout in seconds (1..=120, default 120). With check=true, total validation budget is 1..=3600 and a long check keeps the same execution and returns job_id.",
             false,
         ),
     ]));

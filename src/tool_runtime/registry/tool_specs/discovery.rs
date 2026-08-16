@@ -19,34 +19,22 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "register_project",
-            "Register an existing directory as a WebCodex project on a selected agent. "
-                .to_string()
-                + "Mutation with side effects; constrained by agent policy. The agent validates "
-                + "the path, writes projects_dir/<id>.toml atomically, and refreshes its "
-                + "project list. Requires Bearer auth.",
+            "Register an existing directory, including a non-Git or ad-hoc workspace, as a Project on one Runner. Use this when the directory already exists; policy still bounds allowed paths.".to_string(),
             register_project_input_schema(),
         ),
         tool_spec(
             "create_project",
-            "Create a new directory on the selected agent and register it as a WebCodex "
-                .to_string()
-                + "project. Mutation with side effects; constrained by agent policy. Creates "
-                + "directory, optional template, optional git init, writes projects_dir/<id>.toml "
-                + "atomically. Requires Bearer auth.",
+            "Create a directory on one Runner and register it as a Project. Use this for a new workspace; existing directories belong on the registration path.".to_string(),
             create_project_input_schema(),
         ),
         tool_spec(
             "list_agents",
-            "List connected local/remote execution agents.",
+            "List authorized Runners with process identity, connectivity, capabilities, Projects, and shared Job concurrency.",
             empty_input_schema(),
         ),
         tool_spec(
             "runtime_status",
-            "Return a structured runtime health/observability summary (service "
-                .to_string()
-                + "metadata, projects config status, agent client summaries, and job counts). "
-                + "Use compact=true or summary_only=true for a lightweight sanity payload. "
-                + "Read-only; never exposes tokens, secrets, full env, or stdout/stderr.",
+            "Read current Server, Project, and Runner state, including build compatibility, capabilities, and shared Job concurrency. Use compact=true for a small operator snapshot; read-only.".to_string(),
             runtime_status_input_schema(),
         ),
         tool_spec(

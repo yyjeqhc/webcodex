@@ -4,7 +4,7 @@ use super::common::object_schema;
 
 pub(crate) fn register_project_input_schema() -> Value {
     object_schema(vec![
-        ("client_id", "string", "Registered agent client_id.", true),
+        ("client_id", "string", "Registered Runner client_id.", true),
         (
             "id",
             "string",
@@ -15,7 +15,7 @@ pub(crate) fn register_project_input_schema() -> Value {
         (
             "path",
             "string",
-            "Absolute directory path on the agent host.",
+            "Existing absolute directory path on the Runner. Git is not required.",
             true,
         ),
         (
@@ -41,7 +41,7 @@ pub(crate) fn register_project_input_schema() -> Value {
 
 pub(crate) fn create_project_input_schema() -> Value {
     object_schema(vec![
-        ("client_id", "string", "Registered agent client_id.", true),
+        ("client_id", "string", "Registered Runner client_id.", true),
         (
             "id",
             "string",
@@ -52,7 +52,7 @@ pub(crate) fn create_project_input_schema() -> Value {
         (
             "path",
             "string",
-            "Absolute directory path on the agent host.",
+            "Absolute directory path to create and register on the Runner.",
             true,
         ),
         (

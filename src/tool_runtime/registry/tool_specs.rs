@@ -115,6 +115,122 @@ mod tests {
     }
 
     #[test]
+    fn reliability_tool_descriptions_are_selection_dense_and_keep_lifecycle_contracts() {
+        let specs = registered_tool_specs();
+        let find = |name: &str| {
+            specs
+                .iter()
+                .find(|spec| spec.name == name)
+                .unwrap_or_else(|| panic!("missing tool spec: {name}"))
+        };
+
+        for name in [
+            "run_process",
+            "run_script",
+            "run_shell",
+            "open_session_shell",
+            "run_job",
+            "stop_job",
+            "job_status",
+            "job_log",
+            "observe_jobs",
+            "list_jobs",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "go_test",
+            "register_project",
+            "create_project",
+            "list_agents",
+            "runtime_status",
+            "work_on_project",
+        ] {
+            let description = &find(name).description;
+            assert!(
+                description.chars().count() <= 220,
+                "{name} description is too diffuse ({} chars): {description}",
+                description.chars().count()
+            );
+        }
+
+        for name in [
+            "run_process",
+            "run_script",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "go_test",
+        ] {
+            let description = &find(name).description;
+            assert!(
+                description.contains("same execution"),
+                "{name}: {description}"
+            );
+            assert!(!description.contains("run_shell"), "{name}: {description}");
+            assert!(!description.contains("run_job"), "{name}: {description}");
+        }
+
+        let run_job = &find("run_job").description;
+        assert!(run_job.contains("stable job_id"), "{run_job}");
+        assert!(run_job.contains("observe"), "{run_job}");
+        assert!(run_job.contains("retry"), "{run_job}");
+
+        for name in ["job_status", "job_log", "observe_jobs"] {
+            let description = &find(name).description;
+            let lower = description.to_ascii_lowercase();
+            assert!(lower.contains("never"), "{name}: {description}");
+            assert!(lower.contains("retr"), "{name}: {description}");
+        }
+
+        let job_log = find("job_log");
+        let token = job_log.input_schema["properties"]["after_observation_token"]["description"]
+            .as_str()
+            .expect("job_log observation token description");
+        assert!(token.contains("not execution identity"), "{token}");
+        assert!(token.contains("Server epoch"), "{token}");
+        let wait = job_log.input_schema["properties"]["wait_secs"]["description"]
+            .as_str()
+            .expect("job_log wait description");
+        assert!(wait.contains("not a subscription"), "{wait}");
+
+        let register = find("register_project");
+        assert!(
+            register.description.contains("non-Git"),
+            "{}",
+            register.description
+        );
+        assert_eq!(
+            register.input_schema["properties"]["path"]["description"].as_str(),
+            Some("Existing absolute directory path on the Runner. Git is not required.")
+        );
+        assert!(find("work_on_project")
+            .description
+            .contains("Git not required"));
+        for name in ["list_agents", "runtime_status"] {
+            assert!(find(name).description.contains("shared Job concurrency"));
+        }
+
+        for spec in &specs {
+            if spec.name != "run_shell" {
+                assert!(
+                    !spec.description.contains("run_shell"),
+                    "{} pollutes exact run_shell discovery: {}",
+                    spec.name,
+                    spec.description
+                );
+            }
+            if spec.name != "run_job" {
+                assert!(
+                    !spec.description.contains("run_job"),
+                    "{} pollutes exact run_job discovery: {}",
+                    spec.name,
+                    spec.description
+                );
+            }
+        }
+    }
+
+    #[test]
     fn tool_specs_patch_fields_reject_codex_wrapper() {
         let specs = registered_tool_specs();
         for tool in ["apply_patch", "apply_patch_checked", "validate_patch"] {

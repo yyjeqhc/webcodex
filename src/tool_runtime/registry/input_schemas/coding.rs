@@ -19,7 +19,7 @@ pub(crate) fn start_coding_task_input_schema() -> Value {
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Existing absolute directory path on the selected Runner. The Runner authoritatively canonicalizes and policy-checks it, reuses a unique enabled canonical-path registration, or permanently writes a new projects.d entry. Mutually exclusive with project and temporary_project_name."
+                "description": "Existing absolute directory on the selected Runner; Git is not required. The Runner canonicalizes and policy-checks it, reuses a unique enabled registration, or registers it permanently. Mutually exclusive with project and temporary_project_name."
             },
             "temporary_project_name": {
                 "type": "string",

@@ -14,7 +14,7 @@ pub(crate) fn run_process_input_schema() -> Value {
         (
             "executable",
             "string",
-            "Native executable name or path. It is executed directly and is never parsed as shell text. On Windows, .cmd/.bat files are rejected because they require shell/script semantics; use run_shell explicitly when those semantics are intended.",
+            "Native executable name or path. It is executed directly and never parsed as shell text. Windows .cmd/.bat files are rejected because they require shell semantics.",
             true,
         ),
         (
@@ -38,7 +38,7 @@ pub(crate) fn run_process_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Total process execution budget in seconds (minimum 1, maximum 3600, default 60). Short work returns synchronously; longer work exposes the same execution as a durable Job when the Runner advertises structured_execution_jobs.",
+            "Total process runtime budget in seconds (1..=3600, default 60). Short work returns synchronously; longer work keeps the same execution and returns job_id when durable structured execution is available.",
             false,
         ),
         (
@@ -113,7 +113,7 @@ pub(crate) fn run_script_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Total script execution budget in seconds (minimum 1, maximum 3600, default 60). Short work returns synchronously; longer work exposes the same execution as a durable Job when the Runner advertises structured_execution_jobs.",
+            "Total script runtime budget in seconds (1..=3600, default 60). Short work returns synchronously; longer work keeps the same execution and returns job_id when durable structured execution is available.",
             false,
         ),
         (
@@ -163,7 +163,7 @@ pub(crate) fn run_shell_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Synchronous command timeout in seconds (minimum 1, maximum 120, default 60). Out-of-range values are rejected before the command starts; use run_job for longer work.",
+            "Synchronous command timeout in seconds (1..=120, default 60). Out-of-range values are rejected before start; choose asynchronous execution for longer work.",
             false,
         ),
         (
@@ -353,7 +353,7 @@ pub(crate) fn stop_job_input_schema() -> Value {
             "Configured project id that must match the job project.",
             true,
         ),
-        ("job_id", "string", "Runtime job id returned by run_job.", true),
+        ("job_id", "string", "Existing runtime Job id to stop.", true),
         (
             "confirm",
             "boolean",
@@ -393,7 +393,7 @@ pub(crate) fn job_log_input_schema() -> Value {
         (
             "after_observation_token",
             "string",
-            "Opaque observation token returned by run_job, job_status, job_log, or job_tail. Return it unchanged. The token is bound to one Job; a server epoch change causes an immediate refresh.",
+            "Opaque token from the latest Job snapshot. Return it unchanged. It is bound to one job_id, not execution identity; a Server epoch change causes an immediate refresh when that Job still exists.",
             false,
         ),
         (

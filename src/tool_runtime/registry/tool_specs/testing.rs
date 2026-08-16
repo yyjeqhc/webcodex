@@ -8,22 +8,22 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "cargo_fmt",
-            "Run cargo fmt in an agent-registered project. Use check=true for cargo fmt -- --check before broader validation. check=true is a read-only validation: a short run returns immediately and a longer run continues as a Job and returns job_id.",
+            "Run cargo fmt. With check=true it is read-only validation; a long check continues as the same execution and returns job_id for observation. Mutating format stays synchronous.",
             cargo_fmt_input_schema(),
         ),
         tool_spec(
             "cargo_check",
-            "Preferred structured Rust validation for cargo check. Defaults to --all-targets and supports features/package/cwd/timeout without shell interpolation. A short run returns immediately; a longer run continues as a Job and returns job_id. Use before raw run_shell when applicable.",
+            "Preferred structured cargo check (default --all-targets). Supports scoped flags without shell interpolation; a long validation continues as the same execution and returns job_id.",
             cargo_check_input_schema(),
         ),
         tool_spec(
             "cargo_test",
-            "Preferred structured Rust test runner. Supports filter, feature flags, package, --no-run, timeout, and bounded output tails. A short run returns immediately; a longer run continues as a Job and returns job_id. Use before raw run_shell when applicable.",
+            "Preferred structured cargo test with filter, features, package, no-run, timeout, and bounded output. A long validation continues as the same execution and returns job_id.",
             cargo_test_input_schema(),
         ),
         tool_spec(
             "go_test",
-            "Preferred structured Go test runner. Defaults to exactly go test -json ./... and accepts an optional bounded list of project-relative package patterns. Requires Runner structured Go JSON validation support; a short run may return immediately and a longer run continues as the same Job.",
+            "Preferred structured go test -json (default ./...) with bounded package scopes. Requires Runner Go JSON validation support; long validation continues as the same execution and returns job_id.",
             go_test_input_schema(),
         ),
     ]

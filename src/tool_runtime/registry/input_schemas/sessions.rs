@@ -51,19 +51,19 @@ pub(crate) fn session_execution_context_schema(description: &str) -> Value {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 4096,
-                "description": "Optional cwd inherited by run_shell and run_job. Without resource it is project-relative; with a named SSH resource it is a remote path. Remote cwd is not checked against the Runner project root and is verified by the remote shell when used."
+                "description": "Optional cwd inherited by Session-aware shell execution. Without resource it is project-relative; with a named SSH resource it is a remote path verified by the remote shell instead of the Runner project-root policy."
             },
             "default_shell": {
                 "type": "string",
                 "enum": ["sh", "bash"],
-                "description": "Optional explicit shell dialect inherited by run_shell and run_job."
+                "description": "Optional explicit shell dialect inherited by Session-aware shell execution."
             },
             "resource": {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 80,
                 "pattern": "^[A-Za-z0-9_.-]+$",
-                "description": "Optional named SSH resource configured only on the Runner that owns this Session project. It changes run_shell and run_job execution location only; it never contains a host, SSH configuration, key, password, or connection."
+                "description": "Optional named SSH resource configured only on the Runner that owns this Session project. It changes Session-aware shell execution location only and never contains host, SSH configuration, key, password, or connection data."
             }
         }
     })

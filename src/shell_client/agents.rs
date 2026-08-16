@@ -291,7 +291,7 @@ impl ShellClientRegistry {
                 .clients
                 .get(&client_id)
                 .and_then(|client| client.auth_group.clone());
-            reconcile_inventory_locked(
+            let reconciliation = reconcile_inventory_locked(
                 &mut inner,
                 &client_id,
                 &agent_instance_id,
@@ -299,6 +299,23 @@ impl ShellClientRegistry {
                 self.observation_epoch.clone(),
                 inventory,
                 now,
+            );
+            let process_started_at = inner
+                .clients
+                .get(&client_id)
+                .and_then(|client| client.process_started_at);
+            tracing::info!(
+                target: "webcodex::job_reconciliation",
+                client_id = %client_id,
+                agent_instance_id = %agent_instance_id,
+                process_started_at = ?process_started_at,
+                inventory_active = reconciliation.inventory_active,
+                inventory_terminal = reconciliation.inventory_terminal,
+                reconstructed = reconciliation.reconstructed,
+                updated = reconciliation.updated,
+                missing = reconciliation.missing,
+                suppressed_terminal = reconciliation.suppressed_terminal,
+                "runner job inventory reconciled"
             );
         }
         Ok(Self::client_view_locked(&inner, &client_id).expect("client just inserted"))

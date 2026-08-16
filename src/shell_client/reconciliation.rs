@@ -801,6 +801,16 @@ pub(crate) async fn recovery_timeout_sweep(registry: &ShellClientRegistry) {
     registry.prune_expired_terminal_jobs_locked(&mut inner, now);
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ReconciliationSummary {
+    pub(super) inventory_active: usize,
+    pub(super) inventory_terminal: usize,
+    pub(super) reconstructed: usize,
+    pub(super) updated: usize,
+    pub(super) missing: usize,
+    pub(super) suppressed_terminal: usize,
+}
+
 pub(super) fn reconcile_inventory_locked(
     inner: &mut ShellClientRegistryInner,
     client_id: &str,
@@ -809,7 +819,20 @@ pub(super) fn reconcile_inventory_locked(
     observation_epoch: std::sync::Arc<str>,
     inventory: &ShellJobInventory,
     now: i64,
-) {
+) -> ReconciliationSummary {
+    let mut summary = ReconciliationSummary {
+        inventory_active: inventory
+            .jobs
+            .iter()
+            .filter(|snapshot| is_runner_active_job_status(&snapshot.status))
+            .count(),
+        inventory_terminal: inventory
+            .jobs
+            .iter()
+            .filter(|snapshot| is_final_job_status(&snapshot.status))
+            .count(),
+        ..ReconciliationSummary::default()
+    };
     prune_projected_structured_terminal_suppressions_locked(inner, now);
     expire_recovering_jobs_locked(inner, Some(client_id), now, RECOVERY_SWEEP_PASS_CAP);
 
@@ -833,6 +856,7 @@ pub(super) fn reconcile_inventory_locked(
         .iter()
         .map(|(job_id, _)| job_id.clone())
         .collect::<HashSet<_>>();
+    summary.missing = missing.len();
     for (job_id, request_id) in missing {
         if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
             mark_job_lost(
@@ -872,7 +896,9 @@ pub(super) fn reconcile_inventory_locked(
                 continue;
             }
             apply_snapshot(existing, snapshot, now);
+            summary.updated += 1;
         } else if suppress_unknown_terminal {
+            summary.suppressed_terminal += 1;
             continue;
         } else {
             let mut record = record_from_snapshot(
@@ -887,12 +913,14 @@ pub(super) fn reconcile_inventory_locked(
             replace_log_from_snapshot(&mut record.stderr, &snapshot.stderr);
             notify_job_update(&record);
             inner.jobs_by_id.insert(snapshot.job_id.clone(), record);
+            summary.reconstructed += 1;
         }
         if is_final_job_status(&snapshot.status) {
             remove_job_request_mapping(inner, client_id, Some(&snapshot.request_id));
         }
     }
     remove_cleanup_terminal_jobs_locked(inner);
+    summary
 }
 
 pub(super) fn terminate_instance_jobs_locked(

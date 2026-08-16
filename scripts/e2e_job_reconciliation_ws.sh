@@ -31,6 +31,21 @@ set -euo pipefail
 #        duration / logs present, markers appear exactly the expected number
 #        of times, no duplicate log replay across re-registration, no second
 #        job, no re-execution.
+##
+#   Scenario C — a handed-off structured process survives a Server restart.
+#     1. Starts `run_process` and waits for the same execution to hand off as a Job.
+#     2. Records the original job_id and observation token.
+#     3. Stops the Server only while the Runner process and child stay alive.
+#     4. Restarts the Server; the same Runner inventory reconstructs the same Job.
+#     5. Reuses the old observation token and requires an immediate fresh-epoch
+#        snapshot, then stops the original process by the original job_id.
+#     6. A marker proves the structured command executed exactly once.
+##
+#   Scenario D — a real `cargo_check` validation handoff survives restart.
+#     The fixture build script runs longer than the 90s validation sync window,
+#     forcing the first-class validation path to hand off the same Job. The
+#     original job_id and old observation token must remain usable after a
+#     Control-only restart, with no validation redispatch.
 #
 # Everything uses temp dirs, temp ports, temp tokens, and a temp project.
 # Never reads or controls production services. No QUIC certs or prod domains.
@@ -80,9 +95,9 @@ s.close()
 }
 
 api_post() {
-    local path="$1"; local body="${2:-}"
+    local path="$1"; local body="${2:-}"; local max_time="${3:-15}"
     if [ -z "$body" ]; then body="{}"; fi
-    curl -sS --max-time 15 \
+    curl -sS --max-time "$max_time" \
         -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
         -H "Authorization: Bearer ${TOKEN}" \
         -H "Content-Type: application/json" \
@@ -214,6 +229,34 @@ log "temp root: $TMP_ROOT (port $PORT)"
     git config user.email "e2e@test.local"
     git config user.name "JobRecon E2E"
     printf '# JobRecon fixture\n' > README.md
+    mkdir -p src
+    cat > Cargo.toml <<'EOF'
+[package]
+name = "jobrecon-fixture"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+EOF
+    cat > src/lib.rs <<'EOF'
+pub fn fixture() -> u32 { 1 }
+EOF
+    cat > build.rs <<'EOF'
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let mut marker = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("scenario-d-count.txt")
+        .expect("open scenario D marker");
+    writeln!(marker, "D-START").expect("write scenario D marker");
+    marker.flush().expect("flush scenario D marker");
+    thread::sleep(Duration::from_secs(150));
+}
+EOF
     git add . >/dev/null 2>&1
     git commit -m "seed" >/dev/null 2>&1
 )
@@ -239,7 +282,7 @@ transport = "websocket"
 allow_raw_shell = true
 allow_cwd_anywhere = false
 allowed_roots = ["${TEST_REPO}"]
-max_timeout_secs = 120
+max_timeout_secs = 180
 max_output_bytes = 262144
 EOF
 
@@ -299,13 +342,27 @@ wait_for_reconciliation_capability() {
 }
 
 tool_call() {
-    local tool="$1"; local params="$2"
-    api_post /api/tools/call "{\"tool\":\"${tool}\",\"params\":${params}}"
+    local tool="$1"; local params="$2"; local max_time="${3:-15}"
+    api_post /api/tools/call "{\"tool\":\"${tool}\",\"params\":${params}}" "$max_time"
 }
 
 run_job_call() {
     local command="$1"; local timeout="$2"
     tool_call "run_job" "{\"project\":\"${RUNTIME_PROJECT_ID}\",\"command\":$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$command"),\"timeout_secs\":${timeout}}"
+}
+
+run_process_call() {
+    local script="$1"; local timeout="$2"
+    local encoded
+    encoded="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$script")"
+    tool_call "run_process" "{\"project\":\"${RUNTIME_PROJECT_ID}\",\"executable\":\"python3\",\"args\":[${encoded}],\"timeout_secs\":${timeout}}"
+}
+
+observe_job_call() {
+    local job_id="$1"; local token="$2"; local wait_secs="$3"
+    local encoded_token
+    encoded_token="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$token")"
+    tool_call "observe_jobs" "{\"items\":[{\"job_id\":\"${job_id}\",\"after_observation_token\":${encoded_token}}],\"tail_lines\":40,\"wait_secs\":${wait_secs}}"
 }
 
 job_status_call() {
@@ -593,6 +650,153 @@ else
     fail "scenario B: expected 1 job record, got $B_JOB_COUNT"
 fi
 log "scenario B complete"
+
+# ----------------------------------------------------------------------------
+# Scenario C: a handed-off structured process keeps job identity and refreshes
+# an old Server-epoch observation token after restart.
+# ----------------------------------------------------------------------------
+log "scenario C: structured process handoff across server restart"
+
+C_MARKER_FILE="$TEST_REPO/scenario-c-count.txt"
+C_SCRIPT="$TEST_REPO/scenario-c.py"
+cat >"$C_SCRIPT" <<'PY'
+from pathlib import Path
+import time
+
+marker = Path("scenario-c-count.txt")
+with marker.open("a", encoding="utf-8") as handle:
+    handle.write("C-START\n")
+    handle.flush()
+while True:
+    time.sleep(0.25)
+PY
+: >"$C_MARKER_FILE"
+
+# run_process uses the structured execution path. The child intentionally runs
+# longer than the 10s synchronous grace window so the SAME execution is handed
+# off rather than restarted.
+JOB_BODY_C="$(run_process_call "scenario-c.py" 120)"
+JOB_ID_C="$(json_get "$JOB_BODY_C" output.job_id)"
+TOKEN_C_OLD="$(json_get "$JOB_BODY_C" output.observation_token)"
+assert_nonempty "scenario C: structured process handed off with job_id" "$JOB_ID_C"
+assert_nonempty "scenario C: structured process returned observation token" "$TOKEN_C_OLD"
+assert_eq "scenario C: handoff reports promoted_to_job" "$(json_get "$JOB_BODY_C" output.promoted_to_job)" "True"
+BODY_C_RUNNING="$(wait_for_job_status "$JOB_ID_C" running)" || { fail "scenario C: structured process did not reach running"; dump_logs; exit 1; }
+C_START_BEFORE="$(grep -c 'C-START' "$C_MARKER_FILE" || true)"
+assert_eq "scenario C: command executed once before restart" "$C_START_BEFORE" "1"
+
+log "scenario C: stopping SERVER only after structured handoff"
+kill "$SERVER_PID" 2>/dev/null || true
+sleep 2
+kill -9 "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=""
+if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+    fail "scenario C: runner process died"; dump_logs; exit 1
+fi
+pass "scenario C: runner process stayed alive"
+
+start_server
+wait_for_server || { fail "scenario C: server did not restart"; dump_logs; exit 1; }
+BODY="$(wait_for_agent_online)" || { fail "scenario C: runner did not re-register"; dump_logs; exit 1; }
+INSTANCE_ID_4="$(json_get "$BODY" output.connection_layers.server_transport.connection_instance)"
+assert_eq "scenario C: same runner instance reconciled" "$INSTANCE_ID_4" "$INSTANCE_ID"
+
+# The old token belongs to the previous Server epoch. It must be actionable
+# immediately: same job_id, fresh token, no wait for command-side progress.
+C_OBSERVE_STARTED="$(date +%s)"
+OBS_BODY_C="$(observe_job_call "$JOB_ID_C" "$TOKEN_C_OLD" 30)"
+C_OBSERVE_ELAPSED=$(( $(date +%s) - C_OBSERVE_STARTED ))
+assert_eq "scenario C: old-token observation succeeds" "$(json_get "$OBS_BODY_C" output.items.0.success)" "True"
+TOKEN_C_NEW="$(json_get "$OBS_BODY_C" output.items.0.output.observation_token)"
+assert_nonempty "scenario C: refreshed observation token returned" "$TOKEN_C_NEW"
+assert_ne "scenario C: Server restart refreshes observation epoch" "$TOKEN_C_NEW" "$TOKEN_C_OLD"
+assert_eq "scenario C: original job_id survives token refresh" "$(json_get "$OBS_BODY_C" output.items.0.job_id)" "$JOB_ID_C"
+if [ "$C_OBSERVE_ELAPSED" -le 5 ]; then
+    pass "scenario C: stale Server-epoch token refreshed without waiting"
+else
+    fail "scenario C: stale token refresh took ${C_OBSERVE_ELAPSED}s (expected immediate)"
+fi
+
+STOP_BODY_C="$(stop_job_call "$JOB_ID_C")"
+assert_eq "scenario C: stop_job accepted for original job_id" "$(json_get "$STOP_BODY_C" success)" "True"
+BODY_C_STOP="$(wait_for_job_status "$JOB_ID_C" stopped)" || { fail "scenario C: original structured process did not stop"; dump_logs; exit 1; }
+assert_eq "scenario C: original structured Job reached stopped" "$(json_get "$BODY_C_STOP" output.status)" "stopped"
+C_START_AFTER="$(grep -c 'C-START' "$C_MARKER_FILE" || true)"
+assert_eq "scenario C: structured command was never re-executed" "$C_START_AFTER" "1"
+
+LIST_BODY_C="$(tool_call "list_jobs" '{"limit":100}')"
+C_JOB_COUNT="$(printf '%s' "$(json_get "$LIST_BODY_C" output.jobs)" | python3 -c 'import json,sys; obj=json.loads(sys.stdin.read() or "[]"); print(len([j for j in obj if j.get("job_id")=="'"$JOB_ID_C"'"]))' 2>/dev/null || echo "?")"
+assert_eq "scenario C: exactly one record for original job_id" "$C_JOB_COUNT" "1"
+log "scenario C complete"
+
+# ----------------------------------------------------------------------------
+# Scenario D: exact first-class cargo_check handoff across a Server restart.
+# ----------------------------------------------------------------------------
+log "scenario D: cargo_check validation handoff across server restart"
+
+D_MARKER_FILE="$TEST_REPO/scenario-d-count.txt"
+rm -f -- "$D_MARKER_FILE"
+JOB_BODY_D="$(tool_call "cargo_check" "{\"project\":\"${RUNTIME_PROJECT_ID}\",\"timeout_secs\":180}" 120)"
+JOB_ID_D="$(json_get "$JOB_BODY_D" output.job_id)"
+TOKEN_D_OLD="$(json_get "$JOB_BODY_D" output.observation_token)"
+assert_nonempty "scenario D: cargo_check handed off with job_id" "$JOB_ID_D"
+assert_nonempty "scenario D: cargo_check returned observation token" "$TOKEN_D_OLD"
+assert_eq "scenario D: cargo_check reports promoted_to_job" "$(json_get "$JOB_BODY_D" output.promoted_to_job)" "True"
+BODY_D_RUNNING="$(wait_for_job_status "$JOB_ID_D" running)" || { fail "scenario D: cargo_check did not remain running after handoff"; dump_logs; exit 1; }
+D_START_BEFORE="$(grep -c 'D-START' "$D_MARKER_FILE" 2>/dev/null || true)"
+assert_eq "scenario D: validation command started exactly once" "$D_START_BEFORE" "1"
+
+log "scenario D: stopping SERVER only after cargo_check handoff"
+kill "$SERVER_PID" 2>/dev/null || true
+sleep 2
+kill -9 "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=""
+if ! kill -0 "$AGENT_PID" 2>/dev/null; then
+    fail "scenario D: runner process died"; dump_logs; exit 1
+fi
+pass "scenario D: runner process stayed alive"
+
+start_server
+wait_for_server || { fail "scenario D: server did not restart"; dump_logs; exit 1; }
+BODY="$(wait_for_agent_online)" || { fail "scenario D: runner did not re-register"; dump_logs; exit 1; }
+INSTANCE_ID_5="$(json_get "$BODY" output.connection_layers.server_transport.connection_instance)"
+assert_eq "scenario D: same runner instance reconciled" "$INSTANCE_ID_5" "$INSTANCE_ID"
+
+D_OBSERVE_STARTED="$(date +%s)"
+OBS_BODY_D="$(observe_job_call "$JOB_ID_D" "$TOKEN_D_OLD" 30)"
+D_OBSERVE_ELAPSED=$(( $(date +%s) - D_OBSERVE_STARTED ))
+assert_eq "scenario D: old-token observation succeeds" "$(json_get "$OBS_BODY_D" output.items.0.success)" "True"
+TOKEN_D_NEW="$(json_get "$OBS_BODY_D" output.items.0.output.observation_token)"
+assert_nonempty "scenario D: refreshed observation token returned" "$TOKEN_D_NEW"
+assert_ne "scenario D: Server restart refreshes validation observation epoch" "$TOKEN_D_NEW" "$TOKEN_D_OLD"
+assert_eq "scenario D: original cargo_check job_id survives" "$(json_get "$OBS_BODY_D" output.items.0.job_id)" "$JOB_ID_D"
+if [ "$D_OBSERVE_ELAPSED" -le 5 ]; then
+    pass "scenario D: stale validation token refreshed without waiting"
+else
+    fail "scenario D: stale validation token refresh took ${D_OBSERVE_ELAPSED}s"
+fi
+
+STOP_BODY_D="$(stop_job_call "$JOB_ID_D")"
+assert_eq "scenario D: stop_job accepted for original cargo_check" "$(json_get "$STOP_BODY_D" success)" "True"
+BODY_D_STOP="$(wait_for_job_status "$JOB_ID_D" stopped)" || { fail "scenario D: original cargo_check did not stop"; dump_logs; exit 1; }
+assert_eq "scenario D: original cargo_check reached stopped" "$(json_get "$BODY_D_STOP" output.status)" "stopped"
+D_START_AFTER="$(grep -c 'D-START' "$D_MARKER_FILE" 2>/dev/null || true)"
+assert_eq "scenario D: cargo_check was never redispatched" "$D_START_AFTER" "1"
+assert_eq "scenario D: recovered_after_server_restart set" "$(json_get "$BODY_D_STOP" output.recovered_after_server_restart)" "True"
+
+LIST_BODY_D="$(tool_call "list_jobs" '{"limit":100}')"
+D_JOB_COUNT="$(printf '%s' "$(json_get "$LIST_BODY_D" output.jobs)" | python3 -c 'import json,sys; obj=json.loads(sys.stdin.read() or "[]"); print(len([j for j in obj if j.get("job_id")=="'"$JOB_ID_D"'"]))' 2>/dev/null || echo "?")"
+assert_eq "scenario D: exactly one record for original cargo_check job_id" "$D_JOB_COUNT" "1"
+log "scenario D complete"
+
+if grep -q 'runner job inventory reconciled' "$SERVER_LOG" \
+    && grep -q 'inventory_active' "$SERVER_LOG" \
+    && grep -q 'reconstructed' "$SERVER_LOG" \
+    && grep -q 'missing' "$SERVER_LOG"; then
+    pass "reconciliation emits bounded count diagnostics"
+else
+    fail "reconciliation count diagnostics missing from server log"
+fi
 
 log "==============================================="
 log "pass=$PASS fail=$FAIL"

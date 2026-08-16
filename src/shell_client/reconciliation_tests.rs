@@ -1,6 +1,7 @@
 use super::job_updates::{JobLogWaitOutcome, ShellJobStartMetadata, StructuredJobExecution};
 use super::reconciliation::{
-    recovery_timeout_sweep, validate_job_inventory, RECOVERY_SWEEP_PASS_CAP,
+    reconcile_inventory_locked, recovery_timeout_sweep, validate_job_inventory,
+    RECOVERY_SWEEP_PASS_CAP,
 };
 use super::state::{PendingShellRequest, ShellJobVisibility};
 use super::{
@@ -1923,6 +1924,64 @@ fn standalone_snapshot(job_id: &str, status: &str) -> ShellJobSnapshot {
         stderr: ShellJobStreamSnapshot::default(),
         validation_progress: None,
     }
+}
+
+#[tokio::test]
+async fn reconciliation_summary_counts_inventory_effects_without_payload_data() {
+    let registry = ShellClientRegistry::default();
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+
+    let first_inventory = ShellJobInventory {
+        active_complete: true,
+        jobs: vec![
+            standalone_snapshot("summary-active-a", "running"),
+            standalone_snapshot("summary-active-b", "running"),
+        ],
+    };
+    {
+        let mut inner = registry.inner.lock().await;
+        let first = reconcile_inventory_locked(
+            &mut inner,
+            CLIENT_ID,
+            INSTANCE_A,
+            None,
+            registry.observation_epoch.clone(),
+            &first_inventory,
+            now_ts(),
+        );
+        assert_eq!(first.inventory_active, 2);
+        assert_eq!(first.inventory_terminal, 0);
+        assert_eq!(first.reconstructed, 2);
+        assert_eq!(first.updated, 0);
+        assert_eq!(first.missing, 0);
+        assert_eq!(first.suppressed_terminal, 0);
+    }
+
+    let mut updated = standalone_snapshot("summary-active-a", "running");
+    updated.update_seq = 2;
+    let second_inventory = ShellJobInventory {
+        active_complete: true,
+        jobs: vec![
+            updated,
+            standalone_snapshot("summary-terminal", "completed"),
+        ],
+    };
+    let mut inner = registry.inner.lock().await;
+    let second = reconcile_inventory_locked(
+        &mut inner,
+        CLIENT_ID,
+        INSTANCE_A,
+        None,
+        registry.observation_epoch.clone(),
+        &second_inventory,
+        now_ts(),
+    );
+    assert_eq!(second.inventory_active, 1);
+    assert_eq!(second.inventory_terminal, 1);
+    assert_eq!(second.reconstructed, 1);
+    assert_eq!(second.updated, 1);
+    assert_eq!(second.missing, 1);
+    assert_eq!(second.suppressed_terminal, 0);
 }
 
 #[test]

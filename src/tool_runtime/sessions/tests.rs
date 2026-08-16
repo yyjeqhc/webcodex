@@ -2328,6 +2328,37 @@ fn console_title_and_progress_redact_absolute_private_paths() {
 }
 
 #[test]
+fn console_title_and_progress_redact_json_wrapped_private_paths() {
+    let store = SessionStore::new_in_memory(10, 20);
+    let project = "agent:eval:demo";
+    let session = store.start_session(
+        Some(project.to_string()),
+        Some(r#"inspect {"path":"/etc/passwd"}"#.to_string()),
+    );
+    store
+        .post_message(PostSessionMessageInput {
+            session_id: session.session_id.clone(),
+            kind: SessionMessageKind::Progress,
+            message: r#"checked {"cwd":"C:\\Users\\alice\\secret"}"#.to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        })
+        .unwrap();
+    let detail = store
+        .console_detail_for_project(project, &session.session_id, Some(20))
+        .unwrap();
+    let serialized = serde_json::to_string(&detail).unwrap();
+    for private in ["/etc/passwd", "C:\\\\Users"] {
+        assert!(
+            !serialized.contains(private),
+            "JSON-wrapped private path leaked: {serialized}"
+        );
+    }
+    assert!(serialized.contains("[private path]"));
+}
+
+#[test]
 fn legacy_session_events_without_validation_output_summary_restore() {
     let tmp = tempfile::tempdir().unwrap();
     let ledger = tmp.path().join("sessions.json");

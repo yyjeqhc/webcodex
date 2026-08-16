@@ -922,10 +922,32 @@ fn looks_like_private_path(value: &str) -> bool {
     if looks_like_absolute_path(token) {
         return true;
     }
-    token
+    if token
         .rsplit_once('=')
         .map(|(_, candidate)| trim_path_wrappers(candidate))
         .is_some_and(looks_like_absolute_path)
+    {
+        return true;
+    }
+    contains_delimited_absolute_path(token)
+}
+
+fn contains_delimited_absolute_path(value: &str) -> bool {
+    let mut previous = None;
+    for (index, ch) in value.char_indices() {
+        let delimited = index == 0
+            || previous.is_some_and(|previous| {
+                matches!(
+                    previous,
+                    '"' | '\'' | '(' | '[' | '{' | '<' | ',' | ';' | '='
+                )
+            });
+        if delimited && looks_like_absolute_path(trim_path_wrappers(&value[index..])) {
+            return true;
+        }
+        previous = Some(ch);
+    }
+    false
 }
 
 fn trim_path_wrappers(value: &str) -> &str {

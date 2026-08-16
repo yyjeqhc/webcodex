@@ -38,7 +38,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_element_state",
-            "Revalidate one exact ephemeral native accessibility element and return normalized read-only affordances plus observation generation. Supports macOS AX and Windows UIA; never returns the element value, and protected or secure targets suppress value_empty. Reacquire stale handles with computer_find_elements.",
+            "Revalidate an exact ephemeral accessibility element and return normalized read-only affordances plus observation generation. Supports macOS AX and Windows UIA; never returns element values. Protected or secure targets suppress value_empty. Reacquire stale handles with computer_find_elements.",
             computer_element_state_input_schema(),
         ),
         tool_spec(
@@ -63,7 +63,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_input_text",
-            "Write bounded text verbatim with native macOS AXValue or Windows UI Automation ValuePattern to an exact reusable element_id. Target must already be focused, non-secure, unprotected, supported, enabled, writable, and empty; Windows also requires the exact surface to already be foreground. No focus, activation, paste, synthetic-key, or send fallback. If outcome is unknown, observe UI state before retrying.",
+            "Write bounded text via macOS AXValue or Windows UIA ValuePattern to an exact element_id. Target must be focused, non-secure, unprotected, supported, enabled, writable, and empty; Windows must be foreground. No focus/activation, paste, key, or send fallback. Re-observe unknown outcomes.",
             computer_input_text_input_schema(),
         ),
         tool_spec(

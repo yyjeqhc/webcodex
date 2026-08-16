@@ -36,6 +36,7 @@
 - [测试策略](TESTING.md) —— 测试策略
 - [发布清单](RELEASE_CHECKLIST.md) —— 发布就绪
 - [架构决策](agent/architecture-decisions.md)
+- [Job 可靠性与 Runner 并发](agent/job-reliability-and-concurrency.md) —— Control 重启恢复、observation 语义、共享 Job 容量与工具描述要求
 - [权限模型](agent/permission-model.md)
 - [会话模型](agent/session-model.md)
 - [OpenAPI 指南](agent/openapi-guidelines.md)

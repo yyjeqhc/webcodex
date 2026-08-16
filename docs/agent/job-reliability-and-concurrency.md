@@ -1,0 +1,247 @@
+# Job Reliability, Observation, and Runner Concurrency
+
+This note defines the current V1 engineering contract for Job continuation across
+Control Server restarts, bounded Job observation, and shared Runner execution
+capacity. It complements [Runner](../RUNNER.md), [Testing](../TESTING.md), and
+the [architecture decisions](architecture-decisions.md).
+
+The purpose is to keep implementation, operator diagnosis, and model-facing tool
+descriptions aligned. It is not a new scheduler, persistence layer, or retry
+framework.
+
+## 1. Keep request lifetime, Job lifetime, and observation state separate
+
+Three identities have different lifetimes:
+
+| Thing | Meaning | Expected across Control Server restart |
+|---|---|---|
+| MCP / HTTP request | One transport request or bounded wait | No. The connection/request may fail immediately. |
+| `job_id` | Identity of one already-dispatched execution | Yes, when the same reconciliation-capable Runner process survives and reports the Job in inventory. |
+| `after_observation_token` | Opaque cursor for one observed Job snapshot | No. Its Server epoch is process-local; a surviving Job should return a fresh token immediately after restart. |
+
+A dropped `observe_jobs`, `job_log`, or other MCP request therefore does **not**
+mean that the underlying Job was lost. The caller should keep the original
+`job_id` and observe authoritative Job state again before considering any retry.
+
+Observation tokens are opaque. They must be returned unchanged by clients and
+must never become business identity, retry identity, authorization, or evidence
+that an execution no longer exists.
+
+## 2. Control Server restart recovery contract
+
+When `job_state_reconciliation=true`, the intended recovery chain is:
+
+1. A Job is accepted and dispatched to a Runner.
+2. The Control Server stops or restarts while the Runner process and command keep
+   running.
+3. The same Runner process reconnects with the same `client_id` and
+   `agent_instance_id` and supplies a complete active Job inventory.
+4. The new Server registry validates that inventory and reconstructs the same
+   `job_id` and ownership/project/session context.
+5. An observation request carrying a token from the old Server epoch refreshes
+   immediately rather than waiting for a new command-side event.
+6. Later terminal state remains queryable through the same Job identity, subject
+   to the normal bounded terminal-retention contract.
+
+The Server-side reconstruction path records
+`recovered_after_server_restart=true` and
+`recovery_reason_code=server_restart_reconciliation`. Runner inventory is the
+recovery authority; the Server must not guess a replacement execution or replay
+the original command.
+
+A command that finishes while the Server is down is also recoverable when its
+terminal snapshot is still in the Runner's bounded retained inventory.
+
+### What is expected and what is a bug
+
+Expected:
+
+- the in-flight MCP/HTTP request fails because the Server process restarted;
+- an old observation token becomes stale and is replaced by a fresh token;
+- a Job waits as `agent_queued` when Runner execution capacity is full;
+- a legacy Runner without reconciliation support cannot provide this recovery
+  guarantee;
+- a new Runner process is outside this recovery contract.
+
+A V1 correctness/reliability incident exists when all of the following are true:
+
+- the Job had been dispatched and was active (or retained terminal) before the
+  Server restart;
+- the Runner process survived (`client_id`, `agent_instance_id`, and
+  `process_started_at` identify the same process);
+- the Runner advertises `job_state_reconciliation=true`;
+- the Job is present in the Runner inventory supplied after reconnect, or should
+  have been present under the complete-active-inventory contract;
+- after successful re-registration the same `job_id` is permanently reported as
+  unknown or otherwise requires launching a replacement execution.
+
+The important distinction is **request loss versus execution loss**. Treating
+both as “retry the command” risks duplicate effects.
+
+## 3. Diagnostic playbook for an `unknown job` after restart
+
+Before retrying work, collect safe runtime facts:
+
+1. Use `runtime_status` / `list_agents` to establish the current Server build,
+   Runner connection state, `client_id`, `agent_instance_id`,
+   `process_started_at`, reconciliation capability, and Job concurrency state.
+2. Determine whether the Runner process changed. If it changed, do not claim the
+   same-process Server-restart recovery contract was violated.
+3. If the Runner process is unchanged, inspect the registration/reconciliation
+   path: was the original `job_id` present in `job_inventory`?
+4. If it was present, verify that `reconcile_inventory_locked` reconstructed or
+   updated the Server record instead of dropping it.
+5. If it was absent, investigate Runner `JobManager` retention/inventory rather
+   than creating a replacement Server Job.
+6. Re-observe the original `job_id`. A stale observation epoch should cause an
+   immediate token refresh when the Job exists.
+7. Only after authoritative lifecycle evidence establishes a safe retry state
+   should a caller create a new execution.
+
+Useful reconciliation diagnostics should remain bounded and secret-free. A
+summary such as runner instance, active/terminal inventory counts, reconstructed
+count, updated count, and missing count is sufficient; command text, log bodies,
+credentials, and private paths are not required.
+
+## 4. Runner Job capacity is shared across windows and projects
+
+`max_concurrent_jobs` is a Runner-process execution limit (default 4, effective
+range 1..64). It is not allocated per ChatGPT window, Workflow Session, or
+Project.
+
+Opening multiple model windows consumes no Job slot by itself. A slot is consumed
+while a Job-backed execution owns Runner execution capacity. Therefore several
+windows using different Projects on the same Runner can contend for the same
+pool.
+
+For example, with `max_concurrent_jobs = 4`:
+
+- Window A running a build: 1 slot;
+- Window B running tests: 1 slot;
+- Window C running a long structured process: 1 slot;
+- one additional Job may run immediately;
+- later accepted Jobs remain the same Jobs and report `agent_queued` until a slot
+  is available.
+
+`agent_queued` is not a reason to create another Job. The queued record keeps its
+original `job_id`, enters the Runner's complete active inventory, and should also
+survive a Control Server restart under the same reconciliation contract.
+
+A structured process or validation may consume a Runner Job slot while it runs
+even when it finishes quickly enough for the initiating tool call to return a
+terminal result instead of exposing a long-lived handoff to the model.
+
+### Independent concurrency planes
+
+Do not conflate the Job execution pool with other limits. In particular:
+
+- Runner Job execution uses `max_concurrent_jobs`;
+- polling request dispatch has its own in-flight bound;
+- persistent shells have their own bounded population/lifecycle.
+
+Changing one does not redefine the others. `runtime_status` / `list_agents`
+should be used for current `job_concurrency { limit, running, queued }` facts
+instead of inferring capacity from the number of browser/model windows.
+
+## 5. Requirements for model-facing tool descriptions
+
+Tool descriptions are part of the reliability contract because they influence
+whether a model observes an existing execution or accidentally creates another
+one. Keep descriptions concise, but preserve these semantic distinctions.
+
+### Job-producing execution tools
+
+For structured validation/process tools (`cargo_*`, `go_test`, `run_process`,
+`run_script`, `run_job`, and future equivalents), descriptions should make clear
+that:
+
+- a long operation continues as the **same execution / same Job**;
+- handoff is not cancel-and-retry;
+- queued execution keeps the same `job_id`;
+- loss of the initiating request is not evidence that the Job did not start.
+
+Avoid wording that encourages “rerun if the call times out” without consulting
+structured lifecycle state.
+
+### Job observation tools
+
+For `job_status`, `job_log`, `job_tail`, and `observe_jobs`, descriptions should
+make clear that:
+
+- observation never launches or retries the Job;
+- `wait_secs` is one bounded wait, not a subscription;
+- `after_observation_token` is an opaque observation cursor, not Job identity;
+- Control Server restart may invalidate the token while leaving `job_id` valid;
+- a stale Server epoch should refresh immediately when the same Job has been
+  reconciled;
+- `unknown_job` after same-process reconciliation is a diagnostic signal, not an
+  automatic instruction to create a replacement Job.
+
+### Runtime/operator observation tools
+
+Descriptions for `runtime_status`, `list_agents`, and related operator surfaces
+should distinguish connection health from execution capacity and expose safe
+facts needed to diagnose recovery:
+
+- Runner process identity/liveness;
+- reconciliation capability;
+- current Job concurrency limit/running/queued counts;
+- Server build/version compatibility where relevant.
+
+Do not imply that a healthy transport proves Job recovery succeeded, or that an
+open model window reserves Runner capacity.
+
+## 6. Acceptance coverage
+
+The minimum real-process acceptance scenario for this contract is:
+
+```text
+running Runner Job
+-> stop Control Server only
+-> keep Runner process and command alive
+-> restart Control Server
+-> Runner re-registers complete inventory
+-> same job_id is reconstructed
+-> old observation token refreshes immediately
+-> command runs exactly once
+-> terminal result remains queryable
+```
+
+A second scenario should allow the command to become terminal while the Server is
+down and verify terminal reconciliation after restart. A repeated-restart
+scenario should preserve the same Job identity, monotonic sequence/log cursors,
+and single execution.
+
+These expectations already have dedicated coverage in
+`docs/TESTING.md` (`e2e_job_reconciliation_ws.sh` and
+`e2e_job_recovery_failures_ws.sh`). Unit coverage also verifies old-epoch
+observation-token refresh behavior.
+
+## 7. Explicit non-goals
+
+This contract does not promise:
+
+- survival of the same Job across a Runner **process** restart;
+- survival of an in-flight MCP/HTTP connection across a Control Server process
+  restart;
+- unbounded Job/log retention;
+- a generic distributed scheduler or durable process manager;
+- blind automatic retries for uncertain execution outcomes.
+
+If stronger Runner-process durability is introduced later, it needs its own
+explicit persistence, process-ownership, fencing, and replay semantics rather
+than being inferred from the current Control Server reconciliation path.
+
+## 8. Implementation reference points
+
+The current contract is implemented and tested primarily in:
+
+- `src/shell_client/state.rs` — Server Job record, observation epoch, and Runner
+  concurrency metadata;
+- `src/shell_client/reconciliation.rs` — inventory validation and reconstruction;
+- `src/tool_runtime/observe_jobs.rs` and `src/job_observation.rs` — bounded
+  observation/token behavior;
+- `crates/webcodex-runner/src/main.rs` — Runner `JobManager`, inventory, queue,
+  and slot reservation;
+- `docs/RUNNER.md` — public Job/concurrency behavior;
+- `docs/TESTING.md` — real-process restart/reconciliation acceptance coverage.

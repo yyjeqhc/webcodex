@@ -36,6 +36,7 @@
 - [Testing](TESTING.md) — testing strategy
 - [Release checklist](RELEASE_CHECKLIST.md) — release readiness
 - [Architecture decisions](agent/architecture-decisions.md)
+- [Job reliability and Runner concurrency](agent/job-reliability-and-concurrency.md) — Control restart recovery, observation semantics, shared Job capacity, and tool-description requirements
 - [Authority model](agent/permission-model.md)
 - [Session model](agent/session-model.md)
 - [OpenAPI guidelines](agent/openapi-guidelines.md)

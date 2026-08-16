@@ -144,7 +144,10 @@ Do not conflate the Job execution pool with other limits. In particular:
 
 Changing one does not redefine the others. `runtime_status` / `list_agents`
 should be used for current `job_concurrency { limit, running, queued }` facts
-instead of inferring capacity from the number of browser/model windows.
+instead of inferring capacity from the number of browser/model windows. These
+are bounded lifecycle-status counts, not an exact free-slot calculation:
+`stop_requested` can still own a Runner slot until it becomes terminal, so do
+not derive `available_slots` or saturation by subtracting `running` from `limit`.
 
 ## 5. Requirements for model-facing tool descriptions
 

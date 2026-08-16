@@ -51,13 +51,14 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check schema and metadata contracts
         run: |
-          cargo test --locked -p webcodex --lib openapi_operation_ids_are_minimal
-          cargo test --locked -p webcodex --lib openapi_all_local_refs_resolve
-          cargo test --locked -p webcodex --lib explicit_resume_openapi_metadata_is_distinct_from_session_recording
-          cargo test --locked -p webcodex --lib mcp_tools_list_returns_same_names_as_runtime
-          cargo test --locked -p webcodex --lib mcp_tools_list_parity_with_rest_tools_list
-          cargo test --locked -p webcodex --lib explicit_resume_mcp_schema_and_metadata_are_exposed
-          cargo test --locked -p webcodex --lib http_project_connector_lists_and_dispatches_only_canonical_capabilities
+          cargo test --locked -p webcodex --lib -- \
+            openapi_operation_ids_are_minimal \
+            openapi_all_local_refs_resolve \
+            explicit_resume_openapi_metadata_is_distinct_from_session_recording \
+            mcp_tools_list_returns_same_names_as_runtime \
+            mcp_tools_list_parity_with_rest_tools_list \
+            explicit_resume_mcp_schema_and_metadata_are_exposed \
+            http_project_connector_lists_and_dispatches_only_canonical_capabilities
 
   test:
     # External PRs run automatically (subject to GitHub's normal fork approval

@@ -251,18 +251,19 @@ mod tests {
         for spec in &specs {
             let mut descriptions = Vec::new();
             collect_schema_descriptions(&spec.input_schema, &mut descriptions);
+            collect_schema_descriptions(&spec.output_schema, &mut descriptions);
             for description in descriptions {
                 if spec.name != "run_shell" {
                     assert!(
                         !description.contains("run_shell"),
-                        "{} input schema pollutes exact run_shell discovery: {description}",
+                        "{} schema pollutes exact run_shell discovery: {description}",
                         spec.name
                     );
                 }
                 if spec.name != "run_job" {
                     assert!(
                         !description.contains("run_job"),
-                        "{} input schema pollutes exact run_job discovery: {description}",
+                        "{} schema pollutes exact run_job discovery: {description}",
                         spec.name
                     );
                 }

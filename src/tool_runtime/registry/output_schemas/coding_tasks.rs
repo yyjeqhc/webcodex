@@ -54,7 +54,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "validation",
-                open_object_schema("Unified bounded execution evidence from dedicated validation tools and run_shell/run_job calls that declare validation/test/build/format/release purpose. Preserves historical, resolved, and unresolved failures by stable identity."),
+                open_object_schema("Unified bounded execution evidence from supported execution tools that declare validation/test/build/format/release purpose. Preserves historical, resolved, and unresolved failures by stable identity."),
             ),
             (
                 "continuation_feedback",
@@ -326,7 +326,7 @@ fn startup_session_schema() -> Value {
             "session_id": {"type": "string", "pattern": "^wc_sess_[A-Za-z0-9_]+$"},
             "mode": {"type": "string", "enum": ["normal", "inspect", "read_only"]},
             "execution_context": session_execution_context_schema(
-                "Persistent run_shell/run_job defaults currently stored for this Workflow Session."
+                "Persistent execution defaults currently stored for this Workflow Session."
             ),
             "continuation": {"type": "string", "enum": ["created", "continued", "resumed_explicitly"]},
             "reused": {"type": "boolean"},
@@ -1135,7 +1135,7 @@ fn work_on_project_output_schema() -> Value {
         ),
         (
             "execution_context",
-            session_execution_context_schema("Persistent run_shell/run_job defaults currently stored for this Workflow Session."),
+            session_execution_context_schema("Persistent execution defaults currently stored for this Workflow Session."),
         ),
         (
             "readiness",

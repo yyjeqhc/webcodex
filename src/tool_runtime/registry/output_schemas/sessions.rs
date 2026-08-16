@@ -49,7 +49,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "execution_context",
                 session_execution_context_schema(
-                    "Persistent run_shell/run_job defaults for this Workflow Session.",
+                    "Persistent execution defaults for this Workflow Session.",
                 ),
             ),
             (
@@ -88,7 +88,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "execution_context",
                 session_execution_context_schema(
-                    "Persistent run_shell/run_job defaults for this Workflow Session.",
+                    "Persistent execution defaults for this Workflow Session.",
                 ),
             ),
             (
@@ -330,7 +330,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "execution_context",
                 session_execution_context_schema(
-                    "Persistent run_shell/run_job defaults for this Workflow Session.",
+                    "Persistent execution defaults for this Workflow Session.",
                 ),
             ),
             (
@@ -511,7 +511,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "execution_context",
                 session_execution_context_schema(
-                    "Persistent run_shell/run_job defaults for the bound Workflow Session.",
+                    "Persistent execution defaults for the bound Workflow Session.",
                 ),
             ),
         ])),
@@ -534,7 +534,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "execution_context",
                 session_execution_context_schema(
-                    "Persistent run_shell/run_job defaults for the bound Workflow Session, when found.",
+                    "Persistent execution defaults for the bound Workflow Session, when found.",
                 ),
             ),
         ])),

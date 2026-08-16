@@ -1540,7 +1540,7 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
     for phrase in [
         "unified bounded execution evidence",
         "dedicated validation tools",
-        "run_shell/run_job",
+        "purpose-declared execution calls",
         "validation/test/build/format/release",
         "historical",
         "resolved",

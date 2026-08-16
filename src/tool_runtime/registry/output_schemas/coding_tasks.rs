@@ -54,7 +54,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "validation",
-                open_object_schema("Unified bounded execution evidence from supported execution tools that declare validation/test/build/format/release purpose. Preserves historical, resolved, and unresolved failures by stable identity."),
+                open_object_schema("Unified bounded execution evidence from dedicated validation tools and purpose-declared execution calls for validation/test/build/format/release. Preserves historical, resolved, and unresolved failures by stable identity."),
             ),
             (
                 "continuation_feedback",

@@ -15,7 +15,7 @@ tests with different cost profiles sharing the same default lane.
 | fast unit | Pure parsing, validation, helpers, local state machines, small fixtures. | No network, no global env mutation, no long sleeps. | `cargo test -p webcodex --lib tool_call` |
 | contract/schema | Keep metadata, registry, MCP `tools/list`, OpenAPI, and runtime tool names synchronized. | No external network; in-process services are preferred. | `cargo test -p webcodex --lib metadata`; `cargo test -p webcodex --lib mcp`; `cargo test -p webcodex --lib openapi` |
 | local integration | Exercise HTTP handlers, runtime dispatch, sessions, local agent registry, temp dirs, loopback listeners, and database fixtures. | Loopback only, isolated temp dirs, bounded waits, no shared mutable state without a lock. | `cargo test -p webcodex --lib runtime_http -- --nocapture`; `cargo test -p webcodex --lib session -- --nocapture` |
-| slow/manual ignored | Valuable coverage that is local but slow, serial, large-input, or global-state-sensitive. | Explicit operator opt-in; often `--ignored` and `--test-threads=1`. | `cargo test -p webcodex --lib import_http -- --ignored --nocapture --test-threads=1` |
+| slow/manual ignored | Valuable coverage that is local but slow, serial, large-input, or global-state-sensitive. | Explicit operator opt-in; often `--ignored` and `--test-threads=1`. | Run the specific ignored test/filter documented by its subsystem. |
 | e2e/deployment smoke | Prove that binaries, local services, GPT Actions schema, MCP, artifact transfer, and an agent can work together. | Temporary local services and loopback ports; real deployment only when explicitly requested. | `bash scripts/e2e_zero_config_ws.sh`; `bash scripts/smoke_deployment.sh`; `bash scripts/smoke_artifact_transfer.sh` |
 | reconnect continuity | Runner disconnect/reconnect layer independence, stale-not-ready observations, server-restart durable Session plus exact binding restoration, lost-job terminal semantics, meaningful-activity scoping, and version-mismatch diagnostics. | In-process fixtures, no external network. | `cargo test -p webcodex --lib reconnect` |
 | trusted smoke | Disposable git fixture full chain (start → edit → failing shell validation → fix → pass → git review → finish) asserting zero approval interruptions under `trusted_agent` authority, resolved failure evidence, dirty-worktree advisory-only, and bounded payloads; prints baseline counters. | Temp git fixture, no external network. | `cargo test -p webcodex --lib trusted_smoke` |
@@ -44,8 +44,8 @@ The lanes above define test semantics; workflows decide when to run them.
 - Exact-source release acceptance is separate from ordinary pull-request CI.
   Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
   `.github/workflows/release-readiness.yml`.
-- Slow/manual and real-process lanes remain explicit targeted evidence unless a
-  workflow names them. Do not infer that one lane ran merely because another CI
+- Slow/manual and real-process lanes remain explicit targeted evidence unless
+  a workflow names them. Do not infer that one lane ran merely because another CI
   job passed.
 
 ## Default Test Principles
@@ -76,47 +76,13 @@ The lanes above define test semantics; workflows decide when to run them.
 - Ignored tests are not dead tests. Each ignored test should have a reason and a
   documented lane for running it intentionally.
 
-## Current `import_http` Inventory
+## `import_http` Coverage
 
-`src/runtime_http/tests/import_http_tests.rs` currently contains four ignored
-`import_http` tests:
-
-- `import_http_does_not_follow_302_redirect`
-- `import_http_rejects_content_length_over_limit`
-- `import_http_rejects_chunked_body_after_limit_without_content_length`
-- `import_http_success_uses_source_name_fallback_for_missing_target`
-
-These tests do not access the external internet. They use a loopback mock HTTP
-server, rewrite the import download base URL, create temporary project roots,
-and in one success case drive asynchronous agent completion. They remain
-ignored because they combine several local-integration risks:
-
-- a global download URL override that must be reset,
-- a serial import test lock that protects the test body but still makes the lane
-  unsuitable for high-parallel default runs,
-- raw loopback listener setup and spawned async server tasks,
-- large body coverage around `MAX_IMPORT_FILE_BYTES`,
-- polling with short sleeps while waiting for agent requests,
-- temp-dir project roots and artifact writes.
-
-This coverage is useful and should be preserved. The current default behavior is
-to keep it out of the fast and contract/schema lanes until the fixture can be
-made deterministic enough for a serial local integration lane.
-
-## Path To A Serial Local Integration Lane
-
-The next structural step is to run the four `import_http` ignored tests under a
-named serial local integration lane without changing their assertions:
-
-1. Keep the tests local-only and run them with `--test-threads=1`.
-2. Replace the global URL rewrite with a fixture-scoped guard or downloader
-   injection, if the runtime boundary allows it.
-3. Replace sleep polling for agent completion with a bounded notification or a
-   helper that fails with a clear timeout.
-4. Keep the mock HTTP server on `127.0.0.1:0` and make task shutdown explicit.
-5. Promote the lane from manual to scheduled or path-filtered CI only after the
-   inventory shows no unguarded env mutation, leaked global state, or unbounded
-   waits.
+Conversation-import tests use bounded loopback fixtures in the ordinary local-integration
+surface. Legacy ignored HTTP fixtures for redirect and download-size limits were retired
+after equivalent boundary coverage moved to the current MCP import path; source-name
+fallback is covered directly at the import-name helper. Keep new coverage on the current
+transport/runtime path instead of preserving duplicate historical fixtures.
 
 Run the current heuristic inventory with:
 
@@ -139,13 +105,11 @@ Recent structure work moved large test groups out of production roots:
   `crates/webcodex-cli/src/webcodex_cli/tests/*`.
 - CLI help smoke coverage lives with the CLI test modules and covers common
   help entry points, so new command help should extend that smoke coverage.
-- Runtime HTTP tests live under `src/runtime_http/tests/*`; the only currently
-  ignored tests tracked by the inventory are the four `import_http` tests listed
-  above.
+- Runtime HTTP tests live under `src/runtime_http/tests/*`; historical ignored
+  import fixtures should not be retained once equivalent current-path coverage exists.
 - Tool runtime tests live under `src/tool_runtime/tests/*` by domain.
 
 Do not add large ordinary test blocks to production facade files when one of
 these `tests/` module trees already exists. Exact full-suite pass counts should
-come from a fresh `cargo test -p webcodex --lib` run; recent full-suite scale is
-roughly 1.7k passing tests plus the four ignored `import_http` tests, but this
-document should not be treated as the source of truth for exact counts.
+come from a fresh `cargo test -p webcodex --lib` run; this document should not be
+treated as the source of truth for exact counts.

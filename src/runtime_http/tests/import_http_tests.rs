@@ -1,4 +1,4 @@
-use super::super::import_http::{set_import_test_download_base_url, MAX_IMPORT_FILE_BYTES};
+use super::super::import_http::set_import_test_download_base_url;
 use crate::tool_runtime::files::{
     MAX_PROJECT_ARTIFACT_UPLOAD_BYTES, MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES,
 };
@@ -9,8 +9,17 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+const IMPORT_TEST_AGENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const IMPORT_TEST_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+const IMPORT_TEST_SERVER_IO_TIMEOUT: Duration = Duration::from_secs(30);
+
 async fn lock_import_http_test() -> tokio::sync::MutexGuard<'static, ()> {
-    crate::tool_runtime::conversation_import::lock_import_test_network().await
+    tokio::time::timeout(
+        IMPORT_TEST_LOCK_TIMEOUT,
+        crate::tool_runtime::conversation_import::lock_import_test_network(),
+    )
+    .await
+    .expect("timed out waiting for import test network lock")
 }
 
 struct ImportDownloadBaseUrlGuard;
@@ -46,13 +55,25 @@ async fn start_mock_http_server(responses: Vec<Vec<u8>>) -> MockHttpServer {
     let handle = tokio::spawn(async move {
         let mut responses = std::collections::VecDeque::from(responses);
         while let Some(response) = responses.pop_front() {
-            let Ok((mut stream, _)) = listener.accept().await else {
+            let Ok(Ok((mut stream, _))) =
+                tokio::time::timeout(IMPORT_TEST_SERVER_IO_TIMEOUT, listener.accept()).await
+            else {
                 return;
             };
             let mut buf = [0_u8; 4096];
-            let _ = stream.read(&mut buf).await;
-            let _ = stream.write_all(&response).await;
-            let _ = stream.shutdown().await;
+            if tokio::time::timeout(IMPORT_TEST_SERVER_IO_TIMEOUT, stream.read(&mut buf))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            if tokio::time::timeout(IMPORT_TEST_SERVER_IO_TIMEOUT, stream.write_all(&response))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            let _ = tokio::time::timeout(IMPORT_TEST_SERVER_IO_TIMEOUT, stream.shutdown()).await;
         }
     });
     MockHttpServer {
@@ -94,20 +115,25 @@ async fn next_import_agent_request(
     registry: &crate::shell_client::ShellClientRegistry,
 ) -> crate::shell_protocol::ShellAgentShellRequest {
     use crate::shell_protocol::ShellAgentPollRequest;
-    loop {
-        if let Some(request) = registry
-            .poll(ShellAgentPollRequest {
-                client_id: "importer".to_string(),
-                agent_instance_id: "inst-import".to_string(),
-                projects: None,
-            })
-            .await
-            .unwrap()
-        {
-            return request;
+
+    tokio::time::timeout(IMPORT_TEST_AGENT_REQUEST_TIMEOUT, async {
+        loop {
+            if let Some(request) = registry
+                .poll(ShellAgentPollRequest {
+                    client_id: "importer".to_string(),
+                    agent_instance_id: "inst-import".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap()
+            {
+                return request;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    })
+    .await
+    .expect("timed out waiting for import agent request")
 }
 
 async fn complete_import_artifact_uploads(
@@ -821,181 +847,4 @@ async fn import_http_rejects_non_openai_file_host() {
     );
     let body: Value = resp.take_json().await.unwrap();
     assert!(body["error"].as_str().unwrap().contains("OpenAI file host"));
-}
-
-// These ignored tests are a serial, loopback-only integration lane for import
-// downloader behavior. They remain manual/slow and are not part of default
-// runtime_http test execution.
-
-#[tokio::test]
-#[ignore]
-async fn import_http_does_not_follow_302_redirect() {
-    let _guard = lock_import_http_test().await;
-    let server = start_mock_http_server(vec![http_response(
-        "302 Found",
-        &[(
-            "Location",
-            "https://files.oaiusercontent.com/other.png".to_string(),
-        )],
-        b"",
-    )])
-    .await;
-    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
-    let service = import_test_service_with_local_runtime().await;
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
-        .bearer_auth("secret")
-        .json(&import_body(
-            "https://files.oaiusercontent.com/a.png",
-            "image/png",
-            "a.png",
-        ))
-        .send(&service)
-        .await;
-    assert_eq!(
-        super::effective_status(&resp),
-        salvo::http::StatusCode::BAD_REQUEST
-    );
-    let body: Value = resp.take_json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("HTTP 302"));
-}
-
-#[tokio::test]
-#[ignore]
-async fn import_http_rejects_content_length_over_limit() {
-    let _guard = lock_import_http_test().await;
-    let server = start_mock_http_server(vec![http_response(
-        "200 OK",
-        &[("Content-Length", (MAX_IMPORT_FILE_BYTES + 1).to_string())],
-        b"",
-    )])
-    .await;
-    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
-    let service = import_test_service_with_local_runtime().await;
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
-        .bearer_auth("secret")
-        .json(&import_body(
-            "https://files.oaiusercontent.com/a.png",
-            "image/png",
-            "a.png",
-        ))
-        .send(&service)
-        .await;
-    assert_eq!(
-        super::effective_status(&resp),
-        salvo::http::StatusCode::BAD_REQUEST
-    );
-    let body: Value = resp.take_json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("exceeds"));
-}
-
-#[tokio::test]
-#[ignore]
-async fn import_http_rejects_chunked_body_after_limit_without_content_length() {
-    let _guard = lock_import_http_test().await;
-    let body = vec![b'x'; MAX_IMPORT_FILE_BYTES + 1];
-    let server = start_mock_http_server(vec![http_response("200 OK", &[], &body)]).await;
-    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
-    let tmp = tempfile::tempdir().unwrap();
-    let (runtime, registry) = super::register_import_agent_with_capabilities(
-        tmp.path(),
-        Some(crate::shell_protocol::ShellClientCapabilities {
-            file_write: true,
-            ..Default::default()
-        }),
-    )
-    .await;
-    let config = super::test_config(Some("secret"));
-    let (_db_tmp, db) = super::test_db();
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-    let agent = tokio::spawn(complete_import_artifact_uploads(registry, 1));
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
-        .bearer_auth("secret")
-        .json(&import_body(
-            "https://files.oaiusercontent.com/a.png",
-            "image/png",
-            "a.png",
-        ))
-        .send(&service)
-        .await;
-    let outcomes = tokio::time::timeout(Duration::from_secs(10), agent)
-        .await
-        .expect("over-limit upload abort fixture timed out")
-        .unwrap();
-    assert_eq!(outcomes.len(), 1);
-    assert!(outcomes[0].aborted);
-    assert!(!outcomes[0].finished);
-    assert!(!tmp.path().join("docs/assets/a.png").exists());
-    assert_eq!(
-        super::effective_status(&resp),
-        salvo::http::StatusCode::BAD_REQUEST
-    );
-    let body: Value = resp.take_json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("exceeds"));
-}
-
-#[tokio::test]
-#[ignore]
-async fn import_http_success_uses_source_name_fallback_for_missing_target() {
-    let _guard = lock_import_http_test().await;
-    let png = vec![0x89, b'P', b'N', b'G'];
-    let webp = b"RIFF\x00\x00\x00\x00WEBP".to_vec();
-    let server = start_mock_http_server(vec![
-        http_response("200 OK", &[("Content-Length", png.len().to_string())], &png),
-        http_response(
-            "200 OK",
-            &[("Content-Length", webp.len().to_string())],
-            &webp,
-        ),
-    ])
-    .await;
-    let _download_base = ImportDownloadBaseUrlGuard::set(server.base_url.clone());
-    let tmp = tempfile::tempdir().unwrap();
-    let (runtime, registry) = super::register_import_agent_with_capabilities(
-        tmp.path(),
-        Some(crate::shell_protocol::ShellClientCapabilities {
-            file_write: true,
-            ..Default::default()
-        }),
-    )
-    .await;
-    let config = super::test_config(Some("secret"));
-    let (_db_tmp, db) = super::test_db();
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-    let agent = tokio::spawn(complete_import_artifact_uploads(registry, 2));
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
-        .bearer_auth("secret")
-        .json(&json!({
-            "project":"agent:importer:demo",
-            "output_dir":"docs/assets",
-            "targets":["custom.png"],
-            "openaiFileIdRefs":[
-                {"name":"generated.png","id":"file_png","mime_type":"image/png","download_link":"https://files.oaiusercontent.com/generated.png"},
-                {"name":"fallback.webp","id":"file_webp","mime_type":"image/webp","download_link":"https://files.oaiusercontent.com/fallback.webp"}
-            ]
-        }))
-        .send(&service)
-        .await;
-    let outcomes = agent.await.unwrap();
-    assert_eq!(outcomes.len(), 2);
-    assert!(outcomes.iter().all(|outcome| outcome.finished));
-    assert_eq!(super::effective_status(&resp), salvo::http::StatusCode::OK);
-    let body: Value = resp.take_json().await.unwrap();
-    let imported = body["output"]["imported"].as_array().unwrap();
-    assert_eq!(imported.len(), 2);
-    assert_eq!(imported[0]["path"], "docs/assets/custom.png");
-    assert_eq!(imported[0]["bytes_written"], png.len());
-    assert_eq!(imported[0]["mime_type"], "image/png");
-    assert_eq!(imported[0]["sha256"].as_str().unwrap().len(), 64);
-    assert_eq!(imported[1]["path"], "docs/assets/fallback.webp");
-    assert_eq!(imported[1]["bytes_written"], webp.len());
-    assert_eq!(imported[1]["mime_type"], "image/webp");
-    assert_eq!(imported[1]["sha256"].as_str().unwrap().len(), 64);
-    assert_eq!(
-        std::fs::read(tmp.path().join("docs/assets/custom.png")).unwrap(),
-        png
-    );
-    assert_eq!(
-        std::fs::read(tmp.path().join("docs/assets/fallback.webp")).unwrap(),
-        webp
-    );
 }

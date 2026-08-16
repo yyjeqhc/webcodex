@@ -813,6 +813,20 @@ mod tests {
     }
 
     #[test]
+    fn default_import_leaf_uses_source_name_when_target_is_missing() {
+        let file_ref = OpenAiFileIdRef {
+            name: Some("fallback.webp".to_string()),
+            id: Some("file_webp".to_string()),
+            mime_type: Some("image/webp".to_string()),
+            download_link: "https://files.oaiusercontent.com/fallback.webp".to_string(),
+        };
+        assert_eq!(
+            default_import_leaf(&file_ref, 1, "image/webp"),
+            "fallback.webp"
+        );
+    }
+
+    #[test]
     fn trusted_mcp_ssrf_policy_rejects_non_public_ip_ranges() {
         for ip in [
             "127.0.0.1",

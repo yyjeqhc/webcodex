@@ -8,9 +8,7 @@ use salvo::prelude::*;
 use serde::Deserialize;
 
 #[cfg(test)]
-pub(super) use crate::tool_runtime::conversation_import::{
-    set_import_test_download_base_url, MAX_IMPORT_FILE_BYTES,
-};
+pub(super) use crate::tool_runtime::conversation_import::set_import_test_download_base_url;
 
 #[derive(Debug, Deserialize)]
 struct ImportConversationFilesRequest {

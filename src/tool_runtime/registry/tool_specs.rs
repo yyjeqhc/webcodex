@@ -33,7 +33,14 @@ fn resolve_tool_specs<'a>(
     mut separate_declarations_by_name: BTreeMap<String, ToolSpec>,
 ) -> Vec<ToolSpec> {
     let mut specs = Vec::new();
+    let mut seen_definition_names = std::collections::BTreeSet::new();
     for definition in definitions {
+        if !seen_definition_names.insert(definition.name) {
+            panic!(
+                "{} model-visible ToolDefinition is duplicated",
+                definition.name
+            );
+        }
         let spec = if let Some(model_spec) = definition.model_spec {
             if separate_declarations_by_name
                 .remove(definition.name)
@@ -218,6 +225,16 @@ mod tests {
         assert!(definition.model_spec.is_some());
         definition.model_spec = None;
         let _ = resolve_tool_specs(std::iter::once(&definition), BTreeMap::new());
+    }
+
+    #[test]
+    #[should_panic(expected = "register_project model-visible ToolDefinition is duplicated")]
+    fn duplicate_definition_owned_model_specs_fail_closed() {
+        let definition =
+            *lookup_tool_definition("register_project").expect("register_project ToolDefinition");
+        assert!(definition.model_spec.is_some());
+        let duplicate = definition;
+        let _ = resolve_tool_specs([&definition, &duplicate], BTreeMap::new());
     }
 
     #[test]

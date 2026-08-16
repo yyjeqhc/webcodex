@@ -2,9 +2,9 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 use super::helpers::{
-    command_rejected_message, is_safe_job_id, normalize_local_status, project_relative_agent_cwd,
-    project_relative_cwd, resolve_agent_cwd, resolve_local_cwd, shell_escape_simple,
-    MAX_LOCAL_LOG_LINES,
+    command_rejected_message, explicit_shell_dispatch_command, is_safe_job_id,
+    normalize_local_status, project_relative_agent_cwd, project_relative_cwd, resolve_agent_cwd,
+    resolve_local_cwd, shell_escape_simple, validate_raw_shell_command_length, MAX_LOCAL_LOG_LINES,
 };
 use super::local_jobs::{
     retain_inspect_job_until_terminal, LocalJobKiller, LocalJobRecord, TerminateOutcome,
@@ -1186,6 +1186,12 @@ impl ToolRuntime {
         shell: Option<ExecutionShell>,
         ssh_resource: Option<&str>,
     ) -> ToolResult {
+        if let Err(error) = validate_raw_shell_command_length(&command) {
+            return ToolResult::err(command_rejected_message(
+                error,
+                "use run_script for larger shell program text or stdin/files/artifacts for large data.",
+            ));
+        }
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
             Err(e) => return ToolResult::err(command_rejected_message(
@@ -1263,15 +1269,17 @@ impl ToolRuntime {
             } else {
                 "configured"
             });
-            let dispatched_command = shell
-                .map(|shell| {
-                    format!(
-                        "exec {} -c {}",
-                        shell.as_str(),
-                        shell_escape_simple(&command)
-                    )
-                })
-                .unwrap_or_else(|| command.clone());
+            let dispatched_command =
+                match shell {
+                    Some(shell) => match explicit_shell_dispatch_command(&command, shell.as_str()) {
+                        Ok(command) => command,
+                        Err(error) => return ToolResult::err(command_rejected_message(
+                            error,
+                            "use run_script for large or quote-dense explicit-shell program text.",
+                        )),
+                    },
+                    None => command.clone(),
+                };
             match self
                 .shell_clients
                 .start_job_with_metadata_for_auth(

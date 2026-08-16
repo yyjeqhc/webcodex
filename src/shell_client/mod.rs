@@ -63,9 +63,7 @@ use state::ShellClientRegistryInner;
 pub(crate) use state::ShellJobVisibility;
 use validation::sha256_hex;
 #[cfg(test)]
-use validation::{
-    validate_file_request, validate_run_request, MAX_COMMAND_LEN, MAX_RUN_STDIN_BYTES,
-};
+use validation::{validate_file_request, validate_run_request, MAX_RUN_STDIN_BYTES};
 
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 pub(crate) const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;

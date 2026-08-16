@@ -3544,12 +3544,30 @@ async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
 }
 
 #[test]
+fn validate_run_request_uses_the_internal_raw_shell_wire_bound() {
+    let exact = ShellRunRequest {
+        client_id: "client-1".to_string(),
+        cwd: None,
+        command: "x".repeat(crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES),
+        stdin: None,
+        timeout_secs: 10,
+        wait_timeout_secs: 1,
+    };
+    validate_run_request(&exact).expect("wire-bound command accepted");
+
+    let mut oversized = exact;
+    oversized.command.push('x');
+    let error = validate_run_request(&oversized).unwrap_err();
+    assert!(error.contains("Runner wire envelope"), "{error}");
+}
+
+#[test]
 fn validate_run_request_allows_bounded_stdin_beyond_command_limit() {
     let body = ShellRunRequest {
         client_id: "client-1".to_string(),
         cwd: None,
         command: "cat >/dev/null".to_string(),
-        stdin: Some("x".repeat(MAX_COMMAND_LEN + 1024)),
+        stdin: Some("x".repeat(crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES + 1024)),
         timeout_secs: 10,
         wait_timeout_secs: 1,
     };

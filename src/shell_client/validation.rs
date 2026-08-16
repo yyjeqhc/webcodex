@@ -1,7 +1,8 @@
 use crate::shell_protocol::{
-    validate_process_argv, validate_script_request, AgentConfigReloadStatus, ProviderCallSummary,
-    ShellAgentProjectSummary, ShellFileOpRequest, ShellProcessArgv, ShellRunRequest,
-    ShellScriptPayload, ToolProvidersStatus, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    validate_process_argv, validate_raw_shell_wire_command, validate_script_request,
+    AgentConfigReloadStatus, ProviderCallSummary, ShellAgentProjectSummary, ShellFileOpRequest,
+    ShellProcessArgv, ShellRunRequest, ShellScriptPayload, ToolProvidersStatus,
+    PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
     STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
 };
 use sha2::{Digest, Sha256};
@@ -12,7 +13,6 @@ const MAX_CLIENT_FIELD_LEN: usize = 200;
 /// for future formats but bound it so a malicious peer cannot stash huge
 /// strings in the registry.
 const MAX_AGENT_INSTANCE_ID_LEN: usize = 128;
-pub(super) const MAX_COMMAND_LEN: usize = 8_000;
 const MAX_CWD_LEN: usize = 1_024;
 const MAX_FILE_PATH_LEN: usize = 2_048;
 const MAX_FILE_CONTENT_BYTES: usize = 512 * 1024;
@@ -451,19 +451,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
 
 pub(super) fn validate_run_request(body: &ShellRunRequest) -> Result<(), String> {
     validate_id(&body.client_id, "client_id")?;
-    let command = body.command.trim();
-    if command.is_empty() {
-        return Err("command cannot be empty".to_string());
-    }
-    if body.command.len() > MAX_COMMAND_LEN {
-        return Err(format!(
-            "command is too long; maximum is {} bytes",
-            MAX_COMMAND_LEN
-        ));
-    }
-    if body.command.contains('\0') {
-        return Err("command cannot contain NUL bytes".to_string());
-    }
+    validate_raw_shell_wire_command(&body.command)?;
     if let Some(stdin) = &body.stdin {
         if stdin.len() > MAX_RUN_STDIN_BYTES {
             return Err(format!(

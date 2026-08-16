@@ -1,4 +1,6 @@
-use crate::shell_protocol::{ShellScriptLanguage, ShellScriptPayload};
+use crate::shell_protocol::{
+    ShellScriptLanguage, ShellScriptPayload, RAW_SHELL_COMMAND_MAX_BYTES, RAW_SHELL_WIRE_MAX_BYTES,
+};
 use serde_json::json;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -889,6 +891,47 @@ pub(crate) fn validate_project_relative_path(path: &str) -> Result<(), String> {
         return Err("path cannot contain parent traversal".to_string());
     }
     Ok(())
+}
+
+pub(crate) fn validate_raw_shell_command_length(command: &str) -> Result<(), String> {
+    if command.len() > RAW_SHELL_COMMAND_MAX_BYTES {
+        return Err(format!(
+            "raw shell command exceeds the {RAW_SHELL_COMMAND_MAX_BYTES}-byte UTF-8 limit; use run_script for larger program text or stdin/files/artifacts for large data"
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn explicit_shell_dispatch_command(
+    command: &str,
+    shell: &str,
+) -> Result<String, String> {
+    validate_raw_shell_command_length(command)?;
+    let dispatched = format!("exec {shell} -c {}", shell_escape_simple(command));
+    if dispatched.len() > RAW_SHELL_WIRE_MAX_BYTES {
+        return Err(format!(
+            "explicit shell wrapper exceeds the {RAW_SHELL_WIRE_MAX_BYTES}-byte Runner wire limit; use run_script for large or quote-dense shell program text"
+        ));
+    }
+    Ok(dispatched)
+}
+
+#[cfg(test)]
+mod raw_shell_bound_tests {
+    use super::*;
+
+    #[test]
+    fn authored_raw_shell_bound_and_explicit_wrapper_headroom_are_consistent() {
+        let exact = "x".repeat(RAW_SHELL_COMMAND_MAX_BYTES);
+        validate_raw_shell_command_length(&exact).unwrap();
+        assert!(validate_raw_shell_command_length(&(exact + "x")).is_err());
+
+        let quote_dense = "'".repeat(RAW_SHELL_COMMAND_MAX_BYTES);
+        let dispatched = explicit_shell_dispatch_command(&quote_dense, "bash").unwrap();
+        assert!(dispatched.len() > RAW_SHELL_COMMAND_MAX_BYTES);
+        assert!(dispatched.len() <= RAW_SHELL_WIRE_MAX_BYTES);
+        assert!(dispatched.starts_with("exec bash -c "));
+    }
 }
 
 pub(crate) fn shell_escape_simple(s: &str) -> String {

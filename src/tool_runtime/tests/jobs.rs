@@ -576,6 +576,47 @@ async fn run_shell_failure_reports_command_started_and_output_tail() {
 }
 
 #[tokio::test]
+async fn raw_shell_tools_reject_authored_command_above_shared_bound_before_project_resolution() {
+    let command = "x".repeat(crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES + 1);
+
+    let run_shell = test_runtime()
+        .run_shell(
+            "agent:missing:missing".to_string(),
+            command.clone(),
+            Some(30),
+            None,
+        )
+        .await;
+    assert!(!run_shell.success);
+    assert!(run_shell
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("raw shell command exceeds the 16000-byte UTF-8 limit"));
+    assert_eq!(run_shell.output["execution_state"], "not_started");
+    assert_eq!(run_shell.output["failure_kind"], "runtime_error");
+
+    let run_job = test_runtime()
+        .run_job_for_auth(
+            "agent:missing:missing".to_string(),
+            command,
+            None,
+            Some(30),
+            None,
+            Vec::new(),
+            None,
+            Some(&auth_context(None, true)),
+        )
+        .await;
+    assert!(!run_job.success);
+    assert!(run_job
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("raw shell command exceeds the 16000-byte UTF-8 limit"));
+}
+
+#[tokio::test]
 async fn run_shell_rejection_reports_not_started_and_no_files_modified() {
     let result = test_runtime()
         .run_shell(

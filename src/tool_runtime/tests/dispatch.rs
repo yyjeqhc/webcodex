@@ -837,7 +837,10 @@ async fn apply_patch_checked_applies_large_patch_over_command_limit_via_stdin() 
     let patch = large_marker_patch("LARGE_CHECKED_PROBE.md", marker);
     // Prove the patch exceeds the agent shell command length limit; it must
     // still validate + apply because it travels over stdin, not the command.
-    assert!(patch.len() > 8_000, "patch must exceed command limit");
+    assert!(
+        patch.len() > crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
+        "patch must exceed authored raw shell command limit"
+    );
     assert!(patch.len() <= MAX_VALIDATE_PATCH_BYTES);
 
     let runtime_for_task = runtime.clone();

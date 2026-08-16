@@ -193,18 +193,18 @@ pub(in crate::tool_runtime::tests) fn marker_patch(filename: &str, marker: &str)
     )
 }
 
-/// A patch deliberately larger than the agent shell command limit
-/// (`MAX_COMMAND_LEN` = 8000 bytes) so tests can prove the patch still
-/// validates/applies via `stdin` rather than the command string.
+/// A patch deliberately larger than the model-authored raw shell command
+/// limit so tests can prove the patch still validates/applies via `stdin`
+/// rather than the command string.
 pub(in crate::tool_runtime::tests) fn large_marker_patch(filename: &str, marker: &str) -> String {
     let mut s = String::new();
     s.push_str(&format!(
         "diff --git a/{f} b/{f}\nnew file mode 100644\n--- /dev/null\n+++ b/{f}\n\
-             @@ -0,0 +1,200 @@\n",
+             @@ -0,0 +1,300 @@\n",
         f = filename,
     ));
     s.push_str(&format!("+{m}\n", m = marker));
-    for i in 0..199 {
+    for i in 0..299 {
         s.push_str(&format!("+line-{:04}-{}\n", i, "x".repeat(48)));
     }
     s

@@ -845,12 +845,12 @@ fn show_changes_command_is_read_only() {
     let without_diff = show_changes_command(false, 20, 80);
     let with_diff = show_changes_command(true, 20, 80);
     assert!(
-        without_diff.len() <= 8000,
+        without_diff.len() <= crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
         "include_diff=false command is {} bytes",
         without_diff.len()
     );
     assert!(
-        with_diff.len() <= 8000,
+        with_diff.len() <= crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
         "include_diff=true command is {} bytes",
         with_diff.len()
     );
@@ -3586,7 +3586,7 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
             .await
             .expect("show_changes should enqueue a shell request");
         assert!(
-            req.command.len() <= 8000,
+            req.command.len() <= crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
             "command bytes={}",
             req.command.len()
         );

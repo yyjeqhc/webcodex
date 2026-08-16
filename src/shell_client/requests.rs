@@ -7,14 +7,15 @@ use super::projects::{capability_enabled, ShellClientLookupError};
 use super::state::{PendingShellRequest, ShellClientRegistryInner};
 use super::validation::{
     validate_file_request, validate_id, validate_process_request, validate_run_request,
-    validate_script_enqueue_request, MAX_COMMAND_LEN,
+    validate_script_enqueue_request,
 };
 use super::{now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS};
 use crate::lsp_bridge::{AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND};
 use crate::shell_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
     ShellAgentShellRequest, ShellFileOpRequest, ShellJobContext, ShellProcessArgv, ShellRunRequest,
-    ShellRunResponse, ShellScriptPayload, SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
+    ShellRunResponse, ShellScriptPayload, RAW_SHELL_COMMAND_MAX_BYTES,
+    SHELL_CLIENT_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_FILE_READ,
@@ -796,10 +797,10 @@ impl ShellClientRegistry {
         if request
             .command
             .as_deref()
-            .is_some_and(|command| command.len() > MAX_COMMAND_LEN)
+            .is_some_and(|command| command.len() > RAW_SHELL_COMMAND_MAX_BYTES)
         {
             return Err(format!(
-                "persistent shell command too long (max {MAX_COMMAND_LEN} bytes)"
+                "persistent shell command too long (max {RAW_SHELL_COMMAND_MAX_BYTES} bytes)"
             ));
         }
         let request_id = next_request_id();

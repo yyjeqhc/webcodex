@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use super::helpers::{
     bounded_tail, command_failed_message, command_outcome_unknown_message,
-    command_rejected_message, command_timeout_message, looks_like_command_timeout,
-    project_relative_agent_cwd, project_relative_cwd, resolve_agent_cwd, resolve_local_cwd,
-    resolve_sync_timeout_secs, run_command_sync_bounded_with_shell_and_sandbox,
-    shell_escape_simple, sync_timeout_out_of_range_result, LocalRunFailure,
-    COMMAND_STDIO_TAIL_CHARS, DEFAULT_RUN_SHELL_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS,
-    MIN_SYNC_TIMEOUT_SECS,
+    command_rejected_message, command_timeout_message, explicit_shell_dispatch_command,
+    looks_like_command_timeout, project_relative_agent_cwd, project_relative_cwd,
+    resolve_agent_cwd, resolve_local_cwd, resolve_sync_timeout_secs,
+    run_command_sync_bounded_with_shell_and_sandbox, sync_timeout_out_of_range_result,
+    validate_raw_shell_command_length, LocalRunFailure, COMMAND_STDIO_TAIL_CHARS,
+    DEFAULT_RUN_SHELL_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS, MIN_SYNC_TIMEOUT_SECS,
 };
 use super::tool_result::ToolResult;
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
@@ -420,6 +420,16 @@ impl ToolRuntime {
         ssh_resource: Option<&str>,
         ssh_session_id: Option<&str>,
     ) -> ToolResult {
+        if let Err(error) = validate_raw_shell_command_length(&command) {
+            return Self::run_shell_tool_failure_result(
+                command_rejected_message(
+                    error,
+                    "use run_script for larger shell program text or stdin/files/artifacts for large data.",
+                ),
+                "runtime_error",
+                ShellCommandExecutionState::NotStarted,
+            );
+        }
         let timeout = match resolve_sync_timeout_secs(timeout_secs, DEFAULT_RUN_SHELL_TIMEOUT_SECS)
         {
             Ok(timeout) => timeout,
@@ -522,15 +532,20 @@ impl ToolRuntime {
                     } else {
                         "configured"
                     });
-            let dispatched_command = shell
-                .map(|shell| {
-                    format!(
-                        "exec {} -c {}",
-                        shell.as_str(),
-                        shell_escape_simple(&command)
-                    )
-                })
-                .unwrap_or_else(|| command.clone());
+            let dispatched_command = match shell {
+                Some(shell) => match explicit_shell_dispatch_command(&command, shell.as_str()) {
+                    Ok(command) => command,
+                    Err(error) => return Self::run_shell_tool_failure_result(
+                        command_rejected_message(
+                            error,
+                            "use run_script for large or quote-dense explicit-shell program text.",
+                        ),
+                        "runtime_error",
+                        ShellCommandExecutionState::NotStarted,
+                    ),
+                },
+                None => command.clone(),
+            };
             let wait_timeout = timeout;
             let (request_id, rx) = match self
                 .shell_clients

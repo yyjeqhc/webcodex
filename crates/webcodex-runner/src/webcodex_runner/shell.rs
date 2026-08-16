@@ -2887,11 +2887,15 @@ mod runner_lifecycle_tests {
     }
 
     #[test]
-    fn structured_process_can_exceed_legacy_shell_command_limit() {
+    fn structured_process_preserves_large_literal_argv_without_shell_parsing() {
         let cwd = tempfile::tempdir().unwrap();
         let helper = process_argv_helper();
         let args = vec!["argv".to_string(), "a".repeat(4_500), "b".repeat(4_500)];
         assert!(args.iter().map(String::len).sum::<usize>() > 8_000);
+        assert!(
+            args.iter().map(String::len).sum::<usize>()
+                < crate::shell_protocol::PROCESS_ARGV_MAX_BYTES
+        );
 
         let result = run_direct_process(cwd.path(), &helper, &args, None, 10);
 

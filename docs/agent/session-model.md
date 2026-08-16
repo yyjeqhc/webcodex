@@ -156,6 +156,18 @@ channel. The Runner may reuse the authenticated transport for the same
 Session/resource pair, but it does not preserve `cd`, exports, aliases,
 functions, umask, or shell-process state between commands.
 
+Raw shell text has one shared model-authored ceiling of 16,000 UTF-8 bytes for
+`run_shell`, raw `run_job`, and `session_shell_exec`. Larger shell program text
+belongs in `run_script`; large literal data belongs in stdin, files, or
+artifacts. Control may internally expand an explicit `sh`/`bash` command while
+POSIX-quoting it for the existing Runner wire, so the internal raw-shell wire
+envelope is separately capped at 64 KiB and revalidated by the Runner. That
+transport headroom is not an additional model-facing command allowance.
+A concrete OS/shell launch envelope may still be narrower (notably Windows
+`CreateProcess` after shell-specific wrapping); such a request remains a
+pre-start failure rather than weakening the authored bound or silently changing
+execution semantics. Large or quote-dense program text should use `run_script`.
+
 A missing Session leaves execution unchanged. A mismatched Session fails or,
 on an explicitly authorized cross-project escape path, executes without
 inheriting its context.

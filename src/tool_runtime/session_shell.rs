@@ -3,7 +3,9 @@ use super::helpers::{
 };
 use super::{ExecutionPurpose, ExecutionShell, ToolResult, ToolRuntime};
 use crate::projects::ProjectConfig;
-use crate::shell_protocol::{PersistentShellRequest, PersistentShellResult, ShellJobContext};
+use crate::shell_protocol::{
+    PersistentShellRequest, PersistentShellResult, ShellJobContext, RAW_SHELL_COMMAND_MAX_BYTES,
+};
 use serde_json::json;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -21,7 +23,6 @@ const SERVER_MAX_PERSISTENT_SHELLS: usize = 64;
 const SERVER_MAX_TERMINAL_SHELLS: usize = 128;
 const LOCAL_IDLE_TIMEOUT_SECS: u64 = 30 * 60;
 const LOCAL_MAX_OUTPUT_BYTES: usize = 256 * 1024;
-const MAX_PERSISTENT_COMMAND_BYTES: usize = 8_000;
 
 #[derive(Debug, Clone)]
 struct SessionShellRecord {
@@ -670,10 +671,10 @@ impl ToolRuntime {
         };
         let runtime_project_id = resolved.resolved_id;
         let project_config = resolved.config;
-        if command.len() > MAX_PERSISTENT_COMMAND_BYTES {
+        if command.len() > RAW_SHELL_COMMAND_MAX_BYTES {
             return shell_tool_error(
                 "persistent_shell_invalid_command",
-                format!("command exceeds the {MAX_PERSISTENT_COMMAND_BYTES}-byte Server limit"),
+                format!("command exceeds the {RAW_SHELL_COMMAND_MAX_BYTES}-byte Server limit"),
                 Some(&shell_id),
             );
         }

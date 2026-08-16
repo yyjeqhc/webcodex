@@ -1808,7 +1808,7 @@ log "---- patch chain hardening (large + check-failed) ----"
 pre_harden_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 pre_harden_porcelain="$(json_get "$pre_harden_status" output.stdout)"
 
-# A LARGE patch (well over the 8 KiB shell command limit) that creates a new
+# A LARGE patch (over the 16,000-byte authored raw shell command limit) that creates a new
 # file. It must still validate + apply because the patch travels over stdin,
 # not the command string.
 LARGE_APPLY_PATCH="$(python3 - <<'PY'
@@ -1823,10 +1823,10 @@ PY
 )"
 LARGE_APPLY_PATCH="${LARGE_APPLY_PATCH}"$'\n'
 lap_bytes="$(printf '%s' "$LARGE_APPLY_PATCH" | wc -c | tr -d ' ')"
-if [ "${lap_bytes:-0}" -gt 8000 ] 2>/dev/null; then
-    pass "LARGE_APPLY_PATCH is ${lap_bytes} bytes (> 8000 command limit)"
+if [ "${lap_bytes:-0}" -gt 16000 ] 2>/dev/null; then
+    pass "LARGE_APPLY_PATCH is ${lap_bytes} bytes (> 16000 authored command limit)"
 else
-    fail "LARGE_APPLY_PATCH must exceed the 8000-byte command limit (got ${lap_bytes} bytes)"
+    fail "LARGE_APPLY_PATCH must exceed the 16000-byte authored command limit (got ${lap_bytes} bytes)"
 fi
 lap_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$LARGE_APPLY_PATCH")"
 body="$(api_post /api/projects/apply_patch_checked "$lap_body")"

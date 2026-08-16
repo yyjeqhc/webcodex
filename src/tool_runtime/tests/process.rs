@@ -915,7 +915,7 @@ async fn b2_process_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
 }
 
 #[tokio::test]
-async fn run_process_allows_typed_argv_larger_than_legacy_shell_command_limit() {
+async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project = register_process_agent(&runtime, "process-large", temp.path(), true, false).await;
@@ -949,7 +949,6 @@ async fn run_process_allows_typed_argv_larger_than_legacy_shell_command_limit() 
     assert_eq!(request.command, "");
     let process = request.process.as_ref().unwrap();
     assert_eq!(process.args, large_args);
-    assert!(process.args.iter().map(String::len).sum::<usize>() > 8_000);
     complete_process_lifecycle(
         &runtime,
         "process-large",

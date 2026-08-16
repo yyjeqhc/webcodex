@@ -12,9 +12,9 @@ use super::{
     ShellCommandResult, SubmitResultError,
 };
 use crate::shell_protocol::{
-    validate_process_argv, validate_script_request, ShellAgentShellRequest, ShellProcessArgv,
-    ShellScriptPayload, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
+    validate_process_argv, validate_raw_shell_wire_command, validate_script_request,
+    ShellAgentShellRequest, ShellProcessArgv, ShellScriptPayload, PROCESS_CWD_MAX_BYTES,
+    PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS,
 };
 use crate::{handle_file_request, is_file_request_kind, JobManager, PendingJobStart};
 use std::path::Path;
@@ -200,6 +200,23 @@ pub(crate) fn dispatch_request(
         }
         return submitted.map(|_| true);
     }
+    if request.kind == "run_shell" {
+        if let Err(error) = validate_raw_shell_wire_command(&request.command) {
+            let result = ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(format!(
+                    "invalid_raw_shell_request: {error}; command was not started"
+                )),
+            });
+            return sink
+                .submit_shell_result_with_metadata(request.request_id, result, config, runtime)
+                .map(|_| true);
+        }
+    }
+
     // Inspect requests must stay on the native execution path where Landlock
     // is applied in pre_exec. External providers are not an equivalent local
     // filesystem write boundary.

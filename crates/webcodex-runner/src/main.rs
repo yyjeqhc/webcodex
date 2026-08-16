@@ -2743,6 +2743,9 @@ fn validate_runner_job_context(
     }) {
         return Err("job recovery context shell is invalid".to_string());
     }
+    if request.kind == "start_job" {
+        shell_protocol::validate_raw_shell_wire_command(&request.command)?;
+    }
     let validation_context = request.kind == "start_validation_job";
     if (validation_context && !(1..=3).contains(&context.validation_steps.len()))
         || (!validation_context && !context.validation_steps.is_empty())

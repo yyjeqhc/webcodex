@@ -4,8 +4,8 @@ use super::common::{object_schema, with_optional_session_id};
 use crate::shell_protocol::{
     PROCESS_ARG_MAX_BYTES, PROCESS_ARG_MAX_COUNT, PROCESS_CWD_MAX_BYTES,
     PROCESS_EXECUTABLE_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
-    SCRIPT_ARGV_MAX_BYTES, SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT, SCRIPT_CWD_MAX_BYTES,
-    SCRIPT_MAX_BYTES, SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
+    RAW_SHELL_COMMAND_MAX_BYTES, SCRIPT_ARGV_MAX_BYTES, SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT,
+    SCRIPT_CWD_MAX_BYTES, SCRIPT_MAX_BYTES, SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
 };
 
 pub(crate) fn run_process_input_schema() -> Value {
@@ -196,6 +196,10 @@ pub(crate) fn run_shell_input_schema() -> Value {
         "other"
     ]);
     schema["properties"]["shell"]["enum"] = json!(["sh", "bash"]);
+    schema["properties"]["command"]["maxLength"] = json!(RAW_SHELL_COMMAND_MAX_BYTES);
+    schema["properties"]["command"]["description"] = json!(format!(
+        "Shell command to run. At most {RAW_SHELL_COMMAND_MAX_BYTES} UTF-8 bytes; use run_script for larger program text and stdin/files/artifacts for large data."
+    ));
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
     schema["properties"]["timeout_secs"]["maximum"] = json!(120);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
@@ -247,6 +251,10 @@ pub(crate) fn run_job_input_schema() -> Value {
         "other"
     ]);
     schema["properties"]["shell"]["enum"] = json!(["sh", "bash"]);
+    schema["properties"]["command"]["maxLength"] = json!(RAW_SHELL_COMMAND_MAX_BYTES);
+    schema["properties"]["command"]["description"] = json!(format!(
+        "Shell command to run asynchronously. At most {RAW_SHELL_COMMAND_MAX_BYTES} UTF-8 bytes; use run_script for larger program text and stdin/files/artifacts for large data."
+    ));
     schema
 }
 
@@ -308,7 +316,10 @@ pub(crate) fn session_shell_exec_input_schema() -> Value {
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
     schema["properties"]["timeout_secs"]["maximum"] = json!(3600);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
-    schema["properties"]["command"]["maxLength"] = json!(8000);
+    schema["properties"]["command"]["maxLength"] = json!(RAW_SHELL_COMMAND_MAX_BYTES);
+    schema["properties"]["command"]["description"] = json!(format!(
+        "One command evaluated by the existing long-lived shell. At most {RAW_SHELL_COMMAND_MAX_BYTES} UTF-8 bytes."
+    ));
     schema["properties"]["purpose"]["enum"] = json!([
         "validation",
         "test",

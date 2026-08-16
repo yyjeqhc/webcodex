@@ -9,6 +9,7 @@ use super::shell::{base_shell_env, cwd_allowed, shell_quote};
 use super::ssh::SshConnectionPool;
 use crate::shell_protocol::{
     PersistentShellRequest, PersistentShellResult, ShellAgentShellRequest,
+    RAW_SHELL_COMMAND_MAX_BYTES,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -22,7 +23,6 @@ const EXECUTOR_AGENT: &str = "agent";
 #[cfg(unix)]
 const EXECUTOR_SSH: &str = "ssh";
 const TERMINAL_RECORDS: usize = 128;
-const MAX_COMMAND_BYTES: usize = 8_000;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PersistentShellManager {
@@ -311,12 +311,12 @@ impl PersistentShellManager {
                 )
             }
         };
-        if command.len() > MAX_COMMAND_BYTES {
+        if command.len() > RAW_SHELL_COMMAND_MAX_BYTES {
             return summary_error_result_from_status(
                 &self.processes,
                 operation,
                 "persistent_shell_invalid_command",
-                format!("command exceeds the {MAX_COMMAND_BYTES}-byte Runner limit"),
+                format!("command exceeds the {RAW_SHELL_COMMAND_MAX_BYTES}-byte Runner limit"),
             );
         }
         let timeout_secs = operation.timeout_secs.unwrap_or(30);
@@ -485,11 +485,11 @@ impl PersistentShellManager {
                 )
             }
         };
-        if command.len() > MAX_COMMAND_BYTES {
+        if command.len() > RAW_SHELL_COMMAND_MAX_BYTES {
             return summary_error_result(
                 summary,
                 "persistent_shell_invalid_command",
-                format!("command exceeds the {MAX_COMMAND_BYTES}-byte Runner limit"),
+                format!("command exceeds the {RAW_SHELL_COMMAND_MAX_BYTES}-byte Runner limit"),
             );
         }
         let timeout_secs = operation.timeout_secs.unwrap_or(30);
@@ -1247,7 +1247,7 @@ mod tests {
             &request(
                 "exec",
                 "wc_shell_rejected_exec",
-                Some(&"x".repeat(MAX_COMMAND_BYTES + 1)),
+                Some(&"x".repeat(RAW_SHELL_COMMAND_MAX_BYTES + 1)),
             ),
         );
         assert_eq!(

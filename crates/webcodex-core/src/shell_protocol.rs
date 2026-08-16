@@ -45,6 +45,37 @@ fn default_transport_polling() -> String {
 
 /// Protocol version announced by current `webcodex-runner` polling builds.
 pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
+/// Model/user-authored raw shell command ceiling. Raw shell remains a bounded
+/// escape hatch; larger program text belongs in `run_script`, while large
+/// literal data belongs in stdin/files/artifacts.
+pub const RAW_SHELL_COMMAND_MAX_BYTES: usize = 16_000;
+
+/// Internal Control -> Runner raw-shell command envelope. This is deliberately
+/// larger than the authored-command ceiling because an explicit `sh`/`bash`
+/// request is transported through the existing POSIX single-quote wrapper.
+/// In the worst case every authored byte is a single quote, expanding a
+/// 16,000-byte command to about 64 KiB. This transport bound is not a model
+/// input allowance.
+pub const RAW_SHELL_WIRE_MAX_BYTES: usize = 64 * 1024;
+
+/// Validate the internal raw-shell request envelope accepted by Control and
+/// revalidated by the Runner. Model-facing authored commands use the smaller
+/// `RAW_SHELL_COMMAND_MAX_BYTES` bound before any explicit-shell wrapper is
+/// constructed.
+pub fn validate_raw_shell_wire_command(command: &str) -> Result<(), String> {
+    if command.trim().is_empty() {
+        return Err("command cannot be empty".to_string());
+    }
+    if command.len() > RAW_SHELL_WIRE_MAX_BYTES {
+        return Err(format!(
+            "command is too long for the Runner wire envelope; maximum is {RAW_SHELL_WIRE_MAX_BYTES} bytes"
+        ));
+    }
+    if command.contains('\0') {
+        return Err("command cannot contain NUL bytes".to_string());
+    }
+    Ok(())
+}
 pub const VALIDATION_STEP_SPAWN_FAILED_CODE: &str = "validation_step_spawn_failed";
 pub const VALIDATION_TOOL_UNAVAILABLE_CODE: &str = "validation_tool_unavailable";
 /// The step ran, but the executor lost the ability to reap it — `waitpid`

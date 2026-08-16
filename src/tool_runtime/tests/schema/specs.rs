@@ -207,6 +207,25 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
 }
 
 #[test]
+fn raw_shell_tools_expose_the_shared_authored_command_bound() {
+    let specs = registered_tool_specs();
+    for name in ["run_shell", "run_job", "session_shell_exec"] {
+        let spec = specs.iter().find(|spec| spec.name == name).expect(name);
+        let command = &spec.input_schema["properties"]["command"];
+        assert_eq!(
+            command["maxLength"],
+            crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
+            "{name}"
+        );
+        let description = command["description"].as_str().unwrap_or_default();
+        assert!(
+            description.contains("16000") || description.contains("16,000"),
+            "{name}: {description}"
+        );
+    }
+}
+
+#[test]
 fn run_process_schema_is_small_bounded_and_has_no_shell_or_environment_input() {
     let specs = registered_tool_specs();
     let spec = specs

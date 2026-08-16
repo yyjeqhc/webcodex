@@ -1204,6 +1204,7 @@ fn filter_accessibility_tree(
     enabled: Option<bool>,
     limit: usize,
 ) -> ToolResult {
+    let platform = tree.get("platform").cloned().unwrap_or(Value::Null);
     let nodes = match tree.get("nodes").and_then(Value::as_array) {
         Some(nodes) => nodes,
         None => {
@@ -1249,7 +1250,7 @@ fn filter_accessibility_tree(
     }
     let count = elements.len();
     ToolResult::ok(json!({
-        "platform": "macos",
+        "platform": platform,
         "surface_id": expected_surface_id,
         "observation_generation": observation_generation,
         "elements": elements,
@@ -1449,6 +1450,10 @@ fn validate_window_list(output: Value, limit: usize) -> ToolResult {
     ToolResult::ok(output)
 }
 
+fn is_native_accessibility_platform(value: Option<&str>) -> bool {
+    matches!(value, Some("macos" | "windows"))
+}
+
 fn validate_accessibility_status(output: Value) -> ToolResult {
     let object = match output.as_object() {
         Some(object) => object,
@@ -1462,7 +1467,7 @@ fn validate_accessibility_status(output: Value) -> ToolResult {
     if object
         .keys()
         .any(|key| !matches!(key.as_str(), "platform" | "trusted"))
-        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || !is_native_accessibility_platform(output.get("platform").and_then(Value::as_str))
         || output.get("trusted").and_then(Value::as_bool).is_none()
     {
         return computer_error(
@@ -1606,7 +1611,7 @@ fn validate_accessibility_tree(
             "Accessibility tree fields are inconsistent",
         );
     }
-    if output.get("platform").and_then(Value::as_str) != Some("macos")
+    if !is_native_accessibility_platform(output.get("platform").and_then(Value::as_str))
         || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
         || output.get("max_depth").and_then(Value::as_u64) != Some(max_depth as u64)
         || output.get("max_nodes").and_then(Value::as_u64) != Some(max_nodes as u64)
@@ -1680,7 +1685,7 @@ fn validate_computer_element_state(
     };
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || !is_native_accessibility_platform(output.get("platform").and_then(Value::as_str))
         || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
         || output.get("element_id").and_then(Value::as_str) != Some(expected_element_id)
         || !output
@@ -2147,6 +2152,52 @@ mod tests {
     fn computer_accessibility_tree_validator_accepts_bounded_parent_first_tree() {
         let result = validate_accessibility_tree(accessibility_tree(), "surface_test", 2, 8);
         assert!(result.success, "{:?}", result.output);
+    }
+
+    #[test]
+    fn computer_accessibility_read_validators_accept_windows_platform() {
+        let status = validate_accessibility_status(json!({
+            "platform": "windows",
+            "trusted": true
+        }));
+        assert!(status.success, "{:?}", status.output);
+
+        let mut tree = accessibility_tree();
+        tree["platform"] = json!("windows");
+        let validated = validate_accessibility_tree(tree.clone(), "surface_test", 2, 8);
+        assert!(validated.success, "{:?}", validated.output);
+
+        let found = filter_accessibility_tree(
+            tree,
+            "surface_test",
+            Some("AXButton"),
+            None,
+            None,
+            None,
+            None,
+            4,
+        );
+        assert!(found.success, "{:?}", found.output);
+        assert_eq!(found.output["platform"], "windows");
+
+        let state = validate_computer_element_state(
+            json!({
+                "platform": "windows",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "observation_generation": 7,
+                "enabled": true,
+                "focused": false,
+                "protected": false,
+                "value_empty": true,
+                "can_press": false,
+                "can_focus": false,
+                "can_input_text": false
+            }),
+            "surface_test",
+            "element_child",
+        );
+        assert!(state.success, "{:?}", state.output);
     }
 
     #[test]

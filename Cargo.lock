@@ -4921,6 +4921,7 @@ dependencies = [
  "webcodex-sandbox",
  "webcodex-workspace",
  "webpki-roots 0.26.11",
+ "windows",
  "windows-sys 0.61.2",
  "xcap",
  "xml",

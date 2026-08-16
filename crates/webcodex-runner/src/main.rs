@@ -1868,12 +1868,12 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // old Runners that support only whole-window snapshots fail closed.
     capabilities.computer_snapshot_region = cfg!(any(target_os = "macos", windows));
     // Accessibility inspection is a separate read-only semantic capability.
-    // It is currently implemented only by the macOS Runner and never implies
-    // future computer-control authority.
-    capabilities.computer_accessibility_observe = cfg!(target_os = "macos");
+    // macOS AX and Windows UI Automation share the same model-facing tree;
+    // observation authority never implies computer-control authority.
+    capabilities.computer_accessibility_observe = cfg!(any(target_os = "macos", windows));
     // Normalized element-state observation is a separate rolling-upgrade wire
-    // capability and is currently implemented only on macOS.
-    capabilities.computer_element_state = cfg!(target_os = "macos");
+    // capability implemented by the same native read-only backends.
+    capabilities.computer_element_state = cfg!(any(target_os = "macos", windows));
     // Accessibility control is independently fenced and currently implemented
     // only by the macOS Runner; observation authority never implies it.
     capabilities.computer_control = cfg!(target_os = "macos");

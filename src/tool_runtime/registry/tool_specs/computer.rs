@@ -23,22 +23,22 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_accessibility_status",
-            "Read the exact Runner's macOS Accessibility trust status without prompting or changing system permission state.",
+            "Read the exact Runner's native accessibility availability/trust status without prompting or changing system permission state. Supports macOS Accessibility and Windows UI Automation.",
             computer_accessibility_status_input_schema(),
         ),
         tool_spec(
             "computer_accessibility_tree",
-            "Inspect an exact macOS window as a bounded read-only Accessibility tree. element_id values are ephemeral process-local handles for computer_control; this tool performs no control action and has no AppleScript or shell fallback.",
+            "Inspect an exact macOS or Windows window as a bounded read-only native accessibility tree. element_id values are ephemeral process-local handles; this tool performs no control action and has no shell or platform-script fallback.",
             computer_accessibility_tree_input_schema(),
         ),
         tool_spec(
             "computer_find_elements",
-            "Find bounded semantic elements on an exact macOS window without parsing the full Accessibility tree. Requires at least one role, subrole, label, focused, or enabled filter. Matching is deterministic and read-only; returned element_id values are fresh ephemeral handles.",
+            "Find bounded semantic elements on an exact macOS or Windows window without parsing the full native accessibility tree. Requires at least one role, subrole, label, focused, or enabled filter. Matching is deterministic and read-only; returned element_id values are fresh ephemeral handles.",
             computer_find_elements_input_schema(),
         ),
         tool_spec(
             "computer_element_state",
-            "Revalidate one exact ephemeral macOS Accessibility element and return normalized read-only affordances plus observation generation. Never returns the element value; protected or secure targets suppress value_empty. Reacquire stale handles with computer_find_elements.",
+            "Revalidate one exact ephemeral native accessibility element and return normalized read-only affordances plus observation generation. Supports macOS AX and Windows UIA; never returns the element value, and protected or secure targets suppress value_empty. Reacquire stale handles with computer_find_elements.",
             computer_element_state_input_schema(),
         ),
         tool_spec(

@@ -158,7 +158,7 @@ fn select_exact_ax_window_index(
 struct SurfaceRecord {
     #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     native_id: u32,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     pid: u32,
     #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     identity_hash: [u8; 32],
@@ -204,7 +204,7 @@ struct ElementFingerprint {
 }
 
 impl ElementFingerprint {
-    #[cfg(any(test, target_os = "macos"))]
+    #[cfg(any(test, target_os = "macos", windows))]
     fn has_positive_evidence(&self) -> bool {
         [
             self.identifier.as_deref(),
@@ -226,14 +226,14 @@ struct ElementRecord {
 }
 
 impl ElementRecord {
-    #[cfg(any(test, target_os = "macos"))]
+    #[cfg(any(test, target_os = "macos", windows))]
     fn target_fingerprint(&self) -> Option<&ElementFingerprint> {
         (self.lineage.len() == self.path.len() + 1)
             .then(|| self.lineage.last())
             .flatten()
     }
 
-    #[cfg(any(test, target_os = "macos"))]
+    #[cfg(any(test, target_os = "macos", windows))]
     fn contains_protected_content(&self) -> bool {
         self.lineage.iter().any(|fingerprint| fingerprint.protected)
     }
@@ -256,7 +256,7 @@ fn is_secure_text_fingerprint(fingerprint: &ElementFingerprint) -> bool {
             .is_some_and(|subrole| subrole.contains("Secure"))
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", windows))]
 fn is_supported_text_input_fingerprint(fingerprint: &ElementFingerprint) -> bool {
     match fingerprint.role.as_str() {
         "AXTextField" => matches!(fingerprint.subrole.as_deref(), None | Some("AXSearchField")),
@@ -2195,12 +2195,13 @@ mod platform {
     };
     #[cfg(target_os = "macos")]
     use super::{
-        ensure_correlated_fingerprint, is_secure_text_fingerprint,
-        is_supported_text_input_fingerprint, select_exact_ax_window_index,
+        ensure_correlated_fingerprint, is_secure_text_fingerprint, select_exact_ax_window_index,
         validate_element_state_target, validate_input_text, validate_key_input,
         validate_key_modifiers, validate_text_input_preflight, validate_text_input_target,
-        AxObservationDeadline, ElementFingerprint,
+        AxObservationDeadline,
     };
+    #[cfg(any(target_os = "macos", windows))]
+    use super::{is_supported_text_input_fingerprint, ElementFingerprint};
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use xcap::Window;
@@ -2215,16 +2216,45 @@ mod platform {
     };
     #[cfg(target_os = "macos")]
     use objc2_core_graphics::{CGEvent, CGEventFlags, CGKeyCode, CGPreflightPostEventAccess};
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     use std::collections::VecDeque;
     #[cfg(target_os = "macos")]
     use std::ptr::NonNull;
-    #[cfg(target_os = "macos")]
+    #[cfg(windows)]
+    use std::time::{Duration, Instant};
+    #[cfg(any(target_os = "macos", windows))]
     use uuid::Uuid;
 
     #[cfg(windows)]
+    use windows::{
+        core::{IUnknown, Interface},
+        Win32::{
+            Foundation::{E_NOINTERFACE, E_POINTER, HWND as WinHwnd, RPC_E_CHANGED_MODE},
+            System::Com::{
+                CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+                COINIT_MULTITHREADED,
+            },
+            UI::Accessibility::{
+                CUIAutomation8, IUIAutomation2, IUIAutomationElement, IUIAutomationTreeWalker,
+                IUIAutomationValuePattern, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+                UIA_ComboBoxControlTypeId, UIA_CustomControlTypeId, UIA_DataGridControlTypeId,
+                UIA_DataItemControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
+                UIA_GroupControlTypeId, UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId,
+                UIA_HyperlinkControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+                UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_PaneControlTypeId,
+                UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId,
+                UIA_ScrollBarControlTypeId, UIA_SeparatorControlTypeId, UIA_SliderControlTypeId,
+                UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
+                UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId,
+                UIA_ToolBarControlTypeId, UIA_ToolTipControlTypeId, UIA_TreeControlTypeId,
+                UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId,
+                UIA_CONTROLTYPE_ID, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_NOTSUPPORTED, UIA_PATTERN_ID,
+            },
+        },
+    };
+    #[cfg(windows)]
     use windows_sys::Win32::{
-        Foundation::HWND,
+        Foundation::HWND as SysHwnd,
         Graphics::Gdi::{
             BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
             GetCurrentObject, GetDIBits, GetObjectW, GetWindowDC, ReleaseDC, SelectObject, BITMAP,
@@ -2814,7 +2844,7 @@ mod platform {
             .map_err(|_| "stale_element: AX child path resolved to a non-element value".to_string())
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     fn resolve_surface_window(surface: &SurfaceRecord) -> Result<Window, String> {
         let window = Window::all()
             .map_err(map_error)?
@@ -2893,11 +2923,410 @@ mod platform {
     }
 
     #[cfg(windows)]
-    pub(super) fn accessibility_status() -> Result<Value, String> {
-        Err(
-            "unsupported_platform: computer accessibility observation is unavailable on this platform"
-                .to_string(),
+    const UIA_CONNECTION_TIMEOUT_MS: u32 = 2_000;
+    #[cfg(windows)]
+    const UIA_TRANSACTION_TIMEOUT_MS: u32 = 2_000;
+    #[cfg(windows)]
+    const UIA_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(10);
+    #[cfg(windows)]
+    const UIA_OBSERVATION_TIMEOUT_ERROR: &str =
+        "accessibility_failed: Windows UI Automation observation deadline exceeded";
+
+    #[cfg(windows)]
+    struct UiaObservationDeadline {
+        expires_at: Instant,
+    }
+
+    #[cfg(windows)]
+    impl UiaObservationDeadline {
+        fn new() -> Self {
+            Self {
+                expires_at: Instant::now() + UIA_OBSERVATION_TIMEOUT,
+            }
+        }
+
+        fn ensure_remaining(&self) -> Result<(), String> {
+            self.expires_at
+                .checked_duration_since(Instant::now())
+                .filter(|remaining| !remaining.is_zero())
+                .map(|_| ())
+                .ok_or_else(|| UIA_OBSERVATION_TIMEOUT_ERROR.to_string())
+        }
+    }
+
+    #[cfg(windows)]
+    struct ComInitialization {
+        uninitialize: bool,
+    }
+
+    #[cfg(windows)]
+    impl ComInitialization {
+        fn new() -> Result<Self, String> {
+            let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+            if result.is_ok() {
+                Ok(Self { uninitialize: true })
+            } else if result == RPC_E_CHANGED_MODE {
+                // The Runner thread is already initialized in another apartment.
+                // UI Automation supports either apartment; do not uninitialize an
+                // apartment established by another subsystem.
+                Ok(Self {
+                    uninitialize: false,
+                })
+            } else {
+                Err(format!(
+                    "accessibility_failed: CoInitializeEx failed with HRESULT(0x{:08X})",
+                    result.0 as u32
+                ))
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for ComInitialization {
+        fn drop(&mut self) {
+            if self.uninitialize {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    struct UiaContext {
+        // COM interfaces must be released before the matching CoUninitialize.
+        // Rust drops struct fields in declaration order, so keep the guard last.
+        automation: IUIAutomation2,
+        walker: IUIAutomationTreeWalker,
+        deadline: UiaObservationDeadline,
+        _com: ComInitialization,
+    }
+
+    #[cfg(windows)]
+    impl UiaContext {
+        fn new() -> Result<Self, String> {
+            let com = ComInitialization::new()?;
+            let automation: IUIAutomation2 = unsafe {
+                CoCreateInstance(&CUIAutomation8, None::<&IUnknown>, CLSCTX_INPROC_SERVER)
+            }
+            .map_err(|error| uia_error("CoCreateInstance(CUIAutomation8)", &error))?;
+            unsafe { automation.SetConnectionTimeout(UIA_CONNECTION_TIMEOUT_MS) }
+                .map_err(|error| uia_error("IUIAutomation2::SetConnectionTimeout", &error))?;
+            unsafe { automation.SetTransactionTimeout(UIA_TRANSACTION_TIMEOUT_MS) }
+                .map_err(|error| uia_error("IUIAutomation2::SetTransactionTimeout", &error))?;
+            let walker = unsafe { automation.ControlViewWalker() }
+                .map_err(|error| uia_error("IUIAutomation::ControlViewWalker", &error))?;
+            Ok(Self {
+                automation,
+                walker,
+                deadline: UiaObservationDeadline::new(),
+                _com: com,
+            })
+        }
+    }
+
+    #[cfg(windows)]
+    fn uia_error(operation: &str, error: &windows::core::Error) -> String {
+        format!(
+            "accessibility_failed: {operation} failed with HRESULT(0x{:08X})",
+            error.code().0 as u32
         )
+    }
+
+    #[cfg(windows)]
+    fn uia_error_code(error: &windows::core::Error) -> u32 {
+        error.code().0 as u32
+    }
+
+    #[cfg(windows)]
+    fn optional_uia_element(
+        result: windows::core::Result<IUIAutomationElement>,
+        operation: &str,
+    ) -> Result<Option<IUIAutomationElement>, String> {
+        match result {
+            Ok(element) => Ok(Some(element)),
+            // UIA tree-walker APIs use S_OK + a null interface for end-of-list.
+            // windows-rs represents that nullable success as Error::empty() (S_OK).
+            Err(error) if error.code().is_ok() || error.code() == E_POINTER => Ok(None),
+            Err(error) => Err(uia_error(operation, &error)),
+        }
+    }
+
+    #[cfg(windows)]
+    fn optional_uia_pattern<T: Interface>(
+        context: &UiaContext,
+        element: &IUIAutomationElement,
+        pattern: UIA_PATTERN_ID,
+    ) -> Result<Option<T>, String> {
+        context.deadline.ensure_remaining()?;
+        match unsafe { element.GetCurrentPatternAs::<T>(pattern) } {
+            Ok(pattern) => Ok(Some(pattern)),
+            Err(error)
+                if error.code().is_ok()
+                    || error.code() == E_NOINTERFACE
+                    || error.code() == E_POINTER
+                    || uia_error_code(&error) == UIA_E_NOTSUPPORTED =>
+            {
+                Ok(None)
+            }
+            Err(error) if uia_error_code(&error) == UIA_E_ELEMENTNOTAVAILABLE => {
+                Err("stale_element: UI Automation element is no longer available".to_string())
+            }
+            Err(error) => Err(uia_error(
+                "IUIAutomationElement::GetCurrentPatternAs",
+                &error,
+            )),
+        }
+    }
+
+    #[cfg(windows)]
+    fn uia_string(
+        result: windows::core::Result<windows::core::BSTR>,
+        operation: &str,
+    ) -> Result<Option<String>, String> {
+        let value = result.map_err(|error| uia_error(operation, &error))?;
+        let value = bounded_text(&value.to_string());
+        Ok((!value.is_empty()).then_some(value))
+    }
+
+    #[cfg(windows)]
+    pub(super) fn uia_control_role(control_type: UIA_CONTROLTYPE_ID) -> String {
+        let role = if control_type == UIA_WindowControlTypeId {
+            Some("AXWindow")
+        } else if control_type == UIA_ButtonControlTypeId {
+            Some("AXButton")
+        } else if control_type == UIA_EditControlTypeId {
+            Some("AXTextField")
+        } else if control_type == UIA_DocumentControlTypeId {
+            Some("AXTextArea")
+        } else if control_type == UIA_HyperlinkControlTypeId {
+            Some("AXLink")
+        } else if control_type == UIA_CheckBoxControlTypeId {
+            Some("AXCheckBox")
+        } else if control_type == UIA_RadioButtonControlTypeId {
+            Some("AXRadioButton")
+        } else if control_type == UIA_ComboBoxControlTypeId {
+            Some("AXComboBox")
+        } else if control_type == UIA_ListControlTypeId {
+            Some("AXList")
+        } else if control_type == UIA_ListItemControlTypeId
+            || control_type == UIA_TreeItemControlTypeId
+            || control_type == UIA_DataItemControlTypeId
+        {
+            Some("AXRow")
+        } else if control_type == UIA_MenuControlTypeId {
+            Some("AXMenu")
+        } else if control_type == UIA_MenuItemControlTypeId {
+            Some("AXMenuItem")
+        } else if control_type == UIA_TreeControlTypeId {
+            Some("AXOutline")
+        } else if control_type == UIA_TabControlTypeId {
+            Some("AXTabGroup")
+        } else if control_type == UIA_TabItemControlTypeId {
+            Some("AXRadioButton")
+        } else if control_type == UIA_TextControlTypeId {
+            Some("AXStaticText")
+        } else if control_type == UIA_TableControlTypeId
+            || control_type == UIA_DataGridControlTypeId
+        {
+            Some("AXTable")
+        } else if control_type == UIA_ToolBarControlTypeId {
+            Some("AXToolbar")
+        } else if control_type == UIA_ScrollBarControlTypeId {
+            Some("AXScrollBar")
+        } else if control_type == UIA_SliderControlTypeId {
+            Some("AXSlider")
+        } else if control_type == UIA_SpinnerControlTypeId {
+            Some("AXIncrementor")
+        } else if control_type == UIA_ProgressBarControlTypeId {
+            Some("AXProgressIndicator")
+        } else if control_type == UIA_HeaderItemControlTypeId {
+            Some("AXColumn")
+        } else if control_type == UIA_PaneControlTypeId
+            || control_type == UIA_GroupControlTypeId
+            || control_type == UIA_CustomControlTypeId
+            || control_type == UIA_HeaderControlTypeId
+            || control_type == UIA_StatusBarControlTypeId
+            || control_type == UIA_SeparatorControlTypeId
+            || control_type == UIA_ToolTipControlTypeId
+        {
+            Some("AXGroup")
+        } else {
+            None
+        };
+        role.map(str::to_string)
+            .unwrap_or_else(|| format!("UIAControlType({})", control_type.0))
+    }
+
+    #[cfg(windows)]
+    fn uia_fingerprint(
+        context: &UiaContext,
+        element: &IUIAutomationElement,
+        inherited_protected: bool,
+    ) -> Result<ElementFingerprint, String> {
+        context.deadline.ensure_remaining()?;
+        let control_type = unsafe { element.CurrentControlType() }
+            .map_err(|error| uia_error("IUIAutomationElement::CurrentControlType", &error))?;
+        context.deadline.ensure_remaining()?;
+        let is_password = unsafe { element.CurrentIsPassword() }
+            .map_err(|error| uia_error("IUIAutomationElement::CurrentIsPassword", &error))?
+            .as_bool();
+        let protected = inherited_protected || is_password;
+        context.deadline.ensure_remaining()?;
+        let identifier = uia_string(
+            unsafe { element.CurrentAutomationId() },
+            "IUIAutomationElement::CurrentAutomationId",
+        )?;
+        let title = if protected {
+            None
+        } else {
+            context.deadline.ensure_remaining()?;
+            uia_string(
+                unsafe { element.CurrentName() },
+                "IUIAutomationElement::CurrentName",
+            )?
+        };
+        let description = if protected {
+            None
+        } else {
+            context.deadline.ensure_remaining()?;
+            uia_string(
+                unsafe { element.CurrentHelpText() },
+                "IUIAutomationElement::CurrentHelpText",
+            )?
+        };
+        Ok(ElementFingerprint {
+            role: uia_control_role(control_type),
+            subrole: None,
+            identifier,
+            title,
+            description,
+            placeholder: None,
+            protected,
+        })
+    }
+
+    #[cfg(windows)]
+    fn uia_text_value(
+        context: &UiaContext,
+        element: &IUIAutomationElement,
+    ) -> Result<Option<String>, String> {
+        let Some(pattern) = optional_uia_pattern::<IUIAutomationValuePattern>(
+            context,
+            element,
+            UIA_ValuePatternId,
+        )?
+        else {
+            return Ok(None);
+        };
+        context.deadline.ensure_remaining()?;
+        uia_string(
+            unsafe { pattern.CurrentValue() },
+            "IUIAutomationValuePattern::CurrentValue",
+        )
+        .map(|value| value.or_else(|| Some(String::new())))
+    }
+
+    #[cfg(windows)]
+    fn uia_children(
+        context: &UiaContext,
+        element: &IUIAutomationElement,
+        limit: usize,
+    ) -> Result<(Vec<IUIAutomationElement>, bool), String> {
+        let mut output = Vec::with_capacity(limit.min(32));
+        context.deadline.ensure_remaining()?;
+        let mut current = optional_uia_element(
+            unsafe { context.walker.GetFirstChildElement(element) },
+            "IUIAutomationTreeWalker::GetFirstChildElement",
+        )?;
+        while let Some(element) = current {
+            if output.len() >= limit {
+                return Ok((output, true));
+            }
+            context.deadline.ensure_remaining()?;
+            current = optional_uia_element(
+                unsafe { context.walker.GetNextSiblingElement(&element) },
+                "IUIAutomationTreeWalker::GetNextSiblingElement",
+            )?;
+            output.push(element);
+        }
+        Ok((output, false))
+    }
+
+    #[cfg(windows)]
+    fn win_hwnd(native_id: u32) -> Result<WinHwnd, String> {
+        let hwnd = WinHwnd(native_id as i32 as isize as *mut std::ffi::c_void);
+        if hwnd.0.is_null() {
+            Err("stale_surface: window handle is invalid".to_string())
+        } else {
+            Ok(hwnd)
+        }
+    }
+
+    #[cfg(windows)]
+    fn exact_uia_window(
+        context: &UiaContext,
+        surface: &SurfaceRecord,
+    ) -> Result<IUIAutomationElement, String> {
+        let _window = resolve_surface_window(surface)?;
+        let hwnd = win_hwnd(surface.native_id)?;
+        context.deadline.ensure_remaining()?;
+        let root = unsafe { context.automation.ElementFromHandle(hwnd) }
+            .map_err(|error| uia_error("IUIAutomation::ElementFromHandle", &error))?;
+        context.deadline.ensure_remaining()?;
+        let current_hwnd = unsafe { root.CurrentNativeWindowHandle() }.map_err(|error| {
+            uia_error("IUIAutomationElement::CurrentNativeWindowHandle", &error)
+        })?;
+        context.deadline.ensure_remaining()?;
+        let current_pid = unsafe { root.CurrentProcessId() }
+            .map_err(|error| uia_error("IUIAutomationElement::CurrentProcessId", &error))?;
+        let current_pid = u32::try_from(current_pid)
+            .map_err(|_| "stale_surface: UI Automation process id is invalid".to_string())?;
+        if current_hwnd != hwnd || current_pid != surface.pid {
+            return Err(
+                "stale_surface: UI Automation root no longer matches the observed HWND/PID"
+                    .to_string(),
+            );
+        }
+        Ok(root)
+    }
+
+    #[cfg(windows)]
+    fn resolve_uia_element(
+        context: &UiaContext,
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
+    ) -> Result<IUIAutomationElement, String> {
+        if element.lineage.len() != element.path.len() + 1 {
+            return Err("stale_element: UIA element correlation lineage is incomplete".to_string());
+        }
+        let mut current = exact_uia_window(context, surface)?;
+        let current_root = uia_fingerprint(context, &current, false)?;
+        if current_root != element.lineage[0] {
+            return Err("stale_element: UIA root identity changed since observation".to_string());
+        }
+        for (depth, &index) in element.path.iter().enumerate() {
+            let (children, has_more) = uia_children(context, &current, index + 1)?;
+            if children.len() <= index {
+                return Err("stale_element: UIA child path no longer exists".to_string());
+            }
+            if has_more && index >= super::MAX_ACCESSIBILITY_NODES {
+                return Err("stale_element: UIA child path exceeds bounded correlation".to_string());
+            }
+            current = children[index].clone();
+            let current_fingerprint =
+                uia_fingerprint(context, &current, element.lineage[depth].protected)?;
+            if current_fingerprint != element.lineage[depth + 1] {
+                return Err(
+                    "stale_element: UIA element lineage changed since observation".to_string(),
+                );
+            }
+        }
+        Ok(current)
+    }
+
+    #[cfg(windows)]
+    pub(super) fn accessibility_status() -> Result<Value, String> {
+        let _context = UiaContext::new()?;
+        Ok(json!({"platform": "windows", "trusted": true}))
     }
 
     #[cfg(target_os = "macos")]
@@ -3441,29 +3870,185 @@ mod platform {
 
     #[cfg(windows)]
     pub(super) fn accessibility_tree(
-        _surface_id: &str,
-        _surface: &SurfaceRecord,
-        _max_depth: usize,
-        _max_nodes: usize,
+        surface_id: &str,
+        surface: &SurfaceRecord,
+        max_depth: usize,
+        max_nodes: usize,
     ) -> Result<AccessibilityTreeResult, String> {
-        Err(
-            "unsupported_platform: computer accessibility observation is unavailable on this platform"
-                .to_string(),
-        )
+        let context = UiaContext::new()?;
+        let root = exact_uia_window(&context, surface)?;
+        let mut queue = VecDeque::from([(
+            root,
+            None::<String>,
+            0usize,
+            Vec::<usize>::new(),
+            Vec::<ElementFingerprint>::new(),
+            false,
+        )]);
+        let mut nodes = Vec::with_capacity(max_nodes.min(64));
+        let mut elements = Vec::with_capacity(max_nodes.min(64));
+        let mut truncated = false;
+
+        while let Some((
+            current,
+            parent_element_id,
+            depth,
+            path,
+            mut lineage,
+            inherited_protected,
+        )) = queue.pop_front()
+        {
+            if nodes.len() >= max_nodes {
+                truncated = true;
+                break;
+            }
+
+            let element_id = format!("element_{}", Uuid::new_v4().simple());
+            let fingerprint = uia_fingerprint(&context, &current, inherited_protected)?;
+            let role = fingerprint.role.clone();
+            let subrole = fingerprint.subrole.clone();
+            let title = fingerprint.title.clone();
+            let description = fingerprint.description.clone();
+            let placeholder = fingerprint.placeholder.clone();
+            let protected = fingerprint.protected;
+            let value = if protected || !is_supported_text_input_fingerprint(&fingerprint) {
+                None
+            } else {
+                uia_text_value(&context, &current)?
+            };
+            context.deadline.ensure_remaining()?;
+            let enabled = unsafe { current.CurrentIsEnabled() }
+                .map_err(|error| uia_error("IUIAutomationElement::CurrentIsEnabled", &error))?
+                .as_bool();
+            context.deadline.ensure_remaining()?;
+            let focused = unsafe { current.CurrentHasKeyboardFocus() }
+                .map_err(|error| {
+                    uia_error("IUIAutomationElement::CurrentHasKeyboardFocus", &error)
+                })?
+                .as_bool();
+            lineage.push(fingerprint);
+
+            let reserved = nodes.len() + queue.len() + 1;
+            let remaining = max_nodes.saturating_sub(reserved);
+            let inspect_limit = if depth < max_depth {
+                remaining.saturating_add(1).max(1)
+            } else {
+                1
+            };
+            let (children, has_more_children) = uia_children(&context, &current, inspect_limit)?;
+            let child_count = children.len() + usize::from(has_more_children);
+
+            if depth < max_depth {
+                if children.len() > remaining || has_more_children {
+                    truncated = true;
+                }
+                for (index, child) in children.into_iter().take(remaining).enumerate() {
+                    let mut child_path = path.clone();
+                    child_path.push(index);
+                    queue.push_back((
+                        child,
+                        Some(element_id.clone()),
+                        depth + 1,
+                        child_path,
+                        lineage.clone(),
+                        protected,
+                    ));
+                }
+            } else if child_count > 0 {
+                truncated = true;
+            }
+
+            elements.push((
+                element_id.clone(),
+                ElementRecord {
+                    surface_id: surface_id.to_string(),
+                    path,
+                    lineage,
+                },
+            ));
+            nodes.push(json!({
+                "element_id": element_id,
+                "parent_element_id": parent_element_id,
+                "depth": depth,
+                "role": role,
+                "subrole": subrole,
+                "title": title,
+                "description": description,
+                "value": value,
+                "placeholder": placeholder,
+                "enabled": enabled,
+                "focused": focused,
+                "child_count": child_count,
+            }));
+        }
+
+        if !queue.is_empty() {
+            truncated = true;
+        }
+        let node_count = nodes.len();
+        Ok(AccessibilityTreeResult {
+            output: json!({
+                "platform": "windows",
+                "surface_id": surface_id,
+                "nodes": nodes,
+                "node_count": node_count,
+                "truncated": truncated,
+                "max_depth": max_depth,
+                "max_nodes": max_nodes,
+            }),
+            elements,
+        })
     }
 
     #[cfg(windows)]
     pub(super) fn element_state(
-        _surface_id: &str,
-        _element_id: &str,
-        _observation_generation: u32,
-        _surface: &SurfaceRecord,
-        _element: &ElementRecord,
+        surface_id: &str,
+        element_id: &str,
+        observation_generation: u32,
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
     ) -> Result<Value, String> {
-        Err(
-            "unsupported_platform: computer element state is unavailable on this platform"
-                .to_string(),
-        )
+        let target = element.target_fingerprint().ok_or_else(|| {
+            "stale_element: UIA element correlation lineage is incomplete".to_string()
+        })?;
+        if !target.has_positive_evidence() {
+            return Err(
+                "stale_element: UIA element lacks positive correlation evidence for state"
+                    .to_string(),
+            );
+        }
+        let context = UiaContext::new()?;
+        let current = resolve_uia_element(&context, surface, element)?;
+        context.deadline.ensure_remaining()?;
+        let enabled = unsafe { current.CurrentIsEnabled() }
+            .map_err(|error| uia_error("IUIAutomationElement::CurrentIsEnabled", &error))?
+            .as_bool();
+        context.deadline.ensure_remaining()?;
+        let focused = unsafe { current.CurrentHasKeyboardFocus() }
+            .map_err(|error| uia_error("IUIAutomationElement::CurrentHasKeyboardFocus", &error))?
+            .as_bool();
+        let protected = element.contains_protected_content();
+        let value_empty = if !protected && is_supported_text_input_fingerprint(target) {
+            uia_text_value(&context, &current)?.map(|value| value.is_empty())
+        } else {
+            None
+        };
+
+        Ok(json!({
+            "platform": "windows",
+            "surface_id": surface_id,
+            "element_id": element_id,
+            "observation_generation": observation_generation,
+            "enabled": enabled,
+            "focused": focused,
+            "protected": protected,
+            "value_empty": value_empty,
+            // W1 is read-only. Do not overstate WebCodex mutation affordances
+            // before the corresponding Windows effect capabilities exist.
+            "can_press": false,
+            "can_focus": false,
+            "can_input_text": false,
+        }))
     }
 
     #[cfg(windows)]
@@ -3529,13 +4114,13 @@ mod platform {
 
     #[cfg(windows)]
     struct WindowDc {
-        hwnd: HWND,
+        hwnd: SysHwnd,
         hdc: HDC,
     }
 
     #[cfg(windows)]
     impl WindowDc {
-        fn acquire(hwnd: HWND) -> Result<Self, String> {
+        fn acquire(hwnd: SysHwnd) -> Result<Self, String> {
             let hdc = unsafe { GetWindowDC(hwnd) };
             if hdc.is_null() {
                 Err(win32_capture_error("GetWindowDC"))
@@ -3668,7 +4253,7 @@ mod platform {
             super::native_capture_dimension(output_width, "window width")?,
             super::native_capture_dimension(output_height, "window height")?,
         )?;
-        let hwnd = native_id as i32 as isize as HWND;
+        let hwnd = native_id as i32 as isize as SysHwnd;
         if hwnd.is_null() {
             return Err("capture_failed: window handle is invalid".to_string());
         }
@@ -3901,8 +4486,125 @@ mod platform {
         }
         #[cfg(windows)]
         {
+            ensure_platform_capture_bound(&window, width, height)?;
             capture_window_gdi(surface.native_id, width, height)
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_uia_tests {
+    use super::*;
+    use windows::Win32::UI::Accessibility::{
+        UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_DocumentControlTypeId,
+        UIA_EditControlTypeId, UIA_HyperlinkControlTypeId, UIA_WindowControlTypeId,
+    };
+
+    fn surface_record(candidate: PlatformWindow) -> SurfaceRecord {
+        SurfaceRecord {
+            native_id: candidate.native_id,
+            pid: candidate.pid,
+            identity_hash: candidate.identity_hash,
+            application: bounded_text(&candidate.application),
+            title: bounded_text(&candidate.title),
+            width: candidate.width,
+            height: candidate.height,
+        }
+    }
+
+    #[test]
+    fn computer_windows_uia_control_types_use_existing_semantic_roles() {
+        assert_eq!(
+            platform::uia_control_role(UIA_WindowControlTypeId),
+            "AXWindow"
+        );
+        assert_eq!(
+            platform::uia_control_role(UIA_ButtonControlTypeId),
+            "AXButton"
+        );
+        assert_eq!(
+            platform::uia_control_role(UIA_EditControlTypeId),
+            "AXTextField"
+        );
+        assert_eq!(
+            platform::uia_control_role(UIA_DocumentControlTypeId),
+            "AXTextArea"
+        );
+        assert_eq!(
+            platform::uia_control_role(UIA_HyperlinkControlTypeId),
+            "AXLink"
+        );
+        assert_eq!(
+            platform::uia_control_role(UIA_CheckBoxControlTypeId),
+            "AXCheckBox"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop with at least one UIA-accessible window"]
+    fn computer_windows_uia_live_smoke() {
+        let status = platform::accessibility_status().expect("initialize Windows UI Automation");
+        assert_eq!(status["platform"], "windows");
+        assert_eq!(status["trusted"], true);
+
+        let candidates = platform::list_windows(MAX_WINDOWS).expect("list live Windows windows");
+        let mut failures = Vec::new();
+        for candidate in candidates {
+            let record = surface_record(candidate);
+            match platform::accessibility_tree("surface_windows_live", &record, 3, 64) {
+                Ok(tree) => {
+                    assert_eq!(tree.output["platform"], "windows");
+                    assert_eq!(tree.output["surface_id"], "surface_windows_live");
+                    assert!(tree.output["node_count"].as_u64().unwrap_or(0) > 0);
+                    assert!(!tree.elements.is_empty());
+                    let Some((element_id, element)) = tree.elements.iter().find(|(_, element)| {
+                        element
+                            .target_fingerprint()
+                            .is_some_and(ElementFingerprint::has_positive_evidence)
+                    }) else {
+                        if failures.len() < 8 {
+                            failures.push(
+                                "accessibility_failed: live UIA tree had no positively correlated element"
+                                    .to_string(),
+                            );
+                        }
+                        continue;
+                    };
+                    match platform::element_state(
+                        "surface_windows_live",
+                        element_id,
+                        1,
+                        &record,
+                        element,
+                    ) {
+                        Ok(state) => {
+                            assert_eq!(state["platform"], "windows");
+                            assert_eq!(state["surface_id"], "surface_windows_live");
+                            assert_eq!(state["element_id"], element_id.as_str());
+                            assert_eq!(state["can_press"], false);
+                            assert_eq!(state["can_focus"], false);
+                            assert_eq!(state["can_input_text"], false);
+                            return;
+                        }
+                        Err(error) => {
+                            if failures.len() < 8 && !failures.contains(&error) {
+                                failures.push(error);
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Err(error) => {
+                    if failures.len() < 8 && !failures.contains(&error) {
+                        failures.push(error);
+                    }
+                    continue;
+                }
+            }
+        }
+        panic!(
+            "no bounded observable window exposed a Windows UIA Control View root; errors={failures:?}"
+        );
     }
 }
 

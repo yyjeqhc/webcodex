@@ -127,11 +127,17 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("truncated", json!({"type": "boolean"})),
         ])),
         "computer_accessibility_status" => Some(wrapped_output_schema(vec![
-            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "platform",
+                json!({"type": "string", "enum": ["macos", "windows"]}),
+            ),
             ("trusted", json!({"type": "boolean"})),
         ])),
         "computer_accessibility_tree" => Some(wrapped_output_schema(vec![
-            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "platform",
+                json!({"type": "string", "enum": ["macos", "windows"]}),
+            ),
             (
                 "surface_id",
                 json!({"type": "string", "minLength": 1, "maxLength": 128}),
@@ -159,7 +165,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
         ])),
         "computer_find_elements" => Some(wrapped_output_schema(vec![
-            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "platform",
+                json!({"type": "string", "enum": ["macos", "windows"]}),
+            ),
             (
                 "surface_id",
                 json!({"type": "string", "minLength": 1, "maxLength": 128}),
@@ -183,7 +192,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("truncated", json!({"type": "boolean"})),
         ])),
         "computer_element_state" => Some(wrapped_output_schema(vec![
-            ("platform", json!({"type": "string", "enum": ["macos"]})),
+            (
+                "platform",
+                json!({"type": "string", "enum": ["macos", "windows"]}),
+            ),
             (
                 "surface_id",
                 json!({"type": "string", "minLength": 1, "maxLength": 128}),

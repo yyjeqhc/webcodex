@@ -966,6 +966,12 @@ enum ProjectTomlWriteError {
     AfterRename,
 }
 
+#[derive(Debug)]
+enum ProjectUnregisterError {
+    BeforeRename,
+    AfterRename,
+}
+
 #[cfg(test)]
 thread_local! {
     static FAIL_PARENT_SYNC_AFTER_PROJECT_RENAME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -1562,21 +1568,17 @@ fn cleanup_unregister_tombstones(projects_dir: &Path, id: &str) -> Result<(), St
     Ok(())
 }
 
-fn unregister_project_config(path: &Path) -> Result<(), String> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| "project config has no parent".to_string())?;
+fn unregister_project_config(path: &Path) -> Result<(), ProjectUnregisterError> {
+    let dir = path.parent().ok_or(ProjectUnregisterError::BeforeRename)?;
     let id = path
         .file_stem()
         .and_then(|v| v.to_str())
         .unwrap_or("project");
     let tombstone = unique_registry_temp(dir, id, "toml.unregistering");
-    std::fs::rename(path, &tombstone)
-        .map_err(|e| format!("failed to stage project unregister: {e}"))?;
-    sync_parent_dir(path)?;
-    std::fs::remove_file(&tombstone)
-        .map_err(|e| format!("failed to remove project registry tombstone: {e}"))?;
-    sync_parent_dir(path)
+    std::fs::rename(path, &tombstone).map_err(|_| ProjectUnregisterError::BeforeRename)?;
+    sync_project_parent_after_rename(path).map_err(|_| ProjectUnregisterError::AfterRename)?;
+    std::fs::remove_file(&tombstone).map_err(|_| ProjectUnregisterError::AfterRename)?;
+    sync_project_parent_after_rename(path).map_err(|_| ProjectUnregisterError::AfterRename)
 }
 
 /// Structured, non-shell project lifecycle mutation. Unregister only removes
@@ -1661,8 +1663,19 @@ pub(crate) fn handle_project_lifecycle_op(
         return project_error_cmd(start, "revision_conflict");
     }
     if action == "unregister" {
-        if unregister_project_config(&config_path).is_err() {
-            return project_error_cmd(start, "operation_failed");
+        match unregister_project_config(&config_path) {
+            Ok(()) => {}
+            Err(ProjectUnregisterError::BeforeRename) => {
+                return project_error_cmd(start, "operation_failed")
+            }
+            Err(ProjectUnregisterError::AfterRename) => {
+                return structured_project_error_cmd(
+                    start,
+                    "operation_indeterminate",
+                    true,
+                    serde_json::json!({}),
+                )
+            }
         }
         return ok_cmd(
             start,

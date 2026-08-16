@@ -9071,6 +9071,56 @@ fn project_lifecycle_persists_state_and_unregister_preserves_source() {
 }
 
 #[test]
+fn project_unregister_post_rename_sync_failure_is_indeterminate_and_retry_converges() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_dir = tmp.path().join("repo");
+    let projects_dir = tmp.path().join("projects.d");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("keep.txt"), "keep").unwrap();
+    let policy = project_policy(tmp.path());
+    let registered = project_ok(handle_project_op(
+        &policy,
+        &projects_dir,
+        &project_request(
+            "register_project",
+            serde_json::json!({
+                "id": "demo",
+                "name": "Demo",
+                "path": project_dir.to_string_lossy()
+            }),
+        ),
+    ));
+    let revision = registered["revision"].as_str().unwrap().to_string();
+
+    webcodex_runner::projects::fail_next_project_parent_sync_after_rename();
+    let error = project_error_value(handle_project_lifecycle_op(
+        &policy,
+        &projects_dir,
+        &project_request(
+            "project_lifecycle_unregister",
+            serde_json::json!({"project_id":"demo","expected_revision":revision}),
+        ),
+    ));
+    assert_eq!(error["error_code"], "operation_indeterminate");
+    assert_eq!(error["state_changed"], true);
+    assert!(!projects_dir.join("demo.toml").exists());
+    assert!(project_dir.join("keep.txt").exists());
+
+    let retry = project_ok(handle_project_lifecycle_op(
+        &policy,
+        &projects_dir,
+        &project_request(
+            "project_lifecycle_unregister",
+            serde_json::json!({"project_id":"demo","expected_revision":registered["revision"]}),
+        ),
+    ));
+    assert_eq!(retry["outcome"], "already_unregistered");
+    assert_eq!(retry["changed"], false);
+    assert!(!projects_dir.join("demo.toml").exists());
+    assert!(project_dir.join("keep.txt").exists());
+}
+
+#[test]
 fn register_project_rejects_path_outside_allowed_roots() {
     let allowed = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();

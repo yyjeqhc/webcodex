@@ -1327,19 +1327,26 @@ fn lightweight_contexts_have_no_admin_scope() {
     assert!(!sk.scopes.iter().any(|s| s == SCOPE_ADMIN));
     let open = open_anonymous_context();
     assert!(!open.scopes.iter().any(|s| s == SCOPE_ADMIN));
-    // A direct shared key retains interactive runtime/project access and gets
-    // only the four narrow Agent transport scopes needed by its Runner.
+    // A direct shared key retains interactive runtime/project access, Computer
+    // Use, and the four narrow Agent transport scopes needed by its Runner.
     assert!(sk.scopes.contains(&SCOPE_RUNTIME_READ.to_string()));
     assert!(sk.scopes.contains(&SCOPE_PROJECT_WRITE.to_string()));
+    assert!(sk.scopes.contains(&SCOPE_COMPUTER_READ.to_string()));
+    assert!(sk.scopes.contains(&SCOPE_COMPUTER_CONTROL.to_string()));
     for scope in AGENT_SCOPES {
         assert!(sk.scopes.contains(&scope.to_string()));
     }
-    // Open anonymous and project credentials never gain Agent transport.
+    // Open anonymous and project credentials do not inherit Computer or Agent
+    // transport authority from the direct shared-key quick-start profile.
+    assert!(!open.scopes.contains(&SCOPE_COMPUTER_READ.to_string()));
+    assert!(!open.scopes.contains(&SCOPE_COMPUTER_CONTROL.to_string()));
     assert!(!open.scopes.contains(&SCOPE_AGENT_REGISTER.to_string()));
 
     let project = crate::auth::shared_key::project_credential_context("wc_pgrant_1111111111111111");
     assert!(project.is_project_credential());
     assert!(!project.is_lightweight());
+    assert!(!project.scopes.contains(&SCOPE_COMPUTER_READ.to_string()));
+    assert!(!project.scopes.contains(&SCOPE_COMPUTER_CONTROL.to_string()));
     assert!(!project.scopes.contains(&SCOPE_AGENT_REGISTER.to_string()));
 }
 

@@ -732,10 +732,11 @@ mod tests {
         assert_eq!(check_runtime_tool_scope(Some(&shared), "read_file"), Ok(()));
         assert_eq!(
             check_runtime_tool_scope(Some(&shared), "computer_snapshot"),
-            Err(ToolCallErrorStatus::InsufficientScope {
-                required_scope: Some(crate::auth::SCOPE_COMPUTER_READ),
-                description: "missing required scope: computer:read".to_string(),
-            })
+            Ok(())
+        );
+        assert_eq!(
+            check_runtime_tool_scope(Some(&shared), "computer_control"),
+            Ok(())
         );
     }
 

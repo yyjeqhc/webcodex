@@ -86,9 +86,9 @@ production IAM. It has no independent per-device revocation: rotate the shared
 secret for the whole group, or use managed credentials.
 
 Its default principal carries `runtime:read`, `project:read`, `project:write`,
-`job:run`, and the bounded Agent-transport scopes `agent:register`, `agent:poll`,
-`agent:result`, and `agent:job_update`. It does not carry Computer, account
-management, or admin scopes.
+`job:run`, `computer:read`, `computer:control`, and the bounded Agent-transport
+scopes `agent:register`, `agent:poll`, `agent:result`, and `agent:job_update`. It
+does not carry account-management or admin scopes.
 
 `WEBCODEX_SHARED_KEY_ENABLED=true` enables direct Bearer shared-key fallback on
 an ordinary server. Managed `wc_*` values and empty/whitespace Bearer values
@@ -194,12 +194,12 @@ first-party PAT account self-service keeps the existing handler-level identity
 and role checks rather than requiring that scope merely to manage the PAT's own
 account resources.
 
-The direct shared-key profile uses the default scopes listed above; it does not
-implicitly gain `computer:read`, `computer:control`, `account:manage`, or
-`admin`. Consequently, a Computer tool
-cannot be reached merely because the caller used a direct shared key. Unknown
-authenticated routes and runtime tools fail closed for ordinary principals until
-a scope policy is declared; bootstrap retains setup/superuser compatibility.
+The direct shared-key quick-start profile includes `computer:read` and
+`computer:control` so Computer Use is available through direct key authentication
+without requiring a separate delegated OAuth grant. It still does not implicitly
+gain `account:manage` or `admin`. Unknown authenticated routes and runtime tools
+fail closed for ordinary principals until a scope policy is declared; bootstrap
+retains setup/superuser compatibility.
 
 Scope-denial wire formatting remains credential-aware. OAuth access tokens use
 the OAuth `insufficient_scope` response and `WWW-Authenticate` challenge. Other

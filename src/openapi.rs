@@ -213,9 +213,14 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/pairing/enroll",
     "/mcp",
     "/openapi.json",
-    // The MCP App console is a public static HTML/JS/CSS surface served via
-    // GET; it is intentionally NOT a GPT Action and must never appear in the
-    // POST-only /openapi.json schema.
+    // Browser console shells and their browser-only Runtime Console API are
+    // intentionally NOT GPT Actions and must never appear in /openapi.json.
+    "/api/runtime-console/projects",
+    "/api/runtime-console/workflow-sessions",
+    "/api/runtime-console/workflow-session",
+    "/runtime",
+    "/runtime/app.js",
+    "/runtime/styles.css",
     "/console",
     "/console/app.js",
     "/console/styles.css",

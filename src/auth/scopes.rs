@@ -219,7 +219,10 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
             OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN)
         }
 
-        ("POST", "/api/projects/list")
+        ("POST", "/api/runtime-console/projects")
+        | ("POST", "/api/runtime-console/workflow-sessions")
+        | ("POST", "/api/runtime-console/workflow-session")
+        | ("POST", "/api/projects/list")
         | ("POST", "/api/projects/read_file")
         | ("POST", "/api/projects/git_status")
         | ("POST", "/api/projects/git_diff")
@@ -491,6 +494,17 @@ mod tests {
             ("POST", "/api/connector/task/cancel", SCOPE_JOB_RUN),
             ("POST", "/api/connector/task/finish", SCOPE_PROJECT_WRITE),
             ("POST", "/api/projects/read_file", SCOPE_PROJECT_READ),
+            ("POST", "/api/runtime-console/projects", SCOPE_PROJECT_READ),
+            (
+                "POST",
+                "/api/runtime-console/workflow-sessions",
+                SCOPE_PROJECT_READ,
+            ),
+            (
+                "POST",
+                "/api/runtime-console/workflow-session",
+                SCOPE_PROJECT_READ,
+            ),
             ("POST", "/api/projects/run_job", SCOPE_JOB_RUN),
             ("POST", "/api/users/me", SCOPE_ACCOUNT_MANAGE),
             ("POST", "/api/tokens/list", SCOPE_ACCOUNT_MANAGE),
@@ -534,9 +548,23 @@ mod tests {
                 "{label} must not bypass missing project:read"
             );
         }
+        for (label, auth) in [("pat", &pat), ("oauth", &oauth)] {
+            assert_eq!(
+                enforce_route_scope(auth, "POST", "/api/runtime-console/projects"),
+                Err((
+                    Some(SCOPE_PROJECT_READ),
+                    "missing required scope: project:read".to_string()
+                )),
+                "{label} must not use Runtime Console without project:read"
+            );
+        }
         assert!(
             enforce_route_scope(&shared, "POST", "/api/projects/read_file").is_ok(),
             "direct shared key should use its declared project:read scope"
+        );
+        assert!(
+            enforce_route_scope(&shared, "POST", "/api/runtime-console/projects").is_ok(),
+            "direct shared key should retain its existing project:read Runtime Console access"
         );
         assert!(
             enforce_route_scope(&pat, "POST", "/api/oauth/clients/list").is_ok(),

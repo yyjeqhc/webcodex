@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>WebCodex — Runtime Console</title>
+  <link rel="stylesheet" href="/runtime/styles.css" />
+</head>
+<body>
+  <main id="runtime-page">
+    <header class="topbar">
+      <div>
+        <h1>WebCodex Runtime Console</h1>
+        <p class="muted">Hosted Workflow Session observability</p>
+      </div>
+      <div id="runtime-topbar-controls" class="topbar-controls" hidden>
+        <button id="runtime-refresh" class="btn" type="button">Refresh</button>
+        <button id="runtime-lock" class="btn" type="button">Lock</button>
+      </div>
+    </header>
+
+    <section id="runtime-token-gate" class="gate">
+      <form id="runtime-token-form" autocomplete="off">
+        <h2>Connect to Runtime</h2>
+        <p class="muted">Enter an existing runtime Bearer credential with project read access. It stays in page memory only.</p>
+        <div class="field-row">
+          <input id="runtime-token-input" type="password" placeholder="Runtime Bearer credential" autocomplete="off" spellcheck="false" />
+          <button class="btn primary" type="submit">Connect</button>
+        </div>
+        <p id="runtime-token-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="runtime-console" hidden>
+      <p id="runtime-error" class="banner error" role="alert" hidden></p>
+      <section class="panel project-panel">
+        <label for="runtime-project-select">Project</label>
+        <select id="runtime-project-select"></select>
+        <span id="runtime-project-status" class="muted small">—</span>
+        <span id="runtime-selected-project" class="project-id small">—</span>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Workflow Sessions <span id="runtime-sessions-count" class="muted small">0</span></h2>
+        </div>
+        <div class="session-grid">
+          <div>
+            <ul id="runtime-session-list" class="session-list"></ul>
+            <p id="runtime-sessions-empty" class="muted small" hidden>No retained Workflow Sessions for this project.</p>
+          </div>
+          <div class="detail-column">
+            <div id="runtime-session-detail-empty" class="muted">Select a Workflow Session.</div>
+            <div id="runtime-session-detail" hidden>
+              <h3 id="runtime-session-title" class="detail-title">—</h3>
+              <div class="chips">
+                <span id="runtime-session-lifecycle" class="chip">—</span>
+                <span id="runtime-session-mode" class="chip">—</span>
+                <span id="runtime-session-running" class="chip">—</span>
+              </div>
+              <p id="runtime-session-updated" class="muted small">—</p>
+
+              <div class="overview" aria-label="Workflow Session overview">
+                <section class="overview-card runtime-fact">
+                  <h4>Work</h4>
+                  <p id="runtime-overview-work">—</p>
+                </section>
+                <section id="runtime-overview-validation-card" class="overview-card validation-fact">
+                  <h4>Validation</h4>
+                  <p id="runtime-overview-validation">—</p>
+                </section>
+                <section id="runtime-overview-attention-card" class="overview-card attention-fact">
+                  <h4>Attention</h4>
+                  <p id="runtime-overview-attention">—</p>
+                </section>
+                <section class="overview-card reported-card">
+                  <h4>Reported progress</h4>
+                  <p class="muted small">Model-reported; informational only.</p>
+                  <p id="runtime-overview-progress" class="muted">—</p>
+                </section>
+              </div>
+
+              <div class="timeline-controls">
+                <strong>Activity</strong>
+                <button id="runtime-jump-latest" class="btn" type="button" hidden>Jump to latest</button>
+              </div>
+              <ol id="runtime-timeline" class="timeline"></ol>
+              <p id="runtime-timeline-empty" class="muted small" hidden>No bounded activity is available.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script src="/runtime/app.js" defer></script>
+</body>
+</html>

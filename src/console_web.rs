@@ -1,12 +1,13 @@
 //! Minimal project-readiness console.
 //!
-//! Serves the console HTML/JS/CSS bundle at `/console`, `/console/app.js`, and
-//! `/console/styles.css`. These assets contain no secrets and are public; the
-//! browser still authenticates separately for every `/api/console/*` request.
+//! Serves the public static shells for the project Review Console, hosted
+//! Runtime Console, and Admin. The bundles contain no credentials; each browser
+//! authenticates separately for its protected API requests.
 //!
 //! Production uses the committed `frontend/dist/` bundle embedded at compile
-//! time. An explicitly configured development directory is validated once at
-//! startup, then its three fixed files are re-read on every request.
+//! time. Development mode validates the core Project Review Console files once
+//! at startup; every requested fixed Review/Admin/Runtime asset is then
+//! path-checked and re-read from that same loopback-only directory.
 
 use salvo::http::header::{CACHE_CONTROL, CONTENT_TYPE, PRAGMA};
 use salvo::http::{HeaderName, HeaderValue};
@@ -32,6 +33,9 @@ const CONSOLE_STYLES_CSS: &str = include_str!("../frontend/dist/styles.css");
 const ADMIN_HTML: &str = include_str!("../frontend/dist/admin.html");
 const ADMIN_APP_JS: &str = include_str!("../frontend/dist/admin.js");
 const ADMIN_STYLES_CSS: &str = include_str!("../frontend/dist/admin.css");
+const RUNTIME_HTML: &str = include_str!("../frontend/dist/runtime.html");
+const RUNTIME_APP_JS: &str = include_str!("../frontend/dist/runtime.js");
+const RUNTIME_STYLES_CSS: &str = include_str!("../frontend/dist/runtime.css");
 
 #[derive(Debug, Clone, Copy)]
 enum ConsoleAsset {
@@ -41,6 +45,9 @@ enum ConsoleAsset {
     AdminHtml,
     AdminJavaScript,
     AdminCss,
+    RuntimeHtml,
+    RuntimeJavaScript,
+    RuntimeCss,
 }
 
 impl ConsoleAsset {
@@ -52,6 +59,9 @@ impl ConsoleAsset {
             Self::AdminHtml => "admin.html",
             Self::AdminJavaScript => "admin.js",
             Self::AdminCss => "admin.css",
+            Self::RuntimeHtml => "runtime.html",
+            Self::RuntimeJavaScript => "runtime.js",
+            Self::RuntimeCss => "runtime.css",
         }
     }
 
@@ -59,9 +69,11 @@ impl ConsoleAsset {
         match self {
             Self::Html => "text/html; charset=utf-8",
             Self::JavaScript => "application/javascript; charset=utf-8",
-            Self::Css | Self::AdminCss => "text/css; charset=utf-8",
-            Self::AdminHtml => "text/html; charset=utf-8",
-            Self::AdminJavaScript => "application/javascript; charset=utf-8",
+            Self::Css | Self::AdminCss | Self::RuntimeCss => "text/css; charset=utf-8",
+            Self::AdminHtml | Self::RuntimeHtml => "text/html; charset=utf-8",
+            Self::AdminJavaScript | Self::RuntimeJavaScript => {
+                "application/javascript; charset=utf-8"
+            }
         }
     }
 
@@ -73,6 +85,9 @@ impl ConsoleAsset {
             Self::AdminHtml => ADMIN_HTML,
             Self::AdminJavaScript => ADMIN_APP_JS,
             Self::AdminCss => ADMIN_STYLES_CSS,
+            Self::RuntimeHtml => RUNTIME_HTML,
+            Self::RuntimeJavaScript => RUNTIME_APP_JS,
+            Self::RuntimeCss => RUNTIME_STYLES_CSS,
         }
     }
 }
@@ -129,7 +144,9 @@ impl ConsoleAssetSource {
         Self::from_directory(directory)
     }
 
-    /// Canonicalize and validate the only three files the console may serve.
+    /// Canonicalize the development root and require the three Project Review
+    /// Console core files. Admin and Runtime assets remain optional in this
+    /// compatibility mode and are validated fail-closed when requested.
     pub(crate) fn from_directory(
         directory: impl AsRef<Path>,
     ) -> Result<Self, ConsoleAssetConfigError> {
@@ -338,6 +355,23 @@ pub async fn console_styles_css(depot: &Depot, res: &mut Response) {
     serve_asset(depot, res, ConsoleAsset::Css).await;
 }
 
+/// Public hosted Runtime Console shell; all data stays behind
+/// `/api/runtime-console/*` and ordinary runtime authorization.
+#[handler]
+pub async fn runtime_html(depot: &Depot, res: &mut Response) {
+    serve_asset(depot, res, ConsoleAsset::RuntimeHtml).await;
+}
+
+#[handler]
+pub async fn runtime_app_js(depot: &Depot, res: &mut Response) {
+    serve_asset(depot, res, ConsoleAsset::RuntimeJavaScript).await;
+}
+
+#[handler]
+pub async fn runtime_styles_css(depot: &Depot, res: &mut Response) {
+    serve_asset(depot, res, ConsoleAsset::RuntimeCss).await;
+}
+
 /// Public admin shell; all data remains protected by `/api/admin/*`.
 #[handler]
 pub async fn admin_html(depot: &Depot, res: &mut Response) {
@@ -383,6 +417,9 @@ mod tests {
             .push(Router::with_path("console").get(console_html))
             .push(Router::with_path("console/app.js").get(console_app_js))
             .push(Router::with_path("console/styles.css").get(console_styles_css))
+            .push(Router::with_path("runtime").get(runtime_html))
+            .push(Router::with_path("runtime/app.js").get(runtime_app_js))
+            .push(Router::with_path("runtime/styles.css").get(runtime_styles_css))
             .push(Router::with_path("admin").get(admin_html))
             .push(Router::with_path("admin/app.js").get(admin_app_js))
             .push(Router::with_path("admin/styles.css").get(admin_styles_css))
@@ -447,6 +484,17 @@ mod tests {
         assert!(CONSOLE_APP_JS.contains("performAction"));
         assert!(CONSOLE_STYLES_CSS.contains("[hidden]{display:none !important}"));
         assert!(CONSOLE_HTML.contains("type=\"password\""));
+        assert!(CONSOLE_HTML.contains("WebCodex — Project Review Console"));
+        assert!(!RUNTIME_HTML.is_empty());
+        assert!(RUNTIME_HTML.contains("WebCodex Runtime Console"));
+        assert!(RUNTIME_HTML.contains("/runtime/app.js"));
+        assert!(RUNTIME_HTML.contains("/runtime/styles.css"));
+        assert!(RUNTIME_APP_JS.contains("/api/runtime-console/"));
+        assert!(!RUNTIME_APP_JS.contains("/api/console/"));
+        assert!(!RUNTIME_APP_JS.contains("localStorage"));
+        assert!(!RUNTIME_APP_JS.contains("sessionStorage"));
+        assert!(!RUNTIME_APP_JS.contains("document.cookie"));
+        assert!(!RUNTIME_APP_JS.contains(".innerHTML"));
         assert!(!CONSOLE_HTML.contains("Transport"));
     }
 
@@ -471,6 +519,30 @@ mod tests {
             assert!(header(&resp, "content-type").contains(mime));
             assert_eq!(header(&resp, "cache-control"), "no-cache, must-revalidate");
             assert_eq!(header(&resp, "x-webcodex-console-assets"), "embedded");
+            assert_eq!(resp.take_string().await.unwrap(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn embedded_runtime_assets_preserve_bodies_mime_and_cache_policy() {
+        let service = embedded_service();
+        for (url, expected, mime) in [
+            ("http://localhost/runtime", RUNTIME_HTML, "text/html"),
+            (
+                "http://localhost/runtime/app.js",
+                RUNTIME_APP_JS,
+                "application/javascript",
+            ),
+            (
+                "http://localhost/runtime/styles.css",
+                RUNTIME_STYLES_CSS,
+                "text/css",
+            ),
+        ] {
+            let mut resp = TestClient::get(url).send(&service).await;
+            assert_eq!(resp.status_code, Some(StatusCode::OK));
+            assert!(header(&resp, "content-type").contains(mime));
+            assert_eq!(header(&resp, "cache-control"), "no-cache, must-revalidate");
             assert_eq!(resp.take_string().await.unwrap(), expected);
         }
     }

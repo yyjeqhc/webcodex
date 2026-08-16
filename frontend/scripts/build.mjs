@@ -20,6 +20,10 @@ const watchedSources = new Set([
   "workflow_session_state.ts",
   "styles.css",
   "console.html",
+  "runtime.ts",
+  "runtime_console_state.ts",
+  "runtime.css",
+  "runtime.html",
   "admin.ts",
   "admin_controller.ts",
   "admin_mutation_controller.ts",
@@ -113,6 +117,15 @@ export function createOutputs(
     transpileTypeScript(sourceDirectory, "workflow_session_state.ts")
   );
   const workflowSessionStateClassic = stripModuleExports(workflowSessionStateModule);
+  const runtimeConsoleStateModule = buildJs(
+    transpileTypeScript(sourceDirectory, "runtime_console_state.ts")
+  );
+  const runtimeConsoleStateClassic = stripModuleExports(
+    runtimeConsoleStateModule.replace(
+      /^import\s*\{[\s\S]*?\}\s*from\s*["']\.\/workflow_session_state(?:\.js)?["'];?\s*\n/m,
+      ""
+    )
+  );
   const appModule = transpileTypeScript(sourceDirectory, "app.ts");
   const appScript = stripModuleExports(
     appModule
@@ -129,6 +142,22 @@ export function createOutputs(
     reviewStateClassic + "\n" + workflowSessionStateClassic + "\n" + appScript
   );
   assertClassicScript(resolve(outputDirectory, "app.js"), appInlined);
+  const runtimeModule = transpileTypeScript(sourceDirectory, "runtime.ts");
+  const runtimeScript = stripModuleExports(
+    runtimeModule
+      .replace(
+        /^import\s*\{[\s\S]*?\}\s*from\s*["']\.\/workflow_session_state(?:\.js)?["'];?\s*\n/m,
+        ""
+      )
+      .replace(
+        /^import\s*\{[\s\S]*?\}\s*from\s*["']\.\/runtime_console_state(?:\.js)?["'];?\s*\n/m,
+        ""
+      )
+  );
+  const runtimeInlined = buildJs(
+    workflowSessionStateClassic + "\n" + runtimeConsoleStateClassic + "\n" + runtimeScript
+  );
+  assertClassicScript(resolve(outputDirectory, "runtime.js"), runtimeInlined);
   const adminControllerModule = buildJs(
     transpileTypeScript(sourceDirectory, "admin_controller.ts")
   );
@@ -180,15 +209,19 @@ export function createOutputs(
   return new Map([
     ["review_state.js", reviewStateModule],
     ["workflow_session_state.js", workflowSessionStateModule],
+    ["runtime_console_state.js", runtimeConsoleStateModule],
     ["admin_controller.js", adminControllerModule],
     ["admin_mutation_controller.js", adminMutationControllerModule],
     ["admin_mutation_view.js", adminMutationViewModule],
     ["admin_view.js", adminViewModule],
     ["app.js", appInlined],
     ["styles.css", minifyCss(readSource(sourceDirectory, "styles.css"))],
+    ["runtime.js", runtimeInlined],
+    ["runtime.css", minifyCss(readSource(sourceDirectory, "runtime.css"))],
     ["admin.js", adminScript],
     ["admin.css", minifyCss(readSource(sourceDirectory, "admin.css"))],
     ["console.html", normalizeNewline(readSource(sourceDirectory, "console.html"))],
+    ["runtime.html", normalizeNewline(readSource(sourceDirectory, "runtime.html"))],
     ["admin.html", normalizeNewline(readSource(sourceDirectory, "admin.html"))],
   ]);
 }

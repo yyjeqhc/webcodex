@@ -563,6 +563,12 @@ mod connector_surface_tests {
         );
         assert!(enforce_project_connector_surface(true, &user, "/api/tools/call").is_err());
         assert!(enforce_project_connector_surface(true, &user, "/api/projects/list").is_err());
+        assert!(
+            enforce_project_connector_surface(true, &user, "/api/runtime-console/projects")
+                .is_err()
+        );
+        let agent = AuthContext::new(AuthKind::AgentToken);
+        assert!(enforce_token_surface(&agent, "/api/runtime-console/projects").is_err());
         assert!(enforce_project_connector_surface(false, &user, "/api/tools/call").is_ok());
 
         let bootstrap = bootstrap_context();

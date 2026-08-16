@@ -34,6 +34,7 @@ mod openapi;
 mod pairing_http;
 mod project_entry;
 mod projects;
+mod runtime_console_http;
 mod runtime_http;
 mod shell_client;
 mod startup;
@@ -277,6 +278,7 @@ only for local/trusted-network demos."
         .hoop(AuthMiddleware)
         .push(connector_runtime::http::routes())
         .push(host_console_http::routes())
+        .push(runtime_console_http::routes())
         .push(admin_http::routes())
         .push(Router::with_path("tools/list").post(runtime_http::tools_list))
         .push(Router::with_path("tools/call").post(runtime_http::tools_call))
@@ -391,6 +393,11 @@ only for local/trusted-network demos."
         .push(Router::with_path("app.js").get(console_web::console_app_js))
         .push(Router::with_path("styles.css").get(console_web::console_styles_css));
 
+    let runtime_console_router = Router::with_path("runtime")
+        .get(console_web::runtime_html)
+        .push(Router::with_path("app.js").get(console_web::runtime_app_js))
+        .push(Router::with_path("styles.css").get(console_web::runtime_styles_css));
+
     let admin_router = Router::with_path("admin")
         .get(console_web::admin_html)
         .push(Router::with_path("app.js").get(console_web::admin_app_js))
@@ -418,6 +425,7 @@ only for local/trusted-network demos."
         .push(api_router)
         .push(openapi_router)
         .push(console_router)
+        .push(runtime_console_router)
         .push(admin_router)
         // OAuth2 token, revocation, and discovery endpoints — public, no
         // AuthMiddleware. Token/revoke clients authenticate via

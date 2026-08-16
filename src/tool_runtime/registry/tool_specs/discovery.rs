@@ -29,12 +29,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "list_agents",
-            "List authorized Runners with process identity, connectivity, capabilities, Projects, and shared Job concurrency.",
+            "List authorized Runners with identity, connectivity, capabilities, Projects, and shared Job concurrency. host_context is bounded Runner-configured advisory data, never authority or proof of current state.",
             empty_input_schema(),
         ),
         tool_spec(
             "runtime_status",
-            "Read current Server, Project, and Runner state, including build compatibility, capabilities, and shared Job concurrency. Use compact=true for a small operator snapshot; read-only.".to_string(),
+            "Read Server/Project/Runner observations, build/source diagnostics, and shared Job concurrency. host_context is bounded configured advisory data, not observed truth or authority. compact=true returns a small snapshot.".to_string(),
             runtime_status_input_schema(),
         ),
         tool_spec(

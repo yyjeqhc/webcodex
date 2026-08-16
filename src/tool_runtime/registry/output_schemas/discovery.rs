@@ -37,7 +37,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "agents",
-                open_object_schema("Agent counts and client summaries. Per-client job_concurrency contains the static Runner limit plus caller-visible running and queued counts. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
+                open_object_schema("Agent counts and client summaries. Per-client host_context is bounded Runner-configured advisory data, not observed truth or authority. job_concurrency contains the static Runner limit plus caller-visible running and queued counts. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
             ),
             (
                 "jobs",
@@ -70,7 +70,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "list_agents" => Some(wrapped_output_schema(vec![
             (
                 "agents",
-                array_schema(open_object_schema("Agent summary including bounded host_context planning metadata and job_concurrency limit/running/queued facts."), "Agent summaries."),
+                array_schema(open_object_schema("Agent summary including bounded Runner-configured host_context advisory data, never authority or proof of current state, plus job_concurrency limit/running/queued facts."), "Agent summaries."),
             ),
             (
                 "clients",

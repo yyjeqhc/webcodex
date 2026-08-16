@@ -226,7 +226,17 @@ mod tests {
             .description
             .contains("Git not required"));
         for name in ["list_agents", "runtime_status"] {
-            assert!(find(name).description.contains("shared Job concurrency"));
+            let description = &find(name).description;
+            assert!(
+                description.contains("shared Job concurrency"),
+                "{name}: {description}"
+            );
+            assert!(
+                description.contains("host_context"),
+                "{name}: {description}"
+            );
+            assert!(description.contains("advisory"), "{name}: {description}");
+            assert!(description.contains("authority"), "{name}: {description}");
         }
 
         for spec in &specs {

@@ -1385,6 +1385,26 @@ fn parse_search_matches_skips_lines_without_line_number() {
 }
 
 #[test]
+fn parse_search_matches_drops_claude_worktree_records() {
+    let stdout = concat!(
+        "{\"webcodex_search\":{\"backend\":\"native\"}}\n",
+        ".claude/worktrees/stale/src/lib.rs:1:needle stale\n",
+        "src/lib.rs:1:needle active\n",
+    );
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(10),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let result = search_project_text_output("demo", &options, stdout, Some(0), "");
+    let matches = result.output["matches"].as_array().unwrap();
+
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["path"], "src/lib.rs");
+    assert_eq!(matches[0]["preview"], "needle active");
+}
+
+#[test]
 fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
     let options = SearchOptions::normalize(SearchRequest {
         pattern: "fn main".to_string(),
@@ -1404,9 +1424,11 @@ fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
     assert!(cmd.contains("\"backend\":\"grep\""));
     assert!(cmd.contains("rg --with-filename"));
     assert!(cmd.contains("--glob '!**/.git/**'"));
+    assert!(cmd.contains("--glob '!**/.claude/**'"));
     assert!(cmd.contains("--glob '!**/target/**'"));
     assert!(cmd.contains("--glob '!**/node_modules/**'"));
     assert!(cmd.contains("--exclude-dir=.git"));
+    assert!(cmd.contains("--exclude-dir=.claude"));
     assert!(cmd.contains("--exclude-dir=target"));
     assert!(cmd.contains("--exclude-dir=node_modules"));
     assert!(cmd.contains("--exclude-dir=secrets"));
@@ -1542,6 +1564,72 @@ fn search_project_text_command_falls_back_to_grep_without_rg() {
     assert_eq!(result.output["matches"][0]["path"], "src/lib.rs");
     assert_eq!(result.output["matches"][0]["line"], 3);
     assert_eq!(result.output["matches"][0]["preview"], "needle from grep");
+}
+
+#[cfg(unix)]
+#[test]
+fn search_project_text_grep_fallback_excludes_ignored_claude_worktrees() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    let stale = root.join(".claude/worktrees/stale/src");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(root.join(".gitignore"), ".claude\n").unwrap();
+    std::fs::write(root.join("src/live.txt"), "needle active\n").unwrap();
+    std::fs::write(stale.join("old.txt"), "needle stale\n").unwrap();
+
+    let git_init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&root)
+        .status()
+        .unwrap();
+    assert!(git_init.success());
+    let git_ignore = std::process::Command::new("git")
+        .args(["check-ignore", "-q", ".claude/worktrees/stale/src/old.txt"])
+        .current_dir(&root)
+        .status()
+        .unwrap();
+    assert!(git_ignore.success(), "fixture must be ignored by Git");
+
+    for command in ["grep", "head"] {
+        let found = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("command -v {command}"))
+            .output()
+            .unwrap();
+        assert!(found.status.success(), "host must provide {command}");
+        let target = String::from_utf8(found.stdout).unwrap();
+        let target = target.trim();
+        assert!(!target.is_empty(), "host must provide {command}");
+        std::os::unix::fs::symlink(target, bin.join(command)).unwrap();
+    }
+
+    let options = SearchOptions::normalize(SearchRequest {
+        limit: Some(10),
+        ..raw_search_request()
+    })
+    .unwrap();
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command(&options)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr: {stderr}");
+    let result = search_project_text_output("demo", &options, &stdout, Some(exit_code), "");
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "grep");
+    let matches = result.output["matches"].as_array().unwrap();
+    assert_eq!(
+        matches.len(),
+        1,
+        "stale ignored worktree must not be searched"
+    );
+    assert_eq!(matches[0]["path"], "src/live.txt");
+    assert_eq!(matches[0]["preview"], "needle active");
 }
 
 #[test]

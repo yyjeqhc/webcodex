@@ -446,6 +446,7 @@ pub(crate) fn parse_file_list_entries(
 
 const SEARCH_PROJECT_TEXT_EXCLUDES: &[&str] = &[
     "--exclude-dir=.git",
+    "--exclude-dir=.claude",
     "--exclude-dir=target",
     "--exclude-dir=node_modules",
     "--exclude-dir=.venv",
@@ -474,6 +475,8 @@ const SEARCH_PROJECT_TEXT_EXCLUDES: &[&str] = &[
 const SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS: &[&str] = &[
     "!.git/**",
     "!**/.git/**",
+    "!.claude/**",
+    "!**/.claude/**",
     "!target/**",
     "!**/target/**",
     "!node_modules/**",
@@ -1210,8 +1213,14 @@ fn search_timeout_tool_result(options: &SearchOptions, backend: Option<&str>) ->
 
 fn is_search_project_text_excluded_path(path: &str) -> bool {
     // Search skips credentials and the bulk trees alike: the first for
-    // confidentiality, the second for cost and noise.
+    // confidentiality, the second for cost and noise. `.claude` is
+    // search-local rather than a global bulk exclusion because it commonly
+    // contains ignored nested worktrees/stale checkout copies, while explicit
+    // tracked-file discovery must remain governed by Git's index.
     crate::sensitive_paths::is_bulk_skipped_path(path)
+        || path
+            .split(['/', '\\'])
+            .any(|component| component.eq_ignore_ascii_case(".claude"))
 }
 
 #[derive(Debug, Clone)]

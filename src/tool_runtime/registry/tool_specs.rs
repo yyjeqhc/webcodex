@@ -96,6 +96,25 @@ mod tests {
     use crate::tool_runtime::tool_definition::is_model_visible_tool_name;
     use std::collections::BTreeSet;
 
+    fn collect_schema_descriptions<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(description) = map.get("description").and_then(Value::as_str) {
+                    out.push(description);
+                }
+                for nested in map.values() {
+                    collect_schema_descriptions(nested, out);
+                }
+            }
+            Value::Array(values) => {
+                for nested in values {
+                    collect_schema_descriptions(nested, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[test]
     fn tool_spec_declarations_are_unique_and_model_visible() {
         let declarations = tool_spec_declarations();
@@ -226,6 +245,27 @@ mod tests {
                     spec.name,
                     spec.description
                 );
+            }
+        }
+
+        for spec in &specs {
+            let mut descriptions = Vec::new();
+            collect_schema_descriptions(&spec.input_schema, &mut descriptions);
+            for description in descriptions {
+                if spec.name != "run_shell" {
+                    assert!(
+                        !description.contains("run_shell"),
+                        "{} input schema pollutes exact run_shell discovery: {description}",
+                        spec.name
+                    );
+                }
+                if spec.name != "run_job" {
+                    assert!(
+                        !description.contains("run_job"),
+                        "{} input schema pollutes exact run_job discovery: {description}",
+                        spec.name
+                    );
+                }
             }
         }
     }

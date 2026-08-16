@@ -67,8 +67,9 @@ A V1 correctness/reliability incident exists when all of the following are true:
 
 - the Job had been dispatched and was active (or retained terminal) before the
   Server restart;
-- the Runner process survived (`client_id`, `agent_instance_id`, and
-  `process_started_at` identify the same process);
+- the Runner process survived: the same `client_id` still reports the same
+  process-scoped `agent_instance_id`; reconciliation logs may use
+  `process_started_at` as a secondary cross-check;
 - the Runner advertises `job_state_reconciliation=true`;
 - the Job is present in the Runner inventory supplied after reconnect, or should
   have been present under the complete-active-inventory contract;
@@ -83,8 +84,10 @@ both as “retry the command” risks duplicate effects.
 Before retrying work, collect safe runtime facts:
 
 1. Use `runtime_status` / `list_agents` to establish the current Server build,
-   Runner connection state, `client_id`, `agent_instance_id`,
-   `process_started_at`, reconciliation capability, and Job concurrency state.
+   Runner connection state, `client_id`, process-scoped `agent_instance_id`,
+   reconciliation capability, and Job concurrency state. If reconciliation logs
+   are available, cross-check `process_started_at` there; it is not part of the
+   current `runtime_status` / `list_agents` projection.
 2. Determine whether the Runner process changed. If it changed, do not claim the
    same-process Server-restart recovery contract was violated.
 3. If the Runner process is unchanged, inspect the registration/reconciliation

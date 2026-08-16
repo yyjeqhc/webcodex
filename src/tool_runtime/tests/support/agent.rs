@@ -94,6 +94,9 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
     if req.kind == "file_read" {
         return run_agent_file_read_request_locally(req);
     }
+    if req.kind == "file_list" {
+        return run_agent_file_list_request_locally(req);
+    }
     if req.kind == "file_project_overview" {
         return run_agent_project_overview_request_locally(req);
     }
@@ -131,6 +134,28 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
         String::from_utf8_lossy(&output.stdout).to_string(),
         String::from_utf8_lossy(&output.stderr).to_string(),
     )
+}
+
+fn run_agent_file_list_request_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {
+    let Some(cwd) = req.cwd.as_deref() else {
+        return (-1, String::new(), "file_list missing cwd".to_string());
+    };
+    let path = req.path.as_deref().unwrap_or(".");
+    let target = Path::new(cwd).join(path);
+    let entries = match std::fs::read_dir(&target) {
+        Ok(entries) => entries,
+        Err(error) => return (-1, String::new(), error.to_string()),
+    };
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
+        let mut name = entry.file_name().to_string_lossy().to_string();
+        if entry.file_type().ok().is_some_and(|kind| kind.is_dir()) {
+            name.push('/');
+        }
+        names.push(name);
+    }
+    names.sort();
+    (0, format!("{}\n", names.join("\n")), String::new())
 }
 
 fn run_agent_file_read_request_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {

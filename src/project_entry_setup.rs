@@ -844,7 +844,8 @@ pub(super) fn resolve_state_path_from(
             .join(executor_project_id),
     };
     let state = canonicalize_with_missing_tail(&requested)?;
-    if state == root || state.starts_with(root) {
+    let canonical_root = root.canonicalize().map_err(|_| state_path_unavailable())?;
+    if state == canonical_root || state.starts_with(&canonical_root) {
         return Err(ProductError::new(
             "state_directory_unsafe",
             "the WebCodex state directory must be outside the Git project checkout",

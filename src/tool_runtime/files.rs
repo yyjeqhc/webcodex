@@ -347,6 +347,30 @@ fn content_is_empty_instruction(content: &str) -> bool {
     content.trim().is_empty()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstructionAgentsAliasResolution {
+    KeepBoth,
+    KeepUppercase,
+    KeepLowercase,
+}
+
+fn instruction_agents_alias_resolution(root_listing: &str) -> InstructionAgentsAliasResolution {
+    let mut uppercase = false;
+    let mut lowercase = false;
+    for line in root_listing.lines() {
+        match line.trim_end_matches('\r') {
+            "AGENTS.md" => uppercase = true,
+            "agents.md" => lowercase = true,
+            _ => {}
+        }
+    }
+    match (uppercase, lowercase) {
+        (true, false) => InstructionAgentsAliasResolution::KeepUppercase,
+        (false, true) => InstructionAgentsAliasResolution::KeepLowercase,
+        _ => InstructionAgentsAliasResolution::KeepBoth,
+    }
+}
+
 enum InstructionCandidateRead {
     Found(super::project_instructions::LoadedInstructionCandidate),
     Missing,
@@ -3993,9 +4017,40 @@ impl ToolRuntime {
         let reads = INSTRUCTION_CANDIDATE_PATHS
             .iter()
             .map(|candidate| self.read_instruction_candidate(config, candidate));
+        let results = futures_util::future::join_all(reads).await;
+        let both_agents_spellings_read = results
+            .first()
+            .is_some_and(|result| matches!(result, InstructionCandidateRead::Found(_)))
+            && results
+                .get(1)
+                .is_some_and(|result| matches!(result, InstructionCandidateRead::Found(_)));
+        // On a case-insensitive filesystem both case-variant reads can resolve
+        // to one physical file. Only deduplicate when a complete root listing
+        // proves which spelling actually exists. If listing fails, or both
+        // entries really exist on a case-sensitive filesystem, preserve both
+        // fixed sources rather than guessing from content or hashes.
+        let agents_alias = if both_agents_spellings_read {
+            self.instruction_agents_alias_resolution(config).await
+        } else {
+            None
+        };
         let mut found = Vec::new();
         let mut scan_complete = true;
-        for result in futures_util::future::join_all(reads).await {
+        for (index, result) in results.into_iter().enumerate() {
+            let path = INSTRUCTION_CANDIDATE_PATHS[index];
+            let skip_alias = matches!(
+                (path, agents_alias),
+                (
+                    "AGENTS.md",
+                    Some(InstructionAgentsAliasResolution::KeepLowercase)
+                ) | (
+                    "agents.md",
+                    Some(InstructionAgentsAliasResolution::KeepUppercase)
+                )
+            );
+            if skip_alias {
+                continue;
+            }
             match result {
                 InstructionCandidateRead::Found(candidate) => found.push(candidate),
                 InstructionCandidateRead::Missing => {}
@@ -4008,6 +4063,47 @@ impl ToolRuntime {
             ProjectInstructionsSnapshot::unavailable()
         } else {
             ProjectInstructionsSnapshot::from_candidates(found, scan_complete)
+        }
+    }
+
+    async fn instruction_agents_alias_resolution(
+        &self,
+        config: &ProjectConfig,
+    ) -> Option<InstructionAgentsAliasResolution> {
+        const WAIT_TIMEOUT: u64 = 6;
+        let client_id = config.agent_client_id().ok()?;
+        let (request_id, rx) = self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: "list".to_string(),
+                    client_id: client_id.to_string(),
+                    path: ".".to_string(),
+                    cwd: Some(config.path.clone()),
+                    content: None,
+                    max_bytes: None,
+                    old_text: None,
+                    pattern: None,
+                    expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: WAIT_TIMEOUT,
+                },
+                "project_instructions".to_string(),
+            )
+            .await
+            .ok()?;
+        match tokio::time::timeout(Duration::from_secs(WAIT_TIMEOUT + 2), rx).await {
+            Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => Some(
+                instruction_agents_alias_resolution(resp.stdout.as_deref().unwrap_or_default()),
+            ),
+            _ => {
+                self.shell_clients.cancel_request(&request_id).await;
+                None
+            }
         }
     }
 
@@ -4681,6 +4777,28 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn instruction_agents_alias_resolution_requires_one_actual_spelling() {
+        assert_eq!(
+            instruction_agents_alias_resolution("AGENTS.md\nCLAUDE.md\n"),
+            InstructionAgentsAliasResolution::KeepUppercase
+        );
+        assert_eq!(
+            instruction_agents_alias_resolution("agents.md\nCLAUDE.md\n"),
+            InstructionAgentsAliasResolution::KeepLowercase
+        );
+        assert_eq!(
+            instruction_agents_alias_resolution("AGENTS.md\nagents.md\nCLAUDE.md\n"),
+            InstructionAgentsAliasResolution::KeepBoth,
+            "case-sensitive filesystems may contain two distinct rule sources"
+        );
+        assert_eq!(
+            instruction_agents_alias_resolution("CLAUDE.md\n"),
+            InstructionAgentsAliasResolution::KeepBoth,
+            "absence of both exact directory entries is not alias evidence"
+        );
+    }
 
     fn unique_temp_dir(name: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now()

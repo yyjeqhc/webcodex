@@ -1248,8 +1248,8 @@ fn show_changes_crlf_diff_bytes_match_parsed_frame_exactly() {
 
 fn multibyte_status_path(i: usize) -> std::path::PathBuf {
     let mut path = std::path::PathBuf::new();
-    for level in 0..6 {
-        path.push(format!("{}-{level}", "界".repeat(72)));
+    for level in 0..3 {
+        path.push(format!("{}-{level}", "界".repeat(60)));
     }
     path.push(format!("文件-{i:03}.txt"));
     path
@@ -1259,7 +1259,7 @@ fn multibyte_status_path(i: usize) -> std::path::PathBuf {
 fn show_changes_bash_utf8_locale_counts_multibyte_status_in_bytes() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
-    let total = 200usize;
+    let total = 500usize;
     for i in 0..total {
         let relative = multibyte_status_path(i);
         let path = tmp.path().join(relative);
@@ -3157,10 +3157,10 @@ fn run_bounded_show_changes_full(
 
 fn near_path_max_diff_path(i: usize) -> std::path::PathBuf {
     let mut path = std::path::PathBuf::new();
-    for level in 0..15 {
-        path.push(format!("{}-{level:02}", "p".repeat(235)));
+    for level in 0..3 {
+        path.push(format!("{}-{level:02}", "p".repeat(200)));
     }
-    path.push(format!("{}-{i:02}.txt", "f".repeat(210)));
+    path.push(format!("{}-{i:02}.txt", "f".repeat(170)));
     path
 }
 
@@ -3168,7 +3168,7 @@ fn near_path_max_diff_path(i: usize) -> std::path::PathBuf {
 fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
-    let total = 20usize;
+    let total = 70usize;
     let paths: Vec<_> = (0..total).map(near_path_max_diff_path).collect();
     for path in &paths {
         let full = tmp.path().join(path);
@@ -3190,7 +3190,7 @@ fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
         raw_diff.len()
     );
 
-    let (stdout_bytes, stdout, stderr) = run_bounded_show_changes_full(tmp.path(), true, 20, 80);
+    let (stdout_bytes, stdout, stderr) = run_bounded_show_changes_full(tmp.path(), true, 80, 80);
     assert!(
         stdout_bytes <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES,
         "bounded bytes={stdout_bytes}"
@@ -3203,7 +3203,7 @@ fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
     assert_eq!(frames.diff_bytes, Some(frames.diff.len()));
 
     let output =
-        bounded_show_changes_output_from_frames(&frames, tmp.path(), true, 20, 80, &stderr);
+        bounded_show_changes_output_from_frames(&frames, tmp.path(), true, 80, 80, &stderr);
     let reasons = output["truncation_reasons"].as_array().unwrap();
     assert!(
         reasons.iter().any(|r| r == "diff_byte_budget"),

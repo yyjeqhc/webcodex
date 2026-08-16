@@ -975,8 +975,9 @@ async fn checkpoint_does_not_persist_inside_worktree() {
         .canonicalize()
         .unwrap();
     let root = root.canonicalize().unwrap();
+    let checkpoint_state_dir = runtime.checkpoint_state_dir().canonicalize().unwrap();
     assert!(!storage_path.starts_with(&root));
-    assert!(storage_path.starts_with(runtime.checkpoint_state_dir()));
+    assert!(storage_path.starts_with(&checkpoint_state_dir));
 }
 
 #[tokio::test]

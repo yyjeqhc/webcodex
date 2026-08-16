@@ -571,11 +571,13 @@ fn open_state(location: &TaskLocationOptions) -> Result<(LocalTaskState, Databas
 }
 
 fn ensure_target(state: &LocalTaskState, recorded: &str) -> Result<(), String> {
-    if Path::new(recorded) != state.root {
-        return Err(
-            "task target does not match the resolved project checkout; no result was applied"
-                .to_string(),
-        );
+    let mismatch = || {
+        "task target does not match the resolved project checkout; no result was applied"
+            .to_string()
+    };
+    let recorded = Path::new(recorded).canonicalize().map_err(|_| mismatch())?;
+    if recorded != state.root {
+        return Err(mismatch());
     }
     Ok(())
 }

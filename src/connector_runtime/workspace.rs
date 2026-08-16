@@ -715,7 +715,9 @@ impl WorkspaceManager {
             if inside != "true" {
                 return Err("interrupted execution root is not a Git worktree".to_string());
             }
-        } else if execution_root != Path::new(&task.target_root) || !execution_root.is_dir() {
+        } else if !same_existing_path(execution_root, Path::new(&task.target_root))
+            || !execution_root.is_dir()
+        {
             return Err("read-only task workspace is no longer available".to_string());
         }
         Ok(())
@@ -939,6 +941,13 @@ fn result_changed() -> ConnectorTaskStoreError {
     )
 }
 
+fn same_existing_path(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 fn local_decision_task(
     db: &Database,
     project_id: &str,
@@ -946,7 +955,7 @@ fn local_decision_task(
     target_root: &Path,
 ) -> Result<ConnectorTaskSnapshot, ConnectorTaskStoreError> {
     let task = db.local_connector_task(task_id, project_id)?;
-    if Path::new(&task.target_root) != target_root {
+    if !same_existing_path(Path::new(&task.target_root), target_root) {
         return Err(ConnectorTaskStoreError::decision(
             "result_precondition_failed",
             "task target does not match the resolved project checkout; no result was applied",

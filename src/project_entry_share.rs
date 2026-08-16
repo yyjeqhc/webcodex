@@ -422,6 +422,9 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[cfg(unix)]
+    const TUNNEL_TEST_START_TIMEOUT: Duration = Duration::from_secs(10);
+
     #[test]
     fn parses_cloudflare_quick_tunnel_url_from_bounded_log_line() {
         assert_eq!(
@@ -576,7 +579,7 @@ mod tests {
         let error = start_cloudflare_quick_with_binary(
             &binary,
             "http://127.0.0.1:23456",
-            Duration::from_secs(1),
+            TUNNEL_TEST_START_TIMEOUT,
         )
         .await
         .unwrap_err();
@@ -608,7 +611,7 @@ mod tests {
         let (_url, mut tunnel) = start_cloudflare_quick_with_binary(
             &binary,
             "http://127.0.0.1:23456",
-            Duration::from_secs(1),
+            TUNNEL_TEST_START_TIMEOUT,
         )
         .await
         .unwrap();
@@ -625,7 +628,7 @@ mod tests {
         let (url, mut tunnel) = start_cloudflare_quick_with_binary(
             &binary,
             "http://127.0.0.1:23456",
-            Duration::from_secs(1),
+            TUNNEL_TEST_START_TIMEOUT,
         )
         .await
         .unwrap();

@@ -1007,7 +1007,10 @@ fn state_directory_allows_absolute_and_relative_paths_outside_checkout() {
         &root,
     )
     .unwrap();
-    assert_eq!(resolved, temp.path().join("relative-state"));
+    assert_eq!(
+        resolved,
+        temp.path().canonicalize().unwrap().join("relative-state")
+    );
     setup(&options(root, resolved.clone())).unwrap();
     assert!(resolved.join("project.toml").is_file());
 }
@@ -1070,13 +1073,20 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
     assert_ne!(connector_credential, agent_token);
     assert!(agent_token.starts_with("wc_agent_"));
     assert_eq!(agent_toml["token"].as_str(), Some(agent_token.as_str()));
+    let canonical_root = options.root.canonicalize().unwrap();
+    let canonical_state = state.canonicalize().unwrap();
     assert_eq!(
         registration_toml["path"].as_str(),
-        Some(options.root.to_string_lossy().as_ref())
+        Some(canonical_root.to_string_lossy().as_ref())
     );
     assert_eq!(
         agent_toml["projects_dir"].as_str(),
-        Some(state.join("agent/projects.d").to_string_lossy().as_ref())
+        Some(
+            canonical_state
+                .join("agent/projects.d")
+                .to_string_lossy()
+                .as_ref()
+        )
     );
     let before = (agent, registration);
 
@@ -1572,8 +1582,9 @@ fn doctor_reports_conflicting_registration() {
         .unwrap()
         .path();
     let before = fs::read_to_string(&project_path).unwrap();
+    let canonical_root = options.root.canonicalize().unwrap();
     let conflicting = before.replace(
-        &format!("path = \"{}\"", options.root.display()),
+        &format!("path = \"{}\"", canonical_root.display()),
         "path = \"/different/project\"",
     );
     assert_ne!(conflicting, before);

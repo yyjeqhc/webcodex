@@ -68,7 +68,7 @@ const RGBA_BYTES_PER_PIXEL: u64 = 4;
 /// 8K UHD (7680x4320x4) fits while malformed/extreme dimensions fail closed
 /// before xcap is allowed to allocate the native capture image.
 const MAX_RAW_CAPTURE_BYTES: u64 = 128 * 1024 * 1024;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(test, target_os = "macos", windows))]
 const MAX_IMAGE_DIMENSION: u32 = 4096;
 
 #[cfg(any(test, target_os = "macos"))]

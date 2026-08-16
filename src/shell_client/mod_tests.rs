@@ -2129,6 +2129,7 @@ async fn computer_snapshot_artifact_requires_current_target_project_and_file_wri
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 shell: true,
                 file_read: true,
@@ -2435,6 +2436,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 shell: true,
                 file_read: true,
@@ -2472,6 +2474,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 shell: true,
                 file_read: true,
@@ -2594,6 +2597,7 @@ async fn computer_element_state_requires_its_own_additive_capability() {
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 shell: true,
                 file_read: true,
@@ -2738,6 +2742,7 @@ async fn computer_scroll_to_element_requires_independent_capability() {
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 computer_control: true,
                 computer_scroll_to_element: true,
@@ -2815,6 +2820,7 @@ async fn computer_key_input_requires_independent_capability() {
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 computer_control: true,
                 computer_key_input: true,
@@ -2892,6 +2898,7 @@ async fn computer_window_activation_requires_its_own_additive_capability() {
             display_name: None,
             owner: Some("alice".to_string()),
             hostname: None,
+            host_context: None,
             capabilities: Some(ShellClientCapabilities {
                 shell: true,
                 file_read: true,

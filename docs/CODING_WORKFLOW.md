@@ -66,8 +66,12 @@ bounded `answer` with `reply_to=<todo_id>` and resolves that exact todo.
 
 The first version is intentionally manual. There is no automatic claim, worker
 scheduler, shared transcript, or implicit cross-Session authority. Assign one
-worker per todo. Do not concurrently mutate the same worktree from multiple
-windows; prefer read-only workers or explicitly isolated worktrees/projects.
+worker per todo. Prefer read-oriented workers when windows share a worktree, and
+explicitly isolated worktrees/projects when independent concurrent writes are
+intentional. A `read_only` request or Session mode is useful operating context,
+not authoritative proof of what happened for the worker's whole lifetime. The
+worker should accurately report material operations or deviations, while the
+coordinator relies on recorded tool/effect evidence and current workspace state.
 Return conclusions, load-bearing evidence, and result paths instead of injecting
 the worker transcript into the coordinator.
 

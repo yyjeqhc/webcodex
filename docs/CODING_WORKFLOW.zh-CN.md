@@ -58,9 +58,12 @@ Workflow Session。coordinator 在自己的 Session 中发布 `todo`；worker �
 resolve 精确的 todo。
 
 第一版故意保持手动：没有自动 claim、worker scheduler、共享 transcript，也没有隐式的
-跨 Session authority。一个 todo 由人工分配给一个 worker。不要让多个窗口并发修改同一
-worktree；优先使用 read-only worker，或显式隔离的 worktree/project。worker 应回传结论、
-关键 evidence 与 result path，而不是把长 transcript 注入 coordinator。
+跨 Session authority。一个 todo 由人工分配给一个 worker。多个窗口共享 worktree 时优先
+让 worker 以读为主；确实需要独立并发写时优先隔离 worktree/project。`read_only` 请求或
+Session mode 是有用的执行姿态与 guard context，但不是 worker 整个生命周期实际行为的
+权威证明。worker 应如实回报 mutation、shell/process、validation、external effect 等重要
+操作或偏离预期的行为；coordinator 以记录下来的 tool/effect evidence 与当前 workspace
+状态为准。回传结论、关键 evidence 与 result path，而不是把长 transcript 注入 coordinator。
 
 详细协议与后续 convenience primitive 的 dogfood gate 见
 [Manual Multi-Window Collaboration](agent/manual-window-collaboration.md)。

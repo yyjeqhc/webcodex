@@ -3573,6 +3573,73 @@ fn file_artifact_upload_chunks_finish_and_abort() {
 }
 
 #[test]
+fn file_artifact_upload_finish_detects_ooxml_mime_from_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let path = "artifacts/imports/streamed.docx";
+    let bytes = fake_ooxml_zip(
+        "word/document.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        false,
+    );
+    let expected_sha256 = sha256_hex_bytes(&bytes);
+
+    let begin = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_artifact_upload_begin",
+            path,
+            serde_json::json!({
+                "path": path,
+                "expected_bytes": bytes.len(),
+                "expected_sha256": expected_sha256,
+                "mime_type": null,
+                "overwrite": false,
+                "max_bytes": bytes.len(),
+            }),
+        ),
+    ));
+    let upload_id = begin["upload_id"].as_str().unwrap().to_string();
+    let content_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+    let chunk = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_artifact_upload_chunk",
+            path,
+            serde_json::json!({
+                "path": path,
+                "upload_id": upload_id.clone(),
+                "offset": 0,
+                "content_base64": content_base64,
+                "max_chunk_bytes": bytes.len(),
+            }),
+        ),
+    ));
+    assert_eq!(chunk["received_bytes"], bytes.len());
+
+    let finish = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_artifact_upload_finish",
+            path,
+            serde_json::json!({"path": path, "upload_id": upload_id}),
+        ),
+    ));
+    assert_eq!(finish["committed"], true);
+    assert_eq!(finish["bytes"], bytes.len());
+    assert_eq!(finish["sha256"], sha256_hex_bytes(&bytes));
+    assert_eq!(
+        finish["mime_type"],
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+    assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), bytes);
+    assert_no_upload_temp_files(tmp.path(), path);
+}
+
+#[test]
 fn file_artifact_upload_begin_rejects_validation_and_targets() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());

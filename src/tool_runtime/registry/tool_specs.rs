@@ -4,7 +4,6 @@ mod artifacts;
 mod checkpoints;
 mod coding_tasks;
 mod computer;
-mod discovery;
 mod edits;
 mod files;
 mod git;
@@ -16,16 +15,42 @@ mod testing;
 
 use super::super::tool_definition::{
     is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
+    ToolDefinition,
 };
 use super::super::tool_spec::ToolSpec;
 use super::{output_schema_for_tool, tool_annotations};
 use std::collections::BTreeMap;
 
 pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
-    let mut declarations_by_name = tool_spec_declarations_by_name();
-    let specs = model_visible_tool_definitions()
-        .map(|definition| {
-            declarations_by_name
+    resolve_tool_specs(
+        model_visible_tool_definitions(),
+        separate_tool_spec_declarations_by_name(),
+    )
+}
+
+fn resolve_tool_specs<'a>(
+    definitions: impl IntoIterator<Item = &'a ToolDefinition>,
+    mut separate_declarations_by_name: BTreeMap<String, ToolSpec>,
+) -> Vec<ToolSpec> {
+    let mut specs = Vec::new();
+    for definition in definitions {
+        let spec = if let Some(model_spec) = definition.model_spec {
+            if separate_declarations_by_name
+                .remove(definition.name)
+                .is_some()
+            {
+                panic!(
+                    "{} ToolDefinition model spec duplicates a separate ToolSpec declaration",
+                    definition.name
+                );
+            }
+            tool_spec(
+                definition.name,
+                model_spec.description,
+                (model_spec.input_schema)(),
+            )
+        } else {
+            separate_declarations_by_name
                 .remove(definition.name)
                 .unwrap_or_else(|| {
                     panic!(
@@ -33,17 +58,20 @@ pub(crate) fn registered_tool_specs() -> Vec<ToolSpec> {
                         definition.name
                     )
                 })
-        })
-        .collect::<Vec<_>>();
-    if let Some(extra_name) = declarations_by_name.keys().next() {
-        panic!("{extra_name} ToolSpec declaration has no model-visible ToolDefinition");
+        };
+        specs.push(spec);
+    }
+    if let Some(extra_name) = separate_declarations_by_name.keys().next() {
+        panic!("{extra_name} separate ToolSpec declaration has no model-visible ToolDefinition");
     }
     specs
 }
 
-fn tool_spec_declarations() -> Vec<ToolSpec> {
-    let mut declarations = discovery::tool_specs();
-    declarations.extend(sessions::tool_specs());
+// Domains migrate off this list as their ToolDefinition rows gain embedded
+// description + input-schema ownership. Keep output schemas and annotations
+// independent: `tool_spec()` still derives those by the canonical tool name.
+fn separate_tool_spec_declarations() -> Vec<ToolSpec> {
+    let mut declarations = sessions::tool_specs();
     declarations.extend(jobs::tool_specs());
     declarations.extend(checkpoints::tool_specs());
     declarations.extend(coding_tasks::tool_specs());
@@ -58,9 +86,9 @@ fn tool_spec_declarations() -> Vec<ToolSpec> {
     declarations
 }
 
-fn tool_spec_declarations_by_name() -> BTreeMap<String, ToolSpec> {
+fn separate_tool_spec_declarations_by_name() -> BTreeMap<String, ToolSpec> {
     let mut declarations_by_name = BTreeMap::new();
-    for spec in tool_spec_declarations() {
+    for spec in separate_tool_spec_declarations() {
         if !is_model_visible_tool_name(&spec.name) {
             panic!("{} ToolSpec declaration must be model-visible", spec.name);
         }
@@ -116,8 +144,8 @@ mod tests {
     }
 
     #[test]
-    fn tool_spec_declarations_are_unique_and_model_visible() {
-        let declarations = tool_spec_declarations();
+    fn separate_tool_spec_declarations_are_unique_and_model_visible() {
+        let declarations = separate_tool_spec_declarations();
         let mut names = BTreeSet::new();
         for spec in declarations {
             assert!(
@@ -131,6 +159,65 @@ mod tests {
                 spec.name
             );
         }
+    }
+
+    #[test]
+    fn discovery_model_specs_are_owned_by_tool_definitions() {
+        let separate_names = separate_tool_spec_declarations()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<BTreeSet<_>>();
+        for name in [
+            "list_tools",
+            "list_projects",
+            "register_project",
+            "unregister_project",
+            "create_project",
+            "list_agents",
+            "runtime_status",
+            "tool_manifest",
+        ] {
+            let definition = lookup_tool_definition(name)
+                .unwrap_or_else(|| panic!("missing migrated ToolDefinition for {name}"));
+            assert!(
+                definition.model_spec.is_some(),
+                "{name} must own description + input schema through ToolDefinition"
+            );
+            assert!(
+                !separate_names.contains(name),
+                "{name} must not keep a parallel ToolSpec registration"
+            );
+        }
+    }
+
+    #[test]
+    fn register_project_definition_owned_model_spec_matches_exact_contract() {
+        let actual = registered_tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "register_project")
+            .expect("register_project spec");
+        let expected = tool_spec(
+            "register_project",
+            "Register an existing directory, including a non-Git or ad-hoc workspace, as a Project on one Runner. Use this when the directory already exists; policy still bounds allowed paths.",
+            super::super::input_schemas::register_project_input_schema(),
+        );
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap(),
+            "definition-owned register_project ToolSpec must preserve name, description, input/output schemas, and annotations exactly"
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "register_project public ToolDefinition is missing a ToolSpec declaration"
+    )]
+    fn migrated_model_spec_omission_fails_closed() {
+        let mut definition =
+            *lookup_tool_definition("register_project").expect("register_project ToolDefinition");
+        assert!(definition.model_spec.is_some());
+        definition.model_spec = None;
+        let _ = resolve_tool_specs(std::iter::once(&definition), BTreeMap::new());
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! Runtime tool definitions.
 //!
 //! This module is the central declaration point for runtime tool names,
-//! model-facing visibility, manifest category, runtime metadata, and agent
-//! capability. Non-runtime route metadata fallbacks remain in `metadata.rs`
+//! model-facing visibility/spec association, manifest category, runtime metadata,
+//! and agent capability. Non-runtime route metadata fallbacks remain in `metadata.rs`
 //! while the registry migration proceeds in small steps.
 
 mod artifacts;
@@ -24,6 +24,7 @@ use super::metadata::{
     metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, RUNTIME_READ,
     TOOL_PROVIDER_CONTROL,
 };
+use super::registry::input_schemas::list_tools_input_schema;
 #[cfg(test)]
 pub(crate) use super::tool_catalog::TOOL_MANIFEST_INTENTS;
 pub(crate) use super::tool_catalog::{
@@ -201,9 +202,18 @@ impl ToolVisibility {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) type ToolInputSchemaFactory = fn() -> serde_json::Value;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ToolModelSpecDeclaration {
+    pub(crate) description: &'static str,
+    pub(crate) input_schema: ToolInputSchemaFactory,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ToolDefinition {
     pub(crate) name: &'static str,
+    pub(crate) model_spec: Option<ToolModelSpecDeclaration>,
     pub(crate) visibility: ToolVisibility,
     pub(crate) category: &'static str,
     pub(crate) metadata: ToolMetadata,
@@ -306,6 +316,7 @@ const fn def(
 ) -> ToolDefinition {
     ToolDefinition {
         name,
+        model_spec: None,
         visibility,
         category,
         metadata: make_tool_metadata(
@@ -320,6 +331,20 @@ const fn def(
         ),
         policy: ToolDefinitionPolicy::DEFAULT,
         agent_capability,
+    }
+}
+
+const fn model_spec(
+    definition: ToolDefinition,
+    description: &'static str,
+    input_schema: ToolInputSchemaFactory,
+) -> ToolDefinition {
+    ToolDefinition {
+        model_spec: Some(ToolModelSpecDeclaration {
+            description,
+            input_schema,
+        }),
+        ..definition
     }
 }
 
@@ -418,16 +443,20 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     edits::DEFINITIONS,
 ];
 
-const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
-    "list_tools",
-    ModelVisible,
-    TOOL_CATEGORY_RUNTIME,
-    None,
-    TOOL_PROVIDER_CONTROL,
-    ReadOnly,
-    Some(RUNTIME_READ),
-    false,
-    NoPath,
-    false,
-    false,
+const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[model_spec(
+    def(
+        "list_tools",
+        ModelVisible,
+        TOOL_CATEGORY_RUNTIME,
+        None,
+        TOOL_PROVIDER_CONTROL,
+        ReadOnly,
+        Some(RUNTIME_READ),
+        false,
+        NoPath,
+        false,
+        false,
+    ),
+    "List runtime tools. Full output includes schemas and may be large; use summary_only with category, features, or limit for bounded GPT Action discovery.",
+    list_tools_input_schema,
 )];

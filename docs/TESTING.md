@@ -25,6 +25,16 @@ tests with different cost profiles sharing the same default lane.
 | real-process job recovery failure/compat harness | Cover the failure and compatibility paths the happy-path reconciliation harness omits, using `WEBCODEX_JOB_RECOVERY_GRACE_SECS=10` (clamped, above the 5s floor) so the deadline is bounded without waiting the 120s default. Scenario C: kill the runner only (server stays up), let the job enter `recovering`, and assert the non-request-triggered recovery-timeout sweep transitions it to `lost` with `runner_recovery_deadline_exceeded`, `ended_at` set once, one list record, stop-on-lost stable, and the command never re-executes. Scenario D: instance B replaces instance A (same client_id, new `agent_instance_id`); A's job becomes `lost` with `runner_instance_replaced`, B starts its own new job, A's late update is rejected, first `ended_at`/reason preserved. Scenario E: a legacy runner registered with `WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1` (no capability, no inventory) dispatches a job and, on disconnect, deterministically fences it to `lost` with `legacy_runner_disconnected` (never `recovering`); after a server restart the lost job has no durable record and a same-client new instance cannot revive it. Scenario F: a long job across three server restarts keeps the same `job_id`, runs the command once, keeps `last_update_seq`/log cursors non-regressing and markers non-duplicating, and reaches a terminal `stopped` that survives a third restart with `ended_at` unchanged by terminal inventory replay. | Local processes, temp dirs/ports/tokens, and a temp project; no production services or QUIC certs. | `bash scripts/e2e_job_recovery_failures_ws.sh` |
 | security auth matrix | Cover OAuth, scope policy, shared-key behavior, token classes, read-only session guards, and denied mutations. | No external identity provider by default; use local fixtures and synthetic tokens. | `cargo test -p webcodex --lib oauth -- --nocapture`; `cargo test -p webcodex --lib scope -- --nocapture`; `cargo test -p webcodex --lib metadata -- --nocapture` |
 
+PR CI maps the `contract/schema` intent to the always-on `contract` job in
+`.github/workflows/ci.yml`. That job runs on every configured PR workflow run
+without requiring the `run-ci` label and stays limited to workspace/static boundaries,
+frontend type/test/dist checks, formatting, and focused registry/OpenAPI/MCP
+schema and metadata parity tests. The heavier Linux workspace and native Windows
+jobs keep their existing owner-PR `run-ci` opt-in and still run automatically on
+`main`; they retain full workspace, release-tooling, and native Windows coverage.
+Real-process/restart harnesses and exact-source release readiness remain in their
+existing explicit or release-specific lanes.
+
 Iteration 9 execution/reporting changes use the existing domain lanes rather
 than a new test suite:
 

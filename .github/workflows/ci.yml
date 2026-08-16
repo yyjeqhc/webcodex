@@ -16,6 +16,47 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  contract:
+    # Every PR gets this cheap contract lane, including owner-authored PRs that
+    # have not opted into the heavier `run-ci` jobs below. Keep it limited to
+    # deterministic, in-process/static checks so feedback stays fast.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Check frontend contracts
+        run: |
+          npm --prefix frontend run typecheck
+          npm --prefix frontend test
+          npm --prefix frontend run check:dist
+      - name: Verify workspace boundaries
+        run: |
+          bash scripts/workspace_boundary_check.sh --self-test
+          bash scripts/workspace_boundary_check.sh
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check schema and metadata contracts
+        run: |
+          cargo test --locked -p webcodex --lib openapi_operation_ids_are_minimal
+          cargo test --locked -p webcodex --lib openapi_all_local_refs_resolve
+          cargo test --locked -p webcodex --lib explicit_resume_openapi_metadata_is_distinct_from_session_recording
+          cargo test --locked -p webcodex --lib mcp_tools_list_returns_same_names_as_runtime
+          cargo test --locked -p webcodex --lib mcp_tools_list_parity_with_rest_tools_list
+          cargo test --locked -p webcodex --lib explicit_resume_mcp_schema_and_metadata_are_exposed
+          cargo test --locked -p webcodex --lib http_project_connector_lists_and_dispatches_only_canonical_capabilities
+
   test:
     # External PRs run automatically (subject to GitHub's normal fork approval
     # protections). PRs authored by the repository owner are intentionally

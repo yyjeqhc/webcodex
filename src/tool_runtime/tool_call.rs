@@ -1145,8 +1145,8 @@ pub enum ToolCall {
         as_image: Option<bool>,
     },
 
-    /// Begin a bounded chunked binary artifact upload. The agent creates a
-    /// project-local temporary upload file and returns an opaque upload id.
+    /// Begin a chunked binary artifact upload bounded to 256 MiB. The agent
+    /// creates a project-local temporary upload file and returns an opaque id.
     ArtifactUploadBegin {
         project: String,
         path: String,
@@ -1162,7 +1162,7 @@ pub enum ToolCall {
         overwrite: Option<bool>,
     },
 
-    /// Append one base64-encoded chunk to a bounded artifact upload.
+    /// Append one base64-encoded chunk, at most 1 MiB decoded, to an upload.
     ArtifactUploadChunk {
         project: String,
         path: String,

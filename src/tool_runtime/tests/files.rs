@@ -869,7 +869,7 @@ async fn artifact_upload_chunk_session_log_arguments_do_not_store_base64() {
         "telemetry-artifact-chunk",
         &req.request_id,
         0,
-        r#"{"path":"artifacts/imports/chunk.txt","upload_id":"wc_upload_test_1","received_bytes":12,"next_offset":12,"expected_bytes":null,"expected_sha256":null,"max_bytes":10485760,"mime_type":null,"committed":false}"#,
+        r#"{"path":"artifacts/imports/chunk.txt","upload_id":"wc_upload_test_1","received_bytes":12,"next_offset":12,"expected_bytes":null,"expected_sha256":null,"max_bytes":268435456,"mime_type":null,"committed":false}"#,
         "",
     )
     .await;
@@ -4126,7 +4126,7 @@ async fn artifact_upload_begin_rejects_invalid_inputs_before_resolving_project()
         ),
         (
             "artifacts/imports/too-large.txt",
-            Some(MAX_PROJECT_ARTIFACT_BYTES + 1),
+            Some(MAX_PROJECT_ARTIFACT_UPLOAD_BYTES + 1),
             None,
             Some("text/plain"),
             "expected_bytes too large",

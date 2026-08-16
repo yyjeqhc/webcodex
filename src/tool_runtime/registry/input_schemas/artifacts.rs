@@ -146,7 +146,7 @@ pub(crate) fn artifact_upload_begin_input_schema() -> Value {
         (
             "expected_bytes",
             "integer",
-            "Optional final byte count guard.",
+            "Optional final byte count guard; cannot exceed 268435456 bytes (256 MiB).",
             false,
         ),
         (
@@ -184,7 +184,7 @@ pub(crate) fn artifact_upload_chunk_input_schema() -> Value {
         (
             "content_base64",
             "string",
-            "Base64-encoded chunk; decoded chunk max is 65536 bytes.",
+            "Base64-encoded chunk; decoded chunk max is 1048576 bytes (1 MiB).",
             true,
         ),
     ]))

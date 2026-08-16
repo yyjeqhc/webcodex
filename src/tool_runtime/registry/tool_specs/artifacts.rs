@@ -37,12 +37,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "artifact_upload_begin",
-            "Begin a bounded chunked binary artifact upload. Creates a project-local temporary upload session; finish commits atomically to the target path. For smoke octet-stream uploads, use artifacts/smoke/<name>.artifact or omit mime_type when appropriate.",
+            "Begin a bounded chunked binary artifact upload up to 256 MiB. Creates a project-local temporary upload session; finish commits atomically to the target path. For smoke octet-stream uploads, use artifacts/smoke/<name>.artifact or omit mime_type when appropriate.",
             artifact_upload_begin_input_schema(),
         ),
         tool_spec(
             "artifact_upload_chunk",
-            "Append one base64 chunk to an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id to the target path.",
+            "Append one base64 chunk up to 1 MiB decoded to an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id to the target path.",
             artifact_upload_chunk_input_schema(),
         ),
         tool_spec(

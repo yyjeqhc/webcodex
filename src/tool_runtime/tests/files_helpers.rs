@@ -456,13 +456,13 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
     assert_eq!(payload["expected_sha256"], expected_sha256);
     assert_eq!(payload["mime_type"], "application/zip");
     assert_eq!(payload["overwrite"], false);
-    assert_eq!(payload["max_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
+    assert_eq!(payload["max_bytes"], MAX_PROJECT_ARTIFACT_UPLOAD_BYTES);
     complete_patch_agent_request(
         &runtime,
         "artifact-upload",
         &req.request_id,
         0,
-        r#"{"path":"artifacts/imports/sample.zip","upload_id":"wc_upload_test_1","received_bytes":0,"next_offset":0,"expected_bytes":5,"expected_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","max_bytes":10485760,"mime_type":"application/zip","committed":false}"#,
+        r#"{"path":"artifacts/imports/sample.zip","upload_id":"wc_upload_test_1","received_bytes":0,"next_offset":0,"expected_bytes":5,"expected_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","max_bytes":268435456,"mime_type":"application/zip","committed":false}"#,
         "",
     )
     .await;
@@ -508,7 +508,7 @@ async fn artifact_upload_tools_route_to_agent_file_ops() {
         "artifact-upload",
         &req.request_id,
         0,
-        r#"{"path":"artifacts/imports/sample.zip","upload_id":"wc_upload_test_1","received_bytes":5,"next_offset":5,"expected_bytes":5,"expected_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","max_bytes":10485760,"mime_type":"application/zip","committed":false}"#,
+        r#"{"path":"artifacts/imports/sample.zip","upload_id":"wc_upload_test_1","received_bytes":5,"next_offset":5,"expected_bytes":5,"expected_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","max_bytes":268435456,"mime_type":"application/zip","committed":false}"#,
         "",
     )
     .await;

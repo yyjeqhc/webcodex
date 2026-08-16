@@ -1839,10 +1839,14 @@ fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
     )
 }
 
-/// Maximum decoded size for one binary project artifact imported through GPT
-/// Actions/runtime tools. Keep bounded because artifact content travels to the
-/// owning agent as base64 in a JSON file-op payload.
+/// Maximum decoded size for whole-payload artifact operations and the current
+/// model-facing/export paths. Those paths still aggregate content or return it
+/// as base64/JSON, so they remain at 10 MiB even though chunked uploads admit
+/// larger files.
 pub(crate) const MAX_PROJECT_ARTIFACT_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
+
+/// Maximum final size for one chunked artifact upload.
+pub(crate) const MAX_PROJECT_ARTIFACT_UPLOAD_BYTES: usize = 256 * 1024 * 1024; // 256 MiB
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectArtifactExportSnapshot {
@@ -1861,13 +1865,15 @@ pub(crate) const DEFAULT_READ_PROJECT_ARTIFACT_LENGTH: usize = 32 * 1024; // 32 
 pub(crate) const MAX_READ_PROJECT_ARTIFACT_LENGTH: usize = 64 * 1024; // 64 KiB
 
 /// Maximum decoded size accepted for one `artifact_upload_chunk` request.
-pub(crate) const MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 64 * 1024; // 64 KiB
+pub(crate) const MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// Hard cap for a base64-encoded artifact payload plus JSON overhead.
 pub(crate) const MAX_PROJECT_ARTIFACT_BASE64_BYTES: usize = 14 * 1024 * 1024; // ~10 MiB decoded
 
-/// Hard cap for a base64-encoded chunk plus JSON overhead.
-pub(crate) const MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BASE64_BYTES: usize = 96 * 1024;
+/// Exact maximum standard-base64 length for one upload chunk. Transport JSON
+/// has separate bounded headroom and does not expand this decoded data limit.
+pub(crate) const MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BASE64_BYTES: usize =
+    ((MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES + 2) / 3) * 4;
 
 fn sniff_supported_mcp_image_mime(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -3510,10 +3516,10 @@ impl ToolRuntime {
             return artifact_policy_rejected_result(&path, e);
         }
         if let Some(bytes) = expected_bytes {
-            if bytes > MAX_PROJECT_ARTIFACT_BYTES {
+            if bytes > MAX_PROJECT_ARTIFACT_UPLOAD_BYTES {
                 return ToolResult::err(format!(
                     "expected_bytes too large; maximum is {} bytes",
-                    MAX_PROJECT_ARTIFACT_BYTES
+                    MAX_PROJECT_ARTIFACT_UPLOAD_BYTES
                 ));
             }
         }
@@ -3534,7 +3540,7 @@ impl ToolRuntime {
             "expected_sha256": expected_sha256,
             "mime_type": mime_type,
             "overwrite": overwrite.unwrap_or(false),
-            "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
+            "max_bytes": MAX_PROJECT_ARTIFACT_UPLOAD_BYTES,
         });
         self.run_project_artifact_write_file_op(
             project,

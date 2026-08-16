@@ -19,12 +19,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use xml::reader::{EventReader, XmlEvent};
 
 const DEFAULT_MAX_ARTIFACT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_ARTIFACT_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 const DEFAULT_ARTIFACT_READ_LENGTH: usize = 32 * 1024;
 const MAX_ARTIFACT_EXPORT_CHUNK_BYTES: usize = 64 * 1024;
-const DEFAULT_MAX_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 1024 * 1024;
 const ARTIFACT_UPLOAD_IDLE_TTL_SECS: u64 = 24 * 60 * 60;
 const MAX_ACTIVE_ARTIFACT_UPLOADS_PER_PROJECT: usize = 32;
-const MAX_ARTIFACT_UPLOAD_RESERVED_BYTES_PER_PROJECT: usize = 128 * 1024 * 1024;
+const MAX_ARTIFACT_UPLOAD_RESERVED_BYTES_PER_PROJECT: usize = 512 * 1024 * 1024;
 const MAX_ARTIFACT_UPLOAD_PROJECT_SCAN_ENTRIES: usize = 100_000;
 const MAX_ARTIFACT_UPLOAD_STATE_BYTES: usize = 4 * 1024;
 static ARTIFACT_UPLOAD_STATE_LOCK: Mutex<()> = Mutex::new(());
@@ -1514,7 +1515,7 @@ fn handle_artifact_upload_begin(
         Ok(root) => root,
         Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
     };
-    let max_bytes = match parse_usize_field(&payload, "max_bytes", DEFAULT_MAX_ARTIFACT_BYTES) {
+    let max_bytes = match parse_usize_field(&payload, "max_bytes", MAX_ARTIFACT_UPLOAD_BYTES) {
         Ok(value) if value > 0 => value,
         Ok(_) => {
             return line_edit_stdout(
@@ -1524,6 +1525,16 @@ fn handle_artifact_upload_begin(
         }
         Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
     };
+    if max_bytes > MAX_ARTIFACT_UPLOAD_BYTES {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                None,
+                format!("max_bytes exceeds upload maximum ({MAX_ARTIFACT_UPLOAD_BYTES})"),
+            ),
+            start,
+        );
+    }
     let expected_bytes = match parse_optional_usize_field(&payload, "expected_bytes") {
         Ok(value) => value,
         Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
@@ -1728,20 +1739,31 @@ fn handle_artifact_upload_chunk(
         }
         Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
     };
-    let max_chunk_bytes = match parse_usize_field(
-        &payload,
-        "max_chunk_bytes",
-        DEFAULT_MAX_ARTIFACT_UPLOAD_CHUNK_BYTES,
-    ) {
-        Ok(value) if value > 0 => value,
-        Ok(_) => {
-            return line_edit_stdout(
-                upload_error(Some(path), Some(&upload_id), "max_chunk_bytes must be >= 1"),
-                start,
-            )
-        }
-        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
-    };
+    let max_chunk_bytes =
+        match parse_usize_field(&payload, "max_chunk_bytes", MAX_ARTIFACT_UPLOAD_CHUNK_BYTES) {
+            Ok(value) if value > 0 => value,
+            Ok(_) => {
+                return line_edit_stdout(
+                    upload_error(Some(path), Some(&upload_id), "max_chunk_bytes must be >= 1"),
+                    start,
+                )
+            }
+            Err(e) => {
+                return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start)
+            }
+        };
+    if max_chunk_bytes > MAX_ARTIFACT_UPLOAD_CHUNK_BYTES {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                Some(&upload_id),
+                format!(
+                    "max_chunk_bytes exceeds upload chunk maximum ({MAX_ARTIFACT_UPLOAD_CHUNK_BYTES})"
+                ),
+            ),
+            start,
+        );
+    }
     let content_base64 = match payload.get("content_base64").and_then(Value::as_str) {
         Some(value) if !value.contains('\0') => value,
         _ => {
@@ -1805,12 +1827,12 @@ fn handle_artifact_upload_chunk(
         Ok(state) => state,
         Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
     };
-    if state.max_bytes > MAX_ARTIFACT_UPLOAD_RESERVED_BYTES_PER_PROJECT {
+    if state.max_bytes > MAX_ARTIFACT_UPLOAD_BYTES {
         return line_edit_stdout(
             upload_error(
                 Some(path),
                 Some(&upload_id),
-                "upload max_bytes exceeds project reservation quota",
+                "upload max_bytes exceeds per-file upload maximum",
             ),
             start,
         );
@@ -2574,7 +2596,7 @@ mod tests {
             expected_sha256: None,
             mime_type: None,
             overwrite: false,
-            max_bytes: DEFAULT_MAX_ARTIFACT_BYTES,
+            max_bytes: MAX_ARTIFACT_UPLOAD_BYTES,
         }
     }
 
@@ -2631,7 +2653,7 @@ mod tests {
             usage,
             ArtifactUploadProjectUsage {
                 active_uploads: 1,
-                reserved_bytes: DEFAULT_MAX_ARTIFACT_BYTES,
+                reserved_bytes: MAX_ARTIFACT_UPLOAD_BYTES,
             }
         );
         assert!(!orphan_part.exists());
@@ -2664,6 +2686,117 @@ mod tests {
         assert!(enforce_artifact_upload_begin_admission(&nearly_full, 2)
             .unwrap_err()
             .contains("reserved byte quota exceeded"));
+    }
+
+    #[test]
+    fn artifact_upload_begin_enforces_per_file_maximum() {
+        let tmp = tempfile::tempdir().unwrap();
+        let accepted_path = "artifacts/imports/max-file.bin";
+        let accepted = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_begin",
+            accepted_path,
+            json!({
+                "path": accepted_path,
+                "expected_bytes": null,
+                "expected_sha256": null,
+                "mime_type": null,
+                "overwrite": false,
+                "max_bytes": MAX_ARTIFACT_UPLOAD_BYTES,
+            }),
+        );
+        assert_eq!(accepted["max_bytes"], MAX_ARTIFACT_UPLOAD_BYTES);
+        let upload_id = accepted["upload_id"].as_str().unwrap().to_string();
+        let aborted = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_abort",
+            accepted_path,
+            json!({"path": accepted_path, "upload_id": upload_id}),
+        );
+        assert_eq!(aborted["aborted"], true);
+
+        let rejected_path = "artifacts/imports/too-large-file.bin";
+        let rejected = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_begin",
+            rejected_path,
+            json!({
+                "path": rejected_path,
+                "expected_bytes": null,
+                "expected_sha256": null,
+                "mime_type": null,
+                "overwrite": false,
+                "max_bytes": MAX_ARTIFACT_UPLOAD_BYTES + 1,
+            }),
+        );
+        assert_eq!(
+            rejected["error"],
+            format!("max_bytes exceeds upload maximum ({MAX_ARTIFACT_UPLOAD_BYTES})")
+        );
+    }
+
+    #[test]
+    fn artifact_upload_chunk_enforces_data_plane_maximum() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = "artifacts/imports/max-chunk.bin";
+        let begin = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_begin",
+            path,
+            json!({
+                "path": path,
+                "expected_bytes": null,
+                "expected_sha256": null,
+                "mime_type": null,
+                "overwrite": false,
+                "max_bytes": MAX_ARTIFACT_UPLOAD_CHUNK_BYTES * 2,
+            }),
+        );
+        let upload_id = begin["upload_id"].as_str().unwrap().to_string();
+
+        let rejected = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_chunk",
+            path,
+            json!({
+                "path": path,
+                "upload_id": upload_id.clone(),
+                "offset": 0,
+                "content_base64": "YQ==",
+                "max_chunk_bytes": MAX_ARTIFACT_UPLOAD_CHUNK_BYTES + 1,
+            }),
+        );
+        assert_eq!(
+            rejected["error"],
+            format!(
+                "max_chunk_bytes exceeds upload chunk maximum ({MAX_ARTIFACT_UPLOAD_CHUNK_BYTES})"
+            )
+        );
+        let (part, _) = upload_paths(tmp.path().join("artifacts/imports").as_path(), &upload_id);
+        assert_eq!(std::fs::metadata(&part).unwrap().len(), 0);
+
+        let bytes = vec![b'x'; MAX_ARTIFACT_UPLOAD_CHUNK_BYTES];
+        let accepted = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_chunk",
+            path,
+            json!({
+                "path": path,
+                "upload_id": upload_id.clone(),
+                "offset": 0,
+                "content_base64": general_purpose::STANDARD.encode(&bytes),
+                "max_chunk_bytes": MAX_ARTIFACT_UPLOAD_CHUNK_BYTES,
+            }),
+        );
+        assert_eq!(accepted["received_bytes"], MAX_ARTIFACT_UPLOAD_CHUNK_BYTES);
+
+        let aborted = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_abort",
+            path,
+            json!({"path": path, "upload_id": upload_id}),
+        );
+        assert_eq!(aborted["aborted"], true);
     }
 
     #[test]
@@ -2704,7 +2837,7 @@ mod tests {
     #[test]
     fn artifact_upload_begin_rejects_project_reserved_byte_quota() {
         let tmp = tempfile::tempdir().unwrap();
-        for index in 0..12 {
+        for index in 0..2 {
             let parent = tmp.path().join(format!("artifacts/quota-{index}"));
             std::fs::create_dir_all(&parent).unwrap();
             let upload_id = format!("wc_upload_quota_{index}");
@@ -2784,7 +2917,7 @@ mod tests {
                 expected_sha256: None,
                 mime_type: None,
                 overwrite: false,
-                max_bytes: MAX_ARTIFACT_UPLOAD_RESERVED_BYTES_PER_PROJECT + 1,
+                max_bytes: MAX_ARTIFACT_UPLOAD_BYTES + 1,
             },
         )
         .unwrap();
@@ -2798,12 +2931,12 @@ mod tests {
                 "upload_id": upload_id,
                 "offset": 0,
                 "content_base64": "YQ==",
-                "max_chunk_bytes": DEFAULT_MAX_ARTIFACT_UPLOAD_CHUNK_BYTES,
+                "max_chunk_bytes": MAX_ARTIFACT_UPLOAD_CHUNK_BYTES,
             }),
         );
         assert_eq!(
             output["error"],
-            "upload max_bytes exceeds project reservation quota"
+            "upload max_bytes exceeds per-file upload maximum"
         );
         assert_eq!(std::fs::metadata(&part).unwrap().len(), 0);
         assert!(sidecar.exists());

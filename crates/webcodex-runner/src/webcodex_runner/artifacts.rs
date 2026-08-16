@@ -284,6 +284,25 @@ fn write_bytes_atomic_strict(path: &Path, data: &[u8], overwrite: bool) -> Resul
     Err(last_error.unwrap_or_else(|| "could not create temporary artifact file".to_string()))
 }
 
+fn commit_artifact_upload_part(part: &Path, target: &Path, overwrite: bool) -> Result<(), String> {
+    if overwrite {
+        return std::fs::rename(part, target).map_err(|e| format!("upload finish failed: {e}"));
+    }
+    match std::fs::hard_link(part, target) {
+        Ok(()) => {
+            // The final target now exists without replacing any concurrent writer.
+            // If private-part cleanup fails, the target remains authoritative and a
+            // later upload sweep can remove the orphaned private link safely.
+            let _ = std::fs::remove_file(part);
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err("file exists and overwrite is false".to_string())
+        }
+        Err(e) => Err(format!("upload finish failed: {e}")),
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct ArtifactUploadState {
     path: String,
@@ -2050,15 +2069,8 @@ fn handle_artifact_upload_finish(
             start,
         );
     }
-    if let Err(e) = std::fs::rename(&part, resolved) {
-        return line_edit_stdout(
-            upload_error(
-                Some(path),
-                Some(&upload_id),
-                format!("upload finish failed: {e}"),
-            ),
-            start,
-        );
+    if let Err(e) = commit_artifact_upload_part(&part, resolved, state.overwrite) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
     }
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
@@ -2610,6 +2622,25 @@ mod tests {
 
         write_bytes_atomic_strict(&path, b"third", true).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"third");
+    }
+
+    #[test]
+    fn artifact_upload_create_only_commit_never_replaces_existing_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let part = temp.path().join(".wc-upload-test.part");
+        let target = temp.path().join("artifact.bin");
+        std::fs::write(&part, b"upload").unwrap();
+        std::fs::write(&target, b"concurrent").unwrap();
+
+        let error = commit_artifact_upload_part(&part, &target, false).unwrap_err();
+        assert_eq!(error, "file exists and overwrite is false");
+        assert_eq!(std::fs::read(&target).unwrap(), b"concurrent");
+        assert_eq!(std::fs::read(&part).unwrap(), b"upload");
+
+        std::fs::remove_file(&target).unwrap();
+        commit_artifact_upload_part(&part, &target, false).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"upload");
+        assert!(!part.exists());
     }
 
     fn artifact_request(

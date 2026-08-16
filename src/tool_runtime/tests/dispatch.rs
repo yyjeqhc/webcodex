@@ -998,18 +998,21 @@ fn cleanup_paths_match_sensitive_directories_by_complete_component() {
 #[test]
 fn project_management_tools_require_expected_fields() {
     for spec in registered_tool_specs() {
-        if spec.name == "register_project" || spec.name == "create_project" {
-            let required = spec.input_schema["required"]
-                .as_array()
-                .unwrap_or_else(|| panic!("{} must have required array", spec.name));
-            for field in ["client_id", "id", "name", "path"] {
-                assert!(
-                    required.iter().any(|v| v == field),
-                    "{} input_schema must require '{}'",
-                    spec.name,
-                    field
-                );
-            }
+        let expected: &[&str] = match spec.name.as_str() {
+            "register_project" | "create_project" => &["client_id", "id", "name", "path"],
+            "unregister_project" => &["project", "expected_revision"],
+            _ => continue,
+        };
+        let required = spec.input_schema["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{} must have required array", spec.name));
+        for field in expected {
+            assert!(
+                required.iter().any(|v| v == field),
+                "{} input_schema must require '{}'",
+                spec.name,
+                field
+            );
         }
     }
 }
@@ -1037,6 +1040,114 @@ async fn dispatch_register_project_rejects_unknown_client_id() {
             .contains("unknown agent"),
         "register_project should reject unknown client_id: {:?}",
         result.error
+    );
+}
+
+#[tokio::test]
+async fn dispatch_unregister_project_reuses_lifecycle_validation_without_project_preresolution() {
+    let runtime = test_runtime();
+    let revision = format!("sha256:{}", "a".repeat(64));
+    let result = runtime
+        .dispatch(ToolCall::UnregisterProject {
+            project: "agent:no-such-agent:demo".to_string(),
+            expected_revision: revision,
+        })
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["error"]["code"], "agent_unavailable");
+
+    let invalid = runtime
+        .dispatch(ToolCall::UnregisterProject {
+            project: "agent:no-such-agent:demo".to_string(),
+            expected_revision: "stale".to_string(),
+        })
+        .await;
+    assert!(!invalid.success);
+    assert_eq!(invalid.output["error"]["code"], "invalid_request");
+}
+
+#[tokio::test]
+async fn dispatch_unregister_project_removes_server_inventory_after_terminal_runner_success() {
+    let runtime = test_runtime();
+    let client_id = "unregister-success";
+    let revision = format!("sha256:{}", "a".repeat(64));
+    let mut summary = registered_project("demo", "/tmp/demo");
+    summary.revision = Some(revision.clone());
+    register_agent_projects(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            project_lifecycle: true,
+            ..Default::default()
+        },
+        vec![summary],
+    )
+    .await;
+    let project = crate::tool_runtime::agent_project_runtime_id(client_id, "demo");
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let revision = revision.clone();
+        async move {
+            runtime
+                .dispatch(ToolCall::UnregisterProject {
+                    project,
+                    expected_revision: revision,
+                })
+                .await
+        }
+    });
+    let request = loop {
+        if let Some(request) = next_agent_request_for_client(&runtime, client_id).await {
+            break request;
+        }
+        if task.is_finished() {
+            let result = task.await.unwrap();
+            panic!(
+                "unregister returned before dispatching a lifecycle request: success={} error={:?} output={}",
+                result.success, result.error, result.output
+            );
+        }
+        tokio::task::yield_now().await;
+    };
+    assert_eq!(request.kind, "project_lifecycle_unregister");
+    let payload: serde_json::Value =
+        serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["project_id"], "demo");
+    assert_eq!(payload["expected_revision"], revision);
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        client_id,
+        &format!("inst-{client_id}"),
+        &request.request_id,
+        0,
+        &json!({
+            "operation": "unregister",
+            "agent_project_id": "demo",
+            "outcome": "unregistered",
+            "changed": true,
+            "revision": serde_json::Value::Null
+        })
+        .to_string(),
+        "",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["project"], project);
+    assert_eq!(result.output["outcome"], "unregistered");
+    assert_eq!(result.output["changed"], true);
+    let client = runtime
+        .shell_clients
+        .get_client_view(client_id)
+        .await
+        .expect("Runner should remain registered");
+    assert!(
+        client.projects.iter().all(|entry| entry.id != "demo"),
+        "terminal unregister must remove only the Server project inventory entry"
     );
 }
 

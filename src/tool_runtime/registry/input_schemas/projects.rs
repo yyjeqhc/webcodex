@@ -39,6 +39,23 @@ pub(crate) fn register_project_input_schema() -> Value {
     ])
 }
 
+pub(crate) fn unregister_project_input_schema() -> Value {
+    object_schema(vec![
+        (
+            "project",
+            "string",
+            "Exact full runtime project id returned by list_projects (agent:<client_id>:<project_id>).",
+            true,
+        ),
+        (
+            "expected_revision",
+            "string",
+            "Exact sha256 revision returned by the same list_projects observation; stale revisions fail closed.",
+            true,
+        ),
+    ])
+}
+
 pub(crate) fn create_project_input_schema() -> Value {
     object_schema(vec![
         ("client_id", "string", "Registered Runner client_id.", true),

@@ -159,6 +159,7 @@ mod tests {
             "cargo_test",
             "go_test",
             "register_project",
+            "unregister_project",
             "create_project",
             "list_agents",
             "runtime_status",

@@ -68,7 +68,12 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     },
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_PROJECTS,
-        tools: &["list_projects", "register_project", "create_project"],
+        tools: &[
+            "list_projects",
+            "register_project",
+            "unregister_project",
+            "create_project",
+        ],
     },
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_GIT,

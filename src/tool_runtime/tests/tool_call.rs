@@ -1207,6 +1207,22 @@ fn from_tool_name_parses_project_management_tools() {
             && path == "/root/git/my-project"
     ));
 
+    let revision = format!("sha256:{}", "a".repeat(64));
+    let unregister = ToolCall::from_tool_name(
+        "unregister_project",
+        json!({
+            "project":"agent:oe:my-project",
+            "expected_revision": revision
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        unregister,
+        ToolCall::UnregisterProject { ref project, ref expected_revision }
+            if project == "agent:oe:my-project" && expected_revision == &revision
+    ));
+    assert_eq!(unregister.project(), None, "unregister must bypass generic project pre-resolution so already_unregistered remains representable");
+
     let create = ToolCall::from_tool_name(
         "create_project",
         json!({

@@ -32,6 +32,13 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::UnregisterProject {
+                project,
+                expected_revision,
+            } => {
+                self.unregister_project(project, expected_revision, auth)
+                    .await
+            }
             ToolCall::CreateProject {
                 client_id,
                 id,

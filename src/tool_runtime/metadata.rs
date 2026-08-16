@@ -283,6 +283,7 @@ mod tests {
             "workspace_checkpoint_restore",
             "workspace_checkpoint_delete",
             "register_project",
+            "unregister_project",
             "create_project",
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();

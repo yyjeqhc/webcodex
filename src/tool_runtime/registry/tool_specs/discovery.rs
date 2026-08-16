@@ -1,6 +1,7 @@
 use super::super::input_schemas::{
     create_project_input_schema, empty_input_schema, list_tools_input_schema,
     register_project_input_schema, runtime_status_input_schema, tool_manifest_input_schema,
+    unregister_project_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -21,6 +22,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "register_project",
             "Register an existing directory, including a non-Git or ad-hoc workspace, as a Project on one Runner. Use this when the directory already exists; policy still bounds allowed paths.".to_string(),
             register_project_input_schema(),
+        ),
+        tool_spec(
+            "unregister_project",
+            "Unregister one exact Runner project using the revision from list_projects. Removes registration only; never deletes source, worktree, or branch. Re-list after an indeterminate outcome.".to_string(),
+            unregister_project_input_schema(),
         ),
         tool_spec(
             "create_project",

@@ -113,6 +113,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "action" => json!("focus"),
         "key" => json!("tab"),
         "id" => json!("private-drop"),
+        "expected_revision" => json!(format!("sha256:{}", "a".repeat(64))),
         "name" => json!("Private Drop"),
         "kind" => json!("note"),
         "message" => json!("hello"),

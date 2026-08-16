@@ -695,6 +695,7 @@ impl ToolRuntime {
 
             call @ (ToolCall::ListProjects
             | ToolCall::RegisterProject { .. }
+            | ToolCall::UnregisterProject { .. }
             | ToolCall::CreateProject { .. }) => self.dispatch_project_tool(call, auth).await,
 
             call @ (ToolCall::RunProcess { .. }

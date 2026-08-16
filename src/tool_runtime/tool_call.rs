@@ -1453,6 +1453,16 @@ pub enum ToolCall {
         overwrite: bool,
     },
 
+    /// Unregister one exact Runner project registration using a revision
+    /// observed from `list_projects`. This removes only WebCodex registration
+    /// state; it never deletes the project directory, Git worktree, or branch.
+    /// The target deliberately bypasses generic project pre-resolution so a
+    /// terminal `already_unregistered` Runner outcome remains representable.
+    UnregisterProject {
+        project: String,
+        expected_revision: String,
+    },
+
     /// Create a new directory on the selected agent and register it as a
     /// WebCodex project. The agent validates the path against its own policy,
     /// creates the directory (and optional template files / git init), writes
@@ -1913,6 +1923,7 @@ impl ToolCall {
             Self::ComputerSaveSnapshot { .. } => "computer_save_snapshot",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",
+            Self::UnregisterProject { .. } => "unregister_project",
             Self::CreateProject { .. } => "create_project",
             Self::ListAgents => "list_agents",
             Self::RuntimeStatus { .. } => "runtime_status",

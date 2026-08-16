@@ -205,8 +205,9 @@ impl AdminProjectLifecycleService {
                 if !request.confirm {
                     return Err(api_error(400, "invalid_request"));
                 }
-                self.mutate_authorized_core(
-                    auth,
+                Self::mutate_authorized_core(
+                    self.runtime.as_ref(),
+                    Some(auth),
                     action,
                     &request.project,
                     &request.expected_revision,
@@ -229,24 +230,18 @@ impl AdminProjectLifecycleService {
         project: &str,
         expected_revision: &str,
     ) -> ServiceResponse {
-        match self
-            .mutate_authorized_core(
-                auth,
-                "unregister",
-                project,
-                expected_revision,
-                "project_unregister",
-                true,
-            )
-            .await
-        {
-            Ok(response) | Err(response) => response,
-        }
+        unregister_project_runtime(
+            self.runtime.as_ref(),
+            Some(auth),
+            project,
+            expected_revision,
+        )
+        .await
     }
 
     async fn mutate_authorized_core(
-        &self,
-        auth: &AuthContext,
+        runtime: &ToolRuntime,
+        auth: Option<&AuthContext>,
         action: &'static str,
         target: &str,
         expected_revision: &str,
@@ -255,17 +250,21 @@ impl AdminProjectLifecycleService {
     ) -> Result<ServiceResponse, ServiceResponse> {
         validate_revision(expected_revision)?;
         let (client_id, project_id) = parse_runtime_project(target)?;
-        if require_owner_access {
-            self.runtime
+        // Authenticated ordinary-runtime callers keep the explicit Runner owner/access
+        // fence used by the HTTP unregister path. `auth=None` is the trusted in-process
+        // / open-runtime path: visibility is intentionally unfiltered there, matching
+        // other ToolRuntime operations, so requiring a user owner would incorrectly
+        // reject otherwise reachable unowned Runners.
+        if require_owner_access && auth.is_some() {
+            runtime
                 .shell_clients
-                .assert_client_access(Some(auth), &client_id)
+                .assert_client_access(auth, &client_id)
                 .await
                 .map_err(|_| api_error(503, "agent_unavailable"))?;
         }
-        let client = self
-            .runtime
+        let client = runtime
             .shell_clients
-            .get_client_view_for_auth(&client_id, Some(auth))
+            .get_client_view_for_auth(&client_id, auth)
             .await
             .ok_or_else(|| api_error(503, "agent_unavailable"))?;
         if !client.connected || client.status != "online" {
@@ -279,10 +278,9 @@ impl AdminProjectLifecycleService {
             return Err(api_error(404, "project_not_found"));
         }
         let (active_jobs, _unregister_fence) = if action == "unregister" {
-            let active = self
-                .runtime
+            let active = runtime
                 .shell_clients
-                .begin_project_unregister(Some(auth), target)
+                .begin_project_unregister(auth, target)
                 .await
                 .map_err(|_| api_error(500, "operation_failed"))?;
             if active > 0 {
@@ -294,15 +292,15 @@ impl AdminProjectLifecycleService {
             (
                 active,
                 Some(ProjectUnregisterFence {
-                    registry: self.runtime.shell_clients.clone(),
+                    registry: runtime.shell_clients.clone(),
                     project: target.to_string(),
                 }),
             )
         } else {
             (
-                self.runtime
+                runtime
                     .shell_clients
-                    .count_active_jobs_for_project(Some(auth), target)
+                    .count_active_jobs_for_project(auth, target)
                     .await,
                 None,
             )
@@ -313,8 +311,7 @@ impl AdminProjectLifecycleService {
         }))
         .map_err(|_| api_error(500, "operation_failed"))?;
         let kind = format!("project_lifecycle_{action}");
-        let (request_id, receiver) = self
-            .runtime
+        let (request_id, receiver) = runtime
             .shell_clients
             .enqueue_project_op(client_id.clone(), &kind, payload, requester.to_string())
             .await
@@ -322,7 +319,7 @@ impl AdminProjectLifecycleService {
         let response = match tokio::time::timeout(Duration::from_secs(WAIT_SECS), receiver).await {
             Ok(Ok(value)) => value,
             Ok(Err(_)) | Err(_) => {
-                self.runtime.shell_clients.cancel_request(&request_id).await;
+                runtime.shell_clients.cancel_request(&request_id).await;
                 return Err(api_error(503, "operation_indeterminate"));
             }
         };
@@ -347,14 +344,12 @@ impl AdminProjectLifecycleService {
             .unwrap_or(false);
         let revision = output.get("revision").cloned().unwrap_or(Value::Null);
         if action == "unregister" && matches!(outcome, "unregistered" | "already_unregistered") {
-            let _ = self
-                .runtime
+            let _ = runtime
                 .shell_clients
                 .remove_client_project(&client_id, &project_id)
                 .await;
         } else if let Some(summary) = lifecycle_summary(&output, &project_id) {
-            let _ = self
-                .runtime
+            let _ = runtime
                 .shell_clients
                 .upsert_client_project(&client_id, summary)
                 .await;
@@ -505,6 +500,31 @@ impl AdminProjectLifecycleService {
             },
             Err(_) => api_error(503, "operation_indeterminate"),
         }
+    }
+}
+
+/// Shared ordinary-runtime unregister path used by both the dedicated HTTP
+/// endpoint and the model-facing runtime tool. The lifecycle core owns exact
+/// revision validation, owner filtering, active-Job fencing, Runner capability
+/// checks, uncertain delivery semantics, and Server inventory removal.
+pub(crate) async fn unregister_project_runtime(
+    runtime: &ToolRuntime,
+    auth: Option<&AuthContext>,
+    project: &str,
+    expected_revision: &str,
+) -> ServiceResponse {
+    match AdminProjectLifecycleService::mutate_authorized_core(
+        runtime,
+        auth,
+        "unregister",
+        project,
+        expected_revision,
+        "project_unregister",
+        true,
+    )
+    .await
+    {
+        Ok(response) | Err(response) => response,
     }
 }
 

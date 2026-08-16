@@ -7488,6 +7488,11 @@ async fn mcp_tools_list_includes_project_management_tools() {
         names
     );
     assert!(
+        names.contains(&"unregister_project"),
+        "MCP tools/list must include unregister_project: {:?}",
+        names
+    );
+    assert!(
         names.contains(&"create_project"),
         "MCP tools/list must include create_project: {:?}",
         names
@@ -7539,6 +7544,7 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
     for forbidden in [
         "start_coding_task",
         "register_project",
+        "unregister_project",
         "create_project",
         "start_session",
         "current_session",
@@ -7638,6 +7644,7 @@ async fn local_coding_rejects_non_surface_tools_at_mcp_boundary() {
     for denied in [
         "start_coding_task",
         "register_project",
+        "unregister_project",
         "create_project",
         "start_session",
         "open_session_shell",

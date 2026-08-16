@@ -1,14 +1,13 @@
-//! Agent-side project management tools: `register_project`, `create_project`,
-//! and the internal Runner-managed temporary-project path used by coding-task
-//! startup.
+//! Agent-side project management tools: `register_project`, `unregister_project`,
+//! `create_project`, and the internal Runner-managed temporary-project path used
+//! by coding-task startup.
 //!
-//! Both tools route to the selected agent via `enqueue_project_op`. The agent
-//! validates the path against its own policy, writes `projects_dir/<id>.toml`
-//! atomically (and for `create_project` creates the directory / template files
-//! / optional git init), and returns structured JSON in `stdout`. The runtime
-//! parses the JSON, refreshes the server-side project cache via
-//! `upsert_client_project` so `listProjects` sees the new project immediately,
-//! and returns the structured result.
+//! Registration and creation route to the selected agent through the project-op
+//! path. Unregistration reuses the shared project lifecycle path so the
+//! model-facing tool and `POST /api/projects/unregister` have the same revision
+//! CAS, active-Job fence, capability check, uncertain-delivery semantics, and
+//! server inventory update. The Runner remains authoritative for its local
+//! `projects.d` registration state.
 //!
 //! The server never writes project config files or creates directories on the
 //! agent host directly. OS permissions and agent policy
@@ -130,6 +129,40 @@ impl ToolRuntime {
             auth,
         )
         .await
+    }
+
+    /// Remove only one exact Runner project registration. The caller supplies
+    /// the revision observed from `list_projects`; the shared lifecycle core
+    /// keeps CAS, active-Job fencing, owner filtering, and uncertain-delivery
+    /// semantics identical to `POST /api/projects/unregister`.
+    pub(crate) async fn unregister_project(
+        &self,
+        project: String,
+        expected_revision: String,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        let response = crate::admin_project_lifecycle::unregister_project_runtime(
+            self,
+            auth,
+            &project,
+            &expected_revision,
+        )
+        .await;
+        if (200..300).contains(&response.status) {
+            return ToolResult::ok(response.body);
+        }
+        let error_code = response
+            .body
+            .pointer("/error/code")
+            .and_then(Value::as_str)
+            .unwrap_or("operation_failed")
+            .to_string();
+        let message = if error_code == "operation_indeterminate" {
+            "operation_indeterminate: unregister may have completed; call list_projects and reconcile the exact project before retrying".to_string()
+        } else {
+            error_code.clone()
+        };
+        ToolResult::err_with_output(message, response.body)
     }
 
     /// Create a new directory on the selected agent and register it as a

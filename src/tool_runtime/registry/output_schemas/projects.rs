@@ -1,10 +1,13 @@
 use serde_json::Value;
 
-use super::common::{nullable_schema, schema_type, wrapped_output_schema};
+use super::common::{
+    array_schema, nullable_schema, open_object_schema, schema_type, wrapped_output_schema,
+};
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "register_project" => Some(wrapped_output_schema(register_project_fields())),
+        "unregister_project" => Some(wrapped_output_schema(unregister_project_fields())),
         "create_project" => Some(wrapped_output_schema(create_project_fields())),
         _ => None,
     }
@@ -80,6 +83,42 @@ fn register_project_fields() -> Vec<(&'static str, Value)> {
             schema_type(
                 "boolean",
                 "Project onboarding result metadata for registration or create-and-register responses. Patch permission flag recorded in the agent project config; this schema does not change permission behavior or allow arbitrary project writes and does not include file content.",
+            ),
+        ),
+    ]
+}
+
+fn unregister_project_fields() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "operation",
+            schema_type("string", "Lifecycle operation name; successful unregister responses report unregister."),
+        ),
+        (
+            "project",
+            schema_type("string", "Exact runtime project registration targeted by this lifecycle operation."),
+        ),
+        (
+            "outcome",
+            schema_type("string", "Terminal Runner lifecycle outcome such as unregistered or already_unregistered."),
+        ),
+        (
+            "changed",
+            schema_type("boolean", "True only when the Runner removed an existing registration."),
+        ),
+        (
+            "revision",
+            nullable_schema("string", "Post-operation registration revision when one exists, otherwise null."),
+        ),
+        (
+            "active_jobs",
+            schema_type("integer", "Active project Job count observed by the unregister fence; successful unregister is zero."),
+        ),
+        (
+            "warnings",
+            array_schema(
+                open_object_schema("Bounded project lifecycle warning metadata."),
+                "Bounded project lifecycle warnings.",
             ),
         ),
     ]

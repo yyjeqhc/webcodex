@@ -128,6 +128,9 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 &["client_id", "surface_id", "element_id", "action"],
             );
         }
+        "computer_scroll_to_element" => {
+            copy_keys(obj, &mut out, &["client_id", "surface_id", "element_id"]);
+        }
         "computer_input_text" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id", "element_id"]);
             out.insert(
@@ -525,6 +528,11 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "action": output.get("action").cloned().unwrap_or(Value::Null),
             "success": output.get("success").cloned().unwrap_or(Value::Null),
         }),
+        "computer_scroll_to_element" => serde_json::json!({
+            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
+            "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+        }),
         "computer_input_text" => serde_json::json!({
             "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
             "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
@@ -765,6 +773,34 @@ mod computer_privacy_tests {
         assert_eq!(summary["action"], "press");
         assert_eq!(summary["success"], true);
         assert!(!serialized.contains("PRIVATE CONTROL TARGET"));
+        assert!(!serialized.contains("SUPER_SECRET_VALUE"));
+    }
+
+    #[test]
+    fn computer_scroll_to_element_ledger_is_metadata_only() {
+        let request = json!({
+            "client_id": "mini",
+            "surface_id": "surface_safe",
+            "element_id": "element_safe",
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_scroll_to_element", &request);
+        assert_eq!(request_summary, request);
+
+        let output = json!({
+            "platform": "macos",
+            "surface_id": "surface_safe",
+            "element_id": "element_safe",
+            "success": true,
+            "title": "PRIVATE SCROLLED TARGET",
+            "value": "SUPER_SECRET_VALUE"
+        });
+        let summary = session_log_result_for_tool("computer_scroll_to_element", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["surface_id"], "surface_safe");
+        assert_eq!(summary["element_id"], "element_safe");
+        assert_eq!(summary["success"], true);
+        assert!(!serialized.contains("PRIVATE SCROLLED TARGET"));
         assert!(!serialized.contains("SUPER_SECRET_VALUE"));
     }
 
@@ -1139,6 +1175,15 @@ impl ToolCall {
                 "surface_id": surface_id,
                 "element_id": element_id,
                 "action": action,
+            }),
+            Self::ComputerScrollToElement {
+                client_id,
+                surface_id,
+                element_id,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "surface_id": surface_id,
+                "element_id": element_id,
             }),
             Self::ComputerInputText {
                 client_id,

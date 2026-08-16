@@ -245,6 +245,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // Control authority is runtime/platform-specific and is never
             // implied by either observation capability in generated config.
             computer_control: false,
+            // Semantic scroll-to-element is an independently advertised native
+            // capability and is never inferred from computer_control.
+            computer_scroll_to_element: false,
             // Exact window activation is independently advertised only by the
             // running binary after the native handler is installed.
             computer_window_activate: false,

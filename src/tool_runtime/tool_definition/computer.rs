@@ -1,6 +1,6 @@
 use super::AgentCapability::{
     ComputerAccessibilityObserve, ComputerControl, ComputerElementState, ComputerObserve,
-    ComputerTextInput, ComputerWindowActivate, FileWrite,
+    ComputerScrollToElement, ComputerTextInput, ComputerWindowActivate, FileWrite,
 };
 use super::ToolVisibility::ModelVisible;
 use super::{def, unit_arguments, ToolDefinition, TOOL_CATEGORY_COMPUTER};
@@ -107,6 +107,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_COMPUTER,
         Some(ComputerControl),
+        TOOL_PROVIDER_AGENT,
+        ComputerControlRisk,
+        Some(COMPUTER_CONTROL),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_scroll_to_element",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerScrollToElement),
         TOOL_PROVIDER_AGENT,
         ComputerControlRisk,
         Some(COMPUTER_CONTROL),

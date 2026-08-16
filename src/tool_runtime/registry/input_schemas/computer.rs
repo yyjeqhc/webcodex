@@ -95,6 +95,19 @@ pub(crate) fn computer_control_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_scroll_to_element_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose macOS Accessibility element is scrolled into view."},
+            "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque surface_id used to obtain the element."},
+            "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local element_id returned by computer_accessibility_tree or computer_find_elements."}
+        },
+        "required": ["client_id", "surface_id", "element_id"]
+    })
+}
+
 pub(crate) fn computer_input_text_input_schema() -> Value {
     json!({
         "type": "object",

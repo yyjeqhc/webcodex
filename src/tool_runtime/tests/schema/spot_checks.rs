@@ -324,6 +324,38 @@ fn tool_specs_computer_activate_window_is_exact_surface_only() {
 }
 
 #[test]
+fn tool_specs_computer_scroll_to_element_is_semantic_and_exact() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "computer_scroll_to_element");
+    assert_eq!(
+        required_fields(spec),
+        vec![
+            "client_id".to_string(),
+            "surface_id".to_string(),
+            "element_id".to_string(),
+        ]
+    );
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_scroll_to_element input schema",
+        present: ["client_id", "surface_id", "element_id"],
+        absent: ["action", "delta", "distance", "x", "y", "wheel", "direction"]
+    );
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_scroll_to_element output schema",
+        present: ["platform", "surface_id", "element_id", "success"],
+        absent: ["action", "title", "value", "coordinates"]
+    );
+}
+
+#[test]
 fn tool_specs_schema_spot_checks() {
     // Table-driven: (tool_name, required_fields, forbidden_fields).
     // Required fields are checked via exact equality to catch unexpected additions.

@@ -231,6 +231,7 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ("computer_element_state", "computer", "none"),
         ("computer_activate_window", "computer", "none"),
         ("computer_control", "computer", "none"),
+        ("computer_scroll_to_element", "computer", "none"),
         ("computer_input_text", "computer", "none"),
         ("computer_snapshot", "computer", "none"),
         (

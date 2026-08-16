@@ -91,9 +91,11 @@ This operation crosses Computer observation and project artifact authority and t
 
 ### CU-9 — bounded scroll
 
-Add scrolling as a distinct capability/effect after semantic observation and generation handling are established.
+The first scroll slice is `computer_scroll_to_element(client_id, surface_id, element_id)`, a distinct model-facing effect with its own additive Runner capability and wire kind. It is not an action value on `computer_control`, and an older Runner that advertises only `computer_control` must fail closed rather than being treated as scroll-capable.
 
-Prefer semantic scroll-to-element when the native accessibility backend supports it. A lower-level wheel fallback, if needed, must be bounded and tied to an exactly revalidated active/focused surface. Do not fold scrolling into generic `computer_control`.
+On macOS the Runner keeps the existing exact surface/element correlation and protected-content fences, re-resolves the ephemeral Accessibility handle, verifies native `AXScrollToVisible` support, and performs only that semantic action. The caller supplies no wheel delta, direction, distance, or coordinates. Unsupported targets fail deterministically; a response lost after dispatch remains `outcome_unknown`, so current UI state must be observed before retrying.
+
+No lower-level wheel fallback is added in this slice. If later dogfood demonstrates a real need for one, it must remain separately bounded and tied to an exactly revalidated active/focused surface rather than widening this semantic contract.
 
 ## Next capability sequence
 

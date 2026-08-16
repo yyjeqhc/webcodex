@@ -738,6 +738,13 @@ mod tests {
             })
         );
         assert_eq!(
+            check_runtime_tool_scope(Some(&observe_only), "computer_scroll_to_element"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_CONTROL),
+                description: "missing required scope: computer:control".to_string(),
+            })
+        );
+        assert_eq!(
             check_runtime_tool_scope(Some(&observe_only), "computer_input_text"),
             Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(crate::auth::SCOPE_COMPUTER_CONTROL),
@@ -747,6 +754,10 @@ mod tests {
         let control = oauth(&["computer:control"]);
         assert_eq!(
             check_runtime_tool_scope(Some(&control), "computer_control"),
+            Ok(())
+        );
+        assert_eq!(
+            check_runtime_tool_scope(Some(&control), "computer_scroll_to_element"),
             Ok(())
         );
         assert_eq!(

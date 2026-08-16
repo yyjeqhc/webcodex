@@ -142,6 +142,7 @@ mod tests {
             "computer_element_state",
             "computer_activate_window",
             "computer_control",
+            "computer_scroll_to_element",
             "computer_input_text",
             "computer_snapshot",
             "computer_save_snapshot",

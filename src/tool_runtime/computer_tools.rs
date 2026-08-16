@@ -7,6 +7,7 @@ use crate::auth::AuthContext;
 use crate::shell_protocol::{
     ShellCommandExecutionState, ShellFileOpRequest, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
 };
@@ -245,6 +246,31 @@ impl ToolRuntime {
                         "element_id": element_id,
                         "action": action,
                     }),
+                    auth,
+                    None,
+                    Some(surface_id.as_str()),
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerScrollToElement {
+                client_id,
+                surface_id,
+                element_id,
+            } => {
+                if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+                    return computer_error("invalid_surface", "surface_id is invalid");
+                }
+                if !element_id.starts_with("element_")
+                    || element_id.len() <= "element_".len()
+                    || element_id.len() > MAX_ELEMENT_ID_BYTES
+                {
+                    return computer_error("invalid_element", "element_id is invalid");
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_scroll_to_element",
+                    json!({"surface_id": surface_id, "element_id": element_id}),
                     auth,
                     None,
                     Some(surface_id.as_str()),
@@ -749,6 +775,7 @@ impl ToolRuntime {
             }
             "computer_element_state" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE],
             "computer_control" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL],
+            "computer_scroll_to_element" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT],
             "computer_activate_window" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE],
             "computer_input_text" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT],
             _ => return computer_error("invalid_request", "unsupported computer request kind"),
@@ -935,6 +962,14 @@ impl ToolRuntime {
                 ),
                 "Runner reported successful computer control but returned inconsistent metadata; inspect current UI state before retrying",
             ),
+            "computer_scroll_to_element" => computer_effect_validated_result(
+                validate_computer_scroll_to_element(
+                    output,
+                    expected_surface_id.unwrap_or_default(),
+                    expected_element_id.as_deref().unwrap_or_default(),
+                ),
+                "Runner reported successful computer scroll but returned inconsistent metadata; inspect current UI state before retrying",
+            ),
             "computer_input_text" => computer_effect_validated_result(
                 validate_computer_input_text(
                     output,
@@ -1032,7 +1067,10 @@ fn computer_error_recovery_message(error_kind: &str, error: &str) -> String {
 fn computer_request_is_effect(kind: &str) -> bool {
     matches!(
         kind,
-        "computer_activate_window" | "computer_control" | "computer_input_text"
+        "computer_activate_window"
+            | "computer_control"
+            | "computer_scroll_to_element"
+            | "computer_input_text"
     )
 }
 
@@ -1223,6 +1261,7 @@ fn classify_runner_error(error: &str) -> &'static str {
         "capture_failed",
         "accessibility_failed",
         "control_failed",
+        "scroll_failed",
         "input_failed",
         "outcome_unknown",
         "image_too_large",
@@ -1646,6 +1685,36 @@ fn validate_computer_control(
         return computer_error(
             "invalid_runner_response",
             "computer control result is inconsistent",
+        );
+    }
+    ToolResult::ok(output)
+}
+
+fn validate_computer_scroll_to_element(
+    output: Value,
+    expected_surface_id: &str,
+    expected_element_id: &str,
+) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "computer scroll result is not an object",
+            )
+        }
+    };
+    let allowed = ["platform", "surface_id", "element_id", "success"];
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
+        || output.get("element_id").and_then(Value::as_str) != Some(expected_element_id)
+        || output.get("success").and_then(Value::as_bool) != Some(true)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "computer scroll result is inconsistent",
         );
     }
     ToolResult::ok(output)
@@ -2203,6 +2272,43 @@ mod tests {
     }
 
     #[test]
+    fn computer_scroll_validator_is_exact_and_post_dispatch_mismatch_is_unknown() {
+        let valid = validate_computer_scroll_to_element(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "success": true
+            }),
+            "surface_test",
+            "element_child",
+        );
+        assert!(valid.success, "{:?}", valid.output);
+
+        let invalid = validate_computer_scroll_to_element(
+            json!({
+                "platform": "macos",
+                "surface_id": "surface_test",
+                "element_id": "element_other",
+                "success": true,
+                "title": "MUST_NOT_SURVIVE"
+            }),
+            "surface_test",
+            "element_child",
+        );
+        assert!(!invalid.success);
+        let unknown = computer_effect_validated_result(
+            invalid,
+            "inconsistent scroll result; observe before retrying",
+        );
+        assert_eq!(unknown.output["error_kind"], "outcome_unknown");
+        assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+        assert!(!serde_json::to_string(&unknown.output)
+            .unwrap()
+            .contains("MUST_NOT_SURVIVE"));
+    }
+
+    #[test]
     fn computer_input_text_validator_is_exact_and_post_dispatch_mismatch_is_unknown() {
         let valid = validate_computer_input_text(
             json!({
@@ -2309,6 +2415,7 @@ mod tests {
     fn computer_activate_window_uses_effect_delivery_semantics() {
         assert!(computer_request_is_effect("computer_activate_window"));
         assert!(computer_request_is_effect("computer_control"));
+        assert!(computer_request_is_effect("computer_scroll_to_element"));
         assert!(computer_request_is_effect("computer_input_text"));
         for read_only in [
             "computer_list_windows",
@@ -2322,7 +2429,7 @@ mod tests {
 
     #[test]
     fn computer_control_transport_failure_is_retryable_only_when_undispatched() {
-        // The same narrow delivery fence is shared by computer_activate_window and computer_input_text.
+        // The same narrow delivery fence is shared by activate-window, scroll-to-element, and text input.
         let not_started = computer_effect_delivery_failure("transport lost", Some(false));
         assert!(!not_started.success);
         assert_eq!(not_started.output["error_kind"], "not_started");

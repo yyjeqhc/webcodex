@@ -93,6 +93,7 @@ async fn register_agent_with_lsp_capabilities(
                     computer_accessibility_observe: false,
                     computer_element_state: false,
                     computer_control: false,
+                    computer_scroll_to_element: false,
                     computer_window_activate: false,
                     computer_text_input: false,
                     job_state_reconciliation: false,

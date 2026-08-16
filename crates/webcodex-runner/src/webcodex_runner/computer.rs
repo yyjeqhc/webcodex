@@ -607,6 +607,36 @@ impl ComputerObserver {
         platform::control(surface_id, element_id, &record, &element, action)
     }
 
+    fn scroll_to_element(&self, surface_id: &str, element_id: &str) -> Result<Value, String> {
+        if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
+            return Err("invalid_request: surface_id is invalid".to_string());
+        }
+        if !element_id.starts_with("element_")
+            || element_id.len() <= "element_".len()
+            || element_id.len() > MAX_ELEMENT_ID_BYTES
+        {
+            return Err("invalid_request: element_id is invalid".to_string());
+        }
+        let surface_registry = self
+            .surfaces
+            .lock()
+            .map_err(|_| "computer_state_error: surface registry lock poisoned".to_string())?;
+        let record = surface_registry
+            .get(surface_id)
+            .cloned()
+            .ok_or_else(|| "stale_surface: unknown or stale surface_id".to_string())?;
+        let element = self
+            .elements
+            .lock()
+            .map_err(|_| "computer_state_error: element registry lock poisoned".to_string())?
+            .get(element_id)
+            .ok_or_else(|| "stale_element: unknown, evicted, or stale element_id".to_string())?;
+        if element.surface_id != surface_id {
+            return Err("stale_element: element_id belongs to a different surface".to_string());
+        }
+        platform::scroll_to_element(surface_id, element_id, &record, &element)
+    }
+
     fn input_text(&self, surface_id: &str, element_id: &str, text: &str) -> Result<Value, String> {
         if surface_id.is_empty() || surface_id.len() > MAX_SURFACE_ID_BYTES {
             return Err("invalid_request: surface_id is invalid".to_string());
@@ -1585,6 +1615,7 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
             | "computer_element_state"
             | "computer_activate_window"
             | "computer_control"
+            | "computer_scroll_to_element"
             | "computer_input_text"
     )
 }
@@ -1598,6 +1629,31 @@ fn ensure_exact_payload_fields(payload: &Value, expected: &[&str]) -> Result<(),
         return Err("invalid_request: computer payload contains unsupported fields".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod scroll_wire_contract_tests {
+    use super::*;
+
+    #[test]
+    fn scroll_to_element_is_a_distinct_strict_request_kind() {
+        assert!(is_computer_request_kind("computer_scroll_to_element"));
+        assert!(ensure_exact_payload_fields(
+            &json!({"surface_id": "surface_test", "element_id": "element_test"}),
+            &["surface_id", "element_id"],
+        )
+        .is_ok());
+        let error = ensure_exact_payload_fields(
+            &json!({
+                "surface_id": "surface_test",
+                "element_id": "element_test",
+                "delta": 1
+            }),
+            &["surface_id", "element_id"],
+        )
+        .unwrap_err();
+        assert!(error.contains("unsupported fields"));
+    }
 }
 
 fn optional_snapshot_region(payload: &Value) -> Result<Option<SnapshotRegion>, String> {
@@ -1734,6 +1790,19 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                     })
                 },
             )
+        }
+        "computer_scroll_to_element" => {
+            ensure_exact_payload_fields(&payload, &["surface_id", "element_id"]).and_then(|()| {
+                let surface_id = payload
+                    .get("surface_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_request: surface_id is required".to_string())?;
+                let element_id = payload
+                    .get("element_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_request: element_id is required".to_string())?;
+                ComputerObserver::global().scroll_to_element(surface_id, element_id)
+            })
         }
         "computer_input_text" => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "text"]).and_then(
@@ -1874,6 +1943,15 @@ mod platform {
         _action: ComputerAction,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: computer control is unavailable on this platform".to_string())
+    }
+
+    pub(super) fn scroll_to_element(
+        _surface_id: &str,
+        _element_id: &str,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+    ) -> Result<serde_json::Value, String> {
+        Err("unsupported_platform: computer scroll is unavailable on this platform".to_string())
     }
 
     pub(super) fn input_text(
@@ -2091,6 +2169,50 @@ mod platform {
                 "outcome_unknown: {operation} returned AXError({}) after the native action was attempted",
                 error.0
             )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn scroll_attempt_error(operation: &str, error: AXError) -> String {
+        if error == AXError::APIDisabled {
+            "permission_denied: macOS Accessibility permission is not granted".to_string()
+        } else if matches!(
+            error,
+            AXError::IllegalArgument
+                | AXError::InvalidUIElement
+                | AXError::AttributeUnsupported
+                | AXError::ActionUnsupported
+                | AXError::NotImplemented
+        ) {
+            format!(
+                "scroll_failed: {operation} was rejected with AXError({})",
+                error.0
+            )
+        } else {
+            format!(
+                "outcome_unknown: {operation} returned AXError({}) after the native action was attempted",
+                error.0
+            )
+        }
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    mod scroll_attempt_tests {
+        use super::*;
+
+        #[test]
+        fn rejected_scroll_action_is_definite_but_unclassified_native_error_is_unknown() {
+            let rejected = scroll_attempt_error(
+                "AXUIElementPerformAction(AXScrollToVisible)",
+                AXError::ActionUnsupported,
+            );
+            assert!(rejected.starts_with("scroll_failed:"), "{rejected}");
+
+            let uncertain = scroll_attempt_error(
+                "AXUIElementPerformAction(AXScrollToVisible)",
+                AXError::NoValue,
+            );
+            assert!(uncertain.starts_with("outcome_unknown:"), "{uncertain}");
         }
     }
 
@@ -2915,6 +3037,58 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
+    pub(super) fn scroll_to_element(
+        surface_id: &str,
+        element_id: &str,
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
+    ) -> Result<Value, String> {
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(
+                "permission_denied: macOS Accessibility permission is not granted".to_string(),
+            );
+        }
+        let target_fingerprint = element.target_fingerprint().ok_or_else(|| {
+            "stale_element: AX element correlation lineage is incomplete".to_string()
+        })?;
+        if element.contains_protected_content() {
+            return Err(
+                "permission_denied: macOS Accessibility protected content cannot be scrolled"
+                    .to_string(),
+            );
+        }
+        if !target_fingerprint.has_positive_evidence() {
+            return Err(
+                "stale_element: AX element lacks positive correlation evidence for scrolling"
+                    .to_string(),
+            );
+        }
+        let deadline = AxObservationDeadline::new();
+        let current = resolve_correlated_element(surface, element, &deadline)?;
+        if !ax_supports_action(&deadline, &current, "AXScrollToVisible")? {
+            return Err(
+                "scroll_failed: AX element does not support the AXScrollToVisible action"
+                    .to_string(),
+            );
+        }
+        prepare_ax_call(&deadline, &current)?;
+        let error =
+            unsafe { current.perform_action(&CFString::from_static_str("AXScrollToVisible")) };
+        if error != AXError::Success {
+            return Err(scroll_attempt_error(
+                "AXUIElementPerformAction(AXScrollToVisible)",
+                error,
+            ));
+        }
+        Ok(json!({
+            "platform": "macos",
+            "surface_id": surface_id,
+            "element_id": element_id,
+            "success": true,
+        }))
+    }
+
+    #[cfg(target_os = "macos")]
     pub(super) fn input_text(
         surface_id: &str,
         element_id: &str,
@@ -3005,6 +3179,16 @@ mod platform {
         _action: ComputerAction,
     ) -> Result<Value, String> {
         Err("unsupported_platform: computer control is unavailable on this platform".to_string())
+    }
+
+    #[cfg(windows)]
+    pub(super) fn scroll_to_element(
+        _surface_id: &str,
+        _element_id: &str,
+        _surface: &SurfaceRecord,
+        _element: &ElementRecord,
+    ) -> Result<Value, String> {
+        Err("unsupported_platform: computer scroll is unavailable on this platform".to_string())
     }
 
     #[cfg(windows)]

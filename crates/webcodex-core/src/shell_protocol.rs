@@ -223,6 +223,9 @@ pub const SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE: &str = "computer_eleme
 /// Native bounded accessibility control. Missing on older Runners is false and
 /// is never inferred from either observation capability.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL: &str = "computer_control";
+/// Native semantic scroll-to-visible on one exact observed Accessibility element.
+/// Missing on older Runners is false and is never inferred from computer_control.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT: &str = "computer_scroll_to_element";
 /// Native exact-window activation/raise. Missing on older Runners is false and
 /// is never inferred from accessibility control, observation, or platform.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE: &str = "computer_window_activate";
@@ -274,6 +277,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
     SHELL_CLIENT_CAPABILITY_JOB_STATE_RECONCILIATION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
 ];
@@ -407,6 +411,10 @@ pub struct ShellClientCapabilities {
     /// and never follows from desktop or accessibility observation authority.
     #[serde(default, skip_serializing_if = "is_false")]
     pub computer_control: bool,
+    /// The Runner can semantically scroll one exact observed Accessibility element
+    /// into view. Missing on older Runners is false and never follows from control.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_scroll_to_element: bool,
     /// The Runner can activate/raise one exact previously observed native window.
     /// Missing on older Runners is false and never follows from computer_control.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -476,6 +484,7 @@ impl Default for ShellClientCapabilities {
             computer_accessibility_observe: false,
             computer_element_state: false,
             computer_control: false,
+            computer_scroll_to_element: false,
             computer_window_activate: false,
             computer_text_input: false,
             job_state_reconciliation: false,
@@ -2723,6 +2732,7 @@ mod envelope_tests {
                 computer_accessibility_observe: false,
                 computer_element_state: false,
                 computer_control: false,
+                computer_scroll_to_element: false,
                 computer_window_activate: false,
                 computer_text_input: false,
                 job_state_reconciliation: false,
@@ -2882,6 +2892,20 @@ mod envelope_tests {
         assert!(capabilities.computer_control);
         assert!(!capabilities.computer_observe);
         assert!(!capabilities.computer_accessibility_observe);
+    }
+
+    #[test]
+    fn computer_scroll_to_element_capability_is_distinct_from_control() {
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_control":true}"#).unwrap();
+        assert!(capabilities.computer_control);
+        assert!(!capabilities.computer_scroll_to_element);
+
+        let capabilities: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_scroll_to_element":true}"#).unwrap();
+        assert!(capabilities.computer_scroll_to_element);
+        assert!(!capabilities.computer_control);
+        assert!(!capabilities.computer_observe);
     }
 
     #[test]

@@ -1379,6 +1379,13 @@ pub enum ToolCall {
         action: String,
     },
 
+    /// Semantically scroll one exact registered AX element into view.
+    ComputerScrollToElement {
+        client_id: String,
+        surface_id: String,
+        element_id: String,
+    },
+
     /// Set bounded text on an already-focused, empty exact registered AX text element.
     ComputerInputText {
         client_id: String,
@@ -1890,6 +1897,7 @@ impl ToolCall {
             Self::ComputerElementState { .. } => "computer_element_state",
             Self::ComputerActivateWindow { .. } => "computer_activate_window",
             Self::ComputerControl { .. } => "computer_control",
+            Self::ComputerScrollToElement { .. } => "computer_scroll_to_element",
             Self::ComputerInputText { .. } => "computer_input_text",
             Self::ComputerSnapshot { .. } => "computer_snapshot",
             Self::ComputerSaveSnapshot { .. } => "computer_save_snapshot",

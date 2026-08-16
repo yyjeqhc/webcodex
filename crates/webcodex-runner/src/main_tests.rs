@@ -6693,6 +6693,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         computer_accessibility_observe: true,
         computer_element_state: true,
         computer_control: true,
+        computer_scroll_to_element: true,
         computer_window_activate: true,
         computer_text_input: true,
         project_lifecycle: false,
@@ -6768,6 +6769,11 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         caps.computer_control,
         cfg!(target_os = "macos"),
         "computer control is independently advertised only by the macOS native implementation"
+    );
+    assert_eq!(
+        caps.computer_scroll_to_element,
+        cfg!(target_os = "macos"),
+        "computer scroll-to-element is independently advertised only by the macOS native implementation"
     );
     assert_eq!(
         caps.computer_window_activate,

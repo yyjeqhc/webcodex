@@ -685,6 +685,7 @@ impl ToolRuntime {
             | ToolCall::ComputerElementState { .. }
             | ToolCall::ComputerActivateWindow { .. }
             | ToolCall::ComputerControl { .. }
+            | ToolCall::ComputerScrollToElement { .. }
             | ToolCall::ComputerInputText { .. }
             | ToolCall::ComputerSnapshot { .. }
             | ToolCall::ComputerSaveSnapshot { .. }) => {

@@ -1874,6 +1874,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Accessibility control is independently fenced and currently implemented
     // only by the macOS Runner; observation authority never implies it.
     capabilities.computer_control = cfg!(target_os = "macos");
+    // Semantic AX scroll-to-visible is independently fenced for rolling upgrades;
+    // existing computer_control support never implies it.
+    capabilities.computer_scroll_to_element = cfg!(target_os = "macos");
     // Exact window activation is a separate effect/wire capability. Old macOS
     // Runners that only advertise computer_control must fail closed.
     capabilities.computer_window_activate = cfg!(target_os = "macos");

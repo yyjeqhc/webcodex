@@ -251,8 +251,8 @@ is a separate closed effect for Enter, Escape, Tab, arrows, paging/home/end plus
 bounded modifiers. The exact `surface_id` must still be the frontmost focused
 window, and the Runner does not focus or activate it implicitly. Ordinary text,
 arbitrary characters/keycodes, repeat counts, or held-key state are not accepted.
-`computer_input_text` writes bounded text through native AXValue only to an already
-focused, enabled when known, empty, non-secure, unprotected supported text element.
+`computer_input_text` writes bounded text through native AXValue or Windows UIA ValuePattern only to an already
+focused, enabled, writable, empty, non-secure, unprotected supported text element; Windows also requires the exact surface to already be foreground.
 There is no coordinate-click, generic wheel, open-ended key input, dragging,
 clipboard, app-launch, AppleScript, shell, paste, or implicit-focus fallback in this contract. A
 lost response after an effect may have been dispatched is reported as an

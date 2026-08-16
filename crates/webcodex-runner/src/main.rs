@@ -1887,8 +1887,8 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // independently advertised by native macOS and Windows implementations.
     capabilities.computer_window_activate = cfg!(any(target_os = "macos", windows));
     // Bounded Accessibility text input is a separate rolling-upgrade fence;
-    // older macOS Runners with computer_control must not be treated as capable.
-    capabilities.computer_text_input = cfg!(target_os = "macos");
+    // older native Runners with computer_control must not be treated as capable.
+    capabilities.computer_text_input = cfg!(any(target_os = "macos", windows));
     capabilities.job_state_reconciliation = !disable_job_state_reconciliation_for_test();
 
     // New agents always advertise read-only LSP navigation. Older agents omit

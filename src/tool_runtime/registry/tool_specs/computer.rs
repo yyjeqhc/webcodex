@@ -63,7 +63,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_input_text",
-            "Write bounded text verbatim with native macOS AXValue to an exact reusable element_id. Target must already be focused, non-secure, unprotected, supported, enabled when known, and empty. No focus, paste, synthetic-key, or send fallback. If outcome is unknown, observe UI state before retrying.",
+            "Write bounded text verbatim with native macOS AXValue or Windows UI Automation ValuePattern to an exact reusable element_id. Target must already be focused, non-secure, unprotected, supported, enabled, writable, and empty; Windows also requires the exact surface to already be foreground. No focus, activation, paste, synthetic-key, or send fallback. If outcome is unknown, observe UI state before retrying.",
             computer_input_text_input_schema(),
         ),
         tool_spec(

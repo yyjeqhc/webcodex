@@ -1870,7 +1870,7 @@ fn validate_computer_input_text(
     ];
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || !is_native_window_activation_platform(output.get("platform").and_then(Value::as_str))
         || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
         || output.get("element_id").and_then(Value::as_str) != Some(expected_element_id)
         || output.get("text_bytes").and_then(Value::as_u64) != Some(expected_text_bytes as u64)
@@ -2592,6 +2592,20 @@ mod tests {
             "你好🙂".len(),
         );
         assert!(valid.success, "{:?}", valid.output);
+
+        let windows = validate_computer_input_text(
+            json!({
+                "platform": "windows",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "text_bytes": 5,
+                "success": true
+            }),
+            "surface_test",
+            "element_child",
+            5,
+        );
+        assert!(windows.success, "{:?}", windows.output);
 
         let invalid = validate_computer_input_text(
             json!({

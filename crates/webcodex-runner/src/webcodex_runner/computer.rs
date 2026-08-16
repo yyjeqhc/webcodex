@@ -2190,15 +2190,14 @@ mod tests {
 #[cfg(any(target_os = "macos", windows))]
 mod platform {
     use super::{
-        bounded_text, ensure_raw_capture_bound, AccessibilityTreeResult, ComputerAction,
-        ElementRecord, PlatformWindow, SurfaceRecord,
+        bounded_text, ensure_raw_capture_bound, validate_input_text, AccessibilityTreeResult,
+        ComputerAction, ElementRecord, PlatformWindow, SurfaceRecord,
     };
     #[cfg(target_os = "macos")]
     use super::{
         ensure_correlated_fingerprint, is_secure_text_fingerprint, select_exact_ax_window_index,
-        validate_element_state_target, validate_input_text, validate_key_input,
-        validate_key_modifiers, validate_text_input_preflight, validate_text_input_target,
-        AxObservationDeadline,
+        validate_element_state_target, validate_key_input, validate_key_modifiers,
+        validate_text_input_preflight, validate_text_input_target, AxObservationDeadline,
     };
     #[cfg(any(target_os = "macos", windows))]
     use super::{is_supported_text_input_fingerprint, ElementFingerprint};
@@ -3183,6 +3182,11 @@ mod platform {
     }
 
     #[cfg(windows)]
+    pub(super) fn uia_semantic_text_input_role(role: &str) -> bool {
+        role == "AXTextField"
+    }
+
+    #[cfg(windows)]
     fn uia_fingerprint(
         context: &UiaContext,
         element: &IUIAutomationElement,
@@ -3231,24 +3235,46 @@ mod platform {
     }
 
     #[cfg(windows)]
-    fn uia_text_value(
+    fn uia_text_pattern(
         context: &UiaContext,
         element: &IUIAutomationElement,
-    ) -> Result<Option<String>, String> {
-        let Some(pattern) = optional_uia_pattern::<IUIAutomationValuePattern>(
-            context,
-            element,
-            UIA_ValuePatternId,
-        )?
-        else {
-            return Ok(None);
-        };
+    ) -> Result<Option<IUIAutomationValuePattern>, String> {
+        optional_uia_pattern::<IUIAutomationValuePattern>(context, element, UIA_ValuePatternId)
+    }
+
+    #[cfg(windows)]
+    fn uia_value_pattern_current_value(
+        context: &UiaContext,
+        pattern: &IUIAutomationValuePattern,
+    ) -> Result<String, String> {
         context.deadline.ensure_remaining()?;
         uia_string(
             unsafe { pattern.CurrentValue() },
             "IUIAutomationValuePattern::CurrentValue",
         )
-        .map(|value| value.or_else(|| Some(String::new())))
+        .map(|value| value.unwrap_or_default())
+    }
+
+    #[cfg(windows)]
+    fn uia_value_pattern_writable(
+        context: &UiaContext,
+        pattern: &IUIAutomationValuePattern,
+    ) -> Result<bool, String> {
+        context.deadline.ensure_remaining()?;
+        unsafe { pattern.CurrentIsReadOnly() }
+            .map(|read_only| !read_only.as_bool())
+            .map_err(|error| uia_error("IUIAutomationValuePattern::CurrentIsReadOnly", &error))
+    }
+
+    #[cfg(windows)]
+    fn uia_text_value(
+        context: &UiaContext,
+        element: &IUIAutomationElement,
+    ) -> Result<Option<String>, String> {
+        let Some(pattern) = uia_text_pattern(context, element)? else {
+            return Ok(None);
+        };
+        uia_value_pattern_current_value(context, &pattern).map(Some)
     }
 
     #[cfg(windows)]
@@ -4051,11 +4077,21 @@ mod platform {
             .as_bool();
         let focused = uia_element_has_exact_focus(&context, &current)?;
         let protected = element.contains_protected_content();
-        let value_empty = if !protected && is_supported_text_input_fingerprint(target) {
-            uia_text_value(&context, &current)?.map(|value| value.is_empty())
-        } else {
-            None
-        };
+        let (value_empty, value_writable) =
+            if !protected && is_supported_text_input_fingerprint(target) {
+                match uia_text_pattern(&context, &current)? {
+                    Some(pattern) => {
+                        let value = uia_value_pattern_current_value(&context, &pattern)?;
+                        let writable = uia_value_pattern_writable(&context, &pattern)?;
+                        (Some(value.is_empty()), writable)
+                    }
+                    None => (None, false),
+                }
+            } else {
+                (None, false)
+            };
+        let hwnd = win_hwnd(surface.native_id)?;
+        let surface_foreground = unsafe { GetForegroundWindow() == hwnd };
         let can_press = if protected || !enabled {
             false
         } else {
@@ -4066,21 +4102,27 @@ mod platform {
             )?
             .is_some()
         };
-        let can_focus = if protected || !enabled || !uia_semantic_focus_role(&target.role) {
+        let can_focus = if protected
+            || !enabled
+            || !surface_foreground
+            || !uia_semantic_focus_role(&target.role)
+        {
             false
         } else {
-            let hwnd = win_hwnd(surface.native_id)?;
-            if unsafe { GetForegroundWindow() != hwnd } {
-                false
-            } else {
-                context.deadline.ensure_remaining()?;
-                unsafe { current.CurrentIsKeyboardFocusable() }
-                    .map_err(|error| {
-                        uia_error("IUIAutomationElement::CurrentIsKeyboardFocusable", &error)
-                    })?
-                    .as_bool()
-            }
+            context.deadline.ensure_remaining()?;
+            unsafe { current.CurrentIsKeyboardFocusable() }
+                .map_err(|error| {
+                    uia_error("IUIAutomationElement::CurrentIsKeyboardFocusable", &error)
+                })?
+                .as_bool()
         };
+        let can_input_text = !protected
+            && enabled
+            && surface_foreground
+            && focused
+            && uia_semantic_text_input_role(&target.role)
+            && value_writable
+            && value_empty == Some(true);
 
         Ok(json!({
             "platform": "windows",
@@ -4093,8 +4135,7 @@ mod platform {
             "value_empty": value_empty,
             "can_press": can_press,
             "can_focus": can_focus,
-            // W3 still does not widen Windows text mutation authority.
-            "can_input_text": false,
+            "can_input_text": can_input_text,
         }))
     }
 
@@ -4109,6 +4150,13 @@ mod platform {
     pub(super) fn windows_control_attempt_error(operation: &str) -> String {
         format!(
             "outcome_unknown: {operation} returned after the exact Windows UI Automation control effect was attempted"
+        )
+    }
+
+    #[cfg(windows)]
+    pub(super) fn windows_text_input_attempt_error(operation: &str) -> String {
+        format!(
+            "outcome_unknown: {operation} returned after the exact Windows UI Automation text write was attempted"
         )
     }
 
@@ -4336,13 +4384,91 @@ mod platform {
 
     #[cfg(windows)]
     pub(super) fn input_text(
-        _surface_id: &str,
-        _element_id: &str,
-        _surface: &SurfaceRecord,
-        _element: &ElementRecord,
-        _text: &str,
+        surface_id: &str,
+        element_id: &str,
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
+        text: &str,
     ) -> Result<Value, String> {
-        Err("unsupported_platform: computer text input is unavailable on this platform".to_string())
+        let text_bytes = validate_input_text(text)?;
+        let target = element.target_fingerprint().ok_or_else(|| {
+            "stale_element: UIA element correlation lineage is incomplete".to_string()
+        })?;
+        if element.contains_protected_content() {
+            return Err(
+                "permission_denied: Windows UI Automation protected content cannot receive text input"
+                    .to_string(),
+            );
+        }
+        if !target.has_positive_evidence() {
+            return Err(
+                "stale_element: UIA element lacks positive correlation evidence for text input"
+                    .to_string(),
+            );
+        }
+        if !uia_semantic_text_input_role(&target.role) {
+            return Err(
+                "input_failed: UI Automation element is outside the bounded Windows text-entry role set"
+                    .to_string(),
+            );
+        }
+
+        let context = UiaContext::new()?;
+        let current = resolve_uia_element(&context, surface, element)?;
+        context.deadline.ensure_remaining()?;
+        let enabled = unsafe { current.CurrentIsEnabled() }
+            .map_err(|error| uia_error("IUIAutomationElement::CurrentIsEnabled", &error))?
+            .as_bool();
+        if !enabled {
+            return Err("input_failed: UI Automation text element is disabled".to_string());
+        }
+        let pattern = uia_text_pattern(&context, &current)?.ok_or_else(|| {
+            "input_failed: UI Automation text element does not expose ValuePattern".to_string()
+        })?;
+        if !uia_value_pattern_writable(&context, &pattern)? {
+            return Err("input_failed: UI Automation ValuePattern is read-only".to_string());
+        }
+
+        let hwnd = win_hwnd(surface.native_id)?;
+        if unsafe { GetForegroundWindow() != hwnd } {
+            return Err(
+                "input_failed: exact Windows surface must already be foreground before text input"
+                    .to_string(),
+            );
+        }
+        if !uia_element_has_exact_focus(&context, &current)? {
+            return Err(
+                "input_failed: exact Windows text element must already have keyboard focus"
+                    .to_string(),
+            );
+        }
+
+        // Keep emptiness as the final state read before the native write. The
+        // value never leaves the Runner; only the empty/non-empty affordance is
+        // exposed through element_state.
+        let current_value = uia_value_pattern_current_value(&context, &pattern)?;
+        if !current_value.is_empty() {
+            return Err(
+                "input_failed: UI Automation ValuePattern must be empty before bounded text input; observe and reconcile before retrying"
+                    .to_string(),
+            );
+        }
+
+        let value = windows::core::BSTR::from(text);
+        context.deadline.ensure_remaining()?;
+        if let Err(error) = unsafe { pattern.SetValue(&value) } {
+            return Err(windows_text_input_attempt_error(&format!(
+                "IUIAutomationValuePattern::SetValue HRESULT(0x{:08X})",
+                error.code().0 as u32
+            )));
+        }
+        Ok(json!({
+            "platform": "windows",
+            "surface_id": surface_id,
+            "element_id": element_id,
+            "text_bytes": text_bytes,
+            "success": true,
+        }))
     }
 
     #[cfg(windows)]
@@ -4847,6 +4973,8 @@ $form.Controls.Add($status)
         );
         assert!(platform::uia_semantic_focus_role("AXTextField"));
         assert!(!platform::uia_semantic_focus_role("AXTextArea"));
+        assert!(platform::uia_semantic_text_input_role("AXTextField"));
+        assert!(!platform::uia_semantic_text_input_role("AXTextArea"));
         assert!(!platform::uia_semantic_focus_role("AXButton"));
         assert!(!platform::uia_semantic_focus_role("AXWindow"));
     }
@@ -4861,6 +4989,13 @@ $form.Controls.Add($status)
     #[test]
     fn computer_windows_control_attempt_failure_is_unknown() {
         let error = platform::windows_control_attempt_error("IUIAutomationInvokePattern::Invoke");
+        assert!(error.starts_with("outcome_unknown:"), "{error}");
+    }
+
+    #[test]
+    fn computer_windows_text_input_attempt_failure_is_unknown() {
+        let error =
+            platform::windows_text_input_attempt_error("IUIAutomationValuePattern::SetValue");
         assert!(error.starts_with("outcome_unknown:"), "{error}");
     }
 
@@ -4989,7 +5124,7 @@ $form.Controls.Add($status)
         let edit_state = platform::element_state(surface_id, edit_id, 1, &record, edit)
             .expect("read private edit state");
         assert_eq!(edit_state["can_focus"], true);
-        assert_eq!(edit_state["can_input_text"], false);
+        assert_eq!(edit_state["value_empty"], true);
         let focused = platform::control(surface_id, edit_id, &record, edit, ComputerAction::Focus)
             .expect("focus private UIA edit");
         assert_eq!(focused["platform"], "windows");
@@ -4998,6 +5133,26 @@ $form.Controls.Add($status)
         let focused_state = platform::element_state(surface_id, edit_id, 1, &record, edit)
             .expect("re-read private edit state");
         assert_eq!(focused_state["focused"], true);
+        assert_eq!(focused_state["value_empty"], true);
+        assert_eq!(focused_state["can_input_text"], true);
+
+        let text = "webcodex computer smoke";
+        let input = platform::input_text(surface_id, edit_id, &record, edit, text)
+            .expect("write bounded text through private UIA ValuePattern");
+        assert_eq!(input["platform"], "windows");
+        assert_eq!(input["surface_id"], surface_id);
+        assert_eq!(input["element_id"], edit_id.as_str());
+        assert_eq!(input["text_bytes"], text.len());
+        assert_eq!(input["success"], true);
+
+        let after_input = platform::element_state(surface_id, edit_id, 1, &record, edit)
+            .expect("re-read private edit state after bounded text input");
+        assert_eq!(after_input["focused"], true);
+        assert_eq!(after_input["value_empty"], false);
+        assert_eq!(after_input["can_input_text"], false);
+        let second = platform::input_text(surface_id, edit_id, &record, edit, "again")
+            .expect_err("bounded Windows text input must not overwrite a non-empty field");
+        assert!(second.starts_with("input_failed:"), "{second}");
 
         let button_state = platform::element_state(surface_id, button_id, 1, &record, button)
             .expect("read private button state");
@@ -5080,7 +5235,7 @@ $form.Controls.Add($status)
                             assert_eq!(state["element_id"], element_id.as_str());
                             assert!(state["can_press"].is_boolean());
                             assert!(state["can_focus"].is_boolean());
-                            assert_eq!(state["can_input_text"], false);
+                            assert!(state["can_input_text"].is_boolean());
                             return;
                         }
                         Err(error) => {

@@ -1001,6 +1001,99 @@ mod phase_e2_status_tests {
     }
 
     #[test]
+    fn runner_concurrency_counts_jobs_across_projects_for_one_client() {
+        fn job(job_id: &str, client_id: &str, project_id: &str, status: &str) -> ShellJobInfo {
+            ShellJobInfo {
+                job_id: job_id.to_string(),
+                request_id: None,
+                client_id: client_id.to_string(),
+                kind: "shell".to_string(),
+                project_id: Some(project_id.to_string()),
+                session_id: None,
+                ssh_resource: None,
+                cwd: None,
+                project_cwd: None,
+                purpose: None,
+                shell: None,
+                command_preview: "test".to_string(),
+                status: status.to_string(),
+                created_at: 0,
+                started_at: None,
+                ended_at: None,
+                exit_code: None,
+                duration_ms: None,
+                elapsed_secs: None,
+                error: None,
+                command_execution_state: None,
+                structured_execution: None,
+                codex: None,
+                result: None,
+                validation_progress: None,
+                validation: None,
+                recovery_state: None,
+                recovered_after_server_restart: false,
+                reconciled_at: None,
+                recovery_reason_code: None,
+                observation_token: None,
+                last_update_seq: None,
+                stdout_retained_from_line: None,
+                stderr_retained_from_line: None,
+                stdout_log_truncated: false,
+                stderr_log_truncated: false,
+            }
+        }
+
+        let client = ShellClientView {
+            client_id: "shared-runner".to_string(),
+            agent_instance_id: "shared-instance".to_string(),
+            display_name: None,
+            owner: None,
+            hostname: None,
+            status: "online".to_string(),
+            connected: true,
+            last_seen: 0,
+            capabilities: Default::default(),
+            pending_requests: 0,
+            projects: Vec::new(),
+            agent_protocol_version: "websocket-v1".to_string(),
+            transport: "websocket".to_string(),
+            policy: None,
+            registered_at: 0,
+            connected_at: 0,
+            disconnected_at: None,
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: Some(2),
+        };
+        let jobs = vec![
+            job(
+                "project-a-running",
+                "shared-runner",
+                "agent:shared:a",
+                "running",
+            ),
+            job(
+                "project-b-queued",
+                "shared-runner",
+                "agent:shared:b",
+                "agent_queued",
+            ),
+            job(
+                "foreign-running",
+                "other-runner",
+                "agent:other:c",
+                "running",
+            ),
+        ];
+
+        assert_eq!(active_jobs_for_client(&jobs, "shared-runner"), 2);
+        assert_eq!(
+            job_concurrency_for_client(&client, &jobs),
+            json!({"limit": 2, "running": 1, "queued": 1})
+        );
+    }
+
+    #[test]
     fn compact_runtime_status_keeps_minimum_job_state_counts() {
         let compact = compact_runtime_status(&json!({
             "jobs": {

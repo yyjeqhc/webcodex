@@ -1927,6 +1927,40 @@ fn standalone_snapshot(job_id: &str, status: &str) -> ShellJobSnapshot {
 }
 
 #[tokio::test]
+async fn fresh_server_reconstructs_agent_queued_job_with_same_identity() {
+    let registry = ShellClientRegistry::default();
+    let mut queued = standalone_snapshot("queued-across-server-restart", "agent_queued");
+    queued.started_at = None;
+    queued.context.runtime_project_id = Some(RUNTIME_PROJECT_ID.to_string());
+    queued.context.workflow_session_id = Some(SESSION_ID.to_string());
+
+    register(
+        &registry,
+        INSTANCE_A,
+        ShellJobInventory {
+            active_complete: true,
+            jobs: vec![queued],
+        },
+    )
+    .await;
+
+    let recovered = registry
+        .get_job("queued-across-server-restart")
+        .await
+        .unwrap();
+    assert_eq!(recovered.job_id, "queued-across-server-restart");
+    assert_eq!(recovered.status, "agent_queued");
+    assert_eq!(recovered.project_id.as_deref(), Some(RUNTIME_PROJECT_ID));
+    assert_eq!(recovered.session_id.as_deref(), Some(SESSION_ID));
+    assert!(recovered.recovered_after_server_restart);
+    assert_eq!(
+        recovered.recovery_reason_code.as_deref(),
+        Some("server_restart_reconciliation")
+    );
+    assert_eq!(recovered.command_execution_state, None);
+}
+
+#[tokio::test]
 async fn reconciliation_summary_counts_inventory_effects_without_payload_data() {
     let registry = ShellClientRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;

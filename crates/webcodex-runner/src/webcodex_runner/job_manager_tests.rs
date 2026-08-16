@@ -812,6 +812,48 @@ fn enqueue_gated_structured_job(
     );
 }
 
+fn enqueue_gated_structured_job_for_project(
+    manager: &JobManager,
+    sink: &AgentSink,
+    cwd: &Path,
+    helper: &StructuredProcessHelper,
+    job: &GatedStructuredJob,
+    runtime_project_id: &str,
+) {
+    let mut context = structured_process_context(cwd, job.args().len(), false);
+    context.runtime_project_id = Some(runtime_project_id.to_string());
+    manager.enqueue(
+        sink.clone(),
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: cwd.join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": format!("request-{}", job.job_id),
+                "client_id": "structured-agent",
+                "kind": "start_process_job",
+                "job_id": &job.job_id,
+                "cwd": cwd,
+                "command": "",
+                "process": {
+                    "executable": &helper.path,
+                    "args": job.args(),
+                },
+                "timeout_secs": 20,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "job_context": context,
+            }))
+            .unwrap(),
+        },
+    );
+}
+
 fn active_gated_children(jobs: &[GatedStructuredJob]) -> usize {
     jobs.iter().filter(|job| job.active.exists()).count()
 }
@@ -916,6 +958,86 @@ fn phase_e2_default_four_gates_fifth_and_promotes_same_job_once() {
         assert_eq!(snapshot.status, "completed");
         assert_eq!(snapshot.request_id, format!("request-{}", job.job_id));
     }
+}
+
+#[test]
+fn runner_job_slots_are_shared_across_runtime_projects() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let (sink, _rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let project_a = GatedStructuredJob::new(temp.path(), "project-a-running");
+    let project_b = GatedStructuredJob::new(temp.path(), "project-b-queued");
+
+    enqueue_gated_structured_job_for_project(
+        &manager,
+        &sink,
+        temp.path(),
+        &helper,
+        &project_a,
+        "agent:structured-agent:project-a",
+    );
+    enqueue_gated_structured_job_for_project(
+        &manager,
+        &sink,
+        temp.path(),
+        &helper,
+        &project_b,
+        "agent:structured-agent:project-b",
+    );
+    wait_for_all_started(std::slice::from_ref(&project_a));
+    assert!(
+        wait_until(Duration::from_secs(10), || project_a.active.exists()),
+        "project A Job never became active"
+    );
+    assert!(!project_b.started.exists());
+
+    let inventory = manager.inventory();
+    assert!(inventory.active_complete);
+    let running = inventory
+        .jobs
+        .iter()
+        .find(|snapshot| snapshot.job_id == project_a.job_id)
+        .unwrap();
+    assert_eq!(running.status, "running");
+    assert_eq!(
+        running.context.runtime_project_id.as_deref(),
+        Some("agent:structured-agent:project-a")
+    );
+    let queued = inventory
+        .jobs
+        .iter()
+        .find(|snapshot| snapshot.job_id == project_b.job_id)
+        .unwrap();
+    assert_eq!(queued.status, "agent_queued");
+    assert_eq!(queued.job_id, project_b.job_id);
+    assert_eq!(
+        queued.context.runtime_project_id.as_deref(),
+        Some("agent:structured-agent:project-b")
+    );
+
+    project_a.release();
+    assert!(
+        wait_until(Duration::from_secs(10), || project_b.active.exists()),
+        "project B queued Job did not claim the shared Runner slot"
+    );
+    let promoted = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == project_b.job_id)
+        .unwrap();
+    assert_eq!(promoted.status, "running");
+    assert_eq!(promoted.job_id, project_b.job_id);
+    assert_eq!(
+        promoted.context.runtime_project_id.as_deref(),
+        Some("agent:structured-agent:project-b")
+    );
+
+    project_b.release();
+    wait_for_job_workers(&manager);
+    assert_gated_job_started_once(&project_a);
+    assert_gated_job_started_once(&project_b);
 }
 
 #[test]

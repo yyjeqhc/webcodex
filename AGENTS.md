@@ -76,6 +76,7 @@ Release guidance: [`docs/agent/release-process.md`](docs/agent/release-process.m
 
 - Public runtime and API surfaces: [`docs/agent/openapi-guidelines.md`](docs/agent/openapi-guidelines.md).
 - Workflow Sessions: [`docs/agent/session-model.md`](docs/agent/session-model.md).
+- Manual multi-window collaboration: [`docs/agent/manual-window-collaboration.md`](docs/agent/manual-window-collaboration.md).
 - Authority boundaries: [`docs/agent/permission-model.md`](docs/agent/permission-model.md).
 - Architecture decisions: [`docs/agent/architecture-decisions.md`](docs/agent/architecture-decisions.md).
 

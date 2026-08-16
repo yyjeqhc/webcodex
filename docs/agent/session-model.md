@@ -515,6 +515,10 @@ Session with `session_handoff_summary(session_id=...)`. Explicit
 the same active Session and continues to obey the existing identity,
 lifecycle, project, guard, and binding rules.
 
+For deliberate coordinator/worker delegation across separate windows, keep the
+Sessions independent and use the existing handoff plus message-board primitives;
+see [Manual Multi-Window Collaboration](manual-window-collaboration.md).
+
 ### Invariants (must)
 
 These are also summarized in `AGENTS.md` §7, **Sessions**:

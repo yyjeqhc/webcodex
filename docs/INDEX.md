@@ -41,5 +41,6 @@
 - [Job reliability and Runner concurrency](agent/job-reliability-and-concurrency.md) — Control restart recovery, observation semantics, shared Job capacity, and tool-description requirements
 - [Authority model](agent/permission-model.md)
 - [Session model](agent/session-model.md)
+- [Manual multi-window collaboration](agent/manual-window-collaboration.md) — coordinator/worker handoff through existing Workflow Session message primitives
 - [OpenAPI guidelines](agent/openapi-guidelines.md)
 - [Release process](agent/release-process.md)

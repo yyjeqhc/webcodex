@@ -49,6 +49,22 @@ guidance。沿现有架构实现 <任务>，运行聚焦的 structured validatio
 role 名称应写在 instruction 文本中，不要在 `start_coding_task` 或 `work_on_project` 上寻找
 role 参数。
 
+## 手动多窗口协作
+
+需要把一个有界独立子任务交给另一个窗口时，coordinator 与 worker 应保持**不同的**
+Workflow Session。coordinator 在自己的 Session 中发布 `todo`；worker 新建独立 Session，
+读取 coordinator 的 `session_handoff_summary` 与对应 open todo，在自己的 Session 下完成
+子任务，然后向 coordinator Session 发布带 `reply_to=<todo_id>` 的有界 `answer`，最后
+resolve 精确的 todo。
+
+第一版故意保持手动：没有自动 claim、worker scheduler、共享 transcript，也没有隐式的
+跨 Session authority。一个 todo 由人工分配给一个 worker。不要让多个窗口并发修改同一
+worktree；优先使用 read-only worker，或显式隔离的 worktree/project。worker 应回传结论、
+关键 evidence 与 result path，而不是把长 transcript 注入 coordinator。
+
+详细协议与后续 convenience primitive 的 dogfood gate 见
+[Manual Multi-Window Collaboration](agent/manual-window-collaboration.md)。
+
 ## 已被 dogfood 证明重要的习惯
 
 **修复后复用 validation identity。** structured validation 使用 `assertion_name` 时，同一个

@@ -39,5 +39,6 @@
 - [Job 可靠性与 Runner 并发](agent/job-reliability-and-concurrency.md) —— Control 重启恢复、observation 语义、共享 Job 容量与工具描述要求
 - [权限模型](agent/permission-model.md)
 - [会话模型](agent/session-model.md)
+- [手动多窗口协作](agent/manual-window-collaboration.md) —— 使用现有 Workflow Session message primitive 做 coordinator/worker handoff
 - [OpenAPI 指南](agent/openapi-guidelines.md)
 - [发布流程](agent/release-process.md)

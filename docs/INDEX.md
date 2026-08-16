@@ -34,6 +34,7 @@
 ## Contributing
 
 - [AGENTS.md](../AGENTS.md) — repository instructions for coding/AI agents
+- [Maintenance](MAINTENANCE.md) — canonical maintenance queue, dependency cadence, PR/CI expectations, and bilingual-doc policy
 - [Testing](TESTING.md) — testing strategy
 - [Release checklist](RELEASE_CHECKLIST.md) — release readiness
 - [Architecture decisions](agent/architecture-decisions.md)

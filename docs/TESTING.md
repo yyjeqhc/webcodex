@@ -25,79 +25,28 @@ tests with different cost profiles sharing the same default lane.
 | real-process job recovery failure/compat harness | Cover the failure and compatibility paths the happy-path reconciliation harness omits, using `WEBCODEX_JOB_RECOVERY_GRACE_SECS=10` (clamped, above the 5s floor) so the deadline is bounded without waiting the 120s default. Scenario C: kill the runner only (server stays up), let the job enter `recovering`, and assert the non-request-triggered recovery-timeout sweep transitions it to `lost` with `runner_recovery_deadline_exceeded`, `ended_at` set once, one list record, stop-on-lost stable, and the command never re-executes. Scenario D: instance B replaces instance A (same client_id, new `agent_instance_id`); A's job becomes `lost` with `runner_instance_replaced`, B starts its own new job, A's late update is rejected, first `ended_at`/reason preserved. Scenario E: a legacy runner registered with `WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1` (no capability, no inventory) dispatches a job and, on disconnect, deterministically fences it to `lost` with `legacy_runner_disconnected` (never `recovering`); after a server restart the lost job has no durable record and a same-client new instance cannot revive it. Scenario F: a long job across three server restarts keeps the same `job_id`, runs the command once, keeps `last_update_seq`/log cursors non-regressing and markers non-duplicating, and reaches a terminal `stopped` that survives a third restart with `ended_at` unchanged by terminal inventory replay. | Local processes, temp dirs/ports/tokens, and a temp project; no production services or QUIC certs. | `bash scripts/e2e_job_recovery_failures_ws.sh` |
 | security auth matrix | Cover OAuth, scope policy, shared-key behavior, token classes, read-only session guards, and denied mutations. | No external identity provider by default; use local fixtures and synthetic tokens. | `cargo test -p webcodex --lib oauth -- --nocapture`; `cargo test -p webcodex --lib scope -- --nocapture`; `cargo test -p webcodex --lib metadata -- --nocapture` |
 
-PR CI maps the `contract/schema` intent to the always-on `contract` job in
-`.github/workflows/ci.yml`. That job runs on every configured PR workflow run
-without requiring the `run-ci` label and stays limited to workspace/static boundaries,
-frontend type/test/dist checks, formatting, and focused registry/OpenAPI/MCP
-schema and metadata parity tests. The heavier Linux workspace and native Windows
-jobs keep their existing owner-PR `run-ci` opt-in and still run automatically on
-`main`; they retain full workspace, release-tooling, and native Windows coverage.
-Real-process/restart harnesses and exact-source release readiness remain in their
-existing explicit or release-specific lanes.
+## CI Mapping
 
-Iteration 9 execution/reporting changes use the existing domain lanes rather
-than a new test suite:
+The lanes above define test semantics; workflows decide when to run them.
 
-- `cargo test -p webcodex --lib validation_events -- --nocapture` covers dedicated
-  and declared-purpose generic execution evidence plus exact retry identity;
-- `cargo test -p webcodex --lib tool_runtime::tests::jobs -- --nocapture` covers
-  shell/cwd metadata, bounded job tails, detected summaries, and cursors;
-- `cargo test -p webcodex --lib tool_runtime::tests::coding_task -- --nocapture`
-  and `cargo test -p webcodex --lib tool_runtime::tests::handoff -- --nocapture`
-  cover facts/advisories/hard blockers and the `detail=minimal|standard|full`
-  startup projection (the only startup projection control);
-- `cargo test -p webcodex --lib read_file -- --nocapture`, `metadata`, `mcp`, and
-  `openapi` cover the single read representation, layered readiness, and
-  project-bound versus operator surfaces.
-
-## Iteration 9 Final Acceptance
-
-The Iteration 9 close-out is a real-process, real-protocol pass, not in-process
-function calls. Run these lanes and procedures against binaries built from the
-current tree:
-
-Focused and real-process lanes:
-
-```bash
-cargo test -p webcodex --lib trusted_smoke
-cargo test -p webcodex --lib reconnect
-cargo test -p webcodex --lib select_lines_tests   # bounded job-log tail + non-duplicating cursor
-bash scripts/e2e_reconnect_ws.sh               # real server+runner restart/reconnect, durable session
-bash scripts/e2e_job_reconciliation_ws.sh      # real active-job reconciliation across a server restart (runner stays alive)
-bash scripts/e2e_job_recovery_failures_ws.sh   # real runner-loss / instance-replace / legacy / repeated-restart failure & compat paths
-bash scripts/e2e_zero_config_ws.sh             # real MCP initialize/tools_list/tools_call + REST workflow
-```
-
-Real project-bound MCP and OpenAPI/HTTP acceptance against a connector-configured
-process (no operator token, no `/opt/webcodex`):
-
-```bash
-tmp=$(mktemp -d); repo="$tmp/repo"; state="$tmp/state"
-git -C "$repo" init -q 2>/dev/null || { mkdir -p "$repo"; git -C "$repo" init -q; }
-# ... seed a commit in "$repo" ...
-webcodex setup --root "$repo" --state-dir "$state" --json
-webcodex agent start --root "$repo" --state-dir "$state" &   # boots server+runner+connector
-port=$(grep -oP 'port = \K[0-9]+' "$state/project.toml")
-conn=$(cat "$state/credentials/connector-key")
-# MCP JSON-RPC: initialize, tools/list (exactly 14 canonical, no operator runtime),
-# then task_start → files_read → code_navigate/code_impact → edits_apply → commands_run → checks_run →
-# task_review → task_finish, and task_resume after a fresh initialize:
-curl -fsS -H "Authorization: Bearer $conn" -H 'Content-Type: application/json' \
-  -X POST "http://127.0.0.1:$port/mcp" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-# OpenAPI projection is the same 14 operations:
-curl -fsS -H "Authorization: Bearer $conn" "http://127.0.0.1:$port/openapi.json"
-# Boundary: a project credential must be denied operator-only routes (HTTP 403):
-curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $conn" \
-  -H 'Content-Type: application/json' -X POST "http://127.0.0.1:$port/api/tools/call" \
-  -d '{"tool":"read_file","params":{"project":"x","path":"README.md"}}'
-```
-
-Verify `trusted_agent` auto-authorizes `commands_run` (no approval interruption)
-while `WEBCODEX_AUTHORITY_MODE=restricted agent start` makes the same call return
-`approval_required`. For the deployed-host equivalent (runtime status, authority,
-connection layers, version compatibility, shell dialect, and the finish/handoff
-smoke), see [Deployment](DEPLOYMENT.md#smoke-checks).
+- `.github/workflows/ci.yml` is the ordinary repository gate. Every configured
+  pull-request workflow run gets the lightweight `contract` job without requiring
+  the `run-ci` label. It covers frontend type/test/dist checks, workspace-boundary
+  checks, formatting, and focused registry/OpenAPI/MCP schema and metadata parity.
+- The heavier Linux `test` and native Windows `test-windows` jobs still run on
+  every push to `main`. External pull requests run them automatically subject to
+  GitHub fork protections; owner-authored pull requests opt in with the `run-ci`
+  label.
+- Heavy Linux CI runs frontend checks, workspace-boundary and release-tooling
+  checks, Markdown-link validation, formatting, and the locked workspace test
+  suite. Windows CI runs formatting, native Windows package tests, npm checks,
+  and the Windows artifact-to-install smoke.
+- Exact-source release acceptance is separate from ordinary pull-request CI.
+  Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
+  `.github/workflows/release-readiness.yml`.
+- Slow/manual and real-process lanes remain explicit targeted evidence unless a
+  workflow names them. Do not infer that one lane ran merely because another CI
+  job passed.
 
 ## Default Test Principles
 

@@ -33,6 +33,7 @@
 ## 贡献
 
 - [AGENTS.md](../AGENTS.md) —— 面向 coding/AI agent 的仓库指引
+- [仓库维护](MAINTENANCE.md) —— canonical maintenance queue、依赖更新节奏、PR/CI 约定与双语文档规则
 - [测试策略](TESTING.md) —— 测试策略
 - [发布清单](RELEASE_CHECKLIST.md) —— 发布就绪
 - [架构决策](agent/architecture-decisions.md)

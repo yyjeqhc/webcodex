@@ -563,6 +563,7 @@ fn file_read_project_artifact_metadata_streams_above_whole_payload_limit() {
     assert!(invalid_max["error"].as_str().unwrap().contains("maximum"));
 }
 
+#[cfg(unix)]
 #[test]
 fn file_project_artifact_ops_reject_symlink_escape() {
     let root = tempfile::tempdir().unwrap();

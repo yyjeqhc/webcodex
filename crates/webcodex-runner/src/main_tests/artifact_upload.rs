@@ -810,6 +810,7 @@ fn file_artifact_upload_finish_refuses_late_target_when_overwrite_false() {
     assert_upload_temp_files_exist(tmp.path(), path, &upload_id);
 }
 
+#[cfg(unix)]
 #[test]
 fn file_artifact_upload_finish_refuses_late_symlink_even_with_overwrite() {
     let tmp = tempfile::tempdir().unwrap();

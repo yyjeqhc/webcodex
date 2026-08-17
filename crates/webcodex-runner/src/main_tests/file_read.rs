@@ -61,6 +61,7 @@ fn agent_file_read_without_range_preserves_plain_text_output() {
     assert_eq!(out.stdout.as_deref(), Some("one\ntwo\n"));
 }
 
+#[cfg(unix)]
 #[test]
 fn agent_file_read_rejects_symlink_escape_even_when_policy_allows_target() {
     let project = tempfile::tempdir().unwrap();

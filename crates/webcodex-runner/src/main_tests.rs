@@ -491,8 +491,6 @@ fn line_edit_json(result: CommandResult) -> serde_json::Value {
     serde_json::from_str(result.stdout.as_deref().expect("stdout json")).unwrap()
 }
 
-#[cfg(unix)]
-
 fn json_file_op_request(
     cwd: &Path,
     kind: &str,

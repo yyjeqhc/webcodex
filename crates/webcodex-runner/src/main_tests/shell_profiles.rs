@@ -191,8 +191,6 @@ fn wait_for_job_stdout(rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>) -> S
     panic!("timed out waiting for job completion; stdout so far: {stdout:?}");
 }
 
-#[cfg(unix)]
-#[cfg(unix)]
 #[test]
 fn prepared_profile_run_shell_and_run_job_see_same_env() {
     let tmp = tempfile::tempdir().unwrap();

@@ -92,6 +92,12 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "computer_list_windows" => {
             copy_keys(obj, &mut out, &["client_id", "limit"]);
         }
+        "computer_list_applications" => {
+            copy_keys(obj, &mut out, &["client_id", "limit"]);
+        }
+        "computer_launch_application" => {
+            copy_keys(obj, &mut out, &["client_id", "application_id"]);
+        }
         "computer_accessibility_status" => {
             copy_keys(obj, &mut out, &["client_id"]);
         }
@@ -476,6 +482,17 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "count": output.get("count").cloned().unwrap_or(Value::Null),
             "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
         }),
+        "computer_list_applications" => serde_json::json!({
+            "count": output.get("count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+        }),
+        "computer_launch_application" => serde_json::json!({
+            "application_id": output.get("application_id").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
         "computer_snapshot" => serde_json::json!({
             "surface_id": output.pointer("/surface/surface_id").cloned().unwrap_or(Value::Null),
             "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
@@ -572,6 +589,55 @@ fn copy_keys(
 mod computer_privacy_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn computer_application_list_ledger_omits_names_ids_and_native_identity() {
+        let output = json!({
+            "applications": [{
+                "application_id": "application_0123456789abcdef0123456789abcdef",
+                "display_name": "Private App",
+                "native_identity": "never-allowed"
+            }],
+            "count": 1,
+            "truncated": false
+        });
+        let summary = session_log_result_for_tool("computer_list_applications", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary, json!({"count": 1, "truncated": false}));
+        assert!(!serialized.contains("Private App"));
+        assert!(!serialized.contains("application_"));
+        assert!(!serialized.contains("native_identity"));
+    }
+
+    #[test]
+    fn computer_application_launch_ledger_keeps_only_opaque_lifecycle_metadata() {
+        let application_id = "application_0123456789abcdef0123456789abcdef";
+        let output = json!({
+            "application_id": application_id,
+            "success": true,
+            "error_kind": null,
+            "execution_state": null,
+            "state_changed": null,
+            "native_identity": "PRIVATE_NATIVE_ID",
+            "path": "C:\\Private\\app.exe",
+            "display_name": "Private App"
+        });
+        let summary = session_log_result_for_tool("computer_launch_application", &output);
+        assert_eq!(
+            summary,
+            json!({
+                "application_id": application_id,
+                "success": true,
+                "error_kind": null,
+                "execution_state": null,
+                "state_changed": null
+            })
+        );
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert!(!serialized.contains("PRIVATE_NATIVE_ID"));
+        assert!(!serialized.contains("Private App"));
+        assert!(!serialized.contains("app.exe"));
+    }
 
     #[test]
     fn computer_list_ledger_result_omits_window_content() {
@@ -1165,6 +1231,17 @@ impl ToolCall {
             Self::ComputerListWindows { client_id, limit } => serde_json::json!({
                 "client_id": client_id,
                 "limit": limit,
+            }),
+            Self::ComputerListApplications { client_id, limit } => serde_json::json!({
+                "client_id": client_id,
+                "limit": limit,
+            }),
+            Self::ComputerLaunchApplication {
+                client_id,
+                application_id,
+            } => serde_json::json!({
+                "client_id": client_id,
+                "application_id": application_id,
             }),
             Self::ComputerAccessibilityStatus { client_id } => serde_json::json!({
                 "client_id": client_id,

@@ -136,6 +136,8 @@ mod tests {
         for name in [
             "computer_list_targets",
             "computer_list_windows",
+            "computer_list_applications",
+            "computer_launch_application",
             "computer_accessibility_status",
             "computer_accessibility_tree",
             "computer_find_elements",

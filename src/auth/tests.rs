@@ -1333,6 +1333,10 @@ fn lightweight_contexts_have_no_admin_scope() {
     assert!(sk.scopes.contains(&SCOPE_PROJECT_WRITE.to_string()));
     assert!(sk.scopes.contains(&SCOPE_COMPUTER_READ.to_string()));
     assert!(sk.scopes.contains(&SCOPE_COMPUTER_CONTROL.to_string()));
+    assert!(
+        !sk.scopes.contains(&SCOPE_COMPUTER_LAUNCH.to_string()),
+        "direct shared-key quick-start must not implicitly gain application launch authority"
+    );
     for scope in AGENT_SCOPES {
         assert!(sk.scopes.contains(&scope.to_string()));
     }
@@ -1340,6 +1344,7 @@ fn lightweight_contexts_have_no_admin_scope() {
     // transport authority from the direct shared-key quick-start profile.
     assert!(!open.scopes.contains(&SCOPE_COMPUTER_READ.to_string()));
     assert!(!open.scopes.contains(&SCOPE_COMPUTER_CONTROL.to_string()));
+    assert!(!open.scopes.contains(&SCOPE_COMPUTER_LAUNCH.to_string()));
     assert!(!open.scopes.contains(&SCOPE_AGENT_REGISTER.to_string()));
 
     let project = crate::auth::shared_key::project_credential_context("wc_pgrant_1111111111111111");
@@ -1347,6 +1352,7 @@ fn lightweight_contexts_have_no_admin_scope() {
     assert!(!project.is_lightweight());
     assert!(!project.scopes.contains(&SCOPE_COMPUTER_READ.to_string()));
     assert!(!project.scopes.contains(&SCOPE_COMPUTER_CONTROL.to_string()));
+    assert!(!project.scopes.contains(&SCOPE_COMPUTER_LAUNCH.to_string()));
     assert!(!project.scopes.contains(&SCOPE_AGENT_REGISTER.to_string()));
 }
 

@@ -60,9 +60,10 @@ pub(crate) use super::tool_policy::{
 use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL, SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
     SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
     SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
@@ -99,6 +100,10 @@ pub(crate) enum AgentCapability {
     PersistentShell,
     /// Native read-only desktop/window observation on the exact target Runner.
     ComputerObserve,
+    /// Native bounded installed-application discovery on the exact target Runner.
+    ComputerApplicationDiscovery,
+    /// Native launch of one exact fresh opaque application handle.
+    ComputerApplicationLaunch,
     /// Native read-only semantic accessibility inspection on the exact Runner.
     ComputerAccessibilityObserve,
     /// Native read-only normalized state for one exact observed element.
@@ -132,6 +137,10 @@ impl AgentCapability {
             Self::AsyncJobs => "async shell jobs",
             Self::PersistentShell => SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
             Self::ComputerObserve => SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+            Self::ComputerApplicationDiscovery => {
+                SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY
+            }
+            Self::ComputerApplicationLaunch => SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
             Self::ComputerAccessibilityObserve => {
                 SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
@@ -161,6 +170,12 @@ impl AgentCapability {
             ],
             Self::PersistentShell => &[SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL],
             Self::ComputerObserve => &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE],
+            Self::ComputerApplicationDiscovery => {
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY]
+            }
+            Self::ComputerApplicationLaunch => {
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH]
+            }
             Self::ComputerAccessibilityObserve => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]
             }

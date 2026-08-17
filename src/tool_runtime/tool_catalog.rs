@@ -53,6 +53,8 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "workspace_checkpoint_show",
             "computer_list_targets",
             "computer_list_windows",
+            "computer_list_applications",
+            "computer_launch_application",
             "computer_accessibility_status",
             "computer_accessibility_tree",
             "computer_find_elements",
@@ -296,6 +298,18 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "computer_find_elements",
             "computer_element_state",
             "computer_snapshot",
+        ],
+    },
+    ToolRecommendedFlow {
+        name: "computer_application_launch",
+        summary: "Computer application launch: discover fresh bounded opaque application IDs, launch exactly one ID, then re-list windows and activate an exact surface only if needed.",
+        manifest_purpose:
+            "Discover a Windows application, submit its exact native launch request, then re-observe windows before any follow-up UI effect.",
+        tools: &[
+            "computer_list_applications",
+            "computer_launch_application",
+            "computer_list_windows",
+            "computer_activate_window",
         ],
     },
     ToolRecommendedFlow {

@@ -14,13 +14,27 @@ fn target_schema() -> Value {
                 "additionalProperties": false,
                 "properties": {
                     "computer_observe": {"type": "boolean"},
+                    "computer_application_discovery": {"type": "boolean"},
+                    "computer_application_launch": {"type": "boolean"},
                     "computer_snapshot_region": {"type": "boolean"},
                     "computer_accessibility_observe": {"type": "boolean"}
                 },
-                "required": ["computer_observe", "computer_snapshot_region", "computer_accessibility_observe"]
+                "required": ["computer_observe", "computer_application_discovery", "computer_application_launch", "computer_snapshot_region", "computer_accessibility_observe"]
             }
         },
         "required": ["client_id", "display_name", "connected", "capabilities"]
+    })
+}
+
+fn application_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "application_id": {"type": "string", "pattern": "^application_[0-9a-f]{32}$", "maxLength": 128},
+            "display_name": {"type": "string", "minLength": 1, "maxLength": 256}
+        },
+        "required": ["application_id", "display_name"]
     })
 }
 
@@ -125,6 +139,25 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({"type": "integer", "minimum": 0, "maximum": 64}),
             ),
             ("truncated", json!({"type": "boolean"})),
+        ])),
+        "computer_list_applications" => Some(wrapped_output_schema(vec![
+            (
+                "applications",
+                json!({"type": "array", "maxItems": 64, "items": application_schema()}),
+            ),
+            (
+                "count",
+                json!({"type": "integer", "minimum": 0, "maximum": 64}),
+            ),
+            ("truncated", json!({"type": "boolean"})),
+        ])),
+        "computer_launch_application" => Some(wrapped_output_schema(vec![
+            ("platform", json!({"type": "string", "const": "windows"})),
+            (
+                "application_id",
+                json!({"type": "string", "pattern": "^application_[0-9a-f]{32}$", "maxLength": 128}),
+            ),
+            ("success", json!({"type": "boolean", "const": true})),
         ])),
         "computer_accessibility_status" => Some(wrapped_output_schema(vec![
             (

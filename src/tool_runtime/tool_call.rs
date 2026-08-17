@@ -1325,6 +1325,19 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Enumerate a bounded fresh set of installed applications on one exact Runner.
+    ComputerListApplications {
+        client_id: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Submit one exact native application launch using a fresh opaque discovery id.
+    ComputerLaunchApplication {
+        client_id: String,
+        application_id: String,
+    },
+
     /// Read the exact Runner's macOS Accessibility trust status without prompting.
     ComputerAccessibilityStatus {
         client_id: String,
@@ -1737,6 +1750,33 @@ fn reject_unknown_search_project_texts_fields(arguments: &Value) -> Result<(), S
     ))
 }
 
+fn reject_unknown_computer_application_fields(
+    tool_name: &str,
+    arguments: &Value,
+) -> Result<(), String> {
+    let allowed: &[&str] = match tool_name {
+        "computer_list_applications" => &["client_id", "limit"],
+        "computer_launch_application" => &["client_id", "application_id"],
+        _ => return Ok(()),
+    };
+    let Some(object) = arguments.as_object() else {
+        return Ok(());
+    };
+    let unknown: Vec<&str> = object
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !allowed.contains(key))
+        .collect();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid arguments for tool '{tool_name}': unknown field(s) {}",
+            unknown.join(", ")
+        ))
+    }
+}
+
 impl ToolCall {
     pub fn from_tool_name(name: &str, arguments: Value) -> Result<Self, String> {
         Self::from_tool_name_with_recorder_metadata(name, arguments).map(|(call, _)| call)
@@ -1776,6 +1816,12 @@ impl ToolCall {
         }
         if name == "search_project_texts" {
             reject_unknown_search_project_texts_fields(&arguments)?;
+        }
+        if matches!(
+            name,
+            "computer_list_applications" | "computer_launch_application"
+        ) {
+            reject_unknown_computer_application_fields(name, &arguments)?;
         }
         let mut wrapped = serde_json::Map::new();
         wrapped.insert(
@@ -1910,6 +1956,8 @@ impl ToolCall {
             Self::CallHierarchy { .. } => "call_hierarchy",
             Self::ComputerListTargets => "computer_list_targets",
             Self::ComputerListWindows { .. } => "computer_list_windows",
+            Self::ComputerListApplications { .. } => "computer_list_applications",
+            Self::ComputerLaunchApplication { .. } => "computer_launch_application",
             Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
             Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",
             Self::ComputerFindElements { .. } => "computer_find_elements",

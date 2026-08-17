@@ -679,6 +679,8 @@ impl ToolRuntime {
 
             call @ (ToolCall::ComputerListTargets
             | ToolCall::ComputerListWindows { .. }
+            | ToolCall::ComputerListApplications { .. }
+            | ToolCall::ComputerLaunchApplication { .. }
             | ToolCall::ComputerAccessibilityStatus { .. }
             | ToolCall::ComputerAccessibilityTree { .. }
             | ToolCall::ComputerFindElements { .. }

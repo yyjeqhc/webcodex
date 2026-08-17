@@ -3,6 +3,7 @@ use super::super::input_schemas::{
     computer_activate_window_input_schema, computer_control_input_schema,
     computer_element_state_input_schema, computer_find_elements_input_schema,
     computer_input_text_input_schema, computer_key_input_input_schema,
+    computer_launch_application_input_schema, computer_list_applications_input_schema,
     computer_list_windows_input_schema, computer_save_snapshot_input_schema,
     computer_scroll_to_element_input_schema, computer_snapshot_input_schema, empty_input_schema,
 };
@@ -13,13 +14,23 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "computer_list_targets",
-            "List caller-visible Runner targets that advertise read-only Computer observation capabilities. Use this when client_id is unknown. Returns only minimal target identity, connection state, and Computer capability facts; no projects, policy, jobs, host details, or observation content.",
+            "List caller-visible Runner targets that advertise supported Computer observation or application capabilities. Use this when client_id is unknown. Returns only minimal target identity, connection state, and independent Computer capability facts; no projects, policy, jobs, host details, or observation content.",
             empty_input_schema(),
         ),
         tool_spec(
             "computer_list_windows",
             "List a bounded set of observable top-level windows on an exact Runner. surface_id values are opaque, process-local, and ephemeral. focused is exact-window focus when reliably known; active is the platform active/frontmost signal and may be application-level on macOS.",
             computer_list_windows_input_schema(),
+        ),
+        tool_spec(
+            "computer_list_applications",
+            "List a bounded fresh set of installed applications on an exact Windows Runner. application_id values are opaque, process-local, ephemeral, and replaced by each fresh list; executable paths and native launch identities are never exposed.",
+            computer_list_applications_input_schema(),
+        ),
+        tool_spec(
+            "computer_launch_application",
+            "Submit an exact Windows-native launch for one fresh application_id. No path, argv, cwd, environment, shell, URL, process-launch fallback, focus, or activation is accepted. Success means the OS accepted the launch request, not that a new process/window exists or is ready; reconcile uncertain outcomes with fresh computer_list_windows before any retry.",
+            computer_launch_application_input_schema(),
         ),
         tool_spec(
             "computer_accessibility_status",

@@ -1865,6 +1865,10 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Native read-only desktop observation is implemented only on macOS and
     // Windows. Unsupported platforms advertise false and fail closed.
     capabilities.computer_observe = cfg!(any(target_os = "macos", windows));
+    // Installed-application discovery and exact launch are Windows-only additive
+    // capabilities. Neither is inferred from observation/control or from each other.
+    capabilities.computer_application_discovery = cfg!(windows);
+    capabilities.computer_application_launch = cfg!(windows);
     // Region/downscale snapshot requests use a distinct additive wire fence so
     // old Runners that support only whole-window snapshots fail closed.
     capabilities.computer_snapshot_region = cfg!(any(target_os = "macos", windows));

@@ -64,6 +64,7 @@ pub(crate) const PROJECT_WRITE: &str = crate::auth::SCOPE_PROJECT_WRITE;
 pub(crate) const JOB_RUN: &str = crate::auth::SCOPE_JOB_RUN;
 pub(crate) const COMPUTER_READ: &str = crate::auth::SCOPE_COMPUTER_READ;
 pub(crate) const COMPUTER_CONTROL: &str = crate::auth::SCOPE_COMPUTER_CONTROL;
+pub(crate) const COMPUTER_LAUNCH: &str = crate::auth::SCOPE_COMPUTER_LAUNCH;
 
 pub(crate) const TOOL_PROVIDER_AGENT: &str = "agent";
 pub(crate) const TOOL_PROVIDER_CONTROL: &str = "control";

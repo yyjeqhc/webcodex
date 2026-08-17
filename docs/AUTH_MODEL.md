@@ -179,7 +179,9 @@ device-code flow are not implemented. OAuth setup steps are in
 
 An OAuth client's `allowed_scopes` is a registration-time delegation ceiling and
 is never automatically widened when WebCodex adds a new permission such as
-`computer:control`. First-party operators may explicitly replace an active client's
+`computer:control` or `computer:launch`. The default allow-list used when a new
+client omits `allowed_scopes` intentionally excludes `computer:launch`; launch
+authority is explicit opt-in. First-party operators may explicitly replace an active client's
 complete allow-list with `POST /api/oauth/clients/update_scopes`. A real change
 atomically revokes that client's existing access tokens, refresh tokens, and
 outstanding authorization codes, so the client must complete OAuth authorization
@@ -210,9 +212,10 @@ and role checks rather than requiring that scope merely to manage the PAT's own
 account resources.
 
 The direct shared-key quick-start profile includes `computer:read` and
-`computer:control` so Computer Use is available through direct key authentication
-without requiring a separate delegated OAuth grant. It still does not implicitly
-gain `account:manage` or `admin`. Unknown authenticated routes and runtime tools
+`computer:control` so existing Computer observation/control remains available through
+direct key authentication, but it deliberately does **not** include `computer:launch`.
+Application launch therefore requires a principal that was explicitly granted that
+scope. The shared-key profile also does not implicitly gain `account:manage` or `admin`. Unknown authenticated routes and runtime tools
 fail closed for ordinary principals until a scope policy is declared; bootstrap
 retains setup/superuser compatibility.
 
@@ -223,22 +226,37 @@ an OAuth error. This changes only response framing, not the required scope.
 
 ## Computer observation and control authorization
 
-`computer:read` is the dedicated scope for read-only desktop/window observation.
+`computer:read` is the dedicated scope for read-only Computer observation.
 It authorizes the model-facing `computer_list_targets`, `computer_list_windows`,
-`computer_accessibility_status`, `computer_accessibility_tree`,
+`computer_list_applications`, `computer_accessibility_status`, `computer_accessibility_tree`,
 `computer_find_elements`, `computer_element_state`, and `computer_snapshot` tools; it is separate from
-`runtime:read`, `project:read`,
-`job:run`, and `computer:control`, and none of those scopes imply it.
+`runtime:read`, `project:read`, `job:run`, `computer:control`, and `computer:launch`,
+and none of those scopes imply it.
 
 `computer_save_snapshot` is intentionally not a read-only Computer tool even though its capture phase is observational. It persists a bounded image into a project and therefore requires **both** `computer:read` and `project:write`. The Server reuses the exact Computer snapshot capability checks for the source Runner and independently requires the target project Runner to retain `file_write` at write admission. The operation is create-only; a lost response after possible artifact dispatch is `outcome_unknown` and is reconciled against the exact project/path with `read_project_artifact_metadata` and the expected digest, byte count, and MIME before any retry.
 
 `computer_list_targets` closes the target-discovery loop without widening
-`runtime:read`: it returns only caller-visible Runners that advertise
-`computer_observe` and/or `computer_accessibility_observe`, projected to the
-minimum client identity, connection state, plus the additive
-`computer_snapshot_region` capability fact. It
-does not expose the broader projects, policy, jobs, host, or provider inventory
-from `list_agents`.
+`runtime:read`: it returns only caller-visible Runners that advertise a supported
+Computer observation/application capability, projected to minimum client identity,
+connection state, and bounded capability facts including `computer_observe`,
+`computer_snapshot_region`, `computer_accessibility_observe`,
+`computer_application_discovery`, and `computer_application_launch`. These fields
+are additive and independent; missing old-Runner fields deserialize false and are
+not inferred from platform, observation, or control. The projection does not expose
+the broader projects, policy, jobs, host, or provider inventory from `list_agents`.
+
+`computer:launch` is a separate consequential Computer authority for
+`computer_launch_application`; neither `computer:read` nor `computer:control` implies it.
+The launch tool requires the independent `computer_application_launch` Runner capability,
+while read-only `computer_list_applications` requires `computer:read` plus the independent
+`computer_application_discovery` capability. The model supplies only `client_id` and a fresh
+opaque `application_id` produced by bounded discovery. No executable/path, argv, cwd,
+environment, shell/script, URL/protocol launcher, or generic process launcher is authorized.
+A stale or otherwise pre-native failure is `not_started` with `state_changed=false`; after
+native dispatch may have occurred, loss/ambiguity/inconsistent success metadata is
+`outcome_unknown` and must be reconciled with fresh `computer_list_windows` before another
+launch is considered. Launch success does not imply a new process/window or window readiness,
+and WebCodex performs no implicit activation/focus.
 
 `computer:control` is the separate effect scope for `computer_activate_window`,
 `computer_control`, `computer_scroll_to_element`, `computer_key_input`, and `computer_input_text`.
@@ -263,7 +281,7 @@ arbitrary characters/keycodes, repeat counts, or held-key state are not accepted
 `computer_input_text` writes bounded text through native AXValue or Windows UIA ValuePattern only to an already
 focused, enabled, writable, empty, non-secure, unprotected supported text element; Windows also requires the exact surface to already be foreground.
 There is no coordinate-click, generic wheel, open-ended key input, dragging,
-clipboard, app-launch, AppleScript, shell, paste, or implicit-focus fallback in this contract. A
+clipboard, AppleScript, shell, paste, generic process launch, or implicit-focus fallback in this control contract; application launch is the separate bounded `computer:launch` surface described above. A
 lost response after an effect may have been dispatched is reported as an
 unknown outcome and must be reconciled by observing current UI state before any
 retry. On macOS a native key press is delivered as two adjacent PID-targeted
@@ -280,8 +298,9 @@ not provide concurrent-user desktop isolation.
 Scopes are only one layer of the check. After target discovery, observation and
 effect calls name one exact Runner `client_id`, and the Server also requires
 caller access/ownership for that Runner plus the independently advertised
-capabilities for the requested operation: `computer_observe` for window
-observation and all window snapshots, with `computer_snapshot_region`
+capabilities for the requested operation: `computer_application_discovery` for bounded
+application discovery, `computer_application_launch` for exact opaque-ID application launch,
+`computer_observe` for window observation and all window snapshots, with `computer_snapshot_region`
 additionally required for snapshot requests that add a surface-relative region
 and/or output dimension bound; `computer_accessibility_observe` for Accessibility tree observation,
 `computer_element_state` for normalized state of one exact observed

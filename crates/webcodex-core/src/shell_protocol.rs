@@ -221,6 +221,13 @@ pub const SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_pat
 /// Read-only native desktop/window observation. Missing on older Runners and
 /// false; never inferred from shell or file capabilities.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE: &str = "computer_observe";
+/// Bounded installed-application discovery. Missing on older Runners is false
+/// and is never inferred from desktop observation or launch authority.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY: &str =
+    "computer_application_discovery";
+/// Exact native application launch for a fresh opaque discovery handle. Missing
+/// on older Runners is false and is never inferred from discovery or control.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH: &str = "computer_application_launch";
 /// Bounded surface-relative region/downscale snapshot requests. Missing on older
 /// Runners is false and is never inferred from whole-window observation support.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION: &str = "computer_snapshot_region";
@@ -288,6 +295,8 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_PROJECT_LIFECYCLE,
     SHELL_CLIENT_CAPABILITY_PROJECT_PATH_REGISTRATION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
@@ -421,6 +430,14 @@ pub struct ShellClientCapabilities {
     /// and therefore fail-closed.
     #[serde(default, skip_serializing_if = "is_false")]
     pub computer_observe: bool,
+    /// The Runner can return a bounded process-local installed-application list.
+    /// Missing on older Runners is false and never follows from observation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_application_discovery: bool,
+    /// The Runner can submit an exact native launch for a fresh application_id.
+    /// Missing on older Runners is false and never follows from discovery/control.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_application_launch: bool,
     /// The Runner supports bounded region/max-output snapshot transforms while
     /// preserving the existing whole-window snapshot wire for older Runners.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -513,6 +530,8 @@ impl Default for ShellClientCapabilities {
             project_lifecycle: false,
             project_path_registration: false,
             computer_observe: false,
+            computer_application_discovery: false,
+            computer_application_launch: false,
             computer_snapshot_region: false,
             computer_accessibility_observe: false,
             computer_element_state: false,
@@ -2764,6 +2783,8 @@ mod envelope_tests {
                 project_lifecycle: false,
                 project_path_registration: false,
                 computer_observe: false,
+                computer_application_discovery: false,
+                computer_application_launch: false,
                 computer_snapshot_region: false,
                 computer_accessibility_observe: false,
                 computer_element_state: false,
@@ -2848,6 +2869,8 @@ mod envelope_tests {
         assert!(!capabilities.structured_file_delete);
         assert!(!capabilities.artifact_export_streaming_metadata);
         assert!(!capabilities.computer_observe);
+        assert!(!capabilities.computer_application_discovery);
+        assert!(!capabilities.computer_application_launch);
         assert!(!capabilities.computer_accessibility_observe);
         assert!(!capabilities.computer_element_state);
         assert!(!capabilities.computer_control);
@@ -2857,6 +2880,8 @@ mod envelope_tests {
         assert!(!capabilities.computer_text_input);
         assert!(!ShellClientCapabilities::default().project_path_registration);
         assert!(!ShellClientCapabilities::default().computer_observe);
+        assert!(!ShellClientCapabilities::default().computer_application_discovery);
+        assert!(!ShellClientCapabilities::default().computer_application_launch);
         assert!(!ShellClientCapabilities::default().computer_accessibility_observe);
         assert!(!ShellClientCapabilities::default().computer_element_state);
         assert!(!ShellClientCapabilities::default().computer_control);
@@ -2901,6 +2926,34 @@ mod envelope_tests {
             serde_json::from_str(r#"{"computer_observe":true}"#).unwrap();
         assert!(capabilities.computer_observe);
         assert!(!capabilities.file_read);
+    }
+
+    #[test]
+    fn computer_application_capabilities_are_additive_and_default_false() {
+        let legacy: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_observe":true,"computer_control":true}"#).unwrap();
+        assert!(legacy.computer_observe);
+        assert!(legacy.computer_control);
+        assert!(!legacy.computer_application_discovery);
+        assert!(!legacy.computer_application_launch);
+
+        let discovery: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_application_discovery":true}"#).unwrap();
+        assert!(discovery.computer_application_discovery);
+        assert!(!discovery.computer_application_launch);
+        assert!(!discovery.computer_observe);
+        assert!(!discovery.computer_control);
+
+        let launch: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_application_launch":true}"#).unwrap();
+        assert!(launch.computer_application_launch);
+        assert!(!launch.computer_application_discovery);
+        assert!(!launch.computer_observe);
+        assert!(!launch.computer_control);
+        assert!(SHELL_CLIENT_CAPABILITY_NAMES
+            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY));
+        assert!(SHELL_CLIENT_CAPABILITY_NAMES
+            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH));
     }
 
     #[test]

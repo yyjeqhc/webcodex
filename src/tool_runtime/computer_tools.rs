@@ -5,7 +5,9 @@ use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
 use crate::auth::AuthContext;
 use crate::shell_protocol::{
-    ShellCommandExecutionState, ShellFileOpRequest, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    ShellCommandExecutionState, ShellFileOpRequest,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
@@ -18,6 +20,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 const MAX_WINDOWS: usize = 64;
+const MAX_APPLICATIONS: usize = 64;
+const MAX_APPLICATION_ID_BYTES: usize = 128;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
@@ -74,6 +78,17 @@ fn normalize_computer_key_input(
     Ok(modifiers)
 }
 
+fn valid_application_id(application_id: &str) -> bool {
+    let Some(suffix) = application_id.strip_prefix("application_") else {
+        return false;
+    };
+    application_id.len() <= MAX_APPLICATION_ID_BYTES
+        && suffix.len() == 32
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn validate_input_text(text: &str) -> Result<usize, &'static str> {
     let text_bytes = text.len();
     if text_bytes == 0 || text_bytes > MAX_INPUT_TEXT_BYTES || text.contains('\0') {
@@ -100,6 +115,41 @@ impl ToolRuntime {
                     json!({"limit": limit}),
                     auth,
                     Some(limit),
+                    None,
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerListApplications { client_id, limit } => {
+                let limit = limit.unwrap_or(MAX_APPLICATIONS).clamp(1, MAX_APPLICATIONS);
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_list_applications",
+                    json!({"limit": limit}),
+                    auth,
+                    Some(limit),
+                    None,
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerLaunchApplication {
+                client_id,
+                application_id,
+            } => {
+                if !valid_application_id(&application_id) {
+                    return computer_application_effect_not_started(
+                        "invalid_application",
+                        "application_id is invalid",
+                        &application_id,
+                    );
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_launch_application",
+                    json!({"application_id": application_id}),
+                    auth,
+                    None,
                     None,
                     None,
                 )
@@ -785,9 +835,15 @@ impl ToolRuntime {
         let mut targets = Vec::new();
         for client in clients {
             let computer_observe = client.capabilities.computer_observe;
+            let computer_application_discovery = client.capabilities.computer_application_discovery;
+            let computer_application_launch = client.capabilities.computer_application_launch;
             let computer_snapshot_region = client.capabilities.computer_snapshot_region;
             let computer_accessibility_observe = client.capabilities.computer_accessibility_observe;
-            if !computer_observe && !computer_accessibility_observe {
+            if !computer_observe
+                && !computer_accessibility_observe
+                && !computer_application_discovery
+                && !computer_application_launch
+            {
                 continue;
             }
             total_count = total_count.saturating_add(1);
@@ -800,6 +856,8 @@ impl ToolRuntime {
                 "connected": client.connected,
                 "capabilities": {
                     "computer_observe": computer_observe,
+                    "computer_application_discovery": computer_application_discovery,
+                    "computer_application_launch": computer_application_launch,
                     "computer_snapshot_region": computer_snapshot_region,
                     "computer_accessibility_observe": computer_accessibility_observe,
                 },
@@ -824,10 +882,26 @@ impl ToolRuntime {
         expected_surface_id: Option<&str>,
         accessibility_bounds: Option<(usize, usize)>,
     ) -> ToolResult {
+        let expected_application_id = payload
+            .get("application_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let is_application_launch = kind == "computer_launch_application";
         if client_id.is_empty() || client_id.len() > 128 {
+            if is_application_launch {
+                return computer_application_effect_not_started(
+                    "invalid_client",
+                    "client_id is invalid",
+                    expected_application_id.as_deref().unwrap_or_default(),
+                );
+            }
             return computer_error("invalid_client", "client_id is invalid");
         }
         let required_capabilities: &[&str] = match kind {
+            "computer_list_applications" => {
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY]
+            }
+            "computer_launch_application" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH],
             "computer_list_windows" | "computer_snapshot" => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE]
             }
@@ -854,10 +928,24 @@ impl ToolRuntime {
             {
                 Ok(true) => {}
                 Ok(false) => {
+                    if is_application_launch {
+                        return computer_application_effect_not_started(
+                            "capability_unavailable",
+                            &format!("target Runner does not support {required_capability}"),
+                            expected_application_id.as_deref().unwrap_or_default(),
+                        );
+                    }
                     return computer_error(
                         "capability_unavailable",
                         &format!("target Runner does not support {required_capability}"),
-                    )
+                    );
+                }
+                Err(_error) if is_application_launch => {
+                    return computer_application_effect_not_started(
+                        "client_access_denied",
+                        "caller cannot access the target Runner for application launch",
+                        expected_application_id.as_deref().unwrap_or_default(),
+                    );
                 }
                 Err(error) => return computer_error("client_access_denied", &error),
             }
@@ -888,6 +976,13 @@ impl ToolRuntime {
         let expected_snapshot_max_height = payload.get("max_height").and_then(Value::as_u64);
         let payload = match serde_json::to_string(&payload) {
             Ok(payload) => payload,
+            Err(_) if is_application_launch => {
+                return computer_application_effect_not_started(
+                    "invalid_request",
+                    "could not encode application launch request",
+                    expected_application_id.as_deref().unwrap_or_default(),
+                );
+            }
             Err(_) => {
                 return computer_error("invalid_request", "could not encode computer request")
             }
@@ -906,6 +1001,13 @@ impl ToolRuntime {
             .await
         {
             Ok(value) => value,
+            Err(error) if kind == "computer_launch_application" => {
+                return computer_application_effect_not_started(
+                    "not_started",
+                    &format!("application launch request was not dispatched: {error}"),
+                    expected_application_id.as_deref().unwrap_or_default(),
+                )
+            }
             Err(error) => return computer_error("dispatch_denied", &error),
         };
         let is_effect = computer_request_is_effect(kind);
@@ -922,6 +1024,13 @@ impl ToolRuntime {
                     .shell_clients
                     .cancel_request_dispatch_state(&request_id)
                     .await;
+                if is_application_launch {
+                    return computer_application_effect_delivery_failure(
+                        "Runner response channel closed before a terminal application launch result was received",
+                        request_dispatched,
+                        expected_application_id.as_deref().unwrap_or_default(),
+                    );
+                }
                 return computer_effect_delivery_failure(
                     "Runner response channel closed before a terminal computer effect result was received",
                     request_dispatched,
@@ -935,6 +1044,13 @@ impl ToolRuntime {
                     .shell_clients
                     .cancel_request_dispatch_state(&request_id)
                     .await;
+                if is_application_launch {
+                    return computer_application_effect_delivery_failure(
+                        "Runner did not return a terminal application launch result in time",
+                        request_dispatched,
+                        expected_application_id.as_deref().unwrap_or_default(),
+                    );
+                }
                 return computer_effect_delivery_failure(
                     "Runner did not return a terminal computer effect result in time",
                     request_dispatched,
@@ -952,6 +1068,13 @@ impl ToolRuntime {
             if is_text_input {
                 return computer_text_input_runner_error(error, response.request_dispatched);
             }
+            if is_application_launch {
+                return computer_application_launch_runner_error(
+                    error,
+                    response.request_dispatched,
+                    expected_application_id.as_deref().unwrap_or_default(),
+                );
+            }
             if is_effect && error_kind == "outcome_unknown" {
                 return computer_effect_outcome_unknown(error);
             }
@@ -964,6 +1087,13 @@ impl ToolRuntime {
             );
         }
         if response.exit_code != Some(0) {
+            if is_application_launch {
+                return computer_application_effect_delivery_failure(
+                    "Runner application launch ended without a structured terminal result",
+                    response.request_dispatched,
+                    expected_application_id.as_deref().unwrap_or_default(),
+                );
+            }
             if is_effect {
                 return computer_effect_delivery_failure(
                     "Runner computer effect ended without a structured terminal result",
@@ -979,6 +1109,13 @@ impl ToolRuntime {
             .transpose()
         {
             Ok(Some(output)) => output,
+            _ if is_application_launch => {
+                return computer_application_effect_delivery_failure(
+                    "Runner returned invalid JSON after possible application launch dispatch",
+                    response.request_dispatched,
+                    expected_application_id.as_deref().unwrap_or_default(),
+                )
+            }
             _ if is_effect => {
                 return computer_effect_delivery_failure(
                     "Runner returned invalid JSON after computer effect execution",
@@ -995,6 +1132,23 @@ impl ToolRuntime {
         match kind {
             "computer_list_windows" => {
                 validate_window_list(output, list_limit.unwrap_or(MAX_WINDOWS))
+            }
+            "computer_list_applications" => {
+                validate_application_list(output, list_limit.unwrap_or(MAX_APPLICATIONS))
+            }
+            "computer_launch_application" => {
+                let validated = validate_computer_launch_application(
+                    output,
+                    expected_application_id.as_deref().unwrap_or_default(),
+                );
+                if validated.success {
+                    validated
+                } else {
+                    computer_application_effect_outcome_unknown(
+                        "Runner reported successful application launch but returned inconsistent metadata",
+                        expected_application_id.as_deref().unwrap_or_default(),
+                    )
+                }
             }
             "computer_snapshot" | "computer_snapshot_region" => validate_snapshot(
                 output,
@@ -1143,6 +1297,9 @@ fn computer_error_recovery_message(error_kind: &str, error: &str) -> String {
         "stale_surface" => format!(
             "{error}; reacquire a fresh surface_id with computer_list_windows before continuing"
         ),
+        "stale_application" => format!(
+            "{error}; reacquire a fresh application_id with computer_list_applications before another launch"
+        ),
         _ => error.to_string(),
     }
 }
@@ -1155,6 +1312,7 @@ fn computer_request_is_effect(kind: &str) -> bool {
             | "computer_scroll_to_element"
             | "computer_key_input"
             | "computer_input_text"
+            | "computer_launch_application"
     )
 }
 
@@ -1308,6 +1466,90 @@ fn computer_effect_validated_result(result: ToolResult, inconsistent_message: &s
     }
 }
 
+fn computer_application_effect_not_started(
+    error_kind: &str,
+    message: &str,
+    application_id: &str,
+) -> ToolResult {
+    let application_id = valid_application_id(application_id).then(|| application_id.to_string());
+    ToolResult::err_with_output(
+        message.to_string(),
+        json!({
+            "error_kind": error_kind,
+            "message": bounded_text(message),
+            "application_id": application_id,
+            "state_changed": false,
+            "execution_state": "not_started",
+        }),
+    )
+}
+
+fn computer_application_effect_outcome_unknown(message: &str, application_id: &str) -> ToolResult {
+    let safe_message = format!(
+        "{message}; do not blindly retry. Reconcile with a fresh computer_list_windows observation first"
+    );
+    ToolResult::err_with_output(
+        safe_message.clone(),
+        json!({
+            "error_kind": "outcome_unknown",
+            "message": bounded_text(&safe_message),
+            "application_id": application_id,
+            "execution_state": "outcome_unknown",
+            "reconcile_with": "computer_list_windows",
+        }),
+    )
+}
+
+fn computer_application_effect_delivery_failure(
+    message: &str,
+    request_dispatched: Option<bool>,
+    application_id: &str,
+) -> ToolResult {
+    if request_dispatched == Some(false) {
+        computer_application_effect_not_started("not_started", message, application_id)
+    } else {
+        computer_application_effect_outcome_unknown(message, application_id)
+    }
+}
+
+fn computer_application_launch_runner_error(
+    error: &str,
+    request_dispatched: Option<bool>,
+    application_id: &str,
+) -> ToolResult {
+    match classify_runner_error(error) {
+        "stale_application" => computer_application_effect_not_started(
+            "stale_application",
+            "application_id is stale; run computer_list_applications again before another launch",
+            application_id,
+        ),
+        "invalid_request" => computer_application_effect_not_started(
+            "invalid_request",
+            "Runner rejected the application launch request before native dispatch",
+            application_id,
+        ),
+        "unsupported_platform" => computer_application_effect_not_started(
+            "unsupported_platform",
+            "application launch is unsupported by the target platform",
+            application_id,
+        ),
+        "application_failed" => computer_application_effect_not_started(
+            "application_failed",
+            "Windows application identity could not be revalidated before native dispatch",
+            application_id,
+        ),
+        "outcome_unknown" => computer_application_effect_outcome_unknown(
+            "Runner reported an uncertain native application launch outcome",
+            application_id,
+        ),
+        _ => computer_application_effect_delivery_failure(
+            "Runner application launch ended without a recognized structured result",
+            request_dispatched,
+            application_id,
+        ),
+    }
+}
+
 fn computer_text_input_runner_error(error: &str, request_dispatched: Option<bool>) -> ToolResult {
     let error_kind = classify_runner_error(error);
     match error_kind {
@@ -1342,7 +1584,9 @@ fn classify_runner_error(error: &str) -> &'static str {
         "permission_denied",
         "stale_surface",
         "stale_element",
+        "stale_application",
         "unsupported_platform",
+        "application_failed",
         "capture_failed",
         "accessibility_failed",
         "control_failed",
@@ -1421,6 +1665,114 @@ fn validate_surface(value: &Value, expected_id: Option<&str>) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+fn validate_application_list(output: Value, limit: usize) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner application list is not an object",
+            )
+        }
+    };
+    let allowed = ["applications", "count", "truncated"];
+    if object.len() != allowed.len() || object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner application list fields are inconsistent",
+        );
+    }
+    let applications = match output.get("applications").and_then(Value::as_array) {
+        Some(applications)
+            if applications.len() <= limit && applications.len() <= MAX_APPLICATIONS =>
+        {
+            applications
+        }
+        _ => {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner application list exceeds bound or is missing",
+            )
+        }
+    };
+    let mut seen = std::collections::HashSet::with_capacity(applications.len());
+    for application in applications {
+        let Some(entry) = application.as_object() else {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner application entry is not an object",
+            );
+        };
+        let allowed_entry = ["application_id", "display_name"];
+        if entry.len() != allowed_entry.len()
+            || entry
+                .keys()
+                .any(|key| !allowed_entry.contains(&key.as_str()))
+        {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner application entry fields are inconsistent",
+            );
+        }
+        let application_id = application
+            .get("application_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let display_name = application
+            .get("display_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !valid_application_id(application_id)
+            || !seen.insert(application_id)
+            || display_name.is_empty()
+            || display_name.len() > MAX_TEXT_BYTES
+            || display_name.contains('\0')
+        {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner application entry is invalid",
+            );
+        }
+    }
+    if output.get("count").and_then(Value::as_u64) != Some(applications.len() as u64)
+        || output.get("truncated").and_then(Value::as_bool).is_none()
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner application list metadata is inconsistent",
+        );
+    }
+    ToolResult::ok(output)
+}
+
+fn validate_computer_launch_application(
+    output: Value,
+    expected_application_id: &str,
+) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "application launch result is not an object",
+            )
+        }
+    };
+    let allowed = ["platform", "application_id", "success"];
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("windows")
+        || output.get("application_id").and_then(Value::as_str) != Some(expected_application_id)
+        || output.get("success").and_then(Value::as_bool) != Some(true)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "application launch success metadata is inconsistent",
+        );
+    }
+    ToolResult::ok(output)
 }
 
 fn validate_window_list(output: Value, limit: usize) -> ToolResult {
@@ -2152,6 +2504,196 @@ mod tests {
         })
     }
 
+    fn application(id: &str, name: &str) -> Value {
+        json!({"application_id": id, "display_name": name})
+    }
+
+    const APPLICATION_ID: &str = "application_0123456789abcdef0123456789abcdef";
+    const APPLICATION_ID_2: &str = "application_fedcba9876543210fedcba9876543210";
+
+    #[test]
+    fn computer_application_id_and_public_argument_shape_are_closed() {
+        assert!(valid_application_id(APPLICATION_ID));
+        for invalid in [
+            "",
+            "application_",
+            "application_0123456789ABCDEF0123456789ABCDEF",
+            "application_0123456789abcdef0123456789abcdeg",
+            "surface_0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(!valid_application_id(invalid), "{invalid}");
+        }
+
+        let list = ToolCall::from_tool_name(
+            "computer_list_applications",
+            json!({"client_id": "msi", "limit": 4}),
+        )
+        .unwrap();
+        assert!(matches!(list, ToolCall::ComputerListApplications { .. }));
+        let launch = ToolCall::from_tool_name(
+            "computer_launch_application",
+            json!({"client_id": "msi", "application_id": APPLICATION_ID}),
+        )
+        .unwrap();
+        assert!(matches!(launch, ToolCall::ComputerLaunchApplication { .. }));
+        for forbidden in [
+            "path",
+            "argv",
+            "cwd",
+            "environment",
+            "command",
+            "script",
+            "url",
+        ] {
+            let mut args = json!({"client_id": "msi", "application_id": APPLICATION_ID});
+            args.as_object_mut()
+                .unwrap()
+                .insert(forbidden.to_string(), json!("forbidden"));
+            let error = ToolCall::from_tool_name("computer_launch_application", args).unwrap_err();
+            assert!(error.contains("unknown field"), "{error}");
+        }
+    }
+
+    #[test]
+    fn computer_application_list_validator_is_bounded_exact_and_private() {
+        let valid = validate_application_list(
+            json!({
+                "applications": [application(APPLICATION_ID, "Editor")],
+                "count": 1,
+                "truncated": true
+            }),
+            1,
+        );
+        assert!(valid.success, "{:?}", valid.output);
+
+        let too_many = validate_application_list(
+            json!({
+                "applications": [
+                    application(APPLICATION_ID, "One"),
+                    application(APPLICATION_ID_2, "Two")
+                ],
+                "count": 2,
+                "truncated": false
+            }),
+            1,
+        );
+        assert!(!too_many.success);
+
+        let duplicate = validate_application_list(
+            json!({
+                "applications": [
+                    application(APPLICATION_ID, "One"),
+                    application(APPLICATION_ID, "Two")
+                ],
+                "count": 2,
+                "truncated": false
+            }),
+            2,
+        );
+        assert!(!duplicate.success);
+
+        for leak in [
+            json!({
+                "applications": [{
+                    "application_id": APPLICATION_ID,
+                    "display_name": "Editor",
+                    "path": "C:\\\\secret.exe"
+                }],
+                "count": 1,
+                "truncated": false
+            }),
+            json!({
+                "applications": [{
+                    "application_id": APPLICATION_ID,
+                    "display_name": "Editor",
+                    "native_identity": "AUMID-or-PIDL"
+                }],
+                "count": 1,
+                "truncated": false
+            }),
+        ] {
+            let result = validate_application_list(leak, 1);
+            assert!(!result.success);
+            assert_eq!(result.output["error_kind"], "invalid_runner_response");
+        }
+    }
+
+    #[test]
+    fn computer_application_launch_lifecycle_is_exact_and_never_blindly_retryable() {
+        assert!(computer_request_is_effect("computer_launch_application"));
+        assert!(!computer_request_is_effect("computer_list_applications"));
+
+        let valid = validate_computer_launch_application(
+            json!({"platform": "windows", "application_id": APPLICATION_ID, "success": true}),
+            APPLICATION_ID,
+        );
+        assert!(valid.success, "{:?}", valid.output);
+
+        let invalid = validate_computer_launch_application(
+            json!({
+                "platform": "windows",
+                "application_id": APPLICATION_ID_2,
+                "success": true,
+                "native_identity": "MUST_NOT_SURVIVE"
+            }),
+            APPLICATION_ID,
+        );
+        assert!(!invalid.success);
+        let unknown = computer_application_effect_outcome_unknown(
+            "Runner returned inconsistent successful launch metadata",
+            APPLICATION_ID,
+        );
+        assert_eq!(unknown.output["error_kind"], "outcome_unknown");
+        assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+        assert_eq!(unknown.output["reconcile_with"], "computer_list_windows");
+        assert!(unknown.output.get("state_changed").is_none());
+        assert!(!serde_json::to_string(&unknown.output)
+            .unwrap()
+            .contains("MUST_NOT_SURVIVE"));
+
+        for (dispatched, expected) in [
+            (Some(false), "not_started"),
+            (Some(true), "outcome_unknown"),
+            (None, "outcome_unknown"),
+        ] {
+            let result = computer_application_effect_delivery_failure(
+                "launch transport lost",
+                dispatched,
+                APPLICATION_ID,
+            );
+            assert_eq!(result.output["error_kind"], expected);
+            if expected == "not_started" {
+                assert_eq!(result.output["state_changed"], false);
+            } else {
+                assert_eq!(result.output["reconcile_with"], "computer_list_windows");
+            }
+        }
+
+        for error in [
+            "stale_application: PRIVATE_NATIVE_ID",
+            "application_failed: PRIVATE_NATIVE_ID",
+        ] {
+            let result =
+                computer_application_launch_runner_error(error, Some(true), APPLICATION_ID);
+            assert_eq!(result.output["execution_state"], "not_started");
+            assert_eq!(result.output["state_changed"], false);
+            let serialized = serde_json::to_string(&result.output).unwrap();
+            assert!(!serialized.contains("PRIVATE_NATIVE_ID"));
+            assert!(!result
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("PRIVATE_NATIVE_ID"));
+        }
+        let malformed = computer_application_effect_not_started(
+            "invalid_application",
+            "application_id is invalid",
+            &"x".repeat(512),
+        );
+        assert!(malformed.output["application_id"].is_null());
+        assert_eq!(malformed.output["execution_state"], "not_started");
+    }
+
     #[test]
     fn computer_accessibility_tree_validator_accepts_bounded_parent_first_tree() {
         let result = validate_accessibility_tree(accessibility_tree(), "surface_test", 2, 8);
@@ -2726,6 +3268,7 @@ mod tests {
 
     #[test]
     fn computer_activate_window_uses_effect_delivery_semantics() {
+        assert!(computer_request_is_effect("computer_launch_application"));
         assert!(computer_request_is_effect("computer_activate_window"));
         assert!(computer_request_is_effect("computer_control"));
         assert!(computer_request_is_effect("computer_scroll_to_element"));
@@ -2733,6 +3276,7 @@ mod tests {
         assert!(computer_request_is_effect("computer_input_text"));
         for read_only in [
             "computer_list_windows",
+            "computer_list_applications",
             "computer_accessibility_tree",
             "computer_snapshot",
             "computer_snapshot_region",

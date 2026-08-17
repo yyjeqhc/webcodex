@@ -23,6 +23,15 @@ fn tool_definitions_drive_session_and_permission_policy() {
     assert!(text_input.requires_permission());
     assert_eq!(text_input.metadata().risk, ToolRisk::ComputerControl);
 
+    let application_launch = lookup_tool_definition("computer_launch_application")
+        .expect("computer application launch tool");
+    assert!(application_launch.is_write_like());
+    assert!(application_launch.requires_permission());
+    assert_eq!(
+        application_launch.metadata().risk,
+        ToolRisk::ComputerControl
+    );
+
     let git_group = TOOL_DISCOVERY_GROUPS
         .iter()
         .find(|group| group.name == TOOL_DISCOVERY_GROUP_GIT)

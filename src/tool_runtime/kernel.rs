@@ -682,6 +682,37 @@ mod tests {
             Ok(())
         );
         assert_eq!(
+            check_runtime_tool_scope(Some(&allowed), "computer_list_applications"),
+            Ok(())
+        );
+        assert_eq!(
+            check_runtime_tool_scope(Some(&allowed), "computer_launch_application"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_LAUNCH),
+                description: "missing required scope: computer:launch".to_string(),
+            })
+        );
+        let control_only = oauth(&["computer:control"]);
+        assert!(matches!(
+            check_runtime_tool_scope(Some(&control_only), "computer_launch_application"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_LAUNCH),
+                ..
+            })
+        ));
+        let launch_only = oauth(&["computer:launch"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&launch_only), "computer_launch_application"),
+            Ok(())
+        );
+        assert!(matches!(
+            check_runtime_tool_scope(Some(&launch_only), "computer_list_applications"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_READ),
+                ..
+            })
+        ));
+        assert_eq!(
             check_runtime_tool_scope(Some(&allowed), "computer_list_targets"),
             Ok(())
         );

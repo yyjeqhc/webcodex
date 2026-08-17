@@ -14,6 +14,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 const MAX_WINDOWS: usize = 64;
+const MAX_APPLICATIONS: usize = 64;
+const MAX_APPLICATION_ID_BYTES: usize = 128;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
@@ -33,6 +35,17 @@ const COMPUTER_KEY_INPUT_KEYS: &[&str] = &[
     "end",
 ];
 const COMPUTER_KEY_INPUT_MODIFIERS: &[&str] = &["shift", "control", "option", "command"];
+
+fn valid_application_id(application_id: &str) -> bool {
+    let Some(suffix) = application_id.strip_prefix("application_") else {
+        return false;
+    };
+    application_id.len() <= MAX_APPLICATION_ID_BYTES
+        && suffix.len() == 32
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
 
 fn validate_key_modifiers(modifiers: &[String]) -> Result<(), String> {
     if modifiers.len() > COMPUTER_KEY_INPUT_MODIFIERS.len() {
@@ -447,9 +460,22 @@ struct SnapshotRegion {
     height: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlatformApplication {
+    display_name: String,
+    native_identity: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ApplicationRecord {
+    display_name: String,
+    native_identity: Vec<u8>,
+}
+
 struct ComputerObserver {
     surfaces: Mutex<HashMap<String, SurfaceRecord>>,
     elements: Mutex<ElementRegistry>,
+    applications: Mutex<HashMap<String, ApplicationRecord>>,
 }
 
 impl ComputerObserver {
@@ -458,6 +484,7 @@ impl ComputerObserver {
         OBSERVER.get_or_init(|| ComputerObserver {
             surfaces: Mutex::new(HashMap::new()),
             elements: Mutex::new(ElementRegistry::default()),
+            applications: Mutex::new(HashMap::new()),
         })
     }
 
@@ -500,6 +527,74 @@ impl ComputerObserver {
         *surface_registry = surfaces;
         element_registry.clear();
         Ok(json!({"windows": windows, "count": count, "truncated": truncated}))
+    }
+
+    fn replace_application_candidates(
+        &self,
+        candidates: Vec<PlatformApplication>,
+        limit: usize,
+    ) -> Result<Value, String> {
+        if !(1..=MAX_APPLICATIONS).contains(&limit) {
+            return Err("invalid_request: application discovery limit is invalid".to_string());
+        }
+        let truncated = candidates.len() > limit;
+        let mut applications = HashMap::new();
+        let mut output = Vec::with_capacity(limit.min(candidates.len()));
+        for candidate in candidates.into_iter().take(limit) {
+            let display_name = bounded_text(&candidate.display_name);
+            if display_name.is_empty()
+                || display_name.contains('\0')
+                || candidate.native_identity.is_empty()
+            {
+                return Err(
+                    "application_failed: native application metadata is invalid".to_string()
+                );
+            }
+            let application_id = format!("application_{}", Uuid::new_v4().simple());
+            applications.insert(
+                application_id.clone(),
+                ApplicationRecord {
+                    display_name: display_name.clone(),
+                    native_identity: candidate.native_identity,
+                },
+            );
+            output.push(json!({
+                "application_id": application_id,
+                "display_name": display_name,
+            }));
+        }
+        let count = output.len();
+        let mut registry = self
+            .applications
+            .lock()
+            .map_err(|_| "computer_state_error: application registry lock poisoned".to_string())?;
+        *registry = applications;
+        Ok(json!({"applications": output, "count": count, "truncated": truncated}))
+    }
+
+    fn list_applications(&self, limit: usize) -> Result<Value, String> {
+        let candidates = platform::list_applications(MAX_APPLICATIONS + 1)?;
+        self.replace_application_candidates(candidates, limit)
+    }
+
+    fn launch_application(&self, application_id: &str) -> Result<Value, String> {
+        if !valid_application_id(application_id) {
+            return Err("invalid_request: application_id is invalid".to_string());
+        }
+        // Keep the process-local discovery generation fenced through exact native
+        // revalidation and dispatch. A concurrent fresh list cannot retire this id
+        // between lookup and the native launch attempt.
+        let registry = self
+            .applications
+            .lock()
+            .map_err(|_| "computer_state_error: application registry lock poisoned".to_string())?;
+        let record = registry
+            .get(application_id)
+            .cloned()
+            .ok_or_else(|| "stale_application: unknown or stale application_id".to_string())?;
+        let result = platform::launch_application(application_id, &record);
+        drop(registry);
+        result
     }
 
     fn accessibility_status(&self) -> Result<Value, String> {
@@ -1670,6 +1765,8 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
     matches!(
         kind,
         "computer_list_windows"
+            | "computer_list_applications"
+            | "computer_launch_application"
             | "computer_snapshot"
             | "computer_snapshot_region"
             | "computer_accessibility_status"
@@ -1692,6 +1789,87 @@ fn ensure_exact_payload_fields(payload: &Value, expected: &[&str]) -> Result<(),
         return Err("invalid_request: computer payload contains unsupported fields".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod application_wire_contract_tests {
+    use super::*;
+
+    fn candidate(name: &str, marker: u8) -> PlatformApplication {
+        PlatformApplication {
+            display_name: name.to_string(),
+            native_identity: vec![marker],
+        }
+    }
+
+    fn observer() -> ComputerObserver {
+        ComputerObserver {
+            surfaces: Mutex::new(HashMap::new()),
+            elements: Mutex::new(ElementRegistry::default()),
+            applications: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn application_requests_are_strict_and_ids_are_closed() {
+        assert!(is_computer_request_kind("computer_list_applications"));
+        assert!(is_computer_request_kind("computer_launch_application"));
+        assert!(ensure_exact_payload_fields(&json!({"limit": 2}), &["limit"]).is_ok());
+        assert!(ensure_exact_payload_fields(
+            &json!({"application_id": "application_0123456789abcdef0123456789abcdef"}),
+            &["application_id"],
+        )
+        .is_ok());
+        for invalid in [
+            "",
+            "application_",
+            "application_0123456789abcdef0123456789abcdeg",
+            "surface_0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(!valid_application_id(invalid), "{invalid}");
+        }
+        assert!(valid_application_id(
+            "application_0123456789abcdef0123456789abcdef"
+        ));
+        for extra in ["path", "argv", "cwd", "environment", "command", "url"] {
+            let mut payload =
+                json!({"application_id": "application_0123456789abcdef0123456789abcdef"});
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert(extra.to_string(), json!("x"));
+            assert!(ensure_exact_payload_fields(&payload, &["application_id"]).is_err());
+        }
+    }
+
+    #[test]
+    fn bounded_discovery_replaces_generation_and_stales_old_ids() {
+        let observer = observer();
+        let first = observer
+            .replace_application_candidates(
+                vec![
+                    candidate("One", 1),
+                    candidate("Two", 2),
+                    candidate("Three", 3),
+                ],
+                2,
+            )
+            .unwrap();
+        assert_eq!(first["count"], 2);
+        assert_eq!(first["truncated"], true);
+        let old_id = first["applications"][0]["application_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(first["applications"][0].get("native_identity").is_none());
+
+        let second = observer
+            .replace_application_candidates(vec![candidate("Four", 4)], 1)
+            .unwrap();
+        assert_eq!(second["count"], 1);
+        let error = observer.launch_application(&old_id).unwrap_err();
+        assert!(error.starts_with("stale_application:"), "{error}");
+    }
 }
 
 #[cfg(test)]
@@ -1818,6 +1996,28 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 .clamp(1, MAX_WINDOWS);
             ComputerObserver::global().list_windows(limit)
         }
+        "computer_list_applications" => ensure_exact_payload_fields(&payload, &["limit"])
+            .and_then(|()| {
+                payload
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .filter(|limit| (1..=MAX_APPLICATIONS).contains(limit))
+                    .ok_or_else(|| {
+                        "invalid_request: application discovery limit is invalid".to_string()
+                    })
+            })
+            .and_then(|limit| ComputerObserver::global().list_applications(limit)),
+        "computer_launch_application" => ensure_exact_payload_fields(&payload, &["application_id"])
+            .and_then(|()| {
+                payload
+                    .get("application_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_request: application_id is required".to_string())
+            })
+            .and_then(|application_id| {
+                ComputerObserver::global().launch_application(application_id)
+            }),
         "computer_accessibility_status" => ComputerObserver::global().accessibility_status(),
         "computer_accessibility_tree" => {
             let surface_id = payload
@@ -2004,8 +2204,23 @@ struct PlatformWindow {
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
     use super::{
-        AccessibilityTreeResult, ComputerAction, ElementRecord, PlatformWindow, SurfaceRecord,
+        AccessibilityTreeResult, ApplicationRecord, ComputerAction, ElementRecord,
+        PlatformApplication, PlatformWindow, SurfaceRecord,
     };
+
+    pub(super) fn list_applications(_limit: usize) -> Result<Vec<PlatformApplication>, String> {
+        Err(
+            "unsupported_platform: application discovery is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    pub(super) fn launch_application(
+        _application_id: &str,
+        _application: &ApplicationRecord,
+    ) -> Result<serde_json::Value, String> {
+        Err("unsupported_platform: application launch is unavailable on this platform".to_string())
+    }
 
     pub(super) fn list_windows(_limit: usize) -> Result<Vec<PlatformWindow>, String> {
         Err(
@@ -2197,7 +2412,8 @@ mod platform {
     use super::validate_key_input;
     use super::{
         bounded_text, ensure_raw_capture_bound, validate_input_text, AccessibilityTreeResult,
-        ComputerAction, ElementRecord, PlatformWindow, SurfaceRecord,
+        ApplicationRecord, ComputerAction, ElementRecord, PlatformApplication, PlatformWindow,
+        SurfaceRecord,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -2244,7 +2460,8 @@ mod platform {
         Win32::{
             Foundation::{E_NOINTERFACE, E_POINTER, HWND as WinHwnd, RPC_E_CHANGED_MODE},
             System::Com::{
-                CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+                CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IBindCtx,
+                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
                 COINIT_MULTITHREADED,
             },
             UI::Accessibility::{
@@ -2272,7 +2489,15 @@ mod platform {
                 VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU,
                 VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
             },
-            UI::WindowsAndMessaging::{GetForegroundWindow, IsIconic, ShowWindowAsync, SW_RESTORE},
+            UI::Shell::{
+                Common::ITEMIDLIST, FOLDERID_AppsFolder, IEnumIDList, ILCombine, ILGetSize,
+                IShellFolder, IShellItem, SHCreateItemFromIDList, SHGetDesktopFolder,
+                SHGetKnownFolderIDList, ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_IDLIST,
+                SHCONTF_FOLDERS, SHCONTF_NONFOLDERS, SHELLEXECUTEINFOW, SIGDN_NORMALDISPLAY,
+            },
+            UI::WindowsAndMessaging::{
+                GetForegroundWindow, IsIconic, ShowWindowAsync, SW_RESTORE, SW_SHOWNOACTIVATE,
+            },
         },
     };
     #[cfg(windows)]
@@ -2286,6 +2511,264 @@ mod platform {
         },
         Storage::Xps::PrintWindow,
     };
+
+    #[cfg(windows)]
+    const MAX_NATIVE_APPLICATION_IDENTITY_BYTES: usize = 64 * 1024;
+
+    #[cfg(windows)]
+    struct OwnedPidl(*mut ITEMIDLIST);
+
+    #[cfg(windows)]
+    impl OwnedPidl {
+        fn from_raw(raw: *mut ITEMIDLIST) -> Result<Self, String> {
+            if raw.is_null() {
+                Err(
+                    "application_failed: Windows Shell returned a null application identity"
+                        .to_string(),
+                )
+            } else {
+                Ok(Self(raw))
+            }
+        }
+
+        fn as_ptr(&self) -> *const ITEMIDLIST {
+            self.0.cast_const()
+        }
+
+        fn identity_bytes(&self) -> Result<Vec<u8>, String> {
+            let bytes = unsafe { ILGetSize(Some(self.as_ptr())) } as usize;
+            if bytes == 0 || bytes > MAX_NATIVE_APPLICATION_IDENTITY_BYTES {
+                return Err(
+                    "application_failed: Windows application identity exceeds bound".to_string(),
+                );
+            }
+            Ok(unsafe { std::slice::from_raw_parts(self.0.cast::<u8>(), bytes) }.to_vec())
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for OwnedPidl {
+        fn drop(&mut self) {
+            unsafe { CoTaskMemFree(Some(self.0 as *const std::ffi::c_void)) };
+        }
+    }
+
+    #[cfg(windows)]
+    struct NativeApplicationCandidate {
+        display_name: String,
+        native_identity: Vec<u8>,
+        pidl: OwnedPidl,
+    }
+
+    #[cfg(windows)]
+    struct ShellComInitialization;
+
+    #[cfg(windows)]
+    impl ShellComInitialization {
+        fn new() -> Result<Self, String> {
+            let result =
+                unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+            if result.is_ok() {
+                Ok(Self)
+            } else if result == RPC_E_CHANGED_MODE {
+                Err(
+                    "application_failed: Windows Shell requires a compatible STA COM apartment"
+                        .to_string(),
+                )
+            } else {
+                Err("application_failed: Windows Shell COM initialization failed".to_string())
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for ShellComInitialization {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    #[cfg(windows)]
+    fn application_com() -> Result<ShellComInitialization, String> {
+        ShellComInitialization::new()
+    }
+
+    #[cfg(windows)]
+    fn windows_apps_folder() -> Result<(OwnedPidl, IShellFolder), String> {
+        let root = unsafe { SHGetKnownFolderIDList(&FOLDERID_AppsFolder, 0, None) }
+            .map_err(|_| "application_failed: Windows AppsFolder is unavailable".to_string())
+            .and_then(OwnedPidl::from_raw)?;
+        let desktop = unsafe { SHGetDesktopFolder() }.map_err(|_| {
+            "application_failed: Windows Shell desktop folder is unavailable".to_string()
+        })?;
+        let folder: IShellFolder = unsafe {
+            desktop.BindToObject(root.as_ptr(), None::<&IBindCtx>)
+        }
+        .map_err(|_| "application_failed: Windows AppsFolder could not be bound".to_string())?;
+        Ok((root, folder))
+    }
+
+    #[cfg(windows)]
+    fn display_name_for_application(pidl: &OwnedPidl) -> Result<String, String> {
+        let item: IShellItem = unsafe { SHCreateItemFromIDList(pidl.as_ptr()) }.map_err(|_| {
+            "application_failed: Windows application Shell item is unavailable".to_string()
+        })?;
+        let display = unsafe { item.GetDisplayName(SIGDN_NORMALDISPLAY) }.map_err(|_| {
+            "application_failed: Windows application display name is unavailable".to_string()
+        })?;
+        let text = unsafe { display.to_string() }.map_err(|_| {
+            "application_failed: Windows application display name is invalid".to_string()
+        });
+        unsafe { CoTaskMemFree(Some(display.0 as *const std::ffi::c_void)) };
+        let text = text?;
+        if text.is_empty() || text.contains('\0') {
+            Err("application_failed: Windows application display name is invalid".to_string())
+        } else {
+            Ok(text)
+        }
+    }
+
+    #[cfg(windows)]
+    fn enumerate_native_applications(
+        limit: usize,
+    ) -> Result<Vec<NativeApplicationCandidate>, String> {
+        let _com = application_com()?;
+        let (root, folder) = windows_apps_folder()?;
+        let mut enumerator: Option<IEnumIDList> = None;
+        let flags = (SHCONTF_FOLDERS.0 | SHCONTF_NONFOLDERS.0) as u32;
+        let hr =
+            unsafe { folder.EnumObjects(WinHwnd(std::ptr::null_mut()), flags, &mut enumerator) };
+        if hr.is_err() {
+            return Err("application_failed: Windows AppsFolder enumeration failed".to_string());
+        }
+        let Some(enumerator) = enumerator else {
+            return Ok(Vec::new());
+        };
+        let mut applications = Vec::with_capacity(limit.min(16));
+        while applications.len() < limit {
+            let mut items = [std::ptr::null_mut()];
+            let mut fetched = 0u32;
+            let hr = unsafe { enumerator.Next(&mut items, Some(&mut fetched)) };
+            if hr.is_err() {
+                return Err("application_failed: Windows AppsFolder enumeration failed".to_string());
+            }
+            if fetched == 0 {
+                break;
+            }
+            if fetched != 1 || items[0].is_null() {
+                return Err(
+                    "application_failed: Windows AppsFolder returned invalid enumeration metadata"
+                        .to_string(),
+                );
+            }
+            let relative = OwnedPidl::from_raw(items[0])?;
+            let absolute = OwnedPidl::from_raw(unsafe {
+                ILCombine(Some(root.as_ptr()), Some(relative.as_ptr()))
+            })?;
+            let native_identity = absolute.identity_bytes()?;
+            let display_name = display_name_for_application(&absolute)?;
+            applications.push(NativeApplicationCandidate {
+                display_name,
+                native_identity,
+                pidl: absolute,
+            });
+        }
+        Ok(applications)
+    }
+
+    #[cfg(windows)]
+    pub(super) fn list_applications(limit: usize) -> Result<Vec<PlatformApplication>, String> {
+        enumerate_native_applications(limit).map(|applications| {
+            applications
+                .into_iter()
+                .map(|application| PlatformApplication {
+                    display_name: application.display_name,
+                    native_identity: application.native_identity,
+                })
+                .collect()
+        })
+    }
+
+    #[cfg(windows)]
+    fn revalidate_application_identity(native_identity: &[u8]) -> Result<OwnedPidl, String> {
+        let applications = enumerate_native_applications(super::MAX_APPLICATIONS + 1)?;
+        applications
+            .into_iter()
+            .find(|candidate| candidate.native_identity == native_identity)
+            .map(|candidate| candidate.pidl)
+            .ok_or_else(|| {
+                "stale_application: native application identity changed or disappeared".to_string()
+            })
+    }
+
+    #[cfg(windows)]
+    fn shell_execute_info_for_application(pidl: *const ITEMIDLIST) -> SHELLEXECUTEINFOW {
+        let mut info = SHELLEXECUTEINFOW::default();
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = SEE_MASK_IDLIST | SEE_MASK_FLAG_NO_UI;
+        info.lpIDList = pidl as *mut std::ffi::c_void;
+        // Launch submission must not itself request window activation/focus.
+        info.nShow = SW_SHOWNOACTIVATE.0;
+        info
+    }
+
+    #[cfg(windows)]
+    pub(super) fn launch_application(
+        application_id: &str,
+        application: &ApplicationRecord,
+    ) -> Result<Value, String> {
+        // Hold a dedicated Shell-compatible STA COM apartment through exact
+        // revalidation and native dispatch. An incompatible pre-existing apartment
+        // fails closed before ShellExecuteExW is reached.
+        let _com = application_com()?;
+        // Every failure above ShellExecuteExW is definite pre-effect. Only the
+        // exact fresh PIDL returned by revalidation may reach native dispatch.
+        let pidl = revalidate_application_identity(&application.native_identity)?;
+        let mut info = shell_execute_info_for_application(pidl.as_ptr());
+        unsafe { ShellExecuteExW(&mut info) }.map_err(|_| {
+            "outcome_unknown: Windows application launch result was ambiguous after native dispatch attempt"
+                .to_string()
+        })?;
+        Ok(json!({
+            "platform": "windows",
+            "application_id": application_id,
+            "success": true,
+        }))
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn application_identity_revalidates_for_test(
+        native_identity: &[u8],
+    ) -> Result<(), String> {
+        revalidate_application_identity(native_identity).map(drop)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn application_shell_execute_contract_for_test(
+        native_identity: &[u8],
+    ) -> Result<bool, String> {
+        let pidl = revalidate_application_identity(native_identity)?;
+        let info = shell_execute_info_for_application(pidl.as_ptr());
+        Ok(info.fMask & SEE_MASK_IDLIST != 0
+            && info.lpIDList == pidl.as_ptr() as *mut std::ffi::c_void
+            && info.lpFile.0.is_null()
+            && info.lpParameters.0.is_null()
+            && info.lpDirectory.0.is_null()
+            && info.nShow == SW_SHOWNOACTIVATE.0)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn list_applications(_limit: usize) -> Result<Vec<PlatformApplication>, String> {
+        Err("unsupported_platform: application discovery is unavailable on macOS".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn launch_application(
+        _application_id: &str,
+        _application: &ApplicationRecord,
+    ) -> Result<Value, String> {
+        Err("unsupported_platform: application launch is unavailable on macOS".to_string())
+    }
 
     #[cfg(target_os = "macos")]
     fn ensure_capture_permission() -> Result<(), String> {
@@ -5347,6 +5830,30 @@ mod windows_uia_tests {
         UIA_EditControlTypeId, UIA_HyperlinkControlTypeId, UIA_WindowControlTypeId,
     };
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    #[test]
+    fn windows_application_discovery_is_bounded_and_identity_revalidation_is_exact() {
+        let applications = platform::list_applications(2).expect("Windows AppsFolder discovery");
+        assert!(applications.len() <= 2);
+        for application in &applications {
+            assert!(!application.display_name.is_empty());
+            assert!(!application.native_identity.is_empty());
+        }
+        if let Some(application) = applications.first() {
+            platform::application_identity_revalidates_for_test(&application.native_identity)
+                .expect("fresh native application identity revalidates");
+            assert!(platform::application_shell_execute_contract_for_test(
+                &application.native_identity
+            )
+            .expect("construct exact PIDL ShellExecute contract"));
+
+            let mut changed = application.native_identity.clone();
+            changed[0] ^= 0xff;
+            let error = platform::application_identity_revalidates_for_test(&changed)
+                .expect_err("changed identity must fail closed before launch");
+            assert!(error.starts_with("stale_application:"), "{error}");
+        }
+    }
 
     fn surface_record(candidate: PlatformWindow) -> SurfaceRecord {
         SurfaceRecord {

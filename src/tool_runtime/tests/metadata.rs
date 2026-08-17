@@ -125,6 +125,46 @@ async fn register_computer_target_for_auth(
         .unwrap();
 }
 
+async fn register_application_target_for_auth(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    display_name: &str,
+    auth: &crate::auth::AuthContext,
+    computer_application_discovery: bool,
+    computer_application_launch: bool,
+) {
+    runtime
+        .shell_clients
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{client_id}"),
+                display_name: Some(display_name.to_string()),
+                owner: None,
+                hostname: Some(format!("host-{client_id}")),
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    computer_application_discovery,
+                    computer_application_launch,
+                    ..Default::default()
+                }),
+                projects: Some(vec![registered_project(
+                    &format!("private-{client_id}"),
+                    &format!("/tmp/private-{client_id}"),
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+            Some(auth),
+        )
+        .await
+        .unwrap();
+}
+
 async fn register_agent_projects_for_auth(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -173,6 +213,8 @@ async fn register_agent_projects_for_auth(
                     project_lifecycle: false,
                     project_path_registration: false,
                     computer_observe: false,
+                    computer_application_discovery: false,
+                    computer_application_launch: false,
                     computer_snapshot_region: false,
                     computer_accessibility_observe: false,
                     computer_element_state: false,
@@ -2285,35 +2327,88 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
         true,
     )
     .await;
+    register_application_target_for_auth(
+        &runtime,
+        "a-app-discovery",
+        "Alice Applications",
+        &shared_a,
+        true,
+        false,
+    )
+    .await;
+    register_application_target_for_auth(
+        &runtime,
+        "a-launch-only",
+        "Alice Launch",
+        &shared_a,
+        false,
+        true,
+    )
+    .await;
 
     let result = runtime
         .dispatch_with_auth(ToolCall::ComputerListTargets, Some(&shared_a))
         .await;
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["count"], 2);
-    assert_eq!(result.output["total_count"], 2);
+    assert_eq!(result.output["count"], 4);
+    assert_eq!(result.output["total_count"], 4);
     assert_eq!(result.output["truncated"], false);
     let targets = result.output["targets"].as_array().unwrap();
-    assert_eq!(targets.len(), 2);
-    assert_eq!(targets[0]["client_id"], "a-accessibility");
-    assert_eq!(targets[0]["display_name"], "Alice Accessibility");
-    assert_eq!(targets[0]["connected"], true);
-    assert_eq!(targets[0]["capabilities"]["computer_observe"], false);
+    assert_eq!(targets.len(), 4);
+    let target = |client_id: &str| {
+        targets
+            .iter()
+            .find(|target| target["client_id"] == client_id)
+            .unwrap()
+    };
+    let accessibility = target("a-accessibility");
+    assert_eq!(accessibility["display_name"], "Alice Accessibility");
+    assert_eq!(accessibility["connected"], true);
+    assert_eq!(accessibility["capabilities"]["computer_observe"], false);
     assert_eq!(
-        targets[0]["capabilities"]["computer_snapshot_region"],
+        accessibility["capabilities"]["computer_application_discovery"],
         false
     );
     assert_eq!(
-        targets[0]["capabilities"]["computer_accessibility_observe"],
+        accessibility["capabilities"]["computer_application_launch"],
+        false
+    );
+    assert_eq!(
+        accessibility["capabilities"]["computer_snapshot_region"],
+        false
+    );
+    assert_eq!(
+        accessibility["capabilities"]["computer_accessibility_observe"],
         true
     );
-    assert_eq!(targets[1]["client_id"], "a-observe");
-    assert_eq!(targets[1]["capabilities"]["computer_observe"], true);
-    assert_eq!(targets[1]["capabilities"]["computer_snapshot_region"], true);
+    let observe = target("a-observe");
+    assert_eq!(observe["capabilities"]["computer_observe"], true);
     assert_eq!(
-        targets[1]["capabilities"]["computer_accessibility_observe"],
+        observe["capabilities"]["computer_application_discovery"],
         false
     );
+    assert_eq!(
+        observe["capabilities"]["computer_application_launch"],
+        false
+    );
+    assert_eq!(observe["capabilities"]["computer_snapshot_region"], true);
+    let discovery = target("a-app-discovery");
+    assert_eq!(
+        discovery["capabilities"]["computer_application_discovery"],
+        true
+    );
+    assert_eq!(
+        discovery["capabilities"]["computer_application_launch"],
+        false
+    );
+    assert_eq!(discovery["capabilities"]["computer_observe"], false);
+    let launch = target("a-launch-only");
+    assert_eq!(
+        launch["capabilities"]["computer_application_discovery"],
+        false
+    );
+    assert_eq!(launch["capabilities"]["computer_application_launch"], true);
+    assert_eq!(launch["capabilities"]["computer_observe"], false);
     for target in targets {
         let object = target.as_object().unwrap();
         assert_eq!(

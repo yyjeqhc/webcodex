@@ -28,10 +28,15 @@ struct UpdateOAuthClientScopesRequest {
     allowed_scopes: Vec<String>,
 }
 
-/// The full default delegable OAuth scope set, used when `allowed_scopes` is
-/// omitted or empty on client creation.
+/// Stable legacy default OAuth client allow-list. Newly introduced consequential
+/// scopes such as `computer:launch` require explicit opt-in instead of silently
+/// widening clients that omit `allowed_scopes`.
 fn default_client_allowed_scopes() -> Vec<&'static str> {
-    oauth_scopes_supported().to_vec()
+    oauth_scopes_supported()
+        .iter()
+        .copied()
+        .filter(|scope| *scope != crate::auth::SCOPE_COMPUTER_LAUNCH)
+        .collect()
 }
 
 /// Validate a redirect URI for OAuth client registration.
@@ -66,7 +71,7 @@ fn validate_redirect_uri(uri: &str) -> Result<(), String> {
 }
 
 /// Normalize an `allowed_scopes` input for client registration. When `input`
-/// is `None` or empty, returns the full default delegable OAuth scope set.
+/// is `None` or empty, returns the stable legacy default scope set.
 /// Otherwise every scope must be a member of the global OAuth scope registry.
 /// Output is deduplicated and ordered by the global registry.
 fn normalize_client_allowed_scopes(input: Option<&[String]>) -> Result<Vec<String>, String> {

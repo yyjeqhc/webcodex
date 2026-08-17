@@ -18,6 +18,29 @@ The current contract deliberately keeps read observation separate from effects. 
 
 The roadmap preserves these invariants while reducing unnecessary model round-trips. The primary optimization target is redundant observation, not collapsing distinct effects into opaque workflows.
 
+### Windows application discovery and bounded launch
+
+Windows now exposes two narrow model-facing operations: `computer_list_applications(client_id, limit?)` and `computer_launch_application(client_id, application_id)`. Discovery is bounded to at most 64 returned entries and reports `applications`, `count`, and `truncated`; each entry contains only a fresh opaque `application_id` plus a bounded display name. The Runner uses the Windows AppsFolder Shell namespace rather than recursively scanning filesystems or `PATH`. There is no pagination, search DSL, executable-path result, package/AUMID result, or generic application framework.
+
+Every fresh list replaces the Runner's process-local application registry, so IDs from an earlier generation become stale. Runner restart also invalidates every prior ID. The private Windows record stores the native Shell identity needed for exact revalidation, but that identity never crosses the Runner boundary. Immediately before launch, the Runner performs another bounded AppsFolder enumeration and requires an exact native-identity match; disappearance or change returns `stale_application` before any native launch attempt.
+
+Launch accepts only `client_id` and the opaque `application_id`. The Windows backend submits the freshly revalidated Shell item by PIDL to the native Shell launch primitive. It accepts no executable/path, argv, cwd, environment, shell command, PowerShell/cmd/script, URL/protocol launcher, `run_process` fallback, focus, activation, or input. The launch request is not a promise to create a new process, window, or instance: Windows may route it to an already-running application. Success means only that the native launch request returned success; it does not mean a usable window is ready, and WebCodex does not additionally activate or focus anything.
+
+The canonical workflow is therefore:
+
+```text
+computer_list_applications
+  -> computer_launch_application
+  -> fresh computer_list_windows
+  -> identify the exact new/current surface
+  -> computer_activate_window only if needed
+  -> semantic work
+```
+
+Pre-native validation failures, including malformed or `stale_application` IDs and definite non-dispatch, are `not_started` with `state_changed=false`. Once native launch may have been dispatched, timeout, response loss, Runner interruption, ambiguous native failure, or inconsistent success metadata is `outcome_unknown`; there is no automatic replay or launch idempotency key, and callers must reconcile with a fresh `computer_list_windows` before deciding whether another launch is safe. The two additive Runner capabilities, `computer_application_discovery` and `computer_application_launch`, default false when missing and never imply one another or any existing observe/control capability. macOS and other unimplemented platforms do not advertise them and fail closed.
+
+Durable audit keeps discovery result metadata to `count`/`truncated` only; application names and native identities are omitted. Launch audit may retain the opaque `application_id` plus bounded lifecycle/success metadata, never the native PIDL, executable path, AUMID/package identity, or launch parameters.
+
 ## Near-term slices
 
 ### CU-4 — semantic element finder
@@ -153,7 +176,7 @@ After the near-term slices are dogfooded, the expected order is:
 
 ```text
 Windows UIA parity
--> application discovery / bounded launch
+-> application discovery / bounded launch (implemented on Windows)
 -> full-display discovery and snapshot
 -> coordinate pointer
 -> clipboard

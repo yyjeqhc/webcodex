@@ -206,7 +206,7 @@ async fn oauth_client_create_trims_redirect_uris_before_storing() {
 }
 
 #[tokio::test]
-async fn oauth_client_create_defaults_to_full_delegable_scopes() {
+async fn oauth_client_create_defaults_do_not_gain_computer_launch() {
     let config = test_config(oauth2_enabled());
     let (_tmp, db) = test_db();
     let user = seed_user(&db, "alice");
@@ -227,12 +227,41 @@ async fn oauth_client_create_defaults_to_full_delegable_scopes() {
         .iter()
         .map(|s| s.as_str().unwrap().to_string())
         .collect();
+    assert!(!scopes.iter().any(|scope| scope == "computer:launch"));
     assert_eq!(
         scopes,
         oauth_scopes_supported()
             .iter()
-            .map(|s| s.to_string())
+            .filter(|scope| **scope != "computer:launch")
+            .map(|scope| scope.to_string())
             .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn oauth_client_create_accepts_explicit_computer_launch_scope() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let token = seed_user_token(&db, &user);
+    let service = Service::new(build_router(config, db));
+
+    let mut resp = authorized_post_json(
+        "http://localhost/api/oauth/clients/create",
+        create_client_json(
+            "Launch Opt In",
+            &["https://example.com/callback"],
+            Some(&["computer:read", "computer:launch"]),
+        ),
+        &token,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let body: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(
+        body["client"]["allowed_scopes"],
+        serde_json::json!(["computer:read", "computer:launch"])
     );
 }
 

@@ -91,6 +91,8 @@ async fn register_agent_with_lsp_capabilities(
                     project_lifecycle: false,
                     project_path_registration: false,
                     computer_observe: false,
+                    computer_application_discovery: false,
+                    computer_application_launch: false,
                     computer_snapshot_region: false,
                     computer_accessibility_observe: false,
                     computer_element_state: false,

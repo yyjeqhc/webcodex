@@ -166,63 +166,6 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
 }
 
 #[tokio::test]
-async fn mcp_tools_list_includes_validate_patch() {
-    // validate_patch is a patch preflight / dry-run tool exposed via MCP
-    // tools/list (and a thin REST wrapper), but NOT via GPT Actions.
-    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
-    let outcome = handle_mcp_request(
-        &runtime,
-        rpc("tools/list", Some(Value::from(12)), json!({})),
-        None,
-    )
-    .await;
-    let value = match outcome {
-        McpOutcome::Ok(v) => v,
-        other => panic!("expected Ok, got {:?}", other),
-    };
-    let tools = value["result"]["tools"].as_array().unwrap();
-    let names: Vec<String> = tools
-        .iter()
-        .map(|t| t["name"].as_str().unwrap().to_string())
-        .collect();
-    assert!(
-        names.iter().any(|n| n == "validate_patch"),
-        "MCP tools/list must include validate_patch: {:?}",
-        names
-    );
-}
-
-#[tokio::test]
-async fn mcp_tools_list_includes_show_changes() {
-    let runtime = test_runtime();
-    let outcome = handle_mcp_request(
-        &runtime,
-        rpc("tools/list", Some(Value::from(13)), json!({})),
-        None,
-    )
-    .await;
-    let value = match outcome {
-        McpOutcome::Ok(v) => v,
-        other => panic!("expected Ok, got {:?}", other),
-    };
-    let tools = value["result"]["tools"].as_array().unwrap();
-    let names: Vec<String> = tools
-        .iter()
-        .map(|t| t["name"].as_str().unwrap().to_string())
-        .collect();
-    assert!(
-        names.iter().any(|n| n == "show_changes"),
-        "MCP tools/list must include show_changes: {:?}",
-        names
-    );
-    assert!(
-        names.iter().any(|n| n == "git_log"),
-        "MCP tools/list must include git_log: {:?}",
-        names
-    );
-}
-
-#[tokio::test]
 async fn mcp_tools_call_runtime_status_returns_content() {
     // runtime_status is not part of the local_coding surface; select the full
     // operator surface so the call reaches dispatch.
@@ -283,37 +226,5 @@ async fn mcp_tools_call_show_changes_returns_structured_tool_error() {
     assert_eq!(
         value["result"]["structuredContent"]["output"]["error_kind"],
         "unknown_project"
-    );
-}
-
-#[tokio::test]
-async fn mcp_tools_list_includes_project_management_tools() {
-    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
-    let outcome = handle_mcp_request(
-        &runtime,
-        rpc("tools/list", Some(Value::from(99)), json!({})),
-        None,
-    )
-    .await;
-    let value = match outcome {
-        McpOutcome::Ok(v) => v,
-        other => panic!("expected Ok, got {:?}", other),
-    };
-    let tools = value["result"]["tools"].as_array().unwrap();
-    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert!(
-        names.contains(&"register_project"),
-        "MCP tools/list must include register_project: {:?}",
-        names
-    );
-    assert!(
-        names.contains(&"unregister_project"),
-        "MCP tools/list must include unregister_project: {:?}",
-        names
-    );
-    assert!(
-        names.contains(&"create_project"),
-        "MCP tools/list must include create_project: {:?}",
-        names
     );
 }

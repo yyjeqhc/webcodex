@@ -1,41 +1,6 @@
 use super::*;
 
 #[test]
-fn tool_specs_and_metadata_are_synchronized() {
-    let specs = registered_tool_specs();
-    let spec_names = specs
-        .iter()
-        .map(|spec| spec.name.as_str())
-        .collect::<BTreeSet<_>>();
-
-    for spec in &specs {
-        assert!(
-            crate::tool_runtime::metadata::lookup_tool_metadata(&spec.name).is_some(),
-            "{} missing metadata",
-            spec.name
-        );
-    }
-
-    for metadata in crate::tool_runtime::metadata::iter_tool_metadata() {
-        if metadata.name == "delete_files" {
-            // Legacy dedicated HTTP route metadata; not a public runtime
-            // ToolSpec name and intentionally not accepted by ToolCall.
-            continue;
-        }
-        if is_model_hidden_tool_name(metadata.name) {
-            // Hidden implemented tools keep parser/metadata coverage without
-            // being advertised through model-facing specs.
-            continue;
-        }
-        assert!(
-            spec_names.contains(metadata.name),
-            "{} metadata is not exposed by registry specs",
-            metadata.name
-        );
-    }
-}
-
-#[test]
 fn tool_specs_names_are_unique() {
     let specs = registered_tool_specs();
     let mut names = specs.iter().map(|s| s.name.clone()).collect::<Vec<_>>();

@@ -1,6 +1,6 @@
 use super::Database;
 use crate::{ActionEventRecord, ActionSessionRecord};
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 impl Database {
     pub fn insert_action_session(&self, record: &ActionSessionRecord) -> anyhow::Result<()> {
@@ -194,29 +194,22 @@ impl Database {
         limit: usize,
     ) -> anyhow::Result<Vec<ActionEventRecord>> {
         let conn = self.conn.lock().unwrap();
-        let limit = limit.clamp(1, 500) as i64;
-        let mut stmt = conn.prepare(
-            "SELECT event_id, session_id, started_at, ended_at, duration_ms, endpoint,
-                    operation, action_name, project, principal_kind, principal_user_id,
-                    oauth_client_id, status, http_status, error_summary, warning_summary,
-                    changed_files_json, ids_json, summary_json, request_bytes, response_bytes
-             FROM action_events
-             WHERE session_id = ?1
-             ORDER BY started_at DESC
-             LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![session_id, limit], row_to_action_event)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        list_action_events_on_conn(&conn, session_id, limit)
     }
 
-    pub fn count_action_events(&self, session_id: &str) -> anyhow::Result<usize> {
-        let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM action_events WHERE session_id = ?1",
-            params![session_id],
-            |row| row.get(0),
-        )?;
-        Ok(usize::try_from(count).unwrap_or(usize::MAX))
+    /// Return the total event count and bounded newest rows from one SQLite read
+    /// transaction snapshot so coverage metadata cannot race a concurrent append.
+    pub fn list_action_events_with_count(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<(usize, Vec<ActionEventRecord>)> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let count = count_action_events_on_conn(&tx, session_id)?;
+        let events = list_action_events_on_conn(&tx, session_id, limit)?;
+        tx.commit()?;
+        Ok((count, events))
     }
 
     pub fn append_action_event_and_update_session(
@@ -296,6 +289,35 @@ impl Database {
     }
 }
 
+fn count_action_events_on_conn(conn: &Connection, session_id: &str) -> anyhow::Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM action_events WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(count).unwrap_or(usize::MAX))
+}
+
+fn list_action_events_on_conn(
+    conn: &Connection,
+    session_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<ActionEventRecord>> {
+    let limit = limit.clamp(1, 500) as i64;
+    let mut stmt = conn.prepare(
+        "SELECT event_id, session_id, started_at, ended_at, duration_ms, endpoint,
+                operation, action_name, project, principal_kind, principal_user_id,
+                oauth_client_id, status, http_status, error_summary, warning_summary,
+                changed_files_json, ids_json, summary_json, request_bytes, response_bytes
+         FROM action_events
+         WHERE session_id = ?1
+         ORDER BY started_at DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![session_id, limit], row_to_action_event)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
 fn row_to_action_session(row: &rusqlite::Row) -> rusqlite::Result<ActionSessionRecord> {
     Ok(ActionSessionRecord {
         session_id: row.get(0)?,
@@ -347,6 +369,72 @@ fn row_to_action_event(row: &rusqlite::Row) -> rusqlite::Result<ActionEventRecor
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_event_count_and_rows_share_one_snapshot_during_concurrent_append() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("snapshot.db");
+        let db_reader = Database::open(&path).unwrap();
+        {
+            let conn = db_reader.conn_for_tests();
+            conn.execute(
+                "INSERT INTO action_sessions (session_id, status, created_at, updated_at)
+                 VALUES ('snapshot-session', 'open', 1, 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute_batch(
+                "WITH RECURSIVE seq(n) AS (
+                    SELECT 1
+                    UNION ALL
+                    SELECT n + 1 FROM seq WHERE n < 200
+                 )
+                 INSERT INTO action_events (
+                    event_id, session_id, started_at, ended_at, duration_ms, endpoint,
+                    action_name, status, changed_files_json, ids_json, summary_json
+                 )
+                 SELECT printf('event-%03d', n), 'snapshot-session', n, n, 0, '/mcp',
+                        'toolsCall', 'success', '[]', '{}', '{}'
+                 FROM seq;",
+            )
+            .unwrap();
+        }
+        let db_writer = Database::open(&path).unwrap();
+
+        let mut reader_conn = db_reader.conn_for_tests();
+        let read_tx = reader_conn.transaction().unwrap();
+        let available = count_action_events_on_conn(&read_tx, "snapshot-session").unwrap();
+        assert_eq!(available, 200);
+
+        db_writer
+            .conn_for_tests()
+            .execute(
+                "INSERT INTO action_events (
+                    event_id, session_id, started_at, ended_at, duration_ms, endpoint,
+                    action_name, status, changed_files_json, ids_json, summary_json
+                 ) VALUES (
+                    'event-201', 'snapshot-session', 201, 201, 0, '/mcp',
+                    'toolsCall', 'success', '[]', '{}', '{}'
+                 )",
+                [],
+            )
+            .unwrap();
+
+        let rows = list_action_events_on_conn(&read_tx, "snapshot-session", 200).unwrap();
+        assert_eq!(rows.len(), 200);
+        assert!(rows.iter().all(|event| event.event_id != "event-201"));
+        read_tx.commit().unwrap();
+
+        let committed_count: i64 = db_writer
+            .conn_for_tests()
+            .query_row(
+                "SELECT COUNT(*) FROM action_events WHERE session_id = 'snapshot-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(committed_count, 201);
+    }
 
     #[test]
     fn legacy_action_events_gain_nullable_caller_attribution() {

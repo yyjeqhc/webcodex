@@ -180,20 +180,14 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
                 return;
             }
         }
-        let available = match db.count_action_events(session_id) {
-            Ok(count) => count,
-            Err(e) => {
-                query_failed(res, &e.to_string());
-                return;
-            }
-        };
-        let raw = match db.list_action_events(session_id, STATS_SINGLE_SESSION_EVENTS) {
-            Ok(e) => e,
-            Err(e) => {
-                query_failed(res, &e.to_string());
-                return;
-            }
-        };
+        let (available, raw) =
+            match db.list_action_events_with_count(session_id, STATS_SINGLE_SESSION_EVENTS) {
+                Ok(snapshot) => snapshot,
+                Err(e) => {
+                    query_failed(res, &e.to_string());
+                    return;
+                }
+            };
         events_available = available;
         sessions_scanned = 1;
         truncated_sessions = usize::from(available > raw.len());
@@ -209,15 +203,10 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
         };
         sessions_scanned = sessions.len();
         for session in sessions {
-            let available = match db.count_action_events(&session.session_id) {
-                Ok(count) => count,
-                Err(e) => {
-                    query_failed(res, &e.to_string());
-                    return;
-                }
-            };
-            let raw = match db.list_action_events(&session.session_id, STATS_EVENTS_PER_SESSION) {
-                Ok(events) => events,
+            let (available, raw) = match db
+                .list_action_events_with_count(&session.session_id, STATS_EVENTS_PER_SESSION)
+            {
+                Ok(snapshot) => snapshot,
                 Err(e) => {
                     query_failed(res, &e.to_string());
                     return;

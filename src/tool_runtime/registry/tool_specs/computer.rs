@@ -58,7 +58,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_key_input",
-            "Send one closed key to an exact macOS or Windows window already frontmost and focused. Supports Enter, Escape, Tab, arrows, PageUp/PageDown, Home/End and bounded modifiers; Windows maps option to Alt and rejects command. No text, arbitrary keycodes, held/repeat state, implicit focus, or fallback.",
+            "Send one closed key to an exact macOS or Windows window already frontmost and focused. Supports Enter, Escape, Tab, arrows, PageUp/PageDown, Home/End and bounded modifiers; Windows rejects command and OS-switching chords. No text, arbitrary keycodes, held/repeat state, implicit focus, or fallback.",
             computer_key_input_input_schema(),
         ),
         tool_spec(

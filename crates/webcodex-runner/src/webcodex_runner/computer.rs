@@ -3161,6 +3161,21 @@ mod platform {
     }
 
     #[cfg(windows)]
+    fn validate_windows_key_input_chord(key: &str, modifiers: &[String]) -> Result<(), String> {
+        let has_option = modifiers.iter().any(|modifier| modifier == "option");
+        let has_control = modifiers.iter().any(|modifier| modifier == "control");
+        let escapes_exact_surface =
+            (has_option && matches!(key, "tab" | "escape")) || (has_control && key == "escape");
+        if escapes_exact_surface {
+            return Err(
+                "key_input_failed: Windows system-level key chord is outside the exact-surface input contract"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
     fn windows_keyboard_input(key: VIRTUAL_KEY, key_up: bool, extended: bool) -> INPUT {
         let flags = KEYBD_EVENT_FLAGS(
             if extended { KEYEVENTF_EXTENDEDKEY.0 } else { 0 }
@@ -3188,6 +3203,7 @@ mod platform {
         for modifier in modifiers {
             modifier_keys.push(windows_modifier_key(modifier)?);
         }
+        validate_windows_key_input_chord(key, modifiers)?;
 
         let mut inputs = Vec::with_capacity(modifier_keys.len() * 2 + 2);
         for modifier in &modifier_keys {
@@ -5583,20 +5599,30 @@ $form.Add_Shown({ $form.Activate(); $button.Focus() })
         }
         assert!(platform::test_windows_key_input_plan("a", &[]).is_err());
 
-        let option = platform::test_windows_key_input_plan("tab", &["option".to_string()])
-            .expect("Windows option modifier must map to Alt");
+        let option = platform::test_windows_key_input_plan("arrow_left", &["option".to_string()])
+            .expect("Windows option modifier must map to Alt for exact-surface chords");
         assert_eq!(
             option,
             vec![
                 (18, false, false),
-                (9, false, false),
-                (9, true, false),
+                (37, false, true),
+                (37, true, true),
                 (18, true, false),
             ]
         );
+        for (key, modifiers) in [
+            ("tab", vec!["option".to_string()]),
+            ("escape", vec!["option".to_string()]),
+            ("escape", vec!["control".to_string()]),
+            ("escape", vec!["shift".to_string(), "control".to_string()]),
+        ] {
+            let error = platform::test_windows_key_input_plan(key, &modifiers)
+                .expect_err("Windows system-level chord must fail before native input");
+            assert!(error.starts_with("key_input_failed:"), "{error}");
+        }
 
         let sequence = platform::test_windows_key_input_plan(
-            "tab",
+            "arrow_right",
             &[
                 "shift".to_string(),
                 "control".to_string(),
@@ -5610,8 +5636,8 @@ $form.Add_Shown({ $form.Activate(); $button.Focus() })
                 (16, false, false),
                 (17, false, false),
                 (18, false, false),
-                (9, false, false),
-                (9, true, false),
+                (39, false, true),
+                (39, true, true),
                 (18, true, false),
                 (17, true, false),
                 (16, true, false),

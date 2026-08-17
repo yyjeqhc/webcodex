@@ -288,6 +288,63 @@ fn tool_specs_full_display_observation_is_closed_and_bounded() {
 }
 
 #[test]
+fn tool_specs_clipboard_text_is_strict_bounded_and_private() {
+    let specs = registered_tool_specs();
+    let read = spec_named(&specs, "computer_read_clipboard");
+    assert_eq!(read.input_schema["additionalProperties"], false);
+    assert_eq!(required_fields(read), vec!["client_id".to_string()]);
+    let read_input = read.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        read_input,
+        "clipboard read input schema",
+        present: ["client_id"],
+        absent: ["text", "surface_id", "format", "hwnd", "sequence", "clipboard_generation"]
+    );
+    assert_eq!(
+        read.output_schema["properties"]["output"]["additionalProperties"],
+        false
+    );
+    let read_output = read.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        read_output,
+        "clipboard read output schema",
+        present: ["platform", "available", "text", "text_bytes"],
+        absent: ["format", "hwnd", "native_owner", "hglobal", "sequence", "sha256"]
+    );
+
+    let write = spec_named(&specs, "computer_write_clipboard");
+    assert_eq!(write.input_schema["additionalProperties"], false);
+    assert_eq!(
+        required_fields(write),
+        vec!["client_id".to_string(), "text".to_string()]
+    );
+    let write_input = write.input_schema["properties"].as_object().unwrap();
+    assert_eq!(write_input["text"]["minLength"], 1);
+    assert_eq!(write_input["text"]["maxLength"], 16384);
+    assert_schema_fields!(
+        write_input,
+        "clipboard write input schema",
+        present: ["client_id", "text"],
+        absent: ["surface_id", "element_id", "paste", "format", "mime_type", "hwnd", "restore", "append", "clipboard_generation"]
+    );
+    assert_eq!(
+        write.output_schema["properties"]["output"]["additionalProperties"],
+        false
+    );
+    let write_output = write.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        write_output,
+        "clipboard write output schema",
+        present: ["platform", "text_bytes", "success", "execution_state", "state_changed", "error_kind"],
+        absent: ["text", "sha256", "hglobal", "hwnd", "native_owner", "sequence"]
+    );
+}
+
+#[test]
 fn tool_specs_coordinate_pointer_is_snapshot_fenced_and_private() {
     let specs = registered_tool_specs();
     for name in ["computer_pointer_move", "computer_pointer_click"] {

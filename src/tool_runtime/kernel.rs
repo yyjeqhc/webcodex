@@ -763,6 +763,55 @@ mod tests {
     }
 
     #[test]
+    fn computer_clipboard_tools_require_independent_dual_scopes() {
+        let read_base = oauth(&["computer:read"]);
+        assert!(matches!(
+            check_runtime_tool_scope(Some(&read_base), "computer_read_clipboard"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_CLIPBOARD_READ),
+                ..
+            })
+        ));
+        let clipboard_read_only = oauth(&["computer:clipboard_read"]);
+        assert!(matches!(
+            check_runtime_tool_scope(Some(&clipboard_read_only), "computer_read_clipboard"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_READ),
+                ..
+            })
+        ));
+        let read_both = oauth(&["computer:read", "computer:clipboard_read"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&read_both), "computer_read_clipboard"),
+            Ok(())
+        );
+        assert!(check_runtime_tool_scope(Some(&read_both), "computer_write_clipboard").is_err());
+
+        let control_base = oauth(&["computer:control"]);
+        assert!(matches!(
+            check_runtime_tool_scope(Some(&control_base), "computer_write_clipboard"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_CLIPBOARD_WRITE),
+                ..
+            })
+        ));
+        let clipboard_write_only = oauth(&["computer:clipboard_write"]);
+        assert!(matches!(
+            check_runtime_tool_scope(Some(&clipboard_write_only), "computer_write_clipboard"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_CONTROL),
+                ..
+            })
+        ));
+        let write_both = oauth(&["computer:control", "computer:clipboard_write"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&write_both), "computer_write_clipboard"),
+            Ok(())
+        );
+        assert!(check_runtime_tool_scope(Some(&write_both), "computer_read_clipboard").is_err());
+    }
+
+    #[test]
     fn computer_pointer_control_requires_all_four_independent_scopes() {
         let cases = [
             (

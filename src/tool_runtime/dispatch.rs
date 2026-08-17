@@ -690,6 +690,8 @@ impl ToolRuntime {
             | ToolCall::ComputerControl { .. }
             | ToolCall::ComputerScrollToElement { .. }
             | ToolCall::ComputerKeyInput { .. }
+            | ToolCall::ComputerReadClipboard { .. }
+            | ToolCall::ComputerWriteClipboard { .. }
             | ToolCall::ComputerInputText { .. }
             | ToolCall::ComputerSnapshot { .. }
             | ToolCall::ComputerSnapshotDisplay { .. }

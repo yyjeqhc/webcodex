@@ -5,15 +5,26 @@ use super::super::input_schemas::{
     computer_input_text_input_schema, computer_key_input_input_schema,
     computer_launch_application_input_schema, computer_list_applications_input_schema,
     computer_list_displays_input_schema, computer_list_windows_input_schema,
-    computer_pointer_input_schema, computer_save_snapshot_input_schema,
-    computer_scroll_to_element_input_schema, computer_snapshot_display_input_schema,
-    computer_snapshot_input_schema, empty_input_schema,
+    computer_pointer_input_schema, computer_read_clipboard_input_schema,
+    computer_save_snapshot_input_schema, computer_scroll_to_element_input_schema,
+    computer_snapshot_display_input_schema, computer_snapshot_input_schema,
+    computer_write_clipboard_input_schema, empty_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
 
 pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
+        tool_spec(
+            "computer_read_clipboard",
+            "Read the exact Windows Runner global clipboard only when bounded CF_UNICODETEXT is available. Returns UTF-8 text up to 16 KiB without truncation. This is an independent global privacy authority: no format enumeration, window/focus access, paste, retry loop, shell fallback, or clipboard history is used.",
+            computer_read_clipboard_input_schema(),
+        ),
+        tool_spec(
+            "computer_write_clipboard",
+            "Replace the exact Windows Runner global clipboard with one bounded CF_UNICODETEXT value. This clears prior image, rich-text, file-drop, and custom formats via EmptyClipboard. It never pastes, focuses, activates, restores old clipboard data, retries, or reads back implicitly; uncertain outcomes require caller-directed reconciliation under separate clipboard-read authority.",
+            computer_write_clipboard_input_schema(),
+        ),
         tool_spec(
             "computer_pointer_move",
             "Move the Windows pointer to one exact display-local source coordinate using the latest unspent computer_snapshot_display generation. The generation is a one-effect freshness fence and is spent once native effect admission begins. No global/window coordinates, implicit observation, focus, activation, modifiers, drag, fallback, or retry are performed; reconcile uncertain outcomes with a fresh display snapshot.",

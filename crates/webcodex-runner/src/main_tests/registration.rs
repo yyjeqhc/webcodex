@@ -87,6 +87,16 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         "computer application launch is independently advertised only by the Windows native implementation"
     );
     assert_eq!(
+        caps.computer_clipboard_read,
+        cfg!(windows),
+        "clipboard read is independently advertised only by the Windows native implementation"
+    );
+    assert_eq!(
+        caps.computer_clipboard_write,
+        cfg!(windows),
+        "clipboard write is independently advertised only by the Windows native implementation"
+    );
+    assert_eq!(
         caps.computer_display_observe,
         cfg!(windows),
         "full-display observation is independently advertised only by the exact Windows display backend"

@@ -154,6 +154,21 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 &["client_id", "display_id", "snapshot_generation", "x", "y"],
             );
         }
+        "computer_read_clipboard" => {
+            copy_keys(obj, &mut out, &["client_id"]);
+        }
+        "computer_write_clipboard" => {
+            copy_keys(obj, &mut out, &["client_id"]);
+            out.insert(
+                "text_bytes".to_string(),
+                Value::from(
+                    obj.get("text")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+        }
         "computer_input_text" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id", "element_id"]);
             out.insert(
@@ -524,6 +539,20 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
             "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
         }),
+        "computer_read_clipboard" => serde_json::json!({
+            "available": output.get("available").cloned().unwrap_or(Value::Null),
+            "text_bytes": output.get("text_bytes").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
+        }),
+        "computer_write_clipboard" => serde_json::json!({
+            "text_bytes": output.get("text_bytes").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
         "computer_snapshot" => serde_json::json!({
             "surface_id": output.pointer("/surface/surface_id").cloned().unwrap_or(Value::Null),
             "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
@@ -718,6 +747,82 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("PRIVATE_DEVICE_PATH"));
         assert!(!serialized.contains("global_x"));
         assert!(!serialized.contains("scale_factor"));
+    }
+
+    #[test]
+    fn computer_clipboard_ledger_omits_body_hashes_and_native_state() {
+        const PRIVATE_TEXT: &str = "PRIVATE_CLIPBOARD_TEXT";
+        let read_request = json!({
+            "client_id": "msi",
+            "text": PRIVATE_TEXT,
+            "hwnd": "PRIVATE_HWND",
+        });
+        let read_request_summary =
+            session_log_arguments_for_tool_request("computer_read_clipboard", &read_request);
+        assert_eq!(read_request_summary, json!({"client_id":"msi"}));
+
+        let write_request = json!({
+            "client_id": "msi",
+            "text": PRIVATE_TEXT,
+            "sha256": "PRIVATE_CLIPBOARD_HASH",
+            "native_handle": "PRIVATE_HGLOBAL",
+        });
+        let write_request_summary =
+            session_log_arguments_for_tool_request("computer_write_clipboard", &write_request);
+        assert_eq!(write_request_summary["client_id"], "msi");
+        assert_eq!(write_request_summary["text_bytes"], PRIVATE_TEXT.len());
+        let request_serialized = serde_json::to_string(&write_request_summary).unwrap();
+        for secret in [PRIVATE_TEXT, "PRIVATE_CLIPBOARD_HASH", "PRIVATE_HGLOBAL"] {
+            assert!(!request_serialized.contains(secret));
+        }
+
+        let read_output = json!({
+            "available": true,
+            "text": PRIVATE_TEXT,
+            "text_bytes": PRIVATE_TEXT.len(),
+            "success": true,
+            "error_kind": null,
+            "execution_state": null,
+            "sha256": "PRIVATE_CLIPBOARD_HASH",
+            "hwnd": "PRIVATE_HWND",
+            "native_owner": "PRIVATE_OWNER",
+        });
+        let read_summary = session_log_result_for_tool("computer_read_clipboard", &read_output);
+        assert_eq!(read_summary["available"], true);
+        assert_eq!(read_summary["text_bytes"], PRIVATE_TEXT.len());
+        let read_serialized = serde_json::to_string(&read_summary).unwrap();
+        for secret in [
+            PRIVATE_TEXT,
+            "PRIVATE_CLIPBOARD_HASH",
+            "PRIVATE_HWND",
+            "PRIVATE_OWNER",
+        ] {
+            assert!(!read_serialized.contains(secret));
+        }
+
+        let write_output = json!({
+            "text_bytes": PRIVATE_TEXT.len(),
+            "success": true,
+            "error_kind": null,
+            "execution_state": "completed",
+            "state_changed": true,
+            "text": PRIVATE_TEXT,
+            "sha256": "PRIVATE_CLIPBOARD_HASH",
+            "hglobal": "PRIVATE_HGLOBAL",
+            "clipboard_owner": "PRIVATE_OWNER",
+        });
+        let write_summary = session_log_result_for_tool("computer_write_clipboard", &write_output);
+        assert_eq!(write_summary["text_bytes"], PRIVATE_TEXT.len());
+        assert_eq!(write_summary["success"], true);
+        let write_serialized = serde_json::to_string(&write_summary).unwrap();
+        for secret in [
+            PRIVATE_TEXT,
+            "PRIVATE_CLIPBOARD_HASH",
+            "PRIVATE_HGLOBAL",
+            "PRIVATE_OWNER",
+        ] {
+            assert!(!write_serialized.contains(secret));
+        }
     }
 
     #[test]

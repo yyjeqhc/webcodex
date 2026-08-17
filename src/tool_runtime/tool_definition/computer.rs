@@ -1,19 +1,46 @@
 use super::AgentCapability::{
     ComputerAccessibilityObserve, ComputerApplicationDiscovery, ComputerApplicationLaunch,
-    ComputerControl, ComputerDisplayObserve, ComputerElementState, ComputerKeyInput,
-    ComputerObserve, ComputerPointerControl, ComputerScrollToElement, ComputerTextInput,
-    ComputerWindowActivate, FileWrite,
+    ComputerClipboardRead, ComputerClipboardWrite, ComputerControl, ComputerDisplayObserve,
+    ComputerElementState, ComputerKeyInput, ComputerObserve, ComputerPointerControl,
+    ComputerScrollToElement, ComputerTextInput, ComputerWindowActivate, FileWrite,
 };
 use super::ToolVisibility::ModelVisible;
 use super::{def, unit_arguments, ToolDefinition, TOOL_CATEGORY_COMPUTER};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{Artifact, None},
     ToolRisk::{ComputerControl as ComputerControlRisk, ProjectWrite, ReadOnly},
-    COMPUTER_CONTROL, COMPUTER_DISPLAY_READ, COMPUTER_LAUNCH, COMPUTER_POINTER_CONTROL,
-    COMPUTER_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_CONTROL,
+    COMPUTER_CLIPBOARD_READ, COMPUTER_CLIPBOARD_WRITE, COMPUTER_CONTROL, COMPUTER_DISPLAY_READ,
+    COMPUTER_LAUNCH, COMPUTER_POINTER_CONTROL, COMPUTER_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
+    TOOL_PROVIDER_CONTROL,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
+    def(
+        "computer_read_clipboard",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerClipboardRead),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(COMPUTER_CLIPBOARD_READ),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_write_clipboard",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerClipboardWrite),
+        TOOL_PROVIDER_AGENT,
+        ComputerControlRisk,
+        Some(COMPUTER_CLIPBOARD_WRITE),
+        false,
+        None,
+        false,
+        false,
+    ),
     def(
         "computer_pointer_move",
         ModelVisible,

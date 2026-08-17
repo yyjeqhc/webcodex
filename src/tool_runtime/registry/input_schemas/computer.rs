@@ -158,6 +158,29 @@ pub(crate) fn computer_key_input_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_read_clipboard_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Windows Runner whose global Unicode-text clipboard is observed."}
+        },
+        "required": ["client_id"]
+    })
+}
+
+pub(crate) fn computer_write_clipboard_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Windows Runner whose global clipboard is replaced."},
+            "text": {"type": "string", "minLength": 1, "maxLength": 16384, "description": "Unicode text replacement. Runtime enforces non-empty, NUL-free UTF-8 of at most 16 KiB."}
+        },
+        "required": ["client_id", "text"]
+    })
+}
+
 pub(crate) fn computer_input_text_input_schema() -> Value {
     json!({
         "type": "object",

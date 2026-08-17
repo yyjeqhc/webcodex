@@ -1415,6 +1415,17 @@ pub enum ToolCall {
         modifiers: Option<Vec<String>>,
     },
 
+    /// Read bounded Windows CF_UNICODETEXT from the global clipboard.
+    ComputerReadClipboard {
+        client_id: String,
+    },
+
+    /// Replace the Windows global clipboard with bounded CF_UNICODETEXT.
+    ComputerWriteClipboard {
+        client_id: String,
+        text: String,
+    },
+
     /// Move the Windows pointer using one latest unspent full-display snapshot generation.
     ComputerPointerMove {
         client_id: String,
@@ -1793,6 +1804,8 @@ fn reject_unknown_bounded_computer_fields(
         "computer_list_applications" | "computer_list_displays" => &["client_id", "limit"],
         "computer_launch_application" => &["client_id", "application_id"],
         "computer_snapshot_display" => &["client_id", "display_id", "max_width", "max_height"],
+        "computer_read_clipboard" => &["client_id"],
+        "computer_write_clipboard" => &["client_id", "text"],
         "computer_pointer_move" | "computer_pointer_click" => {
             &["client_id", "display_id", "snapshot_generation", "x", "y"]
         }
@@ -1862,6 +1875,8 @@ impl ToolCall {
                 | "computer_launch_application"
                 | "computer_list_displays"
                 | "computer_snapshot_display"
+                | "computer_read_clipboard"
+                | "computer_write_clipboard"
                 | "computer_pointer_move"
                 | "computer_pointer_click"
         ) {
@@ -2011,6 +2026,8 @@ impl ToolCall {
             Self::ComputerControl { .. } => "computer_control",
             Self::ComputerScrollToElement { .. } => "computer_scroll_to_element",
             Self::ComputerKeyInput { .. } => "computer_key_input",
+            Self::ComputerReadClipboard { .. } => "computer_read_clipboard",
+            Self::ComputerWriteClipboard { .. } => "computer_write_clipboard",
             Self::ComputerPointerMove { .. } => "computer_pointer_move",
             Self::ComputerPointerClick { .. } => "computer_pointer_click",
             Self::ComputerInputText { .. } => "computer_input_text",

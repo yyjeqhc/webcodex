@@ -61,7 +61,9 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_ASYNC_JOBS, SHELL_CLIENT_CAPABILITY_ASYNC_SHELL_JOBS,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
@@ -108,6 +110,10 @@ pub(crate) enum AgentCapability {
     ComputerApplicationLaunch,
     /// Native exact full-display discovery and snapshot observation.
     ComputerDisplayObserve,
+    /// Native bounded global clipboard Unicode-text observation.
+    ComputerClipboardRead,
+    /// Native bounded global clipboard Unicode-text replacement.
+    ComputerClipboardWrite,
     /// Snapshot-fenced exact coordinate pointer control on the exact Runner.
     ComputerPointerControl,
     /// Native read-only semantic accessibility inspection on the exact Runner.
@@ -148,6 +154,8 @@ impl AgentCapability {
             }
             Self::ComputerApplicationLaunch => SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
             Self::ComputerDisplayObserve => SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
+            Self::ComputerClipboardRead => SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ,
+            Self::ComputerClipboardWrite => SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE,
             Self::ComputerPointerControl => SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
             Self::ComputerAccessibilityObserve => {
                 SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
@@ -185,6 +193,8 @@ impl AgentCapability {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH]
             }
             Self::ComputerDisplayObserve => &[SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE],
+            Self::ComputerClipboardRead => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ],
+            Self::ComputerClipboardWrite => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE],
             Self::ComputerPointerControl => &[SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL],
             Self::ComputerAccessibilityObserve => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]

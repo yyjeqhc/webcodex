@@ -24,10 +24,12 @@ fn target_schema() -> Value {
                     "computer_application_launch": {"type": "boolean"},
                     "computer_display_observe": {"type": "boolean"},
                     "computer_pointer_control": {"type": "boolean"},
+                    "computer_clipboard_read": {"type": "boolean"},
+                    "computer_clipboard_write": {"type": "boolean"},
                     "computer_snapshot_region": {"type": "boolean"},
                     "computer_accessibility_observe": {"type": "boolean"}
                 },
-                "required": ["computer_observe", "computer_application_discovery", "computer_application_launch", "computer_display_observe", "computer_pointer_control", "computer_snapshot_region", "computer_accessibility_observe"]
+                "required": ["computer_observe", "computer_application_discovery", "computer_application_launch", "computer_display_observe", "computer_pointer_control", "computer_clipboard_read", "computer_clipboard_write", "computer_snapshot_region", "computer_accessibility_observe"]
             }
         },
         "required": ["client_id", "display_name", "connected", "capabilities"]
@@ -506,6 +508,42 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({"type": "string", "pattern": "^[0-9a-f]{64}$"}),
             ),
             ("saved", json!({"type": "boolean", "const": true})),
+        ])),
+        "computer_read_clipboard" => {
+            let mut schema = strict_computer_output_schema(vec![
+                ("platform", json!({"type": "string", "const": "windows"})),
+                ("available", json!({"type": "boolean"})),
+                ("text", json!({"type": "string", "maxLength": 16384})),
+                (
+                    "text_bytes",
+                    json!({"type": "integer", "minimum": 0, "maximum": 16384}),
+                ),
+            ]);
+            schema["properties"]["output"]["allOf"] = json!([
+                {
+                    "if": {"properties": {"available": {"const": true}}, "required": ["available"]},
+                    "then": {"required": ["platform", "available", "text", "text_bytes"]}
+                },
+                {
+                    "if": {"properties": {"available": {"const": false}}, "required": ["available"]},
+                    "then": {"required": ["platform", "available", "text_bytes"], "not": {"required": ["text"]}}
+                }
+            ]);
+            Some(schema)
+        }
+        "computer_write_clipboard" => Some(strict_computer_output_schema(vec![
+            ("platform", json!({"type": "string", "const": "windows"})),
+            (
+                "text_bytes",
+                json!({"type": "integer", "minimum": 1, "maximum": 16384}),
+            ),
+            ("success", json!({"type": "boolean", "const": true})),
+            (
+                "execution_state",
+                json!({"type": "string", "enum": ["not_started", "completed", "outcome_unknown"]}),
+            ),
+            ("state_changed", json!({"type": "boolean"})),
+            ("error_kind", json!({"type": "string", "maxLength": 128})),
         ])),
         "computer_pointer_move" | "computer_pointer_click" => {
             Some(strict_computer_output_schema(vec![

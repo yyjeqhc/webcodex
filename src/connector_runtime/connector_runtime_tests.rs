@@ -95,6 +95,8 @@ async fn register_agent_with_lsp_capabilities(
                     computer_application_launch: false,
                     computer_display_observe: false,
                     computer_pointer_control: false,
+                    computer_clipboard_read: false,
+                    computer_clipboard_write: false,
                     computer_snapshot_region: false,
                     computer_accessibility_observe: false,
                     computer_element_state: false,

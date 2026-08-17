@@ -7,7 +7,9 @@ use crate::auth::AuthContext;
 use crate::shell_protocol::{
     ShellCommandExecutionState, ShellFileOpRequest,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
@@ -31,6 +33,7 @@ const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
 const MAX_INPUT_TEXT_BYTES: usize = 2048;
+const MAX_CLIPBOARD_TEXT_BYTES: usize = 16 * 1024;
 const MAX_ACCESSIBILITY_DEPTH: usize = 8;
 const MAX_ACCESSIBILITY_NODES: usize = 256;
 const DEFAULT_ACCESSIBILITY_DEPTH: usize = 6;
@@ -81,6 +84,19 @@ fn normalize_computer_key_input(
             .unwrap_or(COMPUTER_KEY_INPUT_MODIFIERS.len())
     });
     Ok(modifiers)
+}
+
+fn validate_clipboard_write_text(text: &str) -> Result<usize, &'static str> {
+    if text.is_empty() {
+        return Err("clipboard text must not be empty");
+    }
+    if text.contains('\0') {
+        return Err("clipboard text must not contain NUL");
+    }
+    if text.len() > MAX_CLIPBOARD_TEXT_BYTES {
+        return Err("clipboard text exceeds the 16 KiB UTF-8 bound");
+    }
+    Ok(text.len())
 }
 
 fn valid_application_id(application_id: &str) -> bool {
@@ -418,6 +434,33 @@ impl ToolRuntime {
                     auth,
                     None,
                     Some(surface_id.as_str()),
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerReadClipboard { client_id } => {
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_read_clipboard",
+                    json!({}),
+                    auth,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerWriteClipboard { client_id, text } => {
+                if let Err(message) = validate_clipboard_write_text(&text) {
+                    return computer_effect_not_started(message);
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_write_clipboard",
+                    json!({"text": text}),
+                    auth,
+                    None,
+                    None,
                     None,
                 )
                 .await
@@ -977,6 +1020,8 @@ impl ToolRuntime {
             let computer_application_launch = client.capabilities.computer_application_launch;
             let computer_display_observe = client.capabilities.computer_display_observe;
             let computer_pointer_control = client.capabilities.computer_pointer_control;
+            let computer_clipboard_read = client.capabilities.computer_clipboard_read;
+            let computer_clipboard_write = client.capabilities.computer_clipboard_write;
             let computer_snapshot_region = client.capabilities.computer_snapshot_region;
             let computer_accessibility_observe = client.capabilities.computer_accessibility_observe;
             if !computer_observe
@@ -985,6 +1030,8 @@ impl ToolRuntime {
                 && !computer_application_launch
                 && !computer_display_observe
                 && !computer_pointer_control
+                && !computer_clipboard_read
+                && !computer_clipboard_write
             {
                 continue;
             }
@@ -1002,6 +1049,8 @@ impl ToolRuntime {
                     "computer_application_launch": computer_application_launch,
                     "computer_display_observe": computer_display_observe,
                     "computer_pointer_control": computer_pointer_control,
+                    "computer_clipboard_read": computer_clipboard_read,
+                    "computer_clipboard_write": computer_clipboard_write,
                     "computer_snapshot_region": computer_snapshot_region,
                     "computer_accessibility_observe": computer_accessibility_observe,
                 },
@@ -1054,6 +1103,10 @@ impl ToolRuntime {
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or_default(),
         });
+        let is_clipboard_write = kind == "computer_write_clipboard";
+        let clipboard_write_context = is_clipboard_write.then(|| ClipboardWriteContext {
+            text_bytes: payload.get("text").and_then(Value::as_str).map(str::len),
+        });
         if client_id.is_empty() || client_id.len() > 128 {
             if is_application_launch {
                 return computer_application_effect_not_started(
@@ -1069,6 +1122,13 @@ impl ToolRuntime {
                     context,
                 );
             }
+            if let Some(context) = clipboard_write_context.as_ref() {
+                return computer_clipboard_write_not_started(
+                    "invalid_client",
+                    "client_id is invalid",
+                    context,
+                );
+            }
             return computer_error("invalid_client", "client_id is invalid");
         }
         let required_capabilities: &[&str] = match kind {
@@ -1079,6 +1139,8 @@ impl ToolRuntime {
             "computer_list_displays" | "computer_snapshot_display" => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE]
             }
+            "computer_read_clipboard" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_READ],
+            "computer_write_clipboard" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_CLIPBOARD_WRITE],
             "computer_pointer_move" | "computer_pointer_click" => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL]
             }
@@ -1122,6 +1184,13 @@ impl ToolRuntime {
                             context,
                         );
                     }
+                    if let Some(context) = clipboard_write_context.as_ref() {
+                        return computer_clipboard_write_not_started(
+                            "capability_unavailable",
+                            &format!("target Runner does not support {required_capability}"),
+                            context,
+                        );
+                    }
                     return computer_error(
                         "capability_unavailable",
                         &format!("target Runner does not support {required_capability}"),
@@ -1139,6 +1208,15 @@ impl ToolRuntime {
                         "client_access_denied",
                         "caller cannot access the target Runner for pointer control",
                         pointer_context.as_ref().expect("pointer context"),
+                    );
+                }
+                Err(_error) if is_clipboard_write => {
+                    return computer_clipboard_write_not_started(
+                        "client_access_denied",
+                        "caller cannot access the target Runner for clipboard write",
+                        clipboard_write_context
+                            .as_ref()
+                            .expect("clipboard write context"),
                     );
                 }
                 Err(error) => return computer_error("client_access_denied", &error),
@@ -1184,6 +1262,15 @@ impl ToolRuntime {
                     pointer_context.as_ref().expect("pointer context"),
                 );
             }
+            Err(_) if is_clipboard_write => {
+                return computer_clipboard_write_not_started(
+                    "invalid_request",
+                    "could not encode clipboard write request",
+                    clipboard_write_context
+                        .as_ref()
+                        .expect("clipboard write context"),
+                );
+            }
             Err(_) => {
                 return computer_error("invalid_request", "could not encode computer request")
             }
@@ -1216,6 +1303,15 @@ impl ToolRuntime {
                     pointer_context.as_ref().expect("pointer context"),
                 );
             }
+            Err(error) if is_clipboard_write => {
+                return computer_clipboard_write_not_started(
+                    "not_started",
+                    &format!("clipboard write request was not dispatched: {error}"),
+                    clipboard_write_context
+                        .as_ref()
+                        .expect("clipboard write context"),
+                );
+            }
             Err(error) => return computer_error("dispatch_denied", &error),
         };
         let is_effect = computer_request_is_effect(kind);
@@ -1246,6 +1342,13 @@ impl ToolRuntime {
                         pointer_context.as_ref().expect("pointer context"),
                     );
                 }
+                if is_clipboard_write {
+                    return computer_clipboard_write_delivery_failure(
+                        "Runner response channel closed before a terminal clipboard write result was received",
+                        request_dispatched,
+                        clipboard_write_context.as_ref().expect("clipboard write context"),
+                    );
+                }
                 return computer_effect_delivery_failure(
                     "Runner response channel closed before a terminal computer effect result was received",
                     request_dispatched,
@@ -1273,6 +1376,15 @@ impl ToolRuntime {
                         pointer_context.as_ref().expect("pointer context"),
                     );
                 }
+                if is_clipboard_write {
+                    return computer_clipboard_write_delivery_failure(
+                        "Runner did not return a terminal clipboard write result in time",
+                        request_dispatched,
+                        clipboard_write_context
+                            .as_ref()
+                            .expect("clipboard write context"),
+                    );
+                }
                 return computer_effect_delivery_failure(
                     "Runner did not return a terminal computer effect result in time",
                     request_dispatched,
@@ -1295,6 +1407,15 @@ impl ToolRuntime {
                     error,
                     response.request_dispatched,
                     pointer_context.as_ref().expect("pointer context"),
+                );
+            }
+            if is_clipboard_write {
+                return computer_clipboard_write_runner_error(
+                    error,
+                    response.request_dispatched,
+                    clipboard_write_context
+                        .as_ref()
+                        .expect("clipboard write context"),
                 );
             }
             if is_application_launch {
@@ -1330,6 +1451,15 @@ impl ToolRuntime {
                     expected_application_id.as_deref().unwrap_or_default(),
                 );
             }
+            if is_clipboard_write {
+                return computer_clipboard_write_delivery_failure(
+                    "Runner clipboard write ended without a structured terminal result",
+                    response.request_dispatched,
+                    clipboard_write_context
+                        .as_ref()
+                        .expect("clipboard write context"),
+                );
+            }
             if is_effect {
                 return computer_effect_delivery_failure(
                     "Runner computer effect ended without a structured terminal result",
@@ -1359,6 +1489,15 @@ impl ToolRuntime {
                     expected_application_id.as_deref().unwrap_or_default(),
                 )
             }
+            _ if is_clipboard_write => {
+                return computer_clipboard_write_delivery_failure(
+                    "Runner returned invalid JSON after possible clipboard replacement",
+                    response.request_dispatched,
+                    clipboard_write_context
+                        .as_ref()
+                        .expect("clipboard write context"),
+                )
+            }
             _ if is_effect => {
                 return computer_effect_delivery_failure(
                     "Runner returned invalid JSON after computer effect execution",
@@ -1381,6 +1520,20 @@ impl ToolRuntime {
             }
             "computer_list_displays" => {
                 validate_display_list(output, list_limit.unwrap_or(MAX_DISPLAYS))
+            }
+            "computer_read_clipboard" => validate_computer_read_clipboard(output),
+            "computer_write_clipboard" => {
+                let context = clipboard_write_context.as_ref().expect("clipboard write context");
+                let validated = validate_computer_write_clipboard(output, context);
+                if validated.success {
+                    validated
+                } else {
+                    computer_clipboard_write_outcome_unknown(
+                        "Runner reported successful clipboard replacement but returned inconsistent metadata",
+                        context,
+                        Some(true),
+                    )
+                }
             }
             "computer_launch_application" => {
                 let validated = validate_computer_launch_application(
@@ -1582,6 +1735,7 @@ fn computer_request_is_effect(kind: &str) -> bool {
             | "computer_input_text"
             | "computer_pointer_move"
             | "computer_pointer_click"
+            | "computer_write_clipboard"
             | "computer_launch_application"
     )
 }
@@ -1808,6 +1962,83 @@ fn computer_pointer_runner_error(
     }
 }
 
+#[derive(Clone, Debug)]
+struct ClipboardWriteContext {
+    text_bytes: Option<usize>,
+}
+
+fn clipboard_write_output_base(context: &ClipboardWriteContext) -> serde_json::Map<String, Value> {
+    let mut output = serde_json::Map::new();
+    if let Some(text_bytes) = context
+        .text_bytes
+        .filter(|bytes| (1..=MAX_CLIPBOARD_TEXT_BYTES).contains(bytes))
+    {
+        output.insert("text_bytes".to_string(), json!(text_bytes));
+    }
+    output
+}
+
+fn computer_clipboard_write_not_started(
+    error_kind: &str,
+    message: &str,
+    context: &ClipboardWriteContext,
+) -> ToolResult {
+    let mut output = clipboard_write_output_base(context);
+    output.insert("error_kind".to_string(), json!(error_kind));
+    output.insert("execution_state".to_string(), json!("not_started"));
+    output.insert("state_changed".to_string(), json!(false));
+    ToolResult::err_with_output(message.to_string(), Value::Object(output))
+}
+
+fn computer_clipboard_write_outcome_unknown(
+    message: &str,
+    context: &ClipboardWriteContext,
+    state_changed: Option<bool>,
+) -> ToolResult {
+    let safe_message = format!(
+        "{message}; do not blindly retry. If separately authorized for computer:clipboard_read, the caller may explicitly use computer_read_clipboard to reconcile current state"
+    );
+    let mut output = clipboard_write_output_base(context);
+    output.insert("error_kind".to_string(), json!("outcome_unknown"));
+    output.insert("execution_state".to_string(), json!("outcome_unknown"));
+    if let Some(state_changed) = state_changed {
+        output.insert("state_changed".to_string(), json!(state_changed));
+    }
+    ToolResult::err_with_output(safe_message, Value::Object(output))
+}
+
+fn computer_clipboard_write_delivery_failure(
+    message: &str,
+    request_dispatched: Option<bool>,
+    context: &ClipboardWriteContext,
+) -> ToolResult {
+    if request_dispatched == Some(false) {
+        computer_clipboard_write_not_started("not_started", message, context)
+    } else {
+        computer_clipboard_write_outcome_unknown(message, context, None)
+    }
+}
+
+fn computer_clipboard_write_runner_error(
+    error: &str,
+    request_dispatched: Option<bool>,
+    context: &ClipboardWriteContext,
+) -> ToolResult {
+    let error_kind = classify_runner_error(error);
+    match error_kind {
+        "not_started" => computer_clipboard_write_not_started("not_started", error, context),
+        "outcome_unknown" => computer_clipboard_write_outcome_unknown(error, context, Some(true)),
+        "invalid_request" | "unsupported_platform" | "permission_denied" => {
+            computer_clipboard_write_not_started(error_kind, error, context)
+        }
+        _ => computer_clipboard_write_delivery_failure(
+            "Runner clipboard write ended without a recognized structured result",
+            request_dispatched,
+            context,
+        ),
+    }
+}
+
 fn computer_effect_not_started(message: &str) -> ToolResult {
     ToolResult::err_with_output(
         message.to_string(),
@@ -1979,6 +2210,10 @@ fn classify_runner_error(error: &str) -> &'static str {
         "scroll_failed",
         "key_input_failed",
         "pointer_input_failed",
+        "clipboard_busy",
+        "clipboard_too_large",
+        "clipboard_malformed",
+        "clipboard_failed",
         "not_started",
         "input_failed",
         "outcome_unknown",
@@ -2374,6 +2609,95 @@ fn validate_display_snapshot(
         .as_object_mut()
         .expect("display snapshot object shape checked above")
         .insert("client_id".to_string(), json!(client_id));
+    ToolResult::ok(output)
+}
+
+fn validate_computer_read_clipboard(output: Value) -> ToolResult {
+    let Some(object) = output.as_object() else {
+        return computer_error(
+            "invalid_runner_response",
+            "clipboard read result is not an object",
+        );
+    };
+    if output.get("platform").and_then(Value::as_str) != Some("windows") {
+        return computer_error(
+            "invalid_runner_response",
+            "clipboard read platform is inconsistent",
+        );
+    }
+    let Some(available) = output.get("available").and_then(Value::as_bool) else {
+        return computer_error(
+            "invalid_runner_response",
+            "clipboard read availability is missing",
+        );
+    };
+    let Some(text_bytes) = output.get("text_bytes").and_then(Value::as_u64) else {
+        return computer_error(
+            "invalid_runner_response",
+            "clipboard read byte count is missing",
+        );
+    };
+    if text_bytes > MAX_CLIPBOARD_TEXT_BYTES as u64 {
+        return computer_error(
+            "invalid_runner_response",
+            "clipboard read byte count exceeds bound",
+        );
+    }
+    if available {
+        let allowed = ["platform", "available", "text", "text_bytes"];
+        let Some(text) = output.get("text").and_then(Value::as_str) else {
+            return computer_error(
+                "invalid_runner_response",
+                "available clipboard text is missing",
+            );
+        };
+        if object.len() != allowed.len()
+            || object.keys().any(|key| !allowed.contains(&key.as_str()))
+            || text.len() != text_bytes as usize
+            || text.len() > MAX_CLIPBOARD_TEXT_BYTES
+            || text.contains('\0')
+        {
+            return computer_error(
+                "invalid_runner_response",
+                "clipboard read success metadata is inconsistent",
+            );
+        }
+    } else {
+        let allowed = ["platform", "available", "text_bytes"];
+        if object.len() != allowed.len()
+            || object.keys().any(|key| !allowed.contains(&key.as_str()))
+            || text_bytes != 0
+            || object.contains_key("text")
+        {
+            return computer_error(
+                "invalid_runner_response",
+                "unavailable clipboard result is inconsistent",
+            );
+        }
+    }
+    ToolResult::ok(output)
+}
+
+fn validate_computer_write_clipboard(output: Value, context: &ClipboardWriteContext) -> ToolResult {
+    let Some(object) = output.as_object() else {
+        return computer_error(
+            "invalid_runner_response",
+            "clipboard write result is not an object",
+        );
+    };
+    let allowed = ["platform", "text_bytes", "success"];
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("windows")
+        || output.get("success").and_then(Value::as_bool) != Some(true)
+        || output.get("text_bytes").and_then(Value::as_u64)
+            != context.text_bytes.map(|value| value as u64)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "clipboard write success metadata is inconsistent",
+        );
+    }
     ToolResult::ok(output)
 }
 
@@ -4367,6 +4691,96 @@ mod tests {
         );
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], "image_too_large");
+    }
+
+    #[test]
+    fn computer_clipboard_public_validator_is_strict_and_read_is_not_an_effect() {
+        assert!(!computer_request_is_effect("computer_read_clipboard"));
+        assert!(computer_request_is_effect("computer_write_clipboard"));
+        assert_eq!(validate_clipboard_write_text("hello").unwrap(), 5);
+        assert!(validate_clipboard_write_text("").is_err());
+        assert!(validate_clipboard_write_text("bad\0text").is_err());
+        assert!(validate_clipboard_write_text(&"a".repeat(MAX_CLIPBOARD_TEXT_BYTES + 1)).is_err());
+
+        let unavailable = validate_computer_read_clipboard(json!({
+            "platform":"windows","available":false,"text_bytes":0
+        }));
+        assert!(unavailable.success);
+        assert!(unavailable.output.get("text").is_none());
+
+        let text = String::from_utf16(&[0x0041, 0x4E2D, 0xD83D, 0xDE00]).unwrap();
+        let available = validate_computer_read_clipboard(json!({
+            "platform":"windows","available":true,"text":text,"text_bytes":text.len()
+        }));
+        assert!(available.success);
+
+        let leaked = validate_computer_read_clipboard(json!({
+            "platform":"windows","available":true,"text":"safe","text_bytes":4,
+            "native_owner":"PRIVATE_OWNER"
+        }));
+        assert!(!leaked.success);
+        assert_eq!(leaked.output["error_kind"], "invalid_runner_response");
+
+        let context = ClipboardWriteContext {
+            text_bytes: Some(5),
+        };
+        let written = validate_computer_write_clipboard(
+            json!({"platform":"windows","text_bytes":5,"success":true}),
+            &context,
+        );
+        assert!(written.success);
+        let leaked_write = validate_computer_write_clipboard(
+            json!({
+                "platform":"windows","text_bytes":5,"success":true,
+                "hglobal":"PRIVATE_HGLOBAL"
+            }),
+            &context,
+        );
+        assert!(!leaked_write.success);
+    }
+
+    #[test]
+    fn computer_clipboard_write_lifecycle_preserves_not_started_and_unknown() {
+        let context = ClipboardWriteContext {
+            text_bytes: Some(5),
+        };
+        let not_started =
+            computer_clipboard_write_delivery_failure("not dispatched", Some(false), &context);
+        assert!(!not_started.success);
+        assert_eq!(not_started.output["execution_state"], "not_started");
+        assert_eq!(not_started.output["state_changed"], false);
+        assert_eq!(not_started.output["text_bytes"], 5);
+
+        let unknown = computer_clipboard_write_delivery_failure("response lost", None, &context);
+        assert!(!unknown.success);
+        assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+        assert!(unknown.output.get("state_changed").is_none());
+        assert!(unknown
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("do not blindly retry"));
+        assert!(unknown
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("computer:clipboard_read"));
+
+        let native_unknown = computer_clipboard_write_runner_error(
+            "outcome_unknown: EmptyClipboard changed state before SetClipboardData failed",
+            Some(true),
+            &context,
+        );
+        assert_eq!(native_unknown.output["execution_state"], "outcome_unknown");
+        assert_eq!(native_unknown.output["state_changed"], true);
+
+        let native_not_started = computer_clipboard_write_runner_error(
+            "not_started: OpenClipboard failed",
+            Some(true),
+            &context,
+        );
+        assert_eq!(native_not_started.output["execution_state"], "not_started");
+        assert_eq!(native_not_started.output["state_changed"], false);
     }
 
     #[test]

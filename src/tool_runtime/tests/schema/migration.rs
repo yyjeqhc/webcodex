@@ -236,6 +236,8 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ("computer_control", "computer", "none"),
         ("computer_scroll_to_element", "computer", "none"),
         ("computer_key_input", "computer", "none"),
+        ("computer_read_clipboard", "computer", "none"),
+        ("computer_write_clipboard", "computer", "none"),
         ("computer_pointer_move", "computer", "none"),
         ("computer_pointer_click", "computer", "none"),
         ("computer_input_text", "computer", "none"),

@@ -24,6 +24,8 @@ const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
 const MAX_ELEMENT_REGISTRY: usize = 1024;
 const MAX_INPUT_TEXT_BYTES: usize = 2048;
+const MAX_CLIPBOARD_TEXT_BYTES: usize = 16 * 1024;
+const MAX_CLIPBOARD_NATIVE_STORAGE_BYTES: usize = 64 * 1024;
 const COMPUTER_KEY_INPUT_KEYS: &[&str] = &[
     "enter",
     "escape",
@@ -274,6 +276,127 @@ fn validate_input_text(text: &str) -> Result<usize, String> {
         return Err("invalid_request: computer text input must be non-empty, NUL-free, and within the UTF-8 byte limit".to_string());
     }
     Ok(text_bytes)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreparedClipboardText {
+    utf16: Vec<u16>,
+    text_bytes: usize,
+    storage_bytes: usize,
+}
+
+fn prepare_clipboard_write_text(text: &str) -> Result<PreparedClipboardText, String> {
+    let text_bytes = text.len();
+    if text_bytes == 0 || text_bytes > MAX_CLIPBOARD_TEXT_BYTES || text.contains('\0') {
+        return Err(
+            "invalid_request: clipboard text must be non-empty, NUL-free, and within the 16 KiB UTF-8 byte limit"
+                .to_string(),
+        );
+    }
+    let mut utf16: Vec<u16> = text.encode_utf16().collect();
+    let units_with_nul = utf16
+        .len()
+        .checked_add(1)
+        .ok_or_else(|| "invalid_request: clipboard UTF-16 length overflow".to_string())?;
+    let storage_bytes = units_with_nul
+        .checked_mul(std::mem::size_of::<u16>())
+        .ok_or_else(|| "invalid_request: clipboard native storage size overflow".to_string())?;
+    if storage_bytes > MAX_CLIPBOARD_NATIVE_STORAGE_BYTES {
+        return Err("invalid_request: clipboard native storage exceeds bound".to_string());
+    }
+    utf16.push(0);
+    Ok(PreparedClipboardText {
+        utf16,
+        text_bytes,
+        storage_bytes,
+    })
+}
+
+fn clipboard_read_result_from_utf16(
+    storage: Option<&[u16]>,
+    native_storage_bytes: usize,
+) -> Result<Value, String> {
+    let Some(storage) = storage else {
+        return Ok(json!({
+            "platform": "windows",
+            "available": false,
+            "text_bytes": 0,
+        }));
+    };
+    if native_storage_bytes == 0 {
+        return Err("clipboard_malformed: clipboard Unicode storage is empty".to_string());
+    }
+    if native_storage_bytes > MAX_CLIPBOARD_NATIVE_STORAGE_BYTES {
+        return Err(
+            "clipboard_too_large: clipboard Unicode storage exceeds the bounded native range"
+                .to_string(),
+        );
+    }
+    if native_storage_bytes % std::mem::size_of::<u16>() != 0 {
+        return Err(
+            "clipboard_malformed: clipboard Unicode storage has odd byte length".to_string(),
+        );
+    }
+    let expected_units = native_storage_bytes / std::mem::size_of::<u16>();
+    if storage.len() != expected_units {
+        return Err(
+            "clipboard_malformed: clipboard Unicode storage length is inconsistent".to_string(),
+        );
+    }
+    let end = storage.iter().position(|unit| *unit == 0).ok_or_else(|| {
+        "clipboard_malformed: clipboard Unicode text is not NUL terminated within bounded storage"
+            .to_string()
+    })?;
+    let text = String::from_utf16(&storage[..end])
+        .map_err(|_| "clipboard_malformed: clipboard Unicode text is invalid UTF-16".to_string())?;
+    let text_bytes = text.len();
+    if text_bytes > MAX_CLIPBOARD_TEXT_BYTES {
+        return Err(
+            "clipboard_too_large: clipboard UTF-8 text exceeds the 16 KiB bound".to_string(),
+        );
+    }
+    Ok(json!({
+        "platform": "windows",
+        "available": true,
+        "text": text,
+        "text_bytes": text_bytes,
+    }))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClipboardWriteEffectState {
+    NotStarted,
+    OutcomeUnknown,
+    Success,
+}
+
+fn run_clipboard_write_effect_steps(
+    empty_clipboard: impl FnOnce() -> bool,
+    set_clipboard_text: impl FnOnce() -> bool,
+    close_clipboard: impl FnOnce() -> bool,
+) -> ClipboardWriteEffectState {
+    if !empty_clipboard() {
+        let _ = close_clipboard();
+        return ClipboardWriteEffectState::NotStarted;
+    }
+    let set_succeeded = set_clipboard_text();
+    let close_succeeded = close_clipboard();
+    if !set_succeeded || !close_succeeded {
+        ClipboardWriteEffectState::OutcomeUnknown
+    } else {
+        ClipboardWriteEffectState::Success
+    }
+}
+
+fn finish_clipboard_read<T>(
+    read_result: Result<T, String>,
+    close_clipboard: impl FnOnce() -> bool,
+) -> Result<T, String> {
+    if !close_clipboard() {
+        Err("clipboard_failed: CloseClipboard failed after bounded read".to_string())
+    } else {
+        read_result
+    }
 }
 
 #[cfg(any(test, target_os = "macos"))]
@@ -2114,6 +2237,8 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
             | "computer_launch_application"
             | "computer_list_displays"
             | "computer_snapshot_display"
+            | "computer_read_clipboard"
+            | "computer_write_clipboard"
             | "computer_pointer_move"
             | "computer_pointer_click"
             | "computer_snapshot"
@@ -2541,6 +2666,222 @@ mod key_input_wire_contract_tests {
     }
 }
 
+#[cfg(test)]
+mod clipboard_contract_tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+
+    fn utf16_storage(value: &str) -> Vec<u16> {
+        let mut units: Vec<u16> = value.encode_utf16().collect();
+        units.push(0);
+        units
+    }
+
+    fn unicode_fixture() -> String {
+        String::from_utf16(&[0x0041, 0x4E2D, 0xD83D, 0xDE00]).unwrap()
+    }
+
+    #[test]
+    fn clipboard_wire_is_strict_and_write_preparation_is_bounded() {
+        assert!(is_computer_request_kind("computer_read_clipboard"));
+        assert!(is_computer_request_kind("computer_write_clipboard"));
+        assert!(ensure_exact_payload_fields(&json!({}), &[]).is_ok());
+        assert!(ensure_exact_payload_fields(&json!({"text":"hello"}), &["text"]).is_ok());
+        for forbidden in [
+            "surface_id",
+            "element_id",
+            "paste",
+            "format",
+            "mime_type",
+            "hwnd",
+            "sequence",
+            "restore",
+            "append",
+            "clipboard_generation",
+        ] {
+            let mut read = json!({});
+            read.as_object_mut()
+                .unwrap()
+                .insert(forbidden.to_string(), json!(1));
+            assert!(
+                ensure_exact_payload_fields(&read, &[]).is_err(),
+                "read extra {forbidden}"
+            );
+            let mut write = json!({"text":"hello"});
+            write
+                .as_object_mut()
+                .unwrap()
+                .insert(forbidden.to_string(), json!(1));
+            assert!(
+                ensure_exact_payload_fields(&write, &["text"]).is_err(),
+                "write extra {forbidden}"
+            );
+        }
+
+        for invalid in [
+            "".to_string(),
+            "nul\0text".to_string(),
+            "a".repeat(16 * 1024 + 1),
+        ] {
+            assert!(prepare_clipboard_write_text(&invalid).is_err());
+        }
+        let text = unicode_fixture();
+        let prepared = prepare_clipboard_write_text(&text).unwrap();
+        assert_eq!(prepared.text_bytes, text.len());
+        assert_eq!(prepared.utf16.last(), Some(&0));
+        assert_eq!(
+            prepared.storage_bytes,
+            prepared.utf16.len() * std::mem::size_of::<u16>()
+        );
+        assert!(prepared.storage_bytes <= MAX_CLIPBOARD_NATIVE_STORAGE_BYTES);
+    }
+
+    #[test]
+    fn clipboard_read_decodes_unicode_empty_and_unavailable_without_truncation() {
+        let unavailable = clipboard_read_result_from_utf16(None, 0).unwrap();
+        assert_eq!(
+            unavailable,
+            json!({"platform":"windows","available":false,"text_bytes":0})
+        );
+
+        let empty = [0u16];
+        assert_eq!(
+            clipboard_read_result_from_utf16(Some(&empty), 2).unwrap(),
+            json!({"platform":"windows","available":true,"text":"","text_bytes":0})
+        );
+
+        let text = unicode_fixture();
+        let units = utf16_storage(&text);
+        assert_eq!(
+            clipboard_read_result_from_utf16(Some(&units), units.len() * 2).unwrap(),
+            json!({"platform":"windows","available":true,"text":text,"text_bytes":text.len()})
+        );
+
+        let unterminated = [b'A' as u16, b'B' as u16];
+        assert!(clipboard_read_result_from_utf16(Some(&unterminated), 4)
+            .unwrap_err()
+            .starts_with("clipboard_malformed:"));
+        let malformed = [0xD800u16, 0];
+        assert!(clipboard_read_result_from_utf16(Some(&malformed), 4)
+            .unwrap_err()
+            .starts_with("clipboard_malformed:"));
+        assert!(clipboard_read_result_from_utf16(
+            Some(&[0]),
+            MAX_CLIPBOARD_NATIVE_STORAGE_BYTES + 2
+        )
+        .unwrap_err()
+        .starts_with("clipboard_too_large:"));
+
+        let two_byte = String::from_utf16(&[0x00E9]).unwrap();
+        let oversized_text = two_byte.repeat((MAX_CLIPBOARD_TEXT_BYTES / 2) + 1);
+        let oversized_units = utf16_storage(&oversized_text);
+        assert!(oversized_units.len() * 2 <= MAX_CLIPBOARD_NATIVE_STORAGE_BYTES);
+        assert!(clipboard_read_result_from_utf16(
+            Some(&oversized_units),
+            oversized_units.len() * 2
+        )
+        .unwrap_err()
+        .starts_with("clipboard_too_large:"));
+    }
+
+    #[test]
+    fn clipboard_read_cleanup_runs_once_on_success_and_error() {
+        let closes = Cell::new(0usize);
+        let result = finish_clipboard_read(Ok::<_, String>(7u8), || {
+            closes.set(closes.get() + 1);
+            true
+        });
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(closes.get(), 1);
+
+        let closes = Cell::new(0usize);
+        let result =
+            finish_clipboard_read::<u8>(Err("clipboard_malformed: bad".to_string()), || {
+                closes.set(closes.get() + 1);
+                true
+            });
+        assert!(result.unwrap_err().starts_with("clipboard_malformed:"));
+        assert_eq!(closes.get(), 1);
+
+        let closes = Cell::new(0usize);
+        let result = finish_clipboard_read::<u8>(Ok(1), || {
+            closes.set(closes.get() + 1);
+            false
+        });
+        assert!(result.unwrap_err().contains("CloseClipboard"));
+        assert_eq!(closes.get(), 1);
+    }
+
+    #[test]
+    fn clipboard_write_effect_boundary_is_one_shot_and_conservative() {
+        fn run(
+            empty: bool,
+            set: bool,
+            close: bool,
+        ) -> (ClipboardWriteEffectState, Vec<&'static str>) {
+            let calls = RefCell::new(Vec::new());
+            let state = run_clipboard_write_effect_steps(
+                || {
+                    calls.borrow_mut().push("empty");
+                    empty
+                },
+                || {
+                    calls.borrow_mut().push("set");
+                    set
+                },
+                || {
+                    calls.borrow_mut().push("close");
+                    close
+                },
+            );
+            (state, calls.into_inner())
+        }
+
+        assert_eq!(
+            run(false, true, true),
+            (
+                ClipboardWriteEffectState::NotStarted,
+                vec!["empty", "close"]
+            )
+        );
+        assert_eq!(
+            run(true, false, true),
+            (
+                ClipboardWriteEffectState::OutcomeUnknown,
+                vec!["empty", "set", "close"]
+            )
+        );
+        assert_eq!(
+            run(true, true, false),
+            (
+                ClipboardWriteEffectState::OutcomeUnknown,
+                vec!["empty", "set", "close"]
+            )
+        );
+        assert_eq!(
+            run(true, true, true),
+            (
+                ClipboardWriteEffectState::Success,
+                vec!["empty", "set", "close"]
+            )
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn clipboard_write_requires_non_null_runner_owned_hwnd_contract() {
+        assert!(!platform::clipboard_owner_hwnd_contract_for_test(false));
+        assert!(platform::clipboard_owner_hwnd_contract_for_test(true));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn clipboard_close_failure_keeps_best_effort_cleanup_armed() {
+        assert!(!platform::clipboard_close_cleanup_armed_for_test(true));
+        assert!(platform::clipboard_close_cleanup_armed_for_test(false));
+    }
+}
+
 fn optional_snapshot_region(payload: &Value) -> Result<Option<SnapshotRegion>, String> {
     match payload.get("region") {
         None | Some(Value::Null) => Ok(None),
@@ -2723,6 +3064,17 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 ComputerObserver::global().scroll_to_element(surface_id, element_id)
             })
         }
+        "computer_read_clipboard" => {
+            ensure_exact_payload_fields(&payload, &[]).and_then(|()| platform::read_clipboard())
+        }
+        "computer_write_clipboard" => ensure_exact_payload_fields(&payload, &["text"])
+            .and_then(|()| {
+                payload
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_request: clipboard text is required".to_string())
+            })
+            .and_then(platform::write_clipboard),
         "computer_key_input" => {
             ensure_exact_payload_fields(&payload, &["surface_id", "key", "modifiers"]).and_then(
                 |()| {
@@ -2885,6 +3237,14 @@ mod platform {
         PlatformApplication, PlatformDisplay, PlatformWindow, PointerAction, PointerPlan,
         SurfaceRecord,
     };
+
+    pub(super) fn read_clipboard() -> Result<serde_json::Value, String> {
+        Err("unsupported_platform: clipboard read is unavailable on this platform".to_string())
+    }
+
+    pub(super) fn write_clipboard(_text: &str) -> Result<serde_json::Value, String> {
+        Err("unsupported_platform: clipboard write is unavailable on this platform".to_string())
+    }
 
     pub(super) fn prepare_pointer(
         _display: &DisplayRecord,
@@ -3124,9 +3484,11 @@ mod platform {
     #[cfg(any(target_os = "macos", windows))]
     use super::validate_key_input;
     use super::{
-        bounded_text, ensure_raw_capture_bound, validate_input_text, AccessibilityTreeResult,
-        ApplicationRecord, ComputerAction, DisplayRecord, ElementRecord, PlatformApplication,
-        PlatformDisplay, PlatformWindow, PointerAction, PointerPlan, SurfaceRecord,
+        bounded_text, clipboard_read_result_from_utf16, ensure_raw_capture_bound,
+        finish_clipboard_read, prepare_clipboard_write_text, run_clipboard_write_effect_steps,
+        validate_input_text, AccessibilityTreeResult, ApplicationRecord, ClipboardWriteEffectState,
+        ComputerAction, DisplayRecord, ElementRecord, PlatformApplication, PlatformDisplay,
+        PlatformWindow, PointerAction, PointerPlan, PreparedClipboardText, SurfaceRecord,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -3169,15 +3531,24 @@ mod platform {
     };
     #[cfg(windows)]
     use windows::{
-        core::{IUnknown, Interface, PCWSTR},
+        core::{w, IUnknown, Interface, PCWSTR},
         Win32::{
-            Foundation::{E_NOINTERFACE, E_POINTER, HWND as WinHwnd, POINT, RPC_E_CHANGED_MODE},
+            Foundation::{
+                GetLastError, GlobalFree, SetLastError, E_NOINTERFACE, E_POINTER, HANDLE, HGLOBAL,
+                HWND as WinHwnd, POINT, RPC_E_CHANGED_MODE, WIN32_ERROR,
+            },
             Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW},
             System::Com::{
                 CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IBindCtx,
                 CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
                 COINIT_MULTITHREADED,
             },
+            System::DataExchange::{
+                CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable,
+                OpenClipboard, SetClipboardData,
+            },
+            System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
+            System::Ole::CF_UNICODETEXT,
             UI::Accessibility::{
                 CUIAutomation8, IUIAutomation2, IUIAutomationElement, IUIAutomationInvokePattern,
                 IUIAutomationScrollItemPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
@@ -3217,9 +3588,10 @@ mod platform {
                 SHCONTF_FOLDERS, SHCONTF_NONFOLDERS, SHELLEXECUTEINFOW, SIGDN_NORMALDISPLAY,
             },
             UI::WindowsAndMessaging::{
-                GetCursorPos, GetForegroundWindow, GetSystemMetrics, IsIconic, ShowWindowAsync,
-                EDD_GET_DEVICE_INTERFACE_NAME, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, SW_SHOWNOACTIVATE,
+                CreateWindowExW, DestroyWindow, GetCursorPos, GetForegroundWindow,
+                GetSystemMetrics, IsIconic, ShowWindowAsync, EDD_GET_DEVICE_INTERFACE_NAME,
+                HWND_MESSAGE, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+                SM_YVIRTUALSCREEN, SW_RESTORE, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE, WINDOW_STYLE,
             },
         },
     };
@@ -3484,6 +3856,286 @@ mod platform {
             && info.lpParameters.0.is_null()
             && info.lpDirectory.0.is_null()
             && info.nShow == SW_SHOWNOACTIVATE.0)
+    }
+
+    #[cfg(windows)]
+    struct ClipboardOpenGuard {
+        open: bool,
+    }
+
+    #[cfg(windows)]
+    impl ClipboardOpenGuard {
+        fn open(owner: Option<WinHwnd>, error: &'static str) -> Result<Self, String> {
+            unsafe { OpenClipboard(owner) }.map_err(|_| error.to_string())?;
+            Ok(Self { open: true })
+        }
+
+        fn close_once(&mut self) -> bool {
+            if !self.open {
+                return false;
+            }
+            let closed = unsafe { CloseClipboard() }.is_ok();
+            // A reported close failure still fails the operation, but keep Drop armed for
+            // one best-effort cleanup attempt so the shared clipboard is not deliberately
+            // left open for the lifetime of the Runner. This never retries clipboard data.
+            self.record_close_result(closed)
+        }
+
+        fn record_close_result(&mut self, closed: bool) -> bool {
+            if closed {
+                self.open = false;
+            }
+            closed
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for ClipboardOpenGuard {
+        fn drop(&mut self) {
+            if self.open {
+                self.open = false;
+                let _ = unsafe { CloseClipboard() };
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn unlock_clipboard_global(handle: HGLOBAL) -> Result<(), String> {
+        // GlobalUnlock returns zero both when the final lock is successfully released
+        // and on failure. Clear last-error first so the two cases remain distinguishable.
+        unsafe { SetLastError(WIN32_ERROR(0)) };
+        let result = unsafe { GlobalUnlock(handle) };
+        if result.is_ok() || unsafe { GetLastError() }.0 == 0 {
+            Ok(())
+        } else {
+            Err("clipboard_failed: GlobalUnlock failed".to_string())
+        }
+    }
+
+    #[cfg(windows)]
+    struct OwnedClipboardGlobal {
+        handle: Option<HGLOBAL>,
+    }
+
+    #[cfg(windows)]
+    impl OwnedClipboardGlobal {
+        fn allocate(prepared: &PreparedClipboardText) -> Result<Self, String> {
+            if prepared.storage_bytes == 0
+                || prepared.storage_bytes > super::MAX_CLIPBOARD_NATIVE_STORAGE_BYTES
+                || prepared.utf16.len().checked_mul(std::mem::size_of::<u16>())
+                    != Some(prepared.storage_bytes)
+            {
+                return Err(
+                    "not_started: clipboard native allocation metadata is invalid".to_string(),
+                );
+            }
+            let handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, prepared.storage_bytes) }
+                .map_err(|_| "not_started: GlobalAlloc failed for clipboard text".to_string())?;
+            let owned = Self {
+                handle: Some(handle),
+            };
+            let locked = unsafe { GlobalLock(handle) };
+            if locked.is_null() {
+                return Err("not_started: GlobalLock failed for clipboard text".to_string());
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    prepared.utf16.as_ptr(),
+                    locked.cast::<u16>(),
+                    prepared.utf16.len(),
+                );
+            }
+            unlock_clipboard_global(handle).map_err(|_| {
+                "not_started: GlobalUnlock failed for prepared clipboard text".to_string()
+            })?;
+            Ok(owned)
+        }
+
+        fn data_handle(&self) -> HANDLE {
+            let handle = self.handle.expect("clipboard global memory ownership");
+            HANDLE(handle.0)
+        }
+
+        fn transfer_to_windows(&mut self) {
+            self.handle = None;
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for OwnedClipboardGlobal {
+        fn drop(&mut self) {
+            if let Some(handle) = self.handle.take() {
+                // GlobalFree returns NULL on successful free, while the windows crate
+                // Result wrapper treats NULL as an error. The call itself is authoritative;
+                // no retry is attempted here.
+                let _ = unsafe { GlobalFree(Some(handle)) };
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn validate_clipboard_owner_hwnd(owner: WinHwnd) -> Result<(), String> {
+        if owner.0.is_null() {
+            Err("not_started: Runner-owned clipboard HWND is null".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn clipboard_owner_hwnd_contract_for_test(non_null: bool) -> bool {
+        let raw = if non_null {
+            std::ptr::NonNull::<u8>::dangling()
+                .as_ptr()
+                .cast::<std::ffi::c_void>()
+        } else {
+            std::ptr::null_mut()
+        };
+        validate_clipboard_owner_hwnd(WinHwnd(raw)).is_ok()
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn clipboard_close_cleanup_armed_for_test(close_succeeded: bool) -> bool {
+        let mut guard = ClipboardOpenGuard { open: true };
+        let _ = guard.record_close_result(close_succeeded);
+        let cleanup_armed = guard.open;
+        // Prevent the synthetic test guard from touching the real process clipboard in Drop.
+        guard.open = false;
+        cleanup_armed
+    }
+
+    #[cfg(windows)]
+    struct OwnedClipboardWindow(WinHwnd);
+
+    #[cfg(windows)]
+    impl OwnedClipboardWindow {
+        fn new() -> Result<Self, String> {
+            // Use the system STATIC class as a short-lived message-only window. This
+            // creates a non-NULL Runner-owned HWND without activating/focusing user UI
+            // and requires no custom WndProc or message-loop framework.
+            let owner = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("STATIC"),
+                    w!(""),
+                    WINDOW_STYLE(0),
+                    0,
+                    0,
+                    0,
+                    0,
+                    Some(HWND_MESSAGE),
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .map_err(|_| {
+                "not_started: failed to create Runner-owned clipboard window".to_string()
+            })?;
+            validate_clipboard_owner_hwnd(owner)?;
+            Ok(Self(owner))
+        }
+
+        fn hwnd(&self) -> WinHwnd {
+            self.0
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for OwnedClipboardWindow {
+        fn drop(&mut self) {
+            let _ = unsafe { DestroyWindow(self.0) };
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn read_clipboard() -> Result<Value, String> {
+        let mut clipboard = ClipboardOpenGuard::open(
+            None,
+            "clipboard_busy: OpenClipboard failed for bounded clipboard read",
+        )?;
+        let read_result = (|| {
+            if unsafe { IsClipboardFormatAvailable(u32::from(CF_UNICODETEXT.0)) }.is_err() {
+                return clipboard_read_result_from_utf16(None, 0);
+            }
+            let data = unsafe { GetClipboardData(u32::from(CF_UNICODETEXT.0)) }.map_err(|_| {
+                "clipboard_failed: GetClipboardData(CF_UNICODETEXT) failed".to_string()
+            })?;
+            let global = HGLOBAL(data.0);
+            let native_storage_bytes = unsafe { GlobalSize(global) };
+            if native_storage_bytes == 0 {
+                return Err("clipboard_malformed: clipboard Unicode storage is empty".to_string());
+            }
+            if native_storage_bytes > super::MAX_CLIPBOARD_NATIVE_STORAGE_BYTES {
+                return Err(
+                    "clipboard_too_large: clipboard Unicode storage exceeds the bounded native range"
+                        .to_string(),
+                );
+            }
+            if native_storage_bytes % std::mem::size_of::<u16>() != 0 {
+                return Err(
+                    "clipboard_malformed: clipboard Unicode storage has odd byte length"
+                        .to_string(),
+                );
+            }
+            let locked = unsafe { GlobalLock(global) };
+            if locked.is_null() {
+                return Err("clipboard_failed: GlobalLock failed for clipboard read".to_string());
+            }
+            let units = native_storage_bytes / std::mem::size_of::<u16>();
+            let storage = unsafe { std::slice::from_raw_parts(locked.cast::<u16>(), units) };
+            let decoded = clipboard_read_result_from_utf16(Some(storage), native_storage_bytes);
+            let unlock = unlock_clipboard_global(global);
+            match (decoded, unlock) {
+                (_, Err(error)) => Err(error),
+                (result, Ok(())) => result,
+            }
+        })();
+        finish_clipboard_read(read_result, || clipboard.close_once())
+    }
+
+    #[cfg(windows)]
+    pub(super) fn write_clipboard(text: &str) -> Result<Value, String> {
+        // Everything below through owner creation is pre-effect preparation.
+        let prepared = prepare_clipboard_write_text(text)?;
+        let mut global = OwnedClipboardGlobal::allocate(&prepared)?;
+        let owner = OwnedClipboardWindow::new()?;
+        let mut clipboard = ClipboardOpenGuard::open(
+            Some(owner.hwnd()),
+            "not_started: OpenClipboard failed before clipboard state changed",
+        )?;
+
+        let effect = run_clipboard_write_effect_steps(
+            || unsafe { EmptyClipboard() }.is_ok(),
+            || {
+                let result = unsafe {
+                    SetClipboardData(u32::from(CF_UNICODETEXT.0), Some(global.data_handle()))
+                };
+                if result.is_ok() {
+                    // SetClipboardData success transfers HGLOBAL ownership to Windows.
+                    global.transfer_to_windows();
+                    true
+                } else {
+                    false
+                }
+            },
+            || clipboard.close_once(),
+        );
+
+        match effect {
+            ClipboardWriteEffectState::NotStarted => Err(
+                "not_started: EmptyClipboard failed before clipboard content changed".to_string(),
+            ),
+            ClipboardWriteEffectState::OutcomeUnknown => Err(
+                "outcome_unknown: clipboard state changed after EmptyClipboard but the complete CF_UNICODETEXT replacement could not be proven"
+                    .to_string(),
+            ),
+            ClipboardWriteEffectState::Success => Ok(json!({
+                "platform": "windows",
+                "text_bytes": prepared.text_bytes,
+                "success": true,
+            })),
+        }
     }
 
     #[cfg(windows)]
@@ -4052,6 +4704,16 @@ mod platform {
             || unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) < 0 },
         )
     }
+    #[cfg(target_os = "macos")]
+    pub(super) fn read_clipboard() -> Result<Value, String> {
+        Err("unsupported_platform: clipboard read is unavailable on macOS".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn write_clipboard(_text: &str) -> Result<Value, String> {
+        Err("unsupported_platform: clipboard write is unavailable on macOS".to_string())
+    }
+
     #[cfg(target_os = "macos")]
     pub(super) fn list_displays(_limit: usize) -> Result<Vec<PlatformDisplay>, String> {
         Err(

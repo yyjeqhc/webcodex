@@ -297,6 +297,8 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 computer_application_launch: true,
                 computer_display_observe: true,
                 computer_pointer_control: true,
+                computer_clipboard_read: true,
+                computer_clipboard_write: true,
                 computer_snapshot_region: true,
                 computer_accessibility_observe: true,
                 computer_element_state: true,

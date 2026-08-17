@@ -1874,6 +1874,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.computer_display_observe = cfg!(windows);
     // Snapshot-fenced exact coordinate pointer input is independently implemented on Windows.
     capabilities.computer_pointer_control = cfg!(windows);
+    // Bounded Unicode-text clipboard observation/replacement are separate Windows-only capabilities.
+    capabilities.computer_clipboard_read = cfg!(windows);
+    capabilities.computer_clipboard_write = cfg!(windows);
     // Region/downscale snapshot requests use a distinct additive wire fence so
     // old Runners that support only whole-window snapshots fail closed.
     capabilities.computer_snapshot_region = cfg!(any(target_os = "macos", windows));

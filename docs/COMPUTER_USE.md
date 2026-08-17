@@ -76,6 +76,16 @@ computer_list_displays
 
 Pointer control requires all four scopes `computer:read`, `computer:display_read`, `computer:control`, and explicit `computer:pointer_control`, plus the independent `computer_pointer_control` Runner capability. The capability defaults false and is advertised only by the Windows implementation in this slice. The tools perform no implicit snapshot, display/window listing, activation, focus, retry, shell/script/process fallback, clipboard operation, OCR, or browser automation.
 
+### Windows bounded Unicode-text clipboard
+
+Windows now exposes two independent global clipboard tools: `computer_read_clipboard(client_id)` and `computer_write_clipboard(client_id, text)`. The first version supports only native `CF_UNICODETEXT`. It does not expose binary/image/HTML/RTF/file-drop/custom formats, native format IDs, clipboard history, delayed rendering, owner/window handles, sequence numbers, or arbitrary format enumeration. It has no clipboard generation/token framework. The independent Runner capabilities `computer_clipboard_read` and `computer_clipboard_write` default false, are not inferred from each other or from ordinary Computer observation/control, and are advertised only by the Windows implementation in this slice; non-Windows Runners remain false.
+
+Clipboard read is a pure observation requiring both `computer:read` and explicit `computer:clipboard_read`. It opens the global clipboard only for the duration of one bounded read, performs no internal retry, checks `CF_UNICODETEXT`, bounds native storage before locking it, requires a UTF-16 terminating NUL within that storage, converts to UTF-8, and rejects rather than truncates text beyond 16 KiB. Absence of readable Unicode text is returned as `available=false`; an existing empty Unicode string is `available=true` with empty `text`. The returned model text is the authorized data plane, but durable audit retains only bounded metadata such as `available` and `text_bytes`: clipboard text, raw UTF-16, hashes, owner HWNDs, HGLOBAL values, and other private Windows state never enter durable audit.
+
+Clipboard write is an independent effect requiring both `computer:control` and explicit `computer:clipboard_write`; write authority does not grant read authority. Caller text must be non-empty, NUL-free, and at most 16 KiB of UTF-8. UTF-16 conversion, terminating NUL construction, checked allocation sizing, movable global-memory allocation/copy, and creation of a short-lived invisible Runner-owned non-NULL message-only HWND all complete before native clipboard mutation. The Runner never borrows the foreground/application HWND and never activates or focuses UI. After `OpenClipboard(owner_hwnd)` succeeds, the first successful `EmptyClipboard` is the effect boundary: failure before that point is definite `not_started`; after the clipboard has been emptied, `SetClipboardData` failure, close failure, lost response, or otherwise unprovable completion is `outcome_unknown`. Successful `SetClipboardData(CF_UNICODETEXT, ...)` transfers HGLOBAL ownership to Windows. There is no retry, previous-content restore, hidden readback, second write, or repair sequence.
+
+`computer_write_clipboard` is intentionally a **replacement** operation: `EmptyClipboard` removes any previous image, rich-text, HTML/RTF, file-drop, or custom formats before installing the bounded Unicode text. It does not attempt to merge or preserve rich formats. Neither clipboard tool pastes anything, sends Ctrl+V, focuses/activates a target, or becomes a fallback for `computer_input_text`, key input, semantic control, or pointer operations. An `outcome_unknown` write is never blindly retried; a caller that separately holds clipboard-read authority may explicitly issue a fresh `computer_read_clipboard`, while a caller without that read scope must retain the unknown outcome rather than bypass authorization. This slice is implemented, independently reviewed, and **production-dogfood accepted on Windows**.
+
 ## Near-term slices
 
 ### CU-4 — semantic element finder
@@ -214,12 +224,12 @@ Windows UIA parity
 -> application discovery / bounded launch (implemented on Windows)
 -> full-display discovery and snapshot
 -> coordinate pointer
--> clipboard
+-> clipboard (Windows MVP implemented; independent review and production dogfood accepted)
 ```
 
 Windows parity should map UI Automation patterns into the same WebCodex semantic action/affordance vocabulary instead of exposing a second OS-specific model API.
 
-Full-display observation receives separate authority from single-window observation because it widens the privacy surface. Pointer actions remain late because they depend on fresh snapshot generation, correct surface-relative geometry, DPI/display handling, and post-effect reconciliation. Clipboard read/write remains separately scoped and bounded.
+Full-display observation receives separate authority from single-window observation because it widens the privacy surface. Pointer actions depend on fresh snapshot generation, correct display-local geometry, DPI/display handling, and post-effect reconciliation. Windows clipboard read/write is implemented, independently reviewed, and production-dogfood accepted as separately scoped bounded global authority.
 
 ## Explicitly deferred
 

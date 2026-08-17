@@ -166,6 +166,9 @@ impl Database {
                 operation TEXT,
                 action_name TEXT NOT NULL,
                 project TEXT,
+                principal_kind TEXT,
+                principal_user_id TEXT,
+                oauth_client_id TEXT,
                 status TEXT NOT NULL,
                 http_status INTEGER,
                 error_summary TEXT,
@@ -558,6 +561,7 @@ impl Database {
         // tables are always created with the current schema, and pre-subject
         // layouts are unsupported (recreate the OAuth tables if needed).
         Self::ensure_users_and_api_key_columns(&conn)?;
+        Self::ensure_action_event_attribution_columns(&conn)?;
         Self::ensure_connector_execution_columns(&conn)?;
         Self::ensure_connector_task_columns(&conn)?;
         Self::ensure_connector_task_modes(&conn)?;
@@ -615,6 +619,34 @@ impl Database {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    /// Add exact authenticated-caller attribution to `action_events` on older
+    /// databases. Historical rows intentionally remain NULL: caller identity
+    /// cannot be reconstructed safely from session, target project, or client.
+    fn ensure_action_event_attribution_columns(conn: &Connection) -> anyhow::Result<()> {
+        let columns = table_columns(conn, "action_events")?;
+        for column in ["principal_kind", "principal_user_id", "oauth_client_id"] {
+            if !columns.iter().any(|existing| existing == column) {
+                conn.execute(
+                    &format!("ALTER TABLE action_events ADD COLUMN {} TEXT", column),
+                    [],
+                )?;
+            }
+        }
+        // Created after the additive migration because an existing table may not
+        // have these columns while the base CREATE TABLE batch is running.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_action_events_principal_user_started
+             ON action_events(principal_user_id, started_at DESC)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_action_events_oauth_client_started
+             ON action_events(oauth_client_id, started_at DESC)",
+            [],
+        )?;
         Ok(())
     }
 

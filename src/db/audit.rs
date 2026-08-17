@@ -157,10 +157,10 @@ impl Database {
         conn.execute(
             "INSERT INTO action_events (
                 event_id, session_id, started_at, ended_at, duration_ms, endpoint,
-                operation, action_name, project, status, http_status, error_summary,
-                warning_summary, changed_files_json, ids_json, summary_json,
-                request_bytes, response_bytes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                operation, action_name, project, principal_kind, principal_user_id,
+                oauth_client_id, status, http_status, error_summary, warning_summary,
+                changed_files_json, ids_json, summary_json, request_bytes, response_bytes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 event.event_id,
                 event.session_id,
@@ -171,6 +171,9 @@ impl Database {
                 event.operation,
                 event.action_name,
                 event.project,
+                event.principal_kind,
+                event.principal_user_id,
+                event.oauth_client_id,
                 event.status,
                 event.http_status,
                 event.error_summary,
@@ -194,9 +197,9 @@ impl Database {
         let limit = limit.clamp(1, 500) as i64;
         let mut stmt = conn.prepare(
             "SELECT event_id, session_id, started_at, ended_at, duration_ms, endpoint,
-                    operation, action_name, project, status, http_status, error_summary,
-                    warning_summary, changed_files_json, ids_json, summary_json,
-                    request_bytes, response_bytes
+                    operation, action_name, project, principal_kind, principal_user_id,
+                    oauth_client_id, status, http_status, error_summary, warning_summary,
+                    changed_files_json, ids_json, summary_json, request_bytes, response_bytes
              FROM action_events
              WHERE session_id = ?1
              ORDER BY started_at DESC
@@ -222,10 +225,10 @@ impl Database {
         tx.execute(
             "INSERT INTO action_events (
                 event_id, session_id, started_at, ended_at, duration_ms, endpoint,
-                operation, action_name, project, status, http_status, error_summary,
-                warning_summary, changed_files_json, ids_json, summary_json,
-                request_bytes, response_bytes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                operation, action_name, project, principal_kind, principal_user_id,
+                oauth_client_id, status, http_status, error_summary, warning_summary,
+                changed_files_json, ids_json, summary_json, request_bytes, response_bytes
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 event.event_id,
                 event.session_id,
@@ -236,6 +239,9 @@ impl Database {
                 event.operation,
                 event.action_name,
                 event.project,
+                event.principal_kind,
+                event.principal_user_id,
+                event.oauth_client_id,
                 event.status,
                 event.http_status,
                 event.error_summary,
@@ -313,14 +319,93 @@ fn row_to_action_event(row: &rusqlite::Row) -> rusqlite::Result<ActionEventRecor
         operation: row.get(6)?,
         action_name: row.get(7)?,
         project: row.get(8)?,
-        status: row.get(9)?,
-        http_status: row.get(10)?,
-        error_summary: row.get(11)?,
-        warning_summary: row.get(12)?,
-        changed_files_json: row.get(13)?,
-        ids_json: row.get(14)?,
-        summary_json: row.get(15)?,
-        request_bytes: row.get(16)?,
-        response_bytes: row.get(17)?,
+        principal_kind: row.get(9)?,
+        principal_user_id: row.get(10)?,
+        oauth_client_id: row.get(11)?,
+        status: row.get(12)?,
+        http_status: row.get(13)?,
+        error_summary: row.get(14)?,
+        warning_summary: row.get(15)?,
+        changed_files_json: row.get(16)?,
+        ids_json: row.get(17)?,
+        summary_json: row.get(18)?,
+        request_bytes: row.get(19)?,
+        response_bytes: row.get(20)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_action_events_gain_nullable_caller_attribution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("audit.db");
+        {
+            let db = Database::open(&path).unwrap();
+            let conn = db.conn_for_tests();
+            conn.execute("DROP TABLE action_events", []).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE action_events (
+                    event_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    started_at INTEGER NOT NULL,
+                    ended_at INTEGER NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    endpoint TEXT NOT NULL,
+                    operation TEXT,
+                    action_name TEXT NOT NULL,
+                    project TEXT,
+                    status TEXT NOT NULL,
+                    http_status INTEGER,
+                    error_summary TEXT,
+                    warning_summary TEXT,
+                    changed_files_json TEXT NOT NULL,
+                    ids_json TEXT NOT NULL,
+                    summary_json TEXT NOT NULL,
+                    request_bytes INTEGER,
+                    response_bytes INTEGER,
+                    FOREIGN KEY(session_id) REFERENCES action_sessions(session_id)
+                );
+                INSERT INTO action_sessions (session_id, status, created_at, updated_at)
+                VALUES ('legacy-session', 'open', 1, 1);
+                INSERT INTO action_events (
+                    event_id, session_id, started_at, ended_at, duration_ms, endpoint,
+                    action_name, status, changed_files_json, ids_json, summary_json
+                ) VALUES (
+                    'legacy-event', 'legacy-session', 1, 2, 1000, '/mcp',
+                    'toolsCall', 'success', '[]', '{}', '{}'
+                );
+                ",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let conn = db.conn_for_tests();
+        let attrs: (Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT principal_kind, principal_user_id, oauth_client_id
+                 FROM action_events WHERE event_id = 'legacy-event'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(attrs, (None, None, None));
+
+        let attribution_indexes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name IN (
+                    'idx_action_events_principal_user_started',
+                    'idx_action_events_oauth_client_started'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(attribution_indexes, 2);
+    }
 }

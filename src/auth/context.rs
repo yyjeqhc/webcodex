@@ -64,6 +64,21 @@ impl AuthContext {
         }
     }
 
+    /// Stable, non-secret credential classification used by durable identity
+    /// projections such as workflow-session and action-event attribution.
+    pub(crate) fn principal_kind(&self) -> &str {
+        match self.kind {
+            AuthKind::ApiToken => self.token_kind.as_deref().unwrap_or("api_token"),
+            AuthKind::AgentToken => "agent_token",
+            AuthKind::AccountCredential => "account_credential",
+            AuthKind::OAuth2Token => "oauth2",
+            AuthKind::Bootstrap => "bootstrap",
+            AuthKind::SharedKey => "shared-key",
+            AuthKind::ProjectCredential => "project-credential",
+            AuthKind::OpenAnonymous => "open",
+        }
+    }
+
     pub fn is_admin(&self) -> bool {
         self.is_bootstrap || self.scopes.iter().any(|scope| scope == SCOPE_ADMIN)
     }

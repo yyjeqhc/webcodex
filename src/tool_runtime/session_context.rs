@@ -351,15 +351,6 @@ pub(crate) fn current_session_principal(
                 .to_string(),
         );
     };
-    let principal_kind = match auth.kind {
-        crate::auth::AuthKind::ApiToken => auth.token_kind.as_deref().unwrap_or("api_token"),
-        crate::auth::AuthKind::AgentToken => "agent_token",
-        crate::auth::AuthKind::AccountCredential => "account_credential",
-        crate::auth::AuthKind::OAuth2Token => "oauth2",
-        crate::auth::AuthKind::Bootstrap => "bootstrap",
-        crate::auth::AuthKind::SharedKey => "shared-key",
-        crate::auth::AuthKind::ProjectCredential => "project-credential",
-        crate::auth::AuthKind::OpenAnonymous => "open",
-    };
+    let principal_kind = auth.principal_kind();
     Ok((principal_kind.to_string(), principal_id))
 }

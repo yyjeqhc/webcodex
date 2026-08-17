@@ -32,6 +32,13 @@ pub struct ActionEventRecord {
     pub operation: Option<String>,
     pub action_name: String,
     pub project: Option<String>,
+    /// Auth credential class observed at request time; `None` for legacy or
+    /// unauthenticated events whose caller cannot be established.
+    pub principal_kind: Option<String>,
+    /// Stable authenticated WebCodex user id when the credential is user-bound.
+    pub principal_user_id: Option<String>,
+    /// Stable OAuth client id for OAuth2 access-token calls only.
+    pub oauth_client_id: Option<String>,
     pub status: String,
     pub http_status: Option<i64>,
     pub error_summary: Option<String>,

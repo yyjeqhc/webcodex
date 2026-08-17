@@ -77,6 +77,95 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     };
     assert_eq!(count, 1);
 }
+
+fn seed_action_audit_pat(db: &crate::Database, user: &crate::models::UserRecord) -> String {
+    let plaintext = crate::auth::generate_api_token();
+    let record = crate::models::ApiKeyRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: user.id.clone(),
+        name: "action-audit-test".to_string(),
+        key_prefix: crate::auth::token_prefix(&plaintext),
+        created_at: chrono::Utc::now().timestamp(),
+        last_used_at: None,
+        revoked_at: None,
+        scopes: "runtime:read project:read project:write job:run".to_string(),
+        expires_at: None,
+        kind: crate::models::TOKEN_KIND_USER.to_string(),
+        allowed_client_id: None,
+    };
+    db.insert_api_key(&record, &crate::auth::hash_token(&plaintext))
+        .unwrap();
+    plaintext
+}
+
+#[tokio::test]
+async fn mcp_pat_tools_call_persists_user_attribution() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let token = seed_action_audit_pat(&db, &user);
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+
+    let resp = TestClient::post("http://localhost/mcp")
+        .bearer_auth(&token)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "list_tools", "arguments": {}}
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+    let attrs: (Option<String>, Option<String>, Option<String>) = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT principal_kind, principal_user_id, oauth_client_id FROM action_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(attrs.0.as_deref(), Some("user"));
+    assert_eq!(attrs.1.as_deref(), Some(user.id.as_str()));
+    assert_eq!(attrs.2, None);
+}
+
+#[tokio::test]
+async fn mcp_oauth_tools_call_persists_user_and_client_attribution() {
+    let config = test_config_oauth2(Some("secret"));
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let client = seed_oauth_client(&db, &user);
+    let token = seed_oauth_access_token(&db, &client, &user, "runtime:read");
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+
+    let resp = TestClient::post("http://localhost/mcp")
+        .bearer_auth(&token)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "list_tools", "arguments": {}}
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+    let attrs: (Option<String>, Option<String>, Option<String>) = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT principal_kind, principal_user_id, oauth_client_id FROM action_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(attrs.0.as_deref(), Some("oauth2"));
+    assert_eq!(attrs.1.as_deref(), Some(user.id.as_str()));
+    assert_eq!(attrs.2.as_deref(), Some(client.client_id.as_str()));
+}
 #[tokio::test]
 async fn http_mcp_initialize_success() {
     let config = test_config(Some("secret"));

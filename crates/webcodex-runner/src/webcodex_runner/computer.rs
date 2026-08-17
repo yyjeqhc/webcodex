@@ -2266,10 +2266,11 @@ mod platform {
                 UIA_E_NOTSUPPORTED, UIA_PATTERN_ID,
             },
             UI::Input::KeyboardAndMouse::{
-                SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-                KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_END,
-                VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT,
-                VK_SHIFT, VK_TAB, VK_UP,
+                GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+                KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL,
+                VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
+                VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU,
+                VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
             },
             UI::WindowsAndMessaging::{GetForegroundWindow, IsIconic, ShowWindowAsync, SW_RESTORE},
         },
@@ -3173,6 +3174,40 @@ mod platform {
             );
         }
         Ok(())
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_keyboard_state_with<F>(key: &str, mut is_down: F) -> Result<(), String>
+    where
+        F: FnMut(VIRTUAL_KEY) -> bool,
+    {
+        let (key_code, _) = windows_key_mapping(key)?;
+        for candidate in [
+            VK_LSHIFT,
+            VK_RSHIFT,
+            VK_LCONTROL,
+            VK_RCONTROL,
+            VK_LMENU,
+            VK_RMENU,
+            VK_LWIN,
+            VK_RWIN,
+            key_code,
+        ] {
+            if is_down(candidate) {
+                return Err(
+                    "key_input_failed: Windows keyboard state is not neutral; release held Shift/Control/Alt/Windows/target keys and re-observe before retrying"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_keyboard_state(key: &str) -> Result<(), String> {
+        validate_windows_keyboard_state_with(key, |candidate| unsafe {
+            GetAsyncKeyState(i32::from(candidate.0)) < 0
+        })
     }
 
     #[cfg(windows)]
@@ -4449,6 +4484,10 @@ mod platform {
     fn validate_windows_send_input_count(inserted: u32, expected: u32) -> Result<(), String> {
         if inserted == expected {
             Ok(())
+        } else if inserted == 0 {
+            Err(format!(
+                "key_input_failed: SendInput inserted 0 of {expected} prepared keyboard events; no keyboard event was inserted"
+            ))
         } else {
             Err(windows_key_input_attempt_error(&format!(
                 "SendInput inserted {inserted} of {expected} prepared keyboard events"
@@ -4745,6 +4784,10 @@ mod platform {
         let root = exact_uia_window(&context, surface)?;
         validate_windows_key_input_target(&context, surface, &root)?;
         context.deadline.ensure_remaining()?;
+        // SendInput shares the interactive desktop's keyboard state. Reject the
+        // physical modifier/target states that can turn this closed request into
+        // a different chord or leave the model racing an already-held key.
+        validate_windows_keyboard_state(key)?;
 
         let inserted = unsafe { SendInput(&inputs, input_size) };
         validate_windows_send_input_count(inserted, expected_count)?;
@@ -5277,6 +5320,14 @@ mod platform {
     }
 
     #[cfg(all(test, windows))]
+    pub(super) fn test_windows_keyboard_state_guard(
+        key: &str,
+        down_virtual_key: Option<u16>,
+    ) -> Result<(), String> {
+        validate_windows_keyboard_state_with(key, |candidate| down_virtual_key == Some(candidate.0))
+    }
+
+    #[cfg(all(test, windows))]
     pub(super) fn test_windows_focused_element_belongs_to_surface(
         surface: &SurfaceRecord,
     ) -> Result<(), String> {
@@ -5650,15 +5701,26 @@ $form.Add_Shown({ $form.Activate(); $button.Focus() })
     }
 
     #[test]
-    fn computer_windows_key_input_partial_or_failed_injection_is_unknown() {
+    fn computer_windows_key_input_zero_is_deterministic_and_partial_injection_is_unknown() {
         assert!(platform::test_windows_send_input_count(2, 2).is_ok());
-        for inserted in [0, 1] {
-            let error = platform::test_windows_send_input_count(inserted, 2)
-                .expect_err("partial or failed SendInput must remain uncertain");
-            assert!(error.starts_with("outcome_unknown:"), "{error}");
-        }
+        let blocked = platform::test_windows_send_input_count(0, 2)
+            .expect_err("zero inserted events must be a definite no-effect failure");
+        assert!(blocked.starts_with("key_input_failed:"), "{blocked}");
+        let partial = platform::test_windows_send_input_count(1, 2)
+            .expect_err("partial SendInput must remain uncertain");
+        assert!(partial.starts_with("outcome_unknown:"), "{partial}");
         let error = platform::windows_key_input_attempt_error("Windows input deadline");
         assert!(error.starts_with("outcome_unknown:"), "{error}");
+    }
+
+    #[test]
+    fn computer_windows_key_input_rejects_interfering_keyboard_state() {
+        assert!(platform::test_windows_keyboard_state_guard("tab", None).is_ok());
+        for down_virtual_key in [0xA0u16, 0xA2, 0xA4, 0x5B, 0x09] {
+            let error = platform::test_windows_keyboard_state_guard("tab", Some(down_virtual_key))
+                .expect_err("held modifier, Windows key, or target key must fail before SendInput");
+            assert!(error.starts_with("key_input_failed:"), "{error}");
+        }
     }
 
     #[test]

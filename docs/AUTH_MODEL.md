@@ -264,7 +264,11 @@ Quartz key-down/key-up posts after all preflight work is complete; termination
 between them is a partial `outcome_unknown`. On Windows the complete modifier/key
 sequence is prepared first and sent in one `SendInput` call only after the exact
 foreground window and bounded UIA focused-element ancestry are revalidated;
-zero or partial insertion remains `outcome_unknown`.
+the Runner rejects an already-held Shift/Control/Alt/Windows/target key before
+injection because `SendInput` shares the interactive desktop keyboard state. A
+zero inserted-event return is a definite no-effect failure; partial insertion
+remains `outcome_unknown`. This preflight bounds shared-desktop input but does
+not provide concurrent-user desktop isolation.
 
 Scopes are only one layer of the check. After target discovery, observation and
 effect calls name one exact Runner `client_id`, and the Server also requires

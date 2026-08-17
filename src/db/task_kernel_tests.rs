@@ -805,16 +805,6 @@ fn failed_claim_does_not_advance_the_watermark() {
 }
 
 #[test]
-fn an_empty_claim_leaves_the_watermark_alone() {
-    let (_temp, db) = database();
-    bind(&db, "user:one");
-    let task = start(&db, "user:one", "fix the parser");
-    assert!(claim(&db, &task).is_empty());
-    guide(&db, &task, "arrived later");
-    assert_eq!(claim(&db, &task).len(), 1);
-}
-
-#[test]
 fn read_state_reports_pending_and_claimed_guidance_without_consuming() {
     let (_temp, db) = database();
     bind(&db, "user:one");

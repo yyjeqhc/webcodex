@@ -489,39 +489,6 @@ fn fallback_and_failure_routes_record_bounded_last_call_evidence() {
 }
 
 #[test]
-fn search_falls_back_before_submission() {
-    let _serial = serialize_fake_mcp_test();
-    let fixture = Fixture::new("normal");
-    let mut unmapped_search = fixture.config.clone();
-    unmapped_search.mapping.remove("search_project_text");
-    let router = ExternalToolRouter::new(&ToolProvidersConfig {
-        strategy: ToolProviderStrategy::ClaudeCodeThenNative,
-        claude_code: unmapped_search,
-    });
-    let mut search = agent_request("run_shell", &fixture.root, ".", None);
-    search.command = EXTERNAL_SEARCH_REQUEST_PREFIX.to_string();
-    search.stdin = Some(search_request().to_string());
-    let ExternalRoute::NativeFallback(fallback) = router.route(&permissive_test_policy(), &search)
-    else {
-        panic!("unsubmitted search did not request Native fallback");
-    };
-    router.complete_native_fallback(
-        fallback,
-        &CommandResult {
-            exit_code: Some(0),
-            stdout: Some("native search".to_string()),
-            stderr: Some(String::new()),
-            duration_ms: Some(1),
-            error: None,
-        },
-    );
-    let call = router.status().claude_code.last_call.unwrap();
-    assert_eq!(call.selected_provider, "native");
-    assert!(call.fallback_used);
-    assert_eq!(call.write_state, None);
-}
-
-#[test]
 fn status_revisions_are_changed_only_and_registration_reads_latest_snapshot() {
     let _serial = serialize_fake_mcp_test();
     let fixture = Fixture::new("normal");

@@ -288,6 +288,48 @@ fn tool_specs_full_display_observation_is_closed_and_bounded() {
 }
 
 #[test]
+fn tool_specs_coordinate_pointer_is_snapshot_fenced_and_private() {
+    let specs = registered_tool_specs();
+    for name in ["computer_pointer_move", "computer_pointer_click"] {
+        let spec = spec_named(&specs, name);
+        assert_eq!(spec.input_schema["additionalProperties"], false);
+        assert_eq!(
+            required_fields(spec),
+            vec![
+                "client_id".to_string(),
+                "display_id".to_string(),
+                "snapshot_generation".to_string(),
+                "x".to_string(),
+                "y".to_string(),
+            ]
+        );
+        let input = spec.input_schema["properties"].as_object().unwrap();
+        assert_schema_fields!(
+            input,
+            "computer pointer input schema",
+            present: ["client_id", "display_id", "snapshot_generation", "x", "y"],
+            absent: ["global_x", "global_y", "button", "double_click", "region", "surface_id", "dpi", "monitor_id"]
+        );
+        assert_eq!(input["snapshot_generation"]["minimum"], 1);
+        assert_eq!(input["x"]["minimum"], 0);
+        assert_eq!(input["y"]["minimum"], 0);
+        assert_eq!(
+            spec.output_schema["properties"]["output"]["additionalProperties"],
+            false
+        );
+        let output = spec.output_schema["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap();
+        assert_schema_fields!(
+            output,
+            "computer pointer output schema",
+            present: ["platform", "display_id", "snapshot_generation", "x", "y", "success", "execution_state", "state_changed", "error_kind", "reconcile_with"],
+            absent: ["native_identity", "device_path", "global_x", "global_y", "virtual_left", "virtual_top", "dpi", "scale_factor", "content_base64"]
+        );
+    }
+}
+
+#[test]
 fn tool_specs_computer_save_snapshot_is_create_only_and_returns_metadata_only() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "computer_save_snapshot");

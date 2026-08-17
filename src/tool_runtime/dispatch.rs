@@ -693,6 +693,8 @@ impl ToolRuntime {
             | ToolCall::ComputerInputText { .. }
             | ToolCall::ComputerSnapshot { .. }
             | ToolCall::ComputerSnapshotDisplay { .. }
+            | ToolCall::ComputerPointerMove { .. }
+            | ToolCall::ComputerPointerClick { .. }
             | ToolCall::ComputerSaveSnapshot { .. }) => {
                 self.dispatch_computer_tool(call, auth).await
             }

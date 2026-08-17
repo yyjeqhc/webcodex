@@ -10,7 +10,8 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
 };
@@ -417,6 +418,82 @@ impl ToolRuntime {
                     auth,
                     None,
                     Some(surface_id.as_str()),
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerPointerMove {
+                client_id,
+                display_id,
+                snapshot_generation,
+                x,
+                y,
+            } => {
+                let context = PointerRequestContext {
+                    display_id: display_id.clone(),
+                    snapshot_generation,
+                    x,
+                    y,
+                };
+                if !valid_display_id(&display_id) {
+                    return computer_pointer_effect_not_started(
+                        "invalid_display",
+                        "display_id is invalid",
+                        &context,
+                    );
+                }
+                if snapshot_generation == 0 {
+                    return computer_pointer_effect_not_started(
+                        "invalid_request",
+                        "snapshot_generation must be positive",
+                        &context,
+                    );
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_pointer_move",
+                    json!({"display_id": display_id, "snapshot_generation": snapshot_generation, "x": x, "y": y}),
+                    auth,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerPointerClick {
+                client_id,
+                display_id,
+                snapshot_generation,
+                x,
+                y,
+            } => {
+                let context = PointerRequestContext {
+                    display_id: display_id.clone(),
+                    snapshot_generation,
+                    x,
+                    y,
+                };
+                if !valid_display_id(&display_id) {
+                    return computer_pointer_effect_not_started(
+                        "invalid_display",
+                        "display_id is invalid",
+                        &context,
+                    );
+                }
+                if snapshot_generation == 0 {
+                    return computer_pointer_effect_not_started(
+                        "invalid_request",
+                        "snapshot_generation must be positive",
+                        &context,
+                    );
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_pointer_click",
+                    json!({"display_id": display_id, "snapshot_generation": snapshot_generation, "x": x, "y": y}),
+                    auth,
+                    None,
+                    None,
                     None,
                 )
                 .await
@@ -899,6 +976,7 @@ impl ToolRuntime {
             let computer_application_discovery = client.capabilities.computer_application_discovery;
             let computer_application_launch = client.capabilities.computer_application_launch;
             let computer_display_observe = client.capabilities.computer_display_observe;
+            let computer_pointer_control = client.capabilities.computer_pointer_control;
             let computer_snapshot_region = client.capabilities.computer_snapshot_region;
             let computer_accessibility_observe = client.capabilities.computer_accessibility_observe;
             if !computer_observe
@@ -906,6 +984,7 @@ impl ToolRuntime {
                 && !computer_application_discovery
                 && !computer_application_launch
                 && !computer_display_observe
+                && !computer_pointer_control
             {
                 continue;
             }
@@ -922,6 +1001,7 @@ impl ToolRuntime {
                     "computer_application_discovery": computer_application_discovery,
                     "computer_application_launch": computer_application_launch,
                     "computer_display_observe": computer_display_observe,
+                    "computer_pointer_control": computer_pointer_control,
                     "computer_snapshot_region": computer_snapshot_region,
                     "computer_accessibility_observe": computer_accessibility_observe,
                 },
@@ -955,12 +1035,38 @@ impl ToolRuntime {
             .get("display_id")
             .and_then(Value::as_str)
             .map(str::to_string);
+        let is_pointer = matches!(kind, "computer_pointer_move" | "computer_pointer_click");
+        let pointer_context = is_pointer.then(|| PointerRequestContext {
+            display_id: expected_display_id.clone().unwrap_or_default(),
+            snapshot_generation: payload
+                .get("snapshot_generation")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or_default(),
+            x: payload
+                .get("x")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or_default(),
+            y: payload
+                .get("y")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or_default(),
+        });
         if client_id.is_empty() || client_id.len() > 128 {
             if is_application_launch {
                 return computer_application_effect_not_started(
                     "invalid_client",
                     "client_id is invalid",
                     expected_application_id.as_deref().unwrap_or_default(),
+                );
+            }
+            if let Some(context) = pointer_context.as_ref() {
+                return computer_pointer_effect_not_started(
+                    "invalid_client",
+                    "client_id is invalid",
+                    context,
                 );
             }
             return computer_error("invalid_client", "client_id is invalid");
@@ -972,6 +1078,9 @@ impl ToolRuntime {
             "computer_launch_application" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH],
             "computer_list_displays" | "computer_snapshot_display" => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE]
+            }
+            "computer_pointer_move" | "computer_pointer_click" => {
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL]
             }
             "computer_list_windows" | "computer_snapshot" => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE]
@@ -1006,6 +1115,13 @@ impl ToolRuntime {
                             expected_application_id.as_deref().unwrap_or_default(),
                         );
                     }
+                    if let Some(context) = pointer_context.as_ref() {
+                        return computer_pointer_effect_not_started(
+                            "capability_unavailable",
+                            &format!("target Runner does not support {required_capability}"),
+                            context,
+                        );
+                    }
                     return computer_error(
                         "capability_unavailable",
                         &format!("target Runner does not support {required_capability}"),
@@ -1016,6 +1132,13 @@ impl ToolRuntime {
                         "client_access_denied",
                         "caller cannot access the target Runner for application launch",
                         expected_application_id.as_deref().unwrap_or_default(),
+                    );
+                }
+                Err(_error) if is_pointer => {
+                    return computer_pointer_effect_not_started(
+                        "client_access_denied",
+                        "caller cannot access the target Runner for pointer control",
+                        pointer_context.as_ref().expect("pointer context"),
                     );
                 }
                 Err(error) => return computer_error("client_access_denied", &error),
@@ -1054,6 +1177,13 @@ impl ToolRuntime {
                     expected_application_id.as_deref().unwrap_or_default(),
                 );
             }
+            Err(_) if is_pointer => {
+                return computer_pointer_effect_not_started(
+                    "invalid_request",
+                    "could not encode pointer control request",
+                    pointer_context.as_ref().expect("pointer context"),
+                );
+            }
             Err(_) => {
                 return computer_error("invalid_request", "could not encode computer request")
             }
@@ -1079,6 +1209,13 @@ impl ToolRuntime {
                     expected_application_id.as_deref().unwrap_or_default(),
                 )
             }
+            Err(error) if is_pointer => {
+                return computer_pointer_effect_not_started(
+                    "not_started",
+                    &format!("pointer request was not dispatched: {error}"),
+                    pointer_context.as_ref().expect("pointer context"),
+                );
+            }
             Err(error) => return computer_error("dispatch_denied", &error),
         };
         let is_effect = computer_request_is_effect(kind);
@@ -1102,6 +1239,13 @@ impl ToolRuntime {
                         expected_application_id.as_deref().unwrap_or_default(),
                     );
                 }
+                if is_pointer {
+                    return computer_pointer_effect_delivery_failure(
+                        "Runner response channel closed before a terminal pointer result was received",
+                        request_dispatched,
+                        pointer_context.as_ref().expect("pointer context"),
+                    );
+                }
                 return computer_effect_delivery_failure(
                     "Runner response channel closed before a terminal computer effect result was received",
                     request_dispatched,
@@ -1122,6 +1266,13 @@ impl ToolRuntime {
                         expected_application_id.as_deref().unwrap_or_default(),
                     );
                 }
+                if is_pointer {
+                    return computer_pointer_effect_delivery_failure(
+                        "Runner did not return a terminal pointer result in time",
+                        request_dispatched,
+                        pointer_context.as_ref().expect("pointer context"),
+                    );
+                }
                 return computer_effect_delivery_failure(
                     "Runner did not return a terminal computer effect result in time",
                     request_dispatched,
@@ -1138,6 +1289,13 @@ impl ToolRuntime {
             let error_kind = classify_runner_error(error);
             if is_text_input {
                 return computer_text_input_runner_error(error, response.request_dispatched);
+            }
+            if is_pointer {
+                return computer_pointer_runner_error(
+                    error,
+                    response.request_dispatched,
+                    pointer_context.as_ref().expect("pointer context"),
+                );
             }
             if is_application_launch {
                 return computer_application_launch_runner_error(
@@ -1158,6 +1316,13 @@ impl ToolRuntime {
             );
         }
         if response.exit_code != Some(0) {
+            if is_pointer {
+                return computer_pointer_effect_delivery_failure(
+                    "Runner pointer effect ended without a structured terminal result",
+                    response.request_dispatched,
+                    pointer_context.as_ref().expect("pointer context"),
+                );
+            }
             if is_application_launch {
                 return computer_application_effect_delivery_failure(
                     "Runner application launch ended without a structured terminal result",
@@ -1180,6 +1345,13 @@ impl ToolRuntime {
             .transpose()
         {
             Ok(Some(output)) => output,
+            _ if is_pointer => {
+                return computer_pointer_effect_delivery_failure(
+                    "Runner returned invalid JSON after possible pointer dispatch",
+                    response.request_dispatched,
+                    pointer_context.as_ref().expect("pointer context"),
+                )
+            }
             _ if is_application_launch => {
                 return computer_application_effect_delivery_failure(
                     "Runner returned invalid JSON after possible application launch dispatch",
@@ -1240,6 +1412,18 @@ impl ToolRuntime {
                 expected_snapshot_max_width,
                 expected_snapshot_max_height,
             ),
+            "computer_pointer_move" | "computer_pointer_click" => {
+                let context = pointer_context.as_ref().expect("pointer context");
+                let validated = validate_computer_pointer(output, context);
+                if validated.success {
+                    validated
+                } else {
+                    computer_pointer_effect_outcome_unknown(
+                        "Runner reported successful pointer input but returned inconsistent metadata",
+                        context,
+                    )
+                }
+            }
             "computer_accessibility_status" => validate_accessibility_status(output),
             "computer_accessibility_tree" => {
                 let (max_depth, max_nodes) = accessibility_bounds.unwrap_or((0, 0));
@@ -1396,6 +1580,8 @@ fn computer_request_is_effect(kind: &str) -> bool {
             | "computer_scroll_to_element"
             | "computer_key_input"
             | "computer_input_text"
+            | "computer_pointer_move"
+            | "computer_pointer_click"
             | "computer_launch_application"
     )
 }
@@ -1507,6 +1693,119 @@ fn computer_error(kind: &str, message: &str) -> ToolResult {
         message.to_string(),
         json!({"error_kind": kind, "message": bounded_text(message)}),
     )
+}
+
+#[derive(Clone, Debug)]
+struct PointerRequestContext {
+    display_id: String,
+    snapshot_generation: u32,
+    x: u32,
+    y: u32,
+}
+
+fn computer_pointer_effect_not_started(
+    error_kind: &str,
+    message: &str,
+    context: &PointerRequestContext,
+) -> ToolResult {
+    let mut output = json!({
+        "error_kind": error_kind,
+        "x": context.x,
+        "y": context.y,
+        "state_changed": false,
+        "execution_state": "not_started",
+    });
+    let object = output
+        .as_object_mut()
+        .expect("pointer not-started output is an object");
+    if valid_display_id(&context.display_id) {
+        object.insert("display_id".to_string(), json!(context.display_id));
+    }
+    if context.snapshot_generation > 0 {
+        object.insert(
+            "snapshot_generation".to_string(),
+            json!(context.snapshot_generation),
+        );
+    }
+    ToolResult::err_with_output(message.to_string(), output)
+}
+
+fn computer_pointer_effect_spent_not_started(
+    message: &str,
+    context: &PointerRequestContext,
+) -> ToolResult {
+    let safe_message = format!(
+        "{message}; snapshot_generation is spent. Reconcile with a fresh computer_snapshot_display observation before another pointer effect"
+    );
+    let mut result = computer_pointer_effect_not_started("not_started", &safe_message, context);
+    result
+        .output
+        .as_object_mut()
+        .expect("pointer spent not-started output is an object")
+        .insert(
+            "reconcile_with".to_string(),
+            json!("computer_snapshot_display"),
+        );
+    result
+}
+
+fn computer_pointer_effect_outcome_unknown(
+    message: &str,
+    context: &PointerRequestContext,
+) -> ToolResult {
+    let safe_message = format!(
+        "{message}; do not blindly retry. Reconcile with a fresh computer_snapshot_display observation first"
+    );
+    ToolResult::err_with_output(
+        safe_message.clone(),
+        json!({
+            "error_kind": "outcome_unknown",
+            "display_id": context.display_id,
+            "snapshot_generation": context.snapshot_generation,
+            "x": context.x,
+            "y": context.y,
+            "execution_state": "outcome_unknown",
+            "reconcile_with": "computer_snapshot_display",
+        }),
+    )
+}
+
+fn computer_pointer_effect_delivery_failure(
+    message: &str,
+    request_dispatched: Option<bool>,
+    context: &PointerRequestContext,
+) -> ToolResult {
+    if request_dispatched == Some(false) {
+        computer_pointer_effect_not_started("not_started", message, context)
+    } else {
+        computer_pointer_effect_outcome_unknown(message, context)
+    }
+}
+
+fn computer_pointer_runner_error(
+    error: &str,
+    request_dispatched: Option<bool>,
+    context: &PointerRequestContext,
+) -> ToolResult {
+    let error_kind = classify_runner_error(error);
+    match error_kind {
+        "outcome_unknown" => computer_pointer_effect_outcome_unknown(
+            "Runner reported an uncertain native pointer outcome",
+            context,
+        ),
+        "not_started" => computer_pointer_effect_spent_not_started(error, context),
+        "pointer_input_failed"
+        | "stale_snapshot_generation"
+        | "stale_display"
+        | "invalid_request"
+        | "unsupported_platform"
+        | "permission_denied" => computer_pointer_effect_not_started(error_kind, error, context),
+        _ => computer_pointer_effect_delivery_failure(
+            "Runner pointer effect ended without a recognized structured result",
+            request_dispatched,
+            context,
+        ),
+    }
 }
 
 fn computer_effect_not_started(message: &str) -> ToolResult {
@@ -1670,6 +1969,7 @@ fn classify_runner_error(error: &str) -> &'static str {
         "stale_element",
         "stale_application",
         "stale_display",
+        "stale_snapshot_generation",
         "unsupported_platform",
         "application_failed",
         "display_failed",
@@ -1678,6 +1978,8 @@ fn classify_runner_error(error: &str) -> &'static str {
         "control_failed",
         "scroll_failed",
         "key_input_failed",
+        "pointer_input_failed",
+        "not_started",
         "input_failed",
         "outcome_unknown",
         "image_too_large",
@@ -2494,6 +2796,47 @@ fn validate_computer_scroll_to_element(
     ToolResult::ok(output)
 }
 
+fn validate_computer_pointer(mut output: Value, context: &PointerRequestContext) -> ToolResult {
+    let object = match output.as_object() {
+        Some(object) => object,
+        None => {
+            return computer_error(
+                "invalid_runner_response",
+                "computer pointer result is not an object",
+            )
+        }
+    };
+    let allowed = [
+        "platform",
+        "display_id",
+        "snapshot_generation",
+        "x",
+        "y",
+        "success",
+    ];
+    if object.len() != allowed.len()
+        || object.keys().any(|key| !allowed.contains(&key.as_str()))
+        || output.get("platform").and_then(Value::as_str) != Some("windows")
+        || output.get("display_id").and_then(Value::as_str) != Some(context.display_id.as_str())
+        || output.get("snapshot_generation").and_then(Value::as_u64)
+            != Some(u64::from(context.snapshot_generation))
+        || output.get("x").and_then(Value::as_u64) != Some(u64::from(context.x))
+        || output.get("y").and_then(Value::as_u64) != Some(u64::from(context.y))
+        || output.get("success").and_then(Value::as_bool) != Some(true)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "computer pointer result is inconsistent",
+        );
+    }
+    let object = output
+        .as_object_mut()
+        .expect("computer pointer output was validated as an object");
+    object.insert("execution_state".to_string(), json!("completed"));
+    object.insert("state_changed".to_string(), json!(true));
+    ToolResult::ok(output)
+}
+
 fn validate_computer_key_input(
     output: Value,
     expected_surface_id: &str,
@@ -3023,6 +3366,115 @@ mod tests {
     }
 
     const DISPLAY_ID: &str = "display_0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
+        let context = PointerRequestContext {
+            display_id: DISPLAY_ID.to_string(),
+            snapshot_generation: 7,
+            x: 123,
+            y: 456,
+        };
+        for tool in ["computer_pointer_move", "computer_pointer_click"] {
+            assert!(computer_request_is_effect(tool));
+            let call = ToolCall::from_tool_name(
+                tool,
+                json!({
+                    "client_id": "msi",
+                    "display_id": DISPLAY_ID,
+                    "snapshot_generation": 7,
+                    "x": 123,
+                    "y": 456
+                }),
+            )
+            .unwrap();
+            assert!(matches!(
+                call,
+                ToolCall::ComputerPointerMove { .. } | ToolCall::ComputerPointerClick { .. }
+            ));
+            for forbidden in ["global_x", "global_y", "button", "region", "surface_id"] {
+                let mut args = json!({
+                    "client_id": "msi",
+                    "display_id": DISPLAY_ID,
+                    "snapshot_generation": 7,
+                    "x": 123,
+                    "y": 456
+                });
+                args.as_object_mut()
+                    .unwrap()
+                    .insert(forbidden.to_string(), json!(1));
+                assert!(ToolCall::from_tool_name(tool, args)
+                    .unwrap_err()
+                    .contains("unknown field"));
+            }
+        }
+
+        let not_started =
+            computer_pointer_effect_delivery_failure("no dispatch", Some(false), &context);
+        assert!(!not_started.success);
+        assert_eq!(not_started.output["execution_state"], "not_started");
+        assert_eq!(not_started.output["state_changed"], false);
+        let spent_not_started = computer_pointer_runner_error(
+            "not_started: Windows pointer SendInput inserted no events",
+            Some(true),
+            &context,
+        );
+        assert!(!spent_not_started.success);
+        assert_eq!(spent_not_started.output["execution_state"], "not_started");
+        assert_eq!(spent_not_started.output["state_changed"], false);
+        assert_eq!(
+            spent_not_started.output["reconcile_with"],
+            "computer_snapshot_display"
+        );
+        assert!(spent_not_started
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("snapshot_generation is spent"));
+        let unknown =
+            computer_pointer_effect_delivery_failure("maybe dispatched", Some(true), &context);
+        assert!(!unknown.success);
+        assert_eq!(unknown.output["execution_state"], "outcome_unknown");
+        assert_eq!(
+            unknown.output["reconcile_with"],
+            "computer_snapshot_display"
+        );
+        assert!(unknown
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("do not blindly retry"));
+
+        let valid = validate_computer_pointer(
+            json!({
+                "platform": "windows",
+                "display_id": DISPLAY_ID,
+                "snapshot_generation": 7,
+                "x": 123,
+                "y": 456,
+                "success": true
+            }),
+            &context,
+        );
+        assert!(valid.success);
+        assert_eq!(valid.output["execution_state"], "completed");
+        assert_eq!(valid.output["state_changed"], true);
+
+        let leaked = validate_computer_pointer(
+            json!({
+                "platform": "windows",
+                "display_id": DISPLAY_ID,
+                "snapshot_generation": 7,
+                "x": 123,
+                "y": 456,
+                "success": true,
+                "global_x": -1797
+            }),
+            &context,
+        );
+        assert!(!leaked.success);
+        assert_eq!(leaked.output["error_kind"], "invalid_runner_response");
+    }
 
     #[test]
     fn computer_display_public_shape_and_read_only_semantics_are_closed() {

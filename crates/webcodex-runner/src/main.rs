@@ -1872,6 +1872,8 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Exact full-display discovery/snapshot is independently implemented only
     // by the Windows backend in this slice; unsupported/unproven platforms fail closed.
     capabilities.computer_display_observe = cfg!(windows);
+    // Snapshot-fenced exact coordinate pointer input is independently implemented on Windows.
+    capabilities.computer_pointer_control = cfg!(windows);
     // Region/downscale snapshot requests use a distinct additive wire fence so
     // old Runners that support only whole-window snapshots fail closed.
     capabilities.computer_snapshot_region = cfg!(any(target_os = "macos", windows));

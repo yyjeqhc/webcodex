@@ -1415,6 +1415,24 @@ pub enum ToolCall {
         modifiers: Option<Vec<String>>,
     },
 
+    /// Move the Windows pointer using one latest unspent full-display snapshot generation.
+    ComputerPointerMove {
+        client_id: String,
+        display_id: String,
+        snapshot_generation: u32,
+        x: u32,
+        y: u32,
+    },
+
+    /// Submit one exact single-left-click at a snapshot-fenced display-local coordinate.
+    ComputerPointerClick {
+        client_id: String,
+        display_id: String,
+        snapshot_generation: u32,
+        x: u32,
+        y: u32,
+    },
+
     /// Set bounded text on an already-focused, empty exact registered AX text element.
     ComputerInputText {
         client_id: String,
@@ -1775,6 +1793,9 @@ fn reject_unknown_bounded_computer_fields(
         "computer_list_applications" | "computer_list_displays" => &["client_id", "limit"],
         "computer_launch_application" => &["client_id", "application_id"],
         "computer_snapshot_display" => &["client_id", "display_id", "max_width", "max_height"],
+        "computer_pointer_move" | "computer_pointer_click" => {
+            &["client_id", "display_id", "snapshot_generation", "x", "y"]
+        }
         _ => return Ok(()),
     };
     let Some(object) = arguments.as_object() else {
@@ -1841,6 +1862,8 @@ impl ToolCall {
                 | "computer_launch_application"
                 | "computer_list_displays"
                 | "computer_snapshot_display"
+                | "computer_pointer_move"
+                | "computer_pointer_click"
         ) {
             reject_unknown_bounded_computer_fields(name, &arguments)?;
         }
@@ -1988,6 +2011,8 @@ impl ToolCall {
             Self::ComputerControl { .. } => "computer_control",
             Self::ComputerScrollToElement { .. } => "computer_scroll_to_element",
             Self::ComputerKeyInput { .. } => "computer_key_input",
+            Self::ComputerPointerMove { .. } => "computer_pointer_move",
+            Self::ComputerPointerClick { .. } => "computer_pointer_click",
             Self::ComputerInputText { .. } => "computer_input_text",
             Self::ComputerSnapshot { .. } => "computer_snapshot",
             Self::ComputerSnapshotDisplay { .. } => "computer_snapshot_display",

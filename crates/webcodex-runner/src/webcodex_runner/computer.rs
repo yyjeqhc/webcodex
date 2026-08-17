@@ -502,6 +502,20 @@ struct DisplayRecord {
     primary: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PointerAction {
+    Move,
+    Click,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PointerPlan {
+    global_x: i32,
+    global_y: i32,
+    normalized_x: i32,
+    normalized_y: i32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DisplaySnapshotBinding {
     generation: u32,
@@ -509,6 +523,7 @@ struct DisplaySnapshotBinding {
     native_identity: Vec<u8>,
     source_width: u32,
     source_height: u32,
+    spent: bool,
 }
 
 #[derive(Default)]
@@ -533,12 +548,98 @@ impl DisplaySnapshotRegistry {
             native_identity: display.native_identity.clone(),
             source_width: display.width,
             source_height: display.height,
+            spent: false,
         });
         while self.bindings.len() > MAX_DISPLAY_SNAPSHOT_BINDINGS {
             self.bindings.pop_front();
         }
         Ok(generation)
     }
+
+    fn pointer_binding_index(
+        &self,
+        display_id: &str,
+        generation: u32,
+        display: &DisplayRecord,
+    ) -> Result<usize, String> {
+        let latest_generation = self
+            .bindings
+            .iter()
+            .rev()
+            .find(|binding| binding.display_id == display_id)
+            .map(|binding| binding.generation)
+            .ok_or_else(|| {
+                "stale_snapshot_generation: no successful full-display snapshot is bound to display_id"
+                    .to_string()
+            })?;
+        if latest_generation != generation {
+            return Err(
+                "stale_snapshot_generation: snapshot_generation is not the latest successful snapshot for display_id"
+                    .to_string(),
+            );
+        }
+        let index = self
+            .bindings
+            .iter()
+            .position(|binding| binding.generation == generation)
+            .ok_or_else(|| {
+                "stale_snapshot_generation: snapshot_generation is unknown or evicted".to_string()
+            })?;
+        let binding = &self.bindings[index];
+        if binding.display_id != display_id {
+            return Err(
+                "stale_snapshot_generation: snapshot_generation belongs to a different display_id"
+                    .to_string(),
+            );
+        }
+        if binding.native_identity != display.native_identity
+            || binding.source_width != display.width
+            || binding.source_height != display.height
+        {
+            return Err(
+                "stale_display: snapshot generation display identity or source geometry changed"
+                    .to_string(),
+            );
+        }
+        if binding.spent {
+            return Err(
+                "stale_snapshot_generation: snapshot_generation was already consumed by a pointer effect"
+                    .to_string(),
+            );
+        }
+        Ok(index)
+    }
+
+    fn validate_pointer(
+        &self,
+        display_id: &str,
+        generation: u32,
+        display: &DisplayRecord,
+    ) -> Result<(), String> {
+        self.pointer_binding_index(display_id, generation, display)
+            .map(|_| ())
+    }
+
+    fn spend_pointer(
+        &mut self,
+        display_id: &str,
+        generation: u32,
+        display: &DisplayRecord,
+    ) -> Result<(), String> {
+        let index = self.pointer_binding_index(display_id, generation, display)?;
+        self.bindings[index].spent = true;
+        Ok(())
+    }
+}
+fn dispatch_after_spending_pointer_generation(
+    snapshots: &mut DisplaySnapshotRegistry,
+    display_id: &str,
+    generation: u32,
+    display: &DisplayRecord,
+    dispatch: impl FnOnce(&DisplaySnapshotRegistry) -> Result<bool, String>,
+) -> Result<bool, String> {
+    snapshots.spend_pointer(display_id, generation, display)?;
+    dispatch(snapshots)
 }
 
 struct ComputerObserver {
@@ -760,6 +861,67 @@ impl ComputerObserver {
         }))
     }
 
+    fn pointer_effect(
+        &self,
+        action: PointerAction,
+        display_id: &str,
+        snapshot_generation: u32,
+        x: u32,
+        y: u32,
+    ) -> Result<Value, String> {
+        if !valid_display_id(display_id) || snapshot_generation == 0 {
+            return Err(
+                "invalid_request: pointer display_id or snapshot_generation is invalid".to_string(),
+            );
+        }
+        let display_registry = self
+            .displays
+            .lock()
+            .map_err(|_| "computer_state_error: display registry lock poisoned".to_string())?;
+        let display = display_registry
+            .get(display_id)
+            .cloned()
+            .ok_or_else(|| "stale_display: unknown or stale display_id".to_string())?;
+        if x >= display.width || y >= display.height {
+            return Err(
+                "invalid_request: pointer coordinates are outside snapshot source geometry"
+                    .to_string(),
+            );
+        }
+        let mut snapshot_registry = self.display_snapshots.lock().map_err(|_| {
+            "computer_state_error: display snapshot registry lock poisoned".to_string()
+        })?;
+        snapshot_registry.validate_pointer(display_id, snapshot_generation, &display)?;
+
+        // Keep Windows topology metrics, exact native mapping, SendInput, and cursor
+        // reconciliation in one per-monitor-v2 physical coordinate context. The guard
+        // is established before pointer preflight and remains live across the effect.
+        #[cfg(windows)]
+        let _pointer_coordinate_context = platform::enter_pointer_coordinate_context()?;
+
+        // All native identity/mapping/shared-input checks occur before the effect boundary.
+        let plan = platform::prepare_pointer(&display, x, y, action)?;
+
+        // Crossing this boundary consumes the snapshot generation before the first native
+        // pointer effect, even if dispatch subsequently reports definite not_started or an uncertain outcome.
+        let result = dispatch_after_spending_pointer_generation(
+            &mut snapshot_registry,
+            display_id,
+            snapshot_generation,
+            &display,
+            |_| platform::dispatch_pointer(plan, action),
+        )?;
+        drop(snapshot_registry);
+        drop(display_registry);
+        Ok(json!({
+            "platform": "windows",
+            "display_id": display_id,
+            "snapshot_generation": snapshot_generation,
+            "x": x,
+            "y": y,
+            "success": result,
+        }))
+    }
     fn launch_application(&self, application_id: &str) -> Result<Value, String> {
         if !valid_application_id(application_id) {
             return Err("invalid_request: application_id is invalid".to_string());
@@ -1952,6 +2114,8 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
             | "computer_launch_application"
             | "computer_list_displays"
             | "computer_snapshot_display"
+            | "computer_pointer_move"
+            | "computer_pointer_click"
             | "computer_snapshot"
             | "computer_snapshot_region"
             | "computer_accessibility_status"
@@ -2207,6 +2371,117 @@ mod display_wire_contract_tests {
             assert_eq!(snapshots.bind(&new_id, &new_record).unwrap(), expected);
         }
         assert_eq!(snapshots.bindings.len(), MAX_DISPLAY_SNAPSHOT_BINDINGS);
+    }
+}
+
+#[cfg(test)]
+mod pointer_wire_contract_tests {
+    use super::*;
+
+    #[test]
+    fn pointer_requests_are_strict_snapshot_fenced_and_closed() {
+        for kind in ["computer_pointer_move", "computer_pointer_click"] {
+            assert!(is_computer_request_kind(kind));
+        }
+        let exact = json!({
+            "display_id": "display_0123456789abcdef0123456789abcdef",
+            "snapshot_generation": 7,
+            "x": 10,
+            "y": 20,
+        });
+        assert!(ensure_exact_payload_fields(
+            &exact,
+            &["display_id", "snapshot_generation", "x", "y"]
+        )
+        .is_ok());
+        for extra in [
+            "global_x",
+            "global_y",
+            "button",
+            "double_click",
+            "region",
+            "surface_id",
+        ] {
+            let mut payload = exact.clone();
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert(extra.to_string(), json!(1));
+            assert!(
+                ensure_exact_payload_fields(
+                    &payload,
+                    &["display_id", "snapshot_generation", "x", "y"]
+                )
+                .is_err(),
+                "extra field {extra}"
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_generation_is_latest_exact_and_single_use() {
+        let display = DisplayRecord {
+            native_identity: vec![9],
+            width: 1920,
+            height: 1080,
+            primary: false,
+        };
+        let mut snapshots = DisplaySnapshotRegistry::default();
+        let display_id = "display_0123456789abcdef0123456789abcdef";
+        let first = snapshots.bind(display_id, &display).unwrap();
+        let second = snapshots.bind(display_id, &display).unwrap();
+        assert!(snapshots
+            .validate_pointer(display_id, first, &display)
+            .unwrap_err()
+            .starts_with("stale_snapshot_generation:"));
+        snapshots
+            .validate_pointer(display_id, second, &display)
+            .unwrap();
+        let dispatched = dispatch_after_spending_pointer_generation(
+            &mut snapshots,
+            display_id,
+            second,
+            &display,
+            |spent| {
+                assert!(spent
+                    .validate_pointer(display_id, second, &display)
+                    .unwrap_err()
+                    .contains("already consumed"));
+                Ok(true)
+            },
+        )
+        .unwrap();
+        assert!(dispatched);
+        assert!(snapshots
+            .validate_pointer(display_id, second, &display)
+            .unwrap_err()
+            .contains("already consumed"));
+
+        let mut changed_identity = display.clone();
+        changed_identity.native_identity = vec![10];
+        assert!(snapshots
+            .validate_pointer(display_id, second, &changed_identity)
+            .unwrap_err()
+            .starts_with("stale_display:"));
+
+        let mut fresh = DisplaySnapshotRegistry::default();
+        let generation = fresh.bind(display_id, &display).unwrap();
+        let mut changed_geometry = display.clone();
+        changed_geometry.width += 1;
+        assert!(fresh
+            .validate_pointer(display_id, generation, &changed_geometry)
+            .unwrap_err()
+            .starts_with("stale_display:"));
+        fresh.clear_bindings();
+        assert!(fresh
+            .validate_pointer(display_id, generation, &display)
+            .unwrap_err()
+            .starts_with("stale_snapshot_generation:"));
+        let restarted = DisplaySnapshotRegistry::default();
+        assert!(restarted
+            .validate_pointer(display_id, generation, &display)
+            .unwrap_err()
+            .starts_with("stale_snapshot_generation:"));
     }
 }
 
@@ -2475,6 +2750,46 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 },
             )
         }
+        "computer_pointer_move" | "computer_pointer_click" => {
+            ensure_exact_payload_fields(&payload, &["display_id", "snapshot_generation", "x", "y"])
+                .and_then(|()| {
+                    let display_id = payload
+                        .get("display_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: display_id is required".to_string())?;
+                    let snapshot_generation = payload
+                        .get("snapshot_generation")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .filter(|value| *value > 0)
+                        .ok_or_else(|| {
+                            "invalid_request: snapshot_generation must be a positive u32"
+                                .to_string()
+                        })?;
+                    let x = payload
+                        .get("x")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .ok_or_else(|| "invalid_request: x must be a u32".to_string())?;
+                    let y = payload
+                        .get("y")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .ok_or_else(|| "invalid_request: y must be a u32".to_string())?;
+                    let action = if request.kind == "computer_pointer_move" {
+                        PointerAction::Move
+                    } else {
+                        PointerAction::Click
+                    };
+                    ComputerObserver::global().pointer_effect(
+                        action,
+                        display_id,
+                        snapshot_generation,
+                        x,
+                        y,
+                    )
+                })
+        }
         "computer_input_text" => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "text"]).and_then(
                 |()| {
@@ -2567,9 +2882,31 @@ struct PlatformWindow {
 mod platform {
     use super::{
         AccessibilityTreeResult, ApplicationRecord, ComputerAction, DisplayRecord, ElementRecord,
-        PlatformApplication, PlatformDisplay, PlatformWindow, SurfaceRecord,
+        PlatformApplication, PlatformDisplay, PlatformWindow, PointerAction, PointerPlan,
+        SurfaceRecord,
     };
 
+    pub(super) fn prepare_pointer(
+        _display: &DisplayRecord,
+        _x: u32,
+        _y: u32,
+        _action: PointerAction,
+    ) -> Result<PointerPlan, String> {
+        Err(
+            "unsupported_platform: coordinate pointer control is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    pub(super) fn dispatch_pointer(
+        _plan: PointerPlan,
+        _action: PointerAction,
+    ) -> Result<bool, String> {
+        Err(
+            "unsupported_platform: coordinate pointer control is unavailable on this platform"
+                .to_string(),
+        )
+    }
     pub(super) fn list_applications(_limit: usize) -> Result<Vec<PlatformApplication>, String> {
         Err(
             "unsupported_platform: application discovery is unavailable on this platform"
@@ -2789,7 +3126,7 @@ mod platform {
     use super::{
         bounded_text, ensure_raw_capture_bound, validate_input_text, AccessibilityTreeResult,
         ApplicationRecord, ComputerAction, DisplayRecord, ElementRecord, PlatformApplication,
-        PlatformDisplay, PlatformWindow, SurfaceRecord,
+        PlatformDisplay, PlatformWindow, PointerAction, PointerPlan, SurfaceRecord,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -2834,7 +3171,7 @@ mod platform {
     use windows::{
         core::{IUnknown, Interface, PCWSTR},
         Win32::{
-            Foundation::{E_NOINTERFACE, E_POINTER, HWND as WinHwnd, RPC_E_CHANGED_MODE},
+            Foundation::{E_NOINTERFACE, E_POINTER, HWND as WinHwnd, POINT, RPC_E_CHANGED_MODE},
             Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW},
             System::Com::{
                 CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IBindCtx,
@@ -2859,12 +3196,19 @@ mod platform {
                 UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID, UIA_E_ELEMENTNOTAVAILABLE,
                 UIA_E_NOTSUPPORTED, UIA_PATTERN_ID,
             },
+            UI::HiDpi::{
+                SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
+                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+            },
             UI::Input::KeyboardAndMouse::{
-                GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-                KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL,
-                VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
-                VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU,
-                VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
+                GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE,
+                KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+                MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
+                MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_CONTROL,
+                VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LBUTTON, VK_LCONTROL, VK_LEFT, VK_LMENU,
+                VK_LSHIFT, VK_LWIN, VK_MBUTTON, VK_MENU, VK_NEXT, VK_PRIOR, VK_RBUTTON,
+                VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB,
+                VK_UP, VK_XBUTTON1, VK_XBUTTON2,
             },
             UI::Shell::{
                 Common::ITEMIDLIST, FOLDERID_AppsFolder, IEnumIDList, ILCombine, ILGetSize,
@@ -2873,8 +3217,9 @@ mod platform {
                 SHCONTF_FOLDERS, SHCONTF_NONFOLDERS, SHELLEXECUTEINFOW, SIGDN_NORMALDISPLAY,
             },
             UI::WindowsAndMessaging::{
-                GetForegroundWindow, IsIconic, ShowWindowAsync, EDD_GET_DEVICE_INTERFACE_NAME,
-                SW_RESTORE, SW_SHOWNOACTIVATE,
+                GetCursorPos, GetForegroundWindow, GetSystemMetrics, IsIconic, ShowWindowAsync,
+                EDD_GET_DEVICE_INTERFACE_NAME, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, SW_SHOWNOACTIVATE,
             },
         },
     };
@@ -3295,6 +3640,418 @@ mod platform {
         Ok(image)
     }
 
+    #[cfg(windows)]
+    pub(super) struct PointerCoordinateContext {
+        previous: DPI_AWARENESS_CONTEXT,
+    }
+
+    #[cfg(windows)]
+    impl Drop for PointerCoordinateContext {
+        fn drop(&mut self) {
+            let restored = unsafe { SetThreadDpiAwarenessContext(self.previous) };
+            debug_assert!(!restored.0.is_null());
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn enter_pointer_coordinate_context() -> Result<PointerCoordinateContext, String> {
+        let previous =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        if previous.0.is_null() {
+            return Err(
+                "pointer_input_failed: Windows per-monitor DPI coordinate context is unavailable"
+                    .to_string(),
+            );
+        }
+        Ok(PointerCoordinateContext { previous })
+    }
+
+    #[cfg(windows)]
+    fn windows_virtual_desktop_metrics() -> Result<(i32, i32, u32, u32), String> {
+        let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+        let top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+        let width =
+            u32::try_from(unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) }).map_err(|_| {
+                "pointer_input_failed: Windows virtual desktop width is invalid".to_string()
+            })?;
+        let height =
+            u32::try_from(unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) }).map_err(|_| {
+                "pointer_input_failed: Windows virtual desktop height is invalid".to_string()
+            })?;
+        if width == 0 || height == 0 {
+            return Err(
+                "pointer_input_failed: Windows virtual desktop geometry is empty".to_string(),
+            );
+        }
+        Ok((left, top, width, height))
+    }
+
+    #[cfg(windows)]
+    fn windows_monitor_rect(monitor: &Monitor) -> Result<(i32, i32, u32, u32), String> {
+        let x = monitor.x().map_err(|_| {
+            "pointer_input_failed: Windows monitor x origin is unavailable".to_string()
+        })?;
+        let y = monitor.y().map_err(|_| {
+            "pointer_input_failed: Windows monitor y origin is unavailable".to_string()
+        })?;
+        let width = monitor.width().map_err(|_| {
+            "pointer_input_failed: Windows monitor width is unavailable".to_string()
+        })?;
+        let height = monitor.height().map_err(|_| {
+            "pointer_input_failed: Windows monitor height is unavailable".to_string()
+        })?;
+        if width == 0 || height == 0 {
+            return Err("pointer_input_failed: Windows monitor geometry is empty".to_string());
+        }
+        Ok((x, y, width, height))
+    }
+
+    #[cfg(windows)]
+    fn windows_xcap_virtual_bounds() -> Result<(i32, i32, u32, u32), String> {
+        let monitors = windows_monitors()?;
+        let mut left = i64::MAX;
+        let mut top = i64::MAX;
+        let mut right = i64::MIN;
+        let mut bottom = i64::MIN;
+        for monitor in monitors {
+            let (x, y, width, height) = windows_monitor_rect(&monitor)?;
+            let x = i64::from(x);
+            let y = i64::from(y);
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x.checked_add(i64::from(width)).ok_or_else(|| {
+                "pointer_input_failed: Windows monitor right edge overflowed".to_string()
+            })?);
+            bottom = bottom.max(y.checked_add(i64::from(height)).ok_or_else(|| {
+                "pointer_input_failed: Windows monitor bottom edge overflowed".to_string()
+            })?);
+        }
+        if left == i64::MAX || top == i64::MAX || right <= left || bottom <= top {
+            return Err("pointer_input_failed: Windows display topology is empty".to_string());
+        }
+        let width = u32::try_from(right - left).map_err(|_| {
+            "pointer_input_failed: Windows display topology width is invalid".to_string()
+        })?;
+        let height = u32::try_from(bottom - top).map_err(|_| {
+            "pointer_input_failed: Windows display topology height is invalid".to_string()
+        })?;
+        Ok((
+            i32::try_from(left).map_err(|_| {
+                "pointer_input_failed: Windows topology left edge is invalid".to_string()
+            })?,
+            i32::try_from(top).map_err(|_| {
+                "pointer_input_failed: Windows topology top edge is invalid".to_string()
+            })?,
+            width,
+            height,
+        ))
+    }
+
+    #[cfg(windows)]
+    fn normalize_pointer_axis(offset: u32, extent: u32) -> Result<i32, String> {
+        if extent == 0 || offset >= extent {
+            return Err(
+                "pointer_input_failed: pointer coordinate is outside virtual desktop bounds"
+                    .to_string(),
+            );
+        }
+        if extent == 1 {
+            return Ok(0);
+        }
+        // A 16-bit normalized axis cannot uniquely address more than 65,536 pixels.
+        if extent > 65_536 {
+            return Err("pointer_input_failed: virtual desktop axis exceeds exact absolute-input addressability".to_string());
+        }
+        let denominator = u64::from(extent - 1);
+        let normalized = (u64::from(offset) * 65_535 + denominator / 2) / denominator;
+        i32::try_from(normalized).map_err(|_| {
+            "pointer_input_failed: normalized pointer coordinate is invalid".to_string()
+        })
+    }
+
+    #[cfg(windows)]
+    fn map_windows_pointer_coordinate(
+        monitor_x: i32,
+        monitor_y: i32,
+        source_width: u32,
+        source_height: u32,
+        virtual_left: i32,
+        virtual_top: i32,
+        virtual_width: u32,
+        virtual_height: u32,
+        x: u32,
+        y: u32,
+    ) -> Result<PointerPlan, String> {
+        if x >= source_width || y >= source_height {
+            return Err(
+                "invalid_request: pointer coordinate is outside snapshot source geometry"
+                    .to_string(),
+            );
+        }
+        let global_x = i64::from(monitor_x)
+            .checked_add(i64::from(x))
+            .ok_or_else(|| "pointer_input_failed: global x coordinate overflowed".to_string())?;
+        let global_y = i64::from(monitor_y)
+            .checked_add(i64::from(y))
+            .ok_or_else(|| "pointer_input_failed: global y coordinate overflowed".to_string())?;
+        let offset_x = global_x - i64::from(virtual_left);
+        let offset_y = global_y - i64::from(virtual_top);
+        if offset_x < 0
+            || offset_y < 0
+            || offset_x >= i64::from(virtual_width)
+            || offset_y >= i64::from(virtual_height)
+        {
+            return Err(
+                "pointer_input_failed: exact display lies outside Windows virtual desktop bounds"
+                    .to_string(),
+            );
+        }
+        Ok(PointerPlan {
+            global_x: i32::try_from(global_x)
+                .map_err(|_| "pointer_input_failed: global x coordinate is invalid".to_string())?,
+            global_y: i32::try_from(global_y)
+                .map_err(|_| "pointer_input_failed: global y coordinate is invalid".to_string())?,
+            normalized_x: normalize_pointer_axis(u32::try_from(offset_x).unwrap(), virtual_width)?,
+            normalized_y: normalize_pointer_axis(u32::try_from(offset_y).unwrap(), virtual_height)?,
+        })
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_pointer_state_with(
+        action: PointerAction,
+        mut is_down: impl FnMut(VIRTUAL_KEY) -> bool,
+    ) -> Result<(), String> {
+        for key in [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2] {
+            if is_down(key) {
+                return Err(
+                    "pointer_input_failed: shared desktop mouse button is already down".to_string(),
+                );
+            }
+        }
+        if action == PointerAction::Click {
+            for key in [
+                VK_SHIFT,
+                VK_LSHIFT,
+                VK_RSHIFT,
+                VK_CONTROL,
+                VK_LCONTROL,
+                VK_RCONTROL,
+                VK_MENU,
+                VK_LMENU,
+                VK_RMENU,
+                VK_LWIN,
+                VK_RWIN,
+            ] {
+                if is_down(key) {
+                    return Err(
+                        "pointer_input_failed: modifier or Windows key is already down".to_string(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_pointer_state(action: PointerAction) -> Result<(), String> {
+        validate_windows_pointer_state_with(action, |key| unsafe {
+            GetAsyncKeyState(i32::from(key.0)) < 0
+        })
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_pointer_coordinate_spaces(
+        virtual_metrics: (i32, i32, u32, u32),
+        xcap_bounds: (i32, i32, u32, u32),
+    ) -> Result<(), String> {
+        if virtual_metrics == xcap_bounds {
+            Ok(())
+        } else {
+            Err("pointer_input_failed: Windows DPI/topology coordinate spaces cannot be proven identical".to_string())
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn prepare_pointer(
+        display: &DisplayRecord,
+        x: u32,
+        y: u32,
+        action: PointerAction,
+    ) -> Result<PointerPlan, String> {
+        let monitor = find_exact_display(display)?;
+        let (monitor_x, monitor_y, monitor_width, monitor_height) = windows_monitor_rect(&monitor)?;
+        if monitor_width != display.width || monitor_height != display.height {
+            return Err(
+                "stale_display: native display source geometry changed before pointer input"
+                    .to_string(),
+            );
+        }
+        let virtual_metrics = windows_virtual_desktop_metrics()?;
+        let xcap_bounds = windows_xcap_virtual_bounds()?;
+        validate_windows_pointer_coordinate_spaces(virtual_metrics, xcap_bounds)?;
+        let plan = map_windows_pointer_coordinate(
+            monitor_x,
+            monitor_y,
+            display.width,
+            display.height,
+            virtual_metrics.0,
+            virtual_metrics.1,
+            virtual_metrics.2,
+            virtual_metrics.3,
+            x,
+            y,
+        )?;
+        let fresh = find_exact_display(display)?;
+        let fresh_rect = windows_monitor_rect(&fresh)?;
+        if fresh_rect != (monitor_x, monitor_y, monitor_width, monitor_height) {
+            return Err(
+                "stale_display: native display placement changed during pointer preflight"
+                    .to_string(),
+            );
+        }
+        validate_windows_pointer_state(action)?;
+        Ok(plan)
+    }
+
+    #[cfg(windows)]
+    fn windows_mouse_input(plan: PointerPlan, flags: MOUSE_EVENT_FLAGS) -> INPUT {
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: plan.normalized_x,
+                    dy: plan.normalized_y,
+                    mouseData: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    #[cfg(windows)]
+    fn windows_pointer_move_inputs(plan: PointerPlan) -> [INPUT; 1] {
+        let move_flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+        [windows_mouse_input(plan, move_flags)]
+    }
+
+    #[cfg(windows)]
+    fn windows_pointer_click_button_inputs(plan: PointerPlan) -> [INPUT; 2] {
+        [
+            windows_mouse_input(plan, MOUSEEVENTF_LEFTDOWN),
+            windows_mouse_input(plan, MOUSEEVENTF_LEFTUP),
+        ]
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_pointer_move_send_input_count(inserted: u32) -> Result<(), String> {
+        if inserted == 1 {
+            Ok(())
+        } else if inserted == 0 {
+            Err("not_started: Windows pointer move SendInput inserted no events".to_string())
+        } else {
+            Err(format!(
+                "outcome_unknown: Windows pointer move SendInput reported {inserted} inserted events for one prepared move"
+            ))
+        }
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_pointer_button_send_input_count(inserted: u32) -> Result<(), String> {
+        if inserted == 2 {
+            Ok(())
+        } else {
+            Err(format!(
+                "outcome_unknown: Windows pointer click button SendInput inserted {inserted} of 2 events after the exact move"
+            ))
+        }
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_pointer_postcondition(
+        plan: PointerPlan,
+        action: PointerAction,
+        cursor_x: i32,
+        cursor_y: i32,
+        left_button_down: bool,
+    ) -> Result<(), String> {
+        if cursor_x != plan.global_x || cursor_y != plan.global_y {
+            return Err("outcome_unknown: Windows pointer position postcondition could not prove the exact target".to_string());
+        }
+        if action == PointerAction::Click && left_button_down {
+            return Err(
+                "outcome_unknown: Windows left mouse button remained down after click sequence"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn dispatch_windows_pointer_with(
+        plan: PointerPlan,
+        action: PointerAction,
+        mut send_input: impl FnMut(&[INPUT]) -> u32,
+        mut cursor_position: impl FnMut() -> Result<(i32, i32), String>,
+        mut validate_click_state: impl FnMut() -> Result<(), String>,
+        mut left_button_down: impl FnMut() -> bool,
+    ) -> Result<bool, String> {
+        let move_inputs = windows_pointer_move_inputs(plan);
+        validate_windows_pointer_move_send_input_count(send_input(&move_inputs))?;
+        let (cursor_x, cursor_y) = cursor_position()?;
+        validate_windows_pointer_postcondition(
+            plan,
+            PointerAction::Move,
+            cursor_x,
+            cursor_y,
+            false,
+        )?;
+        if action == PointerAction::Move {
+            return Ok(true);
+        }
+
+        if validate_click_state().is_err() {
+            return Err(
+                "outcome_unknown: shared desktop input state changed after the exact pointer move; click button events were not attempted"
+                    .to_string(),
+            );
+        }
+        let button_inputs = windows_pointer_click_button_inputs(plan);
+        validate_windows_pointer_button_send_input_count(send_input(&button_inputs))?;
+        let (cursor_x, cursor_y) = cursor_position()?;
+        validate_windows_pointer_postcondition(
+            plan,
+            PointerAction::Click,
+            cursor_x,
+            cursor_y,
+            left_button_down(),
+        )?;
+        Ok(true)
+    }
+
+    #[cfg(windows)]
+    pub(super) fn dispatch_pointer(
+        plan: PointerPlan,
+        action: PointerAction,
+    ) -> Result<bool, String> {
+        let input_size = std::mem::size_of::<INPUT>() as i32;
+        dispatch_windows_pointer_with(
+            plan,
+            action,
+            |inputs| unsafe { SendInput(inputs, input_size) },
+            || {
+                let mut point = POINT::default();
+                unsafe { GetCursorPos(&mut point) }.map_err(|_| {
+                    "outcome_unknown: Windows cursor position postcondition is unavailable"
+                        .to_string()
+                })?;
+                Ok((point.x, point.y))
+            },
+            || validate_windows_pointer_state(PointerAction::Click),
+            || unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) < 0 },
+        )
+    }
     #[cfg(target_os = "macos")]
     pub(super) fn list_displays(_limit: usize) -> Result<Vec<PlatformDisplay>, String> {
         Err(
@@ -3311,6 +4068,23 @@ mod platform {
         )
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn prepare_pointer(
+        _display: &DisplayRecord,
+        _x: u32,
+        _y: u32,
+        _action: PointerAction,
+    ) -> Result<PointerPlan, String> {
+        Err("unsupported_platform: coordinate pointer control is unavailable on macOS".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn dispatch_pointer(
+        _plan: PointerPlan,
+        _action: PointerAction,
+    ) -> Result<bool, String> {
+        Err("unsupported_platform: coordinate pointer control is unavailable on macOS".to_string())
+    }
     #[cfg(target_os = "macos")]
     pub(super) fn list_applications(_limit: usize) -> Result<Vec<PlatformApplication>, String> {
         Err("unsupported_platform: application discovery is unavailable on macOS".to_string())
@@ -6329,6 +7103,196 @@ mod platform {
             .map_err(|error| uia_error("IUIAutomationElement::CurrentIsOffscreen", &error))
     }
     #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_map(
+        monitor_x: i32,
+        monitor_y: i32,
+        source_width: u32,
+        source_height: u32,
+        virtual_left: i32,
+        virtual_top: i32,
+        virtual_width: u32,
+        virtual_height: u32,
+        x: u32,
+        y: u32,
+    ) -> Result<(i32, i32, i32, i32), String> {
+        map_windows_pointer_coordinate(
+            monitor_x,
+            monitor_y,
+            source_width,
+            source_height,
+            virtual_left,
+            virtual_top,
+            virtual_width,
+            virtual_height,
+            x,
+            y,
+        )
+        .map(|plan| {
+            (
+                plan.global_x,
+                plan.global_y,
+                plan.normalized_x,
+                plan.normalized_y,
+            )
+        })
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_dpi_context_metrics() -> Result<
+        (
+            (i32, i32, u32, u32),
+            (i32, i32, u32, u32),
+            (i32, i32, u32, u32),
+            (i32, i32, u32, u32),
+        ),
+        String,
+    > {
+        let before = windows_virtual_desktop_metrics()?;
+        let (during, xcap_bounds) = {
+            let _context = enter_pointer_coordinate_context()?;
+            (
+                windows_virtual_desktop_metrics()?,
+                windows_xcap_virtual_bounds()?,
+            )
+        };
+        let after = windows_virtual_desktop_metrics()?;
+        Ok((before, during, xcap_bounds, after))
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_coordinate_spaces(
+        virtual_metrics: (i32, i32, u32, u32),
+        xcap_bounds: (i32, i32, u32, u32),
+    ) -> Result<(), String> {
+        validate_windows_pointer_coordinate_spaces(virtual_metrics, xcap_bounds)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_state_guard(
+        action: PointerAction,
+        down_virtual_key: Option<u16>,
+    ) -> Result<(), String> {
+        validate_windows_pointer_state_with(action, |candidate| {
+            down_virtual_key == Some(candidate.0)
+        })
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_move_send_input_count(inserted: u32) -> Result<(), String> {
+        validate_windows_pointer_move_send_input_count(inserted)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_button_send_input_count(
+        inserted: u32,
+    ) -> Result<(), String> {
+        validate_windows_pointer_button_send_input_count(inserted)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_postcondition(
+        global_x: i32,
+        global_y: i32,
+        cursor_x: i32,
+        cursor_y: i32,
+        action: PointerAction,
+        left_button_down: bool,
+    ) -> Result<(), String> {
+        validate_windows_pointer_postcondition(
+            PointerPlan {
+                global_x,
+                global_y,
+                normalized_x: 0,
+                normalized_y: 0,
+            },
+            action,
+            cursor_x,
+            cursor_y,
+            left_button_down,
+        )
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_input_flags(action: PointerAction) -> Vec<u32> {
+        let plan = PointerPlan {
+            global_x: 10,
+            global_y: 20,
+            normalized_x: 100,
+            normalized_y: 200,
+        };
+        let mut flags: Vec<u32> = windows_pointer_move_inputs(plan)
+            .iter()
+            .map(|input| unsafe { input.Anonymous.mi.dwFlags.0 })
+            .collect();
+        if action == PointerAction::Click {
+            flags.extend(
+                windows_pointer_click_button_inputs(plan)
+                    .iter()
+                    .map(|input| unsafe { input.Anonymous.mi.dwFlags.0 }),
+            );
+        }
+        flags
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_pointer_dispatch_trace(
+        action: PointerAction,
+        move_inserted: u32,
+        first_cursor: (i32, i32),
+        click_state_down_virtual_key: Option<u16>,
+        button_inserted: u32,
+        final_cursor: (i32, i32),
+        final_left_button_down: bool,
+    ) -> (Result<bool, String>, Vec<Vec<u32>>, usize) {
+        let plan = PointerPlan {
+            global_x: 10,
+            global_y: 20,
+            normalized_x: 100,
+            normalized_y: 200,
+        };
+        let mut send_calls = 0usize;
+        let mut sent_flags = Vec::new();
+        let mut cursor_calls = 0usize;
+        let mut click_state_checks = 0usize;
+        let result = dispatch_windows_pointer_with(
+            plan,
+            action,
+            |inputs| {
+                sent_flags.push(
+                    inputs
+                        .iter()
+                        .map(|input| unsafe { input.Anonymous.mi.dwFlags.0 })
+                        .collect(),
+                );
+                let inserted = if send_calls == 0 {
+                    move_inserted
+                } else {
+                    button_inserted
+                };
+                send_calls += 1;
+                inserted
+            },
+            || {
+                let point = if cursor_calls == 0 {
+                    first_cursor
+                } else {
+                    final_cursor
+                };
+                cursor_calls += 1;
+                Ok(point)
+            },
+            || {
+                click_state_checks += 1;
+                validate_windows_pointer_state_with(PointerAction::Click, |candidate| {
+                    click_state_down_virtual_key == Some(candidate.0)
+                })
+            },
+            || final_left_button_down,
+        );
+        (result, sent_flags, click_state_checks)
+    }
+
+    #[cfg(all(test, windows))]
     pub(super) fn test_windows_key_input_plan(
         key: &str,
         modifiers: &[String],
@@ -6410,6 +7374,14 @@ mod windows_uia_tests {
     }
 
     #[test]
+    fn windows_pointer_dpi_context_uses_physical_monitor_space_and_restores() {
+        let (before, during, xcap_bounds, after) =
+            platform::test_windows_pointer_dpi_context_metrics().unwrap();
+        assert_eq!(during, xcap_bounds);
+        assert_eq!(after, before);
+    }
+
+    #[test]
     fn windows_display_discovery_and_exact_capture_use_private_identity() {
         let displays = platform::list_displays(2).expect("Windows display discovery");
         assert!(displays.len() <= 2);
@@ -6445,6 +7417,180 @@ mod windows_uia_tests {
             width: candidate.width,
             height: candidate.height,
         }
+    }
+
+    #[test]
+    fn windows_pointer_mapping_is_display_local_and_virtual_desktop_exact() {
+        let left =
+            platform::test_windows_pointer_map(-1920, 0, 1920, 1080, -1920, 0, 3840, 1080, 0, 0)
+                .unwrap();
+        assert_eq!((left.0, left.1, left.2, left.3), (-1920, 0, 0, 0));
+
+        let left_bottom_right = platform::test_windows_pointer_map(
+            -1920, 0, 1920, 1080, -1920, 0, 3840, 1080, 1919, 1079,
+        )
+        .unwrap();
+        assert_eq!((left_bottom_right.0, left_bottom_right.1), (-1, 1079));
+        assert!(left_bottom_right.2 > 0 && left_bottom_right.2 < 65_535);
+        assert_eq!(left_bottom_right.3, 65_535);
+
+        let offset = platform::test_windows_pointer_map(
+            2560, -900, 1600, 900, 0, -900, 4160, 2340, 100, 200,
+        )
+        .unwrap();
+        assert_eq!((offset.0, offset.1), (2660, -700));
+        assert!(offset.2 > 0 && offset.3 > 0);
+
+        assert!(platform::test_windows_pointer_map(
+            -1920, 0, 1920, 1080, -1920, 0, 3840, 1080, 1920, 0,
+        )
+        .unwrap_err()
+        .starts_with("invalid_request:"));
+        assert!(platform::test_windows_pointer_map(
+            0, 0, 70_000, 1080, 0, 0, 70_000, 1080, 69_999, 0,
+        )
+        .unwrap_err()
+        .starts_with("pointer_input_failed:"));
+        assert!(platform::test_windows_pointer_coordinate_spaces(
+            (-1920, 0, 3840, 1080),
+            (0, 0, 1920, 1080),
+        )
+        .unwrap_err()
+        .contains("cannot be proven identical"));
+    }
+
+    #[test]
+    fn windows_pointer_shared_input_guards_fail_closed_without_releasing_state() {
+        assert!(platform::test_windows_pointer_state_guard(PointerAction::Move, None).is_ok());
+        assert!(platform::test_windows_pointer_state_guard(PointerAction::Move, Some(16)).is_ok());
+        for down in [1u16, 2, 4, 5, 6] {
+            assert!(
+                platform::test_windows_pointer_state_guard(PointerAction::Move, Some(down))
+                    .unwrap_err()
+                    .starts_with("pointer_input_failed:")
+            );
+        }
+        for down in [1u16, 16, 17, 18, 91, 92] {
+            assert!(
+                platform::test_windows_pointer_state_guard(PointerAction::Click, Some(down))
+                    .unwrap_err()
+                    .starts_with("pointer_input_failed:")
+            );
+        }
+    }
+
+    #[test]
+    fn windows_pointer_send_input_lifecycle_and_postconditions_are_closed() {
+        assert_eq!(
+            platform::test_windows_pointer_input_flags(PointerAction::Move),
+            vec![49_153]
+        );
+        assert_eq!(
+            platform::test_windows_pointer_input_flags(PointerAction::Click),
+            vec![49_153, 2, 4]
+        );
+        assert!(platform::test_windows_pointer_move_send_input_count(1).is_ok());
+        let zero = platform::test_windows_pointer_move_send_input_count(0).unwrap_err();
+        assert!(zero.starts_with("not_started:"), "{zero}");
+        assert!(platform::test_windows_pointer_button_send_input_count(2).is_ok());
+        for inserted in [0, 1] {
+            let error =
+                platform::test_windows_pointer_button_send_input_count(inserted).unwrap_err();
+            assert!(error.starts_with("outcome_unknown:"), "{error}");
+        }
+
+        assert!(platform::test_windows_pointer_postcondition(
+            -100,
+            50,
+            -100,
+            50,
+            PointerAction::Move,
+            false,
+        )
+        .is_ok());
+        let moved_elsewhere = platform::test_windows_pointer_postcondition(
+            -100,
+            50,
+            -99,
+            50,
+            PointerAction::Move,
+            false,
+        )
+        .unwrap_err();
+        assert!(moved_elsewhere.starts_with("outcome_unknown:"));
+        assert!(platform::test_windows_pointer_postcondition(
+            10,
+            20,
+            10,
+            20,
+            PointerAction::Click,
+            false,
+        )
+        .is_ok());
+        let stuck = platform::test_windows_pointer_postcondition(
+            10,
+            20,
+            10,
+            20,
+            PointerAction::Click,
+            true,
+        )
+        .unwrap_err();
+        assert!(stuck.starts_with("outcome_unknown:"));
+
+        let (mismatch, sent, state_checks) = platform::test_windows_pointer_dispatch_trace(
+            PointerAction::Click,
+            1,
+            (9, 20),
+            None,
+            2,
+            (10, 20),
+            false,
+        );
+        assert!(mismatch.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(sent, vec![vec![49_153]]);
+        assert_eq!(state_checks, 0);
+
+        for button_inserted in [0, 1] {
+            let (result, sent, state_checks) = platform::test_windows_pointer_dispatch_trace(
+                PointerAction::Click,
+                1,
+                (10, 20),
+                None,
+                button_inserted,
+                (10, 20),
+                false,
+            );
+            assert!(result.unwrap_err().starts_with("outcome_unknown:"));
+            assert_eq!(sent, vec![vec![49_153], vec![2, 4]]);
+            assert_eq!(state_checks, 1);
+        }
+
+        let (held, sent, state_checks) = platform::test_windows_pointer_dispatch_trace(
+            PointerAction::Click,
+            1,
+            (10, 20),
+            Some(16),
+            2,
+            (10, 20),
+            false,
+        );
+        assert!(held.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(sent, vec![vec![49_153]]);
+        assert_eq!(state_checks, 1);
+
+        let (success, sent, state_checks) = platform::test_windows_pointer_dispatch_trace(
+            PointerAction::Click,
+            1,
+            (10, 20),
+            None,
+            2,
+            (10, 20),
+            false,
+        );
+        assert_eq!(success.unwrap(), true);
+        assert_eq!(sent, vec![vec![49_153], vec![2, 4]]);
+        assert_eq!(state_checks, 1);
     }
 
     const WINDOWS_CONTROL_FIXTURE_TITLE: &str = "WebCodex Windows UIA Control Smoke";

@@ -49,9 +49,32 @@ Discovery returns at most 16 entries with only `display_id`, display-relative `w
 
 `computer_snapshot_display` captures exactly one previously discovered display; there is no virtual-desktop mosaic, caller region, global coordinate, pointer/click input, activation, or fallback. On Windows the Runner re-enumerates native displays and requires an exact private monitor-interface identity plus unchanged display-relative source geometry before capture, verifies the captured pixel geometry, and revalidates identity again after capture so a hotplug/replacement race discards the bytes rather than accepting the wrong display. `max_width`/`max_height` reuse the existing bounded JPEG pipeline and only apply aspect-preserving downscale; they never upscale. The output separates `source_width`/`source_height` from encoded `width`/`height`, while global origin and native DPI mapping remain private.
 
-Each successful snapshot returns a positive process-local `snapshot_generation`. The Runner keeps a bounded binding from that generation to the exact opaque display handle, private native identity, and source geometry as a future coordinate-pointer freshness fence. This slice does not add pointer effects or coordinate input. Display list/snapshot remain read-only observations: malformed, stale, permission, capture, and transport failures do not use effect/outcome-unknown semantics; callers may safely reacquire a fresh display list and observe again.
+Each successful snapshot returns a positive process-local `snapshot_generation`. The Runner keeps a bounded binding from that generation to the exact opaque display handle, private native identity, and source geometry. Display list/snapshot remain read-only observations: malformed, stale, permission, capture, and transport failures do not use effect/outcome-unknown semantics; callers may safely reacquire a fresh display list and observe again.
 
 Durable audit keeps display-list results to minimal `count`/`truncated` metadata. Display snapshot audit may retain the opaque `display_id`, generation, source/encoded dimensions, MIME, digest, byte count, and capture timestamp, but never the image body, native monitor identity/device path, global origin, scale/DPI, or topology. Model/Server output validation rejects Runner fields outside the closed public shape.
+
+### Windows snapshot-fenced coordinate pointer
+
+Windows now exposes `computer_pointer_move(client_id, display_id, snapshot_generation, x, y)` and `computer_pointer_click(client_id, display_id, snapshot_generation, x, y)`. The click slice is deliberately fixed to one left click; there is no caller button, double/right/middle/X click, drag, wheel, button-down/up primitive, window-relative coordinate API, or global desktop coordinate API. `x`/`y` are integer coordinates in the exact display-local `source_width`/`source_height` space returned by `computer_snapshot_display`, never the downscaled JPEG dimensions.
+
+The `snapshot_generation` is a one-effect freshness fence, not presentation metadata. Pointer admission requires the generation to belong to the current Runner process, the exact current `display_id`, private native display identity, and source geometry; it must also be the latest successful snapshot generation for that display and still be unspent. A newer snapshot, fresh display list, Runner restart, display replacement/hotplug, geometry mismatch, or prior pointer use makes the generation stale. Native identity, topology, coordinate-space, and initial held-input checks happen before the effect boundary. Crossing that boundary marks the generation spent before the first `SendInput`, so success, definite non-insertion, partial insertion, or an unprovable postcondition cannot reuse it. Failures before the boundary leave it unspent. A click performs an additional held-input check after its exact move has been proven and before any button event is attempted.
+
+The Windows backend re-enumerates and exactly revalidates the private display identity and geometry, then privately maps display-local source coordinates into Windows virtual-desktop absolute input coordinates. The current xcap monitor rectangle union must exactly equal Windows virtual-desktop metrics; otherwise DPI/topology mapping is not proven and the effect fails closed rather than guessing. Negative or non-zero secondary-monitor origins are handled only inside this private mapping. Public results and durable audit never contain the native monitor identity, device path, global target, virtual-desktop bounds, DPI/scale, or transform.
+
+Pointer input uses the shared interactive desktop and does not isolate the agent from simultaneous human input. Before a move, every mouse button must be up so an agent move cannot extend a human drag. Before a click, every mouse button plus Shift, Control, Alt, and Windows keys must be up; the Runner never releases human-held state. A move is one absolute virtual-desktop `SendInput` event. A click is deliberately two-phase: first one absolute move `SendInput`, then an exact `GetCursorPos` proof; only after that proof and a fresh mouse/modifier/Windows-key held-state check does the Runner submit one bounded `LEFTDOWN` + `LEFTUP` `SendInput`. If the move inserts zero events, the spent effect is definite `not_started`. Once the move has been accepted, an unprovable exact position, changed held-input state, zero or partial button insertion, or a failed final postcondition is `outcome_unknown`; button events are never attempted when the exact move proof or second held-state check fails. Success additionally requires final read-back to prove the cursor remains at the exact target and the left button is not stuck down. An uncertain outcome is never repaired or retried automatically; obtain a fresh full-display snapshot before deciding on another effect.
+
+Canonical pointer flow:
+
+```text
+computer_list_displays
+  -> computer_snapshot_display
+  -> model computes source-space x/y
+  -> computer_pointer_move OR computer_pointer_click
+  -> fresh computer_snapshot_display / semantic observation
+  -> decide next effect
+```
+
+Pointer control requires all four scopes `computer:read`, `computer:display_read`, `computer:control`, and explicit `computer:pointer_control`, plus the independent `computer_pointer_control` Runner capability. The capability defaults false and is advertised only by the Windows implementation in this slice. The tools perform no implicit snapshot, display/window listing, activation, focus, retry, shell/script/process fallback, clipboard operation, OCR, or browser automation.
 
 ## Near-term slices
 

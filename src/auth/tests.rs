@@ -1341,6 +1341,11 @@ fn lightweight_contexts_have_no_admin_scope() {
         !sk.scopes.contains(&SCOPE_COMPUTER_DISPLAY_READ.to_string()),
         "direct shared-key quick-start must not implicitly gain full-display authority"
     );
+    assert!(
+        !sk.scopes
+            .contains(&SCOPE_COMPUTER_POINTER_CONTROL.to_string()),
+        "direct shared-key quick-start must not implicitly gain pointer authority"
+    );
     for scope in AGENT_SCOPES {
         assert!(sk.scopes.contains(&scope.to_string()));
     }
@@ -1353,6 +1358,9 @@ fn lightweight_contexts_have_no_admin_scope() {
         .scopes
         .contains(&SCOPE_COMPUTER_DISPLAY_READ.to_string()));
     assert!(!open.scopes.contains(&SCOPE_AGENT_REGISTER.to_string()));
+    assert!(!open
+        .scopes
+        .contains(&SCOPE_COMPUTER_POINTER_CONTROL.to_string()));
 
     let project = crate::auth::shared_key::project_credential_context("wc_pgrant_1111111111111111");
     assert!(project.is_project_credential());
@@ -1364,6 +1372,9 @@ fn lightweight_contexts_have_no_admin_scope() {
         .scopes
         .contains(&SCOPE_COMPUTER_DISPLAY_READ.to_string()));
     assert!(!project.scopes.contains(&SCOPE_AGENT_REGISTER.to_string()));
+    assert!(!project
+        .scopes
+        .contains(&SCOPE_COMPUTER_POINTER_CONTROL.to_string()));
 }
 
 #[test]

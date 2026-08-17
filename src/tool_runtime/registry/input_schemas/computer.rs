@@ -212,6 +212,21 @@ pub(crate) fn computer_snapshot_display_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_pointer_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id that produced the display snapshot."},
+            "display_id": {"type": "string", "pattern": "^display_[0-9a-f]{32}$", "maxLength": 128, "description": "Exact opaque process-local display_id bound to snapshot_generation."},
+            "snapshot_generation": {"type": "integer", "minimum": 1, "maximum": 4294967295u64, "description": "Latest unspent successful full-display snapshot generation for this display."},
+            "x": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "description": "Display-local source-space x coordinate; must be less than the bound snapshot source_width."},
+            "y": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "description": "Display-local source-space y coordinate; must be less than the bound snapshot source_height."}
+        },
+        "required": ["client_id", "display_id", "snapshot_generation", "x", "y"]
+    })
+}
+
 pub(crate) fn computer_save_snapshot_input_schema() -> Value {
     json!({
         "type": "object",

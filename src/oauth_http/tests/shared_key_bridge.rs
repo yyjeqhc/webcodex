@@ -44,6 +44,19 @@ fn normalize_bridge_oauth_scopes_rejects_computer_read_scope() {
 }
 
 #[test]
+fn normalize_bridge_oauth_scopes_rejects_pointer_control_scope() {
+    let err = normalize_bridge_oauth_scopes(
+        Some("computer:pointer_control"),
+        "runtime:read project:read computer:pointer_control",
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        OAuthAuthorizeError::InvalidScope(OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE)
+    );
+}
+
+#[test]
 fn normalize_bridge_oauth_scopes_accepts_offline_access_as_protocol_scope() {
     let normalized = normalize_bridge_oauth_scopes(
         Some("runtime:read offline_access"),

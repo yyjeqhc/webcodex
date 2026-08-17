@@ -23,10 +23,11 @@ fn target_schema() -> Value {
                     "computer_application_discovery": {"type": "boolean"},
                     "computer_application_launch": {"type": "boolean"},
                     "computer_display_observe": {"type": "boolean"},
+                    "computer_pointer_control": {"type": "boolean"},
                     "computer_snapshot_region": {"type": "boolean"},
                     "computer_accessibility_observe": {"type": "boolean"}
                 },
-                "required": ["computer_observe", "computer_application_discovery", "computer_application_launch", "computer_display_observe", "computer_snapshot_region", "computer_accessibility_observe"]
+                "required": ["computer_observe", "computer_application_discovery", "computer_application_launch", "computer_display_observe", "computer_pointer_control", "computer_snapshot_region", "computer_accessibility_observe"]
             }
         },
         "required": ["client_id", "display_name", "connected", "capabilities"]
@@ -506,6 +507,38 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("saved", json!({"type": "boolean", "const": true})),
         ])),
+        "computer_pointer_move" | "computer_pointer_click" => {
+            Some(strict_computer_output_schema(vec![
+                ("platform", json!({"type": "string", "const": "windows"})),
+                (
+                    "display_id",
+                    json!({"type": "string", "pattern": "^display_[0-9a-f]{32}$", "maxLength": 128}),
+                ),
+                (
+                    "snapshot_generation",
+                    json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+                ),
+                (
+                    "x",
+                    json!({"type": "integer", "minimum": 0, "maximum": 4294967295u64}),
+                ),
+                (
+                    "y",
+                    json!({"type": "integer", "minimum": 0, "maximum": 4294967295u64}),
+                ),
+                ("success", json!({"type": "boolean", "const": true})),
+                (
+                    "execution_state",
+                    json!({"type": "string", "enum": ["not_started", "completed", "outcome_unknown"]}),
+                ),
+                ("state_changed", json!({"type": "boolean"})),
+                ("error_kind", json!({"type": "string", "maxLength": 128})),
+                (
+                    "reconcile_with",
+                    json!({"type": "string", "const": "computer_snapshot_display"}),
+                ),
+            ]))
+        }
         _ => None,
     }
 }

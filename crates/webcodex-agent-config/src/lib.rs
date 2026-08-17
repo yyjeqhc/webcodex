@@ -246,6 +246,8 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             computer_application_launch: false,
             // Full-display observation is a separate privacy/runtime capability.
             computer_display_observe: false,
+            // Coordinate pointer control is independently advertised only by a running native implementation.
+            computer_pointer_control: false,
             // Region/downscale snapshot support is advertised only by the running binary.
             computer_snapshot_region: false,
             // Semantic accessibility inspection is also a runtime/platform

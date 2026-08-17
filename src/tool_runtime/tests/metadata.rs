@@ -202,6 +202,42 @@ async fn register_display_target_for_auth(
         .unwrap();
 }
 
+async fn register_pointer_target_for_auth(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    display_name: &str,
+    auth: &crate::auth::AuthContext,
+) {
+    runtime
+        .shell_clients
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{client_id}"),
+                display_name: Some(display_name.to_string()),
+                owner: None,
+                hostname: Some(format!("host-{client_id}")),
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    computer_pointer_control: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![registered_project(
+                    &format!("private-{client_id}"),
+                    &format!("/tmp/private-{client_id}"),
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+            Some(auth),
+        )
+        .await
+        .unwrap();
+}
 async fn register_agent_projects_for_auth(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -253,6 +289,7 @@ async fn register_agent_projects_for_auth(
                     computer_application_discovery: false,
                     computer_application_launch: false,
                     computer_display_observe: false,
+                    computer_pointer_control: false,
                     computer_snapshot_region: false,
                     computer_accessibility_observe: false,
                     computer_element_state: false,
@@ -2376,6 +2413,8 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
     .await;
     register_display_target_for_auth(&runtime, "a-display-only", "Alice Full Display", &shared_a)
         .await;
+    register_pointer_target_for_auth(&runtime, "a-pointer-only", "Alice Pointer", &shared_a).await;
+
     register_application_target_for_auth(
         &runtime,
         "a-launch-only",
@@ -2390,11 +2429,11 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
         .dispatch_with_auth(ToolCall::ComputerListTargets, Some(&shared_a))
         .await;
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["count"], 5);
-    assert_eq!(result.output["total_count"], 5);
+    assert_eq!(result.output["count"], 6);
+    assert_eq!(result.output["total_count"], 6);
     assert_eq!(result.output["truncated"], false);
     let targets = result.output["targets"].as_array().unwrap();
-    assert_eq!(targets.len(), 5);
+    assert_eq!(targets.len(), 6);
     let target = |client_id: &str| {
         targets
             .iter()
@@ -2454,6 +2493,7 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
     assert_eq!(display["capabilities"]["computer_display_observe"], true);
     assert_eq!(display["capabilities"]["computer_observe"], false);
     assert_eq!(display["capabilities"]["computer_snapshot_region"], false);
+    assert_eq!(display["capabilities"]["computer_pointer_control"], false);
     assert_eq!(
         display["capabilities"]["computer_application_discovery"],
         false
@@ -2462,6 +2502,10 @@ async fn computer_list_targets_is_minimal_capability_filtered_and_auth_scoped() 
         display["capabilities"]["computer_application_launch"],
         false
     );
+    let pointer = target("a-pointer-only");
+    assert_eq!(pointer["capabilities"]["computer_pointer_control"], true);
+    assert_eq!(pointer["capabilities"]["computer_display_observe"], false);
+
     for target in targets {
         let object = target.as_object().unwrap();
         assert_eq!(

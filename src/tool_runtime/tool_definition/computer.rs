@@ -1,18 +1,45 @@
 use super::AgentCapability::{
     ComputerAccessibilityObserve, ComputerApplicationDiscovery, ComputerApplicationLaunch,
     ComputerControl, ComputerDisplayObserve, ComputerElementState, ComputerKeyInput,
-    ComputerObserve, ComputerScrollToElement, ComputerTextInput, ComputerWindowActivate, FileWrite,
+    ComputerObserve, ComputerPointerControl, ComputerScrollToElement, ComputerTextInput,
+    ComputerWindowActivate, FileWrite,
 };
 use super::ToolVisibility::ModelVisible;
 use super::{def, unit_arguments, ToolDefinition, TOOL_CATEGORY_COMPUTER};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{Artifact, None},
     ToolRisk::{ComputerControl as ComputerControlRisk, ProjectWrite, ReadOnly},
-    COMPUTER_CONTROL, COMPUTER_DISPLAY_READ, COMPUTER_LAUNCH, COMPUTER_READ, PROJECT_WRITE,
-    TOOL_PROVIDER_AGENT, TOOL_PROVIDER_CONTROL,
+    COMPUTER_CONTROL, COMPUTER_DISPLAY_READ, COMPUTER_LAUNCH, COMPUTER_POINTER_CONTROL,
+    COMPUTER_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_CONTROL,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
+    def(
+        "computer_pointer_move",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerPointerControl),
+        TOOL_PROVIDER_AGENT,
+        ComputerControlRisk,
+        Some(COMPUTER_POINTER_CONTROL),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_pointer_click",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerPointerControl),
+        TOOL_PROVIDER_AGENT,
+        ComputerControlRisk,
+        Some(COMPUTER_POINTER_CONTROL),
+        false,
+        None,
+        false,
+        false,
+    ),
     unit_arguments(def(
         "computer_list_targets",
         ModelVisible,

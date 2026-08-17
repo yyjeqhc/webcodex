@@ -763,6 +763,60 @@ mod tests {
     }
 
     #[test]
+    fn computer_pointer_control_requires_all_four_independent_scopes() {
+        let cases = [
+            (
+                vec![
+                    "computer:display_read",
+                    "computer:control",
+                    "computer:pointer_control",
+                ],
+                crate::auth::SCOPE_COMPUTER_READ,
+            ),
+            (
+                vec![
+                    "computer:read",
+                    "computer:control",
+                    "computer:pointer_control",
+                ],
+                crate::auth::SCOPE_COMPUTER_DISPLAY_READ,
+            ),
+            (
+                vec![
+                    "computer:read",
+                    "computer:display_read",
+                    "computer:pointer_control",
+                ],
+                crate::auth::SCOPE_COMPUTER_CONTROL,
+            ),
+            (
+                vec!["computer:read", "computer:display_read", "computer:control"],
+                crate::auth::SCOPE_COMPUTER_POINTER_CONTROL,
+            ),
+        ];
+        for tool in ["computer_pointer_move", "computer_pointer_click"] {
+            for (scopes, missing) in &cases {
+                let context = oauth(scopes);
+                assert_eq!(
+                    check_runtime_tool_scope(Some(&context), tool),
+                    Err(ToolCallErrorStatus::InsufficientScope {
+                        required_scope: Some(*missing),
+                        description: format!("missing required scope: {missing}"),
+                    }),
+                    "{tool} missing {missing}"
+                );
+            }
+            let all = oauth(&[
+                "computer:read",
+                "computer:display_read",
+                "computer:control",
+                "computer:pointer_control",
+            ]);
+            assert_eq!(check_runtime_tool_scope(Some(&all), tool), Ok(()));
+        }
+    }
+
+    #[test]
     fn computer_save_snapshot_requires_project_write_and_computer_read() {
         let read_only = oauth(&["computer:read"]);
         assert_eq!(

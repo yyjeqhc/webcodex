@@ -24,6 +24,7 @@ pub const SCOPE_COMPUTER_READ: &str = "computer:read";
 pub const SCOPE_COMPUTER_CONTROL: &str = "computer:control";
 pub const SCOPE_COMPUTER_LAUNCH: &str = "computer:launch";
 pub const SCOPE_COMPUTER_DISPLAY_READ: &str = "computer:display_read";
+pub const SCOPE_COMPUTER_POINTER_CONTROL: &str = "computer:pointer_control";
 pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
 pub const SCOPE_ADMIN: &str = "admin";
 
@@ -46,6 +47,7 @@ pub const AGENT_SCOPES: &[&str] = &[
 /// All scopes recognized by this phase. Unknown scopes are rejected at token
 /// creation time so the stored scope string stays clean.
 pub(crate) const KNOWN_SCOPES: &[&str] = &[
+    SCOPE_COMPUTER_POINTER_CONTROL,
     SCOPE_RUNTIME_READ,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
@@ -280,6 +282,17 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
 }
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
+    if matches!(
+        tool_name,
+        "computer_pointer_move" | "computer_pointer_click"
+    ) {
+        return OAuthToolScopePolicy::RequireAll(&[
+            SCOPE_COMPUTER_READ,
+            SCOPE_COMPUTER_DISPLAY_READ,
+            SCOPE_COMPUTER_CONTROL,
+            SCOPE_COMPUTER_POINTER_CONTROL,
+        ]);
+    }
     if matches!(
         tool_name,
         "computer_list_displays" | "computer_snapshot_display"
@@ -949,6 +962,13 @@ mod tests {
             let metadata = lookup_tool_metadata(tool).unwrap();
             let expected = if tool == "computer_save_snapshot" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ])
+            } else if matches!(tool, "computer_pointer_move" | "computer_pointer_click") {
+                OAuthToolScopePolicy::RequireAll(&[
+                    SCOPE_COMPUTER_READ,
+                    SCOPE_COMPUTER_DISPLAY_READ,
+                    SCOPE_COMPUTER_CONTROL,
+                    SCOPE_COMPUTER_POINTER_CONTROL,
+                ])
             } else if matches!(tool, "computer_list_displays" | "computer_snapshot_display") {
                 OAuthToolScopePolicy::RequireAll(&[
                     SCOPE_COMPUTER_READ,

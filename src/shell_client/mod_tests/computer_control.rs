@@ -223,6 +223,103 @@ async fn computer_key_input_requires_independent_capability() {
 }
 
 #[tokio::test]
+async fn computer_pointer_enqueue_requires_independent_capability_and_typed_envelope() {
+    let registry = ShellClientRegistry::default();
+    let alice = auth_context(Some("alice"), false);
+    let payload = r#"{"display_id":"display_0123456789abcdef0123456789abcdef","snapshot_generation":7,"x":123,"y":456}"#;
+
+    registry
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            client_id: "computer-pointer-old".to_string(),
+            agent_instance_id: "pointer-old-inst".to_string(),
+            display_name: None,
+            owner: Some("alice".to_string()),
+            hostname: None,
+            host_context: None,
+            capabilities: Some(ShellClientCapabilities {
+                computer_control: true,
+                computer_display_observe: true,
+                ..Default::default()
+            }),
+            projects: None,
+            agent_protocol_version: None,
+            policy: None,
+        })
+        .await
+        .unwrap();
+    for kind in ["computer_pointer_move", "computer_pointer_click"] {
+        let error = registry
+            .enqueue_computer(
+                "computer-pointer-old".to_string(),
+                kind,
+                payload.to_string(),
+                "alice".to_string(),
+                Some(&alice),
+                5,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("does not support computer_pointer_control"),
+            "{error}"
+        );
+    }
+
+    registry
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            client_id: "computer-pointer-capable".to_string(),
+            agent_instance_id: "pointer-inst".to_string(),
+            display_name: None,
+            owner: Some("alice".to_string()),
+            hostname: None,
+            host_context: None,
+            capabilities: Some(ShellClientCapabilities {
+                computer_pointer_control: true,
+                ..Default::default()
+            }),
+            projects: None,
+            agent_protocol_version: None,
+            policy: None,
+        })
+        .await
+        .unwrap();
+    let (_request_id, _rx) = registry
+        .enqueue_computer(
+            "computer-pointer-capable".to_string(),
+            "computer_pointer_click",
+            payload.to_string(),
+            "alice".to_string(),
+            Some(&alice),
+            5,
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "computer-pointer-capable".to_string(),
+            agent_instance_id: "pointer-inst".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("queued computer pointer request");
+    assert_eq!(request.kind, "computer_pointer_click");
+    assert_eq!(request.stdin.as_deref(), Some(payload));
+    assert!(request.command.is_empty());
+    assert!(request.cwd.is_none());
+    assert!(request.path.is_none());
+    assert!(request.process.is_none());
+    assert!(request.script.is_none());
+}
+#[tokio::test]
 async fn computer_window_activation_requires_its_own_additive_capability() {
     let registry = ShellClientRegistry::default();
     let alice = auth_context(Some("alice"), false);

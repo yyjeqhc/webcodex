@@ -147,6 +147,13 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 &["client_id", "surface_id", "key", "modifiers"],
             );
         }
+        "computer_pointer_move" | "computer_pointer_click" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["client_id", "display_id", "snapshot_generation", "x", "y"],
+            );
+        }
         "computer_input_text" => {
             copy_keys(obj, &mut out, &["client_id", "surface_id", "element_id"]);
             out.insert(
@@ -507,6 +514,16 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
             "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
         }),
+        "computer_pointer_move" | "computer_pointer_click" => serde_json::json!({
+            "display_id": output.get("display_id").cloned().unwrap_or(Value::Null),
+            "snapshot_generation": output.get("snapshot_generation").cloned().unwrap_or(Value::Null),
+            "x": output.get("x").cloned().unwrap_or(Value::Null),
+            "y": output.get("y").cloned().unwrap_or(Value::Null),
+            "success": output.get("success").cloned().unwrap_or(Value::Null),
+            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
+            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
+        }),
         "computer_snapshot" => serde_json::json!({
             "surface_id": output.pointer("/surface/surface_id").cloned().unwrap_or(Value::Null),
             "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
@@ -701,6 +718,62 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("PRIVATE_DEVICE_PATH"));
         assert!(!serialized.contains("global_x"));
         assert!(!serialized.contains("scale_factor"));
+    }
+
+    #[test]
+    fn computer_pointer_ledger_keeps_only_source_space_and_opaque_lifecycle_metadata() {
+        let display_id = "display_0123456789abcdef0123456789abcdef";
+        let request = json!({
+            "client_id": "msi",
+            "display_id": display_id,
+            "snapshot_generation": 11,
+            "x": 321,
+            "y": 654,
+            "global_x": -1599,
+            "native_identity": "PRIVATE_NATIVE_ID"
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_pointer_click", &request);
+        let request_serialized = serde_json::to_string(&request_summary).unwrap();
+        assert_eq!(request_summary["display_id"], display_id);
+        assert_eq!(request_summary["snapshot_generation"], 11);
+        assert_eq!(request_summary["x"], 321);
+        assert_eq!(request_summary["y"], 654);
+        assert!(!request_serialized.contains("global_x"));
+        assert!(!request_serialized.contains("PRIVATE_NATIVE_ID"));
+
+        let output = json!({
+            "display_id": display_id,
+            "snapshot_generation": 11,
+            "x": 321,
+            "y": 654,
+            "success": true,
+            "error_kind": null,
+            "execution_state": "completed",
+            "state_changed": true,
+            "content_base64": "PRIVATE_IMAGE_BODY",
+            "native_identity": "PRIVATE_NATIVE_ID",
+            "device_path": "PRIVATE_DEVICE_PATH",
+            "global_x": -1599,
+            "virtual_left": -1920,
+            "dpi_scale": 1.25
+        });
+        let summary = session_log_result_for_tool("computer_pointer_click", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["display_id"], display_id);
+        assert_eq!(summary["snapshot_generation"], 11);
+        assert_eq!(summary["x"], 321);
+        assert_eq!(summary["y"], 654);
+        for secret in [
+            "PRIVATE_IMAGE_BODY",
+            "PRIVATE_NATIVE_ID",
+            "PRIVATE_DEVICE_PATH",
+            "global_x",
+            "virtual_left",
+            "dpi_scale",
+        ] {
+            assert!(!serialized.contains(secret), "{secret}");
+        }
     }
 
     #[test]

@@ -232,6 +232,9 @@ pub const SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH: &str = "computer_
 /// Runners is false and is never inferred from window observation, region
 /// snapshots, or platform identity.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE: &str = "computer_display_observe";
+/// Snapshot-fenced exact coordinate pointer input. Missing on older Runners is
+/// false and is never inferred from control, display observation, or platform.
+pub const SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL: &str = "computer_pointer_control";
 /// Bounded surface-relative region/downscale snapshot requests. Missing on older
 /// Runners is false and is never inferred from whole-window observation support.
 pub const SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION: &str = "computer_snapshot_region";
@@ -302,6 +305,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
     SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE,
@@ -447,6 +451,10 @@ pub struct ShellClientCapabilities {
     /// opaque display handle. Missing is false and never follows from window observation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub computer_display_observe: bool,
+    /// The Runner implements snapshot-fenced exact coordinate pointer input.
+    /// Missing on older Runners is false and never follows from other Computer capabilities.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub computer_pointer_control: bool,
     /// The Runner supports bounded region/max-output snapshot transforms while
     /// preserving the existing whole-window snapshot wire for older Runners.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -543,6 +551,7 @@ impl Default for ShellClientCapabilities {
             computer_application_launch: false,
             computer_snapshot_region: false,
             computer_display_observe: false,
+            computer_pointer_control: false,
             computer_accessibility_observe: false,
             computer_element_state: false,
             computer_control: false,
@@ -2796,6 +2805,7 @@ mod envelope_tests {
                 computer_application_discovery: false,
                 computer_application_launch: false,
                 computer_display_observe: false,
+                computer_pointer_control: false,
                 computer_snapshot_region: false,
                 computer_accessibility_observe: false,
                 computer_element_state: false,
@@ -2948,6 +2958,7 @@ mod envelope_tests {
         assert!(!legacy.computer_application_discovery);
         assert!(!legacy.computer_application_launch);
         assert!(!legacy.computer_display_observe);
+        assert!(!legacy.computer_pointer_control);
 
         let discovery: ShellClientCapabilities =
             serde_json::from_str(r#"{"computer_application_discovery":true}"#).unwrap();
@@ -2956,6 +2967,7 @@ mod envelope_tests {
         assert!(!discovery.computer_observe);
         assert!(!discovery.computer_control);
         assert!(!discovery.computer_display_observe);
+        assert!(!discovery.computer_pointer_control);
 
         let launch: ShellClientCapabilities =
             serde_json::from_str(r#"{"computer_application_launch":true}"#).unwrap();
@@ -2964,6 +2976,7 @@ mod envelope_tests {
         assert!(!launch.computer_observe);
         assert!(!launch.computer_control);
         assert!(!launch.computer_display_observe);
+        assert!(!launch.computer_pointer_control);
 
         let display: ShellClientCapabilities =
             serde_json::from_str(r#"{"computer_display_observe":true}"#).unwrap();
@@ -2972,12 +2985,22 @@ mod envelope_tests {
         assert!(!display.computer_snapshot_region);
         assert!(!display.computer_application_discovery);
         assert!(!display.computer_application_launch);
+        assert!(!display.computer_pointer_control);
+
+        let pointer: ShellClientCapabilities =
+            serde_json::from_str(r#"{"computer_pointer_control":true}"#).unwrap();
+        assert!(pointer.computer_pointer_control);
+        assert!(!pointer.computer_control);
+        assert!(!pointer.computer_display_observe);
+        assert!(!pointer.computer_observe);
         assert!(SHELL_CLIENT_CAPABILITY_NAMES
             .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY));
         assert!(SHELL_CLIENT_CAPABILITY_NAMES
             .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH));
         assert!(SHELL_CLIENT_CAPABILITY_NAMES
             .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE));
+        assert!(SHELL_CLIENT_CAPABILITY_NAMES
+            .contains(&SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL));
     }
 
     #[test]

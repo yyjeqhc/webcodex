@@ -64,7 +64,8 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
-    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
     SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
     SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
@@ -107,6 +108,8 @@ pub(crate) enum AgentCapability {
     ComputerApplicationLaunch,
     /// Native exact full-display discovery and snapshot observation.
     ComputerDisplayObserve,
+    /// Snapshot-fenced exact coordinate pointer control on the exact Runner.
+    ComputerPointerControl,
     /// Native read-only semantic accessibility inspection on the exact Runner.
     ComputerAccessibilityObserve,
     /// Native read-only normalized state for one exact observed element.
@@ -145,6 +148,7 @@ impl AgentCapability {
             }
             Self::ComputerApplicationLaunch => SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
             Self::ComputerDisplayObserve => SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
+            Self::ComputerPointerControl => SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
             Self::ComputerAccessibilityObserve => {
                 SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
@@ -181,6 +185,7 @@ impl AgentCapability {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH]
             }
             Self::ComputerDisplayObserve => &[SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE],
+            Self::ComputerPointerControl => &[SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL],
             Self::ComputerAccessibilityObserve => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]
             }

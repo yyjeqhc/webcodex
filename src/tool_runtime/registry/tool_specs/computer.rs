@@ -5,14 +5,25 @@ use super::super::input_schemas::{
     computer_input_text_input_schema, computer_key_input_input_schema,
     computer_launch_application_input_schema, computer_list_applications_input_schema,
     computer_list_displays_input_schema, computer_list_windows_input_schema,
-    computer_save_snapshot_input_schema, computer_scroll_to_element_input_schema,
-    computer_snapshot_display_input_schema, computer_snapshot_input_schema, empty_input_schema,
+    computer_pointer_input_schema, computer_save_snapshot_input_schema,
+    computer_scroll_to_element_input_schema, computer_snapshot_display_input_schema,
+    computer_snapshot_input_schema, empty_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
 
 pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
+        tool_spec(
+            "computer_pointer_move",
+            "Move the Windows pointer to one exact display-local source coordinate using the latest unspent computer_snapshot_display generation. The generation is a one-effect freshness fence and is spent once native effect admission begins. No global/window coordinates, implicit observation, focus, activation, modifiers, drag, fallback, or retry are performed; reconcile uncertain outcomes with a fresh display snapshot.",
+            computer_pointer_input_schema(),
+        ),
+        tool_spec(
+            "computer_pointer_click",
+            "Submit one Windows-native exact coordinate single-left-click sequence (move + left down + left up) using the latest unspent full-display snapshot generation. Shared held mouse/modifier state fails closed before effect. No button selection, double/right/middle click, drag, focus, activation, implicit snapshot, fallback, or retry; reconcile uncertain outcomes with a fresh display snapshot.",
+            computer_pointer_input_schema(),
+        ),
         tool_spec(
             "computer_list_targets",
             "List caller-visible Runner targets that advertise supported Computer observation or application capabilities. Use this when client_id is unknown. Returns only minimal target identity, connection state, and independent Computer capability facts; no projects, policy, jobs, host details, or observation content.",

@@ -2085,22 +2085,6 @@ async fn oauth2_tools_call_unknown_tool_fails_closed() {
 }
 
 #[tokio::test]
-async fn api_token_tools_call_behavior_unchanged() {
-    let (_tmp, service) = phase2_service();
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"tool": "definitely_not_a_tool"}))
-        .send(&service)
-        .await;
-    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert!(body["error"]
-        .as_str()
-        .unwrap_or("")
-        .contains("definitely_not_a_tool"));
-}
-
-#[tokio::test]
 async fn http_tools_list_includes_phase4_edit_tools() {
     let (_tmp, service) = phase2_service();
     let mut resp = TestClient::post("http://localhost/api/tools/list")

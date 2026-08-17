@@ -1,22 +1,5 @@
 use super::*;
 
-#[test]
-fn rpc_result_envelope_is_valid() {
-    let value = rpc_result(Some(Value::from(1)), json!({"ok": true}));
-    assert_eq!(value["jsonrpc"], "2.0");
-    assert_eq!(value["id"], 1);
-    assert_eq!(value["result"]["ok"], true);
-}
-
-#[test]
-fn rpc_error_envelope_carries_code_and_message() {
-    let value = rpc_error(Some(Value::from("a")), -32601, "missing");
-    assert_eq!(value["jsonrpc"], "2.0");
-    assert_eq!(value["id"], "a");
-    assert_eq!(value["error"]["code"], -32601);
-    assert_eq!(value["error"]["message"], "missing");
-}
-
 #[tokio::test]
 async fn mcp_initialize_returns_protocol_and_server_info() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);

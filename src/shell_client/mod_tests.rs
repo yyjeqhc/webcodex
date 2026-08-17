@@ -352,85 +352,6 @@ mod job_lifecycle;
 #[path = "mod_tests/client_liveness.rs"]
 mod client_liveness;
 
-#[test]
-fn enforce_agent_transport_rejects_user_token() {
-    let alice = auth_context(Some("alice"), false);
-    let err = enforce_agent_transport(Some(&alice), "client-1").unwrap_err();
-    assert!(err.contains("user tokens are not allowed"), "got: {}", err);
-}
-
-#[test]
-fn enforce_agent_transport_agent_token_matching_client_succeeds() {
-    let alice = agent_auth_context("alice", "alice-laptop", vec!["agent:poll"]);
-    assert!(enforce_agent_transport(Some(&alice), "alice-laptop").is_ok());
-    let err = enforce_agent_transport(Some(&alice), "other").unwrap_err();
-    assert!(err.contains("not bound"), "got: {}", err);
-}
-
-#[test]
-fn enforce_agent_transport_bootstrap_succeeds() {
-    let bootstrap = auth_context(None, true);
-    assert!(enforce_agent_transport(Some(&bootstrap), "any-client").is_ok());
-}
-
-#[test]
-fn enforce_agent_transport_direct_shared_key_succeeds() {
-    let shared = crate::auth::shared_key::shared_key_context("shared-a");
-    assert!(enforce_agent_transport(Some(&shared), "any-client").is_ok());
-    for scope in crate::auth::AGENT_SCOPES {
-        assert!(require_agent_transport_scope(Some(&shared), scope).is_ok());
-    }
-}
-
-#[test]
-fn enforce_agent_transport_open_anonymous_is_rejected() {
-    let open = open_auth_context();
-    assert!(enforce_agent_transport(Some(&open), "client-a").is_err());
-    assert!(require_agent_transport_scope(Some(&open), "agent:register").is_err());
-}
-
-#[test]
-fn require_agent_transport_scope_agent_token_with_scope_succeeds() {
-    let alice = agent_auth_context("alice", "alice-laptop", vec!["agent:poll"]);
-    assert!(require_agent_transport_scope(Some(&alice), "agent:poll").is_ok());
-    assert!(require_agent_transport_scope(Some(&alice), "agent:register").is_err());
-}
-
-#[test]
-fn require_agent_transport_scope_bootstrap_always_succeeds() {
-    let bootstrap = auth_context(None, true);
-    assert!(require_agent_transport_scope(Some(&bootstrap), "agent:register").is_ok());
-}
-
-#[test]
-fn require_agent_transport_scope_user_token_rejected() {
-    let alice = auth_context(Some("alice"), false);
-    let err = require_agent_transport_scope(Some(&alice), "agent:register").unwrap_err();
-    assert!(err.contains("missing required scope"), "got: {}", err);
-}
-
-#[test]
-fn oauth_bridge_token_remains_blocked_from_agent_transport() {
-    let bridge = oauth_bridge_auth_context(
-        "hash-a",
-        vec![
-            "agent:register",
-            "agent:poll",
-            "agent:result",
-            "agent:job_update",
-        ],
-    );
-    assert!(!bridge.is_lightweight());
-    assert!(enforce_agent_transport(Some(&bridge), "client-a")
-        .unwrap_err()
-        .contains("user tokens are not allowed"));
-    assert!(
-        require_agent_transport_scope(Some(&bridge), "agent:register")
-            .unwrap_err()
-            .contains("missing required scope")
-    );
-}
-
 #[tokio::test]
 async fn registry_rejects_enqueue_when_queue_full() {
     let registry = ShellClientRegistry::default();
@@ -543,6 +464,9 @@ async fn registry_rejects_enqueue_when_client_offline() {
     assert_eq!(view.pending_requests, 0);
     assert!(!view.connected);
 }
+
+#[path = "mod_tests/agent_transport_auth.rs"]
+mod agent_transport_auth;
 
 #[path = "mod_tests/disconnect_reconciliation.rs"]
 mod disconnect_reconciliation;

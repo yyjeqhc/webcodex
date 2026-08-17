@@ -2756,6 +2756,7 @@ mod envelope_tests {
                 structured_go_test_packages: true,
                 structured_process_argv: true,
                 structured_script_payload: true,
+                internal_posix_script: true,
                 structured_execution_jobs: true,
                 lsp_read_only_navigation: false,
                 lsp_call_hierarchy: false,

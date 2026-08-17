@@ -1215,7 +1215,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     let req = next_patch_agent_request(&runtime, "validation-finish")
         .await
         .expect("finish_coding_task should inspect changes through the agent");
-    assert!(req.command.contains("git status --porcelain=v1 -b"));
+    assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     complete_patch_agent_request(
         &runtime,
         "validation-finish",

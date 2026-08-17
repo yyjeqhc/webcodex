@@ -19,6 +19,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
         file_write: true,
         shell: true,
         git: true,
+        internal_posix_script: true,
         ..Default::default()
     };
     register_agent(&runtime, "telemetry-write", None, caps).await;
@@ -144,7 +145,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     let req = next_patch_agent_request(&runtime, "telemetry-write")
         .await
         .expect("finish_coding_task should inspect changes");
-    assert!(req.command.contains("git status --porcelain=v1 -b"));
+    assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     complete_patch_agent_request(
         &runtime,
         "telemetry-write",

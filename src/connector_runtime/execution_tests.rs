@@ -183,6 +183,7 @@ async fn fixture_built(
                     async_shell_jobs: true,
                     structured_validation_argv: true,
                     structured_go_test_json,
+                    internal_posix_script: true,
                     ..Default::default()
                 }),
                 projects: Some(vec![project_summary("project", &project)]),

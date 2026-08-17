@@ -1327,7 +1327,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     let req = next_patch_agent_request(&runtime, "coding-finish")
         .await
         .expect("finish_coding_task should inspect changes through the agent");
-    assert!(req.command.contains("git status --porcelain=v1 -b"));
+    assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     let show_changes_stdout = "## main\n M README.md\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=1\nfiles_returned=1\nfiles_truncated=0\nfiles_limit=200\nmodified=1\nadded=0\ndeleted=0\nrenamed=0\ncopied=0\nuntracked=0\nconflicted=0\nstaged=0\nunstaged=1\nstatus_trunc_count=0\nstatus_trunc_bytes=0\nstatus_trunc_path=0\nstatus_bytes=20\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ncommit=abc123\nshort=abc123\nsummary=add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\nhead_bytes=45\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n README.md | 1 +\n 1 file changed, 1 insertion(+)\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=52\n";
     complete_patch_agent_request(
         &runtime,
@@ -2767,6 +2767,7 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
         shell: true,
         git: true,
         async_shell_jobs: true,
+        internal_posix_script: true,
         ..Default::default()
     };
     let project_path = tmp.path().to_string_lossy().to_string();
@@ -2852,7 +2853,7 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
     let req = next_agent_request_for_client(&runtime, "coding-finish-jobs")
         .await
         .expect("finish_coding_task should inspect changes through the agent");
-    assert!(req.command.contains("git status --porcelain=v1 -b"));
+    assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     let show_changes_stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
     complete_patch_agent_request_for_instance(
         &runtime,
@@ -2899,6 +2900,7 @@ async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
         shell: true,
         git: true,
         async_shell_jobs: true,
+        internal_posix_script: true,
         ..Default::default()
     };
     let project_path = tmp.path().to_string_lossy().to_string();
@@ -3003,7 +3005,7 @@ async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
     let req = next_agent_request_for_client(&runtime, "coding-finish-stop-pending")
         .await
         .expect("finish_coding_task should inspect changes through the agent");
-    assert!(req.command.contains("git status --porcelain=v1 -b"));
+    assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     let show_changes_stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
     complete_patch_agent_request_for_instance(
         &runtime,

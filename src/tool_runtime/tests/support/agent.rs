@@ -706,6 +706,29 @@ pub(in crate::tool_runtime::tests) async fn next_patch_agent_request(
     None
 }
 
+pub(in crate::tool_runtime::tests) fn assert_internal_posix_script_contains(
+    request: &ShellAgentShellRequest,
+    needle: &str,
+) {
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert!(request.command.is_empty());
+    assert!(request.stdin.is_none());
+    let payload = request
+        .script
+        .as_ref()
+        .expect("internal POSIX request must carry a typed script payload");
+    assert_eq!(
+        payload.language,
+        crate::shell_protocol::ShellScriptLanguage::Sh
+    );
+    assert!(payload.args.is_empty());
+    assert!(
+        payload.script.contains(needle),
+        "internal POSIX script did not contain {needle:?}: {}",
+        payload.script
+    );
+}
+
 pub(in crate::tool_runtime::tests) async fn complete_patch_agent_request(
     runtime: &ToolRuntime,
     client_id: &str,

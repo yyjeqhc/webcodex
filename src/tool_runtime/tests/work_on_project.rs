@@ -771,8 +771,10 @@ async fn legacy_031_runner_existing_project_remains_functional() {
         "existing-project rules read did not reach the legacy Runner: {request_kinds:?}"
     );
     assert!(
-        request_kinds.iter().any(|kind| kind == "run_shell"),
-        "existing-project Git inspection did not reach the legacy Runner: {request_kinds:?}"
+        request_kinds
+            .iter()
+            .all(|kind| kind != "run_shell" && kind != "run_internal_posix_script"),
+        "legacy Runner must not receive generated Git programs through any shell path: {request_kinds:?}"
     );
     assert!(
         request_kinds
@@ -1543,6 +1545,7 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
             file_read: true,
             file_write: true,
             lsp_read_only_navigation: true,
+            internal_posix_script: true,
             ..Default::default()
         },
         vec![registered_project("demo", &root.path().to_string_lossy())],
@@ -1590,8 +1593,10 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
         "repository rules were not observed: {request_kinds:?}"
     );
     assert!(
-        request_kinds.iter().any(|kind| kind == "run_shell"),
-        "Git/workspace inspection was not executed: {request_kinds:?}"
+        request_kinds
+            .iter()
+            .any(|kind| kind == "run_internal_posix_script"),
+        "Git/workspace inspection was not executed through the internal POSIX runtime: {request_kinds:?}"
     );
     assert!(
         request_kinds

@@ -27,6 +27,18 @@ pub struct ActionSessionStats {
     pub shell_count: i64,
     pub changed_files_distinct_count: usize,
     pub job_ids_distinct_count: usize,
+    /// Number of events actually included in the aggregate.
+    pub events_scanned: usize,
+    /// Number of events present in the selected session scope before per-session caps.
+    pub events_available: usize,
+    /// Number of selected sessions included in the aggregate.
+    pub sessions_scanned: usize,
+    /// Selected sessions whose event history exceeded the bounded scan cap.
+    pub truncated_sessions: usize,
+    /// True when the aggregate does not cover every event in the selected sessions.
+    pub partial: bool,
+    /// True when bounded event caps caused the partial result.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -406,6 +418,7 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
     let mut by_status = BTreeMap::new();
     let mut changed_files = BTreeSet::new();
     let mut job_ids = BTreeSet::new();
+    let mut session_ids = BTreeSet::new();
     let mut edit_count = 0;
     let mut context_count = 0;
     let mut job_count = 0;
@@ -415,6 +428,7 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
     let mut git_count = 0;
     let mut shell_count = 0;
     for event in events {
+        session_ids.insert(event.session_id.clone());
         *by_endpoint.entry(event.endpoint.clone()).or_insert(0) += 1;
         *by_status.entry(event.status.clone()).or_insert(0) += 1;
         if let Some(project) = &event.project {
@@ -473,6 +487,12 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
         shell_count,
         changed_files_distinct_count: changed_files.len(),
         job_ids_distinct_count: job_ids.len(),
+        events_scanned: events.len(),
+        events_available: events.len(),
+        sessions_scanned: session_ids.len(),
+        truncated_sessions: 0,
+        partial: false,
+        truncated: false,
     }
 }
 

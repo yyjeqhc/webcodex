@@ -135,9 +135,11 @@ struct AuditStatsRequest {
 ///
 /// Body: `{ "session_id"?: string, "limit"?: number }`.
 /// When `session_id` is supplied, stats cover that single session's events
-/// (capped internally). When omitted, stats cover the events of the `limit`
-/// most recent sessions (default 20, max 50; each session capped at 200
-/// events) to bound the scan. Returns the `ActionSessionStats` object.
+/// (capped internally) and return `404` for an unknown session. When omitted,
+/// stats cover the events of the `limit` most recent sessions (default 20,
+/// max 50; each session capped at 200 events) to bound the scan. Coverage fields
+/// report whether any selected session was truncated; database read failures
+/// fail the request rather than returning a silently partial aggregate.
 #[handler]
 pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(db) = get_db(depot) else {
@@ -153,6 +155,9 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
     };
 
     let mut views: Vec<ActionEventView> = Vec::new();
+    let mut events_available = 0usize;
+    let sessions_scanned: usize;
+    let mut truncated_sessions = 0usize;
     let scoped = body
         .session_id
         .as_deref()
@@ -160,6 +165,24 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
         .filter(|s| !s.is_empty());
 
     if let Some(session_id) = scoped {
+        match db.get_action_session(session_id) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                not_found(res, "session not found");
+                return;
+            }
+            Err(e) => {
+                query_failed(res, &e.to_string());
+                return;
+            }
+        }
+        let available = match db.count_action_events(session_id) {
+            Ok(count) => count,
+            Err(e) => {
+                query_failed(res, &e.to_string());
+                return;
+            }
+        };
         let raw = match db.list_action_events(session_id, STATS_SINGLE_SESSION_EVENTS) {
             Ok(e) => e,
             Err(e) => {
@@ -167,6 +190,9 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
                 return;
             }
         };
+        events_available = available;
+        sessions_scanned = 1;
+        truncated_sessions = usize::from(available > raw.len());
         for record in raw {
             views.push(sanitize_event(decode_event(record)));
         }
@@ -179,19 +205,37 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
                 return;
             }
         };
+        sessions_scanned = sessions.len();
         for session in sessions {
-            let Ok(raw) = db.list_action_events(&session.session_id, STATS_EVENTS_PER_SESSION)
-            else {
-                // Skip a session whose events cannot be read rather than
-                // failing the whole aggregate.
-                continue;
+            let available = match db.count_action_events(&session.session_id) {
+                Ok(count) => count,
+                Err(e) => {
+                    query_failed(res, &e.to_string());
+                    return;
+                }
             };
+            let raw = match db.list_action_events(&session.session_id, STATS_EVENTS_PER_SESSION) {
+                Ok(events) => events,
+                Err(e) => {
+                    query_failed(res, &e.to_string());
+                    return;
+                }
+            };
+            events_available = events_available.saturating_add(available);
+            if available > raw.len() {
+                truncated_sessions = truncated_sessions.saturating_add(1);
+            }
             for record in raw {
                 views.push(sanitize_event(decode_event(record)));
             }
         }
     }
 
-    let stats = compute_stats(&views);
+    let mut stats = compute_stats(&views);
+    stats.events_available = events_available;
+    stats.sessions_scanned = sessions_scanned;
+    stats.truncated_sessions = truncated_sessions;
+    stats.truncated = truncated_sessions > 0;
+    stats.partial = stats.truncated;
     res.render(Json(stats));
 }

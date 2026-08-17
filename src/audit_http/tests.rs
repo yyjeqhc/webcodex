@@ -326,6 +326,12 @@ async fn http_audit_stats_happy_path_scoped_to_session() {
     assert_eq!(body["by_status"]["failed"], 1);
     assert_eq!(body["job_count"], 1);
     assert_eq!(body["edit_count"], 1);
+    assert_eq!(body["events_scanned"], 2);
+    assert_eq!(body["events_available"], 2);
+    assert_eq!(body["sessions_scanned"], 1);
+    assert_eq!(body["truncated_sessions"], 0);
+    assert_eq!(body["partial"], false);
+    assert_eq!(body["truncated"], false);
 }
 
 #[tokio::test]
@@ -361,6 +367,57 @@ async fn http_audit_stats_global_over_recent_sessions() {
     assert_eq!(body["by_endpoint"]["/api/runtime/status"], 1);
     assert_eq!(body["git_count"], 1);
     assert_eq!(body["report_count"], 1);
+    assert_eq!(body["events_scanned"], 2);
+    assert_eq!(body["events_available"], 2);
+    assert_eq!(body["sessions_scanned"], 2);
+    assert_eq!(body["truncated_sessions"], 0);
+    assert_eq!(body["partial"], false);
+    assert_eq!(body["truncated"], false);
+}
+
+#[tokio::test]
+async fn http_audit_stats_unknown_session_is_not_found() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_audit_router(config, db));
+
+    let resp = TestClient::post("http://localhost/api/audit/stats")
+        .bearer_auth("secret")
+        .json(&json!({ "session_id": "missing-stats-session" }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn http_audit_stats_reports_bounded_event_truncation() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    for _ in 0..201 {
+        seed_event(
+            &db,
+            "stats-truncated",
+            "/api/runtime/status",
+            "getRuntimeStatus",
+            "success",
+            json!({}),
+        );
+    }
+    let service = Service::new(build_audit_router(config, db));
+
+    let mut resp = TestClient::post("http://localhost/api/audit/stats")
+        .bearer_auth("secret")
+        .json(&json!({}))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["events_scanned"], 200);
+    assert_eq!(body["events_available"], 201);
+    assert_eq!(body["sessions_scanned"], 1);
+    assert_eq!(body["truncated_sessions"], 1);
+    assert_eq!(body["partial"], true);
+    assert_eq!(body["truncated"], true);
 }
 
 // =========================================================================

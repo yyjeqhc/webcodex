@@ -209,6 +209,16 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn count_action_events(&self, session_id: &str) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM action_events WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )?;
+        Ok(usize::try_from(count).unwrap_or(usize::MAX))
+    }
+
     pub fn append_action_event_and_update_session(
         &self,
         event: &ActionEventRecord,

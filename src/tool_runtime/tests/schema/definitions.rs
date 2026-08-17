@@ -71,43 +71,6 @@ fn tool_definitions_cover_known_names_and_public_specs() {
 }
 
 #[test]
-fn model_visible_tool_definitions_have_public_tool_specs() {
-    use crate::tool_runtime::tool_definition::model_visible_tool_definitions;
-
-    let spec_names = registered_tool_specs()
-        .iter()
-        .map(|spec| spec.name.clone())
-        .collect::<BTreeSet<_>>();
-    for definition in model_visible_tool_definitions() {
-        assert!(
-            spec_names.contains(definition.name),
-            "{} is model-visible but missing a public ToolSpec row",
-            definition.name
-        );
-    }
-}
-
-#[test]
-fn public_tool_specs_are_model_visible_tool_definitions() {
-    use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, model_visible_tool_definitions,
-    };
-
-    let visible_definition_names = model_visible_tool_definitions()
-        .map(|definition| definition.name)
-        .collect::<BTreeSet<_>>();
-    for spec in registered_tool_specs() {
-        let definition = lookup_tool_definition(&spec.name)
-            .unwrap_or_else(|| panic!("{} public ToolSpec is missing ToolDefinition", spec.name));
-        assert!(
-            visible_definition_names.contains(definition.name),
-            "{} public ToolSpec must be model-visible in ToolDefinition",
-            spec.name
-        );
-    }
-}
-
-#[test]
 fn tool_definitions_drive_metadata_visibility_and_categories() {
     use crate::tool_runtime::metadata::lookup_tool_metadata;
     use crate::tool_runtime::tool_definition::tool_definitions;

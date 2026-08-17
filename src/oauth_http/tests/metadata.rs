@@ -57,17 +57,9 @@ async fn oauth_protected_resource_metadata_fields() {
     assert_eq!(methods.len(), 1);
     assert_eq!(methods[0], "header");
 
-    // scopes_supported is a non-empty array
-    let scopes = body["scopes_supported"].as_array().unwrap();
-    assert!(!scopes.is_empty(), "scopes_supported should be non-empty");
-    // Must contain at least runtime:read
     assert!(
-        scopes.iter().any(|s| s == "runtime:read"),
-        "scopes_supported should contain runtime:read"
-    );
-    assert!(
-        scopes.iter().any(|s| s == "offline_access"),
-        "discovery should advertise offline_access when refresh tokens are supported"
+        body.get("scopes_supported").is_none(),
+        "MCP resource metadata must let the registered client define its scope ceiling"
     );
 
     // resource_name
@@ -260,9 +252,7 @@ async fn openid_configuration_not_exposed() {
 }
 
 #[tokio::test]
-async fn oauth_protected_resource_metadata_scopes_exclude_agent() {
-    // Agent scopes must not appear in scopes_supported because OAuth2
-    // tokens are rejected on agent transport surfaces.
+async fn oauth_protected_resource_metadata_omits_scopes_supported() {
     let config = test_config(oauth2_enabled());
     let (_tmp, db) = test_db();
     let service = Service::new(build_router(config, db));
@@ -271,18 +261,5 @@ async fn oauth_protected_resource_metadata_scopes_exclude_agent() {
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::OK));
     let body: serde_json::Value = resp.take_json().await.unwrap();
-    let scopes = body["scopes_supported"].as_array().unwrap();
-    for scope in scopes {
-        let s = scope.as_str().unwrap();
-        assert!(
-            !s.starts_with("agent:"),
-            "agent scope '{}' must not appear in scopes_supported",
-            s
-        );
-    }
-    // admin is a bootstrap scope, not for OAuth2 delegation
-    assert!(
-        !scopes.iter().any(|s| s == "admin"),
-        "admin scope must not appear in scopes_supported"
-    );
+    assert!(body.get("scopes_supported").is_none());
 }

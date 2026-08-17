@@ -28,8 +28,9 @@ pub(crate) fn oauth_scopes_supported() -> &'static [&'static str] {
     OAUTH_SCOPES_SUPPORTED
 }
 
-/// Return scopes advertised through OAuth discovery. This includes WebCodex
-/// permission scopes plus protocol-level capabilities such as `offline_access`.
+/// Return scopes advertised through OAuth authorization-server discovery. This
+/// includes WebCodex permission scopes plus protocol capabilities such as
+/// `offline_access`.
 pub(crate) fn oauth_discovery_scopes_supported() -> Vec<&'static str> {
     let mut scopes = oauth_scopes_supported().to_vec();
     scopes.push(OAUTH_OFFLINE_ACCESS_SCOPE);

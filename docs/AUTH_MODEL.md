@@ -168,9 +168,9 @@ access tokens. OAuth credentials have their own roles:
   stored.
 - **access token** (`wc_oat_*`) — issued after consent, delegated from the
   authorizing user's scopes.
-- **refresh token** — `offline_access` is advertised as a protocol-level
-  refresh-token scope; it grants no extra WebCodex permission and should not be
-  added to the client's `allowed_scopes`.
+- **refresh token** — authorization-server metadata advertises `offline_access`
+  as a protocol-level refresh-token scope; it grants no extra WebCodex permission
+  and should not be added to the client's `allowed_scopes`.
 
 The server supports the authorization-code grant, token revocation, and OAuth
 metadata. Dynamic client registration, OIDC, JWKS/JWT ID tokens, and the
@@ -184,6 +184,13 @@ complete allow-list with `POST /api/oauth/clients/update_scopes`. A real change
 atomically revokes that client's existing access tokens, refresh tokens, and
 outstanding authorization codes, so the client must complete OAuth authorization
 again before using the new scope set.
+
+The MCP Protected Resource Metadata intentionally omits `scopes_supported`
+because pre-registered clients can have different delegation ceilings. An MCP
+client can therefore omit the authorization request's `scope`; WebCodex then
+defaults to that client's registered `allowed_scopes`. OAuth Authorization Server
+Metadata continues to advertise server-level capabilities such as
+`account:manage` and `offline_access`.
 
 ## Scope enforcement and credential surfaces
 

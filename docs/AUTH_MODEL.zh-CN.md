@@ -137,8 +137,9 @@ code。只把该 code 传给要接入的客户端；客户端用 `webcodex login
 - **client id** —— 标识 OAuth client（`wc_client_...`）。
 - **client secret** —— client 创建时只返回一次；服务端只存其 hash。
 - **access token**（`wc_oat_*`）—— 同意后签发，委派自授权用户的 scopes。
-- **refresh token** —— `offline_access` 作为协议级 refresh-token scope 发布；
-  它不授予额外 WebCodex 权限，不应写进 client 的 `allowed_scopes`。
+- **refresh token** —— Authorization Server Metadata 会把 `offline_access` 作为协议级
+  refresh-token scope 发布；它不授予额外 WebCodex 权限，不应写进 client 的
+  `allowed_scopes`。
 
 Server 支持 authorization-code grant、token 撤销与 OAuth metadata。动态 client
 注册、OIDC、JWKS/JWT ID token 与 device-code 流程未实现。OAuth 设置步骤见
@@ -150,6 +151,11 @@ operator 可以通过 `POST /api/oauth/clients/update_scopes` 显式替换 activ
 完整 allowlist。allowlist 真正变化时，Server 会在同一事务里撤销该 client 现有的
 access token、refresh token 与尚存 authorization code，因此 client 必须重新完成
 OAuth 授权，才能使用新的 scope 集合。
+
+MCP Protected Resource Metadata 会明确省略 `scopes_supported`，因为不同的预注册 client
+可能具有不同的委派权限上限。MCP client 因此可以在授权请求中省略 `scope`；WebCodex
+随后会默认采用该 client 已注册的 `allowed_scopes`。OAuth Authorization Server Metadata
+仍会发布 `account:manage`、`offline_access` 等 server-level capability。
 
 ## `client_id`
 

@@ -928,6 +928,34 @@ async fn authorize_code_contains_user_client_redirect_scope_pkce_metadata() {
 }
 
 #[tokio::test]
+async fn authorize_omitted_scope_defaults_to_client_allowed_scopes() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let token = seed_user_token(&db, &user);
+    let client = seed_client_with_redirects_and_scopes(
+        &db,
+        &user,
+        "https://example.com/callback",
+        "project:read runtime:read",
+    );
+    let service = Service::new(build_router(config, db.clone()));
+    let url = authorize_url(&[
+        ("response_type", "code"),
+        ("client_id", &client.client_id),
+        ("redirect_uri", "https://example.com/callback"),
+        ("state", "state-1"),
+        ("code_challenge", "challenge-1"),
+        ("code_challenge_method", "S256"),
+    ]);
+
+    let (_resp, _location, _parsed, code) = authorize_success(&service, &db, &url, &token).await;
+    let record = auth_code_by_plaintext(&db, &code);
+
+    assert_eq!(record.scopes, "runtime:read project:read");
+}
+
+#[tokio::test]
 async fn authorize_success_redirect_appends_with_ampersand_when_redirect_uri_has_query() {
     let config = test_config(oauth2_enabled());
     let (_tmp, db) = test_db();

@@ -32,7 +32,6 @@ pub(crate) async fn oauth_metadata(depot: &mut Depot, res: &mut Response) {
         "resource": resource,
         "authorization_servers": [issuer],
         "bearer_methods_supported": ["header"],
-        "scopes_supported": oauth_discovery_scopes_supported(),
         "resource_name": "WebCodex",
     });
 

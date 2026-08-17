@@ -98,7 +98,10 @@ WebCodex advertises PKCE `S256`; Grok can use PKCE together with
 `client_secret_post`. Do not select `none (PKCE only)` for a WebCodex OAuth
 client that has a client secret. `offline_access` is a protocol-level scope for
 refresh tokens and is intentionally not stored in the OAuth client's
-`allowed_scopes` permission list.
+`allowed_scopes` permission list. The MCP Protected Resource Metadata omits
+`scopes_supported` because pre-registered clients can have different scope
+ceilings. General-purpose MCP clients can therefore omit `scope` and let WebCodex
+default the authorization request to that client's registered `allowed_scopes`.
 
 When the WebCodex authorization page opens, sign in with a current user PAT
 (`wc_pat_*`) for the user whose authority Grok should receive. A Runner token

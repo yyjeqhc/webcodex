@@ -91,7 +91,10 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
 WebCodex 会公布 PKCE `S256`；Grok 可以同时使用 PKCE 与
 `client_secret_post`。对于已经注册 client secret 的 WebCodex OAuth client，不要选
 `none (PKCE only)`。`offline_access` 是用于 refresh token 的协议级 scope，不会写进
-OAuth client 的 `allowed_scopes` 权限列表。
+OAuth client 的 `allowed_scopes` 权限列表。MCP Protected Resource Metadata 会省略
+`scopes_supported`，因为不同的预注册 client 可能有不同的 scope 上限。通用 MCP 客户端
+因此可以省略 `scope`，由 WebCodex 把授权请求默认到该 client 已注册的
+`allowed_scopes`。
 
 打开 WebCodex Authorization 页面后，用希望 Grok 代表的用户当前有效 PAT
 （`wc_pat_*`）登录。Runner token（`wc_agent_*`）不是用户登录 token。最终签发的

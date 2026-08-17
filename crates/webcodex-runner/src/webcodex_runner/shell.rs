@@ -420,6 +420,84 @@ fn configured_process_path(
         .map_err(|error| format!("failed to build process PATH from shell.path_prepend: {error}"))
 }
 
+#[cfg(windows)]
+fn is_windows_wsl_bash_launcher(path: &Path) -> bool {
+    let normalized = path
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    normalized.ends_with("\\windows\\system32\\bash.exe")
+        || normalized.ends_with("\\windows\\sysnative\\bash.exe")
+        || normalized.ends_with("\\windows\\syswow64\\bash.exe")
+        || normalized.ends_with("\\microsoft\\windowsapps\\bash.exe")
+}
+
+#[cfg(windows)]
+fn resolve_windows_internal_posix_interpreter(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+) -> Result<OsString, String> {
+    let path = configured_process_path(shell, profile)?;
+
+    // Keep generated Git/workspace programs on the same native Windows toolchain
+    // as the `git.exe` visible to the Runner. Git for Windows normally exposes
+    // `cmd\\git.exe` on PATH while its Bash lives in `bin\\bash.exe`; MSYS/Cygwin
+    // layouts commonly keep both executables in the same `bin` directory.
+    if let Some(super::util::ResolvedProgram::Native(git)) =
+        super::util::resolve_program_in_path("git", &path)
+    {
+        let mut candidates = Vec::new();
+        if let Some(parent) = git.parent() {
+            let parent_name = parent
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            if parent_name.eq_ignore_ascii_case("cmd") {
+                if let Some(root) = parent.parent() {
+                    candidates.push(root.join("bin").join("bash.exe"));
+                    candidates.push(root.join("usr").join("bin").join("bash.exe"));
+                }
+            } else if parent_name.eq_ignore_ascii_case("bin") {
+                candidates.push(parent.join("bash.exe"));
+                if let Some(root) = parent.parent() {
+                    candidates.push(root.join("usr").join("bin").join("bash.exe"));
+                }
+            }
+        }
+        for candidate in candidates {
+            if is_windows_wsl_bash_launcher(&candidate) {
+                continue;
+            }
+            if let Some(super::util::ResolvedProgram::Native(resolved)) =
+                super::util::resolve_program_in_path(&candidate.to_string_lossy(), OsStr::new(""))
+            {
+                return Ok(resolved.into_os_string());
+            }
+        }
+    }
+
+    // A standalone native Windows Bash remains valid for non-Git internal work,
+    // but the Windows-provided `bash.exe` / app-execution alias is a WSL launcher.
+    // Entering WSL changes cwd/Git/environment semantics and is therefore not a
+    // valid runtime for Runner-generated programs over a native Windows project.
+    for directory in std::env::split_paths(&path) {
+        let candidate = directory.join("bash.exe");
+        if is_windows_wsl_bash_launcher(&candidate) {
+            continue;
+        }
+        if let Some(super::util::ResolvedProgram::Native(resolved)) =
+            super::util::resolve_program_in_path(&candidate.to_string_lossy(), OsStr::new(""))
+        {
+            return Ok(resolved.into_os_string());
+        }
+    }
+
+    Err(
+        "interpreter_unavailable: native Windows Bash interpreter is unavailable; WSL bash launchers are not valid for Runner-generated internal programs; command was not started"
+            .to_string(),
+    )
+}
+
 fn configured_script_interpreter(
     shell: &ShellConfig,
     profile: Option<&PreparedShellProfile>,
@@ -1912,22 +1990,19 @@ fn run_internal_posix_script_impl(
         } else {
             None
         };
-        let interpreter = match configured_script_interpreter(
-            shell,
-            profile.as_deref(),
-            ShellScriptLanguage::Bash,
-        ) {
-            Ok(interpreter) => interpreter,
-            Err(error) => {
-                return ShellCommandResult::not_started(CommandResult {
-                    exit_code: None,
-                    stdout: None,
-                    stderr: None,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(error),
-                })
-            }
-        };
+        let interpreter =
+            match resolve_windows_internal_posix_interpreter(shell, profile.as_deref()) {
+                Ok(interpreter) => interpreter,
+                Err(error) => {
+                    return ShellCommandResult::not_started(CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(start.elapsed().as_millis() as u64),
+                        error: Some(error),
+                    })
+                }
+            };
         let mut command = Command::new(interpreter);
         command.arg("-s");
         match profile.as_deref() {
@@ -2786,28 +2861,40 @@ mod runner_lifecycle_tests {
     }
 
     #[cfg(windows)]
-    #[test]
-    fn internal_posix_runtime_uses_bash_stdin_with_powershell_configured() {
-        let cwd = tempfile::tempdir().unwrap();
-        let projects_dir = tempfile::tempdir().unwrap();
-        let helper_dir = tempfile::tempdir().unwrap();
+    fn compile_internal_posix_test_executable(path: &Path) {
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/internal_posix_bash_helper.rs");
-        let bash = helper_dir.path().join("bash.exe");
         let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
         let compiled = Command::new(rustc)
             .arg("--edition=2021")
             .arg("--crate-name=webcodex_internal_posix_bash_helper")
             .arg(source)
             .arg("-o")
-            .arg(&bash)
+            .arg(path)
             .output()
-            .expect("compile internal POSIX bash helper");
+            .expect("compile internal POSIX test executable");
         assert!(
             compiled.status.success(),
-            "internal POSIX bash helper compilation failed: {}",
+            "internal POSIX test executable compilation failed: {}",
             String::from_utf8_lossy(&compiled.stderr)
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn internal_posix_interpreter_prefers_git_toolchain_over_wsl_bash() {
+        let root = tempfile::tempdir().unwrap();
+        let wsl_dir = root.path().join("Windows").join("System32");
+        let git_root = root.path().join("Git");
+        let git_cmd = git_root.join("cmd");
+        let git_bin = git_root.join("bin");
+        std::fs::create_dir_all(&wsl_dir).unwrap();
+        std::fs::create_dir_all(&git_cmd).unwrap();
+        std::fs::create_dir_all(&git_bin).unwrap();
+        compile_internal_posix_test_executable(&wsl_dir.join("bash.exe"));
+        compile_internal_posix_test_executable(&git_cmd.join("git.exe"));
+        let git_bash = git_bin.join("bash.exe");
+        compile_internal_posix_test_executable(&git_bash);
 
         let mut shell = ShellConfig {
             program: "powershell.exe".to_string(),
@@ -2816,8 +2903,58 @@ mod runner_lifecycle_tests {
         };
         shell.env.insert(
             "PATH".to_string(),
-            helper_dir.path().to_string_lossy().into_owned(),
+            std::env::join_paths([&wsl_dir, &git_cmd])
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
         );
+
+        assert_eq!(
+            resolve_windows_internal_posix_interpreter(&shell, None).unwrap(),
+            git_bash.into_os_string()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn internal_posix_interpreter_rejects_wsl_only_bash() {
+        let root = tempfile::tempdir().unwrap();
+        let wsl_dir = root.path().join("Windows").join("System32");
+        std::fs::create_dir_all(&wsl_dir).unwrap();
+        compile_internal_posix_test_executable(&wsl_dir.join("bash.exe"));
+        let mut shell = ShellConfig::default();
+        shell
+            .env
+            .insert("PATH".to_string(), wsl_dir.to_string_lossy().into_owned());
+        let error = resolve_windows_internal_posix_interpreter(&shell, None).unwrap_err();
+        assert!(
+            error.contains("WSL bash launchers are not valid"),
+            "{error}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn internal_posix_runtime_uses_git_bash_stdin_with_powershell_configured() {
+        let cwd = tempfile::tempdir().unwrap();
+        let projects_dir = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let git_root = root.path().join("Git");
+        let git_cmd = git_root.join("cmd");
+        let git_bin = git_root.join("bin");
+        std::fs::create_dir_all(&git_cmd).unwrap();
+        std::fs::create_dir_all(&git_bin).unwrap();
+        compile_internal_posix_test_executable(&git_cmd.join("git.exe"));
+        compile_internal_posix_test_executable(&git_bin.join("bash.exe"));
+
+        let mut shell = ShellConfig {
+            program: "powershell.exe".to_string(),
+            dialect: Some(ShellDialect::PowerShell),
+            ..Default::default()
+        };
+        shell
+            .env
+            .insert("PATH".to_string(), git_cmd.to_string_lossy().into_owned());
         let script =
             "n=0\nwhile [ \"$n\" -lt 1 ]; do n=$((n + 1)); done\nprintf 'internal-posix-ok\\n'\n";
         let result = run_internal_posix_script_with_profiles_in_sandbox_and_execution_state(

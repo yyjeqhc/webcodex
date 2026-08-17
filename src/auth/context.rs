@@ -148,3 +148,37 @@ impl AuthContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn principal_kind_vocabulary_is_stable_for_durable_attribution() {
+        let cases = [
+            (AuthKind::Bootstrap, None, "bootstrap"),
+            (AuthKind::ApiToken, None, "api_token"),
+            (AuthKind::ApiToken, Some("user"), "user"),
+            (AuthKind::AgentToken, Some("agent"), "agent_token"),
+            (
+                AuthKind::AccountCredential,
+                Some("account"),
+                "account_credential",
+            ),
+            (AuthKind::OAuth2Token, Some("oauth2_shared_key"), "oauth2"),
+            (AuthKind::SharedKey, Some("shared-key"), "shared-key"),
+            (
+                AuthKind::ProjectCredential,
+                Some("project"),
+                "project-credential",
+            ),
+            (AuthKind::OpenAnonymous, Some("open"), "open"),
+        ];
+
+        for (kind, token_kind, expected) in cases {
+            let mut auth = AuthContext::new(kind);
+            auth.token_kind = token_kind.map(str::to_string);
+            assert_eq!(auth.principal_kind(), expected, "kind: {kind:?}");
+        }
+    }
+}

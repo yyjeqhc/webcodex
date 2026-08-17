@@ -580,8 +580,10 @@ not “what is the coding task ledger for this repo work?”.
 
 - Group HTTP Action / REST audit events under one audit session
 - Persist action audit records (endpoints, status, durations, redacted summaries)
+- Snapshot non-secret caller attribution at event write time: canonical credential
+  kind, optional stable user id, and OAuth-only client id
 - Idle open-session reuse and explicit close for operator audit views
-- Aggregate stats for read-only audit APIs
+- Aggregate stats for read-only audit APIs, with explicit bounded-scan coverage
 
 ### Identity
 
@@ -590,6 +592,8 @@ not “what is the coding task ledger for this repo work?”.
 | ID form | UUID string (or client-supplied id via headers/query), **not** `wc_sess_*` |
 | Request affinity | Headers `x-action-session-id` / `x-webcodex-session-id`, or query `action_session_id` |
 | Default creation | Server may create a new UUID when no open recent session is reused |
+| Durable caller attribution | `principal_kind`, optional `principal_user_id`, OAuth-only `oauth_client_id`; legacy rows remain `NULL` and are never inferred from target project or session |
+| Stats exposure | `/api/audit/stats` aggregates credential kinds and OAuth client usage; ordinary `/api/audit/session` event views do not expose principal/user/client attribution fields |
 
 ### Storage and ownership
 
@@ -606,8 +610,12 @@ not “what is the coding task ledger for this repo work?”.
    from headers/query.
 2. `get_or_create_active_session` attaches the event to an existing open session
    (explicit id, or recent idle-open session) or creates a new one.
-3. Events are written to SQLite; session aggregate counters update.
+3. Events are written to SQLite; session aggregate counters update. Caller
+   attribution is snapshotted from the authenticated request context before the
+   write and never reconstructed later from execution targets.
 4. Operator APIs list sessions, fetch one session with events, or compute stats.
+   Stats report scanned/available event coverage and fail on database read errors
+   instead of silently presenting a partial aggregate as complete.
 5. Sessions may be closed (`status = closed`); idle open sessions time out for
    reuse purposes (`ACTION_SESSION_IDLE_TIMEOUT_SECS`).
 
@@ -708,7 +716,8 @@ renamed without an explicit compatibility migration:
 ### JSON / type shapes (illustrative)
 
 - Audit session records (`session_id`, `status`, counters, timestamps, …)
-- Audit event views and stats aggregates
+- Audit event views (without principal attribution fields) and stats aggregates,
+  including coverage plus credential-kind/OAuth-client usage summaries
 - Workflow tool fields: `session_id`, `recording_session_id`, session mode
   values such as `normal` / `inspect` / `read_only`
 - Error kinds such as `unknown_session_id`

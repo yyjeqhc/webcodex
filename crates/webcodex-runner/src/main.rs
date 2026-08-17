@@ -1880,9 +1880,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Semantic native scroll-to-visible is independently fenced for rolling upgrades;
     // existing computer_control support never implies it.
     capabilities.computer_scroll_to_element = cfg!(any(target_os = "macos", windows));
-    // Closed key input is a separate effect/wire capability. It is currently
-    // implemented only by the macOS Runner and is never implied by control.
-    capabilities.computer_key_input = cfg!(target_os = "macos");
+    // Closed key input is a separate effect/wire capability implemented by the
+    // native macOS and Windows paths and is never implied by control.
+    capabilities.computer_key_input = cfg!(any(target_os = "macos", windows));
     // Exact window activation is a separate effect/wire capability. It is
     // independently advertised by native macOS and Windows implementations.
     capabilities.computer_window_activate = cfg!(any(target_os = "macos", windows));

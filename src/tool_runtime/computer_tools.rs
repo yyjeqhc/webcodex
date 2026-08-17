@@ -1832,7 +1832,7 @@ fn validate_computer_key_input(
     let allowed = ["platform", "surface_id", "key", "modifiers", "success"];
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || !is_native_accessibility_platform(output.get("platform").and_then(Value::as_str))
         || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
         || output.get("key").and_then(Value::as_str) != Some(expected_key)
         || output.get("modifiers") != Some(expected_modifiers)
@@ -2587,6 +2587,24 @@ mod tests {
         assert!(!serde_json::to_string(&unknown.output)
             .unwrap()
             .contains("MUST_NOT_SURVIVE"));
+    }
+
+    #[test]
+    fn computer_key_input_validator_accepts_closed_windows_metadata() {
+        let expected_modifiers = json!(["shift"]);
+        let valid = validate_computer_key_input(
+            json!({
+                "platform": "windows",
+                "surface_id": "surface_test",
+                "key": "tab",
+                "modifiers": ["shift"],
+                "success": true
+            }),
+            "surface_test",
+            "tab",
+            &expected_modifiers,
+        );
+        assert!(valid.success, "{:?}", valid.output);
     }
 
     #[test]

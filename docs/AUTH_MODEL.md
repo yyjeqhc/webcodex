@@ -250,7 +250,8 @@ on Windows only when that element supports it; callers do not supply wheel
 deltas, direction, distance, or coordinates. `computer_key_input`
 is a separate closed effect for Enter, Escape, Tab, arrows, paging/home/end plus
 bounded modifiers. The exact `surface_id` must still be the frontmost focused
-window, and the Runner does not focus or activate it implicitly. Ordinary text,
+window, and the Runner does not focus or activate it implicitly. On Windows,
+`option` maps to Alt while `command` fails closed before input. Ordinary text,
 arbitrary characters/keycodes, repeat counts, or held-key state are not accepted.
 `computer_input_text` writes bounded text through native AXValue or Windows UIA ValuePattern only to an already
 focused, enabled, writable, empty, non-secure, unprotected supported text element; Windows also requires the exact surface to already be foreground.
@@ -258,10 +259,12 @@ There is no coordinate-click, generic wheel, open-ended key input, dragging,
 clipboard, app-launch, AppleScript, shell, paste, or implicit-focus fallback in this contract. A
 lost response after an effect may have been dispatched is reported as an
 unknown outcome and must be reconciled by observing current UI state before any
-retry. A native key press is delivered as two adjacent PID-targeted key-down and
-key-up posts after all preflight work is complete; Quartz exposes no batch post,
-so Runner termination in the narrow interval between them is a partial
-`outcome_unknown`, not a caller-controlled held-key mode.
+retry. On macOS a native key press is delivered as two adjacent PID-targeted
+Quartz key-down/key-up posts after all preflight work is complete; termination
+between them is a partial `outcome_unknown`. On Windows the complete modifier/key
+sequence is prepared first and sent in one `SendInput` call only after the exact
+foreground window and bounded UIA focused-element ancestry are revalidated;
+zero or partial insertion remains `outcome_unknown`.
 
 Scopes are only one layer of the check. After target discovery, observation and
 effect calls name one exact Runner `client_id`, and the Server also requires

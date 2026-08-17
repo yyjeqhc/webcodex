@@ -2193,6 +2193,8 @@ mod tests {
 
 #[cfg(any(target_os = "macos", windows))]
 mod platform {
+    #[cfg(any(target_os = "macos", windows))]
+    use super::validate_key_input;
     use super::{
         bounded_text, ensure_raw_capture_bound, validate_input_text, AccessibilityTreeResult,
         ComputerAction, ElementRecord, PlatformWindow, SurfaceRecord,
@@ -2200,8 +2202,8 @@ mod platform {
     #[cfg(target_os = "macos")]
     use super::{
         ensure_correlated_fingerprint, is_secure_text_fingerprint, select_exact_ax_window_index,
-        validate_element_state_target, validate_key_input, validate_key_modifiers,
-        validate_text_input_preflight, validate_text_input_target, AxObservationDeadline,
+        validate_element_state_target, validate_key_modifiers, validate_text_input_preflight,
+        validate_text_input_target, AxObservationDeadline,
     };
     #[cfg(any(target_os = "macos", windows))]
     use super::{is_supported_text_input_fingerprint, ElementFingerprint};
@@ -2262,6 +2264,12 @@ mod platform {
                 UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValuePatternId,
                 UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID, UIA_E_ELEMENTNOTAVAILABLE,
                 UIA_E_NOTSUPPORTED, UIA_PATTERN_ID,
+            },
+            UI::Input::KeyboardAndMouse::{
+                SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+                KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_END,
+                VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT,
+                VK_SHIFT, VK_TAB, VK_UP,
             },
             UI::WindowsAndMessaging::{GetForegroundWindow, IsIconic, ShowWindowAsync, SW_RESTORE},
         },
@@ -2947,6 +2955,8 @@ mod platform {
         "accessibility_failed: Windows UI Automation observation deadline exceeded";
     #[cfg(windows)]
     const MAX_UIA_RUNTIME_ID_ELEMENTS: usize = 64;
+    #[cfg(windows)]
+    const MAX_UIA_FOCUS_ANCESTORS: usize = 64;
 
     #[cfg(windows)]
     struct UiaObservationDeadline {
@@ -3116,6 +3126,79 @@ mod platform {
                 &error,
             )),
         }
+    }
+
+    #[cfg(windows)]
+    fn windows_key_mapping(key: &str) -> Result<(VIRTUAL_KEY, bool), String> {
+        match key {
+            "enter" => Ok((VK_RETURN, false)),
+            "escape" => Ok((VK_ESCAPE, false)),
+            "tab" => Ok((VK_TAB, false)),
+            "arrow_up" => Ok((VK_UP, true)),
+            "arrow_down" => Ok((VK_DOWN, true)),
+            "arrow_left" => Ok((VK_LEFT, true)),
+            "arrow_right" => Ok((VK_RIGHT, true)),
+            "page_up" => Ok((VK_PRIOR, true)),
+            "page_down" => Ok((VK_NEXT, true)),
+            "home" => Ok((VK_HOME, true)),
+            "end" => Ok((VK_END, true)),
+            _ => Err("invalid_request: computer key is outside the closed vocabulary".to_string()),
+        }
+    }
+
+    #[cfg(windows)]
+    fn windows_modifier_key(modifier: &str) -> Result<VIRTUAL_KEY, String> {
+        match modifier {
+            "shift" => Ok(VK_SHIFT),
+            "control" => Ok(VK_CONTROL),
+            "option" => Ok(VK_MENU),
+            "command" => Err(
+                "key_input_failed: command modifier has no safe Windows mapping in this closed input slice"
+                    .to_string(),
+            ),
+            _ => Err("invalid_request: computer key input modifier is outside the closed vocabulary".to_string()),
+        }
+    }
+
+    #[cfg(windows)]
+    fn windows_keyboard_input(key: VIRTUAL_KEY, key_up: bool, extended: bool) -> INPUT {
+        let flags = KEYBD_EVENT_FLAGS(
+            if extended { KEYEVENTF_EXTENDEDKEY.0 } else { 0 }
+                | if key_up { KEYEVENTF_KEYUP.0 } else { 0 },
+        );
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: key,
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    #[cfg(windows)]
+    fn windows_key_input_plan(key: &str, modifiers: &[String]) -> Result<Vec<INPUT>, String> {
+        validate_key_input(key, modifiers)?;
+        let (key_code, key_extended) = windows_key_mapping(key)?;
+        let mut modifier_keys = Vec::with_capacity(modifiers.len());
+        for modifier in modifiers {
+            modifier_keys.push(windows_modifier_key(modifier)?);
+        }
+
+        let mut inputs = Vec::with_capacity(modifier_keys.len() * 2 + 2);
+        for modifier in &modifier_keys {
+            inputs.push(windows_keyboard_input(*modifier, false, false));
+        }
+        inputs.push(windows_keyboard_input(key_code, false, key_extended));
+        inputs.push(windows_keyboard_input(key_code, true, key_extended));
+        for modifier in modifier_keys.iter().rev() {
+            inputs.push(windows_keyboard_input(*modifier, true, false));
+        }
+        Ok(inputs)
     }
 
     #[cfg(windows)]
@@ -3440,6 +3523,84 @@ mod platform {
             );
         }
         Ok(root)
+    }
+
+    #[cfg(windows)]
+    fn validate_uia_focused_element_root(
+        context: &UiaContext,
+        root: &IUIAutomationElement,
+    ) -> Result<(), String> {
+        context.deadline.ensure_remaining()?;
+        let focused = optional_uia_element(
+            unsafe { context.automation.GetFocusedElement() },
+            "IUIAutomation::GetFocusedElement",
+        )?
+        .ok_or_else(|| {
+            "key_input_failed: Windows UI Automation has no focused element".to_string()
+        })?;
+        let mut current = focused;
+
+        for depth in 0..=MAX_UIA_FOCUS_ANCESTORS {
+            context.deadline.ensure_remaining()?;
+            let password = unsafe { current.CurrentIsPassword() }
+                .map_err(|error| uia_error("IUIAutomationElement::CurrentIsPassword", &error))?
+                .as_bool();
+            if password {
+                return Err(
+                    "permission_denied: protected or password UI Automation content cannot receive key input"
+                        .to_string(),
+                );
+            }
+
+            context.deadline.ensure_remaining()?;
+            let same_root = unsafe { context.automation.CompareElements(root, &current) }
+                .map_err(|error| uia_error("IUIAutomation::CompareElements", &error))?
+                .as_bool();
+            if same_root {
+                return Ok(());
+            }
+            if depth == MAX_UIA_FOCUS_ANCESTORS {
+                break;
+            }
+
+            context.deadline.ensure_remaining()?;
+            current = optional_uia_element(
+                unsafe { context.walker.GetParentElement(&current) },
+                "IUIAutomationTreeWalker::GetParentElement",
+            )?
+            .ok_or_else(|| {
+                "key_input_failed: focused UI Automation element is outside the exact window root"
+                    .to_string()
+            })?;
+        }
+
+        Err(
+            "key_input_failed: focused UI Automation ancestry exceeds the bounded exact-window check"
+                .to_string(),
+        )
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_key_input_target(
+        context: &UiaContext,
+        surface: &SurfaceRecord,
+        root: &IUIAutomationElement,
+    ) -> Result<(), String> {
+        let hwnd = win_hwnd(surface.native_id)?;
+        if unsafe { GetForegroundWindow() != hwnd } {
+            return Err(
+                "key_input_failed: exact Windows surface must already be the foreground window"
+                    .to_string(),
+            );
+        }
+        validate_uia_focused_element_root(context, root)?;
+        if unsafe { GetForegroundWindow() != hwnd } {
+            return Err(
+                "key_input_failed: exact Windows surface lost foreground during UI Automation focus preflight"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     #[cfg(windows)]
@@ -4262,6 +4423,24 @@ mod platform {
     }
 
     #[cfg(windows)]
+    pub(super) fn windows_key_input_attempt_error(operation: &str) -> String {
+        format!(
+            "outcome_unknown: {operation} returned after Windows native key input was attempted"
+        )
+    }
+
+    #[cfg(windows)]
+    fn validate_windows_send_input_count(inserted: u32, expected: u32) -> Result<(), String> {
+        if inserted == expected {
+            Ok(())
+        } else {
+            Err(windows_key_input_attempt_error(&format!(
+                "SendInput inserted {inserted} of {expected} prepared keyboard events"
+            )))
+        }
+    }
+
+    #[cfg(windows)]
     pub(super) fn windows_text_input_attempt_error(operation: &str) -> String {
         format!(
             "outcome_unknown: {operation} returned after the exact Windows UI Automation text write was attempted"
@@ -4526,12 +4705,44 @@ mod platform {
 
     #[cfg(windows)]
     pub(super) fn key_input(
-        _surface_id: &str,
-        _surface: &SurfaceRecord,
-        _key: &str,
-        _modifiers: &[String],
+        surface_id: &str,
+        surface: &SurfaceRecord,
+        key: &str,
+        modifiers: &[String],
     ) -> Result<Value, String> {
-        Err("unsupported_platform: computer key input is unavailable on this platform".to_string())
+        validate_key_input(key, modifiers)?;
+        let context = UiaContext::new()?;
+
+        // Prove exact foreground/focus ownership before preparing the native input.
+        let root = exact_uia_window(&context, surface)?;
+        validate_windows_key_input_target(&context, surface, &root)?;
+
+        // Prepare the complete bounded input sequence before the first native effect.
+        // `command` deliberately fails here instead of being mapped to the Windows key.
+        let inputs = windows_key_input_plan(key, modifiers)?;
+        let expected_count = u32::try_from(inputs.len())
+            .map_err(|_| "key_input_failed: Windows key input sequence is too large".to_string())?;
+        let input_size = i32::try_from(std::mem::size_of::<INPUT>())
+            .map_err(|_| "key_input_failed: Windows INPUT size is invalid".to_string())?;
+
+        // Revalidate the exact surface/root and focus as close to SendInput as practical.
+        let root = exact_uia_window(&context, surface)?;
+        validate_windows_key_input_target(&context, surface, &root)?;
+        context.deadline.ensure_remaining()?;
+
+        let inserted = unsafe { SendInput(&inputs, input_size) };
+        validate_windows_send_input_count(inserted, expected_count)?;
+        if let Err(error) = context.deadline.ensure_remaining() {
+            return Err(windows_key_input_attempt_error(&error));
+        }
+
+        Ok(json!({
+            "platform": "windows",
+            "surface_id": surface_id,
+            "key": key,
+            "modifiers": modifiers,
+            "success": true,
+        }))
     }
 
     #[cfg(windows)]
@@ -5021,6 +5232,42 @@ mod platform {
             .map(|value| value.as_bool())
             .map_err(|error| uia_error("IUIAutomationElement::CurrentIsOffscreen", &error))
     }
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_key_input_plan(
+        key: &str,
+        modifiers: &[String],
+    ) -> Result<Vec<(u16, bool, bool)>, String> {
+        windows_key_input_plan(key, modifiers).map(|inputs| {
+            inputs
+                .iter()
+                .map(|input| {
+                    let keyboard = unsafe { input.Anonymous.ki };
+                    (
+                        keyboard.wVk.0,
+                        keyboard.dwFlags.contains(KEYEVENTF_KEYUP),
+                        keyboard.dwFlags.contains(KEYEVENTF_EXTENDEDKEY),
+                    )
+                })
+                .collect()
+        })
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_send_input_count(
+        inserted: u32,
+        expected: u32,
+    ) -> Result<(), String> {
+        validate_windows_send_input_count(inserted, expected)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(super) fn test_windows_focused_element_belongs_to_surface(
+        surface: &SurfaceRecord,
+    ) -> Result<(), String> {
+        let context = UiaContext::new()?;
+        let root = exact_uia_window(&context, surface)?;
+        validate_uia_focused_element_root(&context, &root)
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -5047,6 +5294,7 @@ mod windows_uia_tests {
     }
 
     const WINDOWS_CONTROL_FIXTURE_TITLE: &str = "WebCodex Windows UIA Control Smoke";
+    const WINDOWS_FOREGROUND_PROBE_TITLE: &str = "WebCodex Windows UIA Foreground Probe";
 
     struct WindowsControlFixture {
         child: Child,
@@ -5063,16 +5311,19 @@ $form.Text = 'WebCodex Windows UIA Control Smoke'
 $form.StartPosition = 'Manual'
 $form.Location = New-Object System.Drawing.Point(120, 120)
 $form.Size = New-Object System.Drawing.Size(820, 360)
+$form.TopMost = $true
 $input = New-Object System.Windows.Forms.TextBox
 $input.Name = 'SmokeInput'
 $input.AccessibleName = 'Smoke input'
 $input.Location = New-Object System.Drawing.Point(24, 44)
 $input.Size = New-Object System.Drawing.Size(280, 28)
+$input.TabIndex = 0
 $button = New-Object System.Windows.Forms.Button
 $button.Name = 'SmokePress'
 $button.Text = 'Smoke press'
 $button.Location = New-Object System.Drawing.Point(24, 96)
 $button.Size = New-Object System.Drawing.Size(140, 32)
+$button.TabIndex = 1
 $status = New-Object System.Windows.Forms.Label
 $status.Name = 'SmokeStatus'
 $status.Text = 'ready'
@@ -5084,6 +5335,7 @@ $password.AccessibleName = 'Protected input'
 $password.UseSystemPasswordChar = $true
 $password.Location = New-Object System.Drawing.Point(24, 196)
 $password.Size = New-Object System.Drawing.Size(280, 28)
+$password.TabIndex = 2
 $scrollList = New-Object System.Windows.Forms.ListView
 $scrollList.Name = 'ScrollList'
 $scrollList.AccessibleName = 'Scroll list'
@@ -5091,6 +5343,7 @@ $scrollList.View = [System.Windows.Forms.View]::List
 $scrollList.Scrollable = $true
 $scrollList.Location = New-Object System.Drawing.Point(500, 44)
 $scrollList.Size = New-Object System.Drawing.Size(240, 92)
+$scrollList.TabIndex = 3
 for ($i = 0; $i -lt 40; $i++) {
     $item = New-Object System.Windows.Forms.ListViewItem(('Scroll item {0:D2}' -f $i))
     [void]$scrollList.Items.Add($item)
@@ -5156,6 +5409,7 @@ $form.Controls.Add($scrollList)
 $form.Controls.Add($script:twinPrimary)
 $form.Controls.Add($script:twinSecondary)
 $form.Controls.Add($replaceTwins)
+$form.Add_Shown({ $form.Activate(); $input.Focus() })
 [System.Windows.Forms.Application]::Run($form)
 "#;
             let child = Command::new("powershell.exe")
@@ -5172,6 +5426,43 @@ $form.Controls.Add($replaceTwins)
                 .stderr(Stdio::null())
                 .spawn()
                 .expect("launch private WinForms control fixture");
+            Self { child }
+        }
+
+        fn start_foreground_probe() -> Self {
+            let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'WebCodex Windows UIA Foreground Probe'
+$form.StartPosition = 'Manual'
+$form.Location = New-Object System.Drawing.Point(980, 120)
+$form.Size = New-Object System.Drawing.Size(320, 180)
+$form.TopMost = $true
+$button = New-Object System.Windows.Forms.Button
+$button.Text = 'Foreground probe'
+$button.AccessibleName = 'Foreground probe'
+$button.Location = New-Object System.Drawing.Point(24, 44)
+$button.Size = New-Object System.Drawing.Size(180, 32)
+$form.Controls.Add($button)
+$form.Add_Shown({ $form.Activate(); $button.Focus() })
+[System.Windows.Forms.Application]::Run($form)
+"#;
+            let child = Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-STA",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    script,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("launch private WinForms foreground probe");
             Self { child }
         }
     }
@@ -5235,6 +5526,112 @@ $form.Controls.Add($replaceTwins)
         let error = platform::windows_scroll_attempt_error(
             "IUIAutomationScrollItemPattern::ScrollIntoView",
         );
+        assert!(error.starts_with("outcome_unknown:"), "{error}");
+    }
+
+    #[test]
+    fn computer_windows_key_input_native_plan_is_closed_and_releases_modifiers_in_reverse() {
+        for (key, expected_vk) in [
+            ("enter", 13u16),
+            ("escape", 27),
+            ("tab", 9),
+            ("arrow_up", 38),
+            ("arrow_down", 40),
+            ("arrow_left", 37),
+            ("arrow_right", 39),
+            ("page_up", 33),
+            ("page_down", 34),
+            ("home", 36),
+            ("end", 35),
+        ] {
+            assert_eq!(
+                platform::test_windows_key_input_plan(key, &[]).unwrap(),
+                vec![
+                    (
+                        expected_vk,
+                        false,
+                        matches!(
+                            key,
+                            "arrow_up"
+                                | "arrow_down"
+                                | "arrow_left"
+                                | "arrow_right"
+                                | "page_up"
+                                | "page_down"
+                                | "home"
+                                | "end"
+                        )
+                    ),
+                    (
+                        expected_vk,
+                        true,
+                        matches!(
+                            key,
+                            "arrow_up"
+                                | "arrow_down"
+                                | "arrow_left"
+                                | "arrow_right"
+                                | "page_up"
+                                | "page_down"
+                                | "home"
+                                | "end"
+                        )
+                    ),
+                ],
+                "{key}"
+            );
+        }
+        assert!(platform::test_windows_key_input_plan("a", &[]).is_err());
+
+        let option = platform::test_windows_key_input_plan("tab", &["option".to_string()])
+            .expect("Windows option modifier must map to Alt");
+        assert_eq!(
+            option,
+            vec![
+                (18, false, false),
+                (9, false, false),
+                (9, true, false),
+                (18, true, false),
+            ]
+        );
+
+        let sequence = platform::test_windows_key_input_plan(
+            "tab",
+            &[
+                "shift".to_string(),
+                "control".to_string(),
+                "option".to_string(),
+            ],
+        )
+        .expect("prepare complete Windows modifier/key sequence");
+        assert_eq!(
+            sequence,
+            vec![
+                (16, false, false),
+                (17, false, false),
+                (18, false, false),
+                (9, false, false),
+                (9, true, false),
+                (18, true, false),
+                (17, true, false),
+                (16, true, false),
+            ]
+        );
+
+        let command = platform::test_windows_key_input_plan("tab", &["command".to_string()])
+            .expect_err("Windows command modifier must fail before native input");
+        assert!(command.starts_with("key_input_failed:"), "{command}");
+    }
+
+    #[test]
+    fn computer_windows_key_input_partial_or_failed_injection_is_unknown() {
+        assert!(platform::test_windows_send_input_count(2, 2).is_ok());
+        for inserted in [0, 1] {
+            let error = platform::test_windows_send_input_count(inserted, 2)
+                .expect_err("partial or failed SendInput must remain uncertain");
+            assert!(error.starts_with("outcome_unknown:"), "{error}");
+        }
+        let error = platform::windows_key_input_attempt_error("Windows input deadline");
         assert!(error.starts_with("outcome_unknown:"), "{error}");
     }
 
@@ -5546,6 +5943,221 @@ $form.Controls.Add($replaceTwins)
                 .expect("read reconciled UIA offscreen state"),
             "ScrollIntoView must reconcile the exact item as visible"
         );
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop; creates and closes only private WinForms key-input fixtures"]
+    fn computer_windows_key_input_fixture_live_smoke() {
+        let mut fixture = WindowsControlFixture::start();
+        let candidate = (0..500)
+            .find_map(|_| {
+                if let Some(status) = fixture
+                    .child
+                    .try_wait()
+                    .expect("query private WinForms key-input fixture process")
+                {
+                    panic!("private WinForms key-input fixture exited before discovery: {status}");
+                }
+                let candidate = platform::list_windows(4096)
+                    .expect("list Windows windows for key-input fixture")
+                    .into_iter()
+                    .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE);
+                if candidate.is_none() {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                candidate
+            })
+            .expect("discover private WinForms key-input fixture");
+        let record = surface_record(candidate);
+        let hwnd = platform::win_hwnd(record.native_id).expect("resolve key fixture HWND");
+        let foreground_deadline = Instant::now() + Duration::from_secs(2);
+        while unsafe { GetForegroundWindow() } != hwnd {
+            assert!(
+                Instant::now() < foreground_deadline,
+                "private key fixture must self-activate before key-input validation"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        platform::activate_window("surface_windows_key_fixture_activate", &record)
+            .expect("reconcile already-active private WinForms key-input fixture");
+
+        let candidate = platform::list_windows(4096)
+            .expect("re-list Windows windows after key-input fixture activation")
+            .into_iter()
+            .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE)
+            .expect("re-observe private WinForms key-input fixture");
+        let record = surface_record(candidate);
+        let surface_id = "surface_windows_key_fixture";
+        let tree = platform::accessibility_tree(surface_id, &record, 4, 96)
+            .expect("read private WinForms key-input fixture UIA tree");
+        let (edit_id, edit) = tree
+            .elements
+            .iter()
+            .find(|(_, element)| {
+                element.target_fingerprint().is_some_and(|fingerprint| {
+                    fingerprint.identifier.as_deref() == Some("SmokeInput")
+                        && !fingerprint.protected
+                })
+            })
+            .expect("fixture exposes exact SmokeInput element");
+        platform::control(surface_id, edit_id, &record, edit, ComputerAction::Focus)
+            .expect("focus exact private SmokeInput before key input");
+
+        let command = platform::key_input(surface_id, &record, "tab", &["command".to_string()])
+            .expect_err("Windows command modifier must fail before SendInput");
+        assert!(command.starts_with("key_input_failed:"), "{command}");
+        let after_command = platform::accessibility_tree(surface_id, &record, 4, 96)
+            .expect("re-observe fixture after rejected command modifier");
+        assert!(
+            after_command.output["nodes"]
+                .as_array()
+                .is_some_and(|nodes| nodes
+                    .iter()
+                    .any(|node| { node["focused"] == true && node["title"] == "Smoke input" })),
+            "rejected command modifier must not move focus"
+        );
+
+        let tab = platform::key_input(surface_id, &record, "tab", &[])
+            .expect("send one closed Tab to the exact foreground fixture");
+        assert_eq!(tab["platform"], "windows");
+        assert_eq!(tab["surface_id"], surface_id);
+        assert_eq!(tab["key"], "tab");
+        assert_eq!(tab["modifiers"], json!([]));
+        assert_eq!(tab["success"], true);
+
+        let button_focus_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let refreshed = platform::accessibility_tree(surface_id, &record, 4, 96)
+                .expect("re-observe fixture after Tab");
+            if refreshed.output["nodes"].as_array().is_some_and(|nodes| {
+                nodes
+                    .iter()
+                    .any(|node| node["focused"] == true && node["title"] == "Smoke press")
+            }) {
+                break;
+            }
+            assert!(
+                Instant::now() < button_focus_deadline,
+                "Tab must move focus to the fixture-only button"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let shift_tab = platform::key_input(surface_id, &record, "tab", &["shift".to_string()])
+            .expect("send Shift+Tab with bounded modifier lifetime");
+        assert_eq!(shift_tab["modifiers"], json!(["shift"]));
+        let input_focus_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let refreshed = platform::accessibility_tree(surface_id, &record, 4, 96)
+                .expect("re-observe fixture after Shift+Tab");
+            if refreshed.output["nodes"].as_array().is_some_and(|nodes| {
+                nodes
+                    .iter()
+                    .any(|node| node["focused"] == true && node["title"] == "Smoke input")
+            }) {
+                break;
+            }
+            assert!(
+                Instant::now() < input_focus_deadline,
+                "Shift+Tab must return focus to the fixture input"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        platform::key_input(surface_id, &record, "tab", &[])
+            .expect("return focus to the fixture button");
+        platform::key_input(surface_id, &record, "enter", &[])
+            .expect("send Enter to the fixture-only focused button");
+        let click_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let refreshed = platform::accessibility_tree(surface_id, &record, 4, 96)
+                .expect("re-observe fixture after Enter");
+            if refreshed.output["nodes"]
+                .as_array()
+                .is_some_and(|nodes| nodes.iter().any(|node| node["title"] == "clicked"))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < click_deadline,
+                "Enter must invoke only the fixture-local focused button"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        platform::key_input(surface_id, &record, "tab", &[])
+            .expect("move fixture focus from button to password field");
+        let protected_focus_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let refreshed = platform::accessibility_tree(surface_id, &record, 4, 96)
+                .expect("re-observe fixture after moving to password field");
+            let nodes = refreshed.output["nodes"]
+                .as_array()
+                .expect("fixture observation nodes are an array");
+            let protected_focused =
+                refreshed
+                    .elements
+                    .iter()
+                    .zip(nodes.iter())
+                    .any(|((_, element), node)| {
+                        element
+                            .target_fingerprint()
+                            .is_some_and(|fingerprint| fingerprint.protected)
+                            && node["focused"] == true
+                    });
+            if protected_focused {
+                break;
+            }
+            assert!(
+                Instant::now() < protected_focus_deadline,
+                "Tab must reach the fixture password field"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let protected = platform::key_input(surface_id, &record, "escape", &[])
+            .expect_err("protected focused content must reject key input before SendInput");
+        assert!(protected.starts_with("permission_denied:"), "{protected}");
+
+        let mut foreground_probe = WindowsControlFixture::start_foreground_probe();
+        let probe_candidate = (0..500)
+            .find_map(|_| {
+                if let Some(status) = foreground_probe
+                    .child
+                    .try_wait()
+                    .expect("query private foreground probe process")
+                {
+                    panic!("private foreground probe exited before discovery: {status}");
+                }
+                let candidate = platform::list_windows(4096)
+                    .expect("list Windows windows for foreground probe")
+                    .into_iter()
+                    .find(|candidate| candidate.title == WINDOWS_FOREGROUND_PROBE_TITLE);
+                if candidate.is_none() {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                candidate
+            })
+            .expect("discover private foreground probe");
+        let probe_record = surface_record(probe_candidate);
+        let probe_hwnd =
+            platform::win_hwnd(probe_record.native_id).expect("resolve foreground probe HWND");
+        let probe_foreground_deadline = Instant::now() + Duration::from_secs(2);
+        while unsafe { GetForegroundWindow() } != probe_hwnd {
+            assert!(
+                Instant::now() < probe_foreground_deadline,
+                "private foreground probe must self-activate before background rejection"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        platform::activate_window("surface_windows_key_foreground_probe", &probe_record)
+            .expect("reconcile already-active private foreground probe");
+
+        let outside = platform::test_windows_focused_element_belongs_to_surface(&record)
+            .expect_err("focus in another private root must fail exact-root ancestry");
+        assert!(outside.starts_with("key_input_failed:"), "{outside}");
+        let background = platform::key_input(surface_id, &record, "escape", &[])
+            .expect_err("background exact surface must fail before SendInput");
+        assert!(background.starts_with("key_input_failed:"), "{background}");
     }
 
     #[test]

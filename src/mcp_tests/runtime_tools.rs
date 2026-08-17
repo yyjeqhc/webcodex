@@ -5,31 +5,6 @@ use super::*;
 // =========================================================================
 
 #[tokio::test]
-async fn mcp_tools_list_includes_runtime_status() {
-    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
-    let outcome = handle_mcp_request(
-        &runtime,
-        rpc("tools/list", Some(Value::from(10)), json!({})),
-        None,
-    )
-    .await;
-    let value = match outcome {
-        McpOutcome::Ok(v) => v,
-        other => panic!("expected Ok, got {:?}", other),
-    };
-    let tools = value["result"]["tools"].as_array().unwrap();
-    let names: Vec<String> = tools
-        .iter()
-        .map(|t| t["name"].as_str().unwrap().to_string())
-        .collect();
-    assert!(
-        names.iter().any(|n| n == "runtime_status"),
-        "MCP tools/list must include runtime_status: {:?}",
-        names
-    );
-}
-
-#[tokio::test]
 async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let outcome = handle_mcp_request(

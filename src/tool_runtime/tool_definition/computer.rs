@@ -1,15 +1,15 @@
 use super::AgentCapability::{
     ComputerAccessibilityObserve, ComputerApplicationDiscovery, ComputerApplicationLaunch,
-    ComputerControl, ComputerElementState, ComputerKeyInput, ComputerObserve,
-    ComputerScrollToElement, ComputerTextInput, ComputerWindowActivate, FileWrite,
+    ComputerControl, ComputerDisplayObserve, ComputerElementState, ComputerKeyInput,
+    ComputerObserve, ComputerScrollToElement, ComputerTextInput, ComputerWindowActivate, FileWrite,
 };
 use super::ToolVisibility::ModelVisible;
 use super::{def, unit_arguments, ToolDefinition, TOOL_CATEGORY_COMPUTER};
 use crate::tool_runtime::metadata::{
     ToolPathHint::{Artifact, None},
     ToolRisk::{ComputerControl as ComputerControlRisk, ProjectWrite, ReadOnly},
-    COMPUTER_CONTROL, COMPUTER_LAUNCH, COMPUTER_READ, PROJECT_WRITE, TOOL_PROVIDER_AGENT,
-    TOOL_PROVIDER_CONTROL,
+    COMPUTER_CONTROL, COMPUTER_DISPLAY_READ, COMPUTER_LAUNCH, COMPUTER_READ, PROJECT_WRITE,
+    TOOL_PROVIDER_AGENT, TOOL_PROVIDER_CONTROL,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -34,6 +34,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(COMPUTER_READ),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_list_displays",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerDisplayObserve),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(COMPUTER_DISPLAY_READ),
         false,
         None,
         false,
@@ -190,6 +203,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         TOOL_PROVIDER_AGENT,
         ReadOnly,
         Some(COMPUTER_READ),
+        false,
+        None,
+        false,
+        false,
+    ),
+    def(
+        "computer_snapshot_display",
+        ModelVisible,
+        TOOL_CATEGORY_COMPUTER,
+        Some(ComputerDisplayObserve),
+        TOOL_PROVIDER_AGENT,
+        ReadOnly,
+        Some(COMPUTER_DISPLAY_READ),
         false,
         None,
         false,

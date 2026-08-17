@@ -14,6 +14,7 @@ const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
     scopes::SCOPE_COMPUTER_READ,
     scopes::SCOPE_COMPUTER_CONTROL,
     scopes::SCOPE_COMPUTER_LAUNCH,
+    scopes::SCOPE_COMPUTER_DISPLAY_READ,
     scopes::SCOPE_ACCOUNT_MANAGE,
 ];
 

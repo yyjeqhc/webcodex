@@ -1,6 +1,12 @@
 use super::common::wrapped_output_schema;
 use serde_json::{json, Value};
 
+fn strict_computer_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
+    let mut schema = wrapped_output_schema(output_properties);
+    schema["properties"]["output"]["additionalProperties"] = json!(false);
+    schema
+}
+
 fn target_schema() -> Value {
     json!({
         "type": "object",
@@ -16,10 +22,11 @@ fn target_schema() -> Value {
                     "computer_observe": {"type": "boolean"},
                     "computer_application_discovery": {"type": "boolean"},
                     "computer_application_launch": {"type": "boolean"},
+                    "computer_display_observe": {"type": "boolean"},
                     "computer_snapshot_region": {"type": "boolean"},
                     "computer_accessibility_observe": {"type": "boolean"}
                 },
-                "required": ["computer_observe", "computer_application_discovery", "computer_application_launch", "computer_snapshot_region", "computer_accessibility_observe"]
+                "required": ["computer_observe", "computer_application_discovery", "computer_application_launch", "computer_display_observe", "computer_snapshot_region", "computer_accessibility_observe"]
             }
         },
         "required": ["client_id", "display_name", "connected", "capabilities"]
@@ -35,6 +42,20 @@ fn application_schema() -> Value {
             "display_name": {"type": "string", "minLength": 1, "maxLength": 256}
         },
         "required": ["application_id", "display_name"]
+    })
+}
+
+fn display_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "display_id": {"type": "string", "pattern": "^display_[0-9a-f]{32}$", "maxLength": 128},
+            "width": {"type": "integer", "minimum": 1, "maximum": 4294967295u64},
+            "height": {"type": "integer", "minimum": 1, "maximum": 4294967295u64},
+            "primary": {"type": "boolean"}
+        },
+        "required": ["display_id", "width", "height", "primary"]
     })
 }
 
@@ -137,6 +158,17 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "count",
                 json!({"type": "integer", "minimum": 0, "maximum": 64}),
+            ),
+            ("truncated", json!({"type": "boolean"})),
+        ])),
+        "computer_list_displays" => Some(strict_computer_output_schema(vec![
+            (
+                "displays",
+                json!({"type": "array", "maxItems": 16, "items": display_schema()}),
+            ),
+            (
+                "count",
+                json!({"type": "integer", "minimum": 0, "maximum": 16}),
             ),
             ("truncated", json!({"type": "boolean"})),
         ])),
@@ -367,6 +399,53 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "mime_type",
                 json!({"type": "string", "enum": ["image/jpeg"]}),
+            ),
+            (
+                "file_bytes",
+                json!({"type": "integer", "minimum": 1, "maximum": 1048576}),
+            ),
+            (
+                "sha256",
+                json!({"type": "string", "pattern": "^[0-9a-f]{64}$"}),
+            ),
+            (
+                "captured_at_unix_ms",
+                json!({"type": "integer", "minimum": 1, "maximum": 9007199254740991u64}),
+            ),
+            ("content_base64", json!({"type": "string"})),
+        ])),
+        "computer_snapshot_display" => Some(strict_computer_output_schema(vec![
+            (
+                "client_id",
+                json!({"type": "string", "minLength": 1, "maxLength": 128}),
+            ),
+            (
+                "display_id",
+                json!({"type": "string", "pattern": "^display_[0-9a-f]{32}$", "maxLength": 128}),
+            ),
+            (
+                "snapshot_generation",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
+                "source_width",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
+                "source_height",
+                json!({"type": "integer", "minimum": 1, "maximum": 4294967295u64}),
+            ),
+            (
+                "width",
+                json!({"type": "integer", "minimum": 1, "maximum": 4096}),
+            ),
+            (
+                "height",
+                json!({"type": "integer", "minimum": 1, "maximum": 4096}),
+            ),
+            (
+                "mime_type",
+                json!({"type": "string", "const": "image/jpeg"}),
             ),
             (
                 "file_bytes",

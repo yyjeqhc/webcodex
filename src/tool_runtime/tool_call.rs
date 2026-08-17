@@ -1332,6 +1332,13 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Enumerate a bounded fresh set of exact full displays on one Runner.
+    ComputerListDisplays {
+        client_id: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
     /// Submit one exact native application launch using a fresh opaque discovery id.
     ComputerLaunchApplication {
         client_id: String,
@@ -1422,6 +1429,16 @@ pub enum ToolCall {
         surface_id: String,
         #[serde(default)]
         region: Option<ComputerSnapshotRegion>,
+        #[serde(default)]
+        max_width: Option<u32>,
+        #[serde(default)]
+        max_height: Option<u32>,
+    },
+
+    /// Capture one exact previously discovered full display with optional downscale bounds.
+    ComputerSnapshotDisplay {
+        client_id: String,
+        display_id: String,
         #[serde(default)]
         max_width: Option<u32>,
         #[serde(default)]
@@ -1750,13 +1767,14 @@ fn reject_unknown_search_project_texts_fields(arguments: &Value) -> Result<(), S
     ))
 }
 
-fn reject_unknown_computer_application_fields(
+fn reject_unknown_bounded_computer_fields(
     tool_name: &str,
     arguments: &Value,
 ) -> Result<(), String> {
     let allowed: &[&str] = match tool_name {
-        "computer_list_applications" => &["client_id", "limit"],
+        "computer_list_applications" | "computer_list_displays" => &["client_id", "limit"],
         "computer_launch_application" => &["client_id", "application_id"],
+        "computer_snapshot_display" => &["client_id", "display_id", "max_width", "max_height"],
         _ => return Ok(()),
     };
     let Some(object) = arguments.as_object() else {
@@ -1819,9 +1837,12 @@ impl ToolCall {
         }
         if matches!(
             name,
-            "computer_list_applications" | "computer_launch_application"
+            "computer_list_applications"
+                | "computer_launch_application"
+                | "computer_list_displays"
+                | "computer_snapshot_display"
         ) {
-            reject_unknown_computer_application_fields(name, &arguments)?;
+            reject_unknown_bounded_computer_fields(name, &arguments)?;
         }
         let mut wrapped = serde_json::Map::new();
         wrapped.insert(
@@ -1957,6 +1978,7 @@ impl ToolCall {
             Self::ComputerListTargets => "computer_list_targets",
             Self::ComputerListWindows { .. } => "computer_list_windows",
             Self::ComputerListApplications { .. } => "computer_list_applications",
+            Self::ComputerListDisplays { .. } => "computer_list_displays",
             Self::ComputerLaunchApplication { .. } => "computer_launch_application",
             Self::ComputerAccessibilityStatus { .. } => "computer_accessibility_status",
             Self::ComputerAccessibilityTree { .. } => "computer_accessibility_tree",
@@ -1968,6 +1990,7 @@ impl ToolCall {
             Self::ComputerKeyInput { .. } => "computer_key_input",
             Self::ComputerInputText { .. } => "computer_input_text",
             Self::ComputerSnapshot { .. } => "computer_snapshot",
+            Self::ComputerSnapshotDisplay { .. } => "computer_snapshot_display",
             Self::ComputerSaveSnapshot { .. } => "computer_save_snapshot",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",

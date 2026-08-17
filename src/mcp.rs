@@ -459,7 +459,10 @@ fn adapt_computer_snapshot_output_schema_for_mcp(spec: &mut ToolSpec) {
 
 fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
-    if tool_name == "computer_snapshot" {
+    if matches!(
+        tool_name.as_str(),
+        "computer_snapshot" | "computer_snapshot_display"
+    ) {
         adapt_computer_snapshot_output_schema_for_mcp(&mut spec);
     }
     if tool_name == "read_project_artifact" {
@@ -854,7 +857,7 @@ pub(crate) fn mcp_runtime_tool_result(
     mut result: ToolResult,
 ) -> Value {
     let native_image_requested = (tool_name == "read_project_artifact" && as_image_requested)
-        || tool_name == "computer_snapshot";
+        || matches!(tool_name, "computer_snapshot" | "computer_snapshot_display");
     if native_image_requested && result.success {
         match mcp_native_image_tool_result(tool_name, &mut result) {
             Ok(value) => return value,
@@ -934,6 +937,12 @@ fn mcp_native_image_tool_result(tool_name: &str, result: &mut ToolResult) -> Res
             .pointer("/surface/surface_id")
             .and_then(Value::as_str)
             .unwrap_or("desktop surface")
+    } else if tool_name == "computer_snapshot_display" {
+        result
+            .output
+            .get("display_id")
+            .and_then(Value::as_str)
+            .unwrap_or("full display")
     } else {
         result
             .output
@@ -954,7 +963,7 @@ fn mcp_native_image_tool_result(tool_name: &str, result: &mut ToolResult) -> Res
         .get("sha256")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let metadata_text = if tool_name == "computer_snapshot" {
+    let metadata_text = if matches!(tool_name, "computer_snapshot" | "computer_snapshot_display") {
         let width = result
             .output
             .get("width")

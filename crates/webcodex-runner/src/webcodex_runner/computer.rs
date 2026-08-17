@@ -15,7 +15,10 @@ use uuid::Uuid;
 
 const MAX_WINDOWS: usize = 64;
 const MAX_APPLICATIONS: usize = 64;
+const MAX_DISPLAYS: usize = 16;
 const MAX_APPLICATION_ID_BYTES: usize = 128;
+const MAX_DISPLAY_ID_BYTES: usize = 128;
+const MAX_DISPLAY_SNAPSHOT_BINDINGS: usize = 64;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
@@ -41,6 +44,17 @@ fn valid_application_id(application_id: &str) -> bool {
         return false;
     };
     application_id.len() <= MAX_APPLICATION_ID_BYTES
+        && suffix.len() == 32
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_display_id(display_id: &str) -> bool {
+    let Some(suffix) = display_id.strip_prefix("display_") else {
+        return false;
+    };
+    display_id.len() <= MAX_DISPLAY_ID_BYTES
         && suffix.len() == 32
         && suffix
             .bytes()
@@ -472,10 +486,67 @@ struct ApplicationRecord {
     native_identity: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlatformDisplay {
+    native_identity: Vec<u8>,
+    width: u32,
+    height: u32,
+    primary: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DisplayRecord {
+    native_identity: Vec<u8>,
+    width: u32,
+    height: u32,
+    primary: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DisplaySnapshotBinding {
+    generation: u32,
+    display_id: String,
+    native_identity: Vec<u8>,
+    source_width: u32,
+    source_height: u32,
+}
+
+#[derive(Default)]
+struct DisplaySnapshotRegistry {
+    next_generation: u32,
+    bindings: VecDeque<DisplaySnapshotBinding>,
+}
+
+impl DisplaySnapshotRegistry {
+    fn clear_bindings(&mut self) {
+        self.bindings.clear();
+    }
+
+    fn bind(&mut self, display_id: &str, display: &DisplayRecord) -> Result<u32, String> {
+        let generation = self.next_generation.checked_add(1).ok_or_else(|| {
+            "computer_state_error: display snapshot generation exhausted".to_string()
+        })?;
+        self.next_generation = generation;
+        self.bindings.push_back(DisplaySnapshotBinding {
+            generation,
+            display_id: display_id.to_string(),
+            native_identity: display.native_identity.clone(),
+            source_width: display.width,
+            source_height: display.height,
+        });
+        while self.bindings.len() > MAX_DISPLAY_SNAPSHOT_BINDINGS {
+            self.bindings.pop_front();
+        }
+        Ok(generation)
+    }
+}
+
 struct ComputerObserver {
     surfaces: Mutex<HashMap<String, SurfaceRecord>>,
     elements: Mutex<ElementRegistry>,
     applications: Mutex<HashMap<String, ApplicationRecord>>,
+    displays: Mutex<HashMap<String, DisplayRecord>>,
+    display_snapshots: Mutex<DisplaySnapshotRegistry>,
 }
 
 impl ComputerObserver {
@@ -485,6 +556,8 @@ impl ComputerObserver {
             surfaces: Mutex::new(HashMap::new()),
             elements: Mutex::new(ElementRegistry::default()),
             applications: Mutex::new(HashMap::new()),
+            displays: Mutex::new(HashMap::new()),
+            display_snapshots: Mutex::new(DisplaySnapshotRegistry::default()),
         })
     }
 
@@ -575,6 +648,116 @@ impl ComputerObserver {
     fn list_applications(&self, limit: usize) -> Result<Value, String> {
         let candidates = platform::list_applications(MAX_APPLICATIONS + 1)?;
         self.replace_application_candidates(candidates, limit)
+    }
+
+    fn replace_display_candidates(
+        &self,
+        candidates: Vec<PlatformDisplay>,
+        limit: usize,
+    ) -> Result<Value, String> {
+        if !(1..=MAX_DISPLAYS).contains(&limit) {
+            return Err("invalid_request: display discovery limit is invalid".to_string());
+        }
+        let truncated = candidates.len() > limit;
+        let mut displays = HashMap::new();
+        let mut output = Vec::with_capacity(limit.min(candidates.len()));
+        for candidate in candidates.into_iter().take(limit) {
+            if candidate.native_identity.is_empty() || candidate.width == 0 || candidate.height == 0
+            {
+                return Err("display_failed: native display metadata is invalid".to_string());
+            }
+            let display_id = format!("display_{}", Uuid::new_v4().simple());
+            let record = DisplayRecord {
+                native_identity: candidate.native_identity,
+                width: candidate.width,
+                height: candidate.height,
+                primary: candidate.primary,
+            };
+            output.push(json!({
+                "display_id": display_id,
+                "width": record.width,
+                "height": record.height,
+                "primary": record.primary,
+            }));
+            displays.insert(display_id, record);
+        }
+        let count = output.len();
+        let mut display_registry = self
+            .displays
+            .lock()
+            .map_err(|_| "computer_state_error: display registry lock poisoned".to_string())?;
+        let mut snapshot_registry = self.display_snapshots.lock().map_err(|_| {
+            "computer_state_error: display snapshot registry lock poisoned".to_string()
+        })?;
+        *display_registry = displays;
+        snapshot_registry.clear_bindings();
+        Ok(json!({"displays": output, "count": count, "truncated": truncated}))
+    }
+
+    fn list_displays(&self, limit: usize) -> Result<Value, String> {
+        let candidates = platform::list_displays(MAX_DISPLAYS + 1)?;
+        self.replace_display_candidates(candidates, limit)
+    }
+
+    fn snapshot_display(
+        &self,
+        display_id: &str,
+        max_width: Option<u32>,
+        max_height: Option<u32>,
+    ) -> Result<Value, String> {
+        if !valid_display_id(display_id) {
+            return Err("invalid_request: display_id is invalid".to_string());
+        }
+        if max_width.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION)
+            || max_height.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION)
+        {
+            return Err(
+                "invalid_request: display snapshot output dimension bound is invalid".to_string(),
+            );
+        }
+        let display_registry = self
+            .displays
+            .lock()
+            .map_err(|_| "computer_state_error: display registry lock poisoned".to_string())?;
+        let record = display_registry
+            .get(display_id)
+            .cloned()
+            .ok_or_else(|| "stale_display: unknown or stale display_id".to_string())?;
+        ensure_raw_capture_bound(record.width, record.height)?;
+        let image = platform::capture_display(&record)?;
+        let captured_at_unix_ms = current_unix_ms()?;
+        let (image, _full_region) = transform_snapshot_image(
+            image,
+            record.width,
+            record.height,
+            None,
+            max_width,
+            max_height,
+        )?;
+        let encoded = encode_bounded_jpeg(image)?;
+        let file_bytes = encoded.bytes.len();
+        let sha256 = sha256_hex(&encoded.bytes);
+        let generation = self
+            .display_snapshots
+            .lock()
+            .map_err(|_| {
+                "computer_state_error: display snapshot registry lock poisoned".to_string()
+            })?
+            .bind(display_id, &record)?;
+        drop(display_registry);
+        Ok(json!({
+            "display_id": display_id,
+            "snapshot_generation": generation,
+            "source_width": record.width,
+            "source_height": record.height,
+            "width": encoded.width,
+            "height": encoded.height,
+            "mime_type": "image/jpeg",
+            "file_bytes": file_bytes,
+            "sha256": sha256,
+            "captured_at_unix_ms": captured_at_unix_ms,
+            "content_base64": general_purpose::STANDARD.encode(encoded.bytes),
+        }))
     }
 
     fn launch_application(&self, application_id: &str) -> Result<Value, String> {
@@ -1767,6 +1950,8 @@ pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
         "computer_list_windows"
             | "computer_list_applications"
             | "computer_launch_application"
+            | "computer_list_displays"
+            | "computer_snapshot_display"
             | "computer_snapshot"
             | "computer_snapshot_region"
             | "computer_accessibility_status"
@@ -1807,6 +1992,8 @@ mod application_wire_contract_tests {
             surfaces: Mutex::new(HashMap::new()),
             elements: Mutex::new(ElementRegistry::default()),
             applications: Mutex::new(HashMap::new()),
+            displays: Mutex::new(HashMap::new()),
+            display_snapshots: Mutex::new(DisplaySnapshotRegistry::default()),
         }
     }
 
@@ -1869,6 +2056,157 @@ mod application_wire_contract_tests {
         assert_eq!(second["count"], 1);
         let error = observer.launch_application(&old_id).unwrap_err();
         assert!(error.starts_with("stale_application:"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod display_wire_contract_tests {
+    use super::*;
+
+    fn display(marker: u8, width: u32, height: u32, primary: bool) -> PlatformDisplay {
+        PlatformDisplay {
+            native_identity: vec![marker],
+            width,
+            height,
+            primary,
+        }
+    }
+
+    fn observer() -> ComputerObserver {
+        ComputerObserver {
+            surfaces: Mutex::new(HashMap::new()),
+            elements: Mutex::new(ElementRegistry::default()),
+            applications: Mutex::new(HashMap::new()),
+            displays: Mutex::new(HashMap::new()),
+            display_snapshots: Mutex::new(DisplaySnapshotRegistry::default()),
+        }
+    }
+
+    #[test]
+    fn display_requests_are_strict_and_ids_are_closed() {
+        assert!(is_computer_request_kind("computer_list_displays"));
+        assert!(is_computer_request_kind("computer_snapshot_display"));
+        assert!(ensure_exact_payload_fields(&json!({"limit": 2}), &["limit"]).is_ok());
+        let exact = json!({
+            "display_id": "display_0123456789abcdef0123456789abcdef",
+            "max_width": 800,
+            "max_height": null,
+        });
+        assert!(
+            ensure_exact_payload_fields(&exact, &["display_id", "max_width", "max_height"]).is_ok()
+        );
+        assert!(valid_display_id("display_0123456789abcdef0123456789abcdef"));
+        for invalid in [
+            "",
+            "display_",
+            "display_0123456789abcdef0123456789abcdeg",
+            "surface_0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(!valid_display_id(invalid), "{invalid}");
+        }
+        for extra in [
+            "region",
+            "x",
+            "y",
+            "global_x",
+            "pointer",
+            "click",
+            "monitor_id",
+        ] {
+            let mut payload = exact.clone();
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert(extra.to_string(), json!(1));
+            assert!(ensure_exact_payload_fields(
+                &payload,
+                &["display_id", "max_width", "max_height"]
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn display_discovery_replaces_ids_and_snapshot_generation_is_bounded_and_monotonic() {
+        let observer = observer();
+        let first = observer
+            .replace_display_candidates(
+                vec![display(1, 1920, 1080, true), display(2, 1280, 720, false)],
+                1,
+            )
+            .unwrap();
+        assert_eq!(first["count"], 1);
+        assert_eq!(first["truncated"], true);
+        assert!(first["displays"][0].get("native_identity").is_none());
+        let old_id = first["displays"][0]["display_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let record = observer
+            .displays
+            .lock()
+            .unwrap()
+            .get(&old_id)
+            .unwrap()
+            .clone();
+        {
+            let mut snapshots = observer.display_snapshots.lock().unwrap();
+            assert_eq!(snapshots.bind(&old_id, &record).unwrap(), 1);
+            assert_eq!(snapshots.bind(&old_id, &record).unwrap(), 2);
+            assert_eq!(snapshots.bindings.back().unwrap().native_identity, vec![1]);
+            assert_eq!(snapshots.bindings.back().unwrap().source_width, 1920);
+            assert_eq!(snapshots.bindings.back().unwrap().source_height, 1080);
+        }
+        observer
+            .replace_display_candidates(vec![display(3, 2560, 1440, true)], 1)
+            .unwrap();
+        assert!(observer
+            .display_snapshots
+            .lock()
+            .unwrap()
+            .bindings
+            .is_empty());
+        let error = observer
+            .snapshot_display(&old_id, Some(640), Some(480))
+            .unwrap_err();
+        assert!(error.starts_with("stale_display:"), "{error}");
+        let restarted = self::observer();
+        let restart_error = restarted
+            .snapshot_display(&old_id, Some(640), Some(480))
+            .unwrap_err();
+        assert!(
+            restart_error.starts_with("stale_display:"),
+            "{restart_error}"
+        );
+        let new_id = observer
+            .displays
+            .lock()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        let new_record = observer
+            .displays
+            .lock()
+            .unwrap()
+            .get(&new_id)
+            .unwrap()
+            .clone();
+        assert_eq!(
+            observer
+                .display_snapshots
+                .lock()
+                .unwrap()
+                .bind(&new_id, &new_record)
+                .unwrap(),
+            3
+        );
+        let mut snapshots = DisplaySnapshotRegistry::default();
+        for expected in 1..=(MAX_DISPLAY_SNAPSHOT_BINDINGS as u32 + 1) {
+            assert_eq!(snapshots.bind(&new_id, &new_record).unwrap(), expected);
+        }
+        assert_eq!(snapshots.bindings.len(), MAX_DISPLAY_SNAPSHOT_BINDINGS);
     }
 }
 
@@ -1996,6 +2334,18 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 .clamp(1, MAX_WINDOWS);
             ComputerObserver::global().list_windows(limit)
         }
+        "computer_list_displays" => ensure_exact_payload_fields(&payload, &["limit"])
+            .and_then(|()| {
+                payload
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .filter(|limit| (1..=MAX_DISPLAYS).contains(limit))
+                    .ok_or_else(|| {
+                        "invalid_request: display discovery limit is invalid".to_string()
+                    })
+            })
+            .and_then(|limit| ComputerObserver::global().list_displays(limit)),
         "computer_list_applications" => ensure_exact_payload_fields(&payload, &["limit"])
             .and_then(|()| {
                 payload
@@ -2150,6 +2500,18 @@ pub(crate) fn handle_computer_request(request: &ShellAgentShellRequest) -> Comma
                 },
             )
         }
+        "computer_snapshot_display" => {
+            ensure_exact_payload_fields(&payload, &["display_id", "max_width", "max_height"])
+                .and_then(|()| {
+                    let display_id = payload
+                        .get("display_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: display_id is required".to_string())?;
+                    let max_width = optional_snapshot_dimension(&payload, "max_width")?;
+                    let max_height = optional_snapshot_dimension(&payload, "max_height")?;
+                    ComputerObserver::global().snapshot_display(display_id, max_width, max_height)
+                })
+        }
         "computer_snapshot" => ensure_exact_payload_fields(&payload, &["surface_id"])
             .and_then(|()| {
                 payload
@@ -2204,8 +2566,8 @@ struct PlatformWindow {
 #[cfg(not(any(target_os = "macos", windows)))]
 mod platform {
     use super::{
-        AccessibilityTreeResult, ApplicationRecord, ComputerAction, ElementRecord,
-        PlatformApplication, PlatformWindow, SurfaceRecord,
+        AccessibilityTreeResult, ApplicationRecord, ComputerAction, DisplayRecord, ElementRecord,
+        PlatformApplication, PlatformDisplay, PlatformWindow, SurfaceRecord,
     };
 
     pub(super) fn list_applications(_limit: usize) -> Result<Vec<PlatformApplication>, String> {
@@ -2220,6 +2582,20 @@ mod platform {
         _application: &ApplicationRecord,
     ) -> Result<serde_json::Value, String> {
         Err("unsupported_platform: application launch is unavailable on this platform".to_string())
+    }
+
+    pub(super) fn list_displays(_limit: usize) -> Result<Vec<PlatformDisplay>, String> {
+        Err(
+            "unsupported_platform: full-display observation is unavailable on this platform"
+                .to_string(),
+        )
+    }
+
+    pub(super) fn capture_display(_display: &DisplayRecord) -> Result<(), String> {
+        Err(
+            "unsupported_platform: full-display observation is unavailable on this platform"
+                .to_string(),
+        )
     }
 
     pub(super) fn list_windows(_limit: usize) -> Result<Vec<PlatformWindow>, String> {
@@ -2412,8 +2788,8 @@ mod platform {
     use super::validate_key_input;
     use super::{
         bounded_text, ensure_raw_capture_bound, validate_input_text, AccessibilityTreeResult,
-        ApplicationRecord, ComputerAction, ElementRecord, PlatformApplication, PlatformWindow,
-        SurfaceRecord,
+        ApplicationRecord, ComputerAction, DisplayRecord, ElementRecord, PlatformApplication,
+        PlatformDisplay, PlatformWindow, SurfaceRecord,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -2425,7 +2801,7 @@ mod platform {
     use super::{is_supported_text_input_fingerprint, ElementFingerprint};
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
-    use xcap::Window;
+    use xcap::{Monitor, Window};
 
     #[cfg(target_os = "macos")]
     use objc2_application_services::{
@@ -2456,9 +2832,10 @@ mod platform {
     };
     #[cfg(windows)]
     use windows::{
-        core::{IUnknown, Interface},
+        core::{IUnknown, Interface, PCWSTR},
         Win32::{
             Foundation::{E_NOINTERFACE, E_POINTER, HWND as WinHwnd, RPC_E_CHANGED_MODE},
+            Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW},
             System::Com::{
                 CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IBindCtx,
                 CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
@@ -2496,7 +2873,8 @@ mod platform {
                 SHCONTF_FOLDERS, SHCONTF_NONFOLDERS, SHELLEXECUTEINFOW, SIGDN_NORMALDISPLAY,
             },
             UI::WindowsAndMessaging::{
-                GetForegroundWindow, IsIconic, ShowWindowAsync, SW_RESTORE, SW_SHOWNOACTIVATE,
+                GetForegroundWindow, IsIconic, ShowWindowAsync, EDD_GET_DEVICE_INTERFACE_NAME,
+                SW_RESTORE, SW_SHOWNOACTIVATE,
             },
         },
     };
@@ -2514,6 +2892,12 @@ mod platform {
 
     #[cfg(windows)]
     const MAX_NATIVE_APPLICATION_IDENTITY_BYTES: usize = 64 * 1024;
+    #[cfg(windows)]
+    const MAX_NATIVE_DISPLAY_IDENTITY_BYTES: usize = 2048;
+    #[cfg(windows)]
+    const MAX_WINDOWS_DISPLAY_DEVICE_CHILDREN: u32 = 16;
+    #[cfg(windows)]
+    const MAX_WINDOWS_DISPLAY_SCAN: usize = 64;
 
     #[cfg(windows)]
     struct OwnedPidl(*mut ITEMIDLIST);
@@ -2755,6 +3139,176 @@ mod platform {
             && info.lpParameters.0.is_null()
             && info.lpDirectory.0.is_null()
             && info.nShow == SW_SHOWNOACTIVATE.0)
+    }
+
+    #[cfg(windows)]
+    fn fixed_utf16_string(value: &[u16]) -> Result<String, String> {
+        let end = value
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(value.len());
+        String::from_utf16(&value[..end])
+            .map_err(|_| "display_failed: Windows display identity is invalid UTF-16".to_string())
+    }
+
+    #[cfg(windows)]
+    fn windows_display_identity(monitor: &Monitor) -> Result<Vec<u8>, String> {
+        let adapter = monitor.name().map_err(|_| {
+            "display_failed: Windows display adapter identity is unavailable".to_string()
+        })?;
+        if adapter.is_empty() || adapter.contains('\0') || adapter.len() > 512 {
+            return Err("display_failed: Windows display adapter identity is invalid".to_string());
+        }
+        let mut adapter_wide = adapter.encode_utf16().collect::<Vec<_>>();
+        adapter_wide.push(0);
+        let adapter_wide = PCWSTR(adapter_wide.as_ptr());
+        let mut interface_id: Option<String> = None;
+        for index in 0..MAX_WINDOWS_DISPLAY_DEVICE_CHILDREN {
+            let mut device = DISPLAY_DEVICEW::default();
+            device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+            let found = unsafe {
+                EnumDisplayDevicesW(
+                    adapter_wide,
+                    index,
+                    &mut device,
+                    EDD_GET_DEVICE_INTERFACE_NAME,
+                )
+            }
+            .as_bool();
+            if !found {
+                break;
+            }
+            let candidate = fixed_utf16_string(&device.DeviceID)?;
+            if candidate.is_empty() {
+                continue;
+            }
+            if interface_id.is_some() {
+                return Err(
+                    "display_failed: Windows display adapter has ambiguous monitor identity"
+                        .to_string(),
+                );
+            }
+            interface_id = Some(candidate);
+        }
+        let interface_id = interface_id.ok_or_else(|| {
+            "display_failed: Windows display monitor interface identity is unavailable".to_string()
+        })?;
+        let mut identity = b"windows-display-v1\0".to_vec();
+        identity.extend_from_slice(adapter.to_ascii_lowercase().as_bytes());
+        identity.push(0);
+        identity.extend_from_slice(interface_id.to_ascii_lowercase().as_bytes());
+        if identity.len() > MAX_NATIVE_DISPLAY_IDENTITY_BYTES {
+            return Err("display_failed: Windows display identity exceeds bound".to_string());
+        }
+        Ok(identity)
+    }
+
+    #[cfg(windows)]
+    fn platform_display_from_monitor(monitor: &Monitor) -> Result<PlatformDisplay, String> {
+        let native_identity = windows_display_identity(monitor)?;
+        let width = monitor
+            .width()
+            .map_err(|_| "display_failed: Windows display width is unavailable".to_string())?;
+        let height = monitor
+            .height()
+            .map_err(|_| "display_failed: Windows display height is unavailable".to_string())?;
+        let primary = monitor.is_primary().map_err(|_| {
+            "display_failed: Windows display primary state is unavailable".to_string()
+        })?;
+        if width == 0 || height == 0 {
+            return Err("display_failed: Windows display geometry is invalid".to_string());
+        }
+        Ok(PlatformDisplay {
+            native_identity,
+            width,
+            height,
+            primary,
+        })
+    }
+
+    #[cfg(windows)]
+    fn windows_monitors() -> Result<Vec<Monitor>, String> {
+        let monitors = Monitor::all()
+            .map_err(|_| "display_failed: Windows display enumeration failed".to_string())?;
+        if monitors.len() > MAX_WINDOWS_DISPLAY_SCAN {
+            return Err(
+                "display_failed: Windows display count exceeds native scan bound".to_string(),
+            );
+        }
+        Ok(monitors)
+    }
+
+    #[cfg(windows)]
+    pub(super) fn list_displays(limit: usize) -> Result<Vec<PlatformDisplay>, String> {
+        if limit == 0 || limit > super::MAX_DISPLAYS + 1 {
+            return Err("invalid_request: display discovery native limit is invalid".to_string());
+        }
+        windows_monitors()?
+            .into_iter()
+            .take(limit)
+            .map(|monitor| platform_display_from_monitor(&monitor))
+            .collect()
+    }
+
+    #[cfg(windows)]
+    fn find_exact_display(display: &DisplayRecord) -> Result<Monitor, String> {
+        let mut exact = None;
+        for monitor in windows_monitors()? {
+            let candidate = platform_display_from_monitor(&monitor)?;
+            if candidate.native_identity != display.native_identity {
+                continue;
+            }
+            if candidate.width != display.width || candidate.height != display.height {
+                return Err(
+                    "stale_display: native display geometry changed after discovery".to_string(),
+                );
+            }
+            if exact.is_some() {
+                return Err(
+                    "stale_display: native display identity is no longer unique".to_string()
+                );
+            }
+            exact = Some(monitor);
+        }
+        exact.ok_or_else(|| {
+            "stale_display: native display identity changed or disappeared".to_string()
+        })
+    }
+
+    #[cfg(windows)]
+    pub(super) fn capture_display(display: &DisplayRecord) -> Result<image::RgbaImage, String> {
+        ensure_capture_permission()?;
+        let monitor = find_exact_display(display)?;
+        ensure_raw_capture_bound(display.width, display.height)?;
+        let image = monitor
+            .capture_image()
+            .map_err(|_| "capture_failed: Windows display capture failed".to_string())?;
+        if image.width() != display.width || image.height() != display.height {
+            return Err(
+                "capture_failed: Windows display capture geometry does not match the exact display"
+                    .to_string(),
+            );
+        }
+        // Revalidate again after capture so a hotplug/replacement racing the read
+        // causes the captured bytes to be discarded instead of accepted under a stale handle.
+        find_exact_display(display)?;
+        Ok(image)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn list_displays(_limit: usize) -> Result<Vec<PlatformDisplay>, String> {
+        Err(
+            "unsupported_platform: exact full-display observation is unavailable on macOS"
+                .to_string(),
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn capture_display(_display: &DisplayRecord) -> Result<image::RgbaImage, String> {
+        Err(
+            "unsupported_platform: exact full-display observation is unavailable on macOS"
+                .to_string(),
+        )
     }
 
     #[cfg(target_os = "macos")]
@@ -5853,6 +6407,32 @@ mod windows_uia_tests {
                 .expect_err("changed identity must fail closed before launch");
             assert!(error.starts_with("stale_application:"), "{error}");
         }
+    }
+
+    #[test]
+    fn windows_display_discovery_and_exact_capture_use_private_identity() {
+        let displays = platform::list_displays(2).expect("Windows display discovery");
+        assert!(displays.len() <= 2);
+        let Some(display) = displays.first() else {
+            return;
+        };
+        assert!(!display.native_identity.is_empty());
+        assert!(display.width > 0 && display.height > 0);
+        let record = DisplayRecord {
+            native_identity: display.native_identity.clone(),
+            width: display.width,
+            height: display.height,
+            primary: display.primary,
+        };
+        let image = platform::capture_display(&record).expect("exact Windows display capture");
+        assert_eq!(image.width(), record.width);
+        assert_eq!(image.height(), record.height);
+
+        let mut changed = record.clone();
+        changed.native_identity[0] ^= 0xff;
+        let error = platform::capture_display(&changed)
+            .expect_err("changed display identity must never capture another monitor");
+        assert!(error.starts_with("stale_display:"), "{error}");
     }
 
     fn surface_record(candidate: PlatformWindow) -> SurfaceRecord {

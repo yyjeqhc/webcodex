@@ -136,6 +136,7 @@ mod tests {
         for name in [
             "computer_list_targets",
             "computer_list_windows",
+            "computer_list_displays",
             "computer_list_applications",
             "computer_launch_application",
             "computer_accessibility_status",
@@ -148,6 +149,7 @@ mod tests {
             "computer_key_input",
             "computer_input_text",
             "computer_snapshot",
+            "computer_snapshot_display",
             "computer_save_snapshot",
         ] {
             assert!(

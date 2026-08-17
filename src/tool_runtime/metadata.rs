@@ -65,6 +65,7 @@ pub(crate) const JOB_RUN: &str = crate::auth::SCOPE_JOB_RUN;
 pub(crate) const COMPUTER_READ: &str = crate::auth::SCOPE_COMPUTER_READ;
 pub(crate) const COMPUTER_CONTROL: &str = crate::auth::SCOPE_COMPUTER_CONTROL;
 pub(crate) const COMPUTER_LAUNCH: &str = crate::auth::SCOPE_COMPUTER_LAUNCH;
+pub(crate) const COMPUTER_DISPLAY_READ: &str = crate::auth::SCOPE_COMPUTER_DISPLAY_READ;
 
 pub(crate) const TOOL_PROVIDER_AGENT: &str = "agent";
 pub(crate) const TOOL_PROVIDER_CONTROL: &str = "control";
@@ -141,8 +142,8 @@ mod tests {
     use super::*;
     use crate::auth::scopes::{oauth_scope_policy_for_runtime_tool, OAuthToolScopePolicy};
     use crate::auth::scopes::{
-        SCOPE_COMPUTER_READ, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
-        SCOPE_RUNTIME_READ,
+        SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_READ, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
+        SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
     };
     use crate::tool_runtime::{is_known_tool_name, known_tool_names};
 
@@ -164,6 +165,14 @@ mod tests {
             };
             let expected = if metadata.name == "computer_save_snapshot" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ])
+            } else if matches!(
+                metadata.name,
+                "computer_list_displays" | "computer_snapshot_display"
+            ) {
+                OAuthToolScopePolicy::RequireAll(&[
+                    SCOPE_COMPUTER_READ,
+                    SCOPE_COMPUTER_DISPLAY_READ,
+                ])
             } else {
                 OAuthToolScopePolicy::Require(scope)
             };

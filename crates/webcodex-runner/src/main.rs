@@ -1869,6 +1869,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // capabilities. Neither is inferred from observation/control or from each other.
     capabilities.computer_application_discovery = cfg!(windows);
     capabilities.computer_application_launch = cfg!(windows);
+    // Exact full-display discovery/snapshot is independently implemented only
+    // by the Windows backend in this slice; unsupported/unproven platforms fail closed.
+    capabilities.computer_display_observe = cfg!(windows);
     // Region/downscale snapshot requests use a distinct additive wire fence so
     // old Runners that support only whole-window snapshots fail closed.
     capabilities.computer_snapshot_region = cfg!(any(target_os = "macos", windows));

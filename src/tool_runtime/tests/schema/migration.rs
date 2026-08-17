@@ -225,6 +225,7 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ("apply_text_edits", "edit", "current_session_fallback"),
         ("computer_list_targets", "computer", "none"),
         ("computer_list_windows", "computer", "none"),
+        ("computer_list_displays", "computer", "none"),
         ("computer_list_applications", "computer", "none"),
         ("computer_launch_application", "computer", "none"),
         ("computer_accessibility_status", "computer", "none"),
@@ -237,6 +238,7 @@ fn tool_definition_runtime_tool_policy_inventory_is_stable() {
         ("computer_key_input", "computer", "none"),
         ("computer_input_text", "computer", "none"),
         ("computer_snapshot", "computer", "none"),
+        ("computer_snapshot_display", "computer", "none"),
         (
             "computer_save_snapshot",
             "computer",

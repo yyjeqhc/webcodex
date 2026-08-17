@@ -41,6 +41,18 @@ Pre-native validation failures, including malformed or `stale_application` IDs a
 
 Durable audit keeps discovery result metadata to `count`/`truncated` only; application names and native identities are omitted. Launch audit may retain the opaque `application_id` plus bounded lifecycle/success metadata, never the native PIDL, executable path, AUMID/package identity, or launch parameters.
 
+### Full-display discovery and exact display snapshot
+
+Full-display observation is a wider privacy authority than ordinary window observation. `computer_list_displays(client_id, limit?)` and `computer_snapshot_display(client_id, display_id, max_width?, max_height?)` therefore require both `computer:read` and the explicit `computer:display_read` scope, plus the independent Runner capability `computer_display_observe`. Missing capability fields are false and are never inferred from `computer_observe`, region snapshot support, or platform identity. The current exact implementation is Windows-only; macOS and other unproven backends keep the capability false and fail closed.
+
+Discovery returns at most 16 entries with only `display_id`, display-relative `width`/`height`, and `primary`, plus `count`/`truncated`. Every list creates fresh opaque process-local IDs and replaces the prior display registry, so previous IDs become stale and Runner restart invalidates all of them. Native monitor/interface identity, device paths, global desktop origin, scale/DPI mapping, and other topology remain Runner-private.
+
+`computer_snapshot_display` captures exactly one previously discovered display; there is no virtual-desktop mosaic, caller region, global coordinate, pointer/click input, activation, or fallback. On Windows the Runner re-enumerates native displays and requires an exact private monitor-interface identity plus unchanged display-relative source geometry before capture, verifies the captured pixel geometry, and revalidates identity again after capture so a hotplug/replacement race discards the bytes rather than accepting the wrong display. `max_width`/`max_height` reuse the existing bounded JPEG pipeline and only apply aspect-preserving downscale; they never upscale. The output separates `source_width`/`source_height` from encoded `width`/`height`, while global origin and native DPI mapping remain private.
+
+Each successful snapshot returns a positive process-local `snapshot_generation`. The Runner keeps a bounded binding from that generation to the exact opaque display handle, private native identity, and source geometry as a future coordinate-pointer freshness fence. This slice does not add pointer effects or coordinate input. Display list/snapshot remain read-only observations: malformed, stale, permission, capture, and transport failures do not use effect/outcome-unknown semantics; callers may safely reacquire a fresh display list and observe again.
+
+Durable audit keeps display-list results to minimal `count`/`truncated` metadata. Display snapshot audit may retain the opaque `display_id`, generation, source/encoded dimensions, MIME, digest, byte count, and capture timestamp, but never the image body, native monitor identity/device path, global origin, scale/DPI, or topology. Model/Server output validation rejects Runner fields outside the closed public shape.
+
 ## Near-term slices
 
 ### CU-4 — semantic element finder

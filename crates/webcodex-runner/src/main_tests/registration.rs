@@ -11,6 +11,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         computer_observe: true,
         computer_application_discovery: true,
         computer_application_launch: true,
+        computer_display_observe: true,
         computer_snapshot_region: true,
         computer_accessibility_observe: true,
         computer_element_state: true,
@@ -84,6 +85,11 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
         caps.computer_application_launch,
         cfg!(windows),
         "computer application launch is independently advertised only by the Windows native implementation"
+    );
+    assert_eq!(
+        caps.computer_display_observe,
+        cfg!(windows),
+        "full-display observation is independently advertised only by the exact Windows display backend"
     );
     assert_eq!(
         caps.computer_snapshot_region,

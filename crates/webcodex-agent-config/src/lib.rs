@@ -244,6 +244,8 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // generated config never implies either from other Computer support.
             computer_application_discovery: false,
             computer_application_launch: false,
+            // Full-display observation is a separate privacy/runtime capability.
+            computer_display_observe: false,
             // Region/downscale snapshot support is advertised only by the running binary.
             computer_snapshot_region: false,
             // Semantic accessibility inspection is also a runtime/platform

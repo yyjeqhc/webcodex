@@ -42,8 +42,9 @@ pub(super) use computer::{
     computer_element_state_input_schema, computer_find_elements_input_schema,
     computer_input_text_input_schema, computer_key_input_input_schema,
     computer_launch_application_input_schema, computer_list_applications_input_schema,
-    computer_list_windows_input_schema, computer_save_snapshot_input_schema,
-    computer_scroll_to_element_input_schema, computer_snapshot_input_schema,
+    computer_list_displays_input_schema, computer_list_windows_input_schema,
+    computer_save_snapshot_input_schema, computer_scroll_to_element_input_schema,
+    computer_snapshot_display_input_schema, computer_snapshot_input_schema,
 };
 pub(crate) use discovery::accepted_flattened_args_for_spec;
 #[cfg(test)]

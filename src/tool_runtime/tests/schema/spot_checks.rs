@@ -230,6 +230,64 @@ fn tool_specs_computer_snapshot_has_bounded_region_without_format_controls() {
 }
 
 #[test]
+fn tool_specs_full_display_observation_is_closed_and_bounded() {
+    let specs = registered_tool_specs();
+    let list = spec_named(&specs, "computer_list_displays");
+    assert_eq!(list.input_schema["additionalProperties"], false);
+    assert_eq!(list.input_schema["properties"]["limit"]["maximum"], 16);
+    let display = &list.output_schema["properties"]["output"]["properties"]["displays"]["items"];
+    assert_eq!(display["additionalProperties"], false);
+    assert_schema_fields!(
+        display["properties"].as_object().unwrap(),
+        "computer display item schema",
+        present: ["display_id", "width", "height", "primary"],
+        absent: ["native_identity", "device_path", "x", "y", "scale_factor"]
+    );
+    assert_eq!(
+        list.output_schema["properties"]["output"]["additionalProperties"],
+        false
+    );
+
+    let snapshot = spec_named(&specs, "computer_snapshot_display");
+    let props = snapshot.input_schema["properties"].as_object().unwrap();
+    assert_schema_fields!(
+        props,
+        "computer_snapshot_display input schema",
+        present: ["client_id", "display_id", "max_width", "max_height"],
+        absent: ["region", "x", "y", "global_x", "pointer", "click", "monitor_id"]
+    );
+    assert_eq!(props["max_width"]["maximum"], 4096);
+    assert_eq!(props["max_height"]["maximum"], 4096);
+    let output = snapshot.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert_schema_fields!(
+        output,
+        "computer_snapshot_display output schema",
+        present: [
+            "client_id",
+            "display_id",
+            "snapshot_generation",
+            "source_width",
+            "source_height",
+            "width",
+            "height",
+            "mime_type",
+            "file_bytes",
+            "sha256",
+            "captured_at_unix_ms",
+            "content_base64"
+        ],
+        absent: ["native_identity", "device_path", "global_x", "global_y", "scale_factor", "region"]
+    );
+    assert_eq!(
+        snapshot.output_schema["properties"]["output"]["additionalProperties"],
+        false
+    );
+    assert_eq!(output["snapshot_generation"]["minimum"], 1);
+}
+
+#[test]
 fn tool_specs_computer_save_snapshot_is_create_only_and_returns_metadata_only() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "computer_save_snapshot");

@@ -4,8 +4,9 @@ use super::super::input_schemas::{
     computer_element_state_input_schema, computer_find_elements_input_schema,
     computer_input_text_input_schema, computer_key_input_input_schema,
     computer_launch_application_input_schema, computer_list_applications_input_schema,
-    computer_list_windows_input_schema, computer_save_snapshot_input_schema,
-    computer_scroll_to_element_input_schema, computer_snapshot_input_schema, empty_input_schema,
+    computer_list_displays_input_schema, computer_list_windows_input_schema,
+    computer_save_snapshot_input_schema, computer_scroll_to_element_input_schema,
+    computer_snapshot_display_input_schema, computer_snapshot_input_schema, empty_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -21,6 +22,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "computer_list_windows",
             "List a bounded set of observable top-level windows on an exact Runner. surface_id values are opaque, process-local, and ephemeral. focused is exact-window focus when reliably known; active is the platform active/frontmost signal and may be application-level on macOS.",
             computer_list_windows_input_schema(),
+        ),
+        tool_spec(
+            "computer_list_displays",
+            "List a bounded fresh set of exact full displays on one Runner under the independent full-display privacy authority. display_id values are opaque, process-local, ephemeral, and replaced by each fresh list. Results expose only display-relative dimensions and primary status; native monitor identity, device path, global origin, scale, and topology remain private.",
+            computer_list_displays_input_schema(),
         ),
         tool_spec(
             "computer_list_applications",
@@ -81,6 +87,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "computer_snapshot",
             "Capture one exact listed window as a bounded image. Optional surface-relative region or max dimensions require the region-snapshot capability; whole-window capture stays rolling-compatible. Region must fit the revalidated surface. Encoding is system-selected; stale surfaces never fall back.",
             computer_snapshot_input_schema(),
+        ),
+        tool_spec(
+            "computer_snapshot_display",
+            "Capture exactly one fresh previously discovered full display. The Runner revalidates private native display identity before capture; stale or ambiguous displays fail closed. max_width/max_height only downscale aspect-preservingly and never upscale. No global coordinates, regions, virtual-desktop mosaic, activation, input, shell, or process fallback is accepted. A positive process-local snapshot_generation identifies the captured display/geometry generation for future freshness fencing.",
+            computer_snapshot_display_input_schema(),
         ),
         tool_spec(
             "computer_save_snapshot",

@@ -13,6 +13,18 @@ pub(crate) fn computer_list_windows_input_schema() -> Value {
     })
 }
 
+pub(crate) fn computer_list_displays_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose full displays are observed."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 16, "description": "Optional bounded display count; defaults to 16."}
+        },
+        "required": ["client_id"]
+    })
+}
+
 pub(crate) fn computer_list_applications_input_schema() -> Value {
     json!({
         "type": "object",
@@ -183,6 +195,20 @@ pub(crate) fn computer_snapshot_input_schema() -> Value {
             "max_height": {"type": "integer", "minimum": 1, "maximum": 4096, "description": "Optional upper bound on encoded output height. Never upscales."}
         },
         "required": ["client_id", "surface_id"]
+    })
+}
+
+pub(crate) fn computer_snapshot_display_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id that produced the display_id."},
+            "display_id": {"type": "string", "pattern": "^display_[0-9a-f]{32}$", "maxLength": 128, "description": "Fresh opaque process-local display_id returned by computer_list_displays."},
+            "max_width": {"type": "integer", "minimum": 1, "maximum": 4096, "description": "Optional upper bound on encoded output width. Never upscales."},
+            "max_height": {"type": "integer", "minimum": 1, "maximum": 4096, "description": "Optional upper bound on encoded output height. Never upscales."}
+        },
+        "required": ["client_id", "display_id"]
     })
 }
 

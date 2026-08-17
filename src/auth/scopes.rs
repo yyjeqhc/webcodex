@@ -23,6 +23,7 @@ pub const SCOPE_JOB_RUN: &str = "job:run";
 pub const SCOPE_COMPUTER_READ: &str = "computer:read";
 pub const SCOPE_COMPUTER_CONTROL: &str = "computer:control";
 pub const SCOPE_COMPUTER_LAUNCH: &str = "computer:launch";
+pub const SCOPE_COMPUTER_DISPLAY_READ: &str = "computer:display_read";
 pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
 pub const SCOPE_ADMIN: &str = "admin";
 
@@ -52,6 +53,7 @@ pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_COMPUTER_READ,
     SCOPE_COMPUTER_CONTROL,
     SCOPE_COMPUTER_LAUNCH,
+    SCOPE_COMPUTER_DISPLAY_READ,
     SCOPE_ACCOUNT_MANAGE,
     SCOPE_AGENT_REGISTER,
     SCOPE_AGENT_POLL,
@@ -278,6 +280,15 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
 }
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
+    if matches!(
+        tool_name,
+        "computer_list_displays" | "computer_snapshot_display"
+    ) {
+        return OAuthToolScopePolicy::RequireAll(&[
+            SCOPE_COMPUTER_READ,
+            SCOPE_COMPUTER_DISPLAY_READ,
+        ]);
+    }
     if tool_name == "computer_save_snapshot" {
         return OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ]);
     }
@@ -938,6 +949,11 @@ mod tests {
             let metadata = lookup_tool_metadata(tool).unwrap();
             let expected = if tool == "computer_save_snapshot" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ])
+            } else if matches!(tool, "computer_list_displays" | "computer_snapshot_display") {
+                OAuthToolScopePolicy::RequireAll(&[
+                    SCOPE_COMPUTER_READ,
+                    SCOPE_COMPUTER_DISPLAY_READ,
+                ])
             } else {
                 OAuthToolScopePolicy::Require(metadata.oauth_scope.unwrap())
             };

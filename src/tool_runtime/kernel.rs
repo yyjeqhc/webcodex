@@ -734,6 +734,35 @@ mod tests {
     }
 
     #[test]
+    fn computer_display_observation_requires_read_and_display_read() {
+        let read_only = oauth(&["computer:read"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&read_only), "computer_list_displays"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_DISPLAY_READ),
+                description: "missing required scope: computer:display_read".to_string(),
+            })
+        );
+        let display_only = oauth(&["computer:display_read"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&display_only), "computer_snapshot_display"),
+            Err(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(crate::auth::SCOPE_COMPUTER_READ),
+                description: "missing required scope: computer:read".to_string(),
+            })
+        );
+        let both = oauth(&["computer:read", "computer:display_read"]);
+        assert_eq!(
+            check_runtime_tool_scope(Some(&both), "computer_list_displays"),
+            Ok(())
+        );
+        assert_eq!(
+            check_runtime_tool_scope(Some(&both), "computer_snapshot_display"),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn computer_save_snapshot_requires_project_write_and_computer_read() {
         let read_only = oauth(&["computer:read"]);
         assert_eq!(

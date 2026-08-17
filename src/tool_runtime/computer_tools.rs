@@ -8,6 +8,7 @@ use crate::shell_protocol::{
     ShellCommandExecutionState, ShellFileOpRequest,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
@@ -21,7 +22,10 @@ use std::time::Duration;
 
 const MAX_WINDOWS: usize = 64;
 const MAX_APPLICATIONS: usize = 64;
+const MAX_DISPLAYS: usize = 16;
 const MAX_APPLICATION_ID_BYTES: usize = 128;
+const MAX_DISPLAY_ID_BYTES: usize = 128;
+const MAX_RAW_CAPTURE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_SURFACE_ID_BYTES: usize = 128;
 const MAX_ELEMENT_ID_BYTES: usize = 128;
@@ -89,6 +93,17 @@ fn valid_application_id(application_id: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn valid_display_id(display_id: &str) -> bool {
+    let Some(suffix) = display_id.strip_prefix("display_") else {
+        return false;
+    };
+    display_id.len() <= MAX_DISPLAY_ID_BYTES
+        && suffix.len() == 32
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn validate_input_text(text: &str) -> Result<usize, &'static str> {
     let text_bytes = text.len();
     if text_bytes == 0 || text_bytes > MAX_INPUT_TEXT_BYTES || text.contains('\0') {
@@ -112,6 +127,19 @@ impl ToolRuntime {
                 self.dispatch_computer_request(
                     &client_id,
                     "computer_list_windows",
+                    json!({"limit": limit}),
+                    auth,
+                    Some(limit),
+                    None,
+                    None,
+                )
+                .await
+            }
+            ToolCall::ComputerListDisplays { client_id, limit } => {
+                let limit = limit.unwrap_or(MAX_DISPLAYS).clamp(1, MAX_DISPLAYS);
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_list_displays",
                     json!({"limit": limit}),
                     auth,
                     Some(limit),
@@ -440,6 +468,39 @@ impl ToolRuntime {
                     max_width,
                     max_height,
                     auth,
+                )
+                .await
+            }
+            ToolCall::ComputerSnapshotDisplay {
+                client_id,
+                display_id,
+                max_width,
+                max_height,
+            } => {
+                if !valid_display_id(&display_id) {
+                    return computer_error("invalid_display", "display_id is invalid");
+                }
+                if max_width.is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION as u32)
+                    || max_height
+                        .is_some_and(|value| value == 0 || value > MAX_IMAGE_DIMENSION as u32)
+                {
+                    return computer_error(
+                        "invalid_request",
+                        "display snapshot output dimension bound is invalid",
+                    );
+                }
+                self.dispatch_computer_request(
+                    &client_id,
+                    "computer_snapshot_display",
+                    json!({
+                        "display_id": display_id,
+                        "max_width": max_width,
+                        "max_height": max_height,
+                    }),
+                    auth,
+                    None,
+                    None,
+                    None,
                 )
                 .await
             }
@@ -837,12 +898,14 @@ impl ToolRuntime {
             let computer_observe = client.capabilities.computer_observe;
             let computer_application_discovery = client.capabilities.computer_application_discovery;
             let computer_application_launch = client.capabilities.computer_application_launch;
+            let computer_display_observe = client.capabilities.computer_display_observe;
             let computer_snapshot_region = client.capabilities.computer_snapshot_region;
             let computer_accessibility_observe = client.capabilities.computer_accessibility_observe;
             if !computer_observe
                 && !computer_accessibility_observe
                 && !computer_application_discovery
                 && !computer_application_launch
+                && !computer_display_observe
             {
                 continue;
             }
@@ -858,6 +921,7 @@ impl ToolRuntime {
                     "computer_observe": computer_observe,
                     "computer_application_discovery": computer_application_discovery,
                     "computer_application_launch": computer_application_launch,
+                    "computer_display_observe": computer_display_observe,
                     "computer_snapshot_region": computer_snapshot_region,
                     "computer_accessibility_observe": computer_accessibility_observe,
                 },
@@ -887,6 +951,10 @@ impl ToolRuntime {
             .and_then(Value::as_str)
             .map(str::to_string);
         let is_application_launch = kind == "computer_launch_application";
+        let expected_display_id = payload
+            .get("display_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         if client_id.is_empty() || client_id.len() > 128 {
             if is_application_launch {
                 return computer_application_effect_not_started(
@@ -902,6 +970,9 @@ impl ToolRuntime {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY]
             }
             "computer_launch_application" => &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH],
+            "computer_list_displays" | "computer_snapshot_display" => {
+                &[SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE]
+            }
             "computer_list_windows" | "computer_snapshot" => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE]
             }
@@ -1136,6 +1207,9 @@ impl ToolRuntime {
             "computer_list_applications" => {
                 validate_application_list(output, list_limit.unwrap_or(MAX_APPLICATIONS))
             }
+            "computer_list_displays" => {
+                validate_display_list(output, list_limit.unwrap_or(MAX_DISPLAYS))
+            }
             "computer_launch_application" => {
                 let validated = validate_computer_launch_application(
                     output,
@@ -1156,6 +1230,13 @@ impl ToolRuntime {
                 client_id,
                 snapshot_advanced,
                 expected_snapshot_region.as_ref(),
+                expected_snapshot_max_width,
+                expected_snapshot_max_height,
+            ),
+            "computer_snapshot_display" => validate_display_snapshot(
+                output,
+                expected_display_id.as_deref().unwrap_or_default(),
+                client_id,
                 expected_snapshot_max_width,
                 expected_snapshot_max_height,
             ),
@@ -1299,6 +1380,9 @@ fn computer_error_recovery_message(error_kind: &str, error: &str) -> String {
         ),
         "stale_application" => format!(
             "{error}; reacquire a fresh application_id with computer_list_applications before another launch"
+        ),
+        "stale_display" => format!(
+            "{error}; reacquire a fresh display_id with computer_list_displays before continuing"
         ),
         _ => error.to_string(),
     }
@@ -1585,8 +1669,10 @@ fn classify_runner_error(error: &str) -> &'static str {
         "stale_surface",
         "stale_element",
         "stale_application",
+        "stale_display",
         "unsupported_platform",
         "application_failed",
+        "display_failed",
         "capture_failed",
         "accessibility_failed",
         "control_failed",
@@ -1744,6 +1830,248 @@ fn validate_application_list(output: Value, limit: usize) -> ToolResult {
             "Runner application list metadata is inconsistent",
         );
     }
+    ToolResult::ok(output)
+}
+
+fn validate_display_list(output: Value, limit: usize) -> ToolResult {
+    let Some(object) = output.as_object() else {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display list is not an object",
+        );
+    };
+    let allowed = ["displays", "count", "truncated"];
+    if object.len() != allowed.len() || object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display list fields are inconsistent",
+        );
+    }
+    let Some(displays) = output.get("displays").and_then(Value::as_array) else {
+        return computer_error("invalid_runner_response", "Runner display list is missing");
+    };
+    if displays.len() > limit || displays.len() > MAX_DISPLAYS {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display list exceeds bound",
+        );
+    }
+    let mut seen = std::collections::HashSet::with_capacity(displays.len());
+    for display in displays {
+        let Some(entry) = display.as_object() else {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner display entry is not an object",
+            );
+        };
+        let allowed_entry = ["display_id", "width", "height", "primary"];
+        if entry.len() != allowed_entry.len()
+            || entry
+                .keys()
+                .any(|key| !allowed_entry.contains(&key.as_str()))
+        {
+            return computer_error(
+                "invalid_runner_response",
+                "Runner display entry fields are inconsistent",
+            );
+        }
+        let display_id = display
+            .get("display_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let width = display
+            .get("width")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let height = display
+            .get("height")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        if !valid_display_id(display_id)
+            || !seen.insert(display_id)
+            || width == 0
+            || width > u32::MAX as u64
+            || height == 0
+            || height > u32::MAX as u64
+            || display.get("primary").and_then(Value::as_bool).is_none()
+        {
+            return computer_error("invalid_runner_response", "Runner display entry is invalid");
+        }
+    }
+    if output.get("count").and_then(Value::as_u64) != Some(displays.len() as u64)
+        || output.get("truncated").and_then(Value::as_bool).is_none()
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display list metadata is inconsistent",
+        );
+    }
+    ToolResult::ok(output)
+}
+
+fn expected_display_snapshot_dimensions(
+    source_width: u64,
+    source_height: u64,
+    max_width: Option<u64>,
+    max_height: Option<u64>,
+) -> (u64, u64) {
+    let width_scale = max_width
+        .map(|bound| bound as f64 / source_width as f64)
+        .unwrap_or(1.0);
+    let height_scale = max_height
+        .map(|bound| bound as f64 / source_height as f64)
+        .unwrap_or(1.0);
+    let scale = 1.0f64.min(width_scale).min(height_scale);
+    if scale < 1.0 {
+        let width = ((source_width as f64 * scale).floor() as u64)
+            .max(1)
+            .min(max_width.unwrap_or(u64::MAX));
+        let height = ((source_height as f64 * scale).floor() as u64)
+            .max(1)
+            .min(max_height.unwrap_or(u64::MAX));
+        (width, height)
+    } else {
+        (source_width, source_height)
+    }
+}
+
+fn validate_display_snapshot(
+    mut output: Value,
+    expected_display_id: &str,
+    client_id: &str,
+    expected_max_width: Option<u64>,
+    expected_max_height: Option<u64>,
+) -> ToolResult {
+    let Some(object) = output.as_object() else {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot is not an object",
+        );
+    };
+    let allowed = [
+        "display_id",
+        "snapshot_generation",
+        "source_width",
+        "source_height",
+        "width",
+        "height",
+        "mime_type",
+        "file_bytes",
+        "sha256",
+        "captured_at_unix_ms",
+        "content_base64",
+    ];
+    if object.len() != allowed.len() || object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot fields are inconsistent",
+        );
+    }
+    if !valid_display_id(expected_display_id)
+        || output.get("display_id").and_then(Value::as_str) != Some(expected_display_id)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot identity is inconsistent",
+        );
+    }
+    let generation = output
+        .get("snapshot_generation")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let source_width = output
+        .get("source_width")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let source_height = output
+        .get("source_height")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    if generation == 0
+        || generation > u32::MAX as u64
+        || source_width == 0
+        || source_width > u32::MAX as u64
+        || source_height == 0
+        || source_height > u32::MAX as u64
+        || source_width
+            .checked_mul(source_height)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .is_none_or(|bytes| bytes > MAX_RAW_CAPTURE_BYTES)
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot source geometry is invalid",
+        );
+    }
+    let width = output
+        .get("width")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let height = output
+        .get("height")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let expected_dimensions = expected_display_snapshot_dimensions(
+        source_width,
+        source_height,
+        expected_max_width,
+        expected_max_height,
+    );
+    if (width, height) != expected_dimensions
+        || width == 0
+        || height == 0
+        || width > MAX_IMAGE_DIMENSION
+        || height > MAX_IMAGE_DIMENSION
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot dimensions are inconsistent",
+        );
+    }
+    if output.get("mime_type").and_then(Value::as_str) != Some("image/jpeg") {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot MIME is invalid",
+        );
+    }
+    let Some(encoded) = output.get("content_base64").and_then(Value::as_str) else {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot content is missing",
+        );
+    };
+    let decoded = match general_purpose::STANDARD.decode(encoded) {
+        Ok(decoded) if !decoded.is_empty() && decoded.len() <= MAX_MCP_IMAGE_BYTES => decoded,
+        _ => {
+            return computer_error(
+                "image_too_large",
+                "Runner display snapshot image is invalid or too large",
+            )
+        }
+    };
+    if sniff_mime(&decoded) != Some("image/jpeg")
+        || output.get("file_bytes").and_then(Value::as_u64) != Some(decoded.len() as u64)
+        || output.get("sha256").and_then(Value::as_str) != Some(sha256_hex(&decoded).as_str())
+    {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot image metadata is inconsistent",
+        );
+    }
+    const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+    if !matches!(
+        output.get("captured_at_unix_ms").and_then(Value::as_u64),
+        Some(value) if value > 0 && value <= MAX_SAFE_JSON_INTEGER
+    ) {
+        return computer_error(
+            "invalid_runner_response",
+            "Runner display snapshot timestamp is invalid",
+        );
+    }
+    output
+        .as_object_mut()
+        .expect("display snapshot object shape checked above")
+        .insert("client_id".to_string(), json!(client_id));
     ToolResult::ok(output)
 }
 
@@ -2692,6 +3020,149 @@ mod tests {
         );
         assert!(malformed.output["application_id"].is_null());
         assert_eq!(malformed.output["execution_state"], "not_started");
+    }
+
+    const DISPLAY_ID: &str = "display_0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn computer_display_public_shape_and_read_only_semantics_are_closed() {
+        assert!(valid_display_id(DISPLAY_ID));
+        assert!(!computer_request_is_effect("computer_list_displays"));
+        assert!(!computer_request_is_effect("computer_snapshot_display"));
+        let list = ToolCall::from_tool_name(
+            "computer_list_displays",
+            json!({"client_id": "msi", "limit": 2}),
+        )
+        .unwrap();
+        assert!(matches!(list, ToolCall::ComputerListDisplays { .. }));
+        let snapshot = ToolCall::from_tool_name(
+            "computer_snapshot_display",
+            json!({"client_id": "msi", "display_id": DISPLAY_ID, "max_width": 960}),
+        )
+        .unwrap();
+        assert!(matches!(snapshot, ToolCall::ComputerSnapshotDisplay { .. }));
+        for forbidden in [
+            "region",
+            "x",
+            "y",
+            "global_x",
+            "pointer",
+            "click",
+            "monitor_id",
+        ] {
+            let mut args = json!({"client_id": "msi", "display_id": DISPLAY_ID});
+            args.as_object_mut()
+                .unwrap()
+                .insert(forbidden.to_string(), json!(1));
+            let error = ToolCall::from_tool_name("computer_snapshot_display", args).unwrap_err();
+            assert!(error.contains("unknown field"), "{error}");
+        }
+    }
+
+    #[test]
+    fn computer_display_list_validator_is_bounded_exact_and_private() {
+        let valid = validate_display_list(
+            json!({
+                "displays": [{
+                    "display_id": DISPLAY_ID,
+                    "width": 1920,
+                    "height": 1080,
+                    "primary": true
+                }],
+                "count": 1,
+                "truncated": false
+            }),
+            1,
+        );
+        assert!(valid.success, "{:?}", valid.output);
+
+        for output in [
+            json!({
+                "displays": [{
+                    "display_id": DISPLAY_ID,
+                    "width": 1920,
+                    "height": 1080,
+                    "primary": true,
+                    "device_path": "PRIVATE"
+                }],
+                "count": 1,
+                "truncated": false
+            }),
+            json!({
+                "displays": [{
+                    "display_id": DISPLAY_ID,
+                    "width": 1920,
+                    "height": 1080,
+                    "primary": true
+                }],
+                "count": 1,
+                "truncated": false,
+                "global_origin": {"x": 0, "y": 0}
+            }),
+        ] {
+            let result = validate_display_list(output, 1);
+            assert!(!result.success);
+            assert_eq!(result.output["error_kind"], "invalid_runner_response");
+        }
+    }
+
+    #[test]
+    fn computer_display_snapshot_validator_enforces_identity_geometry_and_privacy() {
+        let image = [0xff, 0xd8, 0xff, 0xe0];
+        let output = json!({
+            "display_id": DISPLAY_ID,
+            "snapshot_generation": 7,
+            "source_width": 1920,
+            "source_height": 1080,
+            "width": 960,
+            "height": 540,
+            "mime_type": "image/jpeg",
+            "file_bytes": image.len(),
+            "sha256": sha256_hex(&image),
+            "captured_at_unix_ms": 1_700_000_000_000u64,
+            "content_base64": general_purpose::STANDARD.encode(image)
+        });
+        let valid = validate_display_snapshot(output.clone(), DISPLAY_ID, "msi", Some(960), None);
+        assert!(valid.success, "{:?}", valid.output);
+        assert_eq!(valid.output["client_id"], "msi");
+
+        for (field, value) in [
+            ("native_identity", json!("PRIVATE")),
+            ("device_path", json!("PRIVATE")),
+            ("global_x", json!(0)),
+            ("scale_factor", json!(1.25)),
+        ] {
+            let mut leaked = output.clone();
+            leaked
+                .as_object_mut()
+                .unwrap()
+                .insert(field.to_string(), value);
+            let result = validate_display_snapshot(leaked, DISPLAY_ID, "msi", Some(960), None);
+            assert!(!result.success, "field {field}");
+            assert_eq!(result.output["error_kind"], "invalid_runner_response");
+        }
+
+        let mut wrong_generation = output.clone();
+        wrong_generation["snapshot_generation"] = json!(0);
+        assert!(
+            !validate_display_snapshot(wrong_generation, DISPLAY_ID, "msi", Some(960), None,)
+                .success
+        );
+
+        let mut wrong_dimensions = output.clone();
+        wrong_dimensions["height"] = json!(541);
+        assert!(
+            !validate_display_snapshot(wrong_dimensions, DISPLAY_ID, "msi", Some(960), None,)
+                .success
+        );
+
+        let mut oversized_source = output;
+        oversized_source["source_width"] = json!(10_000);
+        oversized_source["source_height"] = json!(10_000);
+        let result =
+            validate_display_snapshot(oversized_source, DISPLAY_ID, "msi", Some(960), None);
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "invalid_runner_response");
     }
 
     #[test]

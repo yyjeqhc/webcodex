@@ -95,6 +95,9 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
         "computer_list_applications" => {
             copy_keys(obj, &mut out, &["client_id", "limit"]);
         }
+        "computer_list_displays" => {
+            copy_keys(obj, &mut out, &["client_id", "limit"]);
+        }
         "computer_launch_application" => {
             copy_keys(obj, &mut out, &["client_id", "application_id"]);
         }
@@ -165,6 +168,13 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             out.insert(
                 "region_present".to_string(),
                 Value::Bool(obj.get("region").is_some_and(|value| !value.is_null())),
+            );
+        }
+        "computer_snapshot_display" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["client_id", "display_id", "max_width", "max_height"],
             );
         }
         "computer_save_snapshot" => {
@@ -486,6 +496,10 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "count": output.get("count").cloned().unwrap_or(Value::Null),
             "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
         }),
+        "computer_list_displays" => serde_json::json!({
+            "count": output.get("count").cloned().unwrap_or(Value::Null),
+            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
+        }),
         "computer_launch_application" => serde_json::json!({
             "application_id": output.get("application_id").cloned().unwrap_or(Value::Null),
             "success": output.get("success").cloned().unwrap_or(Value::Null),
@@ -502,6 +516,18 @@ pub(crate) fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Va
             "height": output.get("height").cloned().unwrap_or(Value::Null),
             "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
             "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
+            "captured_at_unix_ms": output.get("captured_at_unix_ms").cloned().unwrap_or(Value::Null),
+        }),
+        "computer_snapshot_display" => serde_json::json!({
+            "display_id": output.get("display_id").cloned().unwrap_or(Value::Null),
+            "snapshot_generation": output.get("snapshot_generation").cloned().unwrap_or(Value::Null),
+            "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
+            "source_height": output.get("source_height").cloned().unwrap_or(Value::Null),
+            "width": output.get("width").cloned().unwrap_or(Value::Null),
+            "height": output.get("height").cloned().unwrap_or(Value::Null),
+            "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
+            "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
+            "sha256": output.get("sha256").cloned().unwrap_or(Value::Null),
             "captured_at_unix_ms": output.get("captured_at_unix_ms").cloned().unwrap_or(Value::Null),
         }),
         "computer_save_snapshot" => serde_json::json!({
@@ -607,6 +633,74 @@ mod computer_privacy_tests {
         assert!(!serialized.contains("Private App"));
         assert!(!serialized.contains("application_"));
         assert!(!serialized.contains("native_identity"));
+    }
+
+    #[test]
+    fn computer_display_list_ledger_omits_ids_and_native_topology() {
+        let output = json!({
+            "displays": [{
+                "display_id": "display_0123456789abcdef0123456789abcdef",
+                "width": 1920,
+                "height": 1080,
+                "primary": true,
+                "native_identity": "PRIVATE_NATIVE_ID",
+                "device_path": "PRIVATE_DEVICE_PATH",
+                "global_x": -1920
+            }],
+            "count": 1,
+            "truncated": false
+        });
+        let summary = session_log_result_for_tool("computer_list_displays", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary, json!({"count": 1, "truncated": false}));
+        assert!(!serialized.contains("display_"));
+        assert!(!serialized.contains("PRIVATE_NATIVE_ID"));
+        assert!(!serialized.contains("PRIVATE_DEVICE_PATH"));
+        assert!(!serialized.contains("global_x"));
+    }
+
+    #[test]
+    fn computer_display_snapshot_ledger_omits_image_and_native_topology() {
+        let display_id = "display_0123456789abcdef0123456789abcdef";
+        let request = json!({
+            "client_id": "msi",
+            "display_id": display_id,
+            "max_width": 1024,
+            "max_height": 768,
+            "global_x": -1920
+        });
+        let request_summary =
+            session_log_arguments_for_tool_request("computer_snapshot_display", &request);
+        assert_eq!(request_summary["display_id"], display_id);
+        assert!(request_summary.get("global_x").is_none());
+
+        let output = json!({
+            "display_id": display_id,
+            "snapshot_generation": 9,
+            "source_width": 1920,
+            "source_height": 1080,
+            "width": 1024,
+            "height": 576,
+            "mime_type": "image/jpeg",
+            "file_bytes": 1234,
+            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "captured_at_unix_ms": 1_700_000_000_000u64,
+            "content_base64": "PRIVATE_IMAGE_BODY",
+            "native_identity": "PRIVATE_NATIVE_ID",
+            "device_path": "PRIVATE_DEVICE_PATH",
+            "global_x": -1920,
+            "scale_factor": 1.25
+        });
+        let summary = session_log_result_for_tool("computer_snapshot_display", &output);
+        let serialized = serde_json::to_string(&summary).unwrap();
+        assert_eq!(summary["display_id"], display_id);
+        assert_eq!(summary["snapshot_generation"], 9);
+        assert_eq!(summary["sha256"], output["sha256"]);
+        assert!(!serialized.contains("PRIVATE_IMAGE_BODY"));
+        assert!(!serialized.contains("PRIVATE_NATIVE_ID"));
+        assert!(!serialized.contains("PRIVATE_DEVICE_PATH"));
+        assert!(!serialized.contains("global_x"));
+        assert!(!serialized.contains("scale_factor"));
     }
 
     #[test]

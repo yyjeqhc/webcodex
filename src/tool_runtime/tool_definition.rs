@@ -62,6 +62,7 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
     SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH, SHELL_CLIENT_CAPABILITY_COMPUTER_CONTROL,
+    SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
     SHELL_CLIENT_CAPABILITY_COMPUTER_ELEMENT_STATE, SHELL_CLIENT_CAPABILITY_COMPUTER_KEY_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
@@ -104,6 +105,8 @@ pub(crate) enum AgentCapability {
     ComputerApplicationDiscovery,
     /// Native launch of one exact fresh opaque application handle.
     ComputerApplicationLaunch,
+    /// Native exact full-display discovery and snapshot observation.
+    ComputerDisplayObserve,
     /// Native read-only semantic accessibility inspection on the exact Runner.
     ComputerAccessibilityObserve,
     /// Native read-only normalized state for one exact observed element.
@@ -141,6 +144,7 @@ impl AgentCapability {
                 SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY
             }
             Self::ComputerApplicationLaunch => SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
+            Self::ComputerDisplayObserve => SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
             Self::ComputerAccessibilityObserve => {
                 SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE
             }
@@ -176,6 +180,7 @@ impl AgentCapability {
             Self::ComputerApplicationLaunch => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_APPLICATION_LAUNCH]
             }
+            Self::ComputerDisplayObserve => &[SHELL_CLIENT_CAPABILITY_COMPUTER_DISPLAY_OBSERVE],
             Self::ComputerAccessibilityObserve => {
                 &[SHELL_CLIENT_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE]
             }

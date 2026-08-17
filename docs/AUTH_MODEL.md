@@ -187,6 +187,7 @@ complete allow-list with `POST /api/oauth/clients/update_scopes`. A real change
 atomically revokes that client's existing access tokens, refresh tokens, and
 outstanding authorization codes, so the client must complete OAuth authorization
 again before using the new scope set.
+`computer:display_read` follows that rule: it is outside the frozen legacy default and is available only through explicit client scope opt-in.
 
 The MCP Protected Resource Metadata intentionally omits `scopes_supported`
 because pre-registered clients can have different delegation ceilings. An MCP
@@ -219,6 +220,7 @@ Application launch therefore requires a principal that was explicitly granted th
 scope. The shared-key profile also does not implicitly gain `account:manage` or `admin`. Unknown authenticated routes and runtime tools
 fail closed for ordinary principals until a scope policy is declared; bootstrap
 retains setup/superuser compatibility.
+The direct shared-key profile, open-anonymous contexts, and project credentials do not include `computer:display_read`; full-display observation is never inherited from their existing Computer/project authority.
 
 Scope-denial wire formatting remains credential-aware. OAuth access tokens use
 the OAuth `insufficient_scope` response and `WWW-Authenticate` challenge. Other
@@ -243,8 +245,13 @@ connection state, and bounded capability facts including `computer_observe`,
 `computer_snapshot_region`, `computer_accessibility_observe`,
 `computer_application_discovery`, and `computer_application_launch`. These fields
 are additive and independent; missing old-Runner fields deserialize false and are
-not inferred from platform, observation, or control. The projection does not expose
+not inferred from platform, observation, or control.
+The same projection includes the independent `computer_display_observe` fact without exposing native display topology. The projection does not expose
 the broader projects, policy, jobs, host, or provider inventory from `list_agents`.
+
+`computer:display_read` is a separate, wider privacy authority for full-display observation. Both `computer_list_displays` and `computer_snapshot_display` require **both** `computer:read` and `computer:display_read`; neither scope implies the other. Both tools also require the independent `computer_display_observe` Runner capability, which is missing/default false and is not inferred from window observation, region snapshots, or platform identity. The current exact backend advertises that capability only on Windows; unsupported or unproven platforms remain false.
+
+Display discovery returns only fresh process-local opaque `display_id`, display-relative width/height, primary status, count, and truncation. Native monitor identity/device paths, global origin, scale/DPI, and topology remain Runner-private. Snapshot revalidates the exact private native display identity and source geometry around capture, accepts no global coordinates or region, and returns bounded image metadata plus a positive process-local `snapshot_generation`. These operations are read-only observations and never enter effect/outcome-unknown retry semantics.
 
 `computer:launch` is a separate consequential Computer authority for
 `computer_launch_application`; neither `computer:read` nor `computer:control` implies it.

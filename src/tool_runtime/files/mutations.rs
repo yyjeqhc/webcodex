@@ -479,11 +479,20 @@ impl ToolRuntime {
         self.delete_project_files_local(&proj, paths)
     }
 
+    /// Rolling-upgrade compatibility for Runner binaries that predate
+    /// `structured_file_delete`. This deliberately preserves the historical
+    /// POSIX `rm -f -- ...` path and is therefore not a new cross-platform
+    /// execution contract. Retirement condition: once the supported Runner
+    /// fleet requires `structured_file_delete`, remove this fallback and its
+    /// compatibility tests rather than extending shell quoting to new platforms.
     async fn delete_project_files_legacy_shell(
         &self,
         project: String,
         paths: Vec<String>,
     ) -> ToolResult {
+        // Admission reaches this path only while mixed-version Runner support is
+        // still required. Never retry here after a possibly-dispatched structured
+        // delete; that uncertainty is handled by the structured lifecycle path.
         let command = format!("rm -f -- {}", shell_join_paths(&paths));
         let result = self.run_shell(project, command, Some(30), None).await;
         if result.success {

@@ -102,6 +102,17 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
     if req.kind == "file_project_overview" {
         return run_agent_project_overview_request_locally(req);
     }
+    let structured_process = if req.kind == "run_process" {
+        assert!(req.command.is_empty());
+        assert!(req.script.is_none());
+        Some(
+            req.process
+                .as_ref()
+                .expect("run_process request must carry a typed process payload"),
+        )
+    } else {
+        None
+    };
     let internal_posix = if req.kind == "run_internal_posix_script" {
         let payload = req
             .script
@@ -122,7 +133,11 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
         .command
         .strip_prefix(EXTERNAL_SEARCH_REQUEST_PREFIX)
         .and_then(|rest| rest.strip_prefix('\n'));
-    let (mut command, stdin_payload) = if let Some(script) = internal_posix {
+    let (mut command, stdin_payload) = if let Some(process) = structured_process {
+        let mut command = std::process::Command::new(&process.executable);
+        command.args(&process.args);
+        (command, req.stdin.clone())
+    } else if let Some(script) = internal_posix {
         #[cfg(windows)]
         let mut command = std::process::Command::new("bash.exe");
         #[cfg(not(windows))]

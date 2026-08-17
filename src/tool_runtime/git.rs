@@ -8,8 +8,8 @@ use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES
 use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
 use super::helpers::{
-    run_command_sync_bounded, shell_escape_simple, shell_join_paths,
-    validate_limited_cleanup_paths, validate_project_relative_path, LocalRunFailure,
+    run_command_sync_bounded, shell_escape_simple, validate_limited_cleanup_paths,
+    validate_project_relative_path, LocalRunFailure,
 };
 use super::tool_result::ToolResult;
 use super::ToolRuntime;
@@ -3016,8 +3016,11 @@ impl ToolRuntime {
             Ok(paths) => paths,
             Err(e) => return ToolResult::err(e),
         };
-        let command = format!("git restore -- {}", shell_join_paths(&paths));
-        let result = self.run_shell(project, command, Some(30), None).await;
+        let mut args = vec!["restore".to_string(), "--".to_string()];
+        args.extend(paths.iter().cloned());
+        let result = self
+            .run_internal_process_sync(project, "git".to_string(), args, 30)
+            .await;
         if result.success {
             ToolResult::ok(json!({
                 "restored_paths": paths,
@@ -3037,8 +3040,11 @@ impl ToolRuntime {
             Ok(paths) => paths,
             Err(e) => return ToolResult::err(e),
         };
-        let command = format!("git clean -f -- {}", shell_join_paths(&paths));
-        let result = self.run_shell(project, command, Some(30), None).await;
+        let mut args = vec!["clean".to_string(), "-f".to_string(), "--".to_string()];
+        args.extend(paths.iter().cloned());
+        let result = self
+            .run_internal_process_sync(project, "git".to_string(), args, 30)
+            .await;
         if result.success {
             ToolResult::ok(json!({
                 "discarded_untracked_paths": paths,

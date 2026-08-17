@@ -329,6 +329,66 @@ impl ToolRuntime {
         session_id: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        self.run_process_with_contract_mode(
+            project,
+            executable,
+            args,
+            stdin,
+            timeout_secs,
+            cwd,
+            purpose,
+            sandbox,
+            ssh_resource,
+            session_id,
+            auth,
+            true,
+        )
+        .await
+    }
+
+    /// Execute one server-owned fixed process synchronously without exposing the
+    /// model-facing structured-execution Job handoff. Effectful internal tools
+    /// must not report success while their fixed mutation is still running.
+    pub(super) async fn run_internal_process_sync(
+        &self,
+        project: String,
+        executable: String,
+        args: Vec<String>,
+        timeout_secs: u64,
+    ) -> ToolResult {
+        self.run_process_with_contract_mode(
+            project,
+            executable,
+            args,
+            None,
+            Some(timeout_secs),
+            None,
+            Some(ExecutionPurpose::Operation),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_process_with_contract_mode(
+        &self,
+        project: String,
+        executable: String,
+        args: Vec<String>,
+        stdin: Option<String>,
+        timeout_secs: Option<u64>,
+        cwd: Option<String>,
+        purpose: Option<ExecutionPurpose>,
+        sandbox: Option<&str>,
+        ssh_resource: Option<&str>,
+        session_id: Option<String>,
+        auth: Option<&AuthContext>,
+        allow_async_handoff: bool,
+    ) -> ToolResult {
         let budget = match StructuredExecutionBudget::resolve(timeout_secs) {
             Ok(budget) => budget,
             Err(error) => {
@@ -434,7 +494,8 @@ impl ToolRuntime {
                     return result;
                 }
             };
-            let async_handoff_available = capabilities.structured_execution_jobs
+            let async_handoff_available = allow_async_handoff
+                && capabilities.structured_execution_jobs
                 && (capabilities.async_jobs || capabilities.async_shell_jobs);
             if !async_handoff_available
                 && timeout > STRUCTURED_EXECUTION_LEGACY_SYNC_TIMEOUT_MAX_SECS

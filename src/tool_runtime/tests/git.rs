@@ -12,6 +12,29 @@ use std::fs;
 use std::path::Path;
 use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
+async fn register_structured_git_agent_at_path(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project_id: &str,
+    root: &Path,
+) -> String {
+    let project_path = root.to_string_lossy().to_string();
+    register_agent_with_projects(
+        runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            git: true,
+            structured_process_argv: true,
+            ..Default::default()
+        },
+        vec![registered_project(project_id, &project_path)],
+    )
+    .await;
+    crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
+}
+
 #[tokio::test]
 async fn git_restore_paths_restores_tracked_filename_containing_target() {
     let tmp = tempfile::tempdir().unwrap();
@@ -25,9 +48,13 @@ async fn git_restore_paths_restores_tracked_filename_containing_target() {
     fs::write(tmp.path().join("SMOKE_TARGET.txt"), "modified\n").unwrap();
 
     let runtime = test_runtime();
-    let project =
-        register_agent_project_at_path(&runtime, "restore-target-substring", "repo", tmp.path())
-            .await;
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "restore-target-substring",
+        "repo",
+        tmp.path(),
+    )
+    .await;
     let restore = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -39,19 +66,257 @@ async fn git_restore_paths_restores_tracked_filename_containing_target() {
 
     let request = next_patch_agent_request(&runtime, "restore-target-substring")
         .await
-        .expect("git_restore_paths should enqueue an agent shell request");
-    assert_eq!(request.command, "git restore -- 'SMOKE_TARGET.txt'");
+        .expect("git_restore_paths should enqueue an agent process request");
+    assert_eq!(request.kind, "run_process");
+    assert!(request.command.is_empty());
+    let process = request.process.as_ref().expect("typed git restore process");
+    assert_eq!(process.executable, "git");
+    assert_eq!(
+        process.args,
+        ["restore", "--", "SMOKE_TARGET.txt"].map(str::to_string)
+    );
     complete_agent_request_by_running_locally(&runtime, "restore-target-substring", request).await;
 
     let result = restore.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(
-        fs::read_to_string(tmp.path().join("SMOKE_TARGET.txt")).unwrap(),
+        fs::read_to_string(tmp.path().join("SMOKE_TARGET.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
         "original\n"
     );
     let (exit_code, stdout, stderr, _) = run_command_sync("git status --porcelain", tmp.path(), 30);
     assert_eq!(exit_code, 0, "git status failed: {stderr}");
     assert!(stdout.is_empty(), "worktree should be clean: {stdout}");
+}
+
+#[tokio::test]
+async fn git_path_mutations_pass_shell_sensitive_paths_as_literal_argv() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let tracked = [
+        "space name.txt",
+        "quote'name.txt",
+        "amp&semi;.txt",
+        "dollar$(literal).txt",
+    ];
+    for path in tracked {
+        commit_file(tmp.path(), path, "original\n", &format!("track {path}"));
+        fs::write(tmp.path().join(path), "modified\n").unwrap();
+    }
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "literal-git-paths", "repo", tmp.path())
+            .await;
+    let restore_paths = tracked.map(str::to_string).to_vec();
+    let restore = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let restore_paths = restore_paths.clone();
+        async move { runtime.git_restore_paths(project, restore_paths).await }
+    });
+    let request = next_patch_agent_request(&runtime, "literal-git-paths")
+        .await
+        .expect("git restore should enqueue typed argv");
+    assert_eq!(request.kind, "run_process");
+    let process = request.process.as_ref().expect("typed git restore process");
+    assert_eq!(process.executable, "git");
+    let mut expected = vec!["restore".to_string(), "--".to_string()];
+    expected.extend(restore_paths.iter().cloned());
+    assert_eq!(process.args, expected);
+    complete_agent_request_by_running_locally(&runtime, "literal-git-paths", request).await;
+    assert!(restore.await.unwrap().success);
+    for path in tracked {
+        assert_eq!(
+            fs::read_to_string(tmp.path().join(path))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "original\n"
+        );
+    }
+
+    let untracked = [
+        "untracked space.txt",
+        "untracked'quote.txt",
+        "untracked&semi;.txt",
+        "untracked$(literal).txt",
+    ];
+    for path in untracked {
+        fs::write(tmp.path().join(path), "remove me\n").unwrap();
+    }
+    let discard_paths = untracked.map(str::to_string).to_vec();
+    let discard = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let discard_paths = discard_paths.clone();
+        async move { runtime.discard_untracked(project, discard_paths).await }
+    });
+    let request = next_patch_agent_request(&runtime, "literal-git-paths")
+        .await
+        .expect("git clean should enqueue typed argv");
+    assert_eq!(request.kind, "run_process");
+    let process = request.process.as_ref().expect("typed git clean process");
+    assert_eq!(process.executable, "git");
+    let mut expected = vec!["clean".to_string(), "-f".to_string(), "--".to_string()];
+    expected.extend(discard_paths.iter().cloned());
+    assert_eq!(process.args, expected);
+    complete_agent_request_by_running_locally(&runtime, "literal-git-paths", request).await;
+    assert!(discard.await.unwrap().success);
+    for path in untracked {
+        assert!(
+            !tmp.path().join(path).exists(),
+            "{path} should be removed literally"
+        );
+    }
+}
+
+#[tokio::test]
+async fn git_restore_missing_structured_process_capability_is_definite_not_started() {
+    let runtime = runtime_with_agent_project("restore-no-argv");
+    register_agent(
+        &runtime,
+        "restore-no-argv",
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            git: true,
+            structured_process_argv: false,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let result = runtime
+        .git_restore_paths(
+            agent_test_project_id("restore-no-argv"),
+            vec!["safe.txt".to_string()],
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_eq!(result.output["failure_kind"], "capability_unavailable");
+    assert!(next_patch_agent_request(&runtime, "restore-no-argv")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn git_restore_stays_sync_on_structured_job_capable_runner() {
+    let runtime = runtime_with_agent_project("restore-sync-job-capable");
+    register_agent(
+        &runtime,
+        "restore-sync-job-capable",
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            git: true,
+            jobs: true,
+            async_jobs: true,
+            structured_process_argv: true,
+            structured_execution_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("restore-sync-job-capable");
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .git_restore_paths(project, vec!["safe.txt".to_string()])
+                .await
+        }
+    });
+
+    let request = next_patch_agent_request(&runtime, "restore-sync-job-capable")
+        .await
+        .expect("git restore should stay on the synchronous process path");
+    assert_eq!(request.kind, "run_process");
+    assert!(request.job_id.is_none());
+    assert!(request.command.is_empty());
+    let process = request.process.as_ref().expect("typed git restore process");
+    assert_eq!(process.executable, "git");
+    assert_eq!(
+        process.args,
+        ["restore", "--", "safe.txt"].map(str::to_string)
+    );
+    complete_patch_agent_request(
+        &runtime,
+        "restore-sync-job-capable",
+        &request.request_id,
+        0,
+        "",
+        "",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["restored_paths"], json!(["safe.txt"]));
+    assert!(
+        next_patch_agent_request(&runtime, "restore-sync-job-capable")
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn git_restore_replacement_after_dispatch_reports_outcome_unknown_without_retry() {
+    let runtime = runtime_with_agent_project("restore-uncertain");
+    register_agent(
+        &runtime,
+        "restore-uncertain",
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            git: true,
+            structured_process_argv: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("restore-uncertain");
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .git_restore_paths(project, vec!["safe.txt".to_string()])
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, "restore-uncertain")
+        .await
+        .expect("git restore should dispatch once");
+    assert_eq!(request.kind, "run_process");
+
+    runtime
+        .shell_clients
+        .set_last_seen_for_test("restore-uncertain", chrono::Utc::now().timestamp() - 120)
+        .await;
+    register_agent_with_instance(
+        &runtime,
+        "restore-uncertain",
+        "inst-b",
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            git: true,
+            structured_process_argv: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["failure_kind"], "outcome_unknown");
+    let retry = next_agent_request_for_instance(&runtime, "restore-uncertain", "inst-b").await;
+    assert!(
+        retry.is_none(),
+        "uncertain mutation must not be retried: {retry:?}"
+    );
 }
 
 #[test]

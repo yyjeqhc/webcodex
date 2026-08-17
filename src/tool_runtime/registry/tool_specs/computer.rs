@@ -53,7 +53,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_scroll_to_element",
-            "Scroll one exact macOS Accessibility element into view with native AX scroll-to-visible. Stale, mismatched, unsupported, or protected targets fail closed; no wheel, coordinate, AppleScript, or shell fallback. Lost post-dispatch responses are outcome-unknown; observe UI state before retrying.",
+            "Scroll one exact macOS Accessibility or Windows UIA element into view with the native semantic scroll action. Stale, mismatched, unsupported, or protected targets fail closed; no wheel, coordinate, script, or shell fallback. Unknown post-dispatch outcomes require re-observation before retrying.",
             computer_scroll_to_element_input_schema(),
         ),
         tool_spec(

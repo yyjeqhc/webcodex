@@ -2247,20 +2247,21 @@ mod platform {
             },
             UI::Accessibility::{
                 CUIAutomation8, IUIAutomation2, IUIAutomationElement, IUIAutomationInvokePattern,
-                IUIAutomationTreeWalker, IUIAutomationValuePattern, UIA_ButtonControlTypeId,
-                UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_CustomControlTypeId,
-                UIA_DataGridControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
-                UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_HeaderControlTypeId,
-                UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
-                UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuControlTypeId,
-                UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_ProgressBarControlTypeId,
-                UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId,
-                UIA_SeparatorControlTypeId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
-                UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-                UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
-                UIA_ToolTipControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-                UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
-                UIA_E_ELEMENTNOTAVAILABLE, UIA_E_NOTSUPPORTED, UIA_PATTERN_ID,
+                IUIAutomationScrollItemPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
+                UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
+                UIA_CustomControlTypeId, UIA_DataGridControlTypeId, UIA_DataItemControlTypeId,
+                UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
+                UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId,
+                UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+                UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_PaneControlTypeId,
+                UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId,
+                UIA_ScrollBarControlTypeId, UIA_ScrollItemPatternId, UIA_SeparatorControlTypeId,
+                UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
+                UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TableControlTypeId,
+                UIA_TextControlTypeId, UIA_ToolBarControlTypeId, UIA_ToolTipControlTypeId,
+                UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValuePatternId,
+                UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID, UIA_E_ELEMENTNOTAVAILABLE,
+                UIA_E_NOTSUPPORTED, UIA_PATTERN_ID,
             },
             UI::WindowsAndMessaging::{GetForegroundWindow, IsIconic, ShowWindowAsync, SW_RESTORE},
         },
@@ -4254,6 +4255,13 @@ mod platform {
     }
 
     #[cfg(windows)]
+    pub(super) fn windows_scroll_attempt_error(operation: &str) -> String {
+        format!(
+            "outcome_unknown: {operation} returned after the exact Windows UI Automation scroll effect was attempted"
+        )
+    }
+
+    #[cfg(windows)]
     pub(super) fn windows_text_input_attempt_error(operation: &str) -> String {
         format!(
             "outcome_unknown: {operation} returned after the exact Windows UI Automation text write was attempted"
@@ -4464,12 +4472,56 @@ mod platform {
 
     #[cfg(windows)]
     pub(super) fn scroll_to_element(
-        _surface_id: &str,
-        _element_id: &str,
-        _surface: &SurfaceRecord,
-        _element: &ElementRecord,
+        surface_id: &str,
+        element_id: &str,
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
     ) -> Result<Value, String> {
-        Err("unsupported_platform: computer scroll is unavailable on this platform".to_string())
+        let target = element.target_fingerprint().ok_or_else(|| {
+            "stale_element: UIA element correlation lineage is incomplete".to_string()
+        })?;
+        if element.contains_protected_content() {
+            return Err(
+                "permission_denied: Windows UI Automation protected content cannot be scrolled"
+                    .to_string(),
+            );
+        }
+        if !target.has_positive_evidence() {
+            return Err(
+                "stale_element: UIA element lacks positive correlation evidence for scrolling"
+                    .to_string(),
+            );
+        }
+
+        // Revalidate the exact xcap surface, HWND/PID UIA root, and complete
+        // RuntimeId-bearing root -> ancestor -> target lineage before the effect.
+        let context = UiaContext::new()?;
+        let current = resolve_uia_element(&context, surface, element)?;
+        let pattern = optional_uia_pattern::<IUIAutomationScrollItemPattern>(
+            &context,
+            &current,
+            UIA_ScrollItemPatternId,
+        )?
+        .ok_or_else(|| {
+            "scroll_failed: UI Automation element does not support ScrollItemPattern".to_string()
+        })?;
+        context.deadline.ensure_remaining()?;
+        if let Err(error) = unsafe { pattern.ScrollIntoView() } {
+            return Err(windows_scroll_attempt_error(&format!(
+                "IUIAutomationScrollItemPattern::ScrollIntoView HRESULT(0x{:08X})",
+                error.code().0 as u32
+            )));
+        }
+        if let Err(error) = context.deadline.ensure_remaining() {
+            return Err(windows_scroll_attempt_error(&error));
+        }
+
+        Ok(json!({
+            "platform": "windows",
+            "surface_id": surface_id,
+            "element_id": element_id,
+            "success": true,
+        }))
     }
 
     #[cfg(windows)]
@@ -4957,6 +5009,18 @@ mod platform {
             capture_window_gdi(surface.native_id, width, height)
         }
     }
+    #[cfg(all(test, windows))]
+    pub(super) fn test_uia_is_offscreen(
+        surface: &SurfaceRecord,
+        element: &ElementRecord,
+    ) -> Result<bool, String> {
+        let context = UiaContext::new()?;
+        let current = resolve_uia_element(&context, surface, element)?;
+        context.deadline.ensure_remaining()?;
+        unsafe { current.CurrentIsOffscreen() }
+            .map(|value| value.as_bool())
+            .map_err(|error| uia_error("IUIAutomationElement::CurrentIsOffscreen", &error))
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -4998,7 +5062,7 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = 'WebCodex Windows UIA Control Smoke'
 $form.StartPosition = 'Manual'
 $form.Location = New-Object System.Drawing.Point(120, 120)
-$form.Size = New-Object System.Drawing.Size(700, 300)
+$form.Size = New-Object System.Drawing.Size(820, 360)
 $input = New-Object System.Windows.Forms.TextBox
 $input.Name = 'SmokeInput'
 $input.AccessibleName = 'Smoke input'
@@ -5014,6 +5078,23 @@ $status.Name = 'SmokeStatus'
 $status.Text = 'ready'
 $status.Location = New-Object System.Drawing.Point(24, 148)
 $status.Size = New-Object System.Drawing.Size(140, 24)
+$password = New-Object System.Windows.Forms.TextBox
+$password.Name = 'ProtectedInput'
+$password.AccessibleName = 'Protected input'
+$password.UseSystemPasswordChar = $true
+$password.Location = New-Object System.Drawing.Point(24, 196)
+$password.Size = New-Object System.Drawing.Size(280, 28)
+$scrollList = New-Object System.Windows.Forms.ListView
+$scrollList.Name = 'ScrollList'
+$scrollList.AccessibleName = 'Scroll list'
+$scrollList.View = [System.Windows.Forms.View]::List
+$scrollList.Scrollable = $true
+$scrollList.Location = New-Object System.Drawing.Point(500, 44)
+$scrollList.Size = New-Object System.Drawing.Size(240, 92)
+for ($i = 0; $i -lt 40; $i++) {
+    $item = New-Object System.Windows.Forms.ListViewItem(('Scroll item {0:D2}' -f $i))
+    [void]$scrollList.Items.Add($item)
+}
 $script:twinPrimary = New-Object System.Windows.Forms.Button
 $script:twinPrimary.Name = 'TwinAction'
 $script:twinPrimary.Text = 'Twin action'
@@ -5070,6 +5151,8 @@ $button.Add_Click({ param($sender, $eventArgs) $sender.Text = 'clicked' })
 $form.Controls.Add($input)
 $form.Controls.Add($button)
 $form.Controls.Add($status)
+$form.Controls.Add($password)
+$form.Controls.Add($scrollList)
 $form.Controls.Add($script:twinPrimary)
 $form.Controls.Add($script:twinSecondary)
 $form.Controls.Add($replaceTwins)
@@ -5144,6 +5227,14 @@ $form.Controls.Add($replaceTwins)
     #[test]
     fn computer_windows_control_attempt_failure_is_unknown() {
         let error = platform::windows_control_attempt_error("IUIAutomationInvokePattern::Invoke");
+        assert!(error.starts_with("outcome_unknown:"), "{error}");
+    }
+
+    #[test]
+    fn computer_windows_scroll_attempt_failure_is_unknown() {
+        let error = platform::windows_scroll_attempt_error(
+            "IUIAutomationScrollItemPattern::ScrollIntoView",
+        );
         assert!(error.starts_with("outcome_unknown:"), "{error}");
     }
 
@@ -5291,6 +5382,23 @@ $form.Controls.Add($replaceTwins)
         assert_eq!(focused_state["value_empty"], true);
         assert_eq!(focused_state["can_input_text"], true);
 
+        let password = tree
+            .elements
+            .iter()
+            .find(|(_, element)| {
+                element
+                    .target_fingerprint()
+                    .is_some_and(|fingerprint| fingerprint.protected)
+            })
+            .expect("fixture exposes a protected UIA password field");
+        let protected_scroll =
+            platform::scroll_to_element(surface_id, &password.0, &record, &password.1)
+                .expect_err("protected UIA target must fail before scrolling");
+        assert!(
+            protected_scroll.starts_with("permission_denied:"),
+            "{protected_scroll}"
+        );
+
         let text = "webcodex computer smoke";
         let input = platform::input_text(surface_id, edit_id, &record, edit, text)
             .expect("write bounded text through private UIA ValuePattern");
@@ -5344,6 +5452,99 @@ $form.Controls.Add($replaceTwins)
         assert!(
             clicked,
             "UIA InvokePattern did not update the private fixture"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop; creates and closes a private scrollable WinForms fixture"]
+    fn computer_windows_scroll_to_element_fixture_live_smoke() {
+        let mut fixture = WindowsControlFixture::start();
+        let candidate = (0..500)
+            .find_map(|_| {
+                if let Some(status) = fixture
+                    .child
+                    .try_wait()
+                    .expect("query private WinForms scroll fixture process")
+                {
+                    panic!("private WinForms scroll fixture exited before discovery: {status}");
+                }
+                let candidate = platform::list_windows(4096)
+                    .expect("list Windows windows for scroll fixture")
+                    .into_iter()
+                    .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE);
+                if candidate.is_none() {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                candidate
+            })
+            .expect("discover private WinForms scroll fixture");
+        let record = surface_record(candidate);
+        platform::activate_window("surface_windows_scroll_fixture_activate", &record)
+            .expect("activate private WinForms scroll fixture");
+
+        let candidate = platform::list_windows(4096)
+            .expect("re-list Windows windows after scroll fixture activation")
+            .into_iter()
+            .find(|candidate| candidate.title == WINDOWS_CONTROL_FIXTURE_TITLE)
+            .expect("re-observe private WinForms scroll fixture");
+        let record = surface_record(candidate);
+        let surface_id = "surface_windows_scroll_fixture";
+        let tree = platform::accessibility_tree(surface_id, &record, 5, 128)
+            .expect("read private WinForms scroll fixture UIA tree");
+        let (target_id, target) = tree
+            .elements
+            .iter()
+            .find(|(_, element)| {
+                element.target_fingerprint().is_some_and(|fingerprint| {
+                    fingerprint.role == "AXRow"
+                        && fingerprint.title.as_deref() == Some("Scroll item 39")
+                        && !fingerprint.protected
+                })
+            })
+            .expect("fixture exposes the last scroll-list item");
+        assert!(
+            platform::test_uia_is_offscreen(&record, target)
+                .expect("read initial UIA offscreen state"),
+            "last fixture item must begin off-screen"
+        );
+
+        let button = tree
+            .elements
+            .iter()
+            .find(|(_, element)| {
+                element.target_fingerprint().is_some_and(|fingerprint| {
+                    fingerprint.role == "AXButton"
+                        && fingerprint.title.as_deref() == Some("Smoke press")
+                })
+            })
+            .expect("fixture exposes a non-scrollable button");
+        let unsupported = platform::scroll_to_element(surface_id, &button.0, &record, &button.1)
+            .expect_err("button without ScrollItemPattern must fail before effect");
+        assert!(unsupported.starts_with("scroll_failed:"), "{unsupported}");
+
+        let output = platform::scroll_to_element(surface_id, target_id, &record, target)
+            .expect("scroll exact off-screen UIA list item into view");
+        assert_eq!(output["platform"], "windows");
+        assert_eq!(output["surface_id"], surface_id);
+        assert_eq!(output["element_id"], target_id.as_str());
+        assert_eq!(output["success"], true);
+
+        let refreshed = platform::accessibility_tree(surface_id, &record, 5, 128)
+            .expect("re-observe private scroll fixture after ScrollIntoView");
+        let (_, refreshed_target) = refreshed
+            .elements
+            .iter()
+            .find(|(_, element)| {
+                element.target_fingerprint().is_some_and(|fingerprint| {
+                    fingerprint.role == "AXRow"
+                        && fingerprint.title.as_deref() == Some("Scroll item 39")
+                })
+            })
+            .expect("fresh observation preserves the scrolled fixture item");
+        assert!(
+            !platform::test_uia_is_offscreen(&record, refreshed_target)
+                .expect("read reconciled UIA offscreen state"),
+            "ScrollIntoView must reconcile the exact item as visible"
         );
     }
 
@@ -5470,6 +5671,10 @@ $form.Controls.Add($replaceTwins)
             stale_control.starts_with("stale_element:"),
             "{stale_control}"
         );
+        let stale_scroll =
+            platform::scroll_to_element(surface_id, &old_twin_id, &record, &old_twin)
+                .expect_err("old scroll handle must not retarget the replacement twin");
+        assert!(stale_scroll.starts_with("stale_element:"), "{stale_scroll}");
         let after = platform::accessibility_tree(surface_id, &record, 4, 96)
             .expect("re-observe fixture after rejected stale control");
         assert!(

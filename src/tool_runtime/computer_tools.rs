@@ -1801,7 +1801,7 @@ fn validate_computer_scroll_to_element(
     let allowed = ["platform", "surface_id", "element_id", "success"];
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("macos")
+        || !is_native_accessibility_platform(output.get("platform").and_then(Value::as_str))
         || output.get("surface_id").and_then(Value::as_str) != Some(expected_surface_id)
         || output.get("element_id").and_then(Value::as_str) != Some(expected_element_id)
         || output.get("success").and_then(Value::as_bool) != Some(true)
@@ -2490,6 +2490,18 @@ mod tests {
             "element_child",
         );
         assert!(valid.success, "{:?}", valid.output);
+
+        let windows = validate_computer_scroll_to_element(
+            json!({
+                "platform": "windows",
+                "surface_id": "surface_test",
+                "element_id": "element_child",
+                "success": true
+            }),
+            "surface_test",
+            "element_child",
+        );
+        assert!(windows.success, "{:?}", windows.output);
 
         let invalid = validate_computer_scroll_to_element(
             json!({

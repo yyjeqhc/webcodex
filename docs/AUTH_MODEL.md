@@ -245,8 +245,9 @@ uses only exact-element `SetFocus`, with `GetFocusedElement`/`CompareElements`
 read-back. Unsupported roles, protected or disabled targets, and background-
 surface focus targets fail closed before the effect. `computer_scroll_to_element`
 is a separate semantic effect that revalidates one exact observed element and
-uses native AX scroll-to-visible only when that element supports it; callers do
-not supply wheel deltas, direction, distance, or coordinates. `computer_key_input`
+uses native AX scroll-to-visible on macOS or UIA `ScrollItemPattern::ScrollIntoView`
+on Windows only when that element supports it; callers do not supply wheel
+deltas, direction, distance, or coordinates. `computer_key_input`
 is a separate closed effect for Enter, Escape, Tab, arrows, paging/home/end plus
 bounded modifiers. The exact `surface_id` must still be the frontmost focused
 window, and the Runner does not focus or activate it implicitly. Ordinary text,

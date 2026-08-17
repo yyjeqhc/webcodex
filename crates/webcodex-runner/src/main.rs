@@ -1877,9 +1877,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Accessibility control is independently fenced and implemented by the
     // native macOS AX and Windows UI Automation backends.
     capabilities.computer_control = cfg!(any(target_os = "macos", windows));
-    // Semantic AX scroll-to-visible is independently fenced for rolling upgrades;
+    // Semantic native scroll-to-visible is independently fenced for rolling upgrades;
     // existing computer_control support never implies it.
-    capabilities.computer_scroll_to_element = cfg!(target_os = "macos");
+    capabilities.computer_scroll_to_element = cfg!(any(target_os = "macos", windows));
     // Closed key input is a separate effect/wire capability. It is currently
     // implemented only by the macOS Runner and is never implied by control.
     capabilities.computer_key_input = cfg!(target_os = "macos");

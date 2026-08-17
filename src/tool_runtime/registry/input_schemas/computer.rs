@@ -100,7 +100,7 @@ pub(crate) fn computer_scroll_to_element_input_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose macOS Accessibility element is scrolled into view."},
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose macOS Accessibility or Windows UIA element is scrolled into view."},
             "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact opaque surface_id used to obtain the element."},
             "element_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local element_id returned by computer_accessibility_tree or computer_find_elements."}
         },

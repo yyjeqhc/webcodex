@@ -133,6 +133,12 @@ Windows reuses `computer_input_text(surface_id, element_id, text)` and its indep
 
 `computer_element_state.can_input_text` reflects the same writable/foreground/focused/empty predicate; the current value itself never leaves the Runner. Emptiness is re-read immediately before `SetValue`, so a non-empty field fails closed instead of being overwritten. Once `SetValue` has been attempted, any native HRESULT failure is `outcome_unknown`; callers must re-observe the exact element before considering another write. Successful responses contain only bounded metadata such as `text_bytes`, never caller text or field contents.
 
+### Windows UIA parity W5 — semantic scroll
+
+Windows reuses `computer_scroll_to_element(surface_id, element_id)` and its independent `computer_scroll_to_element` capability. Immediately before the effect the Runner revalidates the exact xcap surface, HWND/PID UIA root, and the complete RuntimeId-bearing root-to-target lineage, rejects protected/password lineage, and requires the exact element to expose `ScrollItemPattern`. The only native effect is `IUIAutomationScrollItemPattern::ScrollIntoView`; there is no wheel, delta/percentage `ScrollPattern`, `SendInput`, coordinate, pointer, LegacyIAccessible, script, shell, or application-specific fallback.
+
+Missing `ScrollItemPattern` and other pre-effect validation failures are deterministic. Once `ScrollIntoView` has been invoked, any HRESULT failure or deadline loss is `outcome_unknown`; callers must make a fresh semantic observation before deciding whether another scroll is safe. The result remains closed metadata containing only platform, surface/element identity, and success.
+
 ## Next capability sequence
 
 After the near-term slices are dogfooded, the expected order is:

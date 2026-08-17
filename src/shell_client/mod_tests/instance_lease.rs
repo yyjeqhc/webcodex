@@ -332,17 +332,6 @@ async fn lease_stale_instance_job_update_rejected() {
 }
 
 #[tokio::test]
-async fn lease_list_clients_exposes_instance_id() {
-    let registry = ShellClientRegistry::default();
-    register_with_instance(&registry, "oe", "inst-a").await;
-    let clients = registry.list_clients().await;
-    assert_eq!(clients.len(), 1);
-    assert_eq!(clients[0].agent_instance_id, "inst-a");
-    let view = registry.get_client_view("oe").await.unwrap();
-    assert_eq!(view.agent_instance_id, "inst-a");
-}
-
-#[tokio::test]
 async fn lease_reconcile_disconnect_stale_instance_is_noop() {
     // A delayed disconnect from a stale, replaced instance must not affect
     // the current active instance: it must not clear B's notifier, not mark

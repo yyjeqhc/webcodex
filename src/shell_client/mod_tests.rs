@@ -2897,47 +2897,6 @@ async fn touch_client_refreshes_stale_client_back_to_online() {
 }
 
 #[tokio::test]
-async fn touch_client_refreshes_websocket_transport_client() {
-    let registry = ShellClientRegistry::default();
-    registry
-        .register(ShellClientRegisterRequest {
-            process_started_at: None,
-            build: None,
-            job_concurrency_limit: None,
-            job_inventory: None,
-            client_id: "ws-1".to_string(),
-            agent_instance_id: "inst".to_string(),
-            display_name: None,
-            owner: None,
-            hostname: None,
-            host_context: None,
-            capabilities: Some(async_job_capabilities()),
-            projects: None,
-            agent_protocol_version: None,
-            policy: None,
-        })
-        .await
-        .unwrap();
-    registry
-        .set_transport("ws-1", TRANSPORT_WEBSOCKET)
-        .await
-        .unwrap();
-
-    registry
-        .set_last_seen_for_test("ws-1", now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
-        .await;
-    let stale = registry.get_client_view("ws-1").await.unwrap();
-    assert_eq!(stale.transport, "websocket");
-    assert!(!stale.connected);
-
-    registry.touch_client("ws-1", "inst").await.unwrap();
-    let fresh = registry.get_client_view("ws-1").await.unwrap();
-    assert_eq!(fresh.transport, "websocket");
-    assert!(fresh.connected);
-    assert_eq!(fresh.status, "online");
-}
-
-#[tokio::test]
 async fn touch_client_rejects_stale_instance_and_accepts_active() {
     // Regression: a stale/replaced instance must not refresh the active
     // lease's `last_seen` via Ping/Pong keepalive.

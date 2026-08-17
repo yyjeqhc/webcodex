@@ -1,5 +1,7 @@
 use super::responses::{bad_json, bad_request, no_db, not_found, query_failed, sanitize_event};
-use crate::action_audit_sessions::{compute_stats, decode_event, ActionEventView};
+use crate::action_audit_sessions::{
+    compute_attribution_stats, compute_stats, decode_event, ActionEventView,
+};
 use crate::get_db;
 use salvo::prelude::*;
 use serde::Deserialize;
@@ -139,7 +141,9 @@ struct AuditStatsRequest {
 /// stats cover the events of the `limit` most recent sessions (default 20,
 /// max 50; each session capped at 200 events) to bound the scan. Coverage fields
 /// report whether any selected session was truncated; database read failures
-/// fail the request rather than returning a silently partial aggregate.
+/// fail the request rather than returning a silently partial aggregate. Caller
+/// attribution is returned only as aggregate credential/client counts; stable
+/// user ids remain absent from this API.
 #[handler]
 pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(db) = get_db(depot) else {
@@ -154,7 +158,7 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
         }
     };
 
-    let mut views: Vec<ActionEventView> = Vec::new();
+    let mut records = Vec::new();
     let mut events_available = 0usize;
     let sessions_scanned: usize;
     let mut truncated_sessions = 0usize;
@@ -193,9 +197,7 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
         events_available = available;
         sessions_scanned = 1;
         truncated_sessions = usize::from(available > raw.len());
-        for record in raw {
-            views.push(sanitize_event(decode_event(record)));
-        }
+        records.extend(raw);
     } else {
         let limit = clamp_limit(body.limit, DEFAULT_STATS_SESSIONS, MAX_STATS_SESSIONS);
         let sessions = match db.list_action_sessions(None, limit) {
@@ -225,13 +227,27 @@ pub async fn audit_stats(req: &mut Request, depot: &mut Depot, res: &mut Respons
             if available > raw.len() {
                 truncated_sessions = truncated_sessions.saturating_add(1);
             }
-            for record in raw {
-                views.push(sanitize_event(decode_event(record)));
-            }
+            records.extend(raw);
         }
     }
 
+    let mut attribution = compute_attribution_stats(&records);
+    for client in &mut attribution.by_oauth_client {
+        client.name = match db.get_oauth_client_name_by_client_id(&client.client_id) {
+            Ok(name) => name,
+            Err(e) => {
+                query_failed(res, &e.to_string());
+                return;
+            }
+        };
+    }
+    let views: Vec<ActionEventView> = records
+        .into_iter()
+        .map(decode_event)
+        .map(sanitize_event)
+        .collect();
     let mut stats = compute_stats(&views);
+    stats.attribution = attribution;
     stats.events_available = events_available;
     stats.sessions_scanned = sessions_scanned;
     stats.truncated_sessions = truncated_sessions;

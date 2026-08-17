@@ -1,6 +1,6 @@
 use super::*;
 use crate::action_audit_sessions::{record_action_event, ActionAuditEventInput};
-use crate::test_support::{test_config, test_db};
+use crate::test_support::{seed_oauth_client_named, seed_user, test_config, test_db};
 use crate::Database;
 use salvo::prelude::{affix_state, Response, Router, StatusCode};
 use salvo::test::{ResponseExt, TestClient};
@@ -55,6 +55,41 @@ fn seed_event(
             changed_files: Vec::new(),
             ids: json!({}),
             summary,
+            request_bytes: None,
+            response_bytes: None,
+        },
+    );
+}
+
+fn seed_attributed_event(
+    db: &Arc<Database>,
+    session_id: &str,
+    principal_kind: Option<&str>,
+    principal_user_id: Option<&str>,
+    oauth_client_id: Option<&str>,
+) {
+    record_action_event(
+        db,
+        ActionAuditEventInput {
+            explicit_session_id: Some(session_id.to_string()),
+            session_title: None,
+            endpoint: "/api/runtime/status".to_string(),
+            action_name: "getRuntimeStatus".to_string(),
+            operation: Some("runtime_status".to_string()),
+            project: Some("demo".to_string()),
+            principal_kind: principal_kind.map(str::to_string),
+            principal_user_id: principal_user_id.map(str::to_string),
+            oauth_client_id: oauth_client_id.map(str::to_string),
+            status: "success".to_string(),
+            http_status: Some(200),
+            started_at: 1,
+            ended_at: 2,
+            duration_ms: 10,
+            error_summary: None,
+            warning_summary: None,
+            changed_files: Vec::new(),
+            ids: json!({}),
+            summary: json!({}),
             request_bytes: None,
             response_bytes: None,
         },
@@ -418,6 +453,73 @@ async fn http_audit_stats_reports_bounded_event_truncation() {
     assert_eq!(body["truncated_sessions"], 1);
     assert_eq!(body["partial"], true);
     assert_eq!(body["truncated"], true);
+}
+
+#[tokio::test]
+async fn http_audit_stats_aggregates_principal_and_oauth_client_usage() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "audit-stats-alice");
+    let (client, _secret) = seed_oauth_client_named(&db, &user, "ChatGPT");
+
+    seed_attributed_event(&db, "stats-attribution", Some("user"), Some(&user.id), None);
+    for _ in 0..2 {
+        seed_attributed_event(
+            &db,
+            "stats-attribution",
+            Some("oauth2"),
+            Some(&user.id),
+            Some(&client.client_id),
+        );
+    }
+    seed_attributed_event(&db, "stats-attribution", None, None, None);
+    db.revoke_oauth_client(&client.id, 10).unwrap();
+
+    let service = Service::new(build_audit_router(config, db));
+    let mut resp = TestClient::post("http://localhost/api/audit/stats")
+        .bearer_auth("secret")
+        .json(&json!({ "session_id": "stats-attribution" }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+    let body: Value = resp.take_json().await.unwrap();
+    let attribution = &body["attribution"];
+    assert_eq!(attribution["attributed_count"], 3);
+    assert_eq!(attribution["unattributed_count"], 1);
+    assert_eq!(attribution["by_principal_kind"]["user"], 1);
+    assert_eq!(attribution["by_principal_kind"]["oauth2"], 2);
+    let clients = attribution["by_oauth_client"].as_array().unwrap();
+    assert_eq!(clients.len(), 1);
+    assert_eq!(clients[0]["client_id"], client.client_id);
+    assert_eq!(clients[0]["name"], "ChatGPT");
+    assert_eq!(clients[0]["count"], 2);
+    assert!(!body.to_string().contains(&user.id));
+}
+
+#[tokio::test]
+async fn http_audit_session_keeps_principal_attribution_out_of_event_details() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    seed_attributed_event(
+        &db,
+        "private-attribution",
+        Some("oauth2"),
+        Some("user-private"),
+        Some("wc_client_public"),
+    );
+    let service = Service::new(build_audit_router(config, db));
+
+    let mut resp = TestClient::post("http://localhost/api/audit/session")
+        .bearer_auth("secret")
+        .json(&json!({ "session_id": "private-attribution" }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+    let body: Value = resp.take_json().await.unwrap();
+    let event = &body["events"][0];
+    assert!(event.get("principal_kind").is_none());
+    assert!(event.get("principal_user_id").is_none());
+    assert!(event.get("oauth_client_id").is_none());
 }
 
 // =========================================================================

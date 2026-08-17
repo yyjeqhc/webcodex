@@ -124,6 +124,21 @@ impl Database {
         }
     }
 
+    /// Resolve the non-secret display name for historical audit attribution.
+    /// Revoked clients remain resolvable so old usage keeps a stable label.
+    pub fn get_oauth_client_name_by_client_id(
+        &self,
+        client_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT name FROM oauth_clients WHERE client_id = ?1")?;
+        let mut rows = stmt.query_map(params![client_id], |row| row.get(0))?;
+        match rows.next() {
+            Some(name) => Ok(Some(name?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn get_oauth_client_by_id(&self, id: &str) -> anyhow::Result<Option<OAuthClientRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

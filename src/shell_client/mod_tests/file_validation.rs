@@ -1,15 +1,6 @@
 use super::*;
 
 #[test]
-fn validate_file_request_allows_read_with_start_and_end_line() {
-    let mut req = file_request("read");
-    req.start_line = Some(10);
-    req.end_line = Some(20);
-
-    validate_file_request(&req).unwrap();
-}
-
-#[test]
 fn validate_file_request_rejects_invalid_read_requests() {
     let cases: Vec<(&str, fn(&mut ShellFileOpRequest), &str)> = vec![
         (

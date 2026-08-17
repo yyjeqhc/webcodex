@@ -206,36 +206,59 @@ async fn oauth_client_create_trims_redirect_uris_before_storing() {
 }
 
 #[tokio::test]
-async fn oauth_client_create_defaults_do_not_gain_computer_launch() {
+async fn oauth_client_create_omitted_and_empty_scopes_use_exact_legacy_default() {
+    const LEGACY_DEFAULT_SCOPES: &[&str] = &[
+        "runtime:read",
+        "project:read",
+        "project:write",
+        "job:run",
+        "computer:read",
+        "computer:control",
+        "account:manage",
+    ];
     let config = test_config(oauth2_enabled());
     let (_tmp, db) = test_db();
     let user = seed_user(&db, "alice");
     let token = seed_user_token(&db, &user);
     let service = Service::new(build_router(config, db.clone()));
-
-    let mut resp = authorized_post_json(
-        "http://localhost/api/oauth/clients/create",
-        create_client_json("Default Scopes", &["https://example.com/callback"], None),
-        &token,
-    )
-    .send(&service)
-    .await;
-    let body: serde_json::Value = resp.take_json().await.unwrap();
-    let scopes: Vec<String> = body["client"]["allowed_scopes"]
-        .as_array()
-        .unwrap()
+    let cases: [(&str, Option<&[&str]>); 2] = [
+        ("Omitted Default Scopes", None),
+        ("Empty Default Scopes", Some(&[])),
+    ];
+    let non_legacy_supported = oauth_scopes_supported()
         .iter()
-        .map(|s| s.as_str().unwrap().to_string())
-        .collect();
-    assert!(!scopes.iter().any(|scope| scope == "computer:launch"));
-    assert_eq!(
-        scopes,
-        oauth_scopes_supported()
+        .copied()
+        .filter(|scope| !LEGACY_DEFAULT_SCOPES.contains(scope))
+        .collect::<Vec<_>>();
+    assert!(non_legacy_supported.contains(&"computer:launch"));
+
+    for (name, requested_scopes) in cases {
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json(name, &["https://example.com/callback"], requested_scopes),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        let scopes = body["client"]["allowed_scopes"]
+            .as_array()
+            .unwrap()
             .iter()
-            .filter(|scope| **scope != "computer:launch")
-            .map(|scope| scope.to_string())
-            .collect::<Vec<_>>()
-    );
+            .map(|scope| scope.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(scopes.as_slice(), LEGACY_DEFAULT_SCOPES);
+        assert!(!scopes.contains(&"computer:launch"));
+        // Any current or future supported permission outside the literal legacy
+        // set must remain opt-in rather than silently joining this default.
+        for scope in &non_legacy_supported {
+            assert!(
+                !scopes.contains(scope),
+                "non-legacy scope {scope} entered default"
+            );
+        }
+    }
 }
 
 #[tokio::test]

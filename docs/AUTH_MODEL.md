@@ -179,9 +179,10 @@ device-code flow are not implemented. OAuth setup steps are in
 
 An OAuth client's `allowed_scopes` is a registration-time delegation ceiling and
 is never automatically widened when WebCodex adds a new permission such as
-`computer:control` or `computer:launch`. The default allow-list used when a new
-client omits `allowed_scopes` intentionally excludes `computer:launch`; launch
-authority is explicit opt-in. First-party operators may explicitly replace an active client's
+`computer:control` or `computer:launch`. The omitted-or-empty default is the
+explicit closed legacy permission set that existed before application launch; it
+does not track the global supported-scope registry. `computer:launch` and future
+permission scopes therefore require explicit opt-in. First-party operators may explicitly replace an active client's
 complete allow-list with `POST /api/oauth/clients/update_scopes`. A real change
 atomically revokes that client's existing access tokens, refresh tokens, and
 outstanding authorization codes, so the client must complete OAuth authorization

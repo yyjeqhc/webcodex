@@ -28,15 +28,21 @@ struct UpdateOAuthClientScopesRequest {
     allowed_scopes: Vec<String>,
 }
 
-/// Stable legacy default OAuth client allow-list. Newly introduced consequential
-/// scopes such as `computer:launch` require explicit opt-in instead of silently
-/// widening clients that omit `allowed_scopes`.
-fn default_client_allowed_scopes() -> Vec<&'static str> {
-    oauth_scopes_supported()
-        .iter()
-        .copied()
-        .filter(|scope| *scope != crate::auth::SCOPE_COMPUTER_LAUNCH)
-        .collect()
+/// Exact OAuth permission default that existed before application launch.
+/// Keep this list closed and explicit: adding a scope to the supported registry
+/// must never widen clients that omit or empty `allowed_scopes`.
+const LEGACY_DEFAULT_CLIENT_ALLOWED_SCOPES: &[&str] = &[
+    "runtime:read",
+    "project:read",
+    "project:write",
+    "job:run",
+    "computer:read",
+    "computer:control",
+    "account:manage",
+];
+
+fn default_client_allowed_scopes() -> &'static [&'static str] {
+    LEGACY_DEFAULT_CLIENT_ALLOWED_SCOPES
 }
 
 /// Validate a redirect URI for OAuth client registration.

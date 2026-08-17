@@ -574,6 +574,7 @@ async fn connector_readiness_uses_registered_agent_capabilities() {
                     async_jobs: true,
                     async_shell_jobs: true,
                     structured_validation_argv: false,
+                    internal_posix_script: true,
                     ..Default::default()
                 }),
                 projects: Some(vec![project_summary(
@@ -1885,6 +1886,7 @@ async fn go_json_execution_replay_does_not_require_current_runner_capability() {
                     async_shell_jobs: true,
                     structured_validation_argv: true,
                     structured_go_test_json: false,
+                    internal_posix_script: true,
                     ..Default::default()
                 }),
                 projects: Some(registered_projects),
@@ -2147,6 +2149,7 @@ async fn old_agent_cannot_receive_a_structured_validation_job() {
                     async_jobs: true,
                     async_shell_jobs: true,
                     structured_validation_argv: false,
+                    internal_posix_script: true,
                     ..Default::default()
                 }),
                 projects: None,
@@ -3478,6 +3481,7 @@ async fn read_only_commands_run_is_denied_even_when_agent_advertises_sandbox() {
                     sandbox_inspect_commands: true,
                     project_lifecycle: false,
                     project_path_registration: false,
+                    internal_posix_script: true,
                     ..Default::default()
                 }),
                 projects: Some(vec![project_summary(
@@ -3542,6 +3546,7 @@ async fn enable_inspect_sandbox(fixture: &Fixture) {
                     sandbox_inspect_commands: true,
                     project_lifecycle: false,
                     project_path_registration: false,
+                    internal_posix_script: true,
                     ..Default::default()
                 }),
                 projects: Some(vec![project_summary(

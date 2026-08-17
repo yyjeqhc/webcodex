@@ -235,6 +235,30 @@ impl ToolRuntime {
         cwd: Option<String>,
         sandbox: Option<&str>,
     ) -> Result<ProjectCommandOutput, String> {
+        self.run_project_command_capture_impl(project, command, timeout_secs, cwd, sandbox, false)
+            .await
+    }
+
+    pub(crate) async fn run_project_internal_posix_script_capture(
+        &self,
+        project: &str,
+        script: String,
+        timeout_secs: u64,
+        cwd: Option<String>,
+    ) -> Result<ProjectCommandOutput, String> {
+        self.run_project_command_capture_impl(project, script, timeout_secs, cwd, None, true)
+            .await
+    }
+
+    async fn run_project_command_capture_impl(
+        &self,
+        project: &str,
+        command: String,
+        timeout_secs: u64,
+        cwd: Option<String>,
+        sandbox: Option<&str>,
+        internal_posix_script: bool,
+    ) -> Result<ProjectCommandOutput, String> {
         let proj = self.resolve_project(project).await?;
         // Shared root of the sync agent-wait contract: wait_timeout_secs and
         // command timeout must both stay within 1..=120 before enqueue so
@@ -250,21 +274,34 @@ impl ToolRuntime {
             let client_id = proj.agent_client_id()?.to_string();
             let effective_cwd = Some(resolve_agent_cwd(&proj, cwd.as_deref())?);
             let wait_timeout = timeout;
-            let (request_id, rx) = self
-                .shell_clients
-                .enqueue_run_with_sandbox(
-                    ShellRunRequest {
+            let (request_id, rx) = if internal_posix_script {
+                self.shell_clients
+                    .enqueue_internal_posix_script(
                         client_id,
-                        cwd: effective_cwd,
+                        effective_cwd,
                         command,
-                        stdin: None,
-                        timeout_secs: timeout,
-                        wait_timeout_secs: wait_timeout,
-                    },
-                    "tool_runtime".to_string(),
-                    sandbox.map(str::to_string),
-                )
-                .await?;
+                        timeout,
+                        wait_timeout,
+                        "tool_runtime".to_string(),
+                        sandbox.map(str::to_string),
+                    )
+                    .await?
+            } else {
+                self.shell_clients
+                    .enqueue_run_with_sandbox(
+                        ShellRunRequest {
+                            client_id,
+                            cwd: effective_cwd,
+                            command,
+                            stdin: None,
+                            timeout_secs: timeout,
+                            wait_timeout_secs: wait_timeout,
+                        },
+                        "tool_runtime".to_string(),
+                        sandbox.map(str::to_string),
+                    )
+                    .await?
+            };
             match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
                 Ok(Ok(response)) => {
                     let execution_state = agent_command_lifecycle(&response, timeout);

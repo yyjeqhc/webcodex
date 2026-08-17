@@ -1754,12 +1754,23 @@ async fn http_tools_call_generic_path_dispatches_git_tools() {
 
 #[tokio::test]
 async fn api_show_changes_with_session_id() {
-    use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+    use crate::shell_protocol::{
+        ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
+    };
 
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
-    let (runtime, registry) = register_import_agent(tmp_proj.path()).await;
+    let (runtime, registry) = register_import_agent_with_capabilities(
+        tmp_proj.path(),
+        Some(ShellClientCapabilities {
+            shell: true,
+            git: true,
+            internal_posix_script: true,
+            ..Default::default()
+        }),
+    )
+    .await;
     let service = Service::new(build_projects_router(config, db, runtime));
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")

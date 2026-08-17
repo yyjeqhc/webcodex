@@ -192,6 +192,11 @@ pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV: &str = "structured_pr
 /// older Runners must fail closed rather than interpreting script text through
 /// the legacy command channel.
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD: &str = "structured_script_payload";
+/// Runner-owned WebCodex-generated POSIX programs execute through an explicit
+/// internal runtime instead of the configured interactive shell. Missing on
+/// older Runners is false so Control never sends the dedicated request kind to
+/// a Runner that could fall through to legacy shell dispatch.
+pub const SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT: &str = "internal_posix_script";
 /// Durable Job execution for both typed native processes and typed script
 /// payloads. This is deliberately independent from the synchronous structured
 /// execution and legacy async-shell capabilities: older B1/B2 Runners may
@@ -275,6 +280,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
     SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
@@ -381,6 +387,11 @@ pub struct ShellClientCapabilities {
     /// inferred from shell, validation argv, or process argv support.
     #[serde(default)]
     pub structured_script_payload: bool,
+    /// Dedicated server-generated POSIX script request kind. Missing on older
+    /// Runners is false and is never inferred from raw shell or typed public
+    /// script support.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub internal_posix_script: bool,
     /// Typed process and typed script requests can execute as durable Jobs.
     /// Missing on older agents and therefore false; it is never inferred from
     /// any synchronous structured-execution or async-shell capability.
@@ -494,6 +505,7 @@ impl Default for ShellClientCapabilities {
             structured_go_test_packages: false,
             structured_process_argv: false,
             structured_script_payload: false,
+            internal_posix_script: false,
             structured_execution_jobs: false,
             lsp_read_only_navigation: false,
             lsp_call_hierarchy: false,
@@ -1286,10 +1298,10 @@ pub struct ShellAgentShellRequest {
     /// compatibility with older envelopes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<ShellProcessArgv>,
-    /// Typed bounded script payload. Present only for `kind = "run_script"` or
-    /// `kind = "start_script_job"`; defaults to `None` for backward
-    /// compatibility with older envelopes. The raw body never enters
-    /// `command`.
+    /// Typed bounded script payload. Present for `kind = "run_script"`,
+    /// `kind = "start_script_job"`, or the server-generated
+    /// `kind = "run_internal_posix_script"`; defaults to `None` for backward
+    /// compatibility with older envelopes. The raw body never enters `command`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script: Option<ShellScriptPayload>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

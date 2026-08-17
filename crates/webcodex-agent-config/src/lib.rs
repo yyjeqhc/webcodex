@@ -228,6 +228,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             structured_go_test_packages: false,
             structured_process_argv: true,
             structured_script_payload: true,
+            // Internal generated-program execution is a running-binary
+            // capability and must fail closed across mixed-version rollout.
+            internal_posix_script: false,
             structured_execution_jobs: true,
             lsp_read_only_navigation: true,
             lsp_call_hierarchy: true,

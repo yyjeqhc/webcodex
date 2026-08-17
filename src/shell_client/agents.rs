@@ -200,6 +200,19 @@ impl ShellClientRegistry {
                     .to_string(),
             );
         }
+        // The dedicated internal-POSIX request kind is also binary support.
+        // A same-process reconnect cannot withdraw it while queued requests may
+        // still target that exact instance.
+        if inner.clients.get(&client_id).is_some_and(|existing| {
+            existing.agent_instance_id == agent_instance_id
+                && existing.capabilities.internal_posix_script
+                && !capabilities.internal_posix_script
+        }) {
+            return Err(
+                "same runner instance cannot downgrade internal_posix_script capability"
+                    .to_string(),
+            );
+        }
         // This optimized export request kind is process-lifetime binary support.
         // Reject same-instance downgrade so a request already admitted for this
         // process is never handed to a registration claiming it cannot decode it.

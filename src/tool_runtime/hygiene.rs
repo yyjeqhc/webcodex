@@ -773,7 +773,12 @@ impl ToolRuntime {
         // structured hygiene response.
         let command = hygiene_diagnostic_command();
         let output = match self
-            .run_project_command_capture(&project, command, HYGIENE_SCRIPT_TIMEOUT_SECS, None)
+            .run_project_internal_posix_script_capture(
+                &project,
+                command,
+                HYGIENE_SCRIPT_TIMEOUT_SECS,
+                None,
+            )
             .await
         {
             Ok(output) => output,
@@ -788,7 +793,7 @@ impl ToolRuntime {
                     for batch in hygiene_size_probe_batches(&entries) {
                         let command = hygiene_size_probe_command(&batch);
                         if let Ok(output) = self
-                            .run_project_command_capture(
+                            .run_project_internal_posix_script_capture(
                                 &project,
                                 command,
                                 HYGIENE_SCRIPT_TIMEOUT_SECS,

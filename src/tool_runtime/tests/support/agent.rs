@@ -37,6 +37,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
                 git: true,
                 file_read: true,
                 file_write: true,
+                internal_posix_script: true,
                 ..Default::default()
             }),
             projects: Some(vec![registered_project(project_id, &project_path)]),
@@ -75,6 +76,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path_with_
                     git: true,
                     file_read: true,
                     file_write: true,
+                    internal_posix_script: true,
                     ..Default::default()
                 }),
                 projects: Some(vec![registered_project(project_id, &project_path)]),
@@ -100,11 +102,34 @@ pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
     if req.kind == "file_project_overview" {
         return run_agent_project_overview_request_locally(req);
     }
+    let internal_posix = if req.kind == "run_internal_posix_script" {
+        let payload = req
+            .script
+            .as_ref()
+            .expect("internal POSIX request must carry a script payload");
+        assert_eq!(
+            payload.language,
+            crate::shell_protocol::ShellScriptLanguage::Sh
+        );
+        assert!(payload.args.is_empty());
+        assert!(req.command.is_empty());
+        assert!(req.stdin.is_none());
+        Some(payload.script.as_str())
+    } else {
+        None
+    };
     let internal_search = req
         .command
         .strip_prefix(EXTERNAL_SEARCH_REQUEST_PREFIX)
         .and_then(|rest| rest.strip_prefix('\n'));
-    let (mut command, stdin_payload) = if let Some(script) = internal_search {
+    let (mut command, stdin_payload) = if let Some(script) = internal_posix {
+        #[cfg(windows)]
+        let mut command = std::process::Command::new("bash.exe");
+        #[cfg(not(windows))]
+        let mut command = std::process::Command::new("sh");
+        command.arg("-s");
+        (command, Some(script.to_string()))
+    } else if let Some(script) = internal_search {
         #[cfg(windows)]
         let mut command = std::process::Command::new("bash.exe");
         #[cfg(not(windows))]
@@ -607,6 +632,7 @@ pub(in crate::tool_runtime::tests) async fn runtime_with_resolver_projects() -> 
         file_read: true,
         git: true,
         shell: true,
+        internal_posix_script: true,
         ..Default::default()
     };
     register_agent_projects(

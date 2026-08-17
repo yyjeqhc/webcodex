@@ -2994,7 +2994,7 @@ impl ToolRuntime {
             }
             let command = show_changes_untracked_preview_probe_command(path);
             let preview = match self
-                .run_project_command_capture(project, command, 10, None)
+                .run_project_internal_posix_script_capture(project, command, 10, None)
                 .await
             {
                 Ok(output) => {
@@ -3283,7 +3283,7 @@ impl ToolRuntime {
             }
         };
         let output = match self
-            .run_project_command_capture(&resolved.resolved_id, command, 30, None)
+            .run_project_internal_posix_script_capture(&resolved.resolved_id, command, 30, None)
             .await
         {
             Ok(output) => output,
@@ -3537,16 +3537,14 @@ impl ToolRuntime {
             };
             let (req_id, rx) = match self
                 .shell_clients
-                .enqueue_run(
-                    ShellRunRequest {
-                        client_id,
-                        cwd: Some(proj.path.clone()),
-                        command: cmd,
-                        stdin: None,
-                        timeout_secs: 30,
-                        wait_timeout_secs: 32,
-                    },
+                .enqueue_internal_posix_script(
+                    client_id,
+                    Some(proj.path.clone()),
+                    cmd,
+                    30,
+                    32,
                     "tool_runtime".to_string(),
+                    None,
                 )
                 .await
             {
@@ -3627,7 +3625,7 @@ impl ToolRuntime {
             .min(SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT);
         let command = show_changes_command(include_diff, max_hunks, max_hunk_lines);
         let output = match self
-            .run_project_command_capture(&project, command, 30, None)
+            .run_project_internal_posix_script_capture(&project, command, 30, None)
             .await
         {
             Ok(output) => output,

@@ -42,10 +42,21 @@ async fn dispatch_hygiene_with_agent(
             break;
         }
         if let Some(req) = next_patch_agent_request(runtime, client_id).await {
+            assert_eq!(req.kind, "run_internal_posix_script");
+            assert!(req.command.is_empty());
+            let payload = req
+                .script
+                .as_ref()
+                .expect("hygiene diagnostics must carry a typed internal script");
+            assert_eq!(
+                payload.language,
+                crate::shell_protocol::ShellScriptLanguage::Sh
+            );
+            assert!(payload.args.is_empty());
             assert!(
-                !req.command.contains(&forbidden),
+                !payload.script.contains(&forbidden),
                 "hygiene diagnostics must not enqueue a Python helper: {}",
-                req.command
+                payload.script
             );
             complete_agent_request_by_running_locally(runtime, client_id, req).await;
         } else {

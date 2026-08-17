@@ -6910,6 +6910,7 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     assert!(caps.structured_go_test_packages);
     assert!(caps.structured_process_argv);
     assert!(caps.structured_script_payload);
+    assert!(caps.internal_posix_script);
     assert!(caps.structured_execution_jobs);
     assert!(caps.lsp_read_only_navigation);
     assert!(caps.lsp_call_hierarchy);
@@ -7736,6 +7737,80 @@ fn dispatch_request_internal_search_uses_posix_runtime_not_configured_shell_pars
                 .as_deref()
                 .unwrap_or_default()
                 .contains("webcodex_search"));
+            assert_eq!(
+                payload.command_execution_state,
+                Some(ShellCommandExecutionState::Completed)
+            );
+        }
+        other => panic!("expected result, got {:?}", other.kind()),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn dispatch_request_internal_posix_script_ignores_configured_shell_parser() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = test_config(tmp.path().join("config/projects.d"));
+    cfg.shell.program = "/bin/false".to_string();
+    cfg.shell.dialect = Some(crate::webcodex_runner::config::ShellDialect::PowerShell);
+    let jobs = JobManager::new(max_concurrent_jobs(&cfg));
+    let pdir = projects_dir(&cfg).unwrap();
+    let hot = runtime_config(&cfg);
+    let persistent_shells = webcodex_runner::PersistentShellManager::new(
+        &cfg.shell,
+        webcodex_runner::SshConnectionPool::default(),
+    );
+    let (sink, mut rx) = ws_sink("ws-client");
+    let request = ShellAgentShellRequest {
+        request_id: "req-internal-posix".to_string(),
+        client_id: "ws-client".to_string(),
+        kind: "run_internal_posix_script".to_string(),
+        job_id: None,
+        cwd: Some(tmp.path().to_string_lossy().to_string()),
+        path: None,
+        content: None,
+        max_bytes: None,
+        expected_sha256: None,
+        expected_prefix: None,
+        start_line: None,
+        end_line: None,
+        create_dirs: false,
+        command: String::new(),
+        process: None,
+        script: Some(shell_protocol::ShellScriptPayload {
+            language: shell_protocol::ShellScriptLanguage::Sh,
+            script: "printf 'internal-posix-dispatch-ok\\n'\n".to_string(),
+            args: Vec::new(),
+        }),
+        stdin: None,
+        timeout_secs: 10,
+        requested_by: "tester".to_string(),
+        created_at: 0,
+        validation: None,
+        lsp: None,
+        sandbox: None,
+        job_context: None,
+        persistent_shell: None,
+    };
+
+    assert!(dispatch_request(
+        &sink,
+        &hot.snapshot(),
+        &hot,
+        &jobs,
+        &persistent_shells,
+        &pdir,
+        &webcodex_runner::LspSupervisor::default(),
+        request,
+    )
+    .unwrap());
+    match rx.try_recv().expect("internal POSIX result") {
+        AgentEnvelope::Result { payload } => {
+            assert_eq!(payload.result.exit_code, Some(0));
+            assert_eq!(
+                payload.result.stdout.as_deref(),
+                Some("internal-posix-dispatch-ok\n")
+            );
             assert_eq!(
                 payload.command_execution_state,
                 Some(ShellCommandExecutionState::Completed)

@@ -23,10 +23,10 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SNAPSHOT_REGION, SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE, SHELL_CLIENT_CAPABILITY_FILE_READ,
-    SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
+    SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
+    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
+    SHELL_CLIENT_CAPABILITY_SSH_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_FILE_DELETE,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
@@ -759,6 +759,97 @@ impl ShellClientRegistry {
         if !client.capabilities.structured_script_payload {
             return Err(format!(
                 "capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD}"
+            ));
+        }
+        if let Some(mode) = sandbox.as_deref() {
+            if mode != crate::command_sandbox::INSPECT_SANDBOX_MODE {
+                return Err(format!("unknown sandbox mode '{mode}'"));
+            }
+            if !client.capabilities.sandbox_inspect_commands {
+                return Err(format!(
+                    "{}: agent client {} cannot enforce the inspect sandbox",
+                    SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS, client_id
+                ));
+            }
+        }
+        enqueue_pending_request_locked(
+            &mut inner,
+            &client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        notify_client_locked(&inner, &client_id);
+        Ok((request_id, rx))
+    }
+
+    /// Enqueue one WebCodex-generated POSIX program through the dedicated
+    /// Runner runtime. This is not a caller shell escape hatch: the server
+    /// selects the language and request kind, arguments are unavailable, and
+    /// older Runners fail closed through an explicit capability fence.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn enqueue_internal_posix_script(
+        &self,
+        client_id: String,
+        cwd: Option<String>,
+        script: String,
+        timeout_secs: u64,
+        wait_timeout_secs: u64,
+        requested_by: String,
+        sandbox: Option<String>,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        crate::shell_protocol::validate_raw_shell_wire_command(&script)?;
+        let script = ShellScriptPayload {
+            language: crate::shell_protocol::ShellScriptLanguage::Sh,
+            script,
+            args: Vec::new(),
+        };
+        validate_script_enqueue_request(
+            &client_id,
+            cwd.as_deref(),
+            &script,
+            None,
+            timeout_secs,
+            wait_timeout_secs,
+        )?;
+        let normalized_cwd = cwd.map(|cwd| cwd.trim().to_string());
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.clone(),
+            kind: "run_internal_posix_script".to_string(),
+            job_id: None,
+            cwd: normalized_cwd,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+            command: String::new(),
+            process: None,
+            script: Some(script),
+            stdin: None,
+            timeout_secs,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            sandbox: sandbox.clone(),
+            job_context: None,
+            persistent_shell: None,
+        };
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get(&client_id) else {
+            return Err(format!("unknown shell client: {client_id}"));
+        };
+        if !client.capabilities.internal_posix_script {
+            return Err(format!(
+                "capability_unavailable: agent client {client_id} does not support {SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT}"
             ));
         }
         if let Some(mode) = sandbox.as_deref() {

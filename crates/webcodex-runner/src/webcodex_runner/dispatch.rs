@@ -6,6 +6,7 @@ use super::{
     handle_computer_request, handle_project_lifecycle_op,
     handle_project_op_with_temporary_projects_root, handle_resolve_or_register_project,
     is_computer_request_kind,
+    run_internal_posix_script_with_profiles_in_sandbox_and_execution_state,
     run_internal_search_script_with_profiles_in_sandbox_and_execution_state,
     run_process_with_profiles_in_sandbox_and_execution_state,
     run_script_with_profiles_in_sandbox_and_execution_state,
@@ -226,6 +227,50 @@ pub(crate) fn dispatch_request(
                     duration_ms: Some(0),
                     error: Some(format!(
                         "invalid_structured_script_request: {error}; command was not started"
+                    )),
+                }),
+            }
+        };
+        return sink
+            .submit_shell_result_with_metadata(request_id, result, config, runtime)
+            .map(|_| true);
+    }
+    if request.kind == "run_internal_posix_script" {
+        let request_id = request.request_id.clone();
+        let result = if ssh_resource.is_some() {
+            ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(
+                    "internal_posix_script_ssh_unsupported: generated internal programs are unavailable for SSH resources; command was not started"
+                        .to_string(),
+                ),
+            })
+        } else {
+            match validate_internal_posix_script_request(&request) {
+                Ok(script) => {
+                    run_internal_posix_script_with_profiles_in_sandbox_and_execution_state(
+                        config.generation,
+                        policy,
+                        shell,
+                        projects_dir,
+                        &jobs.prepared_profiles,
+                        request.cwd.as_deref(),
+                        script,
+                        request.timeout_secs,
+                        Some(runtime.shutdown_flag()),
+                        request.sandbox.as_deref(),
+                    )
+                }
+                Err(error) => ShellCommandResult::not_started(CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(0),
+                    error: Some(format!(
+                        "invalid_internal_posix_script_request: {error}; command was not started"
                     )),
                 }),
             }
@@ -531,6 +576,22 @@ fn validate_run_script_request(
         ));
     }
     Ok(script)
+}
+
+fn validate_internal_posix_script_request(
+    request: &ShellAgentShellRequest,
+) -> Result<&str, String> {
+    let script = validate_run_script_request(request)?;
+    if request.stdin.is_some() {
+        return Err("stdin must be absent for an internal POSIX script".to_string());
+    }
+    if script.language != crate::shell_protocol::ShellScriptLanguage::Sh {
+        return Err("internal POSIX script language must be sh".to_string());
+    }
+    if !script.args.is_empty() {
+        return Err("internal POSIX script args must be empty".to_string());
+    }
+    Ok(&script.script)
 }
 
 fn lifecycle_project_id(request: &ShellAgentShellRequest) -> Option<String> {

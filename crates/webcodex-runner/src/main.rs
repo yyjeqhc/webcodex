@@ -1850,6 +1850,7 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.structured_go_test_packages = true;
     capabilities.structured_process_argv = true;
     capabilities.structured_script_payload = true;
+    capabilities.internal_posix_script = true;
     capabilities.structured_execution_jobs = true;
     capabilities.project_lifecycle = true;
     // This binary implements resolve_or_register_project; do not trust config to

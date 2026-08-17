@@ -277,8 +277,19 @@ async fn run_agent_git_diff_hunks_page(
     let request = next_patch_agent_request(runtime, client_id)
         .await
         .expect("git_diff_hunks should enqueue one bounded agent request");
-    let command = request.command.clone();
-    let (exit_code, stdout, stderr) = run_command_full_capture(&command, repo, 30);
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert_eq!(
+        request.cwd.as_deref(),
+        Some(repo.to_string_lossy().as_ref())
+    );
+    assert!(request.command.is_empty());
+    let script = request
+        .script
+        .as_ref()
+        .expect("git_diff_hunks must carry a typed internal script")
+        .script
+        .clone();
+    let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&request);
     let stdout_bytes = stdout.len();
     complete_patch_agent_request(
         runtime,
@@ -289,7 +300,7 @@ async fn run_agent_git_diff_hunks_page(
         &stderr,
     )
     .await;
-    (task.await.unwrap(), stdout_bytes, command)
+    (task.await.unwrap(), stdout_bytes, script)
 }
 
 fn git_test_command_ok(repo: &Path, command: &str) {
@@ -1543,6 +1554,7 @@ async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper(
     let runtime = runtime_with_agent_project("show-native");
     let caps = ShellClientCapabilities {
         shell: true,
+        internal_posix_script: true,
         ..Default::default()
     };
     register_agent(&runtime, "show-native", None, caps).await;
@@ -1570,13 +1582,24 @@ async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper(
     let req = next_patch_agent_request(&runtime, "show-native")
         .await
         .expect("show_changes should enqueue an agent shell request");
+    assert_eq!(req.kind, "run_internal_posix_script");
+    assert!(req.command.is_empty());
+    let payload = req
+        .script
+        .as_ref()
+        .expect("show_changes must carry a typed internal script");
+    assert_eq!(
+        payload.language,
+        crate::shell_protocol::ShellScriptLanguage::Sh
+    );
+    assert!(payload.args.is_empty());
     let forbidden = ["python3", "-c"].join(" ");
     assert!(
-        !req.command.contains(&forbidden),
+        !payload.script.contains(&forbidden),
         "show_changes include_diff must not enqueue a Python helper: {}",
-        req.command
+        payload.script
     );
-    assert!(req.command.contains("git diff --unified=80"));
+    assert!(payload.script.contains("git diff --unified=80"));
     // Modern frame layout: status, status-result, head, head-meta, stat,
     // stat-meta, diff, diff-meta (with diff_exit=0 so success is provable).
     let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nstatus_exit=0\nrepository_probe=inside_worktree\nrepository_probe_exit=0\nfiles_total=0\nfiles_returned=0\nfiles_truncated=0\nfiles_limit=200\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nhead_exit=0\nhead_truncated=0\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_stat_exit=0\ndiff_stat_truncated=0\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n\n@@WEBCODEX_SHOW_CHANGES_SEP@@\ndiff_exit=0\ndiff_hunks_returned=0\ndiff_hunks_truncated=0\ndiff_trunc_hunk_count=0\ndiff_trunc_hunk_lines=0\ndiff_trunc_bytes=0\ndiff_bytes=0\n";
@@ -1764,6 +1787,7 @@ async fn show_changes_session_event_limit_is_bounded() {
     let runtime = runtime_with_agent_project("show");
     let caps = ShellClientCapabilities {
         shell: true,
+        internal_posix_script: true,
         ..Default::default()
     };
     register_agent(&runtime, "show", None, caps).await;
@@ -2086,6 +2110,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
     let caps = ShellClientCapabilities {
         file_read: true,
         shell: true,
+        internal_posix_script: true,
         ..Default::default()
     };
     register_agent(&runtime, "telemetry-show", None, caps).await;
@@ -2322,6 +2347,49 @@ fn git_diff_summary_command_is_read_only() {
 }
 
 #[tokio::test]
+async fn git_diff_summary_agent_uses_internal_posix_runtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "before\n", "initial");
+    std::fs::write(tmp.path().join("README.md"), "after\n").unwrap();
+
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "summary-internal", "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move { runtime.git_diff_summary(project).await }
+    });
+
+    let request = next_patch_agent_request(&runtime, "summary-internal")
+        .await
+        .expect("git_diff_summary should enqueue one internal request");
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert!(request.command.is_empty());
+    let payload = request
+        .script
+        .as_ref()
+        .expect("git_diff_summary must carry a typed internal script");
+    assert_eq!(
+        payload.language,
+        crate::shell_protocol::ShellScriptLanguage::Sh
+    );
+    assert_eq!(payload.script, git_diff_summary_command());
+    assert!(payload.args.is_empty());
+    complete_agent_request_by_running_locally(&runtime, "summary-internal", request).await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["changed_files_count"], 1);
+    assert_eq!(result.output["changed_files"], json!(["README.md"]));
+    assert!(result.output["diff_stat"]
+        .as_str()
+        .unwrap()
+        .contains("README.md"));
+}
+
+#[tokio::test]
 async fn git_or_shell_tools_rejected_without_git_or_shell_capability() {
     let runtime = runtime_with_agent_project("oe");
     register_agent(
@@ -2430,10 +2498,31 @@ async fn run_show_changes_via_agent(
             .show_changes(project, session_id, Some(include_diff), None, None, None)
             .await
     });
-    let req = next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("show_changes should enqueue an agent shell request");
-    complete_agent_request_by_running_locally(runtime, client_id, req).await;
+    for _ in 0..20 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
+            assert_eq!(req.kind, "run_internal_posix_script");
+            assert!(req.command.is_empty());
+            let payload = req
+                .script
+                .as_ref()
+                .expect("show_changes must carry a typed internal script");
+            assert_eq!(
+                payload.language,
+                crate::shell_protocol::ShellScriptLanguage::Sh
+            );
+            assert!(payload.args.is_empty());
+            complete_agent_request_by_running_locally(runtime, client_id, req).await;
+        } else {
+            tokio::task::yield_now().await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "show_changes did not finish after agent requests"
+    );
     task.await.unwrap()
 }
 
@@ -2532,6 +2621,26 @@ async fn show_changes_preserves_sentinel_text_in_normal_diff_and_tool_result() {
     assert!(serialized.contains(&format!("+{SHOW_CHANGES_SENTINEL}")));
     assert!(serialized.contains(&format!("+prefix{SHOW_CHANGES_SENTINEL}suffix")));
     assert_show_changes_envelope_matches_schema("sentinel normal diff", &result);
+}
+
+#[tokio::test]
+async fn show_changes_agent_untracked_preview_uses_internal_posix_runtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "tracked\n", "initial");
+    std::fs::write(tmp.path().join("notes.txt"), "alpha\nbeta\n").unwrap();
+
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "show-untracked", "demo", tmp.path()).await;
+    let result = run_show_changes_via_agent(&runtime, "show-untracked", project, None, true).await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["counts"]["untracked"], 1);
+    let preview = preview_for_path(&result.output, "notes.txt");
+    assert_eq!(preview["kind"], "text");
+    assert_eq!(preview["lines"][0]["text"], "alpha");
+    assert_eq!(preview["lines"][1]["text"], "beta");
 }
 
 #[cfg(unix)]
@@ -3585,12 +3694,23 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
         let req = next_patch_agent_request(&runtime, "stat-only")
             .await
             .expect("show_changes should enqueue a shell request");
-        assert!(
-            req.command.len() <= crate::shell_protocol::RAW_SHELL_COMMAND_MAX_BYTES,
-            "command bytes={}",
-            req.command.len()
+        assert_eq!(req.kind, "run_internal_posix_script");
+        assert!(req.command.is_empty());
+        let payload = req
+            .script
+            .as_ref()
+            .expect("show_changes must carry a typed internal script");
+        assert_eq!(
+            payload.language,
+            crate::shell_protocol::ShellScriptLanguage::Sh
         );
-        let full_command = format!("{path_prefix} {}", req.command);
+        assert!(payload.args.is_empty());
+        assert!(
+            payload.script.len() <= crate::shell_protocol::RAW_SHELL_WIRE_MAX_BYTES,
+            "script bytes={}",
+            payload.script.len()
+        );
+        let full_command = format!("{path_prefix} {}", payload.script);
         let (command_exit, stdout, stderr) =
             run_command_full_capture(&full_command, repo.path(), 30);
         assert_eq!(
@@ -3689,7 +3809,13 @@ async fn show_changes_runtime_rejects_unavailable_diff_stat_observation() {
     let req = next_patch_agent_request(&runtime, "stat-missing")
         .await
         .expect("show_changes should enqueue a shell request");
-    let (command_exit, stdout, stderr) = run_command_full_capture(&req.command, repo.path(), 30);
+    assert_eq!(req.kind, "run_internal_posix_script");
+    assert!(req.command.is_empty());
+    let payload = req
+        .script
+        .as_ref()
+        .expect("show_changes must carry a typed internal script");
+    let (command_exit, stdout, stderr) = run_command_full_capture(&payload.script, repo.path(), 30);
     assert_eq!(command_exit, 0, "show_changes command failed: {stderr}");
     let mut missing_stat_exit = stdout
         .lines()
@@ -3948,10 +4074,15 @@ async fn show_changes_runtime_propagates_full_diff_failure_as_tool_failure() {
     let req = next_patch_agent_request(&runtime, "extd")
         .await
         .expect("show_changes should enqueue a shell request");
-    // Run the agent's command locally with the failing external diff in the
-    // environment so the full `git diff` fails.
-    let cmd = req.command;
-    let full = format!("{ext_env} {cmd}");
+    // Run the generated internal script locally with the failing external diff
+    // in the environment so the full `git diff` fails.
+    assert_eq!(req.kind, "run_internal_posix_script");
+    assert!(req.command.is_empty());
+    let payload = req
+        .script
+        .as_ref()
+        .expect("show_changes must carry a typed internal script");
+    let full = format!("{ext_env} {}", payload.script);
     let (exit, stdout, stderr) = run_command_full_capture(&full, tmp.path(), 30);
     complete_patch_agent_request(&runtime, "extd", &req.request_id, exit, &stdout, &stderr).await;
     let result = task.await.unwrap();

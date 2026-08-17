@@ -1605,7 +1605,7 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
 async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_id() {
     use crate::shell_protocol::{
         ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-        ShellClientRegisterRequest,
+        ShellClientCapabilities, ShellClientRegisterRequest,
     };
 
     let runtime = test_runtime();
@@ -1622,7 +1622,12 @@ async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_i
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: None,
+            capabilities: Some(ShellClientCapabilities {
+                shell: true,
+                git: true,
+                internal_posix_script: true,
+                ..Default::default()
+            }),
             projects: Some(vec![ShellAgentProjectSummary {
                 id: "demo".to_string(),
                 name: Some("Demo".to_string()),

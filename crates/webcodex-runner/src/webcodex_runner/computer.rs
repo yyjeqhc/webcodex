@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 const MAX_WINDOWS: usize = 64;
 const MAX_APPLICATIONS: usize = 64;
+const MAX_APPLICATION_SCAN: usize = 1024;
 const MAX_DISPLAYS: usize = 16;
 const MAX_APPLICATION_ID_BYTES: usize = 128;
 const MAX_DISPLAY_ID_BYTES: usize = 128;
@@ -603,6 +604,21 @@ struct PlatformApplication {
     native_identity: Vec<u8>,
 }
 
+fn application_candidate_order(
+    left: &PlatformApplication,
+    right: &PlatformApplication,
+) -> std::cmp::Ordering {
+    left.display_name
+        .to_lowercase()
+        .cmp(&right.display_name.to_lowercase())
+        .then_with(|| left.display_name.cmp(&right.display_name))
+        .then_with(|| left.native_identity.cmp(&right.native_identity))
+}
+
+fn sort_application_candidates(applications: &mut [PlatformApplication]) {
+    applications.sort_by(application_candidate_order);
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ApplicationRecord {
     display_name: String,
@@ -870,7 +886,7 @@ impl ComputerObserver {
     }
 
     fn list_applications(&self, limit: usize) -> Result<Value, String> {
-        let candidates = platform::list_applications(MAX_APPLICATIONS + 1)?;
+        let candidates = platform::list_applications(MAX_APPLICATION_SCAN)?;
         self.replace_application_candidates(candidates, limit)
     }
 
@@ -2316,6 +2332,25 @@ mod application_wire_contract_tests {
                 .insert(extra.to_string(), json!("x"));
             assert!(ensure_exact_payload_fields(&payload, &["application_id"]).is_err());
         }
+    }
+
+    #[test]
+    fn application_candidates_have_stable_bounded_order() {
+        assert!(MAX_APPLICATION_SCAN > MAX_APPLICATIONS);
+        let mut applications = vec![
+            candidate("zeta", 4),
+            candidate("alpha", 3),
+            candidate("Beta", 2),
+            candidate("Alpha", 1),
+        ];
+        sort_application_candidates(&mut applications);
+        assert_eq!(
+            applications
+                .iter()
+                .map(|application| application.display_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alpha", "alpha", "Beta", "zeta"]
+        );
     }
 
     #[test]
@@ -3780,19 +3815,21 @@ mod platform {
     #[cfg(windows)]
     pub(super) fn list_applications(limit: usize) -> Result<Vec<PlatformApplication>, String> {
         enumerate_native_applications(limit).map(|applications| {
-            applications
+            let mut applications = applications
                 .into_iter()
                 .map(|application| PlatformApplication {
                     display_name: application.display_name,
                     native_identity: application.native_identity,
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            super::sort_application_candidates(&mut applications);
+            applications
         })
     }
 
     #[cfg(windows)]
     fn revalidate_application_identity(native_identity: &[u8]) -> Result<OwnedPidl, String> {
-        let applications = enumerate_native_applications(super::MAX_APPLICATIONS + 1)?;
+        let applications = enumerate_native_applications(super::MAX_APPLICATION_SCAN)?;
         applications
             .into_iter()
             .find(|candidate| candidate.native_identity == native_identity)
@@ -8013,8 +8050,12 @@ mod windows_uia_tests {
 
     #[test]
     fn windows_application_discovery_is_bounded_and_identity_revalidation_is_exact() {
-        let applications = platform::list_applications(2).expect("Windows AppsFolder discovery");
-        assert!(applications.len() <= 2);
+        let applications = platform::list_applications(MAX_APPLICATION_SCAN)
+            .expect("Windows AppsFolder discovery");
+        assert!(applications.len() <= MAX_APPLICATION_SCAN);
+        assert!(applications.windows(2).all(|pair| {
+            application_candidate_order(&pair[0], &pair[1]) != std::cmp::Ordering::Greater
+        }));
         for application in &applications {
             assert!(!application.display_name.is_empty());
             assert!(!application.native_identity.is_empty());

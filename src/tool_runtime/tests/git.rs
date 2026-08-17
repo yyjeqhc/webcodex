@@ -172,6 +172,100 @@ async fn git_path_mutations_pass_shell_sensitive_paths_as_literal_argv() {
 }
 
 #[tokio::test]
+async fn git_path_mutation_capability_preflight_matches_structured_process_runtime() {
+    let runtime = runtime_with_agent_project("restore-structured-only");
+    register_agent(
+        &runtime,
+        "restore-structured-only",
+        None,
+        ShellClientCapabilities {
+            shell: false,
+            structured_process_argv: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("restore-structured-only");
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::GitRestorePaths {
+                        project,
+                        paths: vec!["safe.txt".to_string()],
+                        session_id: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+
+    let request = next_patch_agent_request(&runtime, "restore-structured-only")
+        .await
+        .expect("structured-process-only Runner should reach typed process dispatch");
+    assert_eq!(request.kind, "run_process");
+    assert!(request.command.is_empty());
+    let process = request.process.as_ref().expect("typed git restore process");
+    assert_eq!(process.executable, "git");
+    assert_eq!(
+        process.args,
+        ["restore", "--", "safe.txt"].map(str::to_string)
+    );
+    complete_patch_agent_request(
+        &runtime,
+        "restore-structured-only",
+        &request.request_id,
+        0,
+        "",
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+
+    let runtime = runtime_with_agent_project("discard-shell-only");
+    register_agent(
+        &runtime,
+        "discard-shell-only",
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            git: true,
+            structured_process_argv: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let bootstrap = auth_context(None, true);
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::DiscardUntracked {
+                project: agent_test_project_id("discard-shell-only"),
+                paths: vec!["safe.txt".to_string()],
+                session_id: None,
+            },
+            Some(&bootstrap),
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["failure_kind"], "capability_unavailable");
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("structured_process_argv"), "{error}");
+    assert!(error.contains("no shell fallback"), "{error}");
+    assert!(
+        next_patch_agent_request(&runtime, "discard-shell-only")
+            .await
+            .is_none(),
+        "capability preflight must reject before enqueue"
+    );
+}
+
+#[tokio::test]
 async fn git_restore_missing_structured_process_capability_is_definite_not_started() {
     let runtime = runtime_with_agent_project("restore-no-argv");
     register_agent(

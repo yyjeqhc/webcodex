@@ -756,16 +756,14 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
             desc
         );
     }
-    // The patch/shell/cleanup/write mutations must also mention the agent
-    // shell capability. startProjectShellJob requires the async shell job
-    // capability (checked separately below), not the plain shell capability.
+    // Patch/shell/delete mutations still require the agent shell capability.
+    // Git path mutations use typed executable+argv dispatch and therefore
+    // require the distinct structured-process capability instead.
     for path in [
         "/api/projects/apply_patch",
         "/api/projects/apply_patch_checked",
         "/api/projects/run_shell",
         "/api/projects/delete_files",
-        "/api/projects/git_restore_paths",
-        "/api/projects/discard_untracked",
     ] {
         let desc = spec["paths"][path]["post"]["description"]
             .as_str()
@@ -773,6 +771,26 @@ fn openapi_mutation_actions_describe_execution_risk_and_auth() {
         assert!(
             desc.to_lowercase().contains("agent shell capability"),
             "{} description should mention the agent shell capability, got: {}",
+            path,
+            desc
+        );
+    }
+    for path in [
+        "/api/projects/git_restore_paths",
+        "/api/projects/discard_untracked",
+    ] {
+        let desc = spec["paths"][path]["post"]["description"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            desc.contains("structured_process_argv"),
+            "{} description should mention structured_process_argv, got: {}",
+            path,
+            desc
+        );
+        assert!(
+            !desc.to_lowercase().contains("agent shell capability"),
+            "{} must not advertise the obsolete shell capability, got: {}",
             path,
             desc
         );

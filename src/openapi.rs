@@ -650,7 +650,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "gitRestorePaths",
                     "Restore tracked project paths",
-                    "Mutation with side effects. Runs `git restore -- <paths>` on selected tracked project-relative paths. Does not remove untracked files. Requires Bearer auth and the agent shell capability.",
+                    "Mutation with side effects. Runs `git restore -- <paths>` on selected tracked project-relative paths. Does not remove untracked files. Requires Bearer auth and the agent `structured_process_argv` capability.",
                     "GitRestorePathsRequest",
                     "ToolResult",
                     json!({
@@ -668,7 +668,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "discardUntrackedFiles",
                     "Discard untracked project files",
-                    "Mutation with side effects. Runs `git clean -f -- <paths>` only for selected project-relative untracked paths. Requires Bearer auth and the agent shell capability.",
+                    "Mutation with side effects. Runs `git clean -f -- <paths>` only for selected project-relative untracked paths. Requires Bearer auth and the agent `structured_process_argv` capability.",
                     "DiscardUntrackedRequest",
                     "ToolResult",
                     json!({

@@ -411,12 +411,12 @@ fn required_agent_capability_matches_metadata_risk_table() {
         (
             "git_restore_paths",
             ToolRisk::ProjectWrite,
-            AgentCapability::Shell,
+            AgentCapability::StructuredProcess,
         ),
         (
             "discard_untracked",
             ToolRisk::ProjectWrite,
-            AgentCapability::Shell,
+            AgentCapability::StructuredProcess,
         ),
         // Read-only dry run, but implemented through the agent shell path.
         ("validate_patch", ToolRisk::ReadOnly, AgentCapability::Shell),

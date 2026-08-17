@@ -1,4 +1,4 @@
-use super::AgentCapability::{GitOrShell, Shell};
+use super::AgentCapability::{GitOrShell, Shell, StructuredProcess};
 use super::ToolVisibility::ModelVisible;
 use super::{def, git_like, ToolDefinition, TOOL_CATEGORY_CLEANUP};
 use crate::tool_runtime::metadata::{
@@ -39,7 +39,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         "git_restore_paths",
         ModelVisible,
         TOOL_CATEGORY_CLEANUP,
-        Some(Shell),
+        Some(StructuredProcess),
         TOOL_PROVIDER_AGENT,
         ProjectWrite,
         Some(PROJECT_WRITE),
@@ -52,7 +52,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         "discard_untracked",
         ModelVisible,
         TOOL_CATEGORY_CLEANUP,
-        Some(Shell),
+        Some(StructuredProcess),
         TOOL_PROVIDER_AGENT,
         ProjectWrite,
         Some(PROJECT_WRITE),

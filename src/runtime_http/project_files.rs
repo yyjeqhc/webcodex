@@ -343,7 +343,7 @@ pub async fn projects_delete_files(req: &mut Request, depot: &mut Depot, res: &m
 /// `POST /api/projects/git_restore_paths` — thin GPT Actions wrapper over
 /// `ToolCall::GitRestorePaths`. Mutation with side effects: runs
 /// `git restore -- <paths>` on selected tracked project-relative paths.
-/// Requires Bearer auth and the agent shell capability.
+/// Requires Bearer auth and the agent `structured_process_argv` capability.
 #[handler]
 pub async fn projects_git_restore_paths(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(
@@ -376,7 +376,7 @@ pub async fn projects_git_restore_paths(req: &mut Request, depot: &mut Depot, re
 /// `POST /api/projects/discard_untracked` — thin GPT Actions wrapper over
 /// `ToolCall::DiscardUntracked`. Mutation with side effects: runs
 /// `git clean -f -- <paths>` only for selected project-relative untracked
-/// paths. Requires Bearer auth and the agent shell capability.
+/// paths. Requires Bearer auth and the agent `structured_process_argv` capability.
 #[handler]
 pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(

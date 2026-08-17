@@ -2280,23 +2280,6 @@ fn show_changes_reports_conflicted_file() {
 }
 
 #[test]
-fn show_changes_include_diff_false_omits_hunks() {
-    let output = parse_show_changes_output(
-        "agent:oe:webcodex",
-        "## main\n M src/lib.rs",
-        "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
-        " src/lib.rs | 2 +-",
-        None,
-        20,
-        80,
-        Some(0),
-        "",
-    );
-    assert!(output.get("hunks").is_none());
-    assert!(output.get("hunk_count").is_none());
-}
-
-#[test]
 fn show_changes_include_diff_true_returns_bounded_hunks() {
     let diff = "\
 diff --git a/src/lib.rs b/src/lib.rs

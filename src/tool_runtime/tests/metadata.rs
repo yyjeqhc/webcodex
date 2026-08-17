@@ -1201,19 +1201,6 @@ async fn agent_tool_allows_bootstrap_token_for_run_job() {
 }
 
 #[test]
-fn runtime_status_is_in_registered_tool_specs() {
-    let names: Vec<String> = registered_tool_specs()
-        .iter()
-        .map(|s| s.name.clone())
-        .collect();
-    assert!(
-        names.iter().any(|n| n == "runtime_status"),
-        "runtime_status must be in registered tool specs: {:?}",
-        names
-    );
-}
-
-#[test]
 fn runtime_status_input_schema_exposes_compact_flags() {
     let specs = registered_tool_specs();
     let spec = specs

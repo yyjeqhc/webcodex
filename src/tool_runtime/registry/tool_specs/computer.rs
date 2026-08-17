@@ -58,7 +58,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_key_input",
-            "Send one closed key only after an exact macOS or Windows window is revalidated frontmost and focused. Supports Enter, Escape, Tab, arrows, PageUp/PageDown, Home/End and bounded modifiers; Windows rejects command, OS-switching chords, and interfering held-key state. Windows uses the shared interactive input stream, not concurrent-user desktop isolation. No text, arbitrary keycodes, held/repeat state, implicit focus, or fallback.",
+            "Send one closed key to an exact revalidated frontmost/focused macOS or Windows window. Windows rejects command, unsafe system chords, and interfering held keys; input uses the shared input stream. No text, keycodes, repeat/held state, implicit focus, or fallback. Re-observe unknown outcomes.",
             computer_key_input_input_schema(),
         ),
         tool_spec(

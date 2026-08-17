@@ -76,25 +76,6 @@ fn oauth_bridge_auth_context(hash: &str, scopes: Vec<&str>) -> crate::auth::Auth
     }
 }
 
-fn managed_oauth_auth_context(
-    username: &str,
-    shared_key_hash: Option<&str>,
-) -> crate::auth::AuthContext {
-    crate::auth::AuthContext {
-        kind: crate::auth::AuthKind::OAuth2Token,
-        user_id: Some(format!("user-{}", username)),
-        username: Some(username.to_string()),
-        api_key_id: Some("oauth-access-token".to_string()),
-        role: Some("user".to_string()),
-        scopes: Vec::new(),
-        is_bootstrap: false,
-        token_kind: Some("oauth2".to_string()),
-        allowed_client_id: Some("oauth-client".to_string()),
-        shared_key_hash: shared_key_hash.map(str::to_string),
-        project_grant_id: None,
-    }
-}
-
 fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
     ShellAgentProjectSummary {
         id: id.to_string(),

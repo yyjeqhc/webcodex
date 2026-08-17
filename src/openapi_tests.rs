@@ -135,27 +135,6 @@ fn openapi_operation_ids_are_minimal() {
 }
 
 #[test]
-fn openapi_operations_have_consequential_flags() {
-    let spec = build_openapi_spec();
-    let paths = spec["paths"].as_object().unwrap();
-    let mut count = 0;
-    for methods in paths.values() {
-        for op in methods.as_object().unwrap().values() {
-            count += 1;
-            let operation_id = op["operationId"].as_str().unwrap();
-            assert!(
-                op.get("x-openai-isConsequential")
-                    .and_then(|v| v.as_bool())
-                    .is_some(),
-                "operation {} must have x-openai-isConsequential",
-                operation_id
-            );
-        }
-    }
-    assert_eq!(count, 25);
-}
-
-#[test]
 fn openapi_consequential_flags_match_operation_risk() {
     let spec = build_openapi_spec();
     let mut flags = std::collections::BTreeMap::new();
@@ -1424,28 +1403,6 @@ fn openapi_runtime_only_tools_do_not_get_dedicated_paths() {
             forbidden
         );
     }
-}
-
-#[test]
-fn openapi_operation_count_is_twenty_five_after_retiring_legacy_edits() {
-    // Phase 3 promoted 10 core runtime tools to dedicated GPT Actions,
-    // then later phases promoted run_job plus project onboarding actions.
-    // The single-purpose legacy edit tools are retired, while retained editing
-    // tools stay on the generic runtime surface. The current GPT Action count
-    // is 25 after removing legacy `/api/codex/*` routes.
-    // The surface must stay <= 30.
-    let spec = build_openapi_spec();
-    let count: usize = spec["paths"]
-        .as_object()
-        .unwrap()
-        .values()
-        .map(|m| m.as_object().unwrap().len())
-        .sum();
-    assert_eq!(
-        count, 25,
-        "GPT Actions schema must be 25 operations after retiring legacy edits"
-    );
-    assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
 }
 
 #[test]

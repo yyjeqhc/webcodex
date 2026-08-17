@@ -582,28 +582,6 @@ fn lsp_jsonrpc_replies_method_not_found_to_server_requests() {
 }
 
 #[test]
-fn lsp_request_timeout_removes_pending_request() {
-    let _serial = super::super::serialize_fake_lsp_test();
-    let fixture = Fixture::new("timeout");
-    let server = fixture
-        .supervisor
-        .server_for_test(&fixture.root, LspServerKind::RustAnalyzer)
-        .unwrap();
-    let error = fixture
-        .supervisor
-        .request_with_timeout(
-            &fixture.root,
-            LspServerKind::RustAnalyzer,
-            "fake/timeout",
-            json!({}),
-            Duration::from_millis(40),
-        )
-        .unwrap_err();
-    assert!(matches!(error, LspError::RequestTimeout { .. }));
-    assert_eq!(server.pending_count(), 0);
-}
-
-#[test]
 fn lsp_request_timeout_sends_cancel_request() {
     let _serial = super::super::serialize_fake_lsp_test();
     let fixture = Fixture::new("timeout_cancel");

@@ -229,6 +229,8 @@ struct JobManager {
     pending_job_updates: Arc<Mutex<HashMap<String, JobUpdateDeliveryQueue>>>,
     delivery_signal: Arc<JobUpdateDeliverySignal>,
     owner_lifetime: Option<Arc<JobManagerOwnerLifetime>>,
+    detached_profile_server_url: String,
+    detached_profile_config_path: PathBuf,
     #[cfg(test)]
     fail_detached_observer_spawn: Arc<AtomicBool>,
     #[cfg(test)]
@@ -269,11 +271,19 @@ impl JobManager {
             pending_job_updates,
             delivery_signal,
             owner_lifetime: Some(owner_lifetime),
+            detached_profile_server_url: String::new(),
+            detached_profile_config_path: PathBuf::new(),
             #[cfg(test)]
             fail_detached_observer_spawn: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
             detached_store_root_override: Arc::new(Mutex::new(None)),
         }
+    }
+
+    fn with_detached_profile_identity(mut self, server_url: &str, config_path: PathBuf) -> Self {
+        self.detached_profile_server_url = server_url.to_string();
+        self.detached_profile_config_path = config_path;
+        self
     }
 
     fn clone_for_worker(&self) -> Self {
@@ -3094,12 +3104,22 @@ fn validate_runner_structured_common(request: &ShellAgentShellRequest) -> Result
 }
 
 impl JobManager {
-    fn detached_store_for_start(&self) -> Result<DetachedJobStore, String> {
+    fn detached_store_for_start(
+        &self,
+        client_id: &str,
+        projects_dir: &Path,
+    ) -> Result<DetachedJobStore, String> {
         #[cfg(test)]
         if let Some(root) = lock_unpoison(&self.detached_store_root_override).clone() {
             return Ok(DetachedJobStore::new(root));
         }
-        DetachedJobStore::default_root().map(DetachedJobStore::new)
+        DetachedJobStore::default_root_for_runner(
+            client_id,
+            &self.detached_profile_server_url,
+            &self.detached_profile_config_path,
+            projects_dir,
+        )
+        .map(DetachedJobStore::new)
     }
 
     fn install_sink(&self, sink: AgentSink) {
@@ -4077,7 +4097,7 @@ impl JobManager {
                 manager.start_available_queued();
                 return;
             }
-            let store = match manager.detached_store_for_start() {
+            let store = match manager.detached_store_for_start(&request.client_id, &projects_dir) {
                 Ok(store) => store,
                 Err(error) => {
                     manager.fail_job(&request, error, None);

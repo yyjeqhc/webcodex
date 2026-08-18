@@ -159,7 +159,8 @@ impl AgentRuntimeState {
     }
 
     fn with_shutdown_budget(cfg: &AgentConfig, path: PathBuf, budget: Duration) -> Self {
-        let jobs = JobManager::new(max_concurrent_jobs(cfg));
+        let jobs = JobManager::new(max_concurrent_jobs(cfg))
+            .with_detached_profile_identity(&cfg.server_url, path.clone());
         // Persistent shells reuse the same authenticated OpenSSH multiplex pool
         // as async jobs: one transport per (session, resource, generation),
         // never a second SSH configuration or connection pool.
@@ -1254,9 +1255,16 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
         .to_string();
     // The LSP supervisor belongs to the agent process rather than any server
     // transport session and is shared across reconnects.
-    let runtime = AgentRuntimeState::new(&cfg, config_path);
+    let runtime = AgentRuntimeState::new(&cfg, config_path.clone());
     #[cfg(any(target_os = "linux", windows))]
-    match DetachedJobStore::default_root() {
+    match projects_dir(&cfg).and_then(|projects_dir| {
+        DetachedJobStore::default_root_for_runner(
+            &cfg.client_id,
+            &cfg.server_url,
+            &config_path,
+            &projects_dir,
+        )
+    }) {
         Ok(root) => match runtime.jobs.recover_detached_jobs(
             DetachedJobStore::new(root),
             &cfg.client_id,

@@ -17,7 +17,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "run_detached_process",
-            "Start one durable detached native process Job with literal argv, explicit detached authority, and a required bounded idempotency key. The key prevents duplicate payload dispatch and supports exact logical-Job recovery after a lost initiating response. Observe and stop through the existing Job tools; no shell, script, SSH-resource, or implicit retry fallback is used.",
+            "Start one durable detached native process Job with literal argv, explicit detached authority, and a required bounded replay key. While that logical Job remains in retained Job history, the key prevents duplicate payload dispatch and supports exact recovery after a lost initiating response; expired keys must not be reused as retry tokens. Observe and stop through the existing Job tools; no shell, script, SSH-resource, or implicit retry fallback is used.",
             run_detached_process_input_schema(),
         ),
         tool_spec(

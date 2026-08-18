@@ -103,6 +103,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "prompt" => json!("summarize"),
         "query" => json!("ToolRuntime"),
         "job_id" => json!("job_123"),
+        "idempotency_key" => json!("sample-detached-key"),
         "shell_id" => json!("wc_shell_123"),
         "session_id" => json!("wc_sess_existing"),
         "checkpoint_id" => json!("wc_ckpt_1234"),

@@ -123,9 +123,13 @@ restart; a client that retains its transport window identity restores the
 matching repository on its next `task_start`, and an explicit durable task id
 recovers it otherwise.
 
-Runner Job state is reconciled from the Runner's inventory on reconnect. A
-Runner process restart cannot recover its old child processes; those Jobs
-become `lost`.
+Runner Job state is reconciled from the Runner's inventory on reconnect.
+Ordinary Jobs remain owned by the Runner process, so a Runner process restart
+cannot recover those old child processes and they become `lost`. Explicit
+`run_detached_process` Jobs use a separate bounded durable supervisor handoff;
+when the exact supervisor and execution identity survive, a replacement Runner
+can reconcile the same logical Job without adopting ordinary `ManagedChild`
+processes.
 
 `client_id` is the stable logical identity of a Runner/device; each live
 process additionally carries an `agent_instance_id` (generated at startup)

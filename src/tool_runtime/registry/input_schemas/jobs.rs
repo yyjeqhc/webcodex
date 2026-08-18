@@ -2,11 +2,11 @@ use serde_json::{json, Value};
 
 use super::common::{object_schema, with_optional_session_id};
 use crate::shell_protocol::{
-    DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, PROCESS_ARG_MAX_BYTES, PROCESS_ARG_MAX_COUNT,
-    PROCESS_CWD_MAX_BYTES, PROCESS_EXECUTABLE_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    PROCESS_TIMEOUT_MAX_SECS, RAW_SHELL_COMMAND_MAX_BYTES, SCRIPT_ARGV_MAX_BYTES,
-    SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT, SCRIPT_CWD_MAX_BYTES, SCRIPT_MAX_BYTES,
-    SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
+    DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS, PROCESS_ARG_MAX_BYTES,
+    PROCESS_ARG_MAX_COUNT, PROCESS_CWD_MAX_BYTES, PROCESS_EXECUTABLE_MAX_BYTES,
+    PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS, RAW_SHELL_COMMAND_MAX_BYTES,
+    SCRIPT_ARGV_MAX_BYTES, SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT, SCRIPT_CWD_MAX_BYTES,
+    SCRIPT_MAX_BYTES, SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
 };
 
 pub(crate) fn run_process_input_schema() -> Value {
@@ -84,7 +84,7 @@ pub(crate) fn run_detached_process_input_schema() -> Value {
         "type": "string",
         "minLength": 1,
         "maxLength": DETACHED_IDEMPOTENCY_KEY_MAX_BYTES,
-        "description": "Required bounded caller-chosen key for this detached initiation. Reusing the same key can never dispatch a second payload execution; after Server restart an existing logical Job is returned for recovery rather than guessing that a resent body matches."
+        "description": format!("Required bounded caller-chosen key for this detached initiation. While the logical Job is active or retained for {JOB_TERMINAL_RETENTION_SECS} seconds after terminal observation, reusing the same key resolves to that Job and cannot redispatch its payload. After retained history expires the key may identify a new execution, so never reuse an expired key as a retry token. After Server restart an existing retained Job is returned for recovery rather than guessing that a resent body matches.")
     });
     schema["required"]
         .as_array_mut()

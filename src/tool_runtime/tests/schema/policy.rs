@@ -377,6 +377,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
             AgentCapability::StructuredProcess,
         ),
         (
+            "run_detached_process",
+            ToolRisk::JobRun,
+            AgentCapability::DetachedProcess,
+        ),
+        (
             "run_script",
             ToolRisk::JobRun,
             AgentCapability::StructuredScript,

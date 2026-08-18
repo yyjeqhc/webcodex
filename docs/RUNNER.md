@@ -226,8 +226,14 @@ not use proxy settings.
 A Runner disconnect is a liveness fact, not a lost-work fact. Accepted active
 Jobs enter a bounded `recovering` state (default grace 120 seconds) and are
 restored from the Runner's inventory when the same Runner instance reconnects.
-A replacement Runner instance does not inherit the old instance's jobs; they
-become `lost`. A Runner process restart cannot recover its old child processes.
+Ordinary Jobs remain owned by that exact Runner process: a replacement instance
+does not inherit their child processes, so they become `lost`. Explicit
+`run_detached_process` Jobs are different: after a one-shot durable ownership
+handoff, a narrow supervisor owns the payload tree. If that exact supervisor and
+its fenced execution identity remain live, a replacement Runner can reconstruct
+the same logical detached Job and route observation or stop through its durable
+control state. This does not make ordinary process execution detachable, and it
+does not promise survival across a machine reboot.
 
 Each Runner process carries its own `agent_instance_id` (generated at
 startup), which distinguishes it from the stable `client_id` that the device

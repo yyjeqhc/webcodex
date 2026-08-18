@@ -249,20 +249,29 @@ These expectations already have dedicated coverage in
 `e2e_job_recovery_failures_ws.sh`). Unit coverage also verifies old-epoch
 observation-token refresh behavior.
 
-## 7. Explicit non-goals
+## 7. Runner-process restart boundary
 
-This contract does not promise:
+Ordinary Jobs are still process-owned by their exact Runner instance. A Runner
+process restart therefore makes those child processes unrecoverable and they
+converge to `lost`; Server-side inventory reconciliation must never infer native
+ownership for them.
 
-- survival of the same Job across a Runner **process** restart;
+`run_detached_process` is the explicit exception. Before payload start it makes
+a one-shot durable ownership handoff to a narrow supervisor. The replacement
+Runner may transfer the same logical Job to a new `agent_instance_id` only when
+bounded durable state, request/context identity, supervisor native start
+identity, and lifetime fencing all reconcile exactly. A lost initiating response
+is replay-safe only while that logical Job remains in active or retained terminal
+history; replay keys are not permanent tombstones after retention expires.
+
+This contract still does not promise:
+
 - survival of an in-flight MCP/HTTP connection across a Control Server process
   restart;
-- unbounded Job/log retention;
-- a generic distributed scheduler or durable process manager;
+- survival of detached execution across a machine reboot;
+- unbounded Job/log or idempotency-key retention;
+- a generic distributed scheduler or general child-detach API;
 - blind automatic retries for uncertain execution outcomes.
-
-If stronger Runner-process durability is introduced later, it needs its own
-explicit persistence, process-ownership, fencing, and replay semantics rather
-than being inferred from the current Control Server reconciliation path.
 
 ## 8. Implementation reference points
 

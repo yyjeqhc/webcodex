@@ -340,9 +340,17 @@ fn darwin_group_has_live_members(pgid: u32) -> bool {
             )
         };
         if bytes != size as libc::c_int {
-            // The member may have raced with exit, but an incomplete query is
-            // not positive proof that the whole group is zombie-only. Retry on
-            // the next bounded poll instead of prematurely releasing the PGID.
+            let error = io::Error::last_os_error();
+            if bytes == 0 && error.raw_os_error() == Some(libc::ESRCH) {
+                // Darwin keeps an unreaped zombie in proc_listpgrppids but
+                // proc_pidinfo reports that zombie as ESRCH. The PID is still
+                // holding the group identity, yet it can no longer execute
+                // code, so it must not keep the owned tree live.
+                continue;
+            }
+            // Any other incomplete query is not proof that this member is
+            // dead/zombie. Retry on the next bounded poll instead of
+            // prematurely releasing the PGID identity.
             return true;
         }
         let info = unsafe { info.assume_init() };

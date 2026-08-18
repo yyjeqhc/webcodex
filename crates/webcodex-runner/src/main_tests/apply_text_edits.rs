@@ -345,6 +345,160 @@ fn file_apply_text_edits_insert_before_after_and_delete_exact() {
 }
 
 #[test]
+fn file_apply_text_edits_crlf_accepts_lf_edits_and_preserves_crlf() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n").unwrap();
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "edits": [
+                    {"kind": "replace_exact", "old_text": "one\n", "new_text": "ONE\n"},
+                    {"kind": "insert_after", "anchor_text": "two\n", "new_text": "AFTER-TWO\n"},
+                    {"kind": "delete_exact", "old_text": "three\n"},
+                    {"kind": "insert_before", "anchor_text": "four\n", "new_text": "BEFORE-FOUR\n"}
+                ]
+            }),
+        ),
+    ));
+
+    assert_eq!(out["changed"], true);
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"ONE\r\ntwo\r\nAFTER-TWO\r\nBEFORE-FOUR\r\nfour\r\nfive\r\n"
+    );
+}
+
+#[test]
+fn file_apply_text_edits_lf_accepts_crlf_edits_and_preserves_lf() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, b"one\ntwo\nthree\nfour\nfive\n").unwrap();
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "edits": [
+                    {"kind": "replace_exact", "old_text": "one\r\n", "new_text": "ONE\r\n"},
+                    {"kind": "insert_after", "anchor_text": "two\r\n", "new_text": "AFTER-TWO\r\n"},
+                    {"kind": "delete_exact", "old_text": "three\r\n"},
+                    {"kind": "insert_before", "anchor_text": "four\r\n", "new_text": "BEFORE-FOUR\r\n"}
+                ]
+            }),
+        ),
+    ));
+
+    assert_eq!(out["changed"], true);
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"ONE\ntwo\nAFTER-TWO\nBEFORE-FOUR\nfour\nfive\n"
+    );
+}
+
+#[test]
+fn file_apply_text_edits_mixed_line_endings_abort_entire_batch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let first = tmp.path().join("first.txt");
+    let mixed = tmp.path().join("mixed.txt");
+    std::fs::write(&first, b"alpha\r\n").unwrap();
+    std::fs::write(&mixed, b"beta\r\ngamma\n").unwrap();
+    let hash = |path: &Path| sha256_hex_bytes(&std::fs::read(path).unwrap());
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "first.txt",
+            serde_json::json!({
+                "changes": [
+                    {
+                        "kind": "edit",
+                        "path": "first.txt",
+                        "expected_sha256": hash(&first),
+                        "edits": [{"kind": "replace_exact", "old_text": "alpha\n", "new_text": "ALPHA\n"}]
+                    },
+                    {
+                        "kind": "edit",
+                        "path": "mixed.txt",
+                        "expected_sha256": hash(&mixed),
+                        "edits": [{"kind": "replace_exact", "old_text": "beta\n", "new_text": "BETA\n"}]
+                    }
+                ]
+            }),
+        ),
+    ));
+
+    assert_eq!(out["error_kind"], "edit_conflict");
+    assert_eq!(out["change_index"], 1);
+    assert!(out["error"].as_str().unwrap().contains("mixed LF and CRLF"));
+    assert_eq!(std::fs::read(&first).unwrap(), b"alpha\r\n");
+    assert_eq!(std::fs::read(&mixed).unwrap(), b"beta\r\ngamma\n");
+}
+
+#[test]
+fn file_apply_text_edits_line_ending_normalization_is_not_fuzzy_matching() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, b"alpha beta\r\n").unwrap();
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "edits": [
+                    {"kind": "replace_exact", "old_text": "alpha  beta\n", "new_text": "x\n"}
+                ]
+            }),
+        ),
+    ));
+
+    assert_eq!(out["error_kind"], "edit_conflict");
+    assert!(out["error"]
+        .as_str()
+        .unwrap()
+        .contains("match text was not found"));
+    assert_eq!(std::fs::read(&file).unwrap(), b"alpha beta\r\n");
+}
+
+#[test]
+fn file_apply_text_edits_rejects_bare_cr_replacement_without_file_line_endings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, b"one").unwrap();
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "edits": [
+                    {"kind": "replace_exact", "old_text": "one", "new_text": "ONE\r"}
+                ]
+            }),
+        ),
+    ));
+
+    assert_eq!(out["error_kind"], "edit_conflict");
+    assert!(out["error"].as_str().unwrap().contains("bare CR"));
+    assert_eq!(std::fs::read(&file).unwrap(), b"one");
+}
+
+#[test]
 fn file_apply_text_edits_rejects_overlapping_edits() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());

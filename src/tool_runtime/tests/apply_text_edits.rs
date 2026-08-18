@@ -193,6 +193,110 @@ fn apply_text_edits_rejects_overlapping_edits() {
     assert!(err.contains("overlap"));
 }
 
+#[test]
+fn apply_text_edits_crlf_accepts_lf_edits_and_preserves_crlf() {
+    let original = "one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n";
+    let edits = vec![
+        text_edit(
+            ApplyTextEditKind::ReplaceExact,
+            Some("one\n"),
+            Some("ONE\n"),
+            None,
+        ),
+        text_edit(
+            ApplyTextEditKind::InsertAfter,
+            None,
+            Some("AFTER-TWO\n"),
+            Some("two\n"),
+        ),
+        text_edit(ApplyTextEditKind::DeleteExact, Some("three\n"), None, None),
+        text_edit(
+            ApplyTextEditKind::InsertBefore,
+            None,
+            Some("BEFORE-FOUR\n"),
+            Some("four\n"),
+        ),
+    ];
+    let real_sha = files::sha256_hex_bytes(original.as_bytes());
+    let (updated, out) =
+        files::apply_text_edits_to_string(original, "src/x.rs", &edits, Some(&real_sha), false)
+            .unwrap();
+
+    assert_eq!(
+        updated,
+        "ONE\r\ntwo\r\nAFTER-TWO\r\nBEFORE-FOUR\r\nfour\r\nfive\r\n"
+    );
+    assert!(!updated.replace("\r\n", "").contains('\n'));
+    assert_eq!(out["changed"], true);
+}
+
+#[test]
+fn apply_text_edits_lf_accepts_crlf_edits_and_preserves_lf() {
+    let original = "one\ntwo\nthree\nfour\nfive\n";
+    let edits = vec![
+        text_edit(
+            ApplyTextEditKind::ReplaceExact,
+            Some("one\r\n"),
+            Some("ONE\r\n"),
+            None,
+        ),
+        text_edit(
+            ApplyTextEditKind::InsertAfter,
+            None,
+            Some("AFTER-TWO\r\n"),
+            Some("two\r\n"),
+        ),
+        text_edit(
+            ApplyTextEditKind::DeleteExact,
+            Some("three\r\n"),
+            None,
+            None,
+        ),
+        text_edit(
+            ApplyTextEditKind::InsertBefore,
+            None,
+            Some("BEFORE-FOUR\r\n"),
+            Some("four\r\n"),
+        ),
+    ];
+    let (updated, _) =
+        files::apply_text_edits_to_string(original, "src/x.rs", &edits, None, false).unwrap();
+
+    assert_eq!(updated, "ONE\ntwo\nAFTER-TWO\nBEFORE-FOUR\nfour\nfive\n");
+    assert!(!updated.contains('\r'));
+}
+
+#[test]
+fn apply_text_edits_rejects_mixed_or_bare_cr_line_endings() {
+    for original in ["one\r\ntwo\n", "one\rtwo\r"] {
+        let edits = vec![text_edit(
+            ApplyTextEditKind::ReplaceExact,
+            Some("one\n"),
+            Some("ONE\n"),
+            None,
+        )];
+        let err = files::apply_text_edits_to_string(original, "src/x.rs", &edits, None, false)
+            .unwrap_err();
+        assert!(err.contains("line endings"), "{err}");
+        assert!(err.contains("No files were modified"), "{err}");
+    }
+}
+
+#[test]
+fn apply_text_edits_rejects_bare_cr_edit_text_without_file_line_endings() {
+    let original = "one";
+    let edits = vec![text_edit(
+        ApplyTextEditKind::ReplaceExact,
+        Some("one"),
+        Some("ONE\r"),
+        None,
+    )];
+    let err =
+        files::apply_text_edits_to_string(original, "src/x.rs", &edits, None, false).unwrap_err();
+    assert!(err.contains("bare CR"), "{err}");
+    assert!(err.contains("No files were modified"), "{err}");
+}
+
 #[tokio::test]
 async fn apply_text_edits_dry_run_does_not_write() {
     let runtime = runtime_with_agent_project("ate-dry");

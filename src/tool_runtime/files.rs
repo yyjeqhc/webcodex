@@ -64,6 +64,11 @@ pub(crate) use search::{
 pub(crate) use search::{SearchOptions, SearchRequest, DEFAULT_SEARCH_HEAD_ABSOLUTE_CANDIDATES};
 
 // Edit limits and the sensitive-path guard are shared with the agent binary.
+#[cfg(test)]
+pub(crate) use crate::apply_edits_shared::{
+    canonicalize_apply_text_line_endings, detect_apply_text_line_ending,
+    restore_apply_text_line_endings,
+};
 pub(crate) use crate::apply_edits_shared::{
     is_sensitive_edit_path, MAX_APPLY_FILE_CHANGES, MAX_APPLY_TEXT_EDITS,
     MAX_APPLY_TEXT_EDIT_FIELD_BYTES,

@@ -6,6 +6,76 @@
 //! have. Do not add main-crate-only imports here.
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+
+/// Line-ending convention of one existing text file. Mixed LF/CRLF and bare
+/// carriage returns are rejected because edit matching must not guess how to
+/// rewrite an ambiguous file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyTextLineEnding {
+    None,
+    Lf,
+    Crlf,
+}
+
+/// Detect one unambiguous existing-file line-ending convention.
+pub fn detect_apply_text_line_ending(text: &str) -> Result<ApplyTextLineEnding, &'static str> {
+    let bytes = text.as_bytes();
+    let mut saw_lf = false;
+    let mut saw_crlf = false;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\r' => {
+                if bytes.get(index + 1) != Some(&b'\n') {
+                    return Err("file contains unsupported bare CR line endings");
+                }
+                saw_crlf = true;
+                index += 2;
+            }
+            b'\n' => {
+                saw_lf = true;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    match (saw_lf, saw_crlf) {
+        (true, true) => Err("file contains mixed LF and CRLF line endings"),
+        (true, false) => Ok(ApplyTextLineEnding::Lf),
+        (false, true) => Ok(ApplyTextLineEnding::Crlf),
+        (false, false) => Ok(ApplyTextLineEnding::None),
+    }
+}
+
+/// Canonicalize LF/CRLF edit text to LF for exact matching. Bare CR remains a
+/// hard error; no other whitespace or textual normalization is performed.
+pub fn canonicalize_apply_text_line_endings<'a>(
+    text: &'a str,
+    line_ending: ApplyTextLineEnding,
+) -> Result<Cow<'a, str>, &'static str> {
+    let bytes = text.as_bytes();
+    if !bytes.contains(&b'\r') {
+        return Ok(Cow::Borrowed(text));
+    }
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n') {
+            return Err("edit text contains unsupported bare CR line endings");
+        }
+    }
+    if line_ending == ApplyTextLineEnding::None {
+        return Ok(Cow::Borrowed(text));
+    }
+    Ok(Cow::Owned(text.replace("\r\n", "\n")))
+}
+
+/// Restore canonical LF content to the original existing-file convention.
+pub fn restore_apply_text_line_endings(text: String, line_ending: ApplyTextLineEnding) -> String {
+    match line_ending {
+        ApplyTextLineEnding::Crlf => text.replace('\n', "\r\n"),
+        ApplyTextLineEnding::None | ApplyTextLineEnding::Lf => text,
+    }
+}
 
 /// Kind of atomic text edit performed by `apply_text_edits`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

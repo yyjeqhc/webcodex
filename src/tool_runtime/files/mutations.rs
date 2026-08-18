@@ -274,6 +274,13 @@ pub(crate) fn apply_text_edits_to_string(
         }
     }
 
+    let raw_original = original;
+    let line_ending =
+        detect_apply_text_line_ending(original).map_err(recoverable_write_rejection)?;
+    let canonical_original = canonicalize_apply_text_line_endings(original, line_ending)
+        .map_err(recoverable_write_rejection)?;
+    let original = canonical_original.as_ref();
+
     // Resolve each edit to a (start, end, replacement, index) op against the
     // original content. start/end are byte offsets; inserts are zero-width.
     let mut ops: Vec<(usize, usize, String, usize)> = Vec::with_capacity(edits.len());
@@ -327,6 +334,12 @@ pub(crate) fn apply_text_edits_to_string(
                 "replacement text cannot contain NUL bytes",
             ));
         }
+        let needle = canonicalize_apply_text_line_endings(needle, line_ending)
+            .map_err(|error| edit_match_error(index, kind, error))?;
+        let replacement = canonicalize_apply_text_line_endings(&replacement, line_ending)
+            .map_err(|error| edit_field_error(index, kind, error))?
+            .into_owned();
+        let needle = needle.as_ref();
         let matches = original.matches(needle).count();
         if matches == 0 {
             return Err(edit_match_error(index, kind, "match text was not found"));
@@ -400,9 +413,10 @@ pub(crate) fn apply_text_edits_to_string(
         }));
     }
     new_content.push_str(&original[cursor..]);
+    let new_content = restore_apply_text_line_endings(new_content, line_ending);
 
     let new_sha256 = sha256_hex_bytes(new_content.as_bytes());
-    let changed = new_content != original;
+    let changed = new_content != raw_original;
     let output = json!({
         "path": path,
         "dry_run": dry_run,

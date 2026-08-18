@@ -264,7 +264,8 @@ const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 // shared verbatim with the host write path via `apply_edits_shared`. Aliases
 // keep this module's existing `Agent*` / `APPLY_TEXT_EDITS_MAX_*` names.
 use crate::apply_edits_shared::{
-    is_sensitive_edit_path, ApplyFileChangeInput as AgentFileChange,
+    canonicalize_apply_text_line_endings, detect_apply_text_line_ending, is_sensitive_edit_path,
+    restore_apply_text_line_endings, ApplyFileChangeInput as AgentFileChange,
     ApplyFileChangeKind as AgentFileChangeKind, ApplyTextEditInput as AgentTextEdit,
     ApplyTextEditKind as AgentTextEditKind, MAX_APPLY_FILE_CHANGES as APPLY_TEXT_EDITS_MAX_CHANGES,
     MAX_APPLY_TEXT_EDITS as APPLY_TEXT_EDITS_MAX_EDITS,
@@ -313,6 +314,11 @@ fn edit_plan(
             ),
         ));
     }
+    let line_ending =
+        detect_apply_text_line_ending(original).map_err(|error| (0, "edit", error.to_string()))?;
+    let canonical_original = canonicalize_apply_text_line_endings(original, line_ending)
+        .map_err(|error| (0, "edit", error.to_string()))?;
+    let original = canonical_original.as_ref();
     let mut ops: Vec<(usize, usize, String, usize)> = Vec::with_capacity(edits.len());
     for (index, edit) in edits.iter().enumerate() {
         let kind = &edit.kind;
@@ -400,6 +406,12 @@ fn edit_plan(
         {
             return Err((index, kind.as_str(), "edit field is too large".to_string()));
         }
+        let needle = canonicalize_apply_text_line_endings(needle, line_ending)
+            .map_err(|error| (index, kind.as_str(), error.to_string()))?;
+        let replacement = canonicalize_apply_text_line_endings(&replacement, line_ending)
+            .map_err(|error| (index, kind.as_str(), error.to_string()))?
+            .into_owned();
+        let needle = needle.as_ref();
         let matches = original.matches(needle).count();
         if matches != 1 {
             return Err((
@@ -455,6 +467,7 @@ fn edit_plan(
         }));
     }
     replacement.push_str(&original[cursor..]);
+    let replacement = restore_apply_text_line_endings(replacement, line_ending);
     Ok((replacement, summaries))
 }
 

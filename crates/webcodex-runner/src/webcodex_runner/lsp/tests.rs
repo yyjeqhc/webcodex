@@ -1965,7 +1965,27 @@ fn process_exists(pid: u32) -> bool {
     ok == 1 && exit_code == 259
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(target_os = "macos")]
+fn process_exists(pid: u32) -> bool {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    let bytes = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size as libc::c_int,
+        )
+    };
+    if bytes == size as libc::c_int {
+        let info = unsafe { info.assume_init() };
+        return info.pbi_status != libc::SZOMB;
+    }
+    !(bytes == 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn process_exists(_pid: u32) -> bool {
     false
 }

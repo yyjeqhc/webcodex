@@ -1002,6 +1002,7 @@ mod tests {
     }
 
     impl TestSshServer {
+        #[cfg(target_os = "linux")]
         fn start() -> Option<Self> {
             let sshd = executable_on_path("sshd")?;
             if Command::new(&sshd)
@@ -1101,6 +1102,15 @@ mod tests {
             let _ = child.kill();
             let _ = child.wait();
             panic!("SSH test daemon did not listen within five seconds");
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        fn start() -> Option<Self> {
+            // These tests launch a local OpenSSH daemon and exercise its
+            // Linux fixture configuration. macOS still compiles the SSH client
+            // production surface, but its system sshd account/auth policy is
+            // not a hermetic equivalent of this fixture.
+            None
         }
     }
 

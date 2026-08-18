@@ -104,8 +104,12 @@ impl Fixture {
 
     fn with_timeout(scenario: &str, timeout_secs: u64) -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("project");
-        fs::create_dir_all(root.join("src")).unwrap();
+        let requested_root = temp.path().join("project");
+        fs::create_dir_all(requested_root.join("src")).unwrap();
+        // Production request routing canonicalizes the project root before it
+        // reaches the provider. Mirror that here so macOS `/var` -> `/private/var`
+        // aliases cannot make fake absolute search output look out-of-project.
+        let root = fs::canonicalize(requested_root).unwrap();
         fs::write(root.join("edit.txt"), "before\n").unwrap();
         fs::write(root.join("src/lib.rs"), "zero\nneedle\n").unwrap();
         let marker = temp.path().join("marker.log");
@@ -1025,7 +1029,27 @@ fn opt_in_real_claude_mcp_smoke() {
 
 /// Whether a process with `pid` is still alive, probed natively (no tasklist,
 /// no shelling out).
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
+fn process_exists(pid: u32) -> bool {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    let bytes = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size as libc::c_int,
+        )
+    };
+    if bytes == size as libc::c_int {
+        let info = unsafe { info.assume_init() };
+        return info.pbi_status != libc::SZOMB;
+    }
+    !(bytes == 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn process_exists(pid: u32) -> bool {
     // SAFETY: signal 0 is an existence probe; the pid comes from our own child.
     unsafe { libc::kill(pid as i32, 0) == 0 }

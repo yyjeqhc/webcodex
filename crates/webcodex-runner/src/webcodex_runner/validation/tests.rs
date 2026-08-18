@@ -359,15 +359,20 @@ fn invalid_cwd_reports_available_tool_without_starting_command() {
 fn spawn_failure_does_not_report_command_started() {
     let project = tempfile::tempdir().unwrap();
     let bin = tempfile::tempdir().unwrap();
-    // A file that resolves as a program but cannot be executed. Unix can use
-    // an executable non-shebang file. On Windows, executing a corrupt PE can
-    // trigger an interactive compatibility dialog, so use a real PE held with
-    // an exclusive share mode instead; CreateProcess then fails cleanly while
-    // the resolver still sees an available tool.
+    // A file that resolves as a program but cannot be started. Executable text
+    // without a shebang is not portable here: macOS Command::spawn may run it
+    // through the platform shell. A shebang naming a definitely missing
+    // interpreter instead produces a pre-start spawn failure on Unix. On
+    // Windows, executing a corrupt PE can trigger an interactive compatibility
+    // dialog, so use a real PE held with an exclusive share mode instead.
     #[cfg(unix)]
     {
         let path = bin.path().join("pyright");
-        fs::write(&path, "not a recognized executable format\n").unwrap();
+        fs::write(
+            &path,
+            "#!/definitely/missing/webcodex-validation-interpreter\n",
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     }

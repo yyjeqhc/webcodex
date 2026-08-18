@@ -721,6 +721,13 @@ const DANGEROUS_PROJECT_ROOTS: &[&str] = &[
     "/sbin",
     "/usr",
     "/var",
+    // macOS canonicalizes the public `/etc` and `/var` aliases through
+    // `/private`; policy is evaluated after canonicalization, so fence those
+    // canonical spellings as the same dangerous roots.
+    #[cfg(target_os = "macos")]
+    "/private/etc",
+    #[cfg(target_os = "macos")]
+    "/private/var",
     "/proc",
     "/sys",
     "/dev",

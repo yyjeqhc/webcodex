@@ -206,7 +206,7 @@ def preflight_release(
     if npm_metadata is not None:
         raise PublicationError(f"npm package version already exists: {PACKAGE}@{release_version}")
 
-    github_user = client.fetch_json("/user").get("login")
+    github_user = client.fetch_authenticated_user().get("login")
     if not isinstance(github_user, str) or not github_user:
         raise PublicationError("GitHub publication identity is unavailable")
     npm_user = _run_capture(

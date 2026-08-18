@@ -109,10 +109,50 @@ def _write_bundle(root: Path) -> dict:
     return release_build
 
 
+class _JsonResponse:
+    headers: dict[str, str] = {}
+
+    def __init__(self, payload: dict):
+        self.payload = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self, _size=-1):
+        return self.payload
+
+
+class _RecordingOpener:
+    def __init__(self, payload: dict):
+        self.payload = payload
+        self.requests = []
+
+    def open(self, request, timeout):
+        self.requests.append((request, timeout))
+        return _JsonResponse(self.payload)
+
+
+class GitHubClientIdentityTests(unittest.TestCase):
+    def test_authenticated_user_uses_global_api_endpoint(self) -> None:
+        client = collector.GitHubClient(collector.DEFAULT_REPO, "fake-token", 5)
+        opener = _RecordingOpener({"login": "publisher"})
+        client.opener = opener
+
+        self.assertEqual(client.fetch_authenticated_user(), {"login": "publisher"})
+        self.assertEqual(client.api_url("/branches/main"), f"https://api.github.com/repos/{collector.DEFAULT_REPO}/branches/main")
+        self.assertEqual(len(opener.requests), 1)
+        request, timeout = opener.requests[0]
+        self.assertEqual(request.full_url, "https://api.github.com/user")
+        self.assertEqual(timeout, 5)
+
+
 class PreflightTests(unittest.TestCase):
     def test_preflight_requires_exact_versions_and_unused_namespaces(self) -> None:
         client = mock.Mock()
-        client.fetch_json.side_effect = lambda suffix: {"login": "publisher"} if suffix == "/user" else {}
+        client.fetch_authenticated_user.return_value = {"login": "publisher"}
         with mock.patch.object(publication, "_require_exact_clean_root"), mock.patch.object(
             publication, "_package_versions", return_value=(VERSION, VERSION)
         ), mock.patch.object(publication.collector, "resolve_github_token", return_value="fake"), mock.patch.object(
@@ -140,6 +180,7 @@ class PreflightTests(unittest.TestCase):
             ["npm", "whoami", "--registry", publication.NPM_REGISTRY], timeout=5
         )
         self.assertEqual(optional_json.call_count, 2)
+        client.fetch_authenticated_user.assert_called_once_with()
 
     def test_preflight_rejects_existing_local_tag(self) -> None:
         client = mock.Mock()

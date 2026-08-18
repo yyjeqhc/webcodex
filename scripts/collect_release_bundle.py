@@ -131,8 +131,7 @@ class GitHubClient:
             },
         )
 
-    def fetch_json(self, suffix: str) -> dict:
-        url = self.api_url(suffix)
+    def _fetch_json_url(self, url: str) -> dict:
         try:
             with self.opener.open(self._request(url), timeout=self.timeout) as response:
                 length = _content_length(response.headers)
@@ -154,6 +153,12 @@ class GitHubClient:
         if not isinstance(value, dict):
             raise CollectionError(f"GitHub API returned a non-object: {url}")
         return value
+
+    def fetch_json(self, suffix: str) -> dict:
+        return self._fetch_json_url(self.api_url(suffix))
+
+    def fetch_authenticated_user(self) -> dict:
+        return self._fetch_json_url("https://api.github.com/user")
 
     def download_artifact_zip(
         self,

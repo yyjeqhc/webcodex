@@ -86,6 +86,15 @@ fn test_config(projects_dir: PathBuf) -> AgentConfig {
     }
 }
 
+#[test]
+fn detached_process_capability_matches_supported_native_backends() {
+    let capabilities = agent_register_capabilities(&test_config(PathBuf::new()));
+    assert_eq!(
+        capabilities.detached_process_jobs,
+        cfg!(any(target_os = "linux", target_os = "macos", windows))
+    );
+}
+
 fn runtime_config(cfg: &AgentConfig) -> Arc<ReloadableAgentConfig> {
     Arc::new(ReloadableAgentConfig::new(cfg.clone(), PathBuf::new()))
 }

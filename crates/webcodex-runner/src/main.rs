@@ -4778,6 +4778,11 @@ fn handle_one_poll(
 }
 
 fn main() {
+    if let Some(code) =
+        webcodex_runner::detached_job::maybe_run_internal_mode(std::env::args().skip(1))
+    {
+        std::process::exit(code);
+    }
     // Pin the process start timestamp before any transport work so register
     // payloads report real process identity even after reconnect loops.
     let _ = process_started_at();

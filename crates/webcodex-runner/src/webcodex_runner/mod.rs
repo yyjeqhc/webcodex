@@ -2,6 +2,7 @@ pub(crate) mod artifacts;
 pub(crate) mod checkpoints;
 pub(crate) mod computer;
 pub(crate) mod config;
+pub(crate) mod detached_job;
 pub(crate) mod dispatch;
 pub(crate) mod external_tools;
 pub(crate) mod files;

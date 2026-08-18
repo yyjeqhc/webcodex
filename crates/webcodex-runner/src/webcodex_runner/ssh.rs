@@ -980,10 +980,13 @@ mod tests {
     use super::{remote_script, run_ssh_shell, shell_quote, SshConnectionPool};
     use crate::webcodex_runner::config::{AgentPolicy, SshConfig, SshResourceConfig};
     use std::collections::BTreeMap;
+    #[cfg(target_os = "linux")]
     use std::net::{TcpListener, TcpStream};
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::{Path, PathBuf};
-    use std::process::{Child, Command, Stdio};
+    #[cfg(target_os = "linux")]
+    use std::process::Stdio;
+    use std::process::{Child, Command};
     use std::time::{Duration, Instant};
 
     struct TestSshServer {
@@ -1114,6 +1117,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn generate_key(path: &Path) {
         let status = Command::new("ssh-keygen")
             .args(["-q", "-t", "ed25519", "-N", "", "-f"])
@@ -1123,6 +1127,7 @@ mod tests {
         assert!(status.success(), "ssh-keygen failed");
     }
 
+    #[cfg(target_os = "linux")]
     fn executable_on_path(name: &str) -> Option<PathBuf> {
         std::env::var_os("PATH").and_then(|paths| {
             std::env::split_paths(&paths)

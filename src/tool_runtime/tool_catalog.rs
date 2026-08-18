@@ -64,6 +64,8 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "computer_control",
             "computer_scroll_to_element",
             "computer_key_input",
+            "computer_read_clipboard",
+            "computer_write_clipboard",
             "computer_pointer_move",
             "computer_pointer_click",
             "computer_input_text",

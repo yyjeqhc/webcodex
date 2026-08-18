@@ -23,7 +23,7 @@ pub(crate) fn list_tools_input_schema() -> Value {
             },
             "limit": {
                 "type": "integer",
-                "description": "Maximum returned tools for focused discovery; capped at 100."
+                "description": "Maximum returned tools for focused discovery; capped at 128."
             }
         },
         "required": [],

@@ -17,27 +17,27 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "computer_read_clipboard",
-            "Read the exact Windows Runner global clipboard only when bounded CF_UNICODETEXT is available. Returns UTF-8 text up to 16 KiB without truncation. This is an independent global privacy authority: no format enumeration, window/focus access, paste, retry loop, shell fallback, or clipboard history is used.",
+            "Read bounded CF_UNICODETEXT from the exact Windows Runner global clipboard. Returns UTF-8 text up to 16 KiB without truncation. This is an independent global privacy authority; it never enumerates formats, accesses windows/focus, pastes, retries, invokes shell fallback, or reads clipboard history.",
             computer_read_clipboard_input_schema(),
         ),
         tool_spec(
             "computer_write_clipboard",
-            "Replace the exact Windows Runner global clipboard with one bounded CF_UNICODETEXT value. This clears prior image, rich-text, file-drop, and custom formats via EmptyClipboard. It never pastes, focuses, activates, restores old clipboard data, retries, or reads back implicitly; uncertain outcomes require caller-directed reconciliation under separate clipboard-read authority.",
+            "Replace the exact Windows Runner global clipboard with bounded CF_UNICODETEXT, clearing formats via EmptyClipboard. It never pastes, focuses, activates, restores old data, retries, or reads back implicitly. Unknown outcomes require explicit reconciliation under separate clipboard-read authority.",
             computer_write_clipboard_input_schema(),
         ),
         tool_spec(
             "computer_pointer_move",
-            "Move the Windows pointer to one exact display-local source coordinate using the latest unspent computer_snapshot_display generation. The generation is a one-effect freshness fence and is spent once native effect admission begins. No global/window coordinates, implicit observation, focus, activation, modifiers, drag, fallback, or retry are performed; reconcile uncertain outcomes with a fresh display snapshot.",
+            "Move the Windows pointer to an exact display-local coordinate using the latest unspent display snapshot generation. The generation is single-use and spent at effect admission. No implicit observation, focus, drag, fallback, or retry. Reconcile unknown outcomes with a fresh snapshot.",
             computer_pointer_input_schema(),
         ),
         tool_spec(
             "computer_pointer_click",
-            "Submit one Windows-native exact coordinate single-left-click sequence (move + left down + left up) using the latest unspent full-display snapshot generation. Shared held mouse/modifier state fails closed before effect. No button selection, double/right/middle click, drag, focus, activation, implicit snapshot, fallback, or retry; reconcile uncertain outcomes with a fresh display snapshot.",
+            "Send one Windows-native left click at an exact display-local coordinate using the latest unspent display snapshot generation. Held mouse/modifier state fails closed. No other buttons, double click, drag, implicit snapshot, fallback, or retry. Reconcile unknown outcomes with a fresh snapshot.",
             computer_pointer_input_schema(),
         ),
         tool_spec(
             "computer_list_targets",
-            "List caller-visible Runner targets that advertise supported Computer observation or application capabilities. Use this when client_id is unknown. Returns only minimal target identity, connection state, and independent Computer capability facts; no projects, policy, jobs, host details, or observation content.",
+            "List caller-visible Runners that advertise Computer observation or application capabilities. Use when client_id is unknown. Returns only target identity, connection state, and independent Computer capability facts; no projects, policy, jobs, host details, or observation content.",
             empty_input_schema(),
         ),
         tool_spec(
@@ -47,7 +47,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_list_displays",
-            "List a bounded fresh set of exact full displays on one Runner under the independent full-display privacy authority. display_id values are opaque, process-local, ephemeral, and replaced by each fresh list. Results expose only display-relative dimensions and primary status; native monitor identity, device path, global origin, scale, and topology remain private.",
+            "List bounded fresh full displays under separate display privacy authority. display_id values are opaque, process-local, ephemeral, and replaced on each list. Returns only display-relative dimensions and primary status; native identity, global origin, scale, and topology stay private.",
             computer_list_displays_input_schema(),
         ),
         tool_spec(
@@ -57,7 +57,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_launch_application",
-            "Submit an exact Windows-native launch for one fresh application_id. No path, argv, cwd, environment, shell, URL, process-launch fallback, focus, or activation is accepted. Success means the OS accepted the launch request, not that a new process/window exists or is ready; reconcile uncertain outcomes with fresh computer_list_windows before any retry.",
+            "Launch one fresh application_id through Windows native launch. Accepts no path, argv, cwd, environment, shell, URL, fallback, focus, or activation. Success means only that the OS accepted the request, not that a process/window is ready. Reconcile unknown outcomes with fresh computer_list_windows.",
             computer_launch_application_input_schema(),
         ),
         tool_spec(
@@ -112,7 +112,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_snapshot_display",
-            "Capture exactly one fresh previously discovered full display. The Runner revalidates private native display identity before capture; stale or ambiguous displays fail closed. max_width/max_height only downscale aspect-preservingly and never upscale. No global coordinates, regions, virtual-desktop mosaic, activation, input, shell, or process fallback is accepted. A positive process-local snapshot_generation identifies the captured display/geometry generation for future freshness fencing.",
+            "Capture one fresh discovered full display after private native-identity revalidation; stale or ambiguous displays fail closed. max_width/max_height only downscale. No global coordinates, regions, activation, input, shell, or fallback. Returns a positive snapshot_generation for freshness fencing.",
             computer_snapshot_display_input_schema(),
         ),
         tool_spec(

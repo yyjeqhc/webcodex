@@ -639,6 +639,26 @@ fn try_tree_exit_tracks_tree_liveness() {
     let _ = managed.try_wait();
 }
 
+#[test]
+fn unreaped_direct_child_is_not_a_live_tree_member() {
+    let (mut managed, reader) = spawn_helper("sleep", &["0", "0"], true);
+    reader
+        .expect("captured stdout reader")
+        .wait_for_eof(Duration::from_secs(5))
+        .expect("direct child should close stdout when it exits");
+
+    assert!(
+        managed
+            .wait_tree_exit(Duration::from_secs(1))
+            .expect("zombie-only tree probe"),
+        "an exited but unreaped direct child must not keep the process tree live"
+    );
+    assert!(
+        managed.try_wait().expect("reap direct child").is_some(),
+        "the direct child should still have been unreaped until try_wait"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Platform-native liveness probing
 // ---------------------------------------------------------------------------

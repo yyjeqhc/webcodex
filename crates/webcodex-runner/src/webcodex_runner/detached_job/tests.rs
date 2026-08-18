@@ -12,63 +12,21 @@ fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[test]
-fn default_state_roots_are_scoped_by_runner_profile_identity() {
-    let config_a = Path::new("/profile-a/agent.toml");
-    let config_b = Path::new("/profile-b/agent.toml");
-    let projects_a = Path::new("/shared/projects.d");
-    let projects_b = Path::new("/profile-b/projects.d");
-    let first = DetachedJobStore::default_root_for_runner(
-        "client-a",
-        "https://server-a.example/",
-        config_a,
-        projects_a,
-    )
-    .unwrap();
-    let first_again = DetachedJobStore::default_root_for_runner(
-        "client-a",
-        "https://server-a.example",
-        config_a,
-        projects_a,
-    )
-    .unwrap();
-    let other_client = DetachedJobStore::default_root_for_runner(
-        "client-b",
-        "https://server-a.example",
-        config_a,
-        projects_a,
-    )
-    .unwrap();
-    let other_server = DetachedJobStore::default_root_for_runner(
-        "client-a",
-        "https://server-b.example",
-        config_a,
-        projects_a,
-    )
-    .unwrap();
-    let other_config = DetachedJobStore::default_root_for_runner(
-        "client-a",
-        "https://server-a.example",
-        config_b,
-        projects_a,
-    )
-    .unwrap();
-    let other_projects = DetachedJobStore::default_root_for_runner(
-        "client-a",
-        "https://server-a.example",
-        config_a,
-        projects_b,
-    )
-    .unwrap();
+fn default_state_roots_are_scoped_by_server_and_client_identity() {
+    let first =
+        DetachedJobStore::default_root_for_runner("client-a", "https://server-a.example/").unwrap();
+    let first_again =
+        DetachedJobStore::default_root_for_runner("client-a", "https://server-a.example").unwrap();
+    let other_client =
+        DetachedJobStore::default_root_for_runner("client-b", "https://server-a.example").unwrap();
+    let other_server =
+        DetachedJobStore::default_root_for_runner("client-a", "https://server-b.example").unwrap();
 
     assert_eq!(first, first_again);
     assert_ne!(first, other_client);
     assert_ne!(first, other_server);
-    assert_ne!(first, other_config);
-    assert_ne!(first, other_projects);
     assert_eq!(first.parent(), other_client.parent());
     assert_eq!(first.parent(), other_server.parent());
-    assert_eq!(first.parent(), other_config.parent());
-    assert_eq!(first.parent(), other_projects.parent());
 }
 
 #[cfg(windows)]

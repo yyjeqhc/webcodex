@@ -262,36 +262,29 @@ impl DetachedJobStore {
         Self { root }
     }
 
-    /// Return the durable state root for one stable local Runner profile.
+    /// Return the durable state root for one stable Runner identity on one Server.
     ///
-    /// The per-user state base can host multiple Runner profiles, and `client_id`
-    /// is only server-local identity. Bind the detached namespace to the stable
-    /// client id, Server endpoint, local agent-config path, and project-registry
-    /// path so unrelated profiles do not share job ids or the bounded detached
-    /// record quota. Only the digest is used as a filesystem component.
+    /// The per-user state base can host Runners connected to different Servers,
+    /// while `client_id` is only server-local identity. Bind the detached
+    /// namespace to the normalized Server endpoint plus stable `client_id` so
+    /// unrelated Runners do not share job ids or the bounded record quota.
+    /// Local config/project path spelling is deliberately excluded: moving a
+    /// profile or restarting it with an equivalent path must not orphan the
+    /// supervisor-owned state that the Server still attributes to this Runner.
     pub(crate) fn default_root_for_runner(
         client_id: &str,
         server_url: &str,
-        config_path: &Path,
-        projects_dir: &Path,
     ) -> Result<PathBuf, String> {
         validate_identity("client_id", client_id, 128)?;
         let server_url = server_url.trim().trim_end_matches('/');
         if server_url.is_empty() {
             return Err("detached Job profile server_url cannot be empty".to_string());
         }
-        if config_path.as_os_str().is_empty() {
-            return Err("detached Job profile config path cannot be empty".to_string());
-        }
         let mut hasher = Sha256::new();
         hasher.update(b"webcodex-detached-store-runner-v1\0");
         hasher.update(client_id.as_bytes());
         hasher.update(b"\0");
         hasher.update(server_url.as_bytes());
-        hasher.update(b"\0");
-        hasher.update(config_path.as_os_str().as_encoded_bytes());
-        hasher.update(b"\0");
-        hasher.update(projects_dir.as_os_str().as_encoded_bytes());
         let namespace = format!("{:x}", hasher.finalize());
         Ok(
             webcodex_agent_config::paths::default_client_state_base_dir()?

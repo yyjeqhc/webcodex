@@ -84,7 +84,7 @@ pub(crate) fn run_detached_process_input_schema() -> Value {
         "type": "string",
         "minLength": 1,
         "maxLength": DETACHED_IDEMPOTENCY_KEY_MAX_BYTES,
-        "description": format!("Required bounded caller-chosen key for this detached initiation. While the logical Job is active or retained for {JOB_TERMINAL_RETENTION_SECS} seconds after terminal observation, reusing the same key resolves to that Job and cannot redispatch its payload. After retained history expires the key may identify a new execution, so never reuse an expired key as a retry token. After Server restart an existing retained Job is returned for recovery rather than guessing that a resent body matches.")
+        "description": format!("Required bounded caller-chosen key for this detached initiation. While the logical Job is active or retained for {JOB_TERMINAL_RETENTION_SECS} seconds after terminal completion, reusing the same key resolves to that Job and cannot redispatch its payload. After retained history expires the key may identify a new execution, so never reuse an expired key as a retry token. After Server restart an existing retained Job is returned for recovery rather than guessing that a resent body matches.")
     });
     schema["required"]
         .as_array_mut()

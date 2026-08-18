@@ -298,7 +298,7 @@ fn job_structured_execution_metadata_schema() -> Value {
                 "properties": {
                     "execution_source": {
                         "type": "string",
-                        "enum": ["run_process", "run_script"]
+                        "enum": ["run_process", "run_detached_process", "run_script"]
                     },
                     "language": {
                         "anyOf": [
@@ -465,6 +465,36 @@ fn observe_jobs_output_schema() -> Value {
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
+        "run_detached_process" => {
+            let mut schema = wrapped_output_schema(vec![
+                ("job_id", schema_type("string", "Stable detached Job id when admitted or recovered.")),
+                ("kind", schema_type("string", "Detached Job kind.")),
+                ("status", schema_type("string", "Current detached Job status at admission.")),
+                ("project", schema_type("string", "Configured project id.")),
+                ("execution_source", schema_type("string", "Always run_detached_process on successful admission.")),
+                ("purpose", schema_type("string", "Declared execution purpose.")),
+                ("process_summary", schema_type("string", "Bounded body-free detached process summary.")),
+                ("cwd", schema_type("string", "Resolved project-relative cwd.")),
+                ("shell", schema_type("string", "Always direct_argv for detached process Jobs.")),
+                ("executor", schema_type("string", "Always agent for detached process Jobs.")),
+                ("execution_state", json!({"type": "string", "enum": ["pending", "not_started"]})),
+                ("command_started", schema_type("boolean", "Whether the payload is known to have started at tool return.")),
+                ("command_completed", schema_type("boolean", "Whether the payload completed before tool return.")),
+                ("command_ok", schema_type("boolean", "False on pre-start tool failures.")),
+                ("exit_code", nullable_schema("integer", "Process exit code; null for detached initiation responses.")),
+                ("failure_kind", nullable_schema("string", "Structured detached initiation failure kind.")),
+                ("tool_failure", schema_type("boolean", "True for WebCodex initiation/runtime failures.")),
+                ("terminal", schema_type("boolean", "False after successful detached Job admission.")),
+                ("effective_timeout_secs", schema_type("integer", "Total detached process runtime budget in seconds.")),
+                ("created_at", schema_type("integer", "Durable Job creation timestamp.")),
+                ("observation_token", nullable_schema("string", "Current Job observation token when available.")),
+                ("last_update_seq", nullable_schema("integer", "Latest agent update sequence when available.")),
+                ("redispatched", schema_type("boolean", "False when bounded replay recovery returns an existing Job.")),
+            ]);
+            schema["properties"]["output"]["properties"]["execution_source"]["const"] =
+                json!("run_detached_process");
+            Some(schema)
+        }
         "run_process" => {
             let mut properties = vec![
                 (

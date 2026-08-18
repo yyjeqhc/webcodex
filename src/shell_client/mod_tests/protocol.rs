@@ -287,7 +287,7 @@ async fn client_supports_recognizes_all_protocol_capability_names() {
                 structured_script_payload: true,
                 internal_posix_script: true,
                 structured_execution_jobs: true,
-                detached_process_jobs: false,
+                detached_process_jobs: true,
                 lsp_read_only_navigation: true,
                 lsp_call_hierarchy: true,
                 sandbox_inspect_commands: true,

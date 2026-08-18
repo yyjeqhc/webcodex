@@ -314,6 +314,7 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         "list_projects" => Some(&["inspect", "projects", "runtime"]),
         "list_tools" => Some(&["inspect", "runtime"]),
         "run_job" => Some(&["jobs", "shell"]),
+        "run_detached_process" => Some(&["jobs", "shell"]),
         "run_process" | "run_script" => Some(&["inspect", "shell"]),
         "run_shell" => Some(&["inspect", "shell"]),
         "open_session_shell"

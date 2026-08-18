@@ -8,7 +8,7 @@ use super::output_text::{
     CapturedOutputEncoding, FullStreamUtf8Validity, LeadingBom, OutputTextSource,
 };
 use super::projects::find_project_shell_context;
-use crate::shell_protocol::{ShellScriptLanguage, ShellScriptPayload};
+use crate::shell_protocol::{ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload};
 use std::collections::HashMap;
 #[cfg(windows)]
 use std::ffi::OsStr;
@@ -51,6 +51,14 @@ pub(crate) struct PreparedShellProfile {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PreparedShellProfileCache {
     profiles: Arc<Mutex<HashMap<PreparedShellProfileKey, Arc<PreparedShellProfile>>>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedDetachedProcessLaunch {
+    pub(crate) process: ShellProcessArgv,
+    pub(crate) cwd: String,
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) timeout_secs: u64,
 }
 
 /// POSIX sh single-quote escaping.
@@ -98,7 +106,13 @@ fn is_sensitive_env_key(key: &str) -> bool {
 }
 
 fn should_inherit_env_key(key: &str) -> bool {
-    !is_sensitive_env_key(key)
+    // Windows command processors may add drive-current-directory pseudo
+    // entries such as `=E:=E:\\git\\webcodex` to the native environment
+    // block. They are not ordinary environment variables and cannot be
+    // reconstructed through `Command::env`; detached execution carries its
+    // working directory explicitly, so dropping them preserves the intended
+    // child environment without weakening launch-envelope validation.
+    !is_sensitive_env_key(key) && !(cfg!(windows) && key.starts_with('='))
 }
 
 /// Case-insensitive lookup on Windows (where environment names are
@@ -1669,6 +1683,65 @@ pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_detached_process_launch(
+    generation: u64,
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    executable: &str,
+    args: &[String],
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+) -> Result<PreparedDetachedProcessLaunch, String> {
+    // Detached structured execution has the same local policy boundary as the
+    // ordinary native-argv path. This helper performs preparation only; it never
+    // spawns the requested payload.
+    if !policy.allow_raw_shell {
+        return Err("structured process execution is disabled by local agent policy".to_string());
+    }
+    let cwd_path = cwd
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+    cwd_allowed(policy, &cwd_path)?;
+    let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
+    let profile = resolve_prepared_shell_profile(
+        generation,
+        shell,
+        projects_dir,
+        &cwd_path,
+        cwd.is_some(),
+        cache,
+        stop_requested,
+    )?;
+    let resolved_program =
+        resolve_process_program(shell, profile.as_deref(), executable, Some(&cwd_path))?;
+    let resolved_program = resolved_program.into_string().map_err(|_| {
+        "structured process executable resolved to a non-UTF-8 native path".to_string()
+    })?;
+    let cwd = cwd_path
+        .to_str()
+        .ok_or_else(|| "structured process cwd resolved to a non-UTF-8 native path".to_string())?
+        .to_string();
+    let env = match profile.as_deref() {
+        Some(profile) => profile.env_snapshot.clone(),
+        None => base_shell_env(shell, &ShellProfileConfig::default())?,
+    };
+    let mut env = env.into_iter().collect::<Vec<_>>();
+    env.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(PreparedDetachedProcessLaunch {
+        process: ShellProcessArgv {
+            executable: resolved_program,
+            args: args.to_vec(),
+        },
+        cwd,
+        env,
+        timeout_secs,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_process_with_profiles_in_sandbox_and_execution_state_with_start_hook(
     generation: u64,
     policy: &AgentPolicy,
@@ -2759,6 +2832,14 @@ mod runner_lifecycle_tests {
     use super::*;
     use crate::shell_protocol::ShellCommandExecutionState;
     use std::sync::{Arc, OnceLock};
+
+    #[cfg(windows)]
+    #[test]
+    fn inherited_environment_drops_windows_drive_current_directory_entries() {
+        assert!(!should_inherit_env_key("=E:"));
+        assert!(should_inherit_env_key("PATH"));
+        assert!(!should_inherit_env_key("WebCodex_Token"));
+    }
 
     struct ProcessArgvHelper {
         _temp: tempfile::TempDir,

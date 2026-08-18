@@ -1,8 +1,9 @@
 use super::super::input_schemas::{
     job_log_input_schema, job_status_input_schema, list_jobs_input_schema,
-    observe_jobs_input_schema, open_session_shell_input_schema, run_job_input_schema,
-    run_process_input_schema, run_script_input_schema, run_shell_input_schema,
-    session_shell_exec_input_schema, session_shell_identity_input_schema, stop_job_input_schema,
+    observe_jobs_input_schema, open_session_shell_input_schema, run_detached_process_input_schema,
+    run_job_input_schema, run_process_input_schema, run_script_input_schema,
+    run_shell_input_schema, session_shell_exec_input_schema, session_shell_identity_input_schema,
+    stop_job_input_schema,
 };
 use super::tool_spec;
 use crate::tool_runtime::tool_spec::ToolSpec;
@@ -13,6 +14,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             "run_process",
             "Run one native executable with literal argv and no shell parsing. Long work continues as the same execution; choose a shell command tool only when shell syntax or a Windows batch file is required.",
             run_process_input_schema(),
+        ),
+        tool_spec(
+            "run_detached_process",
+            "Start one durable detached native process Job with literal argv, explicit detached authority, and a required bounded idempotency key. The key prevents duplicate payload dispatch and supports exact logical-Job recovery after a lost initiating response. Observe and stop through the existing Job tools; no shell, script, SSH-resource, or implicit retry fallback is used.",
+            run_detached_process_input_schema(),
         ),
         tool_spec(
             "run_script",

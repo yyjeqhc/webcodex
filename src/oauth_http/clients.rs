@@ -45,6 +45,17 @@ fn default_client_allowed_scopes() -> &'static [&'static str] {
     LEGACY_DEFAULT_CLIENT_ALLOWED_SCOPES
 }
 
+#[cfg(test)]
+mod detached_scope_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_default_client_does_not_gain_detached_execution_scope() {
+        assert!(default_client_allowed_scopes().contains(&"job:run"));
+        assert!(!default_client_allowed_scopes().contains(&"job:detach"));
+    }
+}
+
 /// Validate a redirect URI for OAuth client registration.
 ///
 /// Rules:

@@ -69,10 +69,11 @@ use crate::shell_protocol::{
     SHELL_CLIENT_CAPABILITY_COMPUTER_OBSERVE, SHELL_CLIENT_CAPABILITY_COMPUTER_POINTER_CONTROL,
     SHELL_CLIENT_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
     SHELL_CLIENT_CAPABILITY_COMPUTER_TEXT_INPUT, SHELL_CLIENT_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-    SHELL_CLIENT_CAPABILITY_FILE_READ, SHELL_CLIENT_CAPABILITY_FILE_WRITE,
-    SHELL_CLIENT_CAPABILITY_GIT, SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
-    SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION, SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL,
-    SHELL_CLIENT_CAPABILITY_SHELL, SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+    SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS, SHELL_CLIENT_CAPABILITY_FILE_READ,
+    SHELL_CLIENT_CAPABILITY_FILE_WRITE, SHELL_CLIENT_CAPABILITY_GIT,
+    SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY, SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
+    SHELL_CLIENT_CAPABILITY_PERSISTENT_SHELL, SHELL_CLIENT_CAPABILITY_SHELL,
+    SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
 
@@ -88,6 +89,9 @@ pub(crate) enum AgentCapability {
     /// General native process + argv execution. This must never be inferred
     /// from shell or structured-validation support.
     StructuredProcess,
+    /// Durable detached native process Jobs. This explicit authority is never
+    /// inferred from ordinary structured process execution.
+    DetachedProcess,
     /// Bounded typed script payload execution. Never inferred from raw shell
     /// or either structured argv capability.
     StructuredScript,
@@ -142,6 +146,7 @@ impl AgentCapability {
             Self::OwnerOnly => "owner boundary",
             Self::Shell => SHELL_CLIENT_CAPABILITY_SHELL,
             Self::StructuredProcess => SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+            Self::DetachedProcess => SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS,
             Self::StructuredScript => SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
             Self::FileRead => SHELL_CLIENT_CAPABILITY_FILE_READ,
             Self::FileWrite => SHELL_CLIENT_CAPABILITY_FILE_WRITE,
@@ -176,6 +181,7 @@ impl AgentCapability {
             Self::OwnerOnly => &[],
             Self::Shell => &[SHELL_CLIENT_CAPABILITY_SHELL],
             Self::StructuredProcess => &[SHELL_CLIENT_CAPABILITY_STRUCTURED_PROCESS_ARGV],
+            Self::DetachedProcess => &[SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS],
             Self::StructuredScript => &[SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD],
             Self::FileRead => &[SHELL_CLIENT_CAPABILITY_FILE_READ],
             Self::FileWrite => &[SHELL_CLIENT_CAPABILITY_FILE_WRITE],

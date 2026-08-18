@@ -20,6 +20,7 @@ pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
 pub const SCOPE_PROJECT_READ: &str = "project:read";
 pub const SCOPE_PROJECT_WRITE: &str = "project:write";
 pub const SCOPE_JOB_RUN: &str = "job:run";
+pub const SCOPE_JOB_DETACH: &str = "job:detach";
 pub const SCOPE_COMPUTER_READ: &str = "computer:read";
 pub const SCOPE_COMPUTER_CONTROL: &str = "computer:control";
 pub const SCOPE_COMPUTER_LAUNCH: &str = "computer:launch";
@@ -56,6 +57,7 @@ pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
     SCOPE_JOB_RUN,
+    SCOPE_JOB_DETACH,
     SCOPE_COMPUTER_READ,
     SCOPE_COMPUTER_CONTROL,
     SCOPE_COMPUTER_LAUNCH,
@@ -286,6 +288,9 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
 }
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
+    if tool_name == "run_detached_process" {
+        return OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH]);
+    }
     if tool_name == "computer_read_clipboard" {
         return OAuthToolScopePolicy::RequireAll(&[
             SCOPE_COMPUTER_READ,
@@ -976,7 +981,9 @@ mod tests {
     fn oauth_route_policy_tool_scope_policy_covers_metadata_for_known_tools() {
         for tool in known_tool_names() {
             let metadata = lookup_tool_metadata(tool).unwrap();
-            let expected = if tool == "computer_save_snapshot" {
+            let expected = if tool == "run_detached_process" {
+                OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH])
+            } else if tool == "computer_save_snapshot" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ])
             } else if tool == "computer_read_clipboard" {
                 OAuthToolScopePolicy::RequireAll(&[
@@ -1018,6 +1025,30 @@ mod tests {
             oauth_scope_policy_for_runtime_tool("delete_files"),
             OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE)
         );
+    }
+
+    #[test]
+    fn detached_scope_is_never_implicit_for_legacy_lightweight_authority() {
+        for (label, auth) in [
+            (
+                "shared-key",
+                crate::auth::shared_key_context("detached-scope-check"),
+            ),
+            ("open", crate::auth::open_anonymous_context()),
+            (
+                "project-credential",
+                crate::auth::shared_key::project_credential_context("wc_pgrant_detachedscope"),
+            ),
+        ] {
+            assert!(
+                auth.has_scope(SCOPE_JOB_RUN),
+                "{label} should retain job:run"
+            );
+            assert!(
+                !auth.has_scope(SCOPE_JOB_DETACH),
+                "{label} must not implicitly gain detached execution authority"
+            );
+        }
     }
 
     #[test]

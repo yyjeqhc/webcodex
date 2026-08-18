@@ -320,6 +320,7 @@ async fn register_agent_projects_for_auth(
                     structured_script_payload: false,
                     internal_posix_script: false,
                     structured_execution_jobs: false,
+                    detached_process_jobs: false,
                     lsp_read_only_navigation: false,
                     lsp_call_hierarchy: false,
                     sandbox_inspect_commands: false,

@@ -38,6 +38,27 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 );
             }
         }
+        "run_detached_process" => {
+            out.insert(
+                "executable_present".to_string(),
+                Value::Bool(obj.contains_key("executable")),
+            );
+            out.insert(
+                "stdin_present".to_string(),
+                Value::Bool(obj.contains_key("stdin")),
+            );
+            let arg_count = obj
+                .get("args")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default();
+            out.insert("arg_count".to_string(), Value::from(arg_count));
+            out.insert(
+                "process_summary".to_string(),
+                Value::String(format!("detached process ({arg_count} args)")),
+            );
+            copy_keys(obj, &mut out, &["timeout_secs", "cwd", "purpose"]);
+        }
         "run_script" => {
             if let Some(language) = obj.get("language").cloned() {
                 out.insert("language".to_string(), language);

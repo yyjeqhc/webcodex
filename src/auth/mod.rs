@@ -62,8 +62,6 @@ pub(crate) use project_credential::{
     ProjectCredentialVerifier,
 };
 
-#[cfg(test)]
-pub use scopes::SCOPE_ACCOUNT_MANAGE;
 pub use scopes::{
     AGENT_SCOPES, SCOPE_ADMIN, SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER,
     SCOPE_AGENT_RESULT, SCOPE_COMPUTER_CLIPBOARD_READ, SCOPE_COMPUTER_CLIPBOARD_WRITE,
@@ -71,6 +69,8 @@ pub use scopes::{
     SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
 };
+#[cfg(test)]
+pub use scopes::{SCOPE_ACCOUNT_MANAGE, SCOPE_JOB_DETACH};
 
 pub(crate) use scopes::{is_agent_scope, scopes_to_string, validate_agent_scopes, validate_scopes};
 

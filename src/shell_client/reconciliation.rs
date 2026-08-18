@@ -400,6 +400,20 @@ fn same_context(job: &ShellJobRecord, snapshot: &ShellJobSnapshot) -> bool {
         && job.structured_execution == context.structured_execution
 }
 
+fn detached_instance_transfer_allowed(job: &ShellJobRecord, snapshot: &ShellJobSnapshot) -> bool {
+    job.kind == "run_detached_process"
+        && job
+            .structured_execution
+            .as_ref()
+            .is_some_and(|metadata| metadata.execution_source == "run_detached_process")
+        && snapshot
+            .context
+            .structured_execution
+            .as_ref()
+            .is_some_and(|metadata| metadata.execution_source == "run_detached_process")
+        && same_context(job, snapshot)
+}
+
 pub(super) fn preflight_inventory_locked(
     inner: &ShellClientRegistryInner,
     client_id: &str,
@@ -426,7 +440,9 @@ pub(super) fn preflight_inventory_locked(
                 snapshot.job_id
             ));
         }
-        if existing.agent_instance_id != agent_instance_id {
+        let detached_instance_transfer = existing.agent_instance_id != agent_instance_id
+            && detached_instance_transfer_allowed(existing, snapshot);
+        if existing.agent_instance_id != agent_instance_id && !detached_instance_transfer {
             return Err(format!(
                 "job inventory job_id {} belongs to a replaced runner instance",
                 snapshot.job_id
@@ -435,6 +451,15 @@ pub(super) fn preflight_inventory_locked(
         if !same_context(existing, snapshot) {
             return Err(format!(
                 "job inventory job_id {} has inconsistent ownership context",
+                snapshot.job_id
+            ));
+        }
+        if detached_instance_transfer
+            && !is_final_job_status(&existing.status)
+            && snapshot.update_seq < existing.last_update_seq
+        {
+            return Err(format!(
+                "job inventory job_id {} regresses update sequence across detached runner replacement",
                 snapshot.job_id
             ));
         }
@@ -536,6 +561,10 @@ fn record_from_snapshot(
         purpose: context.purpose.clone(),
         shell: context.shell.clone(),
         command_preview: context.command_preview.clone(),
+        // Exact replay intent is process-local only and never restored from
+        // Runner inventory. Same-key retries after Server restart recover this
+        // logical Job instead of guessing that a resent body matches.
+        detached_idempotency_intent: None,
         status: snapshot.status.clone(),
         created_at: snapshot.created_at,
         started_at: snapshot.started_at,
@@ -568,7 +597,12 @@ fn record_from_snapshot(
     record
 }
 
-fn apply_snapshot(job: &mut ShellJobRecord, snapshot: &ShellJobSnapshot, now: i64) {
+fn apply_snapshot(
+    job: &mut ShellJobRecord,
+    snapshot: &ShellJobSnapshot,
+    now: i64,
+    recovery_reason_code: &str,
+) {
     job.status = snapshot.status.clone();
     observe_job_terminal(job, now);
     job.started_at = snapshot.started_at;
@@ -585,7 +619,7 @@ fn apply_snapshot(job: &mut ShellJobRecord, snapshot: &ShellJobSnapshot, now: i6
     job.last_update_seq = snapshot.update_seq;
     job.recovery_state = Some("reconciled".to_string());
     job.reconciled_at = Some(now);
-    job.recovery_reason_code = Some("same_instance_reconciliation".to_string());
+    job.recovery_reason_code = Some(recovery_reason_code.to_string());
     job.recovering_since = None;
     job.recovery_original_status = None;
     notify_job_update(job);
@@ -889,13 +923,26 @@ pub(super) fn reconcile_inventory_locked(
                 // changes terminal class.
                 continue;
             }
+            let detached_instance_transfer = existing.agent_instance_id != agent_instance_id
+                && detached_instance_transfer_allowed(existing, snapshot);
             if snapshot.update_seq < existing.last_update_seq {
                 continue;
             }
-            if snapshot.update_seq == existing.last_update_seq && existing.status != "recovering" {
+            if snapshot.update_seq == existing.last_update_seq
+                && existing.status != "recovering"
+                && !detached_instance_transfer
+            {
                 continue;
             }
-            apply_snapshot(existing, snapshot, now);
+            if detached_instance_transfer {
+                existing.agent_instance_id = agent_instance_id.to_string();
+            }
+            let recovery_reason_code = if detached_instance_transfer {
+                "detached_instance_transfer"
+            } else {
+                "same_instance_reconciliation"
+            };
+            apply_snapshot(existing, snapshot, now, recovery_reason_code);
             summary.updated += 1;
         } else if suppress_unknown_terminal {
             summary.suppressed_terminal += 1;
@@ -927,15 +974,23 @@ pub(super) fn terminate_instance_jobs_locked(
     inner: &mut ShellClientRegistryInner,
     client_id: &str,
     agent_instance_id: &str,
+    replacement_inventory: Option<&ShellJobInventory>,
     now: i64,
 ) {
     let jobs = inner
         .jobs_by_id
         .iter()
         .filter(|(_, job)| {
+            let detached_instance_transfer = replacement_inventory.is_some_and(|inventory| {
+                inventory.jobs.iter().any(|snapshot| {
+                    snapshot.job_id == job.job_id
+                        && detached_instance_transfer_allowed(job, snapshot)
+                })
+            });
             job.client_id == client_id
                 && job.agent_instance_id == agent_instance_id
                 && (job.status == "queued" || is_runner_active_job_status(&job.status))
+                && !detached_instance_transfer
         })
         .map(|(job_id, job)| (job_id.clone(), job.request_id.clone()))
         .collect::<Vec<_>>();

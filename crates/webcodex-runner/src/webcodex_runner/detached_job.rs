@@ -14,22 +14,25 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::fs::{File, OpenOptions};
+#[cfg(any(unix, windows))]
+use std::io::{Read, Write};
 #[cfg(unix)]
-use std::io::{Read, Seek, SeekFrom, Write};
-#[cfg(unix)]
+use std::io::{Seek, SeekFrom};
+#[cfg(any(unix, windows))]
 use std::process::{Child, Command, ExitStatus, Stdio};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::mpsc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::Instant;
 use uuid::Uuid;
 use webcodex_core::shell_protocol::{
     validate_process_argv, ShellCommandExecutionState, ShellJobContext, ShellJobSnapshot,
     ShellJobStreamSnapshot, ShellProcessArgv, JOB_INVENTORY_MAX_JOBS,
-    JOB_SNAPSHOT_STREAM_MAX_BYTES, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
+    JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS, PROCESS_CWD_MAX_BYTES,
+    PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
 
 #[cfg(unix)]
@@ -38,8 +41,29 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use webcodex_process::ManagedChild;
+
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt as WindowsOpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt as WindowsCommandExt;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    MoveFileExW, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, MOVEFILE_REPLACE_EXISTING,
+    MOVEFILE_WRITE_THROUGH,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{
+    GetProcessTimes, OpenProcess, WaitForSingleObject, CREATE_BREAKAWAY_FROM_JOB,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+};
 
 pub(crate) const DETACHED_STATE_SCHEMA_VERSION: u32 = 2;
 pub(crate) const DETACHED_STATE_MAX_RECORDS: usize = JOB_INVENTORY_MAX_JOBS;
@@ -71,6 +95,7 @@ const STATE_FILE: &str = "state.json";
 const STATE_TEMP_FILE: &str = ".state.tmp";
 const STATE_LOCK_FILE: &str = "state.lock";
 const ROOT_LOCK_FILE: &str = ".root.lock";
+const TERMINAL_RETENTION_MS: i64 = JOB_TERMINAL_RETENTION_SECS * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -248,10 +273,6 @@ impl DetachedJobStore {
         )
     }
 
-    pub(crate) fn root(&self) -> &Path {
-        &self.root
-    }
-
     fn job_dir(&self, job_id: &str) -> PathBuf {
         let mut hasher = Sha256::new();
         hasher.update(job_id.as_bytes());
@@ -291,6 +312,7 @@ impl DetachedJobStore {
                 ))
             }
         }
+        let _root_lock = exclusive_lock(&self.root.join(ROOT_LOCK_FILE), true)?;
         let mut records = Vec::new();
         let mut job_dirs = 0usize;
         for entry in fs::read_dir(&self.root)
@@ -305,7 +327,13 @@ impl DetachedJobStore {
                 return Err("detached Job state root contains a symlink entry".to_string());
             }
             if !file_type.is_dir() {
-                continue;
+                if entry.file_name() == ROOT_LOCK_FILE {
+                    continue;
+                }
+                return Err(
+                    "detached Job state root contains an unexpected non-directory entry"
+                        .to_string(),
+                );
             }
             job_dirs = job_dirs.saturating_add(1);
             if job_dirs > DETACHED_STATE_MAX_RECORDS {
@@ -332,7 +360,7 @@ impl DetachedJobStore {
         Ok(records)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     pub(crate) fn reconcile_after_runner_restart(
         &self,
         record: DetachedJobRecord,
@@ -342,10 +370,57 @@ impl DetachedJobStore {
             return Ok(Some(record));
         }
         if record.ownership_accepted_at_unix_ms.is_none() {
-            // No payload exists before acceptance. The old Runner's launch pipe
-            // closes on process death, so the supervisor owns persistence of the
-            // resulting handoff_failed state; a replacement Runner never resumes it.
-            return Ok(None);
+            // A replacement Runner must never turn a pre-accept residue into a
+            // respawn. Prepared has no supervisor and is therefore definitely
+            // not_started. SupervisorStarted may still be draining the old
+            // Runner's one-shot handoff pipe; while that exact supervisor is live
+            // we retain and observe the same record. Only after its exact native
+            // identity/lifetime lock proves dead may recovery persist
+            // handoff_failed. This closes the narrow accept-byte race without
+            // making the residue invisible.
+            if record.phase == DetachedJobPhase::Prepared {
+                let execution_id = record.execution_id.clone();
+                return self
+                    .update(&record.job_id, &execution_id, |current| {
+                        set_terminal(
+                            current,
+                            "handoff_failed",
+                            None,
+                            Some("Runner restarted before detached ownership acceptance"),
+                            current.created_at_unix_ms,
+                        );
+                        Ok(())
+                    })
+                    .map(Some);
+            }
+            let supervisor = record.supervisor.as_ref().ok_or_else(|| {
+                "pre-accept detached Job is missing supervisor identity".to_string()
+            })?;
+            if detached_process_identity_is_live(
+                &self.job_dir(&record.job_id).join(SUPERVISOR_LOCK_FILE),
+                supervisor,
+            )? {
+                return Ok(Some(record));
+            }
+            let refreshed = self.read(&record.job_id)?;
+            if refreshed.phase == DetachedJobPhase::Terminal
+                || refreshed.ownership_accepted_at_unix_ms.is_some()
+            {
+                return Ok(Some(refreshed));
+            }
+            let execution_id = refreshed.execution_id.clone();
+            return self
+                .update(&refreshed.job_id, &execution_id, |current| {
+                    set_terminal(
+                        current,
+                        "handoff_failed",
+                        None,
+                        Some("detached supervisor exited before ownership acceptance"),
+                        current.created_at_unix_ms,
+                    );
+                    Ok(())
+                })
+                .map(Some);
         }
         let supervisor = record
             .supervisor
@@ -399,33 +474,159 @@ impl DetachedJobStore {
         })
     }
 
+    fn reclaim_expired_terminal_records_locked(&self, now_unix_ms: i64) -> Result<usize, String> {
+        let mut retained = 0usize;
+        for entry in fs::read_dir(&self.root).map_err(|error| {
+            format!("failed to list detached Job state root for reclamation: {error}")
+        })? {
+            let entry = entry.map_err(|error| {
+                format!("failed to inspect detached Job state during reclamation: {error}")
+            })?;
+            let file_type = entry.file_type().map_err(|error| {
+                format!("failed to inspect detached Job state entry during reclamation: {error}")
+            })?;
+            if file_type.is_symlink() {
+                return Err("detached Job reclamation found a symlink state entry".to_string());
+            }
+            if !file_type.is_dir() {
+                if entry.file_name() == ROOT_LOCK_FILE {
+                    continue;
+                }
+                return Err(
+                    "detached Job reclamation found an unexpected non-directory state entry"
+                        .to_string(),
+                );
+            }
+            let job_dir = entry.path();
+            let initial: DetachedJobRecord = read_json_bounded(
+                &job_dir.join(STATE_FILE),
+                DETACHED_STATE_MAX_BYTES,
+                "detached Job state",
+            )?;
+            validate_record(&initial)?;
+            if self.job_dir(&initial.job_id) != job_dir {
+                return Err(
+                    "detached Job reclamation state directory does not match durable job identity"
+                        .to_string(),
+                );
+            }
+            let terminal_expired = initial.terminal.as_ref().is_some_and(|terminal| {
+                now_unix_ms.saturating_sub(terminal.completed_at_unix_ms) >= TERMINAL_RETENTION_MS
+            });
+            if !terminal_expired {
+                retained = retained.saturating_add(1);
+                continue;
+            }
+            self.reclaim_terminal_job_dir_locked(&job_dir, &initial, now_unix_ms)?;
+        }
+        Ok(retained)
+    }
+
+    fn reclaim_terminal_job_dir_locked(
+        &self,
+        job_dir: &Path,
+        expected: &DetachedJobRecord,
+        now_unix_ms: i64,
+    ) -> Result<(), String> {
+        reject_symlink_or_non_dir(job_dir, "detached Job reclamation directory")?;
+        let state_lock_path = job_dir.join(STATE_LOCK_FILE);
+        let state_lock = exclusive_lock(&state_lock_path, true)?;
+        let current: DetachedJobRecord = read_json_bounded(
+            &job_dir.join(STATE_FILE),
+            DETACHED_STATE_MAX_BYTES,
+            "detached Job state",
+        )?;
+        validate_record(&current)?;
+        if current.job_id != expected.job_id || current.execution_id != expected.execution_id {
+            return Err("detached Job reclamation identity changed under lock".to_string());
+        }
+        let terminal = current
+            .terminal
+            .as_ref()
+            .ok_or_else(|| "detached Job reclamation refuses an active state record".to_string())?;
+        if now_unix_ms.saturating_sub(terminal.completed_at_unix_ms) < TERMINAL_RETENTION_MS {
+            return Err("detached Job reclamation retention window changed under lock".to_string());
+        }
+        let mut removable = Vec::new();
+        for child in fs::read_dir(job_dir).map_err(|error| {
+            format!("failed to list detached Job directory for reclamation: {error}")
+        })? {
+            let child = child.map_err(|error| {
+                format!("failed to inspect detached Job reclamation child: {error}")
+            })?;
+            let file_type = child.file_type().map_err(|error| {
+                format!("failed to inspect detached Job reclamation child type: {error}")
+            })?;
+            if file_type.is_symlink() || !file_type.is_file() {
+                return Err(
+                    "detached Job reclamation found a symlink or non-file child; refusing deletion"
+                        .to_string(),
+                );
+            }
+            let name = child.file_name();
+            let known = name == STATE_FILE
+                || name == STATE_LOCK_FILE
+                || name == STATE_TEMP_FILE
+                || name == SUPERVISOR_LOCK_FILE
+                || name == TREE_LOCK_FILE;
+            if !known {
+                return Err(
+                    "detached Job reclamation found an unexpected state child; refusing deletion"
+                        .to_string(),
+                );
+            }
+            removable.push(child.path());
+        }
+        for path in removable {
+            fs::remove_file(&path).map_err(|error| {
+                format!(
+                    "failed to remove expired detached Job state {}: {error}",
+                    path.display()
+                )
+            })?;
+        }
+        // The exact state lock remains open through remove_dir. A racing updater
+        // can only fail closed against the disappearing path; it cannot turn a
+        // terminal record back into an active execution.
+        fs::remove_dir(job_dir).map_err(|error| {
+            format!(
+                "failed to remove expired detached Job directory {}: {error}",
+                job_dir.display()
+            )
+        })?;
+        drop(state_lock);
+        sync_directory(&self.root)?;
+        Ok(())
+    }
+
     fn prepare(&self, request: &DetachedStartRequest) -> Result<PrepareOutcome, String> {
         validate_start_request(request)?;
         ensure_private_dir(&self.root)?;
         let _root_lock = exclusive_lock(&self.root.join(ROOT_LOCK_FILE), true)?;
         let job_dir = self.job_dir(&request.job_id);
-        match fs::create_dir(&job_dir) {
-            Ok(()) => set_private_dir_permissions(&job_dir)?,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+        match fs::symlink_metadata(&job_dir) {
+            Ok(_) => {
                 reject_symlink_or_non_dir(&job_dir, "detached Job directory")?;
                 let existing = self.read(&request.job_id)?;
                 validate_existing_request(&existing, request)?;
                 return Ok(PrepareOutcome::Existing(existing));
             }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(format!(
-                    "failed to create detached Job state directory: {error}"
+                    "failed to inspect detached Job state directory before prepare: {error}"
                 ))
             }
         }
-
-        let count = bounded_job_dir_count(&self.root)?;
-        if count > DETACHED_STATE_MAX_RECORDS {
-            let _ = fs::remove_dir(&job_dir);
+        let retained = self.reclaim_expired_terminal_records_locked(unix_ms())?;
+        if retained >= DETACHED_STATE_MAX_RECORDS {
             return Err(format!(
                 "detached Job state root is full; maximum is {DETACHED_STATE_MAX_RECORDS} records"
             ));
         }
+        fs::create_dir(&job_dir)
+            .map_err(|error| format!("failed to create detached Job state directory: {error}"))?;
+        set_private_dir_permissions(&job_dir)?;
 
         let record = DetachedJobRecord {
             schema_version: DETACHED_STATE_SCHEMA_VERSION,
@@ -436,7 +637,11 @@ impl DetachedJobStore {
             agent_instance_id: request.agent_instance_id.clone(),
             context: request.context.clone(),
             phase: DetachedJobPhase::Prepared,
-            update_seq: 0,
+            // JobManager has already projected agent_queued at sequence 1 before
+            // detached durable handoff starts. Reserve that sequence so every
+            // durable transition, including a pre-accept failure, is strictly
+            // newer than the public queued snapshot.
+            update_seq: 1,
             stop_requested: false,
             created_at_unix_ms: unix_ms(),
             supervisor_started_at_unix_ms: None,
@@ -524,11 +729,11 @@ pub(crate) fn handoff_detached_job(
             }
         }
         PrepareOutcome::First(record) => {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             {
-                handoff_first_unix(store, request, record)
+                handoff_first_platform(store, request, record)
             }
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             {
                 let _ = request;
                 let execution_id = record.execution_id.clone();
@@ -570,9 +775,9 @@ where
     ) {
         return None;
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
-        Some(match run_internal_unix_mode(&args) {
+        Some(match run_internal_platform_mode(&args) {
             Ok(()) => 0,
             Err(error) => {
                 // Internal failures are persisted by the supervisor when it has
@@ -582,7 +787,7 @@ where
             }
         })
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = args;
         Some(2)
@@ -786,6 +991,12 @@ fn validate_process_identity(name: &str, identity: &DetachedProcessIdentity) -> 
             "invalid detached {name} Linux process start identity"
         ));
     }
+    #[cfg(windows)]
+    if !identity.native_start_id.starts_with("windows_creation_") {
+        return Err(format!(
+            "invalid detached {name} Windows process start identity"
+        ));
+    }
     Ok(())
 }
 
@@ -807,6 +1018,76 @@ fn native_process_start_identity(pid: u32) -> Result<String, String> {
         .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
         .ok_or_else(|| "missing Linux process starttime for detached identity".to_string())?;
     Ok(format!("linux_start_{start}"))
+}
+
+#[cfg(windows)]
+fn native_process_start_identity(pid: u32) -> Result<String, String> {
+    let handle = windows_open_process_identity(pid)
+        .map_err(|error| format!("failed to open detached Windows process identity: {error}"))?;
+    let creation = windows_process_creation_time(handle.as_raw_handle() as HANDLE)?;
+    Ok(format!("windows_creation_{creation}"))
+}
+
+#[cfg(windows)]
+fn windows_open_process_identity(pid: u32) -> Result<OwnedHandle, io::Error> {
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            pid,
+        )
+    };
+    if handle.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) })
+}
+
+#[cfg(windows)]
+fn windows_process_creation_time(handle: HANDLE) -> Result<u64, String> {
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    if unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) } == 0 {
+        return Err(format!(
+            "failed to read detached Windows process creation time: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
+}
+
+#[cfg(windows)]
+fn detached_process_identity_is_live(
+    _lock_path: &Path,
+    identity: &DetachedProcessIdentity,
+) -> Result<bool, String> {
+    validate_process_identity("recovery", identity)?;
+    let handle = match windows_open_process_identity(identity.pid) {
+        Ok(handle) => handle,
+        Err(error) if error.raw_os_error() == Some(87) => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "failed to open detached Windows process identity: {error}"
+            ))
+        }
+    };
+    let current = windows_process_creation_time(handle.as_raw_handle() as HANDLE)?;
+    if identity.native_start_id != format!("windows_creation_{current}") {
+        return Ok(false);
+    }
+    let wait = unsafe { WaitForSingleObject(handle.as_raw_handle() as HANDLE, 0) };
+    if wait == WAIT_TIMEOUT {
+        Ok(true)
+    } else if wait == WAIT_OBJECT_0 {
+        Ok(false)
+    } else {
+        Err(format!(
+            "failed to probe detached Windows process liveness: {}",
+            io::Error::last_os_error()
+        ))
+    }
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
@@ -1035,26 +1316,6 @@ fn unix_ms() -> i64 {
         .min(i64::MAX as u128) as i64
 }
 
-fn bounded_job_dir_count(root: &Path) -> Result<usize, String> {
-    let mut count = 0usize;
-    for entry in fs::read_dir(root)
-        .map_err(|error| format!("failed to list detached Job state root: {error}"))?
-    {
-        let entry =
-            entry.map_err(|error| format!("failed to inspect detached Job state: {error}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("failed to inspect detached Job state entry: {error}"))?;
-        if file_type.is_dir() {
-            count = count.saturating_add(1);
-            if count > DETACHED_STATE_MAX_RECORDS {
-                return Ok(count);
-            }
-        }
-    }
-    Ok(count)
-}
-
 #[cfg(unix)]
 fn ensure_private_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| {
@@ -1067,7 +1328,18 @@ fn ensure_private_dir(path: &Path) -> Result<(), String> {
     set_private_dir_permissions(path)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn ensure_private_dir(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path).map_err(|error| {
+        format!(
+            "failed to create detached Job state root {}: {error}",
+            path.display()
+        )
+    })?;
+    reject_symlink_or_non_dir(path, "detached Job state root")
+}
+
+#[cfg(not(any(unix, windows)))]
 fn ensure_private_dir(_path: &Path) -> Result<(), String> {
     Err("detached Job durable state is unsupported on this platform".to_string())
 }
@@ -1082,7 +1354,14 @@ fn set_private_dir_permissions(path: &Path) -> Result<(), String> {
     })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn set_private_dir_permissions(path: &Path) -> Result<(), String> {
+    // The Windows state root inherits its ACL from the Runner-owned application
+    // state directory. Detached launch secrets are never persisted here.
+    reject_symlink_or_non_dir(path, "detached Job directory")
+}
+
+#[cfg(not(any(unix, windows)))]
 fn set_private_dir_permissions(_path: &Path) -> Result<(), String> {
     Err("detached Job durable state is unsupported on this platform".to_string())
 }
@@ -1198,13 +1477,96 @@ fn atomic_write_json<T: Serialize>(path: &Path, value: &T, max_bytes: usize) -> 
     result
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn atomic_write_json<T: Serialize>(path: &Path, value: &T, max_bytes: usize) -> Result<(), String> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|error| format!("failed to encode detached Job state: {error}"))?;
+    if bytes.len() > max_bytes {
+        return Err(format!("detached Job state exceeds {max_bytes} bytes"));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "detached Job state path has no parent".to_string())?;
+    reject_symlink_or_non_dir(parent, "detached Job state parent")?;
+    let temp = parent.join(STATE_TEMP_FILE);
+    match fs::symlink_metadata(&temp) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(
+                    "detached Job temp state must be a regular non-symlink file".to_string()
+                );
+            }
+            fs::remove_file(&temp).map_err(|error| {
+                format!("failed to remove stale detached Job temp state: {error}")
+            })?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "failed to inspect detached Job temp state: {error}"
+            ));
+        }
+    }
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            // Keep the exact temp content protected from readers/writers through
+            // replacement while still allowing the rename/delete operation.
+            .share_mode(FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&temp)
+            .map_err(|error| format!("failed to create detached Job temp state: {error}"))?;
+        file.write_all(&bytes)
+            .map_err(|error| format!("failed to write detached Job temp state: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("failed to sync detached Job temp state: {error}"))?;
+        let from = windows_wide_path(&temp);
+        let to = windows_wide_path(path);
+        let retry_deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            if unsafe {
+                MoveFileExW(
+                    from.as_ptr(),
+                    to.as_ptr(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
+            } != 0
+            {
+                drop(file);
+                break;
+            }
+            let error = io::Error::last_os_error();
+            let retryable = matches!(error.raw_os_error(), Some(5) | Some(32) | Some(33));
+            if !retryable || Instant::now() >= retry_deadline {
+                drop(file);
+                return Err(format!("failed to commit detached Job state: {error}"));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
+#[cfg(not(any(unix, windows)))]
 fn atomic_write_json<T: Serialize>(
     _path: &Path,
     _value: &T,
     _max_bytes: usize,
 ) -> Result<(), String> {
     Err("detached Job durable state is unsupported on this platform".to_string())
+}
+
+#[cfg(windows)]
+fn windows_wide_path(path: &Path) -> Vec<u16> {
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 #[cfg(unix)]
@@ -1214,6 +1576,13 @@ fn sync_directory(path: &Path) -> Result<(), String> {
     directory
         .sync_all()
         .map_err(|error| format!("failed to sync detached Job state directory: {error}"))
+}
+
+#[cfg(windows)]
+fn sync_directory(_path: &Path) -> Result<(), String> {
+    // State replacement uses MOVEFILE_WRITE_THROUGH. We make no stronger host
+    // power-loss durability claim for parent-directory metadata on Windows.
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -1284,12 +1653,84 @@ fn exclusive_lock(path: &Path, blocking: bool) -> Result<FileLock, String> {
     Ok(FileLock { file })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+struct FileLock {
+    file: File,
+}
+
+#[cfg(windows)]
+fn exclusive_lock(path: &Path, blocking: bool) -> Result<FileLock, String> {
+    loop {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err("detached Job lock must be a regular non-symlink file".to_string())
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect detached Job lock {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+        let opened = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            // Deny concurrent read/write openers while permitting delete so an
+            // expired terminal directory can remove this exact locked file.
+            .share_mode(FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path);
+        match opened {
+            Ok(file) => {
+                let metadata = fs::symlink_metadata(path).map_err(|error| {
+                    format!(
+                        "failed to revalidate detached Job lock {}: {error}",
+                        path.display()
+                    )
+                })?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(
+                        "detached Job lock path changed or is not a regular non-symlink file"
+                            .to_string(),
+                    );
+                }
+                return Ok(FileLock { file });
+            }
+            Err(error) if blocking && error.raw_os_error() == Some(32) => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to acquire detached Job lock {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn exclusive_lock(_path: &Path, _blocking: bool) -> Result<(), String> {
     Err("detached Job locking is unsupported on this platform".to_string())
 }
 
 #[cfg(unix)]
+fn write_lock_identity(lock: &mut FileLock, creation_id: &str) -> Result<(), String> {
+    lock.file
+        .set_len(0)
+        .map_err(|error| format!("failed to reset detached lifetime lock: {error}"))?;
+    lock.file
+        .write_all(creation_id.as_bytes())
+        .map_err(|error| format!("failed to write detached lifetime identity: {error}"))?;
+    lock.file
+        .sync_all()
+        .map_err(|error| format!("failed to sync detached lifetime identity: {error}"))
+}
+
+#[cfg(windows)]
 fn write_lock_identity(lock: &mut FileLock, creation_id: &str) -> Result<(), String> {
     lock.file
         .set_len(0)
@@ -1350,8 +1791,8 @@ fn lifetime_lock_is_held(path: &Path, expected_creation_id: &str) -> Result<bool
     }
 }
 
-#[cfg(unix)]
-fn handoff_first_unix(
+#[cfg(any(unix, windows))]
+fn handoff_first_platform(
     store: &DetachedJobStore,
     request: DetachedStartRequest,
     prepared: DetachedJobRecord,
@@ -1376,7 +1817,10 @@ fn handoff_first_unix(
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
     make_new_session(&mut command);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_BREAKAWAY_FROM_JOB);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -1463,7 +1907,7 @@ fn handoff_first_unix(
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn resolved_handoff_outcome(
     record: DetachedJobRecord,
     reconciled_from_state: bool,
@@ -1484,7 +1928,7 @@ fn resolved_handoff_outcome(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn wait_for_accepted_state(
     store: &DetachedJobStore,
     prepared: &DetachedJobRecord,
@@ -1508,7 +1952,7 @@ fn wait_for_accepted_state(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn mark_pre_accept_failure(
     store: &DetachedJobStore,
     prepared: &DetachedJobRecord,
@@ -1535,7 +1979,7 @@ fn mark_pre_accept_failure(
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn cleanup_pre_accept_supervisor(
     store: &DetachedJobStore,
     prepared: &DetachedJobRecord,
@@ -1544,7 +1988,10 @@ fn cleanup_pre_accept_supervisor(
 ) -> Result<(), String> {
     // The direct Child handle is still Runner-owned before acceptance, so there
     // is no PID-reuse ambiguity in signaling this exact process.
+    #[cfg(unix)]
     let _ = unsafe { libc::kill(child.id() as i32, libc::SIGKILL) };
+    #[cfg(windows)]
+    let _ = child.kill();
     let deadline = Instant::now() + DETACHED_HANDOFF_TIMEOUT;
     loop {
         match child.try_wait() {
@@ -1584,14 +2031,14 @@ fn cleanup_pre_accept_supervisor(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn spawn_supervisor_reaper(mut child: Child) {
     std::thread::spawn(move || {
         let _ = child.wait();
     });
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn write_launch_frame(writer: &mut impl Write, spec: &DetachedLaunchSpec) -> Result<(), String> {
     validate_launch_spec(spec)?;
     let bytes = serde_json::to_vec(spec)
@@ -1606,7 +2053,7 @@ fn write_launch_frame(writer: &mut impl Write, spec: &DetachedLaunchSpec) -> Res
         .map_err(|error| format!("failed to send detached launch payload: {error}"))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn read_launch_frame(reader: &mut impl Read) -> Result<DetachedLaunchSpec, String> {
     let mut length = [0u8; 4];
     reader
@@ -1626,7 +2073,7 @@ fn read_launch_frame(reader: &mut impl Read) -> Result<DetachedLaunchSpec, Strin
     Ok(spec)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn spawn_byte_reader(mut reader: impl Read + Send + 'static) -> mpsc::Receiver<u8> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -1657,7 +2104,7 @@ fn make_new_session(command: &mut Command) {
 }
 
 #[cfg(unix)]
-fn run_internal_unix_mode(args: &[String]) -> Result<(), String> {
+fn run_internal_platform_mode(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some(DETACHED_INTERNAL_SUPERVISOR) if args.len() == 4 => {
             run_supervisor(Path::new(&args[1]), &args[2], &args[3], &mut io::stdin())
@@ -1669,7 +2116,20 @@ fn run_internal_unix_mode(args: &[String]) -> Result<(), String> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(windows)]
+fn run_internal_platform_mode(args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some(DETACHED_INTERNAL_SUPERVISOR) if args.len() == 4 => {
+            run_supervisor(Path::new(&args[1]), &args[2], &args[3], &mut io::stdin())
+        }
+        Some(DETACHED_INTERNAL_WATCHDOG) => {
+            Err("detached watchdog internal mode is not used on Windows".to_string())
+        }
+        _ => Err("malformed detached internal mode arguments".to_string()),
+    }
+}
+
+#[cfg(any(unix, windows))]
 fn run_supervisor(
     job_dir: &Path,
     execution_id: &str,
@@ -1734,7 +2194,7 @@ fn run_supervisor(
         // No process-tree helper or payload exists before this Ready/Accept
         // boundary. Before acceptance the Runner still owns the direct
         // supervisor child and can clean it without leaving an orphan.
-        write_control_fd(2, &[HANDSHAKE_READY])?;
+        write_supervisor_handshake(&[HANDSHAKE_READY])?;
         let mut accept = [0u8; 1];
         launch_reader
             .read_exact(&mut accept)
@@ -1773,7 +2233,7 @@ fn run_supervisor(
         if terminal.ownership_accepted_at_unix_ms.is_some() {
             // A committed execution must be reconciled by the caller even when
             // post-accept payload setup fails; it must never be respawned.
-            let _ = write_control_fd(2, &[HANDSHAKE_ACCEPTED]);
+            let _ = write_supervisor_handshake(&[HANDSHAKE_ACCEPTED]);
         }
         return Err(error);
     }
@@ -1842,7 +2302,7 @@ fn run_accepted_payload(
     // The ACK is advisory once that boundary is committed: a Runner/owner may
     // disappear before reading it, and that lost response must not stop or
     // respawn the already-owned payload.
-    let _ = write_control_fd(2, &[HANDSHAKE_ACCEPTED]);
+    let _ = write_supervisor_handshake(&[HANDSHAKE_ACCEPTED]);
 
     let stdin_thread = launch.stdin.map(|stdin| {
         let mut child_stdin = payload.stdin.take();
@@ -2056,7 +2516,262 @@ fn run_accepted_payload(
     Ok(terminal)
 }
 
-#[cfg(unix)]
+#[cfg(windows)]
+fn run_accepted_payload(
+    store: &DetachedJobStore,
+    accepted: &DetachedJobRecord,
+    launch: DetachedLaunchSpec,
+) -> Result<DetachedJobRecord, String> {
+    let tree_birth = format!("birth_{}", Uuid::new_v4().simple());
+    let mut payload_command = Command::new(&launch.process.executable);
+    payload_command.args(&launch.process.args).env_clear();
+    for (key, value) in &launch.env {
+        payload_command.env(key, value);
+    }
+    if let Some(cwd) = launch.cwd.as_deref() {
+        payload_command.current_dir(cwd);
+    }
+    payload_command
+        .stdin(if launch.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // ManagedChild is created inside the detached supervisor. Its private
+    // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE Job Object therefore belongs to the
+    // supervisor rather than the Runner. If the supervisor dies, Windows closes
+    // its last Job handle and kills the complete payload tree.
+    let mut payload = ManagedChild::spawn(&mut payload_command)
+        .map_err(|error| format!("failed to spawn detached Windows payload: {error}"))?;
+    let payload_started = unix_ms();
+    let tree_pid = payload.id();
+    let tree_identity = DetachedProcessIdentity {
+        pid: tree_pid,
+        creation_id: tree_birth,
+        native_start_id: native_process_start_identity(tree_pid)?,
+        started_at_unix_ms: payload_started,
+    };
+    let running = store.update(&accepted.job_id, &accepted.execution_id, |record| {
+        if record.phase != DetachedJobPhase::OwnershipAccepted {
+            return Err("detached payload cannot start from current durable state".to_string());
+        }
+        record.phase = DetachedJobPhase::Running;
+        record.payload_started_at_unix_ms = Some(payload_started);
+        record.tree_leader = Some(tree_identity.clone());
+        Ok(())
+    })?;
+    let _ = write_supervisor_handshake(&[HANDSHAKE_ACCEPTED]);
+
+    let stdin_thread = launch.stdin.map(|stdin| {
+        let mut child_stdin = payload.child_mut().stdin.take();
+        std::thread::spawn(move || {
+            if let Some(mut child_stdin) = child_stdin.take() {
+                let _ = child_stdin.write_all(stdin.as_bytes());
+            }
+        })
+    });
+    let stdout = payload
+        .child_mut()
+        .stdout
+        .take()
+        .ok_or_else(|| "detached payload stdout pipe is unavailable".to_string())?;
+    let stderr = payload
+        .child_mut()
+        .stderr
+        .take()
+        .ok_or_else(|| "detached payload stderr pipe is unavailable".to_string())?;
+    let (output_tx, output_rx) = mpsc::sync_channel(DETACHED_OUTPUT_CHANNEL_CAPACITY);
+    let stdout_thread = spawn_output_reader(stdout, output_tx.clone(), true);
+    let stderr_thread = spawn_output_reader(stderr, output_tx, false);
+    let mut stdout_decoder = OutputTextDecoder::new(OutputTextSource::LocalProcess);
+    let mut stderr_decoder = OutputTextDecoder::new(OutputTextSource::LocalProcess);
+    let started = Instant::now();
+    let mut state = running;
+    let mut last_checkpoint = Instant::now();
+    let mut last_control_poll = Instant::now();
+    let mut output_dirty = false;
+    let mut stdout_eof = false;
+    let mut stderr_eof = false;
+    let mut direct_status: Option<ExitStatus> = None;
+    let mut forced_status: Option<(&'static str, String)> = None;
+
+    loop {
+        match output_rx.recv_timeout(DETACHED_PROCESS_POLL_INTERVAL) {
+            Ok(OutputEvent::Stdout(bytes)) => {
+                let text = stdout_decoder.push(&bytes, false);
+                append_output_tail(&mut state.stdout, bytes.len(), &text);
+                output_dirty = true;
+            }
+            Ok(OutputEvent::Stderr(bytes)) => {
+                let text = stderr_decoder.push(&bytes, false);
+                append_output_tail(&mut state.stderr, bytes.len(), &text);
+                output_dirty = true;
+            }
+            Ok(OutputEvent::StdoutEof) => {
+                let text = stdout_decoder.push(&[], true);
+                append_output_tail(&mut state.stdout, 0, &text);
+                stdout_eof = true;
+                output_dirty |= !text.is_empty();
+            }
+            Ok(OutputEvent::StderrEof) => {
+                let text = stderr_decoder.push(&[], true);
+                append_output_tail(&mut state.stderr, 0, &text);
+                stderr_eof = true;
+                output_dirty |= !text.is_empty();
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                stdout_eof = true;
+                stderr_eof = true;
+            }
+        }
+
+        if output_dirty && last_checkpoint.elapsed() >= DETACHED_CHECKPOINT_INTERVAL {
+            let stdout_snapshot = state.stdout.clone();
+            let stderr_snapshot = state.stderr.clone();
+            state = store.update(&state.job_id, &state.execution_id, |record| {
+                if record.phase != DetachedJobPhase::Running {
+                    return Err("detached output checkpoint found non-running state".to_string());
+                }
+                record.stdout = stdout_snapshot;
+                record.stderr = stderr_snapshot;
+                Ok(())
+            })?;
+            output_dirty = false;
+            last_checkpoint = Instant::now();
+        }
+
+        if forced_status.is_none() && last_control_poll.elapsed() >= DETACHED_CONTROL_POLL_INTERVAL
+        {
+            let control = store.read(&state.job_id)?;
+            if control.execution_id != state.execution_id {
+                return Err("detached control state execution identity changed".to_string());
+            }
+            if control.stop_requested {
+                forced_status = Some(("stopped", "job stopped by request".to_string()));
+            }
+            last_control_poll = Instant::now();
+        }
+        if direct_status.is_none() {
+            match payload.try_wait() {
+                Ok(Some(status)) => direct_status = Some(status),
+                Ok(None) => {}
+                Err(error) => {
+                    forced_status = Some((
+                        "failed",
+                        format!("failed to wait for detached payload: {error}"),
+                    ));
+                }
+            }
+        }
+        if forced_status.is_none() && started.elapsed().as_secs() >= launch.timeout_secs {
+            forced_status = Some((
+                "timeout",
+                format!(
+                    "detached payload timed out after {} seconds",
+                    launch.timeout_secs
+                ),
+            ));
+        }
+        if forced_status.is_some() {
+            break;
+        }
+        match payload.try_tree_exit() {
+            Ok(true) if direct_status.is_some() => break,
+            Ok(_) => {}
+            Err(error) => {
+                forced_status = Some((
+                    "failed",
+                    format!("failed to observe detached Windows Job Object: {error}"),
+                ));
+                break;
+            }
+        }
+    }
+
+    if forced_status.is_some() {
+        let _ = payload.terminate_tree();
+        let _ = payload.wait_tree_exit(DETACHED_HANDOFF_TIMEOUT);
+    }
+    if direct_status.is_none() {
+        direct_status = payload.wait().ok();
+    }
+
+    let drain_deadline = Instant::now() + DETACHED_HANDOFF_TIMEOUT;
+    while !(stdout_eof && stderr_eof) && Instant::now() < drain_deadline {
+        match output_rx.recv_timeout(Duration::from_millis(20)) {
+            Ok(OutputEvent::Stdout(bytes)) => {
+                let text = stdout_decoder.push(&bytes, false);
+                append_output_tail(&mut state.stdout, bytes.len(), &text);
+            }
+            Ok(OutputEvent::Stderr(bytes)) => {
+                let text = stderr_decoder.push(&bytes, false);
+                append_output_tail(&mut state.stderr, bytes.len(), &text);
+            }
+            Ok(OutputEvent::StdoutEof) => {
+                let text = stdout_decoder.push(&[], true);
+                append_output_tail(&mut state.stdout, 0, &text);
+                stdout_eof = true;
+            }
+            Ok(OutputEvent::StderrEof) => {
+                let text = stderr_decoder.push(&[], true);
+                append_output_tail(&mut state.stderr, 0, &text);
+                stderr_eof = true;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                stdout_eof = true;
+                stderr_eof = true;
+            }
+        }
+    }
+    if !(stdout_eof && stderr_eof) && forced_status.is_none() {
+        forced_status = Some((
+            "failed",
+            "detached payload output did not reach EOF within the bounded drain window".to_string(),
+        ));
+    }
+    drop(stdout_thread);
+    drop(stderr_thread);
+    drop(stdin_thread);
+
+    let (terminal_status, terminal_exit, terminal_error) =
+        if let Some((status, error)) = forced_status {
+            (status.to_string(), Some(-1), Some(error))
+        } else if let Some(status) = direct_status {
+            let code = status.code().unwrap_or(-1);
+            if status.success() {
+                ("completed".to_string(), Some(code), None)
+            } else {
+                ("failed".to_string(), Some(code), None)
+            }
+        } else {
+            (
+                "failed".to_string(),
+                None,
+                Some("detached payload exited without an observable status".to_string()),
+            )
+        };
+    let stdout_final = state.stdout.clone();
+    let stderr_final = state.stderr.clone();
+    store.update(&state.job_id, &state.execution_id, |record| {
+        record.stdout = stdout_final;
+        record.stderr = stderr_final;
+        set_terminal(
+            record,
+            &terminal_status,
+            terminal_exit,
+            terminal_error.as_deref(),
+            payload_started,
+        );
+        Ok(())
+    })
+}
+
+#[cfg(any(unix, windows))]
 #[derive(Debug)]
 enum OutputEvent {
     Stdout(Vec<u8>),
@@ -2065,7 +2780,7 @@ enum OutputEvent {
     StderrEof,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn spawn_output_reader(
     mut reader: impl Read + Send + 'static,
     tx: mpsc::SyncSender<OutputEvent>,
@@ -2187,6 +2902,20 @@ fn run_watchdog(job_dir: &Path, creation_id: &str, execution_id: &str) -> Result
 }
 
 #[cfg(unix)]
+fn write_supervisor_handshake(bytes: &[u8]) -> Result<(), String> {
+    write_control_fd(2, bytes)
+}
+
+#[cfg(windows)]
+fn write_supervisor_handshake(bytes: &[u8]) -> Result<(), String> {
+    let mut stderr = io::stderr().lock();
+    stderr
+        .write_all(bytes)
+        .and_then(|_| stderr.flush())
+        .map_err(|error| format!("detached supervisor handshake write failed: {error}"))
+}
+
+#[cfg(unix)]
 fn write_control_fd(fd: i32, mut bytes: &[u8]) -> Result<(), String> {
     while !bytes.is_empty() {
         // SAFETY: bytes points at a live slice and fd is a process-owned stdio
@@ -2260,7 +2989,7 @@ fn read_line_with_timeout(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn internal_mode_command(mode: &str, args: &[String]) -> Result<Command, String> {
     #[cfg(test)]
     {
@@ -2307,6 +3036,28 @@ mod tests {
             .unwrap_or_else(|error| error.into_inner())
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_atomic_state_replace_retries_transient_destination_sharing() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = temp.path().join("state.json");
+        fs::write(&state, br#"{"value":1}"#).unwrap();
+        let blocker = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&state)
+            .unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            drop(blocker);
+        });
+
+        atomic_write_json(&state, &serde_json::json!({"value": 2}), 1024).unwrap();
+        release.join().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert_eq!(value["value"], 2);
+    }
+
     #[test]
     fn internal_mode_subprocess_entrypoint() {
         let Some(mode) = std::env::var_os("WEBCODEX_DETACHED_TEST_INTERNAL_MODE") else {
@@ -2318,7 +3069,7 @@ mod tests {
         .expect("decode internal args");
         let mut full = vec![mode.to_string_lossy().into_owned()];
         full.extend(args);
-        let code = match run_internal_unix_mode(&full) {
+        let code = match run_internal_platform_mode(&full) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("detached test internal mode failed: {error}");
@@ -2361,6 +3112,36 @@ mod tests {
         }
     }
 
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn pre_accept_failure_advances_beyond_public_agent_queued_sequence() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let request = test_request("never-started".to_string(), Vec::new());
+        let prepared = match store.prepare(&request).unwrap() {
+            PrepareOutcome::First(record) => record,
+            PrepareOutcome::Existing(_) => panic!("fresh detached prepare unexpectedly existed"),
+        };
+        assert_eq!(prepared.phase, DetachedJobPhase::Prepared);
+        assert_eq!(prepared.update_seq, 1);
+
+        let terminal = mark_pre_accept_failure(&store, &prepared, "preaccept blocked").unwrap();
+        assert_eq!(terminal.phase, DetachedJobPhase::Terminal);
+        assert_eq!(terminal.update_seq, 2);
+        assert!(terminal.ownership_accepted_at_unix_ms.is_none());
+        assert!(terminal.supervisor.is_none());
+        assert!(terminal.tree_leader.is_none());
+        assert_eq!(terminal.terminal.as_ref().unwrap().status, "handoff_failed");
+
+        let snapshot = snapshot_from_detached_record(&terminal).unwrap();
+        assert_eq!(snapshot.update_seq, 2);
+        assert_eq!(snapshot.status, "failed");
+        assert_eq!(
+            snapshot.command_execution_state,
+            Some(ShellCommandExecutionState::NotStarted)
+        );
+    }
+
     #[test]
     fn durable_record_rejects_mixed_or_oversized_state() {
         let temp = tempfile::tempdir().unwrap();
@@ -2388,35 +3169,225 @@ mod tests {
     fn durable_record_never_contains_ephemeral_launch_secrets() {
         let temp = tempfile::tempdir().unwrap();
         let store = DetachedJobStore::new(temp.path().join("state"));
-        let secret = "super-secret-detached-value";
-        let mut request = test_request("/bin/true".to_string(), vec![secret.to_string()]);
-        request.launch.stdin = Some(secret.to_string());
+        let sentinel = "wc-detached-private-sentinel-9f3c0a";
+        let digest = format!("{:x}", Sha256::digest(sentinel.as_bytes()));
+        let mut request = test_request(format!("/tmp/{sentinel}"), vec![sentinel.to_string()]);
+        request.launch.stdin = Some(sentinel.to_string());
         request
             .launch
             .env
-            .push(("PRIVATE_TOKEN".to_string(), secret.to_string()));
+            .push(("PRIVATE_TOKEN".to_string(), sentinel.to_string()));
         let _ = store.prepare(&request).unwrap();
         let bytes = fs::read(store.state_path_for_job(&request.job_id)).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        assert!(!text.contains(secret));
+        assert!(
+            !text.contains(sentinel),
+            "durable state leaked launch body: {text}"
+        );
+        assert!(
+            !text.contains(&digest),
+            "durable state leaked launch-body digest: {text}"
+        );
         assert!(!text.contains("PRIVATE_TOKEN"));
-        assert!(!text.contains("/bin/true"));
     }
 
     #[test]
     fn durable_state_root_has_a_hard_record_count_bound() {
         let temp = tempfile::tempdir().unwrap();
         let store = DetachedJobStore::new(temp.path().join("state"));
-        ensure_private_dir(store.root()).unwrap();
-        for index in 0..DETACHED_STATE_MAX_RECORDS {
-            let dir = store.root().join(format!("existing-{index}"));
-            fs::create_dir(&dir).unwrap();
+        for _ in 0..DETACHED_STATE_MAX_RECORDS {
+            let request = test_request("/bin/true".to_string(), Vec::new());
+            assert!(matches!(
+                store.prepare(&request).unwrap(),
+                PrepareOutcome::First(_)
+            ));
         }
         let request = test_request("/bin/true".to_string(), Vec::new());
         let error = store.prepare(&request).unwrap_err();
         assert!(error.contains("state root is full"), "{error}");
         assert_eq!(
-            bounded_job_dir_count(store.root()).unwrap(),
+            store.scan_for_client("test-runner").unwrap().len(),
+            DETACHED_STATE_MAX_RECORDS
+        );
+    }
+
+    fn terminal_record(store: &DetachedJobStore) -> DetachedStartRequest {
+        let request = test_request("/bin/true".to_string(), Vec::new());
+        let prepared = match store.prepare(&request).unwrap() {
+            PrepareOutcome::First(record) => record,
+            PrepareOutcome::Existing(_) => panic!("fresh terminal fixture unexpectedly existed"),
+        };
+        store
+            .update(&request.job_id, &prepared.execution_id, |record| {
+                set_terminal(
+                    record,
+                    "completed",
+                    Some(0),
+                    None,
+                    record.created_at_unix_ms,
+                );
+                Ok(())
+            })
+            .unwrap();
+        request
+    }
+
+    #[test]
+    fn terminal_reclamation_respects_retention_window_and_then_deletes() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let request = terminal_record(&store);
+        let completed = store
+            .read(&request.job_id)
+            .unwrap()
+            .terminal
+            .unwrap()
+            .completed_at_unix_ms;
+
+        assert_eq!(
+            store
+                .reclaim_expired_terminal_records_locked(completed + TERMINAL_RETENTION_MS - 1)
+                .unwrap(),
+            1
+        );
+        assert!(store.read(&request.job_id).is_ok());
+
+        assert_eq!(
+            store
+                .reclaim_expired_terminal_records_locked(completed + TERMINAL_RETENTION_MS)
+                .unwrap(),
+            0
+        );
+        assert!(store.read(&request.job_id).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn accepted_active_record_is_never_reclaimed() {
+        let _guard = test_env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let request = make_payload_request("count_once", Vec::new());
+        let outcome = handoff_detached_job(&store, request.clone()).unwrap();
+        assert!(matches!(outcome, DetachedHandoffOutcome::Accepted { .. }));
+        let running = store.read(&request.job_id).unwrap();
+        assert!(running.ownership_accepted_at_unix_ms.is_some());
+        assert_ne!(running.phase, DetachedJobPhase::Terminal);
+
+        assert_eq!(
+            store
+                .reclaim_expired_terminal_records_locked(i64::MAX)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store.read(&request.job_id).unwrap().execution_id,
+            running.execution_id
+        );
+        store
+            .request_stop(&request.job_id, &running.execution_id)
+            .unwrap();
+        let _ = wait_for_terminal(&store, &request.job_id);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reclamation_fails_closed_on_corrupt_or_symlink_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let request = terminal_record(&store);
+        let job_dir = store.job_dir(&request.job_id);
+        let completed = store
+            .read(&request.job_id)
+            .unwrap()
+            .terminal
+            .unwrap()
+            .completed_at_unix_ms;
+        let unexpected_target = temp.path().join("do-not-delete");
+        fs::write(&unexpected_target, b"sentinel").unwrap();
+        std::os::unix::fs::symlink(&unexpected_target, job_dir.join("unexpected-link")).unwrap();
+
+        let error = store
+            .reclaim_expired_terminal_records_locked(completed + TERMINAL_RETENTION_MS)
+            .unwrap_err();
+        assert!(error.contains("symlink"), "{error}");
+        assert_eq!(fs::read(&unexpected_target).unwrap(), b"sentinel");
+        assert!(job_dir.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn prepared_restart_residue_converges_to_not_started_without_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let marker = temp.path().join("must-not-run");
+        let request = make_payload_request(
+            "count_once",
+            vec![(
+                "PAYLOAD_MARKER".to_string(),
+                marker.to_string_lossy().into_owned(),
+            )],
+        );
+        let prepared = match store.prepare(&request).unwrap() {
+            PrepareOutcome::First(record) => record,
+            PrepareOutcome::Existing(_) => panic!("fresh pre-accept fixture unexpectedly existed"),
+        };
+        let reconciled = store
+            .reconcile_after_runner_restart(prepared)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reconciled.phase, DetachedJobPhase::Terminal);
+        assert_eq!(
+            reconciled.terminal.as_ref().unwrap().status,
+            "handoff_failed"
+        );
+        assert_eq!(
+            snapshot_from_detached_record(&reconciled)
+                .unwrap()
+                .command_execution_state,
+            Some(ShellCommandExecutionState::NotStarted)
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            !marker.exists(),
+            "pre-accept recovery must never spawn the payload"
+        );
+    }
+
+    #[test]
+    fn expired_terminal_record_releases_capacity_for_new_prepare() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let expired = terminal_record(&store);
+        let mut expired_record = store.read(&expired.job_id).unwrap();
+        expired_record
+            .terminal
+            .as_mut()
+            .unwrap()
+            .completed_at_unix_ms = unix_ms().saturating_sub(TERMINAL_RETENTION_MS + 1);
+        atomic_write_json(
+            &store.state_path_for_job(&expired.job_id),
+            &expired_record,
+            DETACHED_STATE_MAX_BYTES,
+        )
+        .unwrap();
+
+        for _ in 1..DETACHED_STATE_MAX_RECORDS {
+            let request = test_request("/bin/true".to_string(), Vec::new());
+            assert!(matches!(
+                store.prepare(&request).unwrap(),
+                PrepareOutcome::First(_)
+            ));
+        }
+        let replacement = test_request("/bin/true".to_string(), Vec::new());
+        assert!(matches!(
+            store.prepare(&replacement).unwrap(),
+            PrepareOutcome::First(_)
+        ));
+        assert!(store.read(&expired.job_id).is_err());
+        assert!(store.read(&replacement.job_id).is_ok());
+        assert_eq!(
+            store.scan_for_client("test-runner").unwrap().len(),
             DETACHED_STATE_MAX_RECORDS
         );
     }

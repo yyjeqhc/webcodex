@@ -2,10 +2,11 @@ use serde_json::{json, Value};
 
 use super::common::{object_schema, with_optional_session_id};
 use crate::shell_protocol::{
-    PROCESS_ARG_MAX_BYTES, PROCESS_ARG_MAX_COUNT, PROCESS_CWD_MAX_BYTES,
-    PROCESS_EXECUTABLE_MAX_BYTES, PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS,
-    RAW_SHELL_COMMAND_MAX_BYTES, SCRIPT_ARGV_MAX_BYTES, SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT,
-    SCRIPT_CWD_MAX_BYTES, SCRIPT_MAX_BYTES, SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
+    DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, PROCESS_ARG_MAX_BYTES, PROCESS_ARG_MAX_COUNT,
+    PROCESS_CWD_MAX_BYTES, PROCESS_EXECUTABLE_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
+    PROCESS_TIMEOUT_MAX_SECS, RAW_SHELL_COMMAND_MAX_BYTES, SCRIPT_ARGV_MAX_BYTES,
+    SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT, SCRIPT_CWD_MAX_BYTES, SCRIPT_MAX_BYTES,
+    SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
 };
 
 pub(crate) fn run_process_input_schema() -> Value {
@@ -74,6 +75,27 @@ pub(crate) fn run_process_input_schema() -> Value {
         "operation",
         "other"
     ]);
+    schema
+}
+
+pub(crate) fn run_detached_process_input_schema() -> Value {
+    let mut schema = run_process_input_schema();
+    schema["properties"]["idempotency_key"] = json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": DETACHED_IDEMPOTENCY_KEY_MAX_BYTES,
+        "description": "Required bounded caller-chosen key for this detached initiation. Reusing the same key can never dispatch a second payload execution; after Server restart an existing logical Job is returned for recovery rather than guessing that a resent body matches."
+    });
+    schema["required"]
+        .as_array_mut()
+        .expect("run_process schema required array")
+        .push(json!("idempotency_key"));
+    schema["properties"]["cwd"]["description"] = json!(
+        "Project-relative working directory. Omit, empty string, or '.' for the project root. Named Session SSH resources are unsupported for run_detached_process."
+    );
+    schema["properties"]["timeout_secs"]["description"] = json!(
+        "Total detached process runtime budget in seconds (1..=3600, default 60). Admission returns the stable Job identity without waiting for terminal completion."
+    );
     schema
 }
 

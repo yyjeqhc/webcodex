@@ -9,17 +9,22 @@ use super::requests::{
     enqueue_pending_request_locked, next_request_id, notify_client_locked,
     remove_pending_request_locked,
 };
-use super::state::{ShellJobRecord, ShellJobVisibility};
+use super::state::{DetachedIdempotencyIntent, ShellJobRecord, ShellJobVisibility};
 use super::validation::{validate_agent_instance_id, validate_id, validate_run_request};
-use super::{now_ts, ShellClientRegistry};
+use super::{
+    now_ts, ShellClientRegistry, DETACHED_IDEMPOTENCY_CONFLICT,
+    DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
+};
 use crate::shell_protocol::{
     validate_process_argv, validate_script_request, validation_infrastructure_failure_code,
     ShellAgentJobUpdateRequest, ShellAgentShellRequest, ShellCommandExecutionState,
     ShellJobContext, ShellJobInfo, ShellJobOpRequest, ShellJobStructuredExecutionMetadata,
     ShellJobValidationMetadata, ShellJobValidationStep, ShellProcessArgv, ShellRunRequest,
-    ShellScriptPayload, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
+    ShellScriptPayload, DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, PROCESS_CWD_MAX_BYTES,
+    PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tokio::sync::Notify;
@@ -249,11 +254,15 @@ pub(crate) struct ShellJobStartMetadata {
     pub(crate) sandbox: Option<String>,
     pub(crate) structured_execution: Option<StructuredJobExecution>,
     pub(crate) stdin: Option<String>,
+    /// Detached-only caller replay key. Consumed to derive the logical Job
+    /// identity; never copied into Runner protocol, durable state, or audit.
+    pub(crate) detached_idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum StructuredJobExecution {
     Process(ShellProcessArgv),
+    DetachedProcess(ShellProcessArgv),
     Script(ShellScriptPayload),
 }
 
@@ -290,6 +299,57 @@ fn validate_structured_job_common(
         ));
     }
     Ok(())
+}
+
+fn validate_detached_idempotency_key(key: &str) -> Result<(), String> {
+    if key.is_empty()
+        || key.len() > DETACHED_IDEMPOTENCY_KEY_MAX_BYTES
+        || key.contains(['\0', '\r', '\n'])
+    {
+        return Err(format!(
+            "detached idempotency_key must be 1..={DETACHED_IDEMPOTENCY_KEY_MAX_BYTES} bytes and contain no NUL/CR/LF"
+        ));
+    }
+    Ok(())
+}
+
+fn detached_idempotency_principal(
+    auth: Option<&crate::auth::AuthContext>,
+) -> Result<String, String> {
+    let Some(auth) = auth else {
+        return Ok("internal".to_string());
+    };
+    if auth.is_bootstrap() {
+        return Ok("bootstrap".to_string());
+    }
+    if auth.is_oauth_token() && !auth.is_oauth_shared_key_subject() {
+        let user_id = auth.user_id.as_deref().ok_or_else(|| {
+            "detached idempotency requires a stable OAuth user identity".to_string()
+        })?;
+        let client_id = auth
+            .allowed_client_id
+            .as_deref()
+            .unwrap_or("unknown-client");
+        return Ok(format!("oauth2:{user_id}:{client_id}"));
+    }
+    if let Some(api_key_id) = auth.api_key_id.as_deref() {
+        return Ok(format!("{}:{api_key_id}", auth.principal_kind()));
+    }
+    Err("detached idempotency requires a stable authenticated caller identity".to_string())
+}
+
+fn detached_job_id_for_key(
+    auth: Option<&crate::auth::AuthContext>,
+    key: &str,
+) -> Result<String, String> {
+    validate_detached_idempotency_key(key)?;
+    let principal = detached_idempotency_principal(auth)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex-detached-initiation-v1\0");
+    hasher.update(principal.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(key.as_bytes());
+    Ok(format!("detached_{:x}", hasher.finalize()))
 }
 
 impl ShellClientRegistry {
@@ -330,7 +390,6 @@ impl ShellClientRegistry {
         let timeout_secs = body.timeout_secs.unwrap_or(120);
         let normalized_job_cwd = body.cwd.clone().map(|cwd| cwd.trim().to_string());
         let request_id = next_request_id();
-        let job_id = Uuid::new_v4().to_string();
         let created_at = now_ts();
         // Ordinary Session-scoped jobs retain their Session id even without an
         // SSH resource. Only the inverse is invalid: remote execution without
@@ -417,6 +476,32 @@ impl ShellClientRegistry {
                     "run_process",
                 )
             }
+            Some(StructuredJobExecution::DetachedProcess(process)) => {
+                validate_process_argv(&process)?;
+                validate_structured_job_common(
+                    normalized_job_cwd.as_deref(),
+                    structured_stdin.as_deref(),
+                    timeout_secs,
+                )?;
+                let preview = format!("detached process ({} args)", process.args.len());
+                let safe = ShellJobStructuredExecutionMetadata {
+                    execution_source: "run_detached_process".to_string(),
+                    language: None,
+                    script_bytes: None,
+                    arg_count: process.args.len(),
+                    stdin_present: structured_stdin.is_some(),
+                };
+                (
+                    "start_detached_process_job",
+                    String::new(),
+                    Some(process),
+                    None,
+                    structured_stdin,
+                    preview,
+                    Some(safe),
+                    "run_detached_process",
+                )
+            }
             Some(StructuredJobExecution::Script(script)) => {
                 validate_script_request(
                     &script,
@@ -492,6 +577,36 @@ impl ShellClientRegistry {
                 )
             }
         };
+        let detached_idempotency_key = metadata.detached_idempotency_key.as_deref();
+        let detached_request = request_kind == "start_detached_process_job";
+        if detached_request != detached_idempotency_key.is_some() {
+            return Err(
+                "detached idempotency_key must be present exactly for detached process Job starts"
+                    .to_string(),
+            );
+        }
+        let detached_intent = if detached_request {
+            Some(DetachedIdempotencyIntent {
+                project_id: metadata.project_id.clone(),
+                session_id: metadata.session_id.clone(),
+                project_cwd: metadata.project_cwd.clone(),
+                cwd: normalized_job_cwd.clone(),
+                purpose: metadata.purpose.clone(),
+                shell: metadata.shell.clone(),
+                process: request_process
+                    .as_ref()
+                    .expect("detached request has typed process")
+                    .clone(),
+                stdin: request_stdin.clone(),
+                timeout_secs,
+            })
+        } else {
+            None
+        };
+        let job_id = match detached_idempotency_key {
+            Some(key) => detached_job_id_for_key(auth, key)?,
+            None => Uuid::new_v4().to_string(),
+        };
         let validation_step_names = validation_steps
             .iter()
             .map(|step| step.name.clone())
@@ -552,6 +667,13 @@ impl ShellClientRegistry {
         if structured_metadata.is_some() && !client.capabilities.structured_execution_jobs {
             return Err(format!(
                 "capability_unavailable: agent client {client_id} does not support structured_execution_jobs"
+            ));
+        }
+        if request.kind == "start_detached_process_job"
+            && !client.capabilities.detached_process_jobs
+        {
+            return Err(format!(
+                "capability_unavailable: agent client {client_id} does not support detached_process_jobs"
             ));
         }
         if structured_metadata.is_some() && metadata.ssh_resource.is_some() {
@@ -622,6 +744,28 @@ impl ShellClientRegistry {
         }
         let agent_instance_id = client.agent_instance_id.clone();
         let auth_group = client.auth_group.clone();
+        if let Some(intent) = detached_intent.as_ref() {
+            if let Some(existing) = inner.jobs_by_id.get(&job_id) {
+                if existing.kind != "run_detached_process" {
+                    return Err(format!(
+                        "{DETACHED_IDEMPOTENCY_CONFLICT}: idempotency key resolves to a non-detached Job"
+                    ));
+                }
+                match existing.detached_idempotency_intent.as_ref() {
+                    Some(existing_intent) if existing_intent == intent => {
+                        return Ok(job_view(existing));
+                    }
+                    Some(_) => {
+                        return Err(format!(
+                            "{DETACHED_IDEMPOTENCY_CONFLICT}: idempotency key was already used for different detached process intent"
+                        ));
+                    }
+                    None => {
+                        return Err(format!("{DETACHED_IDEMPOTENCY_RECOVERY_PREFIX}{job_id}"));
+                    }
+                }
+            }
+        }
         enqueue_pending_request_locked(
             &mut inner,
             &client_id,
@@ -645,6 +789,7 @@ impl ShellClientRegistry {
             purpose: metadata.purpose,
             shell: metadata.shell,
             command_preview: safe_command_preview,
+            detached_idempotency_intent: detached_intent,
             status: "queued".to_string(),
             created_at,
             started_at: None,

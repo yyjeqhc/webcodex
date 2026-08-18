@@ -270,7 +270,13 @@ impl ShellClientRegistry {
             let replaced_instance_id = replaced_instance_id
                 .as_deref()
                 .expect("replacement id captured");
-            terminate_instance_jobs_locked(&mut inner, &client_id, replaced_instance_id, now);
+            terminate_instance_jobs_locked(
+                &mut inner,
+                &client_id,
+                replaced_instance_id,
+                job_inventory.as_ref(),
+                now,
+            );
             // A different `agent_instance_id` is a new Runner process; pending
             // synchronous requests were admitted for the process that existed
             // when they were queued, so they must not be inherited by or

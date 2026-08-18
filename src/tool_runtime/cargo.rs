@@ -1017,6 +1017,7 @@ impl ToolRuntime {
                     sandbox: sandbox.map(str::to_string),
                     structured_execution: None,
                     stdin: None,
+                    detached_idempotency_key: None,
                 },
                 auth,
             )

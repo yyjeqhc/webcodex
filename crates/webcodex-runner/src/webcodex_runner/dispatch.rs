@@ -376,7 +376,11 @@ pub(crate) fn dispatch_request(
         ExternalRoute::Native => {}
     }
     match request.kind.as_str() {
-        "start_job" | "start_validation_job" | "start_process_job" | "start_script_job" => {
+        "start_job"
+        | "start_validation_job"
+        | "start_process_job"
+        | "start_detached_process_job"
+        | "start_script_job" => {
             jobs.enqueue(
                 sink.clone(),
                 PendingJobStart {

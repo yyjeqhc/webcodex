@@ -1310,6 +1310,7 @@ impl ToolRuntime {
                         sandbox,
                         structured_execution: None,
                         stdin: None,
+                        detached_idempotency_key: None,
                     },
                     auth,
                 )

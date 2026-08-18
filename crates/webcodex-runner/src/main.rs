@@ -47,7 +47,10 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use std::net::SocketAddr;
 use webcodex_runner::contains_any;
-use webcodex_runner::detached_job::{snapshot_from_detached_record, DetachedJobStore};
+use webcodex_runner::detached_job::{
+    handoff_detached_job, snapshot_from_detached_record, DetachedHandoffOutcome, DetachedJobStore,
+    DetachedLaunchSpec, DetachedStartRequest,
+};
 use webcodex_runner::output_text::{OutputTextDecoder, OutputTextSource};
 #[cfg(test)]
 use webcodex_runner::QuicClientConfig;
@@ -69,8 +72,9 @@ use webcodex_runner::{
     handle_artifact_file_request, handle_basic_file_request, handle_checkpoint_file_request,
     handle_write_project_file_request, hostname, is_artifact_request_kind,
     is_basic_file_request_kind, is_checkpoint_request_kind, is_project_op,
-    is_structured_edit_request_kind, load_config, max_concurrent_jobs, ok_cmd, projects_dir,
-    resolve_prepared_shell_profile, resolve_requested_path, run_agent, validate_client_profile,
+    is_structured_edit_request_kind, load_config, max_concurrent_jobs, ok_cmd,
+    prepare_detached_process_launch, projects_dir, resolve_prepared_shell_profile,
+    resolve_requested_path, run_agent, validate_client_profile,
     validate_structured_edit_agent_path, AgentConfig, AgentPolicy, AgentProjectCache, AgentSink,
     CommandResult, HotAgentConfig, HttpSendConfig, PreparedShellProfile, PreparedShellProfileCache,
     ReloadableAgentConfig, ShellConfig, SubmitResultError,
@@ -225,6 +229,10 @@ struct JobManager {
     pending_job_updates: Arc<Mutex<HashMap<String, JobUpdateDeliveryQueue>>>,
     delivery_signal: Arc<JobUpdateDeliverySignal>,
     owner_lifetime: Option<Arc<JobManagerOwnerLifetime>>,
+    #[cfg(test)]
+    fail_detached_observer_spawn: Arc<AtomicBool>,
+    #[cfg(test)]
+    detached_store_root_override: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl JobManager {
@@ -261,6 +269,10 @@ impl JobManager {
             pending_job_updates,
             delivery_signal,
             owner_lifetime: Some(owner_lifetime),
+            #[cfg(test)]
+            fail_detached_observer_spawn: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            detached_store_root_override: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1877,6 +1889,10 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.structured_script_payload = true;
     capabilities.internal_posix_script = true;
     capabilities.structured_execution_jobs = true;
+    // Detached process ownership is an independent additive authority. Until
+    // each native backend is implemented and dogfooded it must fail closed
+    // rather than being inferred from structured process + durable Jobs.
+    capabilities.detached_process_jobs = cfg!(any(target_os = "linux", windows));
     capabilities.project_lifecycle = true;
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.
@@ -2611,7 +2627,7 @@ fn structured_prestart_lifecycle(
 ) -> Option<ShellCommandExecutionState> {
     matches!(
         request.kind.as_str(),
-        "start_process_job" | "start_script_job"
+        "start_process_job" | "start_detached_process_job" | "start_script_job"
     )
     .then_some(ShellCommandExecutionState::NotStarted)
 }
@@ -2962,6 +2978,29 @@ fn validate_runner_job_context(
                 stdin_present: request.stdin.is_some(),
             })
         }
+        "start_detached_process_job" => {
+            if !request.command.is_empty()
+                || request.script.is_some()
+                || request.process.is_none()
+                || request.sandbox.is_some()
+                || context.ssh_resource.is_some()
+            {
+                return Err("typed detached process Job request shape is invalid".to_string());
+            }
+            let process = request
+                .process
+                .as_ref()
+                .expect("checked detached process payload");
+            shell_protocol::validate_process_argv(process)?;
+            validate_runner_structured_common(request)?;
+            Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+                execution_source: "run_detached_process".to_string(),
+                language: None,
+                script_bytes: None,
+                arg_count: process.args.len(),
+                stdin_present: request.stdin.is_some(),
+            })
+        }
         "start_script_job" => {
             if !request.command.is_empty()
                 || request.process.is_some()
@@ -3055,6 +3094,14 @@ fn validate_runner_structured_common(request: &ShellAgentShellRequest) -> Result
 }
 
 impl JobManager {
+    fn detached_store_for_start(&self) -> Result<DetachedJobStore, String> {
+        #[cfg(test)]
+        if let Some(root) = lock_unpoison(&self.detached_store_root_override).clone() {
+            return Ok(DetachedJobStore::new(root));
+        }
+        DetachedJobStore::default_root().map(DetachedJobStore::new)
+    }
+
     fn install_sink(&self, sink: AgentSink) {
         *lock_unpoison(&self.current_sink) = Some(sink);
         self.delivery_signal.notify();
@@ -3377,7 +3424,7 @@ impl JobManager {
         inventory
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     fn recover_detached_jobs(
         &self,
         store: DetachedJobStore,
@@ -3447,26 +3494,29 @@ impl JobManager {
                 }
             }
         }
-        let mut recovered = 0usize;
+        let recovered = observers.len();
         for (job_id, detached) in observers {
-            match self.spawn_detached_observer(job_id.clone(), detached) {
-                Ok(()) => recovered = recovered.saturating_add(1),
-                Err(error) => {
-                    lock_unpoison(&self.detached_jobs).remove(&job_id);
-                    lock_unpoison(&self.jobs).remove(&job_id);
-                    tracing::error!(job_id = %job_id, error = %error, "detached Job observer startup failed closed");
-                }
+            if let Err(error) = self.spawn_detached_observer(job_id.clone(), detached) {
+                // Observation is best-effort after exact durable ownership has
+                // been recovered. Keep the durable control reference and Job
+                // projection so shutdown exclusion and normal stop routing
+                // remain correct even when live observation is degraded.
+                tracing::error!(job_id = %job_id, error = %error, "detached Job observer startup failed; durable control retained");
             }
         }
         Ok(recovered)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     fn spawn_detached_observer(
         &self,
         job_id: String,
         detached: DetachedJobRef,
     ) -> Result<(), String> {
+        #[cfg(test)]
+        if self.fail_detached_observer_spawn.load(Ordering::SeqCst) {
+            return Err("test-injected detached observer startup failure".to_string());
+        }
         let manager = self.clone_for_worker();
         let shutting_down = Arc::clone(&self.shutting_down);
         let worker_guard = self.workers.enter();
@@ -3863,7 +3913,17 @@ impl JobManager {
             self.shutdown_rejection(&start.request);
             return;
         }
-        if matches!(
+        if start.request.kind == "start_detached_process_job" {
+            let PendingJobStart {
+                generation,
+                policy,
+                shell,
+                projects_dir,
+                request,
+                ..
+            } = start;
+            self.start_detached_process_job(generation, policy, shell, projects_dir, request);
+        } else if matches!(
             start.request.kind.as_str(),
             "start_process_job" | "start_script_job"
         ) {
@@ -3926,6 +3986,174 @@ impl JobManager {
             };
             self.start_now(start);
         }
+    }
+
+    fn start_detached_process_job(
+        &self,
+        generation: u64,
+        policy: AgentPolicy,
+        shell: ShellConfig,
+        projects_dir: PathBuf,
+        request: ShellAgentShellRequest,
+    ) {
+        let Some(job_id) = request.job_id.clone() else {
+            return;
+        };
+        let (stop_requested, agent_instance_id) = {
+            let _lifecycle = lock_unpoison(&self.lifecycle);
+            if self.shutting_down.load(Ordering::SeqCst) {
+                (None, None)
+            } else {
+                let mut jobs = lock_unpoison(&self.jobs);
+                let Some(job) = jobs.get_mut(&job_id) else {
+                    return;
+                };
+                job.slot_reserved = true;
+                (
+                    Some(Arc::clone(&job.stop_requested)),
+                    Some(job.agent_instance_id.clone()),
+                )
+            }
+        };
+        let (Some(stop_requested), Some(agent_instance_id)) = (stop_requested, agent_instance_id)
+        else {
+            self.shutdown_rejection(&request);
+            return;
+        };
+        let Some(process) = request.process.clone() else {
+            self.fail_job(
+                &request,
+                "typed detached process Job request is missing its payload".to_string(),
+                None,
+            );
+            return;
+        };
+        let Some(context) = request.job_context.clone() else {
+            self.fail_job(
+                &request,
+                "detached process Job request is missing recovery context".to_string(),
+                None,
+            );
+            return;
+        };
+        let manager = self.clone_for_worker();
+        let worker_guard = self.workers.enter();
+        std::thread::spawn(move || {
+            let _worker_guard = worker_guard;
+            let prepared = match prepare_detached_process_launch(
+                generation,
+                &policy,
+                &shell,
+                &projects_dir,
+                &manager.prepared_profiles,
+                request.cwd.as_deref(),
+                &process.executable,
+                &process.args,
+                request.timeout_secs,
+                Some(stop_requested.as_ref()),
+            ) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    manager.fail_job(&request, error, None);
+                    manager.start_available_queued();
+                    return;
+                }
+            };
+            if stop_requested.load(Ordering::SeqCst) || manager.shutting_down.load(Ordering::SeqCst)
+            {
+                manager.update_and_send(
+                    &job_id,
+                    RunnerJobDelta {
+                        status: "stopped".to_string(),
+                        duration_ms: Some(0),
+                        error: Some(
+                            "detached process Job stopped before ownership acceptance".to_string(),
+                        ),
+                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
+                        finished: true,
+                        ..Default::default()
+                    },
+                );
+                manager.start_available_queued();
+                return;
+            }
+            let store = match manager.detached_store_for_start() {
+                Ok(store) => store,
+                Err(error) => {
+                    manager.fail_job(&request, error, None);
+                    manager.start_available_queued();
+                    return;
+                }
+            };
+            let detached_request = DetachedStartRequest {
+                job_id: job_id.clone(),
+                request_id: request.request_id.clone(),
+                client_id: request.client_id.clone(),
+                agent_instance_id,
+                context,
+                launch: DetachedLaunchSpec {
+                    process: prepared.process,
+                    cwd: Some(prepared.cwd),
+                    stdin: request.stdin.clone(),
+                    env: prepared.env,
+                    timeout_secs: prepared.timeout_secs,
+                },
+            };
+            let outcome = match handoff_detached_job(&store, detached_request) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    match store.read(&job_id) {
+                        Ok(record) => {
+                            if let Err(sync_error) = manager.sync_detached_record(&job_id, &record)
+                            {
+                                tracing::error!(job_id = %job_id, error = %sync_error, "detached Job failed-start durable sync failed closed");
+                            }
+                        }
+                        Err(_) => manager.fail_job(&request, error, None),
+                    }
+                    manager.start_available_queued();
+                    return;
+                }
+            };
+            let (execution_id, record, observe) = match outcome {
+                DetachedHandoffOutcome::Accepted {
+                    execution_id,
+                    record,
+                    ..
+                }
+                | DetachedHandoffOutcome::Existing {
+                    execution_id,
+                    record,
+                }
+                | DetachedHandoffOutcome::OutcomeUnknown {
+                    execution_id,
+                    record,
+                } => (execution_id, record, true),
+                DetachedHandoffOutcome::PreAcceptFailed {
+                    execution_id,
+                    record,
+                } => (execution_id, record, false),
+            };
+            let detached = DetachedJobRef {
+                store: store.clone(),
+                execution_id,
+            };
+            if observe {
+                lock_unpoison(&manager.detached_jobs).insert(job_id.clone(), detached.clone());
+            }
+            match manager.sync_detached_record(&job_id, &record) {
+                Ok(terminal) if !terminal && observe => {
+                    if let Err(error) = manager.spawn_detached_observer(job_id.clone(), detached) {
+                        tracing::error!(job_id = %job_id, error = %error, "detached Job observer startup failed after ownership handoff; durable control retained");
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::error!(job_id = %job_id, error = %error, "detached Job durable sync failed after ownership handoff; durable control retained");
+                }
+            }
+            manager.start_available_queued();
+        });
     }
 
     fn start_structured_job(
@@ -4935,7 +5163,11 @@ impl JobManager {
                 return Ok(());
             }
         }
-        if let Some(detached) = lock_unpoison(&self.detached_jobs).get(job_id).cloned() {
+        let detached = {
+            let detached_jobs = lock_unpoison(&self.detached_jobs);
+            detached_jobs.get(job_id).cloned()
+        };
+        if let Some(detached) = detached {
             let record = detached
                 .store
                 .request_stop(job_id, &detached.execution_id)?;

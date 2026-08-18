@@ -37,6 +37,33 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::RunDetachedProcess {
+                project,
+                idempotency_key,
+                executable,
+                args,
+                stdin,
+                session_id,
+                timeout_secs,
+                cwd,
+                purpose,
+            } => {
+                self.run_detached_process_with_contract(
+                    project,
+                    idempotency_key,
+                    executable,
+                    args,
+                    stdin,
+                    timeout_secs,
+                    cwd,
+                    purpose,
+                    sandbox,
+                    ssh_resource,
+                    session_id,
+                    auth,
+                )
+                .await
+            }
             ToolCall::RunScript {
                 project,
                 language,

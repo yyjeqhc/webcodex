@@ -1953,6 +1953,7 @@ async fn structured_progress_rejects_invalid_order_and_preserves_fail_fast_plan(
         visibility: crate::shell_client::ShellJobVisibility::Public,
         structured_execution: None,
         stdin: None,
+        detached_idempotency_key: None,
     };
     let duplicate = fixture
         .registry

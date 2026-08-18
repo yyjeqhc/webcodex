@@ -566,6 +566,27 @@ pub enum ToolCall {
         purpose: Option<ExecutionPurpose>,
     },
 
+    /// Admit one native executable + argv as an explicitly detached durable Job.
+    /// The detached supervisor owns the accepted payload tree; ordinary
+    /// RunProcess remains unchanged.
+    RunDetachedProcess {
+        project: String,
+        idempotency_key: String,
+        executable: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        stdin: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        purpose: Option<ExecutionPurpose>,
+    },
+
     /// Execute bounded script content transported as typed data and written to
     /// a Runner-owned temporary file. The selected language is explicit and
     /// never inherited from Session default_shell.
@@ -1957,6 +1978,7 @@ impl ToolCall {
             Self::WorkspaceCheckpointRestore { .. } => "workspace_checkpoint_restore",
             Self::WorkspaceCheckpointDelete { .. } => "workspace_checkpoint_delete",
             Self::RunProcess { .. } => "run_process",
+            Self::RunDetachedProcess { .. } => "run_detached_process",
             Self::RunScript { .. } => "run_script",
             Self::RunShell { .. } => "run_shell",
             Self::OpenSessionShell { .. } => "open_session_shell",
@@ -2047,6 +2069,7 @@ impl ToolCall {
     pub(crate) fn session_id(&self) -> Option<&str> {
         match self {
             Self::RunProcess { session_id, .. }
+            | Self::RunDetachedProcess { session_id, .. }
             | Self::RunScript { session_id, .. }
             | Self::RunShell { session_id, .. }
             | Self::ApplyPatch { session_id, .. }
@@ -2113,6 +2136,7 @@ impl ToolCall {
     pub(crate) fn with_effective_session_id(mut self, effective_session_id: String) -> Self {
         match &mut self {
             Self::RunProcess { session_id, .. }
+            | Self::RunDetachedProcess { session_id, .. }
             | Self::RunScript { session_id, .. }
             | Self::RunShell { session_id, .. }
             | Self::ApplyPatch { session_id, .. }
@@ -2184,7 +2208,11 @@ impl ToolCall {
         execution_context: &SessionExecutionContext,
     ) -> Self {
         match &mut self {
-            Self::RunProcess { cwd, .. } | Self::RunScript { cwd, .. } if cwd.is_none() => {
+            Self::RunProcess { cwd, .. }
+            | Self::RunDetachedProcess { cwd, .. }
+            | Self::RunScript { cwd, .. }
+                if cwd.is_none() =>
+            {
                 *cwd = execution_context.default_cwd.clone();
             }
             Self::RunShell { cwd, shell, .. }
@@ -2205,6 +2233,7 @@ impl ToolCall {
     pub(crate) fn project(&self) -> Option<&str> {
         match self {
             Self::RunProcess { project, .. }
+            | Self::RunDetachedProcess { project, .. }
             | Self::RunScript { project, .. }
             | Self::RunShell { project, .. }
             | Self::OpenSessionShell { project, .. }

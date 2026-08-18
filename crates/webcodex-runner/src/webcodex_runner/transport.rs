@@ -2,7 +2,7 @@ use super::config::{
     max_concurrent_jobs, projects_dir, validate_quic_config, AgentConfig, HotAgentConfig,
     QuicClientConfig, ReloadableAgentConfig,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use super::detached_job::DetachedJobStore;
 use super::lsp::LspSupervisor;
 use super::projects::AgentProjectCache;
@@ -1255,7 +1255,7 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
     // The LSP supervisor belongs to the agent process rather than any server
     // transport session and is shared across reconnects.
     let runtime = AgentRuntimeState::new(&cfg, config_path);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     match DetachedJobStore::default_root() {
         Ok(root) => match runtime.jobs.recover_detached_jobs(
             DetachedJobStore::new(root),

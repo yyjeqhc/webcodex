@@ -1,5 +1,5 @@
 use super::AgentCapability::{
-    AsyncJobs, PersistentShell, Shell, StructuredProcess, StructuredScript,
+    AsyncJobs, DetachedProcess, PersistentShell, Shell, StructuredProcess, StructuredScript,
 };
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
@@ -18,6 +18,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         ModelVisible,
         TOOL_CATEGORY_JOB,
         Some(StructuredProcess),
+        TOOL_PROVIDER_AGENT,
+        JobRun,
+        Some(JOB_RUN),
+        true,
+        NoPath,
+        true,
+        true,
+    ),
+    def(
+        "run_detached_process",
+        ModelVisible,
+        TOOL_CATEGORY_JOB,
+        Some(DetachedProcess),
         TOOL_PROVIDER_AGENT,
         JobRun,
         Some(JOB_RUN),

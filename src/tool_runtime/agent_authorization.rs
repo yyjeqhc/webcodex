@@ -50,11 +50,15 @@ impl ToolRuntime {
         };
         if matches!(
             call,
-            ToolCall::RunProcess { .. } | ToolCall::RunScript { .. }
+            ToolCall::RunProcess { .. }
+                | ToolCall::RunDetachedProcess { .. }
+                | ToolCall::RunScript { .. }
         ) && ssh_resource.is_some()
         {
             let (tool, representation) = if matches!(call, ToolCall::RunScript { .. }) {
                 ("run_script", "typed script payloads")
+            } else if matches!(call, ToolCall::RunDetachedProcess { .. }) {
+                ("run_detached_process", "detached native argv ownership")
             } else {
                 ("run_process", "native argv boundaries")
             };
@@ -138,10 +142,14 @@ impl ToolRuntime {
                     }
                     if matches!(
                         required,
-                        AgentCapability::StructuredProcess | AgentCapability::StructuredScript
+                        AgentCapability::StructuredProcess
+                            | AgentCapability::DetachedProcess
+                            | AgentCapability::StructuredScript
                     ) {
                         let noun = if matches!(required, AgentCapability::StructuredScript) {
                             "script"
+                        } else if matches!(required, AgentCapability::DetachedProcess) {
+                            "detached process"
                         } else {
                             "process"
                         };

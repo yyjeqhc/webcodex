@@ -202,6 +202,10 @@ pub const SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT: &str = "internal_posix_
 /// execution and legacy async-shell capabilities: older B1/B2 Runners may
 /// advertise those capabilities without understanding typed Job starts.
 pub const SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS: &str = "structured_execution_jobs";
+/// Explicit authority for durable detached native-process Jobs whose payload tree is
+/// handed off to the detached supervisor. Missing on older Runners is false and
+/// is never inferred from structured process argv or ordinary durable Job support.
+pub const SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS: &str = "detached_process_jobs";
 /// Explicit capability for agent-side read-only LSP navigation. Missing on
 /// older agents and defaults to `false` so the server never dispatches typed
 /// LSP requests to agents that cannot handle them.
@@ -307,6 +311,7 @@ pub const SHELL_CLIENT_CAPABILITY_NAMES: &[&str] = &[
     SHELL_CLIENT_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
     SHELL_CLIENT_CAPABILITY_INTERNAL_POSIX_SCRIPT,
     SHELL_CLIENT_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
+    SHELL_CLIENT_CAPABILITY_DETACHED_PROCESS_JOBS,
     SHELL_CLIENT_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
     SHELL_CLIENT_CAPABILITY_LSP_CALL_HIERARCHY,
     SHELL_CLIENT_CAPABILITY_SANDBOX_INSPECT_COMMANDS,
@@ -428,6 +433,11 @@ pub struct ShellClientCapabilities {
     /// any synchronous structured-execution or async-shell capability.
     #[serde(default)]
     pub structured_execution_jobs: bool,
+    /// Durable detached native-process ownership handoff. This is an additive
+    /// authority fence and is never implied by structured_process_argv or
+    /// structured_execution_jobs.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub detached_process_jobs: bool,
     /// Read-only semantic navigation via constrained Runner language-server
     /// profiles. Defaults to false for wire compatibility with older agents.
     #[serde(default)]
@@ -560,6 +570,7 @@ impl Default for ShellClientCapabilities {
             structured_script_payload: false,
             internal_posix_script: false,
             structured_execution_jobs: false,
+            detached_process_jobs: false,
             lsp_read_only_navigation: false,
             lsp_call_hierarchy: false,
             sandbox_inspect_commands: false,
@@ -1074,6 +1085,7 @@ pub const PROCESS_ARG_MAX_BYTES: usize = 8_192;
 pub const PROCESS_ARGV_MAX_BYTES: usize = 16_000;
 pub const PROCESS_STDIN_MAX_BYTES: usize = 64 * 1_024;
 pub const PROCESS_CWD_MAX_BYTES: usize = 1_024;
+pub const DETACHED_IDEMPOTENCY_KEY_MAX_BYTES: usize = 128;
 pub const STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS: u64 = 1;
 pub const STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS: u64 = 3_600;
 pub const STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS: u64 = 60;
@@ -2068,7 +2080,7 @@ pub struct ShellJobStructuredExecutionMetadata {
 impl ShellJobStructuredExecutionMetadata {
     pub fn is_valid(&self) -> bool {
         match self.execution_source.as_str() {
-            "run_process" => {
+            "run_process" | "run_detached_process" => {
                 self.language.is_none()
                     && self.script_bytes.is_none()
                     && self.arg_count <= PROCESS_ARG_MAX_COUNT

@@ -232,6 +232,9 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // capability and must fail closed across mixed-version rollout.
             internal_posix_script: false,
             structured_execution_jobs: true,
+            // Detached process authority is advertised only by a running binary
+            // after its durable ownership-transfer backend is installed.
+            detached_process_jobs: false,
             lsp_read_only_navigation: true,
             lsp_call_hierarchy: true,
             sandbox_inspect_commands: false,

@@ -8,6 +8,7 @@ use crate::shell_protocol::{
 };
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -118,6 +119,63 @@ async fn register_process_job_agent(
     )
     .await;
     crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+}
+
+async fn register_detached_process_job_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    root: &std::path::Path,
+    detached_process_jobs: bool,
+) -> String {
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        structured_process_argv: true,
+        structured_execution_jobs: true,
+        detached_process_jobs,
+        ..Default::default()
+    };
+    register_agent_with_projects(
+        runtime,
+        client_id,
+        None,
+        capabilities,
+        vec![registered_project("demo", &root.to_string_lossy())],
+    )
+    .await;
+    crate::tool_runtime::agent_project_runtime_id(client_id, "demo")
+}
+
+fn detached_process_call_with(
+    project: String,
+    idempotency_key: &str,
+    executable: &str,
+    args: Vec<String>,
+    stdin: Option<String>,
+) -> ToolCall {
+    ToolCall::RunDetachedProcess {
+        project,
+        idempotency_key: idempotency_key.to_string(),
+        executable: executable.to_string(),
+        args,
+        stdin,
+        session_id: None,
+        timeout_secs: Some(30),
+        cwd: None,
+        purpose: Some(ExecutionPurpose::Operation),
+    }
+}
+
+fn detached_process_call(project: String) -> ToolCall {
+    detached_process_call_with(
+        project,
+        "detached-process-test-key",
+        "argv-helper",
+        vec!["detached".to_string()],
+        None,
+    )
 }
 
 async fn update_process_job(
@@ -289,6 +347,450 @@ async fn run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes()
         assert_eq!(result.output["execution_source"], "run_process");
         assert_eq!(result.output["purpose"], "diagnostic");
     }
+}
+
+#[tokio::test]
+async fn detached_process_requires_job_run_and_detach_scopes_before_any_admission() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        structured_process_argv: true,
+        structured_execution_jobs: true,
+        detached_process_jobs: true,
+        ..Default::default()
+    };
+    register_agent_with_projects(
+        &runtime,
+        "detached-scope-gate",
+        Some("alice"),
+        capabilities,
+        vec![registered_project("demo", &temp.path().to_string_lossy())],
+    )
+    .await;
+    let project = crate::tool_runtime::agent_project_runtime_id("detached-scope-gate", "demo");
+
+    for (label, mut auth, key) in [
+        (
+            "job-run-only",
+            auth_context(Some("alice"), false),
+            "scope-run",
+        ),
+        (
+            "shared-key-default",
+            shared_key_auth_context("detached-scope"),
+            "scope-shared",
+        ),
+        ("open-default", open_auth_context(), "scope-open"),
+        (
+            "managed-oauth-default",
+            managed_oauth_auth_context("alice", None),
+            "scope-oauth-default",
+        ),
+    ] {
+        if label == "job-run-only" {
+            auth.scopes = vec![crate::auth::SCOPE_JOB_RUN.to_string()];
+        }
+        let outcome = runtime
+            .call_tool_with_context(
+                ToolCallRequest {
+                    tool_name: "run_detached_process".to_string(),
+                    arguments: json!({
+                        "project": project,
+                        "idempotency_key": key,
+                        "executable": "argv-helper",
+                        "args": ["detached"]
+                    }),
+                },
+                ToolCallContext {
+                    transport: ToolTransport::Api,
+                    session_id: None,
+                    auth: Some(&auth),
+                    window: None,
+                    record_oauth_scope_denials: true,
+                    host_file_import_trust:
+                        crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+                },
+            )
+            .await;
+        assert!(
+            !outcome.success,
+            "{label} unexpectedly admitted detached execution"
+        );
+        assert!(
+            outcome.error_status.is_some(),
+            "{label} should fail at scope gate"
+        );
+        assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+        assert!(next_patch_agent_request(&runtime, "detached-scope-gate")
+            .await
+            .is_none());
+    }
+
+    let mut detach_only = auth_context(Some("alice"), false);
+    detach_only.scopes = vec![crate::auth::SCOPE_JOB_DETACH.to_string()];
+    let denied = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "run_detached_process".to_string(),
+                arguments: json!({
+                    "project": project,
+                    "idempotency_key": "scope-detach-only",
+                    "executable": "argv-helper",
+                    "args": ["detached"]
+                }),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: None,
+                auth: Some(&detach_only),
+                window: None,
+                record_oauth_scope_denials: true,
+                host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    assert!(!denied.success);
+    assert!(denied.error_status.is_some());
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+    assert!(next_patch_agent_request(&runtime, "detached-scope-gate")
+        .await
+        .is_none());
+
+    let mut both = auth_context(Some("alice"), false);
+    both.scopes = vec![
+        crate::auth::SCOPE_JOB_RUN.to_string(),
+        crate::auth::SCOPE_JOB_DETACH.to_string(),
+    ];
+    let admitted = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "run_detached_process".to_string(),
+                arguments: json!({
+                    "project": project,
+                    "idempotency_key": "scope-both",
+                    "executable": "argv-helper",
+                    "args": ["detached"]
+                }),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: None,
+                auth: Some(&both),
+                window: None,
+                record_oauth_scope_denials: true,
+                host_file_import_trust: crate::tool_runtime::kernel::HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    assert!(
+        admitted.success,
+        "both scopes should reach admission: {admitted:?}"
+    );
+    let result = admitted.result.expect("admitted detached tool result");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(runtime.shell_clients.list_jobs(Some(10)).await.len(), 1);
+    assert_eq!(
+        next_patch_agent_request(&runtime, "detached-scope-gate")
+            .await
+            .expect("both scopes dispatch exactly one Job")
+            .kind,
+        "start_detached_process_job"
+    );
+    assert!(next_patch_agent_request(&runtime, "detached-scope-gate")
+        .await
+        .is_none());
+}
+
+#[test]
+fn detached_process_audit_is_body_free_for_arbitrary_sentinel_and_digest() {
+    let sentinel = "wc-detached-private-sentinel-4d7a9e";
+    let digest = format!("{:x}", Sha256::digest(sentinel.as_bytes()));
+    let raw = json!({
+        "project": "agent:test:demo",
+        "idempotency_key": "privacy-key",
+        "executable": format!("/tmp/{sentinel}"),
+        "args": [format!("arg-{sentinel}")],
+        "stdin": format!("stdin-{sentinel}"),
+        "timeout_secs": 30,
+        "purpose": "operation"
+    });
+    let log = super::super::tool_audit::session_log_arguments_for_tool_request(
+        "run_detached_process",
+        &raw,
+    );
+    let retained =
+        super::super::sessions::session_input_summary_for_tool("run_detached_process", &raw);
+    let text = format!("{}\n{}", log, retained);
+    assert!(
+        !text.contains(sentinel),
+        "detached audit leaked raw body: {text}"
+    );
+    assert!(
+        !text.contains(&digest),
+        "detached audit leaked body digest: {text}"
+    );
+    assert!(
+        !text.contains("privacy-key"),
+        "detached audit leaked idempotency key: {text}"
+    );
+    assert_eq!(log["process_summary"], "detached process (1 args)");
+}
+
+#[tokio::test]
+async fn detached_process_idempotency_replays_same_intent_and_rejects_conflict() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_detached_process_job_agent(&runtime, "detached-idempotency", temp.path(), true)
+            .await;
+    let auth = auth_context(None, true);
+    let key = "same-public-initiation";
+    let first = runtime
+        .dispatch_with_auth(
+            detached_process_call_with(
+                project.clone(),
+                key,
+                "argv-helper",
+                vec!["detached".to_string()],
+                None,
+            ),
+            Some(&auth),
+        )
+        .await;
+    assert!(first.success, "{:?}", first.error);
+    let job_id = first.output["job_id"].as_str().unwrap().to_string();
+    let request = next_patch_agent_request(&runtime, "detached-idempotency")
+        .await
+        .expect("first initiation dispatches");
+    assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
+
+    let replay = runtime
+        .dispatch_with_auth(
+            detached_process_call_with(
+                project.clone(),
+                key,
+                "argv-helper",
+                vec!["detached".to_string()],
+                None,
+            ),
+            Some(&auth),
+        )
+        .await;
+    assert!(replay.success, "{:?}", replay.error);
+    assert_eq!(replay.output["job_id"], job_id);
+    assert!(
+        next_patch_agent_request(&runtime, "detached-idempotency")
+            .await
+            .is_none(),
+        "same-key same-intent replay must not redispatch"
+    );
+    assert_eq!(runtime.shell_clients.list_jobs(Some(10)).await.len(), 1);
+
+    let conflict = runtime
+        .dispatch_with_auth(
+            detached_process_call_with(
+                project,
+                key,
+                "argv-helper",
+                vec!["different-intent".to_string()],
+                None,
+            ),
+            Some(&auth),
+        )
+        .await;
+    assert!(!conflict.success);
+    assert_eq!(conflict.output["failure_kind"], "idempotency_conflict");
+    assert_eq!(conflict.output["execution_state"], "not_started");
+    assert!(
+        next_patch_agent_request(&runtime, "detached-idempotency")
+            .await
+            .is_none(),
+        "conflicting key must fail before redispatch"
+    );
+    assert_eq!(runtime.shell_clients.list_jobs(Some(10)).await.len(), 1);
+}
+
+#[tokio::test]
+async fn detached_process_lost_initiation_after_server_restart_recovers_same_job_without_redispatch(
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let first_runtime = test_runtime();
+    let project = register_detached_process_job_agent(
+        &first_runtime,
+        "detached-restart-recovery",
+        temp.path(),
+        true,
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let key = "lost-response-restart-key";
+    let first = first_runtime
+        .dispatch_with_auth(
+            detached_process_call_with(
+                project,
+                key,
+                "argv-helper",
+                vec!["detached".to_string()],
+                None,
+            ),
+            Some(&auth),
+        )
+        .await;
+    assert!(first.success, "{:?}", first.error);
+    let job_id = first.output["job_id"].as_str().unwrap().to_string();
+    let request = next_patch_agent_request(&first_runtime, "detached-restart-recovery")
+        .await
+        .expect("first initiation dispatches");
+    let context = request
+        .job_context
+        .clone()
+        .expect("durable detached context");
+    assert_eq!(context.command_preview, "detached process (1 args)");
+    assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
+
+    let restarted = test_runtime();
+    let capabilities = ShellClientCapabilities {
+        shell: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        structured_validation_argv: true,
+        structured_process_argv: true,
+        structured_execution_jobs: true,
+        detached_process_jobs: true,
+        job_state_reconciliation: true,
+        ..Default::default()
+    };
+    restarted
+        .shell_clients
+        .register(crate::shell_protocol::ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: Some(crate::shell_protocol::ShellJobInventory {
+                active_complete: true,
+                jobs: vec![crate::shell_protocol::ShellJobSnapshot {
+                    job_id: job_id.clone(),
+                    request_id: request.request_id.clone(),
+                    status: "running".to_string(),
+                    update_seq: 1,
+                    created_at: request.created_at,
+                    started_at: Some(request.created_at),
+                    ended_at: None,
+                    exit_code: None,
+                    duration_ms: None,
+                    error: None,
+                    command_execution_state: None,
+                    context,
+                    stdout: Default::default(),
+                    stderr: Default::default(),
+                    validation_progress: None,
+                }],
+            }),
+            client_id: "detached-restart-recovery".to_string(),
+            agent_instance_id: "inst".to_string(),
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: Some(capabilities),
+            projects: Some(vec![registered_project(
+                "demo",
+                &temp.path().to_string_lossy(),
+            )]),
+            agent_protocol_version: Some("polling-v1".to_string()),
+            policy: None,
+        })
+        .await
+        .unwrap();
+    let restarted_project =
+        crate::tool_runtime::agent_project_runtime_id("detached-restart-recovery", "demo");
+    let retry = restarted
+        .dispatch_with_auth(
+            detached_process_call_with(
+                restarted_project,
+                key,
+                "argv-helper",
+                vec!["detached".to_string()],
+                None,
+            ),
+            Some(&auth),
+        )
+        .await;
+    assert!(
+        !retry.success,
+        "restart replay must require observation, not redispatch"
+    );
+    assert_eq!(
+        retry.output["failure_kind"],
+        "idempotency_recovery_required"
+    );
+    assert_eq!(retry.output["job_id"], job_id);
+    assert_eq!(retry.output["redispatched"], false);
+    assert!(
+        next_patch_agent_request(&restarted, "detached-restart-recovery")
+            .await
+            .is_none(),
+        "lost-response recovery must not enqueue a second payload"
+    );
+    let status = restarted
+        .job_status_for_auth(job_id.clone(), false, Some(&auth))
+        .await;
+    assert!(
+        status.success,
+        "reconstructed logical Job must remain observable"
+    );
+    assert_eq!(status.output["job_id"], job_id);
+    assert_eq!(status.output["status"], "running");
+}
+
+#[tokio::test]
+async fn detached_process_requires_explicit_runner_authority_before_admission() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_detached_process_job_agent(&runtime, "detached-no-authority", temp.path(), false)
+            .await;
+    let auth = auth_context(None, true);
+    let result = runtime
+        .dispatch_with_auth(detached_process_call(project), Some(&auth))
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_eq!(result.output["failure_kind"], "capability_unavailable");
+    assert!(next_patch_agent_request(&runtime, "detached-no-authority")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn detached_process_uses_existing_job_identity_and_typed_runner_request() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_detached_process_job_agent(&runtime, "detached-product-path", temp.path(), true)
+            .await;
+    let auth = auth_context(None, true);
+    let result = runtime
+        .dispatch_with_auth(detached_process_call(project), Some(&auth))
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let job_id = result.output["job_id"].as_str().unwrap().to_string();
+    assert_eq!(result.output["execution_source"], "run_detached_process");
+
+    let request = next_patch_agent_request(&runtime, "detached-product-path")
+        .await
+        .expect("detached product path should dispatch one typed Job request");
+    assert_eq!(request.kind, "start_detached_process_job");
+    assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
+    assert!(request.process.is_some());
+    assert!(request.script.is_none());
+    assert!(next_patch_agent_request(&runtime, "detached-product-path")
+        .await
+        .is_none());
 }
 
 #[tokio::test]

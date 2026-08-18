@@ -17,6 +17,7 @@ use super::{ExecutionPurpose, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_client::{
     process_preview, ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution,
+    DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
 };
 use crate::shell_protocol::{
     validate_process_argv, ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest,
@@ -344,6 +345,241 @@ impl ToolRuntime {
             true,
         )
         .await
+    }
+
+    /// Admit one explicitly detached native process through the existing durable
+    /// Job identity/admission path. This never falls back to ordinary process,
+    /// shell, script, local execution, or a retrying respawn path.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn run_detached_process_with_contract(
+        &self,
+        project: String,
+        idempotency_key: String,
+        executable: String,
+        args: Vec<String>,
+        stdin: Option<String>,
+        timeout_secs: Option<u64>,
+        cwd: Option<String>,
+        purpose: Option<ExecutionPurpose>,
+        sandbox: Option<&str>,
+        ssh_resource: Option<&str>,
+        session_id: Option<String>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        let budget = match StructuredExecutionBudget::resolve(timeout_secs) {
+            Ok(budget) => budget,
+            Err(error) => {
+                return process_tool_failure_result(
+                    command_rejected_message(
+                        format!("run_detached_process {error}"),
+                        "pass timeout_secs between 1 and 3600, or omit it for the default of 60 seconds.",
+                    ),
+                    "invalid_arguments",
+                    ShellCommandExecutionState::NotStarted,
+                )
+            }
+        };
+        let timeout = budget.effective_timeout_secs;
+        let process = ShellProcessArgv { executable, args };
+        if let Err(error) = validate_process_input(&process, stdin.as_deref(), cwd.as_deref()) {
+            return process_tool_failure_result(
+                command_rejected_message(
+                    error,
+                    "correct the structured process fields and retry; detached execution accepts native argv only.",
+                ),
+                "invalid_arguments",
+                ShellCommandExecutionState::NotStarted,
+            );
+        }
+        if sandbox.is_some() {
+            return process_tool_failure_result(
+                command_rejected_message(
+                    "detached process Jobs do not support inspect sandbox inheritance",
+                    "use run_process for sandboxed synchronous work, or start the detached process from a normal execution Session.",
+                ),
+                "unsupported_sandbox",
+                ShellCommandExecutionState::NotStarted,
+            );
+        }
+        if ssh_resource.is_some() {
+            return process_tool_failure_result(
+                command_rejected_message(
+                    "named Session SSH resources do not support detached native argv ownership",
+                    "run the detached process against the Runner-host project; use run_shell explicitly for remote shell semantics.",
+                ),
+                "unsupported_resource",
+                ShellCommandExecutionState::NotStarted,
+            );
+        }
+        let summary = format!("detached process ({} args)", process.args.len());
+        let declared_purpose = purpose.unwrap_or_default();
+        let proj = match self.resolve_project(&project).await {
+            Ok(project) => project,
+            Err(error) => {
+                return process_tool_failure_result(
+                    command_rejected_message(
+                        error.to_message(),
+                        "verify the project id with list_projects, then retry with a registered Runner project.",
+                    ),
+                    "agent_offline",
+                    ShellCommandExecutionState::NotStarted,
+                )
+            }
+        };
+        if !proj.is_agent() {
+            return process_tool_failure_result(
+                command_rejected_message(
+                    "detached process Jobs require a Runner-owned project",
+                    "choose an Agent-owned project that advertises detached_process_jobs.",
+                ),
+                "capability_unavailable",
+                ShellCommandExecutionState::NotStarted,
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(client_id) => client_id.to_string(),
+            Err(error) => {
+                return process_tool_failure_result(
+                    command_rejected_message(
+                        error,
+                        "refresh the agent project registry with list_projects, then retry.",
+                    ),
+                    "agent_offline",
+                    ShellCommandExecutionState::NotStarted,
+                )
+            }
+        };
+        let effective_cwd = match resolve_agent_cwd(&proj, cwd.as_deref()) {
+            Ok(cwd) => cwd,
+            Err(error) => {
+                return process_tool_failure_result(
+                    command_rejected_message(
+                        error,
+                        "choose '.', an existing project-relative cwd, or an absolute path inside the registered project root.",
+                    ),
+                    "permission_denied",
+                    ShellCommandExecutionState::NotStarted,
+                )
+            }
+        };
+        let resolved_cwd =
+            project_relative_agent_cwd(&proj, &effective_cwd).unwrap_or_else(|_| ".".to_string());
+        let capabilities = match self.shell_clients.get_client_capabilities(&client_id).await {
+            Ok(capabilities) => capabilities,
+            Err(error) => {
+                return process_tool_failure_result(
+                    command_rejected_message(
+                        error.to_string(),
+                        "confirm the Runner is registered and connected, then retry.",
+                    ),
+                    "agent_offline",
+                    ShellCommandExecutionState::NotStarted,
+                )
+            }
+        };
+        if !capabilities.detached_process_jobs
+            || !capabilities.structured_process_argv
+            || !capabilities.structured_execution_jobs
+            || !(capabilities.async_jobs || capabilities.async_shell_jobs)
+        {
+            return process_tool_failure_result(
+                command_rejected_message(
+                    "capability_unavailable: this Runner does not advertise the complete detached_process_jobs structured Job contract",
+                    "upgrade or select a Runner that explicitly advertises detached_process_jobs; do not retry as ordinary run_process.",
+                ),
+                "capability_unavailable",
+                ShellCommandExecutionState::NotStarted,
+            );
+        }
+        match self
+            .shell_clients
+            .start_job_with_metadata_for_auth(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some(client_id),
+                    cwd: Some(effective_cwd),
+                    command: Some(String::new()),
+                    timeout_secs: Some(timeout),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "tool_runtime".to_string(),
+                ShellJobStartMetadata {
+                    project_id: Some(project.clone()),
+                    session_id,
+                    project_cwd: Some(resolved_cwd.clone()),
+                    purpose: Some(declared_purpose.as_str().to_string()),
+                    shell: Some("direct_argv".to_string()),
+                    visibility: ShellJobVisibility::Public,
+                    structured_execution: Some(StructuredJobExecution::DetachedProcess(process)),
+                    stdin,
+                    detached_idempotency_key: Some(idempotency_key),
+                    ..Default::default()
+                },
+                auth,
+            )
+            .await
+        {
+            Ok(job) => ToolResult::ok(json!({
+                "job_id": job.job_id,
+                "kind": job.kind,
+                "status": job.status,
+                "project": project,
+                "execution_source": "run_detached_process",
+                "purpose": declared_purpose.as_str(),
+                "process_summary": summary,
+                "cwd": resolved_cwd,
+                "shell": "direct_argv",
+                "executor": "agent",
+                "execution_state": "pending",
+                "command_started": false,
+                "command_completed": false,
+                "terminal": false,
+                "effective_timeout_secs": timeout,
+                "created_at": job.created_at,
+                "observation_token": job.observation_token,
+                "last_update_seq": job.last_update_seq,
+            })),
+            Err(error) => {
+                if let Some(job_id) = error.strip_prefix(DETACHED_IDEMPOTENCY_RECOVERY_PREFIX) {
+                    return ToolResult::err_with_output(
+                        "detached initiation key already identifies a durable logical Job reconstructed after Server restart; the resent body was not redispatched. Observe the returned job_id instead of retrying execution.".to_string(),
+                        json!({
+                            "job_id": job_id,
+                            "execution_state": "not_started",
+                            "command_started": false,
+                            "command_completed": false,
+                            "command_ok": false,
+                            "failure_kind": "idempotency_recovery_required",
+                            "redispatched": false,
+                            "tool_failure": true,
+                        }),
+                    );
+                }
+                if error.starts_with(DETACHED_IDEMPOTENCY_CONFLICT) {
+                    return process_tool_failure_result(
+                        command_rejected_message(
+                            &error,
+                            "use a fresh idempotency_key for a different detached process intent; the existing logical Job was left unchanged.",
+                        ),
+                        "idempotency_conflict",
+                        ShellCommandExecutionState::NotStarted,
+                    );
+                }
+                process_tool_failure_result(
+                    command_rejected_message(
+                        &error,
+                        "observe the deterministic logical Job if an initiating response may have been lost; do not retry with a fresh key unless no Job was admitted.",
+                    ),
+                    classify_process_failure(&error),
+                    ShellCommandExecutionState::NotStarted,
+                )
+            }
+        }
     }
 
     /// Execute one server-owned fixed process synchronously without exposing the

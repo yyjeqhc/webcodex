@@ -147,7 +147,8 @@ mod tests {
     use crate::auth::scopes::{
         SCOPE_COMPUTER_CLIPBOARD_READ, SCOPE_COMPUTER_CLIPBOARD_WRITE, SCOPE_COMPUTER_CONTROL,
         SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ,
-        SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+        SCOPE_JOB_DETACH, SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
+        SCOPE_RUNTIME_READ,
     };
     use crate::tool_runtime::{is_known_tool_name, known_tool_names};
 
@@ -167,7 +168,9 @@ mod tests {
             let Some(scope) = metadata.oauth_scope else {
                 continue;
             };
-            let expected = if metadata.name == "computer_save_snapshot" {
+            let expected = if metadata.name == "run_detached_process" {
+                OAuthToolScopePolicy::RequireAll(&[SCOPE_JOB_RUN, SCOPE_JOB_DETACH])
+            } else if metadata.name == "computer_save_snapshot" {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ])
             } else if metadata.name == "computer_read_clipboard" {
                 OAuthToolScopePolicy::RequireAll(&[

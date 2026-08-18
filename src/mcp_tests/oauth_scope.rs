@@ -324,6 +324,52 @@ async fn oauth2_mcp_tool_call_requires_job_run_for_run_shell() {
 }
 
 #[tokio::test]
+async fn oauth2_mcp_detached_process_requires_job_run_and_job_detach() {
+    for (scopes, missing) in [
+        ("job:run", crate::auth::SCOPE_JOB_DETACH),
+        ("job:detach", crate::auth::SCOPE_JOB_RUN),
+    ] {
+        let (_tmp, service, token) =
+            oauth_mcp_service_with_surface(scopes, ModelSurface::FullOperatorRuntime);
+        let (status, body, challenge) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            json!({
+                "name": "run_detached_process",
+                "arguments": {
+                    "project": "demo",
+                    "idempotency_key": "oauth-detached-scope",
+                    "executable": "argv-helper",
+                    "args": []
+                }
+            }),
+        )
+        .await;
+        assert_mcp_oauth_scope_rejected(status, &body, challenge.as_deref(), Some(missing));
+    }
+
+    let (_tmp, service, token) =
+        oauth_mcp_service_with_surface("job:run job:detach", ModelSurface::FullOperatorRuntime);
+    let (status, body, _) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": "run_detached_process",
+            "arguments": {
+                "project": "demo",
+                "idempotency_key": "oauth-detached-both",
+                "executable": "argv-helper",
+                "args": []
+            }
+        }),
+    )
+    .await;
+    assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+}
+
+#[tokio::test]
 async fn oauth2_mcp_unknown_tool_fails_closed() {
     let (_tmp, service, token) = oauth_mcp_service_with_surface(
         "runtime:read project:read",

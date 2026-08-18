@@ -426,6 +426,13 @@ pub(crate) fn session_input_summary_for_tool(tool_name: &str, arguments: &Value)
             object.remove("stdin");
             object.remove("process_summary");
         }
+        "run_detached_process" => {
+            object.remove("executable");
+            object.remove("args");
+            object.remove("stdin");
+            object.remove("idempotency_key");
+            object.remove("process_summary");
+        }
         "run_script" => {
             object.remove("script");
             object.remove("args");

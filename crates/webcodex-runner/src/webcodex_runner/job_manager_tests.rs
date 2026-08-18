@@ -604,6 +604,63 @@ fn detached_recovery_stop_uses_durable_control_without_managed_child() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn detached_recovery_observer_start_failure_retains_durable_control_and_stop_routing() {
+    let temp = tempfile::tempdir().unwrap();
+    let pid_marker = temp.path().join("payload.pid");
+    let store = DetachedJobStore::new(temp.path().join("state"));
+    let request = detached_job_request(
+        temp.path(),
+        "detached-observer-start-failure",
+        "pid_sleep",
+        vec![(
+            "PID_MARKER".to_string(),
+            pid_marker.to_string_lossy().into_owned(),
+        )],
+    );
+    let _ = handoff_detached_job(&store, request.clone()).unwrap();
+    assert!(wait_until(Duration::from_secs(5), || pid_marker.exists()));
+    let payload_pid: u32 = std::fs::read_to_string(&pid_marker)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(process_running(payload_pid));
+
+    let manager = JobManager::new(1);
+    manager
+        .fail_detached_observer_spawn
+        .store(true, Ordering::SeqCst);
+    assert_eq!(
+        manager
+            .recover_detached_jobs(store.clone(), "detached-agent", "replacement-instance")
+            .unwrap(),
+        1
+    );
+    assert!(lock_unpoison(&manager.detached_jobs).contains_key(&request.job_id));
+    assert!(lock_unpoison(&manager.jobs).contains_key(&request.job_id));
+    assert!(
+        !manager.has_work(),
+        "detached durable ownership must remain excluded from Runner work drain"
+    );
+    manager.stop_accepting_work();
+    let shutdown = manager.signal_all_for_shutdown();
+    assert_eq!(shutdown.running, 0);
+    assert!(shutdown.targets.is_empty());
+    assert!(!store.read(&request.job_id).unwrap().stop_requested);
+
+    manager.stop(&request.job_id).unwrap();
+    let terminal = store.read(&request.job_id).unwrap();
+    assert!(terminal.stop_requested);
+    assert_eq!(terminal.phase, DetachedJobPhase::Terminal);
+    assert_eq!(terminal.terminal.unwrap().status, "stopped");
+    assert!(wait_until(Duration::from_secs(5), || !process_running(
+        payload_pid
+    )));
+    assert!(!lock_unpoison(&manager.detached_jobs).contains_key(&request.job_id));
+    wait_for_job_workers(&manager);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn detached_recovery_observer_marks_later_supervisor_loss() {
     let temp = tempfile::tempdir().unwrap();
     let pid_marker = temp.path().join("payload.pid");
@@ -953,6 +1010,17 @@ fn structured_process_context(
     context
 }
 
+fn detached_process_context(cwd: &Path, arg_count: usize, stdin_present: bool) -> ShellJobContext {
+    let mut context = structured_process_context(cwd, arg_count, stdin_present);
+    context.command_preview = format!("detached process ({arg_count} args)");
+    context
+        .structured_execution
+        .as_mut()
+        .expect("structured detached metadata")
+        .execution_source = "run_detached_process".to_string();
+    context
+}
+
 #[cfg(unix)]
 fn structured_script_context(
     cwd: &Path,
@@ -1036,6 +1104,129 @@ fn enqueue_structured_process_job(
             .unwrap(),
         },
     );
+}
+
+fn enqueue_detached_process_job(
+    manager: &JobManager,
+    sink: AgentSink,
+    cwd: &Path,
+    job_id: &str,
+    executable: &Path,
+    args: Vec<String>,
+    stdin: Option<String>,
+    timeout_secs: u64,
+) {
+    let context = detached_process_context(cwd, args.len(), stdin.is_some());
+    manager.enqueue(
+        sink,
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                ..AgentPolicy::default()
+            },
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: cwd.join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": format!("request-{job_id}"),
+                "client_id": "structured-agent",
+                "kind": "start_detached_process_job",
+                "job_id": job_id,
+                "cwd": cwd,
+                "command": "",
+                "process": {
+                    "executable": executable,
+                    "args": args,
+                },
+                "stdin": stdin,
+                "timeout_secs": timeout_secs,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "job_context": context,
+            }))
+            .unwrap(),
+        },
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn detached_process_jobmanager_initiation_handoffs_once_and_stops_via_durable_control() {
+    let temp = tempfile::tempdir().unwrap();
+    let state_root = temp.path().join("detached-state");
+    let store = DetachedJobStore::new(state_root.clone());
+    let helper = structured_process_helper();
+    let marker = temp.path().join("starts.log");
+    let job_id = "detached-jobmanager-initiation";
+    let nonce = "phase3-init-once";
+    let args = vec![
+        "mark-sleep".to_string(),
+        marker.to_string_lossy().into_owned(),
+        nonce.to_string(),
+        "30000".to_string(),
+    ];
+    let manager = JobManager::new(1);
+    *lock_unpoison(&manager.detached_store_root_override) = Some(state_root);
+    let (sink, _rx) = structured_test_sink("structured-agent", "inst");
+
+    enqueue_detached_process_job(
+        &manager,
+        sink,
+        temp.path(),
+        job_id,
+        &helper.path,
+        args,
+        None,
+        60,
+    );
+    assert!(wait_until(Duration::from_secs(5), || marker.exists()));
+    assert!(wait_until(Duration::from_secs(5), || store
+        .read(job_id)
+        .is_ok_and(|record| record.phase == DetachedJobPhase::Running)));
+    let running = store.read(job_id).unwrap();
+    assert_eq!(running.context.command_preview, "detached process (4 args)");
+    assert_eq!(
+        running
+            .context
+            .structured_execution
+            .as_ref()
+            .unwrap()
+            .execution_source,
+        "run_detached_process"
+    );
+    assert_eq!(
+        lock_unpoison(&manager.detached_jobs)
+            .get(job_id)
+            .unwrap()
+            .execution_id,
+        running.execution_id
+    );
+    let starts = std::fs::read_to_string(&marker).unwrap();
+    assert_eq!(starts.lines().count(), 1);
+    assert!(starts.contains(nonce));
+    let payload_pid: u32 = starts
+        .lines()
+        .next()
+        .unwrap()
+        .split(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(process_running(payload_pid));
+
+    manager.stop(job_id).unwrap();
+    let terminal = store.read(job_id).unwrap();
+    assert_eq!(terminal.phase, DetachedJobPhase::Terminal);
+    assert!(terminal.stop_requested);
+    assert_eq!(terminal.terminal.unwrap().status, "stopped");
+    assert!(wait_until(Duration::from_secs(5), || !process_running(
+        payload_pid
+    )));
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    assert!(!lock_unpoison(&manager.detached_jobs).contains_key(job_id));
+    wait_for_job_workers(&manager);
 }
 
 #[cfg(unix)]

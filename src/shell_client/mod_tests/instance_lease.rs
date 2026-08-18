@@ -530,3 +530,231 @@ async fn lease_register_rejects_empty_instance_id() {
         .unwrap_err();
     assert!(err.contains("agent_instance_id"), "error was: {err}");
 }
+
+#[tokio::test]
+async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() {
+    let registry = ShellClientRegistry::default();
+    let capabilities = || ShellClientCapabilities {
+        jobs: true,
+        async_jobs: true,
+        async_shell_jobs: true,
+        job_state_reconciliation: true,
+        structured_process_argv: true,
+        structured_execution_jobs: true,
+        detached_process_jobs: true,
+        ..Default::default()
+    };
+    registry
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: Some(crate::shell_protocol::ShellJobInventory {
+                active_complete: true,
+                jobs: Vec::new(),
+            }),
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst-a".to_string(),
+            display_name: None,
+            owner: Some("alice".to_string()),
+            hostname: None,
+            host_context: None,
+            capabilities: Some(capabilities()),
+            projects: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
+            policy: None,
+        })
+        .await
+        .unwrap();
+
+    let job = registry
+        .start_job_with_metadata(
+            ShellJobOpRequest {
+                op: "start".to_string(),
+                client_id: Some("oe".to_string()),
+                cwd: Some("/tmp".to_string()),
+                command: Some(String::new()),
+                timeout_secs: Some(60),
+                job_id: None,
+                since_stdout_line: None,
+                since_stderr_line: None,
+                tail_lines: None,
+                limit: None,
+                codex: None,
+            },
+            "tester".to_string(),
+            ShellJobStartMetadata {
+                purpose: Some("test".to_string()),
+                shell: Some("direct_argv".to_string()),
+                structured_execution: Some(StructuredJobExecution::DetachedProcess(
+                    crate::shell_protocol::ShellProcessArgv {
+                        executable: "/bin/sleep".to_string(),
+                        args: vec!["60".to_string()],
+                    },
+                )),
+                detached_idempotency_key: Some("lease-detached-transfer".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(ShellAgentPollRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst-a".to_string(),
+            projects: None,
+        })
+        .await
+        .unwrap()
+        .expect("detached start must dispatch to original instance");
+    assert_eq!(request.kind, "start_detached_process_job");
+    assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
+
+    registry
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst-a".to_string(),
+            job_id: job.job_id.clone(),
+            request_id: job.request_id.clone(),
+            update_seq: Some(1),
+            status: "running".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            finished: false,
+        })
+        .await
+        .unwrap();
+
+    let snapshot = {
+        let inner = registry.inner.lock().await;
+        let record = inner.jobs_by_id.get(&job.job_id).unwrap();
+        crate::shell_protocol::ShellJobSnapshot {
+            job_id: record.job_id.clone(),
+            request_id: record.request_id.clone().unwrap(),
+            status: record.status.clone(),
+            update_seq: record.last_update_seq,
+            created_at: record.created_at,
+            started_at: record.started_at,
+            ended_at: record.ended_at,
+            exit_code: record.exit_code,
+            duration_ms: record.duration_ms,
+            error: record.error.clone(),
+            command_execution_state: record.command_execution_state,
+            context: crate::shell_protocol::ShellJobContext {
+                runtime_project_id: record.project_id.clone(),
+                workflow_session_id: record.session_id.clone(),
+                ssh_resource: record.ssh_resource.clone(),
+                project_cwd: record.project_cwd.clone(),
+                cwd: record.cwd.clone(),
+                purpose: record.purpose.clone(),
+                shell: record.shell.clone(),
+                command_preview: record.command_preview.clone(),
+                validation_steps: record.validation_steps.clone(),
+                validation: record.validation.clone(),
+                structured_execution: record.structured_execution.clone(),
+            },
+            stdout: Default::default(),
+            stderr: Default::default(),
+            validation_progress: record.validation_progress.clone(),
+        }
+    };
+
+    registry
+        .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
+        .await;
+    let view = registry
+        .register(ShellClientRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: Some(crate::shell_protocol::ShellJobInventory {
+                active_complete: true,
+                jobs: vec![snapshot.clone()],
+            }),
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst-b".to_string(),
+            display_name: None,
+            owner: Some("alice".to_string()),
+            hostname: None,
+            host_context: None,
+            capabilities: Some(capabilities()),
+            projects: None,
+            agent_protocol_version: Some("polling-v1".to_string()),
+            policy: None,
+        })
+        .await
+        .expect("exact detached recovery inventory must transfer to replacement instance");
+    assert_eq!(view.agent_instance_id, "inst-b");
+
+    {
+        let inner = registry.inner.lock().await;
+        let record = inner.jobs_by_id.get(&job.job_id).unwrap();
+        assert_eq!(record.agent_instance_id, "inst-b");
+        assert_eq!(record.status, "running");
+        assert_eq!(record.last_update_seq, snapshot.update_seq);
+        assert_eq!(
+            record.recovery_reason_code.as_deref(),
+            Some("detached_instance_transfer")
+        );
+    }
+
+    let updated = registry
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst-b".to_string(),
+            job_id: job.job_id.clone(),
+            request_id: job.request_id.clone(),
+            update_seq: Some(snapshot.update_seq + 1),
+            status: "running".to_string(),
+            stdout_chunk: Some("continued\n".to_string()),
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            finished: false,
+        })
+        .await
+        .expect("replacement instance must own subsequent detached updates");
+    assert_eq!(updated.status, "running");
+
+    let stale = registry
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "inst-a".to_string(),
+            job_id: job.job_id.clone(),
+            request_id: job.request_id.clone(),
+            update_seq: Some(snapshot.update_seq + 2),
+            status: "running".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            finished: false,
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        stale.contains("no longer the active instance")
+            || stale.contains("replaced runner instance"),
+        "stale instance must remain fenced: {stale}"
+    );
+}

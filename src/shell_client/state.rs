@@ -3,8 +3,8 @@ use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
     ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
     ShellCommandExecutionState, ShellJobCodexMetadata, ShellJobStructuredExecutionMetadata,
-    ShellJobValidationProgress, ShellRunResponse, JOB_INVENTORY_MAX_TERMINAL_JOBS,
-    JOB_TERMINAL_RETENTION_SECS,
+    ShellJobValidationProgress, ShellProcessArgv, ShellRunResponse,
+    JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_TERMINAL_RETENTION_SECS,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicU64;
@@ -151,6 +151,22 @@ pub(crate) enum ShellJobVisibility {
     CleanupPending,
 }
 
+/// Server-process-local exact intent retained only to prove same-key detached
+/// replays. It is never serialized into Runner protocol, durable state, audit,
+/// or Session evidence; restart reconstruction deliberately restores `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DetachedIdempotencyIntent {
+    pub(super) project_id: Option<String>,
+    pub(super) session_id: Option<String>,
+    pub(super) project_cwd: Option<String>,
+    pub(super) cwd: Option<String>,
+    pub(super) purpose: Option<String>,
+    pub(super) shell: Option<String>,
+    pub(super) process: ShellProcessArgv,
+    pub(super) stdin: Option<String>,
+    pub(super) timeout_secs: u64,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ShellJobRecord {
     pub(super) job_id: String,
@@ -172,6 +188,10 @@ pub(super) struct ShellJobRecord {
     pub(super) purpose: Option<String>,
     pub(super) shell: Option<String>,
     pub(super) command_preview: String,
+    /// Exact detached replay intent is process-local only. Reconstructed Jobs
+    /// keep this `None`, forcing exact logical-Job recovery instead of guessing
+    /// that a resent body matches after Server restart.
+    pub(super) detached_idempotency_intent: Option<DetachedIdempotencyIntent>,
     pub(super) status: String,
     pub(super) created_at: i64,
     pub(super) started_at: Option<i64>,

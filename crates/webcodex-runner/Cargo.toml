@@ -64,7 +64,9 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
     "Win32_Storage_Xps",
+    "Win32_System_Threading",
 ] }
 
 # Windows-native process liveness probe for MCP tests (OpenProcess +

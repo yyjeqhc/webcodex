@@ -23,7 +23,10 @@ pub(super) fn decorate_structured_execution_prestart_denial(
     result: &mut ToolResult,
     fallback_failure_kind: &'static str,
 ) {
-    if !matches!(tool_name, "run_process" | "run_script") {
+    if !matches!(
+        tool_name,
+        "run_process" | "run_detached_process" | "run_script"
+    ) {
         return;
     }
     let mut output = match std::mem::take(&mut result.output) {
@@ -200,6 +203,9 @@ impl ToolRuntime {
                     executable,
                     args.iter().map(String::as_str),
                 )),
+                ToolCall::RunDetachedProcess { args, .. } => {
+                    Some(format!("detached process ({} args)", args.len()))
+                }
                 ToolCall::RunScript {
                     language,
                     script,
@@ -371,6 +377,7 @@ impl ToolRuntime {
                     if matches!(
                         &call,
                         ToolCall::RunProcess { .. }
+                            | ToolCall::RunDetachedProcess { .. }
                             | ToolCall::RunScript { .. }
                             | ToolCall::RunShell { .. }
                             | ToolCall::RunJob { .. }
@@ -707,6 +714,7 @@ impl ToolRuntime {
             | ToolCall::CreateProject { .. }) => self.dispatch_project_tool(call, auth).await,
 
             call @ (ToolCall::RunProcess { .. }
+            | ToolCall::RunDetachedProcess { .. }
             | ToolCall::RunScript { .. }
             | ToolCall::RunShell { .. }) => {
                 self.dispatch_shell_tool(call, execution_sandbox, ssh_resource, auth)

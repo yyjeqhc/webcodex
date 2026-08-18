@@ -67,7 +67,8 @@ pub(crate) use projects::{
 };
 pub(crate) use shell::{
     configured_prepared_shell_job_command, configured_shell_job_command,
-    configured_validation_job_command, cwd_allowed, resolve_prepared_shell_profile,
+    configured_validation_job_command, cwd_allowed, prepare_detached_process_launch,
+    resolve_prepared_shell_profile,
     run_internal_posix_script_with_profiles_in_sandbox_and_execution_state,
     run_internal_search_script_with_profiles_in_sandbox_and_execution_state,
     run_process_with_profiles_in_sandbox_and_execution_state,

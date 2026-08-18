@@ -2603,7 +2603,15 @@ struct JobShutdownOutcome {
 }
 
 fn shutdown_target_running(target: &mut JobShutdownTarget) -> bool {
-    managed_tree_running(&target.child)
+    if managed_tree_running(&target.child) {
+        return true;
+    }
+    // Tree liveness and direct-child reaping are distinct on Unix. Darwin can
+    // prove a zombie-only process group non-executable just before waitpid makes
+    // the direct child's status observable. Keep the shutdown target pending
+    // within the existing global deadline until that direct child is reaped;
+    // do not re-signal the already-confirmed-empty process group.
+    !reap_managed_direct_child(&target.child, Instant::now()).unwrap_or(false)
 }
 
 #[derive(Debug, Default)]

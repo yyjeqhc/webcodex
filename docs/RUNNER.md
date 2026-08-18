@@ -297,7 +297,9 @@ a separate distribution identity without sharing the local development grant.
 
 A Runner that can invoke the local OpenSSH client advertises the `ssh_shell`
 capability. A Workflow Session may select a named SSH resource so `run_shell`
-and `run_job` execute on a remote host through the Runner's own OpenSSH client:
+and `run_job` execute on a remote host through the Runner's own OpenSSH client.
+On Unix, a Runner that also advertises `ssh_persistent_shell` can use the same
+resource for `open_session_shell`:
 
 ```toml
 [ssh.resources.tmp]
@@ -309,8 +311,9 @@ The `host` value is passed to the Runner machine's OpenSSH client, so normal
 `~/.ssh/config`, keys, `ssh-agent`, and `ProxyJump` configuration remain on
 that machine. Do not put credentials, private keys, or complete SSH
 configuration into session data, Server storage, or tool input. A Session's
-`execution_context.resource` changes only `run_shell` and `run_job`; file,
-Git, and LSP tools remain local.
+`execution_context.resource` routes `run_shell`, `run_job`, and supported
+`open_session_shell` calls through that resource; file, Git, and LSP tools
+remain local.
 
 ## LSP navigation (read-only)
 

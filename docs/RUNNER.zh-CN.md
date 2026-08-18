@@ -260,7 +260,8 @@ macOS release 可以使用独立的 distribution identity，不与本地开发�
 
 能够调用本地 OpenSSH 客户端的 Runner 会声明 `ssh_shell` capability。Workflow
 Session 可以选择命名的 SSH 资源，使 `run_shell` 与 `run_job` 通过 Runner 自己的
-OpenSSH 客户端在远程主机上执行：
+OpenSSH 客户端在远程主机上执行。在 Unix 上，如果 Runner 还声明
+`ssh_persistent_shell`，同一资源也可以用于 `open_session_shell`：
 
 ```toml
 [ssh.resources.tmp]
@@ -271,7 +272,8 @@ default_cwd = "/opt/webcodex-edge"
 `host` 值会传给 Runner 机器的 OpenSSH 客户端，因此 `~/.ssh/config`、密钥、
 `ssh-agent`、`ProxyJump` 等配置都留在该机器上。不要把凭据、私钥或完整 SSH 配置
 放进 Session 数据、Server 存储或工具输入。Session 的 `execution_context.resource`
-只改变 `run_shell` 与 `run_job`；文件、Git、LSP 工具仍在本地。
+会让 `run_shell`、`run_job` 以及受支持的 `open_session_shell` 调用通过该资源执行；
+文件、Git、LSP 工具仍在本地。
 
 ## LSP 导航（只读）
 

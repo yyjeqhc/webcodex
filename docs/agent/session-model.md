@@ -5,7 +5,8 @@ casual vocabulary only. They must not be merged, cross-wired, or inferred from
 each other.
 
 Executable constraints that agents must obey live in
-[`AGENTS.md`](../../AGENTS.md) §7, **Sessions**. Standing architecture summary:
+[`AGENTS.md`](../../AGENTS.md); this document is the Workflow Sessions domain
+source linked from §6. Standing architecture summary:
 [`architecture-decisions.md`](architecture-decisions.md) §1.
 
 ---
@@ -251,8 +252,8 @@ proved, it kills the group, marks the shell poisoned/lost, returns
 
 Persistent shells are process-local and are not durable Job records. Neither a
 Server nor Runner restart claims to recover or reattach one from ledger data.
-There is no SSH persistent shell, PTY, raw keystroke/input stream, terminal
-resize, WebSocket terminal UI, or full-screen terminal application support.
+There is no PTY, raw keystroke/input stream, terminal resize, WebSocket terminal
+UI, or full-screen terminal application support.
 The Session ledger stores bounded lifecycle and permission evidence
 (`shell_id`, action, shell/execution state, error code, and completion flags),
 never command text, stdout/stderr, the complete environment, internal shell

@@ -217,7 +217,7 @@ Windows `SendInput` uses the shared interactive-desktop input stream; the exact 
 
 ## Next capability sequence
 
-After the near-term slices are dogfooded, the expected order is:
+The planned mainline sequence is now complete on Windows:
 
 ```text
 Windows UIA parity
@@ -228,6 +228,8 @@ Windows UIA parity
 ```
 
 Windows parity should map UI Automation patterns into the same WebCodex semantic action/affordance vocabulary instead of exposing a second OS-specific model API.
+
+Windows Computer Use current planned mainline capabilities are implemented, independently reviewed, production-dogfooded, and integrated-dogfooded; future work is dogfood-driven maintenance rather than checklist parity.
 
 Full-display observation receives separate authority from single-window observation because it widens the privacy surface. Pointer actions depend on fresh snapshot generation, correct display-local geometry, DPI/display handling, and post-effect reconciliation. Windows clipboard read/write is implemented, independently reviewed, and production-dogfood accepted as separately scoped bounded global authority.
 

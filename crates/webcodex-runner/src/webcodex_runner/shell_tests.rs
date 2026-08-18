@@ -1113,7 +1113,9 @@ fn powershell_runtime_executes_from_file_when_available() {
             args: vec!["two words".to_string()],
         },
         None,
-        10,
+        // This smoke validates external PowerShell file execution, not timeout
+        // behavior. Allow cold pwsh startup under a loaded CI runner.
+        30,
         None,
         None,
     );

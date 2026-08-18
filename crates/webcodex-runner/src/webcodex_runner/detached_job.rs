@@ -1118,7 +1118,7 @@ fn detached_process_identity_is_live(
 }
 
 #[cfg(target_os = "macos")]
-fn native_process_start_identity(pid: u32) -> Result<String, String> {
+fn macos_process_start_identity(pid: u32) -> Result<Option<String>, String> {
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
     let size = std::mem::size_of::<libc::proc_bsdinfo>();
     // SAFETY: `info` points to writable storage for exactly one proc_bsdinfo,
@@ -1133,9 +1133,16 @@ fn native_process_start_identity(pid: u32) -> Result<String, String> {
         )
     };
     if bytes != size as libc::c_int {
+        let error = io::Error::last_os_error();
+        if bytes == 0 && error.raw_os_error() == Some(libc::ESRCH) {
+            // Darwin reports an unreaped zombie as ESRCH here even while
+            // kill(pid, 0) can still succeed. A zombie cannot execute and its
+            // process-owned lifetime lock is already released, so this is
+            // definitive dead evidence for recovery without a PID-only probe.
+            return Ok(None);
+        }
         return Err(format!(
-            "failed to read detached macOS process start identity for pid {pid}: returned {bytes} bytes ({})",
-            io::Error::last_os_error()
+            "failed to read detached macOS process start identity for pid {pid}: returned {bytes} bytes ({error})"
         ));
     }
     // SAFETY: proc_pidinfo reported that it initialized the complete structure.
@@ -1143,10 +1150,17 @@ fn native_process_start_identity(pid: u32) -> Result<String, String> {
     if info.pbi_start_tvsec == 0 && info.pbi_start_tvusec == 0 {
         return Err("missing macOS process start identity".to_string());
     }
-    Ok(format!(
+    Ok(Some(format!(
         "macos_start_{}_{}",
         info.pbi_start_tvsec, info.pbi_start_tvusec
-    ))
+    )))
+}
+
+#[cfg(target_os = "macos")]
+fn native_process_start_identity(pid: u32) -> Result<String, String> {
+    macos_process_start_identity(pid)?.ok_or_else(|| {
+        format!("detached macOS process {pid} exited before its start identity was captured")
+    })
 }
 
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
@@ -1163,18 +1177,8 @@ fn detached_process_identity_is_live(
     identity: &DetachedProcessIdentity,
 ) -> Result<bool, String> {
     validate_process_identity("recovery", identity)?;
-    let current_start = match native_process_start_identity(identity.pid) {
-        Ok(value) => value,
-        Err(error) => {
-            // PID-only probing is never positive identity evidence. It is used
-            // only after the Darwin birth-time query failed, to distinguish a
-            // definitely vanished process from an indeterminate query failure.
-            let probe = unsafe { libc::kill(identity.pid as libc::pid_t, 0) };
-            if probe != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
-                return Ok(false);
-            }
-            return Err(error);
-        }
+    let Some(current_start) = macos_process_start_identity(identity.pid)? else {
+        return Ok(false);
     };
     if current_start != identity.native_start_id {
         return Ok(false);

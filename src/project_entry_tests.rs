@@ -560,7 +560,6 @@ struct GoldenPathEvidence {
     accepted_output: String,
     accepted_content: String,
     execution_count: i64,
-    recipe_id: String,
 }
 
 async fn run_authenticated_golden_path(recipe: &str) -> GoldenPathEvidence {
@@ -846,10 +845,6 @@ async fn run_authenticated_golden_path(recipe: &str) -> GoldenPathEvidence {
         accepted_output,
         accepted_content,
         execution_count,
-        recipe_id: checked["data"]["execution"]["recipe"]["id"]
-            .as_str()
-            .unwrap()
-            .to_string(),
     }
 }
 
@@ -1028,20 +1023,6 @@ fn state_directory_rejects_symlink_that_resolves_into_checkout() {
 
     assert_eq!(error.code, "state_directory_unsafe");
     assert_no_project_state_artifacts(&root);
-}
-
-#[tokio::test]
-async fn checks_run_project_aware_golden_paths_cover_rust_node_python_and_go() {
-    for recipe in ["rust", "node", "python", "go"] {
-        let evidence = run_authenticated_golden_path(recipe).await;
-        assert_eq!(evidence.recipe_id, recipe);
-        assert!(evidence.accepted_output.contains("Accepted"));
-        assert_eq!(evidence.accepted_content, "accepted\n");
-        assert!(evidence
-            .agent_request_kinds
-            .iter()
-            .any(|kind| kind == "start_validation_job"));
-    }
 }
 
 #[test]

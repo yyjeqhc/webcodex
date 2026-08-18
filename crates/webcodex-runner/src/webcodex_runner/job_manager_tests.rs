@@ -1,4 +1,9 @@
 use super::*;
+#[cfg(target_os = "linux")]
+use crate::webcodex_runner::detached_job::{
+    handoff_detached_job, DetachedJobPhase, DetachedJobStore, DetachedLaunchSpec,
+    DetachedStartRequest,
+};
 use serde_json::json;
 use std::ffi::OsString;
 use std::io::BufReader;
@@ -344,6 +349,321 @@ fn validation_wait_failure_is_executor_owned_without_a_failed_check() {
         validation_failed_step("failed", Some("check exited non-zero"), "check"),
         Some("check".to_string())
     );
+}
+
+#[cfg(target_os = "linux")]
+fn detached_job_request(
+    cwd: &std::path::Path,
+    job_id: &str,
+    scenario: &str,
+    mut env: Vec<(String, String)>,
+) -> DetachedStartRequest {
+    env.push((
+        "WEBCODEX_DETACHED_JOB_MANAGER_SCENARIO".to_string(),
+        scenario.to_string(),
+    ));
+    DetachedStartRequest {
+        job_id: job_id.to_string(),
+        request_id: format!("request-{job_id}"),
+        client_id: "detached-agent".to_string(),
+        agent_instance_id: "old-runner-instance".to_string(),
+        context: ShellJobContext {
+            runtime_project_id: Some("agent:detached-agent:project".to_string()),
+            workflow_session_id: None,
+            ssh_resource: None,
+            project_cwd: Some(cwd.to_string_lossy().into_owned()),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            purpose: Some("test".to_string()),
+            shell: Some("direct_argv".to_string()),
+            command_preview: "detached test process".to_string(),
+            validation_steps: Vec::new(),
+            validation: None,
+            structured_execution: Some(shell_protocol::ShellJobStructuredExecutionMetadata {
+                execution_source: "run_process".to_string(),
+                language: None,
+                script_bytes: None,
+                arg_count: 3,
+                stdin_present: false,
+            }),
+        },
+        launch: DetachedLaunchSpec {
+            process: shell_protocol::ShellProcessArgv {
+                executable: std::env::current_exe()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                args: vec![
+                    "--exact".to_string(),
+                    "job_manager_tests::detached_job_payload_subprocess_entrypoint".to_string(),
+                    "--nocapture".to_string(),
+                ],
+            },
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            stdin: None,
+            env,
+            timeout_secs: 30,
+        },
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn detached_job_payload_subprocess_entrypoint() {
+    let Ok(scenario) = std::env::var("WEBCODEX_DETACHED_JOB_MANAGER_SCENARIO") else {
+        return;
+    };
+    match scenario.as_str() {
+        "terminal_output" => {
+            let marker = PathBuf::from(std::env::var_os("MARKER").unwrap());
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(marker)
+                .unwrap();
+            writeln!(file, "run").unwrap();
+            file.flush().unwrap();
+            println!("before");
+            std::io::stdout().flush().unwrap();
+            std::thread::sleep(Duration::from_secs(2));
+            println!("after");
+        }
+        "sleep" => {
+            println!("ready");
+            std::io::stdout().flush().unwrap();
+            std::thread::sleep(Duration::from_secs(30));
+        }
+        "pid_sleep" => {
+            let marker = PathBuf::from(std::env::var_os("PID_MARKER").unwrap());
+            std::fs::write(marker, std::process::id().to_string()).unwrap();
+            std::thread::sleep(Duration::from_secs(30));
+        }
+        other => panic!("unknown detached JobManager payload scenario: {other}"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn detached_recovery_uses_same_inventory_and_observes_terminal_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("runs");
+    let store = DetachedJobStore::new(temp.path().join("state"));
+    let request = detached_job_request(
+        temp.path(),
+        "detached-recovery-terminal",
+        "terminal_output",
+        vec![("MARKER".to_string(), marker.to_string_lossy().into_owned())],
+    );
+    let outcome = handoff_detached_job(&store, request.clone()).unwrap();
+    assert!(matches!(
+        outcome,
+        crate::webcodex_runner::detached_job::DetachedHandoffOutcome::Accepted { .. }
+    ));
+    assert!(wait_until(Duration::from_secs(5), || store
+        .read(&request.job_id)
+        .is_ok_and(|record| record.phase == DetachedJobPhase::Running)));
+
+    let manager = JobManager::new(1);
+    assert_eq!(
+        manager
+            .recover_detached_jobs(store.clone(), "detached-agent", "new-runner-instance")
+            .unwrap(),
+        1
+    );
+    let recovered = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == request.job_id)
+        .unwrap();
+    assert_eq!(recovered.status, "running");
+    let local = lock_unpoison(&manager.jobs)
+        .get(&request.job_id)
+        .cloned()
+        .unwrap();
+    assert_eq!(local.agent_instance_id, "new-runner-instance");
+    assert!(local.child.is_none());
+    assert!(lock_unpoison(&manager.detached_jobs).contains_key(&request.job_id));
+
+    assert!(wait_until(Duration::from_secs(10), || manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == request.job_id)
+        .is_some_and(|snapshot| snapshot.status == "completed")));
+    let terminal = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == request.job_id)
+        .unwrap();
+    assert_eq!(terminal.status, "completed");
+    assert!(terminal.stdout.tail.contains("before\n"));
+    assert!(terminal.stdout.tail.contains("after\n"));
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    assert!(!lock_unpoison(&manager.detached_jobs).contains_key(&request.job_id));
+    wait_for_job_workers(&manager);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn detached_recovery_runner_shutdown_preserves_supervisor_ownership() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = DetachedJobStore::new(temp.path().join("state"));
+    let request = detached_job_request(
+        temp.path(),
+        "detached-recovery-shutdown",
+        "sleep",
+        Vec::new(),
+    );
+    let _ = handoff_detached_job(&store, request.clone()).unwrap();
+    assert!(wait_until(Duration::from_secs(5), || store
+        .read(&request.job_id)
+        .is_ok_and(|record| record.phase == DetachedJobPhase::Running)));
+    let manager = JobManager::new(1);
+    manager
+        .recover_detached_jobs(store.clone(), "detached-agent", "new-runner-instance")
+        .unwrap();
+    assert!(
+        !manager.has_work(),
+        "detached ownership must not block current Runner-owned work drain"
+    );
+    let supervisor_pid = store.read(&request.job_id).unwrap().supervisor.unwrap().pid;
+    assert!(process_running(supervisor_pid));
+
+    manager.stop_accepting_work();
+    let batch = manager.signal_all_for_shutdown();
+    assert_eq!(batch.running, 0);
+    assert!(batch.targets.is_empty());
+    assert!(!store.read(&request.job_id).unwrap().stop_requested);
+    drop(manager);
+    assert!(wait_until(Duration::from_secs(2), || process_running(
+        supervisor_pid
+    )));
+    let still_running = store.read(&request.job_id).unwrap();
+    assert!(!still_running.stop_requested);
+
+    store
+        .request_stop(&request.job_id, &still_running.execution_id)
+        .unwrap();
+    assert!(wait_until(Duration::from_secs(5), || store
+        .read(&request.job_id)
+        .is_ok_and(|record| record.phase == DetachedJobPhase::Terminal)));
+    assert_eq!(
+        store
+            .read(&request.job_id)
+            .unwrap()
+            .terminal
+            .unwrap()
+            .status,
+        "stopped"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn detached_recovery_stop_uses_durable_control_without_managed_child() {
+    let temp = tempfile::tempdir().unwrap();
+    let pid_marker = temp.path().join("payload.pid");
+    let store = DetachedJobStore::new(temp.path().join("state"));
+    let request = detached_job_request(
+        temp.path(),
+        "detached-recovery-stop",
+        "pid_sleep",
+        vec![(
+            "PID_MARKER".to_string(),
+            pid_marker.to_string_lossy().into_owned(),
+        )],
+    );
+    let _ = handoff_detached_job(&store, request.clone()).unwrap();
+    assert!(wait_until(Duration::from_secs(5), || pid_marker.exists()));
+    let payload_pid: u32 = std::fs::read_to_string(&pid_marker)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(process_running(payload_pid));
+
+    let manager = JobManager::new(1);
+    manager
+        .recover_detached_jobs(store.clone(), "detached-agent", "new-runner-instance")
+        .unwrap();
+    assert!(lock_unpoison(&manager.jobs)
+        .get(&request.job_id)
+        .unwrap()
+        .child
+        .is_none());
+    manager.stop(&request.job_id).unwrap();
+    let terminal = store.read(&request.job_id).unwrap();
+    assert_eq!(terminal.phase, DetachedJobPhase::Terminal);
+    assert!(terminal.stop_requested);
+    assert_eq!(terminal.terminal.unwrap().status, "stopped");
+    assert!(wait_until(Duration::from_secs(5), || !process_running(
+        payload_pid
+    )));
+    wait_for_job_workers(&manager);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn detached_recovery_observer_marks_later_supervisor_loss() {
+    let temp = tempfile::tempdir().unwrap();
+    let pid_marker = temp.path().join("payload.pid");
+    let store = DetachedJobStore::new(temp.path().join("state"));
+    let request = detached_job_request(
+        temp.path(),
+        "detached-recovery-supervisor-loss",
+        "pid_sleep",
+        vec![(
+            "PID_MARKER".to_string(),
+            pid_marker.to_string_lossy().into_owned(),
+        )],
+    );
+    let _ = handoff_detached_job(&store, request.clone()).unwrap();
+    assert!(wait_until(Duration::from_secs(5), || pid_marker.exists()));
+    let payload_pid: u32 = std::fs::read_to_string(&pid_marker)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let supervisor_pid = store.read(&request.job_id).unwrap().supervisor.unwrap().pid;
+
+    let manager = JobManager::new(1);
+    manager
+        .recover_detached_jobs(store.clone(), "detached-agent", "new-runner-instance")
+        .unwrap();
+    assert!(process_running(supervisor_pid));
+    assert!(process_running(payload_pid));
+
+    // Test-only fault: kill the exact PID just read from the durable record.
+    // Production recovery never signals by PID; it only observes native start
+    // identity plus the lifetime lock and persists supervisor_lost.
+    unsafe {
+        libc::kill(supervisor_pid as i32, libc::SIGKILL);
+    }
+    assert!(wait_until(Duration::from_secs(5), || !process_running(
+        supervisor_pid
+    )));
+    assert!(wait_until(Duration::from_secs(5), || !process_running(
+        payload_pid
+    )));
+    assert!(wait_until(Duration::from_secs(5), || manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == request.job_id)
+        .is_some_and(|snapshot| {
+            snapshot.status == "lost"
+                && snapshot.command_execution_state
+                    == Some(ShellCommandExecutionState::OutcomeUnknown)
+        })));
+    assert_eq!(
+        store
+            .read(&request.job_id)
+            .unwrap()
+            .terminal
+            .unwrap()
+            .status,
+        "supervisor_lost"
+    );
+    wait_for_job_workers(&manager);
 }
 
 #[cfg(target_os = "linux")]

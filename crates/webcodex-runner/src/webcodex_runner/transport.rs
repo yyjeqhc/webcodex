@@ -2,6 +2,8 @@ use super::config::{
     max_concurrent_jobs, projects_dir, validate_quic_config, AgentConfig, HotAgentConfig,
     QuicClientConfig, ReloadableAgentConfig,
 };
+#[cfg(target_os = "linux")]
+use super::detached_job::DetachedJobStore;
 use super::lsp::LspSupervisor;
 use super::projects::AgentProjectCache;
 use super::shutdown::{
@@ -1253,6 +1255,28 @@ pub(crate) fn run_agent(cfg: AgentConfig, config_path: PathBuf, once: bool) -> R
     // The LSP supervisor belongs to the agent process rather than any server
     // transport session and is shared across reconnects.
     let runtime = AgentRuntimeState::new(&cfg, config_path);
+    #[cfg(target_os = "linux")]
+    match DetachedJobStore::default_root() {
+        Ok(root) => match runtime.jobs.recover_detached_jobs(
+            DetachedJobStore::new(root),
+            &cfg.client_id,
+            &agent_instance_id,
+        ) {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "recovered detached Jobs before Runner registration");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                // Recovery is fail-closed for the detached records but must not
+                // brick ordinary Runner service. Omitting an untrusted/corrupt
+                // detached record lets normal Server reconciliation mark it lost.
+                tracing::error!(error = %error, "detached Job restart recovery failed closed");
+            }
+        },
+        Err(error) => {
+            tracing::error!(error = %error, "detached Job state root is unavailable");
+        }
+    }
     let shutdown_listener = install_shutdown_listener(runtime.clone())?;
     runtime.register_background_thread(shutdown_listener);
     #[cfg(unix)]

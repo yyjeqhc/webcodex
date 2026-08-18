@@ -26,7 +26,8 @@ use std::sync::mpsc;
 use std::time::Instant;
 use uuid::Uuid;
 use webcodex_core::shell_protocol::{
-    validate_process_argv, ShellJobContext, ShellProcessArgv, JOB_INVENTORY_MAX_JOBS,
+    validate_process_argv, ShellCommandExecutionState, ShellJobContext, ShellJobSnapshot,
+    ShellJobStreamSnapshot, ShellProcessArgv, JOB_INVENTORY_MAX_JOBS,
     JOB_SNAPSHOT_STREAM_MAX_BYTES, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
     STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
@@ -40,7 +41,7 @@ use std::os::unix::process::CommandExt;
 #[cfg(unix)]
 use webcodex_process::ManagedChild;
 
-pub(crate) const DETACHED_STATE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const DETACHED_STATE_SCHEMA_VERSION: u32 = 2;
 pub(crate) const DETACHED_STATE_MAX_RECORDS: usize = JOB_INVENTORY_MAX_JOBS;
 // JSON escaping can expand the two retained 64 KiB text tails substantially
 // (for example NUL becomes six JSON bytes). Keep one explicit 1 MiB record
@@ -54,6 +55,7 @@ pub(crate) const DETACHED_ENV_TOTAL_MAX_BYTES: usize = 64 * 1024;
 pub(crate) const DETACHED_LAUNCH_MAX_BYTES: usize = 192 * 1024;
 pub(crate) const DETACHED_HANDOFF_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const DETACHED_CHECKPOINT_INTERVAL: Duration = Duration::from_millis(250);
+const DETACHED_CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const DETACHED_OUTPUT_CHANNEL_CAPACITY: usize = 64;
 const DETACHED_OUTPUT_READ_CHUNK: usize = 8 * 1024;
 const DETACHED_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -155,6 +157,8 @@ pub(crate) struct DetachedJobRecord {
     pub(crate) agent_instance_id: String,
     pub(crate) context: ShellJobContext,
     pub(crate) phase: DetachedJobPhase,
+    pub(crate) update_seq: u64,
+    pub(crate) stop_requested: bool,
     pub(crate) created_at_unix_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) supervisor_started_at_unix_ms: Option<i64>,
@@ -272,6 +276,129 @@ impl DetachedJobStore {
         Ok(record)
     }
 
+    pub(crate) fn scan_for_client(
+        &self,
+        client_id: &str,
+    ) -> Result<Vec<DetachedJobRecord>, String> {
+        validate_identity("client_id", client_id, 128)?;
+        match fs::symlink_metadata(&self.root) {
+            Ok(_) => reject_symlink_or_non_dir(&self.root, "detached Job state root")?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect detached Job state root {}: {error}",
+                    self.root.display()
+                ))
+            }
+        }
+        let mut records = Vec::new();
+        let mut job_dirs = 0usize;
+        for entry in fs::read_dir(&self.root)
+            .map_err(|error| format!("failed to list detached Job state root: {error}"))?
+        {
+            let entry =
+                entry.map_err(|error| format!("failed to inspect detached Job state: {error}"))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("failed to inspect detached Job state entry: {error}"))?;
+            if file_type.is_symlink() {
+                return Err("detached Job state root contains a symlink entry".to_string());
+            }
+            if !file_type.is_dir() {
+                continue;
+            }
+            job_dirs = job_dirs.saturating_add(1);
+            if job_dirs > DETACHED_STATE_MAX_RECORDS {
+                return Err(format!(
+                    "detached Job state root exceeds {DETACHED_STATE_MAX_RECORDS} records"
+                ));
+            }
+            let record: DetachedJobRecord = read_json_bounded(
+                &entry.path().join(STATE_FILE),
+                DETACHED_STATE_MAX_BYTES,
+                "detached Job state",
+            )?;
+            validate_record(&record)?;
+            if self.job_dir(&record.job_id) != entry.path() {
+                return Err(
+                    "detached Job state directory does not match its job identity".to_string(),
+                );
+            }
+            if record.client_id == client_id {
+                records.push(record);
+            }
+        }
+        records.sort_by(|left, right| left.job_id.cmp(&right.job_id));
+        Ok(records)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn reconcile_after_runner_restart(
+        &self,
+        record: DetachedJobRecord,
+    ) -> Result<Option<DetachedJobRecord>, String> {
+        validate_record(&record)?;
+        if record.phase == DetachedJobPhase::Terminal {
+            return Ok(Some(record));
+        }
+        if record.ownership_accepted_at_unix_ms.is_none() {
+            // No payload exists before acceptance. The old Runner's launch pipe
+            // closes on process death, so the supervisor owns persistence of the
+            // resulting handoff_failed state; a replacement Runner never resumes it.
+            return Ok(None);
+        }
+        let supervisor = record
+            .supervisor
+            .as_ref()
+            .ok_or_else(|| "accepted detached Job is missing supervisor identity".to_string())?;
+        if detached_process_identity_is_live(
+            &self.job_dir(&record.job_id).join(SUPERVISOR_LOCK_FILE),
+            supervisor,
+        )? {
+            return Ok(Some(record));
+        }
+        let refreshed = self.read(&record.job_id)?;
+        if refreshed.phase == DetachedJobPhase::Terminal {
+            return Ok(Some(refreshed));
+        }
+        let started_at = refreshed
+            .payload_started_at_unix_ms
+            .or(refreshed.ownership_accepted_at_unix_ms)
+            .unwrap_or(refreshed.created_at_unix_ms);
+        let execution_id = refreshed.execution_id.clone();
+        self.update(&refreshed.job_id, &execution_id, |current| {
+            if current.phase != DetachedJobPhase::Terminal {
+                set_terminal(
+                    current,
+                    "supervisor_lost",
+                    None,
+                    Some(
+                        "detached supervisor is no longer live after Runner restart reconciliation",
+                    ),
+                    started_at,
+                );
+            }
+            Ok(())
+        })
+        .map(Some)
+    }
+
+    pub(crate) fn request_stop(
+        &self,
+        job_id: &str,
+        execution_id: &str,
+    ) -> Result<DetachedJobRecord, String> {
+        self.update(job_id, execution_id, |record| {
+            if record.ownership_accepted_at_unix_ms.is_none() {
+                return Err(
+                    "detached Job cannot be stopped before ownership acceptance".to_string()
+                );
+            }
+            record.stop_requested = true;
+            Ok(())
+        })
+    }
+
     fn prepare(&self, request: &DetachedStartRequest) -> Result<PrepareOutcome, String> {
         validate_start_request(request)?;
         ensure_private_dir(&self.root)?;
@@ -309,6 +436,8 @@ impl DetachedJobStore {
             agent_instance_id: request.agent_instance_id.clone(),
             context: request.context.clone(),
             phase: DetachedJobPhase::Prepared,
+            update_seq: 0,
+            stop_requested: false,
             created_at_unix_ms: unix_ms(),
             supervisor_started_at_unix_ms: None,
             ownership_accepted_at_unix_ms: None,
@@ -355,6 +484,13 @@ impl DetachedJobStore {
             return Ok(previous);
         }
         update(&mut record)?;
+        if record == previous {
+            return Ok(previous);
+        }
+        record.update_seq = previous
+            .update_seq
+            .checked_add(1)
+            .ok_or_else(|| "detached Job update sequence overflow".to_string())?;
         validate_transition(&previous, &record)?;
         validate_record(&record)?;
         atomic_write_json(&job_dir.join(STATE_FILE), &record, DETACHED_STATE_MAX_BYTES)?;
@@ -623,6 +759,9 @@ fn validate_record(record: &DetachedJobRecord) -> Result<(), String> {
         (_, Some(_)) => return Err("non-terminal detached Job has a terminal result".to_string()),
         _ => {}
     }
+    if record.stop_requested && record.ownership_accepted_at_unix_ms.is_none() {
+        return Err("detached Job stop request predates ownership acceptance".to_string());
+    }
     let encoded = serde_json::to_vec(record)
         .map_err(|error| format!("failed to encode detached Job state: {error}"))?;
     if encoded.len() > DETACHED_STATE_MAX_BYTES {
@@ -678,6 +817,28 @@ fn native_process_start_identity(_pid: u32) -> Result<String, String> {
     )
 }
 
+#[cfg(target_os = "linux")]
+fn detached_process_identity_is_live(
+    lock_path: &Path,
+    identity: &DetachedProcessIdentity,
+) -> Result<bool, String> {
+    validate_process_identity("recovery", identity)?;
+    let current_start = match native_process_start_identity(identity.pid) {
+        Ok(value) => value,
+        Err(error) => {
+            let proc_stat = PathBuf::from(format!("/proc/{}/stat", identity.pid));
+            if !proc_stat.exists() {
+                return Ok(false);
+            }
+            return Err(error);
+        }
+    };
+    if current_start != identity.native_start_id {
+        return Ok(false);
+    }
+    lifetime_lock_is_held(lock_path, &identity.creation_id)
+}
+
 fn validate_output_state(name: &str, output: &DetachedOutputState) -> Result<(), String> {
     if output.tail.len() > JOB_SNAPSHOT_STREAM_MAX_BYTES
         || output.retained_bytes != output.tail.len()
@@ -699,6 +860,12 @@ fn validate_output_state(name: &str, output: &DetachedOutputState) -> Result<(),
 fn validate_terminal(terminal: &DetachedTerminalResult) -> Result<(), String> {
     if terminal.status.is_empty() || terminal.status.len() > 64 {
         return Err("detached Job terminal status is invalid".to_string());
+    }
+    if !matches!(
+        terminal.status.as_str(),
+        "completed" | "failed" | "stopped" | "timeout" | "handoff_failed" | "supervisor_lost"
+    ) {
+        return Err("detached Job terminal status is unsupported".to_string());
     }
     if terminal
         .error
@@ -724,6 +891,12 @@ fn validate_transition(
         || previous.created_at_unix_ms != next.created_at_unix_ms
     {
         return Err("detached Job immutable durable identity changed".to_string());
+    }
+    if next.update_seq != previous.update_seq.saturating_add(1) {
+        return Err("detached Job update sequence must advance exactly once".to_string());
+    }
+    if previous.stop_requested && !next.stop_requested {
+        return Err("detached Job stop request cannot be cleared".to_string());
     }
     if next.phase.rank() < previous.phase.rank() {
         return Err("detached Job phase cannot regress".to_string());
@@ -796,6 +969,62 @@ fn append_output_tail(output: &mut DetachedOutputState, raw_bytes: usize, text: 
     output.next_line = output
         .first_retained_line
         .saturating_add(detached_retained_line_count(&output.tail));
+}
+
+pub(crate) fn snapshot_from_detached_record(
+    record: &DetachedJobRecord,
+) -> Result<ShellJobSnapshot, String> {
+    validate_record(record)?;
+    if record.update_seq == 0 {
+        return Err("detached Job snapshot update_seq must be greater than zero".to_string());
+    }
+    let terminal = record.terminal.as_ref();
+    let status = match terminal.map(|value| value.status.as_str()) {
+        Some("handoff_failed") => "failed",
+        Some("supervisor_lost") => "lost",
+        Some("timeout") => "timeout",
+        Some("completed") => "completed",
+        Some("failed") => "failed",
+        Some("stopped") => "stopped",
+        Some(other) => return Err(format!("unsupported detached terminal status {other}")),
+        None if record.stop_requested => "stop_requested",
+        None if record.ownership_accepted_at_unix_ms.is_some() => "running",
+        None => "agent_queued",
+    };
+    let command_execution_state = match terminal.map(|value| value.status.as_str()) {
+        Some("handoff_failed") => Some(ShellCommandExecutionState::NotStarted),
+        Some("supervisor_lost") => Some(ShellCommandExecutionState::OutcomeUnknown),
+        Some("timeout") => Some(ShellCommandExecutionState::TimedOut),
+        Some("completed" | "failed" | "stopped") => Some(ShellCommandExecutionState::Completed),
+        Some(_) => None,
+        None => None,
+    };
+    let stream = |output: &DetachedOutputState| ShellJobStreamSnapshot {
+        tail: output.tail.clone(),
+        first_retained_line: output.first_retained_line,
+        next_line: output.next_line,
+        truncated: output.truncated,
+    };
+    Ok(ShellJobSnapshot {
+        job_id: record.job_id.clone(),
+        request_id: record.request_id.clone(),
+        status: status.to_string(),
+        update_seq: record.update_seq,
+        created_at: record.created_at_unix_ms.div_euclid(1000),
+        started_at: record
+            .payload_started_at_unix_ms
+            .or(record.ownership_accepted_at_unix_ms)
+            .map(|value| value.div_euclid(1000)),
+        ended_at: terminal.map(|value| value.completed_at_unix_ms.div_euclid(1000)),
+        exit_code: terminal.and_then(|value| value.exit_code),
+        duration_ms: terminal.map(|value| value.duration_ms),
+        error: terminal.and_then(|value| value.error.clone()),
+        command_execution_state,
+        context: record.context.clone(),
+        stdout: stream(&record.stdout),
+        stderr: stream(&record.stderr),
+        validation_progress: None,
+    })
 }
 
 fn unix_ms() -> i64 {
@@ -1639,6 +1868,7 @@ fn run_accepted_payload(
     let started = Instant::now();
     let mut state = running;
     let mut last_checkpoint = Instant::now();
+    let mut last_control_poll = Instant::now();
     let mut output_dirty = false;
     let mut stdout_eof = false;
     let mut stderr_eof = false;
@@ -1689,6 +1919,20 @@ fn run_accepted_payload(
             })?;
             output_dirty = false;
             last_checkpoint = Instant::now();
+        }
+
+        if direct_status.is_none()
+            && forced_status.is_none()
+            && last_control_poll.elapsed() >= DETACHED_CONTROL_POLL_INTERVAL
+        {
+            let control = store.read(&state.job_id)?;
+            if control.execution_id != state.execution_id {
+                return Err("detached control state execution identity changed".to_string());
+            }
+            if control.stop_requested {
+                forced_status = Some(("stopped", "job stopped by request".to_string()));
+            }
+            last_control_poll = Instant::now();
         }
 
         if direct_status.is_none() {
@@ -2588,6 +2832,167 @@ mod tests {
         let _ = wait_for_terminal(&store, &request.job_id);
         let runs = fs::read_to_string(marker).unwrap();
         assert_eq!(runs.lines().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn durable_update_sequence_advances_and_duplicate_handoff_does_not() {
+        let _guard = test_env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let request = make_payload_request("count_once", Vec::new());
+        let _ = handoff_detached_job(&store, request.clone()).unwrap();
+        let running = store.read(&request.job_id).unwrap();
+        assert!(running.update_seq >= 3);
+        let sequence = running.update_seq;
+        let replay = handoff_detached_job(&store, request.clone()).unwrap();
+        assert!(matches!(replay, DetachedHandoffOutcome::Accepted { .. }));
+        assert_eq!(store.read(&request.job_id).unwrap().update_seq, sequence);
+        let terminal = wait_for_terminal(&store, &request.job_id);
+        assert!(terminal.update_seq > sequence);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn restart_scan_reconciles_live_detached_execution_without_respawn() {
+        let _guard = test_env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let state_root = temp.path().join("state");
+        let marker = temp.path().join("count");
+        let request = make_payload_request(
+            "count_once",
+            vec![(
+                "PAYLOAD_MARKER".to_string(),
+                marker.to_string_lossy().into_owned(),
+            )],
+        );
+        let instruction = temp.path().join("restart-owner.json");
+        fs::write(
+            &instruction,
+            serde_json::to_vec(&(state_root.clone(), request.clone())).unwrap(),
+        )
+        .unwrap();
+        let mut owner = Command::new(std::env::current_exe().unwrap());
+        owner
+            .arg("--exact")
+            .arg("webcodex_runner::detached_job::tests::accept_then_exit_owner_subprocess_entrypoint")
+            .arg("--nocapture")
+            .env_clear()
+            .env("WEBCODEX_DETACHED_ACCEPT_EXIT_INSTRUCTION", &instruction)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        assert!(owner.spawn().unwrap().wait().unwrap().success());
+
+        let store = DetachedJobStore::new(state_root);
+        assert!(wait_until(Duration::from_secs(5), || store
+            .read(&request.job_id)
+            .is_ok_and(|record| record.phase == DetachedJobPhase::Running)));
+        let records = store.scan_for_client(&request.client_id).unwrap();
+        assert_eq!(records.len(), 1);
+        let recovered = store
+            .reconcile_after_runner_restart(records.into_iter().next().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.job_id, request.job_id);
+        assert_eq!(recovered.phase, DetachedJobPhase::Running);
+        let snapshot = snapshot_from_detached_record(&recovered).unwrap();
+        assert_eq!(snapshot.status, "running");
+        assert_eq!(snapshot.update_seq, recovered.update_seq);
+        let terminal = wait_for_terminal(&store, &request.job_id);
+        assert_eq!(terminal.terminal.as_ref().unwrap().status, "completed");
+        assert_eq!(fs::read_to_string(marker).unwrap().lines().count(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn durable_stop_request_terminates_exact_supervisor_owned_tree() {
+        let _guard = test_env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let parent_marker = temp.path().join("parent.pid");
+        let child_marker = temp.path().join("child.pid");
+        let request = make_payload_request(
+            "tree",
+            vec![
+                (
+                    "PARENT_PID_MARKER".to_string(),
+                    parent_marker.to_string_lossy().into_owned(),
+                ),
+                (
+                    "CHILD_PID_MARKER".to_string(),
+                    child_marker.to_string_lossy().into_owned(),
+                ),
+            ],
+        );
+        let _ = handoff_detached_job(&store, request.clone()).unwrap();
+        assert!(wait_until(Duration::from_secs(5), || {
+            parent_marker.exists() && child_marker.exists()
+        }));
+        let parent_pid: u32 = fs::read_to_string(&parent_marker).unwrap().parse().unwrap();
+        let child_pid: u32 = fs::read_to_string(&child_marker).unwrap().parse().unwrap();
+        let running = store.read(&request.job_id).unwrap();
+        let stopped = store
+            .request_stop(&request.job_id, &running.execution_id)
+            .unwrap();
+        assert!(stopped.stop_requested);
+        assert_eq!(stopped.update_seq, running.update_seq + 1);
+        let terminal = wait_for_terminal(&store, &request.job_id);
+        assert_eq!(terminal.terminal.as_ref().unwrap().status, "stopped");
+        assert!(terminal.update_seq > stopped.update_seq);
+        assert!(wait_until(Duration::from_secs(5), || !process_alive(
+            parent_pid
+        )));
+        assert!(wait_until(Duration::from_secs(5), || !process_alive(
+            child_pid
+        )));
+        let snapshot = snapshot_from_detached_record(&terminal).unwrap();
+        assert_eq!(snapshot.status, "stopped");
+        assert_eq!(
+            snapshot.command_execution_state,
+            Some(ShellCommandExecutionState::Completed)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stale_native_supervisor_identity_reconciles_to_lost_without_respawn() {
+        let _guard = test_env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let store = DetachedJobStore::new(temp.path().join("state"));
+        let request = make_payload_request("delayed_marker", Vec::new());
+        let _ = handoff_detached_job(&store, request.clone()).unwrap();
+        assert!(wait_until(Duration::from_secs(5), || store
+            .read(&request.job_id)
+            .is_ok_and(|record| record.phase == DetachedJobPhase::Running)));
+        let mut running = store.read(&request.job_id).unwrap();
+        let real_supervisor_pid = running.supervisor.as_ref().unwrap().pid;
+        running.supervisor.as_mut().unwrap().native_start_id = "linux_start_0".to_string();
+        atomic_write_json(
+            &store.state_path_for_job(&request.job_id),
+            &running,
+            DETACHED_STATE_MAX_BYTES,
+        )
+        .unwrap();
+        let lost = store
+            .reconcile_after_runner_restart(running)
+            .unwrap()
+            .unwrap();
+        assert_eq!(lost.phase, DetachedJobPhase::Terminal);
+        assert_eq!(lost.terminal.as_ref().unwrap().status, "supervisor_lost");
+        let snapshot = snapshot_from_detached_record(&lost).unwrap();
+        assert_eq!(snapshot.status, "lost");
+        assert_eq!(
+            snapshot.command_execution_state,
+            Some(ShellCommandExecutionState::OutcomeUnknown)
+        );
+        // The replacement reconciler never signals by numeric PID. Clean up the
+        // deliberately still-live test supervisor only after the assertion.
+        unsafe {
+            libc::kill(real_supervisor_pid as i32, libc::SIGKILL);
+        }
+        assert!(wait_until(Duration::from_secs(5), || !process_alive(
+            real_supervisor_pid
+        )));
     }
 
     #[cfg(unix)]

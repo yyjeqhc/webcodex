@@ -202,9 +202,13 @@ impl Drop for ManagedChild {
 
 /// Signal a whole process group, reporting whether it still existed.
 ///
-/// Returns `Ok(true)` when the signal was delivered, `Ok(false)` for `ESRCH`
-/// (the group is already gone), and `Err` for any other failure.
+/// Returns `Ok(true)` when the signal was delivered and `Ok(false)` when the
+/// owned group has no member that can still execute. Normally that is `ESRCH`;
+/// Darwin can instead return `EPERM` for a zombie-only group, which is resolved
+/// through the native exact-group liveness probe before being treated as gone.
 fn signal_group(pgid: u32, signal: i32) -> io::Result<bool> {
+    #[cfg(target_os = "macos")]
+    let native_pgid = pgid;
     let pgid = i32::try_from(pgid).map_err(|_| {
         io::Error::new(io::ErrorKind::InvalidInput, "process group id out of range")
     })?;
@@ -215,6 +219,10 @@ fn signal_group(pgid: u32, signal: i32) -> io::Result<bool> {
     }
     let error = io::Error::last_os_error();
     if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(false);
+    }
+    #[cfg(target_os = "macos")]
+    if error.raw_os_error() == Some(libc::EPERM) && !darwin_group_has_live_members(native_pgid) {
         return Ok(false);
     }
     Err(error)

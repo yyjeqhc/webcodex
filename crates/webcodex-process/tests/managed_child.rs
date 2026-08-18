@@ -606,25 +606,47 @@ fn graceful_request_repeated_and_already_exited_do_not_panic() {
     let _ = result;
 }
 
-/// ManagedChild must preserve the normal Command spawn failure for an
-/// executable text file without a shebang. A generic pre_exec hook changes
-/// this on Unix by allowing libc execvp to fall back to /bin/sh on ENOEXEC.
+/// ManagedChild must preserve the platform's normal `Command::spawn` behavior
+/// for an executable text file without a shebang. Linux reports ENOEXEC while
+/// macOS's standard-library spawn path executes it through the platform shell;
+/// process-group ownership must not change either platform's baseline behavior.
 #[cfg(unix)]
 #[test]
-fn spawn_preserves_enoexec_failure() {
+fn spawn_preserves_platform_enoexec_behavior() {
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempfile::tempdir().unwrap();
     let executable = temp.path().join("not-an-executable-format");
-    std::fs::write(&executable, "echo should-not-run\n").unwrap();
+    std::fs::write(&executable, "exit 0\n").unwrap();
     let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&executable, permissions).unwrap();
 
-    let mut command = Command::new(&executable);
-    let error = ManagedChild::spawn(&mut command)
-        .expect_err("ENOEXEC must remain a spawn failure, not a /bin/sh fallback");
-    assert_eq!(error.raw_os_error(), Some(libc::ENOEXEC));
+    let baseline = Command::new(&executable).spawn();
+    let mut managed_command = Command::new(&executable);
+    let managed = ManagedChild::spawn(&mut managed_command);
+    match (baseline, managed) {
+        (Ok(mut baseline), Ok(mut managed)) => {
+            assert_eq!(
+                baseline.wait().expect("wait baseline").success(),
+                managed.wait().expect("wait managed").success(),
+                "ManagedChild must preserve successful platform script fallback behavior"
+            );
+        }
+        (Err(baseline), Err(managed)) => {
+            assert_eq!(managed.kind(), baseline.kind());
+            assert_eq!(managed.raw_os_error(), baseline.raw_os_error());
+        }
+        (baseline, managed) => panic!(
+            "ManagedChild changed platform spawn behavior: baseline={:?} managed={:?}",
+            baseline
+                .map(|child| child.id())
+                .map_err(|error| (error.kind(), error.raw_os_error())),
+            managed
+                .map(|child| child.id())
+                .map_err(|error| (error.kind(), error.raw_os_error()))
+        ),
+    }
 }
 /// `try_tree_exit` is the non-blocking tree probe used by Runner shutdown.
 #[test]

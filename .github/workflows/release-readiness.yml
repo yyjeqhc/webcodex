@@ -133,8 +133,75 @@ jobs:
           git diff --check
           test -z "$(git status --porcelain --untracked-files=all)"
 
+  macos-runner:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release readiness must be dispatched from the main workflow definition." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]; then
+            echo "request_id must match rr_<24 lowercase hex>." >&2
+            exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$INPUT_SOURCE_SHA" ]; then
+            echo "main moved before readiness dispatch: requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Verify exact clean checkout
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-readiness-macos
+
+      - name: Check macOS release production surfaces
+        run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
+
+      - name: Run native macOS Runner tests
+        run: cargo test --locked -p webcodex-runner -- --nocapture
+
+      - name: Require final macOS source cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  summary:
+    needs: [readiness, macos-runner]
+    runs-on: ubuntu-latest
+    steps:
       - name: Record readiness summary
-        if: ${{ success() }}
         shell: bash
         env:
           INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
@@ -144,5 +211,6 @@ jobs:
             echo "### Release readiness passed"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- request: \`$INPUT_REQUEST_ID\`"
+            echo "- native macOS Runner validation: passed"
             echo "- candidate binaries produced: no"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -82,7 +82,8 @@ Before tagging or publishing, follow sections in
 `scripts/release_operator.py readiness-start` for one exact merged `main` SHA and
 observed through the same durable state with `readiness-status`. It runs the canonical
 release check, locked full workspace suite, frontend checks, both zero-config E2E
-transports, and the coding-loop compare eval without producing release candidates.
+transports, the coding-loop compare eval, and a parallel native macOS production-surface
+compile plus Runner suite without producing release candidates.
 Product-documentation consistency and allowed legacy-term matches remain part of the
 release-prep review rather than being guessed by an automated semantic checker.
 

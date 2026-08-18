@@ -33,14 +33,16 @@ The lanes above define test semantics; workflows decide when to run them.
   pull-request workflow run gets the lightweight `contract` job without requiring
   the `run-ci` label. It covers frontend type/test/dist checks, workspace-boundary
   checks, formatting, and focused registry/OpenAPI/MCP schema and metadata parity.
-- The heavier Linux `test` and native Windows `test-windows` jobs still run on
-  every push to `main`. External pull requests run them automatically subject to
-  GitHub fork protections; owner-authored pull requests opt in with the `run-ci`
-  label.
+- The heavier Linux `test`, native macOS `test-macos`, and native Windows
+  `test-windows` jobs run on every push to `main`. External pull requests run
+  them automatically subject to GitHub fork protections; owner-authored pull
+  requests opt in with the `run-ci` label.
 - Heavy Linux CI runs frontend checks, workspace-boundary and release-tooling
   checks, Markdown-link validation, formatting, and the locked workspace test
-  suite. Windows CI runs formatting, native Windows package tests, npm checks,
-  and the Windows artifact-to-install smoke.
+  suite. macOS CI compiles the release production surfaces and runs the native
+  Runner suite, including detached ownership/restart recovery. Windows CI runs
+  formatting, native Windows package tests, npm checks, and the Windows
+  artifact-to-install smoke.
 - Exact-source release acceptance is separate from ordinary pull-request CI.
   Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
   `.github/workflows/release-readiness.yml`.

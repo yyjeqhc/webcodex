@@ -1899,7 +1899,8 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Detached process ownership is an independent additive authority. Until
     // each native backend is implemented and dogfooded it must fail closed
     // rather than being inferred from structured process + durable Jobs.
-    capabilities.detached_process_jobs = cfg!(any(target_os = "linux", windows));
+    capabilities.detached_process_jobs =
+        cfg!(any(target_os = "linux", target_os = "macos", windows));
     capabilities.project_lifecycle = true;
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.
@@ -3432,7 +3433,7 @@ impl JobManager {
         inventory
     }
 
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     fn recover_detached_jobs(
         &self,
         store: DetachedJobStore,
@@ -3515,7 +3516,7 @@ impl JobManager {
         Ok(recovered)
     }
 
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     fn spawn_detached_observer(
         &self,
         job_id: String,

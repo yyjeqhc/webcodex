@@ -308,7 +308,7 @@ fn reclamation_fails_closed_on_corrupt_or_symlink_state() {
     assert!(job_dir.exists());
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn prepared_restart_residue_converges_to_not_started_without_payload() {
     let temp = tempfile::tempdir().unwrap();
@@ -818,7 +818,7 @@ fn durable_update_sequence_advances_and_duplicate_handoff_does_not() {
     assert!(terminal.update_seq > sequence);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn restart_scan_reconciles_live_detached_execution_without_respawn() {
     let _guard = test_env_lock();
@@ -869,7 +869,7 @@ fn restart_scan_reconciles_live_detached_execution_without_respawn() {
     assert_eq!(fs::read_to_string(marker).unwrap().lines().count(), 1);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn durable_stop_request_terminates_exact_supervisor_owned_tree() {
     let _guard = test_env_lock();
@@ -920,6 +920,26 @@ fn durable_stop_request_terminates_exact_supervisor_owned_tree() {
 }
 
 #[cfg(target_os = "linux")]
+fn stale_native_start_identity() -> &'static str {
+    "linux_start_0"
+}
+
+#[cfg(target_os = "macos")]
+fn stale_native_start_identity() -> &'static str {
+    "macos_start_0_0"
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_native_process_start_identity_is_stable() {
+    let pid = std::process::id();
+    let first = native_process_start_identity(pid).unwrap();
+    let second = native_process_start_identity(pid).unwrap();
+    assert!(first.starts_with("macos_start_"));
+    assert_eq!(first, second);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn stale_native_supervisor_identity_reconciles_to_lost_without_respawn() {
     let _guard = test_env_lock();
@@ -932,7 +952,8 @@ fn stale_native_supervisor_identity_reconciles_to_lost_without_respawn() {
         .is_ok_and(|record| record.phase == DetachedJobPhase::Running)));
     let mut running = store.read(&request.job_id).unwrap();
     let real_supervisor_pid = running.supervisor.as_ref().unwrap().pid;
-    running.supervisor.as_mut().unwrap().native_start_id = "linux_start_0".to_string();
+    running.supervisor.as_mut().unwrap().native_start_id =
+        stale_native_start_identity().to_string();
     atomic_write_json(
         &store.state_path_for_job(&request.job_id),
         &running,
@@ -1157,7 +1178,7 @@ fn pre_accept_supervisor_death_leaves_no_internal_or_payload_orphan() {
     assert!(record.tree_leader.is_none());
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn supervisor_death_terminates_payload_process_tree() {
     let _guard = test_env_lock();

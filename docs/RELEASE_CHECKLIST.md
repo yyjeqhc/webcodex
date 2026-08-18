@@ -24,7 +24,7 @@ python3 scripts/release_operator.py readiness-status \
 
 If dispatch delivery becomes uncertain or the run is not resolved before the short start timeout, **do not create a second state file and do not redispatch**. Continue with `readiness-status` on the original state; its unique request id recovers the exact workflow run when present. Only terminal `success` (operator exit 0) satisfies the pre-tag gate. A nonterminal/unresolved status is not release approval.
 
-The readiness workflow runs the canonical `scripts/release_check.sh`, the locked full workspace suite, frontend typecheck/tests/committed-build check, WebSocket and polling zero-config E2E, and coding-loop compare eval. `release_check.sh` includes formatting, workspace all-target check, focused metadata/schema/OpenAPI/MCP tests, release-tooling self-tests, Markdown local-link validation, and static current-contract/leakage guards.
+The readiness workflow runs the canonical `scripts/release_check.sh`, the locked full workspace suite, frontend typecheck/tests/committed-build check, WebSocket and polling zero-config E2E, coding-loop compare eval, and a parallel native macOS gate that compiles the release production surfaces and runs the Runner suite. `release_check.sh` includes formatting, workspace all-target check, focused metadata/schema/OpenAPI/MCP tests, release-tooling self-tests, Markdown local-link validation, and static current-contract/leakage guards.
 
 For focused diagnosis outside the final workflow, the underlying commands remain available, but a local pass does not replace the exact-source readiness run.
 

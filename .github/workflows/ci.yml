@@ -119,6 +119,30 @@ jobs:
       - name: Run tests
         run: cargo test --locked --workspace
 
+  test-macos:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.user.login != github.repository_owner ||
+      contains(github.event.pull_request.labels.*.name, 'run-ci')
+    # Native macOS gate for the release production surfaces plus the Runner's
+    # detached ownership/restart suites. Keep this ahead of immutable tagging.
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-ci
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check macOS release production surfaces
+        run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
+      - name: Run native macOS Runner tests
+        run: cargo test --locked -p webcodex-runner
+
   test-windows:
     if: >-
       github.event_name == 'push' ||

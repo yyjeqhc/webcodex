@@ -30,6 +30,7 @@ set -euo pipefail
 #   - bash scripts/e2e_zero_config_ws.sh
 #   - E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh
+#   - native macOS release-surface compile + webcodex-runner suite
 #
 # Usage:
 #   bash scripts/release_check.sh

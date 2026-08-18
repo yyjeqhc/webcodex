@@ -2829,6 +2829,7 @@ mod envelope_tests {
                 structured_script_payload: true,
                 internal_posix_script: true,
                 structured_execution_jobs: true,
+                detached_process_jobs: true,
                 lsp_read_only_navigation: false,
                 lsp_call_hierarchy: false,
                 sandbox_inspect_commands: false,

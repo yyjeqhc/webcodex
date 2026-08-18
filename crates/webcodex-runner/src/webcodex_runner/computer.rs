@@ -91,9 +91,7 @@ const MAX_ACCESSIBILITY_DEPTH: usize = 8;
 const MAX_ACCESSIBILITY_NODES: usize = 256;
 const DEFAULT_ACCESSIBILITY_DEPTH: usize = 6;
 const DEFAULT_ACCESSIBILITY_NODES: usize = 128;
-#[cfg(any(test, target_os = "macos", windows))]
 const RGBA_BYTES_PER_PIXEL: u64 = 4;
-#[cfg(any(test, target_os = "macos", windows))]
 /// Pre-capture ceiling for the expected complete raw RGBA frame. Standard
 /// 8K UHD (7680x4320x4) fits while malformed/extreme dimensions fail closed
 /// before xcap is allowed to allocate the native capture image.
@@ -1725,7 +1723,6 @@ fn bounded_text(value: &str) -> String {
     value[..end].to_string()
 }
 
-#[cfg(any(test, target_os = "macos", windows))]
 fn raw_rgba_bytes(width: u32, height: u32) -> Result<u64, String> {
     u64::from(width)
         .checked_mul(u64::from(height))
@@ -1733,7 +1730,6 @@ fn raw_rgba_bytes(width: u32, height: u32) -> Result<u64, String> {
         .ok_or_else(|| "image_too_large: raw RGBA capture size overflow".to_string())
 }
 
-#[cfg(any(test, target_os = "macos", windows))]
 fn ensure_raw_capture_bound(width: u32, height: u32) -> Result<u64, String> {
     let bytes = raw_rgba_bytes(width, height)?;
     if bytes > MAX_RAW_CAPTURE_BYTES {

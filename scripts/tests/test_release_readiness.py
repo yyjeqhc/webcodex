@@ -161,5 +161,18 @@ class DispatchClassificationTests(unittest.TestCase):
             readiness._post_dispatch(client, SOURCE, REQUEST)
 
 
+class WorkflowContractTests(unittest.TestCase):
+    def test_pre_tag_gate_covers_every_release_platform_without_uploads(self) -> None:
+        workflow = Path(".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
+        for platform in ("linux-x64", "linux-arm64", "darwin-arm64", "win32-x64", "win32-arm64"):
+            self.assertIn(platform, workflow)
+        self.assertGreaterEqual(workflow.count("cargo build --locked --release"), 3)
+        self.assertIn("quay.io/pypa/manylinux2014_x86_64", workflow)
+        self.assertIn("quay.io/pypa/manylinux2014_aarch64", workflow)
+        self.assertIn("npm_install_windows_smoke.ps1", workflow)
+        self.assertIn("needs: [readiness, native-linux, macos-runner, native-windows]", workflow)
+        self.assertNotIn("actions/upload-artifact", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()

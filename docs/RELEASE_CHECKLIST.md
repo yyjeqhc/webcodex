@@ -20,11 +20,11 @@ python3 scripts/release_operator.py readiness-status \
   --wait-secs 3600
 ```
 
-`readiness-start` first requires GitHub `main` to equal `<MAIN_COMMIT>`, writes a mode-0600 operator-local correlation state before dispatch, and dispatches `.github/workflows/release-readiness.yml` from `main`. The workflow itself requires its `github.sha` to equal the requested source, checks out that exact commit with no persisted credential, and never tags, publishes, deploys, or produces release candidate binaries.
+`readiness-start` first requires GitHub `main` to equal `<MAIN_COMMIT>`, writes a mode-0600 operator-local correlation state before dispatch, and dispatches `.github/workflows/release-readiness.yml` from `main`. The workflow itself requires its `github.sha` to equal the requested source, checks out that exact commit with no persisted credential, and never tags, publishes, deploys, or uploads release candidate binaries. Its native release-profile builds are disposable pre-tag validation only.
 
 If dispatch delivery becomes uncertain or the run is not resolved before the short start timeout, **do not create a second state file and do not redispatch**. Continue with `readiness-status` on the original state; its unique request id recovers the exact workflow run when present. Only terminal `success` (operator exit 0) satisfies the pre-tag gate. A nonterminal/unresolved status is not release approval.
 
-The readiness workflow runs the canonical `scripts/release_check.sh`, the locked full workspace suite, frontend typecheck/tests/committed-build check, WebSocket and polling zero-config E2E, coding-loop compare eval, and a parallel native macOS gate that compiles the release production surfaces and runs the Runner suite. `release_check.sh` includes formatting, workspace all-target check, focused metadata/schema/OpenAPI/MCP tests, release-tooling self-tests, Markdown local-link validation, and static current-contract/leakage guards.
+The readiness workflow runs the canonical `scripts/release_check.sh`, the locked full workspace suite, frontend typecheck/tests/committed-build check, WebSocket and polling zero-config E2E, coding-loop compare eval, and parallel native release-profile gates for all five published platforms. Linux x64/arm64 use the same native manylinux2014 userspaces and ABI/dependency checks as formal release builds; macOS arm64 performs a release build/package plus the Runner suite; Windows x64/arm64 perform native release builds, PE architecture checks, packaging, and the local npm-install smoke. These pre-tag artifacts are disposable and are never uploaded or promoted. `release_check.sh` includes formatting, workspace all-target check, focused metadata/schema/OpenAPI/MCP tests, release-tooling self-tests, Markdown local-link validation, and static current-contract/leakage guards.
 
 For focused diagnosis outside the final workflow, the underlying commands remain available, but a local pass does not replace the exact-source readiness run.
 
@@ -61,7 +61,7 @@ Do not allow docs that ask users to configure server-side project onboarding, im
 
 ## 5. E2E Smoke
 
-The exact-source release-readiness workflow builds dedicated debug `webcodex-server` / `webcodex-runner` test fixtures once, then runs both supported zero-config transports against disposable local fixtures through the E2E script's existing-binary overrides. These binaries are never uploaded or treated as release candidates; `.github/workflows/release-build.yml` remains the only candidate producer.
+The exact-source release-readiness workflow builds dedicated debug `webcodex-server` / `webcodex-runner` test fixtures once for both supported zero-config transports and, in parallel, performs disposable native release-profile validation for all five published platforms. None of those binaries or archives are uploaded or treated as release candidates; `.github/workflows/release-build.yml` remains the only formal candidate producer after the immutable tag exists.
 
 The underlying smoke commands remain:
 
@@ -106,7 +106,7 @@ For every new binary and npm release, choose one candidate `<VERSION>` first and
 ## 9. Release Sequence
 
 1. Put version bumps, release notes, platform docs, packaging changes, and release tests in **one release-prep PR** and squash-merge it into `main`. Resolve the exact merged commit and run `release_operator.py preflight --version <VERSION> --source-sha <MAIN_COMMIT> --root <EXACT_MAIN_WORKTREE>`; require all three publication namespaces (Git tag, GitHub Release, npm version) to be unused and both publication identities to be available.
-2. Run `release_operator.py readiness-start` with a fresh durable state file, then `readiness-status --wait-secs 3600` on that same state. Require terminal success for the exact source. If dispatch/observation is uncertain, recover from the same state instead of blind redispatch.
+2. Run `release_operator.py readiness-start` with a fresh durable state file, then `readiness-status --wait-secs 3600` on that same state. Require terminal success for the exact source, including all five native release-profile pre-tag gates. If dispatch/observation is uncertain, recover from the same state instead of blind redispatch.
 3. After explicit human authorization, create and push the immutable annotated `v<VERSION>` tag at that exact source; never move it. Then run `release_operator.py build-start --source-sha <TAG_COMMIT> --tag v<VERSION> --state-file <BUILD_STATE>` once, and `build-status --state-file <BUILD_STATE> --wait-secs 7200` on the same state until terminal. Require all five native targets plus `assemble` to succeed in that one bound workflow run.
 4. Collect only that run's `<ARCHIVE_STEM>-bundle` with `scripts/release_operator.py collect`, passing the bound run id, exact tag commit, and tag. The collector must finish successfully before publication; its output directory is the retained candidate bundle.
 5. From a clean detached worktree at the immutable tag, run `scripts/release_operator.py stage-npm --bundle-dir <BUNDLE_DIR> --source-root <TAG_WORKTREE> --output-dir <STAGE_DIR>`. This performs exact-tag staging and existing-binary npm smoke without recompilation.

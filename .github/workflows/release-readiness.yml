@@ -15,7 +15,8 @@ on:
         type: string
 
 # This workflow validates one exact main commit before an immutable release tag is
-# created. It never builds release candidates, writes repository contents, publishes,
+# created, including disposable release-profile builds on every published native
+# platform. It never uploads release candidates, writes repository contents, publishes,
 # tags, or deploys.
 permissions:
   contents: read
@@ -133,6 +134,141 @@ jobs:
           git diff --check
           test -z "$(git status --porcelain --untracked-files=all)"
 
+  native-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-latest
+            image: quay.io/pypa/manylinux2014_x86_64
+            machine: x86_64
+            elf_machine: Advanced Micro Devices X86-64
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            image: quay.io/pypa/manylinux2014_aarch64
+            machine: aarch64
+            elf_machine: AArch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Fence exact reviewed main source
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release readiness must be dispatched from the main workflow definition." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]; then
+            echo "request_id must match rr_<24 lowercase hex>." >&2
+            exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$INPUT_SOURCE_SHA" ]; then
+            echo "main moved before readiness dispatch: requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Build and verify native Linux release surface
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+          cargo_cache="$RUNNER_TEMP/webcodex-readiness-cargo-${{ matrix.platform }}"
+          rustup_cache="$RUNNER_TEMP/webcodex-readiness-rustup-${{ matrix.platform }}"
+          mkdir -p "$cargo_cache" "$rustup_cache"
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          built_at="$(git show -s --format=%ct HEAD)"
+          if [ -z "$version" ] || [[ ! "$built_at" =~ ^[0-9]+$ ]]; then
+            echo "Could not resolve pre-tag native build metadata." >&2
+            exit 1
+          fi
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -v "$cargo_cache:/cargo" \
+            -v "$rustup_cache:/rustup" \
+            -w /work \
+            -e CARGO_HOME=/cargo \
+            -e RUSTUP_HOME=/rustup \
+            -e VERSION="$version" \
+            -e SOURCE_SHA="$INPUT_SOURCE_SHA" \
+            -e WEBCODEX_BUILT_AT="$built_at" \
+            -e WEBCODEX_RELEASE_VERSION="$version" \
+            -e WEBCODEX_RELEASE_PLATFORM="${{ matrix.platform }}" \
+            "${{ matrix.image }}" \
+            bash -lc '
+              set -euo pipefail
+              export PATH="/cargo/bin:$PATH"
+              git config --global --add safe.directory /work
+              if [ "$(uname -m)" != "${{ matrix.machine }}" ]; then
+                echo "Unexpected native architecture: $(uname -m)" >&2
+                exit 1
+              fi
+              test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+              test -z "$(git status --porcelain --untracked-files=all)"
+              if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+                yum install -y git curl
+              fi
+              if [ ! -x /cargo/bin/rustup ]; then
+                curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                  | sh -s -- -y --profile minimal --default-toolchain stable
+              fi
+              rustup toolchain install stable --profile minimal
+              rustup default stable
+              cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+
+              short_commit="$(git rev-parse --short=12 HEAD)"
+              allowed_needed="libc.so.6 libm.so.6 libgcc_s.so.1 libpthread.so.0 libdl.so.2 librt.so.1 libresolv.so.2 ld-linux-x86-64.so.2 ld-linux-aarch64.so.1"
+              for name in webcodex webcodex-server webcodex-runner; do
+                binary="target/release/$name"
+                expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+                output="$($binary --version)"
+                test "$output" = "$expected"
+                readelf -h "$binary" | grep -F "Machine:" | grep -Fq "${{ matrix.elf_machine }}"
+                max_glibc="$(readelf --version-info "$binary" \
+                  | grep -oE "GLIBC_[0-9]+(\.[0-9]+)*" \
+                  | sed "s/^GLIBC_//" \
+                  | sort -Vu \
+                  | tail -n 1 || true)"
+                if [ -n "$max_glibc" ] && [ "$(printf "%s\n" 2.17 "$max_glibc" | sort -V | tail -n 1)" != "2.17" ]; then
+                  echo "$binary requires GLIBC_$max_glibc, exceeding the 2.17 release floor." >&2
+                  exit 1
+                fi
+                while IFS= read -r needed; do
+                  case " $allowed_needed " in
+                    *" $needed "*) ;;
+                    *) echo "$binary has unexpected DT_NEEDED dependency: $needed" >&2; exit 1 ;;
+                  esac
+                done < <(readelf -d "$binary" | sed -n "s/.*Shared library: \[\([^]]*\)\].*/\1/p")
+              done
+
+              dist="$(mktemp -d)"
+              trap "rm -rf \"$dist\"" EXIT
+              scripts/package_release_artifact.sh "$dist" >/dev/null
+              test -s "$dist/webcodex-v$VERSION-${WEBCODEX_RELEASE_PLATFORM}.tar.gz"
+            '
+
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
   macos-runner:
     runs-on: macos-14
     timeout-minutes: 45
@@ -184,8 +320,36 @@ jobs:
         with:
           shared-key: release-readiness-macos
 
-      - name: Check macOS release production surfaces
-        run: cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
+      - name: Build and verify native macOS release surface
+        shell: bash
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          if [ "$(uname -m)" != "arm64" ]; then
+            echo "Expected a native macOS ARM64 runner, got $(uname -m)." >&2
+            exit 1
+          fi
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          built_at="$(git show -s --format=%ct HEAD)"
+          export WEBCODEX_BUILT_AT="$built_at"
+          export WEBCODEX_RELEASE_VERSION="$version"
+          export WEBCODEX_RELEASE_PLATFORM=darwin-arm64
+          cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
+          short_commit="$(git rev-parse --short=12 HEAD)"
+          for name in webcodex webcodex-server webcodex-runner; do
+            binary="target/release/$name"
+            output="$($binary --version)"
+            expected="$name $version (commit $short_commit, dirty=false, built_at=$built_at)"
+            test "$output" = "$expected"
+            file "$binary" | grep -Fq "arm64"
+          done
+          dist="$(mktemp -d)"
+          trap 'rm -rf "$dist"' EXIT
+          scripts/package_release_artifact.sh "$dist" >/dev/null
+          test -s "$dist/webcodex-v$version-darwin-arm64.tar.gz"
 
       - name: Run native macOS Runner tests
         run: cargo test --locked -p webcodex-runner -- --nocapture
@@ -197,8 +361,120 @@ jobs:
           git diff --check
           test -z "$(git status --porcelain --untracked-files=all)"
 
+  native-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win32-x64
+            runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            processor_architecture: AMD64
+            pe_machine: "8664"
+            node_architecture: x64
+          - platform: win32-arm64
+            runner: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+            processor_architecture: ARM64
+            pe_machine: "AA64"
+            node_architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Fence exact reviewed main source
+        shell: pwsh
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GITHUB_REF -ne "refs/heads/main") {
+            throw "Release readiness must be dispatched from the main workflow definition."
+          }
+          if ($env:INPUT_SOURCE_SHA -notmatch '^[0-9a-f]{40}$') {
+            throw "source_sha must be exactly 40 lowercase hexadecimal characters."
+          }
+          if ($env:INPUT_REQUEST_ID -notmatch '^rr_[0-9a-f]{24}$') {
+            throw "request_id must match rr_<24 lowercase hex>."
+          }
+          if ($env:GITHUB_SHA -ne $env:INPUT_SOURCE_SHA) {
+            throw "main moved before readiness dispatch: requested=$env:INPUT_SOURCE_SHA run=$env:GITHUB_SHA"
+          }
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          architecture: ${{ matrix.node_architecture }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-readiness-${{ matrix.platform }}
+
+      - name: Build and verify native Windows release surface
+        shell: pwsh
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_PROCESSOR_ARCHITECTURE: ${{ matrix.processor_architecture }}
+          EXPECTED_PE_MACHINE: ${{ matrix.pe_machine }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+          WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:PROCESSOR_ARCHITECTURE -ne $env:EXPECTED_PROCESSOR_ARCHITECTURE) {
+            throw "Unexpected Windows host architecture: $env:PROCESSOR_ARCHITECTURE"
+          }
+          if ((git rev-parse HEAD).Trim() -ne $env:INPUT_SOURCE_SHA) {
+            throw "Build checkout does not match reviewed release source."
+          }
+          if (@(git status --porcelain --untracked-files=all).Count -ne 0) {
+            throw "Build checkout is not clean before compilation."
+          }
+          $hostLine = rustc -vV | Select-String '^host: '
+          if ($hostLine.Line -ne "host: $env:RUST_TARGET") {
+            throw "Expected native Rust host $env:RUST_TARGET; got $($hostLine.Line)"
+          }
+          $version = (Get-Content -LiteralPath npm\webcodex\package.json -Raw | ConvertFrom-Json).version
+          $builtAt = (git show -s --format=%ct HEAD).Trim()
+          $env:WEBCODEX_BUILT_AT = $builtAt
+          cargo build --locked --release --target $env:RUST_TARGET -p webcodex -p webcodex-cli -p webcodex-runner
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
+
+          $shortCommit = (git rev-parse --short=12 HEAD).Trim()
+          $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
+          $expectedMachine = [Convert]::ToUInt16($env:EXPECTED_PE_MACHINE, 16)
+          foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
+            $binary = Join-Path $binDir "$name.exe"
+            $output = @(& $binary --version | Select-Object -First 1)[0].TrimEnd()
+            $expected = "$name $version (commit $shortCommit, dirty=false, built_at=$builtAt)"
+            if ($output -ne $expected) { throw "Unexpected $name release identity: $output" }
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $binary))
+            if ($bytes.Length -lt 64) { throw "$binary is too small to be a PE image" }
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne $expectedMachine) {
+              throw ("Unexpected PE machine for {0}: 0x{1:x4}" -f $binary, $machine)
+            }
+          }
+
+          & .\scripts\npm_install_windows_smoke.ps1 -BinDir $binDir -Platform $env:WEBCODEX_RELEASE_PLATFORM
+          if ($LASTEXITCODE -ne 0) { throw "native Windows npm smoke failed with exit code $LASTEXITCODE" }
+          git diff --check
+          if (@(git status --porcelain --untracked-files=all).Count -ne 0) {
+            throw "Pre-tag Windows validation dirtied the release source."
+          }
+
   summary:
-    needs: [readiness, macos-runner]
+    needs: [readiness, native-linux, macos-runner, native-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Record readiness summary
@@ -211,6 +487,6 @@ jobs:
             echo "### Release readiness passed"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- request: \`$INPUT_REQUEST_ID\`"
-            echo "- native macOS Runner validation: passed"
-            echo "- candidate binaries produced: no"
+            echo "- native release-profile validation: linux-x64, linux-arm64, darwin-arm64, win32-x64, win32-arm64 passed"
+            echo "- candidate binaries produced: no (pre-tag validation artifacts are disposable)"
           } >> "$GITHUB_STEP_SUMMARY"

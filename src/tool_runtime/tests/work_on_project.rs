@@ -476,8 +476,6 @@ fn work_on_project_schema_and_registration() {
         "blockers",
         "warnings",
         "suggested_next_actions",
-        "deterministic",
-        "llm_summary",
     ] {
         assert!(
             output_props.contains_key(field),
@@ -494,6 +492,8 @@ fn work_on_project_schema_and_registration() {
         "git",
         "continuation_feedback",
         "current_binding",
+        "deterministic",
+        "llm_summary",
     ] {
         assert!(
             !output_props.contains_key(hidden),
@@ -702,6 +702,107 @@ fn work_on_project_projection_does_not_default_missing_instruction_sources() {
         .is_some_and(|detail| detail.contains("sources")));
 }
 
+#[test]
+fn work_on_project_projection_is_sparse_for_defaults_and_keeps_noteworthy_state() {
+    let default_result = crate::tool_runtime::coding_task::project_work_on_project_output(
+        SAMPLE_PROJECT.to_string(),
+        valid_work_on_project_projection_input(),
+    );
+    assert!(default_result.success, "{:?}", default_result.error);
+    for omitted in [
+        "project_resolution",
+        "execution_context",
+        "readiness",
+        "repository",
+        "jobs",
+        "blockers",
+        "warnings",
+        "suggested_next_actions",
+        "deterministic",
+        "llm_summary",
+    ] {
+        assert!(
+            default_result.output.get(omitted).is_none(),
+            "boring default field {omitted} should be omitted: {}",
+            default_result.output
+        );
+    }
+    assert_eq!(default_result.output["workspace"]["status"], "clean");
+    assert!(default_result.output["workspace"]["branch"].is_string());
+    assert!(default_result.output["workspace"]["head"].is_string());
+    for omitted in ["git_available", "clean", "conflicts"] {
+        assert!(default_result.output["workspace"].get(omitted).is_none());
+    }
+    assert_eq!(
+        default_result.output["instructions"]["content_included"],
+        true
+    );
+    for omitted in ["changed_sources", "truncated", "total_chars"] {
+        assert!(default_result.output["instructions"].get(omitted).is_none());
+    }
+
+    let mut noteworthy = valid_work_on_project_projection_input();
+    noteworthy["session"]["execution_context"] = json!({"default_cwd": "src"});
+    noteworthy["project_resolution"] = json!({
+        "source": "path",
+        "outcome": "auto_registered",
+        "resolved_project": "agent:wop:demo",
+        "registered": true,
+    });
+    noteworthy["workspace"]["status"] = json!("blocked");
+    noteworthy["workspace"]["conflicts"] = json!(2);
+    noteworthy["repository"] = json!({
+        "status": "unavailable",
+        "reason_code": "probe_failed",
+    });
+    noteworthy["continuation"]["jobs"]["active_count"] = json!(1);
+    noteworthy["continuation"]["jobs"]["latest_status"] = json!("running");
+    noteworthy["blockers"] = json!(["workspace_conflicts"]);
+    noteworthy["warnings"] = json!(["active_jobs_present"]);
+    noteworthy["startup_verdict"] = json!({
+        "status": "fail",
+        "blocking": true,
+        "suggested_next_actions": ["inspect or await blocking active jobs"],
+    });
+    let noteworthy_result = crate::tool_runtime::coding_task::project_work_on_project_output(
+        SAMPLE_PROJECT.to_string(),
+        noteworthy,
+    );
+    assert!(noteworthy_result.success, "{:?}", noteworthy_result.error);
+    assert_eq!(
+        noteworthy_result.output["project_resolution"]["outcome"],
+        "auto_registered"
+    );
+    assert_eq!(
+        noteworthy_result.output["execution_context"]["default_cwd"],
+        "src"
+    );
+    assert_eq!(noteworthy_result.output["readiness"]["status"], "fail");
+    assert_eq!(
+        noteworthy_result.output["repository"]["reason_code"],
+        "probe_failed"
+    );
+    assert_eq!(noteworthy_result.output["workspace"]["conflicts"], 2);
+    assert_eq!(noteworthy_result.output["jobs"]["active_count"], 1);
+    assert_eq!(noteworthy_result.output["jobs"]["latest_status"], "running");
+    assert_eq!(
+        noteworthy_result.output["blockers"],
+        json!(["workspace_conflicts"])
+    );
+    assert_eq!(
+        noteworthy_result.output["warnings"],
+        json!(["active_jobs_present"])
+    );
+    assert_eq!(
+        noteworthy_result.output["suggested_next_actions"],
+        json!(["inspect or await blocking active jobs"])
+    );
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
+    let instance = json!({ "success": true, "output": noteworthy_result.output });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| panic!("noteworthy sparse output must match schema: {error}"));
+}
+
 #[tokio::test]
 async fn work_on_project_creates_a_new_normal_session_without_binding() {
     let root = tempfile::tempdir().unwrap();
@@ -720,18 +821,39 @@ async fn work_on_project_creates_a_new_normal_session_without_binding() {
     .await;
     assert!(result.success, "{:?}", result.error);
 
-    // Compact projection fields are present and no full diagnostics leak.
-    assert_eq!(result.output["deterministic"], true);
-    assert_eq!(result.output["llm_summary"], false);
+    // Compact projection keeps identity and omits boring default metadata.
     let session_id = result.output["session_id"].as_str().unwrap().to_string();
     assert!(session_id.starts_with("wc_sess_"));
     assert_eq!(result.output["project"], "demo");
     assert_eq!(result.output["resolved_project"], project);
-    assert_eq!(
-        result.output["project_resolution"]["resolved_project"],
-        project
-    );
     assert_eq!(result.output["continuation"], "created");
+    for omitted in [
+        "project_resolution",
+        "execution_context",
+        "repository",
+        "jobs",
+        "blockers",
+        "suggested_next_actions",
+        "deterministic",
+        "llm_summary",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "boring default field {omitted} should be omitted: {}",
+            result.output
+        );
+    }
+    assert_eq!(result.output["readiness"]["status"], "warn");
+    assert!(result.output["warnings"]
+        .as_array()
+        .is_some_and(|warnings| warnings
+            .iter()
+            .any(|warning| warning == "semantic_navigation_unavailable")));
+    assert!(!result.output["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|warning| warning == "current_binding_unavailable"));
     assert_eq!(
         result.output["workflow"],
         crate::tool_runtime::startup_brief::builtin_coding_workflow_projection()
@@ -1633,25 +1755,19 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
 
     // resolved_project is the full runtime project id.
     assert_eq!(result.output["resolved_project"], project);
-    // readiness mirrors the shared startup verdict.
-    assert_eq!(result.output["readiness"]["status"].as_str(), Some("warn"));
-    assert_eq!(result.output["readiness"]["blocking"], false);
-
-    // work_on_project deliberately omits the optional repository overview. The
-    // compact compatibility field reports intentional omission without any
-    // overview lists or a failure warning.
-    let repository = &result.output["repository"];
-    assert_eq!(repository["status"], "unavailable");
-    assert_eq!(
-        repository["reason_code"],
-        "not_requested_by_work_on_project"
-    );
-    assert_eq!(repository.as_object().unwrap().len(), 2);
-    assert!(!result.output["warnings"]
-        .as_array()
-        .unwrap()
+    // Deliberately disabled window binding is normal for work_on_project. This
+    // fixture still has a real semantic-navigation warning, so readiness/warnings
+    // remain while the binding warning and intentionally skipped repository
+    // overview are omitted.
+    assert!(result.output.get("repository").is_none());
+    assert_eq!(result.output["readiness"]["status"], "warn");
+    let warnings = result.output["warnings"].as_array().unwrap();
+    assert!(warnings
         .iter()
-        .any(|warning| warning == "repository_overview_unavailable"));
+        .any(|warning| warning == "semantic_navigation_unavailable"));
+    assert!(!warnings
+        .iter()
+        .any(|warning| warning == "current_binding_unavailable"));
 
     // Runner request evidence: rules, Git, and LSP probes remain; repository
     // overview is not merely hidden from JSON, it is never enqueued.
@@ -1698,11 +1814,8 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
     assert!(result.output["semantic_navigation"].is_object());
     assert!(result.output["semantic_navigation"]["status"].is_string());
 
-    // jobs block initial counts.
-    let jobs = &result.output["jobs"];
-    assert_eq!(jobs["active_count"], 0);
-    assert_eq!(jobs["blocking_active_count"], 0);
-    assert!(jobs["latest_status"].is_string());
+    // No noteworthy Job state means no jobs block at all.
+    assert!(result.output.get("jobs").is_none());
 
     // No full diagnostics leak.
     for hidden in [
@@ -1788,24 +1901,29 @@ async fn work_on_project_can_omit_instruction_bodies_for_a_fresh_session() {
 
     let instructions = &second.output["instructions"];
     assert_eq!(instructions["status"], "loaded");
-    assert_eq!(instructions["content_included"], false);
+    assert!(instructions.get("content_included").is_none());
     let agents_source = instructions["sources"]
         .as_array()
         .unwrap()
         .iter()
         .find(|source| source["path"] == "AGENTS.md")
         .expect("AGENTS.md metadata");
-    assert_eq!(agents_source["content"], Value::Null);
+    assert!(agents_source.get("content").is_none());
+    assert!(agents_source.get("headings").is_none());
+    assert!(agents_source.get("truncated").is_none());
     assert!(agents_source["fingerprint"]
         .as_str()
         .is_some_and(|value| value.len() == 64));
-    assert!(agents_source["headings"]
-        .as_array()
-        .is_some_and(|headings| !headings.is_empty()));
     assert!(
         request_kinds.iter().any(|kind| kind == "file_read"),
         "instruction files must still be observed when their bodies are omitted: {request_kinds:?}"
     );
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
+    let instance = json!({ "success": true, "output": second.output.clone() });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| {
+            panic!("sparse instruction metadata must match output schema: {error}")
+        });
 
     let summary = runtime
         .sessions
@@ -1859,14 +1977,12 @@ async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
     assert_eq!(reused.output["continuation"], "resumed_explicitly");
     let reused_instructions = &reused.output["instructions"];
     assert_eq!(reused_instructions["status"], "reused");
-    assert_eq!(reused_instructions["content_included"], false);
-    assert!(reused_instructions["changed_sources"]
-        .as_array()
-        .map(|sources| sources.is_empty())
-        .unwrap_or(false));
+    assert!(reused_instructions.get("content_included").is_none());
+    assert!(reused_instructions.get("changed_sources").is_none());
     for source in reused_instructions["sources"].as_array().unwrap() {
         if source["path"] == "AGENTS.md" {
-            assert_eq!(source["content"], serde_json::Value::Null);
+            assert!(source.get("content").is_none());
+            assert!(source.get("headings").is_none());
             assert!(source["fingerprint"].is_string());
         }
     }
@@ -1946,7 +2062,9 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     .await;
     assert!(reused.success, "{:?}", reused.error);
     assert_eq!(reused.output["instructions"]["status"], "reused");
-    assert_eq!(reused.output["instructions"]["content_included"], false);
+    assert!(reused.output["instructions"]
+        .get("content_included")
+        .is_none());
 
     let (standard, standard_requests) = dispatch_recording_startup_requests(
         &runtime,
@@ -1964,25 +2082,24 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     assert_eq!(standard.output["repository"]["status"], "available");
 
     for output in [&fresh.output, &reused.output] {
-        assert_eq!(
-            output["repository"]["reason_code"],
-            "not_requested_by_work_on_project"
-        );
         for omitted in [
-            "project_types",
-            "manifests",
-            "key_files",
-            "roots",
-            "top_level",
-            "suggested_next_reads",
-            "scan",
-            "warnings",
+            "repository",
+            "execution_context",
+            "jobs",
+            "blockers",
+            "deterministic",
+            "llm_summary",
         ] {
             assert!(
-                output["repository"].get(omitted).is_none(),
-                "work_on_project repository unexpectedly contains {omitted}"
+                output.get(omitted).is_none(),
+                "work_on_project boring default field {omitted} should be omitted: {output}"
             );
         }
+        assert!(!output["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning == "current_binding_unavailable"));
     }
 
     let fresh_overviews = fresh_requests
@@ -2020,6 +2137,17 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     assert!(standard_bytes <= hard_max);
     assert!(fresh_bytes < standard_bytes);
     assert!(reused_bytes < standard_bytes);
+    // Before sparse-by-default projection this fixture was 3154 bytes fresh
+    // and 3259 bytes on unchanged continuation. Leave modest headroom while
+    // locking in a material reduction in model-facing context.
+    assert!(
+        fresh_bytes <= 2600,
+        "fresh work_on_project projection regressed above the sparse context budget: {fresh_bytes} bytes"
+    );
+    assert!(
+        reused_bytes <= 2600,
+        "unchanged work_on_project projection regressed above the sparse context budget: {reused_bytes} bytes"
+    );
     eprintln!(
         "work_on_project_fixture_bytes fresh={fresh_bytes} unchanged_continuation={reused_bytes} standard={standard_bytes}; runner_requests fresh={} unchanged_continuation={} standard={}",
         fresh_requests.len(),

@@ -1010,6 +1010,12 @@ fn semantic_navigation_schema() -> Value {
     })
 }
 
+fn work_on_project_instruction_source_schema() -> Value {
+    let mut schema = startup_instruction_source_schema();
+    schema["required"] = json!(["path", "fingerprint"]);
+    schema
+}
+
 /// Compact startup projection for `work_on_project`. Carries only the fields a
 /// coding model immediately needs after starting or continuing a task. It never
 /// returns the full runtime/connection/authority/binding/manifest diagnostics
@@ -1018,20 +1024,21 @@ fn semantic_navigation_schema() -> Value {
 fn work_on_project_output_schema() -> Value {
     let compact_workspace = json!({
         "type": "object",
+        "description": "Sparse workspace state. status is always present; null/default facts are omitted, branch/head are included when observed, git_available is emitted only when false, and conflicts only when non-zero.",
         "properties": {
             "status": {"type": "string", "enum": ["clean", "dirty", "blocked", "unavailable"]},
-            "git_available": nullable_schema("boolean", "Whether bounded Git inspection was available."),
+            "git_available": nullable_schema("boolean", "Emitted when bounded Git inspection is explicitly unavailable; omission means no exceptional Git-unavailable fact."),
             "branch": nullable_schema("string", "Current branch when observed."),
             "head": nullable_schema("string", "Current full HEAD commit when observed."),
-            "clean": nullable_schema("boolean", "Whether the worktree is clean when observed."),
-            "conflicts": {"type": "integer", "minimum": 0}
+            "clean": nullable_schema("boolean", "Legacy compatibility field; normal clean/dirty state is represented by status and may omit this field."),
+            "conflicts": {"type": "integer", "minimum": 1}
         },
-        "required": ["status", "git_available", "branch", "head", "clean", "conflicts"],
+        "required": ["status"],
         "additionalProperties": true
     });
     let compact_instructions = json!({
         "type": "object",
-        "description": "Compact project-local repository instruction projection, separate from the WebCodex built-in workflow.",
+        "description": "Compact project-local repository instruction projection, separate from the WebCodex built-in workflow. False/null/empty body-projection defaults are omitted.",
         "properties": {
             "status": {
                 "type": "string",
@@ -1040,8 +1047,8 @@ fn work_on_project_output_schema() -> Value {
             "sources": {
                 "type": "array",
                 "maxItems": 5,
-                "items": startup_instruction_source_schema(),
-                "description": "Fixed, ordered repository-rule sources."
+                "items": work_on_project_instruction_source_schema(),
+                "description": "Fixed, ordered repository-rule sources. path/fingerprint are always present; false/null/empty body-projection defaults are omitted."
             },
             "changed_sources": {
                 "type": "array",
@@ -1058,9 +1065,9 @@ fn work_on_project_output_schema() -> Value {
                     ]
                 }
             },
-            "content_included": {"type": "boolean"},
-            "truncated": {"type": "boolean"},
-            "total_chars": {"type": "integer", "minimum": 0, "maximum": 32768}
+            "content_included": {"type": "boolean", "description": "Emitted only when bounded instruction bodies are included; omission means false."},
+            "truncated": {"type": "boolean", "description": "Emitted only when true."},
+            "total_chars": {"type": "integer", "minimum": 1, "maximum": 32768, "description": "Emitted only with truncated=true to quantify the observed instruction extent."}
         },
         "required": ["status", "sources"],
         "additionalProperties": true
@@ -1093,22 +1100,16 @@ fn work_on_project_output_schema() -> Value {
     });
     let compact_jobs = json!({
         "type": "object",
+        "description": "Sparse noteworthy Job state. The whole object is omitted when all lifecycle counts are zero and no latest status was observed; inside the object zero counts and latest_status=not_observed are omitted.",
         "properties": {
-            "active_count": {"type": "integer", "minimum": 0},
-            "blocking_active_count": {"type": "integer", "minimum": 0},
-            "nonblocking_active_count": {"type": "integer", "minimum": 0},
-            "recovering_count": {"type": "integer", "minimum": 0},
-            "terminal_pending_count": {"type": "integer", "minimum": 0},
+            "active_count": {"type": "integer", "minimum": 1},
+            "blocking_active_count": {"type": "integer", "minimum": 1},
+            "nonblocking_active_count": {"type": "integer", "minimum": 1},
+            "recovering_count": {"type": "integer", "minimum": 1},
+            "terminal_pending_count": {"type": "integer", "minimum": 1},
             "latest_status": {"type": "string"}
         },
-        "required": [
-            "active_count",
-            "blocking_active_count",
-            "nonblocking_active_count",
-            "recovering_count",
-            "terminal_pending_count",
-            "latest_status"
-        ],
+        "minProperties": 1,
         "additionalProperties": true
     });
     let compact_repository = startup_repository_schema();
@@ -1127,7 +1128,11 @@ fn work_on_project_output_schema() -> Value {
         ),
         (
             "project_resolution",
-            project_resolution_schema(),
+            {
+                let mut schema = project_resolution_schema();
+                schema["description"] = json!("Non-default project-source resolution metadata. Omitted when an ordinary project input resolves to an existing registration without mutation.");
+                schema
+            },
         ),
         (
             "continuation",
@@ -1135,7 +1140,7 @@ fn work_on_project_output_schema() -> Value {
         ),
         (
             "execution_context",
-            session_execution_context_schema("Persistent execution defaults currently stored for this Workflow Session."),
+            session_execution_context_schema("Persistent execution defaults currently stored for this Workflow Session. Omitted when empty."),
         ),
         (
             "readiness",
@@ -1153,49 +1158,40 @@ fn work_on_project_output_schema() -> Value {
             "workspace",
             compact_workspace,
         ),
-        ("repository", compact_repository),
+        (
+            "repository",
+            {
+                let mut schema = compact_repository;
+                schema["description"] = json!("Unexpected or noteworthy repository-overview state. Omitted for work_on_project's normal intentional no-overview path.");
+                schema
+            },
+        ),
         ("workflow", startup_workflow_schema()),
         ("instructions", compact_instructions),
         ("semantic_navigation", compact_semantic_navigation),
         ("jobs", compact_jobs),
         (
             "blockers",
-            startup_issue_list_schema(true),
+            {
+                let mut schema = startup_issue_list_schema(true);
+                schema["description"] = json!("Blocking startup issues; omitted when empty.");
+                schema
+            },
         ),
         (
             "warnings",
-            startup_issue_list_schema(false),
+            {
+                let mut schema = startup_issue_list_schema(false);
+                schema["description"] = json!("Non-blocking startup warnings; omitted when empty. Deliberately disabled current-window binding is not a warning.");
+                schema
+            },
         ),
         (
             "suggested_next_actions",
-            array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions."),
+            array_schema(schema_type("string", "Short suggested action."), "Bounded non-default suggested next actions. Omitted when there is nothing more informative than beginning the requested task."),
         ),
     ];
-    let mut schema = wrapped_output_schema(output_properties);
-    add_compact_work_metadata(&mut schema);
-    schema
-}
-
-fn add_compact_work_metadata(schema: &mut Value) {
-    let output = schema
-        .get_mut("properties")
-        .and_then(|properties| properties.get_mut("output"))
-        .and_then(|output| output.get_mut("properties"))
-        .expect("work_on_project output schema properties");
-    let output = output
-        .as_object_mut()
-        .expect("work_on_project output properties");
-    output.insert(
-        "deterministic".to_string(),
-        schema_type(
-            "boolean",
-            "True: the projection derives only from existing runtime state.",
-        ),
-    );
-    output.insert(
-        "llm_summary".to_string(),
-        schema_type("boolean", "Always false; never an LLM summary."),
-    );
+    wrapped_output_schema(output_properties)
 }
 
 fn review_evidence_schema(description: &str) -> Value {

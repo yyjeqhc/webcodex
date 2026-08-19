@@ -205,6 +205,11 @@ async fn explicit_resume_without_window_continues_unbound_and_preserves_root_tit
         resumed.output["session"]["explicit_session_id_required_for_continuity"],
         true
     );
+    assert!(resumed.output["startup_brief"]["warnings"]
+        .as_array()
+        .is_some_and(|warnings| warnings
+            .iter()
+            .any(|warning| warning == "current_binding_unavailable")));
     assert!(!serde_json::to_string(&resumed.output)
         .unwrap()
         .contains("current_session_unavailable"));

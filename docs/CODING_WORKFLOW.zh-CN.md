@@ -18,6 +18,12 @@ project-local instructions；它们不是 role selector。
   `work_on_project(include_project_instructions=false)` 省略本轮 bootstrap response 中的
   instruction 正文。WebCodex 仍会观察这些文件，并为本次 bootstrap 对应的 Workflow
   Session 记录当前的 instruction metadata。
+- `work_on_project` 的成功输出默认采用 sparse projection。省略的默认 section 表示：没有
+  Session execution defaults、普通已有 project 的解析没有特殊事件、repository overview
+  按设计未请求、readiness 为 pass/non-blocking、没有值得报告的 Job，或 blockers/warnings
+  为空。Instruction source 始终保留 path/fingerprint identity；false/null/empty 的正文投影
+  字段会省略。真实 warning、blocker、truncation、非默认 project resolution 和值得报告的
+  Job state 仍会显式返回。
 - 需要精确 `resume_session_id`、显式 `new_session=true` 隔离等高级 continuity 控制时，
   使用 `start_coding_task`。
 - behavioral role 由 **task instruction** 显式选择。实现任务明确写使用

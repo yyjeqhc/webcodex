@@ -1049,7 +1049,7 @@ fn startup_issues(
     if workspace.get("git_available").and_then(Value::as_bool) == Some(false) {
         push_unique(&mut warnings, "git_unavailable");
     }
-    if !input.binding_available {
+    if !input.binding_available && input.binding_reason_code != Some("binding_disabled") {
         push_unique(&mut warnings, "current_binding_unavailable");
     }
     if instructions.get("status").and_then(Value::as_str) == Some("unavailable") {

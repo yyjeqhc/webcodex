@@ -20,6 +20,13 @@ selectors.
   instructions, `work_on_project(include_project_instructions=false)` omits their
   bodies from that bootstrap response. WebCodex still observes the instruction
   files and records current instruction metadata for the resulting Workflow Session.
+- `work_on_project` success output is sparse by default. Omitted default sections
+  mean no Session execution defaults, ordinary existing-project resolution, the
+  intentionally skipped repository overview, pass/non-blocking readiness, no
+  noteworthy Jobs, or empty blockers/warnings. Instruction sources always keep
+  path/fingerprint identity; false/null/empty body-projection fields are omitted.
+  Positive warnings, blockers, truncation, non-default resolution, and noteworthy
+  Job state remain explicit.
 - Use `start_coding_task` when you need its advanced continuity controls, such
   as exact `resume_session_id` or deliberate `new_session=true` isolation.
 - Choose behavioral roles in the **task instruction**. For implementation work,

@@ -173,15 +173,23 @@ fn computer_application_launch_lifecycle_is_exact_and_never_blindly_retryable() 
     assert!(computer_request_is_effect("computer_launch_application"));
     assert!(!computer_request_is_effect("computer_list_applications"));
 
-    let valid = validate_computer_launch_application(
-        json!({"platform": "windows", "application_id": APPLICATION_ID, "success": true}),
+    for platform in ["windows", "macos"] {
+        let valid = validate_computer_launch_application(
+            json!({"platform": platform, "application_id": APPLICATION_ID, "success": true}),
+            APPLICATION_ID,
+        );
+        assert!(valid.success, "{platform}: {:?}", valid.output);
+    }
+
+    let unsupported = validate_computer_launch_application(
+        json!({"platform": "linux", "application_id": APPLICATION_ID, "success": true}),
         APPLICATION_ID,
     );
-    assert!(valid.success, "{:?}", valid.output);
+    assert!(!unsupported.success);
 
     let invalid = validate_computer_launch_application(
         json!({
-            "platform": "windows",
+            "platform": "macos",
             "application_id": APPLICATION_ID_2,
             "success": true,
             "native_identity": "MUST_NOT_SURVIVE"

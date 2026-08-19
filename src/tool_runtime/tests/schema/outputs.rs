@@ -43,6 +43,44 @@ fn structured_execution_output(
 }
 
 #[test]
+fn computer_launch_application_output_schema_has_closed_native_platforms() {
+    let schema =
+        crate::tool_runtime::registry::output_schema_for_tool("computer_launch_application");
+    let validate = |value: &Value| {
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(value, &schema)
+    };
+    let application_id = "application_0123456789abcdef0123456789abcdef";
+    for platform in ["windows", "macos"] {
+        let output =
+            serde_json::to_value(crate::tool_runtime::tool_result::ToolResult::ok(json!({
+                "platform": platform,
+                "application_id": application_id,
+                "success": true,
+            })))
+            .unwrap();
+        validate(&output).unwrap_or_else(|error| panic!("{platform}: {error}"));
+    }
+
+    let unsupported =
+        serde_json::to_value(crate::tool_runtime::tool_result::ToolResult::ok(json!({
+            "platform": "linux",
+            "application_id": application_id,
+            "success": true,
+        })))
+        .unwrap();
+    assert!(validate(&unsupported).is_err());
+
+    let extra = serde_json::to_value(crate::tool_runtime::tool_result::ToolResult::ok(json!({
+        "platform": "macos",
+        "application_id": application_id,
+        "success": true,
+        "bundle_url": "PRIVATE",
+    })))
+    .unwrap();
+    assert!(validate(&extra).is_err());
+}
+
+#[test]
 fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
     let specs = registered_tool_specs();
     let default_fields = default_output_schema_field_names();

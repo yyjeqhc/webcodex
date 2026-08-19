@@ -1091,6 +1091,16 @@ impl ComputerObserver {
         }))
     }
     fn launch_application(&self, application_id: &str) -> Result<Value, String> {
+        self.with_current_application(application_id, |record| {
+            platform::launch_application(application_id, record)
+        })
+    }
+
+    fn with_current_application<T>(
+        &self,
+        application_id: &str,
+        effect: impl FnOnce(&ApplicationRecord) -> Result<T, String>,
+    ) -> Result<T, String> {
         if !valid_application_id(application_id) {
             return Err("invalid_request: application_id is invalid".to_string());
         }
@@ -1103,9 +1113,8 @@ impl ComputerObserver {
             .map_err(|_| "computer_state_error: application registry lock poisoned".to_string())?;
         let record = registry
             .get(application_id)
-            .cloned()
             .ok_or_else(|| "stale_application: unknown or stale application_id".to_string())?;
-        let result = platform::launch_application(application_id, &record);
+        let result = effect(record);
         drop(registry);
         result
     }
@@ -2311,6 +2320,7 @@ fn ensure_exact_payload_fields(payload: &Value, expected: &[&str]) -> Result<(),
 #[cfg(test)]
 mod application_wire_contract_tests {
     use super::*;
+    use std::sync::{mpsc, Arc};
 
     fn candidate(name: &str, marker: u8) -> PlatformApplication {
         PlatformApplication {
@@ -2406,6 +2416,57 @@ mod application_wire_contract_tests {
             .unwrap();
         assert_eq!(second["count"], 1);
         let error = observer.launch_application(&old_id).unwrap_err();
+        assert!(error.starts_with("stale_application:"), "{error}");
+    }
+
+    #[test]
+    fn launch_admission_fences_concurrent_fresh_list_retirement() {
+        let observer = Arc::new(observer());
+        let first = observer
+            .replace_application_candidates(vec![candidate("One", 1)], 1)
+            .unwrap();
+        let application_id = first["applications"][0]["application_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let (effect_entered_tx, effect_entered_rx) = mpsc::channel();
+        let (release_effect_tx, release_effect_rx) = mpsc::channel();
+        let launch_observer = Arc::clone(&observer);
+        let launch_id = application_id.clone();
+        let launch = std::thread::spawn(move || {
+            launch_observer.with_current_application(&launch_id, |_| {
+                effect_entered_tx.send(()).unwrap();
+                release_effect_rx.recv().unwrap();
+                Ok(())
+            })
+        });
+        effect_entered_rx.recv().unwrap();
+
+        let (list_started_tx, list_started_rx) = mpsc::channel();
+        let (list_completed_tx, list_completed_rx) = mpsc::channel();
+        let list_observer = Arc::clone(&observer);
+        let fresh_list = std::thread::spawn(move || {
+            list_started_tx.send(()).unwrap();
+            let output = list_observer
+                .replace_application_candidates(vec![candidate("Two", 2)], 1)
+                .unwrap();
+            list_completed_tx.send(output).unwrap();
+        });
+        list_started_rx.recv().unwrap();
+        assert!(matches!(
+            list_completed_rx.recv_timeout(Duration::from_millis(25)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+
+        release_effect_tx.send(()).unwrap();
+        launch.join().unwrap().unwrap();
+        let fresh = list_completed_rx.recv().unwrap();
+        fresh_list.join().unwrap();
+        assert_eq!(fresh["applications"][0]["display_name"], "Two");
+        let error = observer
+            .with_current_application(&application_id, |_| Ok(()))
+            .unwrap_err();
         assert!(error.starts_with("stale_application:"), "{error}");
     }
 }

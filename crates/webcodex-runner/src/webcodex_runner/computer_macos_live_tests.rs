@@ -1,4 +1,44 @@
 use super::*;
+use objc2_foundation::{NSBundle, NSString, NSURL};
+use std::fs;
+use std::os::unix::fs::{symlink, PermissionsExt};
+use std::path::Path;
+
+fn create_test_application(path: &Path, name: &str, bundle_identifier: &str) {
+    let executable_name = "TestExecutable";
+    let contents = path.join("Contents");
+    let executable_directory = contents.join("MacOS");
+    fs::create_dir_all(&executable_directory).unwrap();
+    let info_plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key><string>{name}</string>
+  <key>CFBundleName</key><string>{name}</string>
+  <key>CFBundleIdentifier</key><string>{bundle_identifier}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>{executable_name}</string>
+</dict>
+</plist>
+"#
+    );
+    fs::write(contents.join("Info.plist"), info_plist).unwrap();
+    let executable = executable_directory.join(executable_name);
+    fs::write(&executable, b"#!/bin/sh\nexit 0\n").unwrap();
+    let mut permissions = fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(executable, permissions).unwrap();
+}
+
+fn assert_test_application_bundle(path: &Path) {
+    let canonical = fs::canonicalize(path).unwrap();
+    let native_path = NSString::from_str(canonical.to_str().unwrap());
+    let url = NSURL::fileURLWithPath_isDirectory(&native_path, true);
+    let bundle = NSBundle::bundleWithURL(&url).expect("synthetic test bundle");
+    assert!(bundle.bundleIdentifier().is_some());
+    assert!(bundle.executableURL().is_some());
+}
 
 fn surface_record(candidate: PlatformWindow) -> SurfaceRecord {
     SurfaceRecord {
@@ -84,6 +124,116 @@ fn live_focus_control_smoke(application_matches: impl Fn(&str) -> bool) -> bool 
         }
     }
     false
+}
+
+#[test]
+fn computer_macos_application_discovery_is_bounded_and_exact_without_launching() {
+    let applications =
+        platform::list_applications(MAX_APPLICATION_SCAN).expect("native macOS app discovery");
+    assert!(
+        !applications.is_empty(),
+        "a macOS host should expose at least one reliably launchable native application bundle"
+    );
+    assert!(applications.len() <= MAX_APPLICATION_SCAN);
+    assert!(applications.windows(2).all(|pair| {
+        application_candidate_order(&pair[0], &pair[1]) != std::cmp::Ordering::Greater
+    }));
+    for application in &applications {
+        assert!(!application.display_name.is_empty());
+        assert!(!application.native_identity.is_empty());
+    }
+    if let Some(application) = applications.first() {
+        platform::application_identity_revalidates_for_test(&application.native_identity)
+            .expect("fresh macOS application identity revalidates");
+    }
+}
+
+#[test]
+fn computer_macos_application_scan_is_bounded_symlink_safe_and_treats_apps_as_leaves() {
+    let temp = tempfile::tempdir().unwrap();
+    let applications_root = temp.path().join("Applications");
+    fs::create_dir_all(applications_root.join("Utilities")).unwrap();
+
+    let outer = applications_root.join("Outer.app");
+    create_test_application(&outer, "Outer", "dev.webcodex.outer");
+    assert_test_application_bundle(&outer);
+    create_test_application(
+        &outer.join("Contents/Nested.app"),
+        "Nested",
+        "dev.webcodex.nested",
+    );
+    create_test_application(
+        &applications_root.join("Utilities/Utility.app"),
+        "Utility",
+        "dev.webcodex.utility",
+    );
+
+    let outside = temp.path().join("Outside/Outside.app");
+    create_test_application(&outside, "Outside", "dev.webcodex.outside");
+    symlink(&outside, applications_root.join("Escape.app")).unwrap();
+
+    let applications = platform::macos_applications_in_roots_for_test(
+        std::slice::from_ref(&applications_root),
+        MAX_APPLICATION_SCAN,
+    );
+    assert_eq!(
+        applications
+            .iter()
+            .map(|application| application.display_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Outer", "Utility"]
+    );
+}
+
+#[test]
+fn computer_macos_application_replacement_at_same_path_is_stale() {
+    let temp = tempfile::tempdir().unwrap();
+    let applications_root = temp.path().join("Applications");
+    fs::create_dir_all(&applications_root).unwrap();
+    let application_path = applications_root.join("Replaceable.app");
+    create_test_application(&application_path, "Replaceable", "dev.webcodex.replaceable");
+    let first = platform::macos_applications_in_roots_for_test(
+        std::slice::from_ref(&applications_root),
+        MAX_APPLICATION_SCAN,
+    );
+    let original_identity = first[0].native_identity.clone();
+
+    fs::rename(&application_path, applications_root.join("Retired.app")).unwrap();
+    create_test_application(&application_path, "Replaceable", "dev.webcodex.replaceable");
+    let second = platform::macos_applications_in_roots_for_test(
+        std::slice::from_ref(&applications_root),
+        MAX_APPLICATION_SCAN,
+    );
+    let replacement = second
+        .iter()
+        .find(|application| application.display_name == "Replaceable")
+        .unwrap();
+    assert_ne!(replacement.native_identity, original_identity);
+    let error = platform::macos_application_identity_revalidates_in_roots_for_test(
+        &original_identity,
+        std::slice::from_ref(&applications_root),
+    )
+    .expect_err("same-path replacement must retire the discovered identity");
+    assert!(error.starts_with("stale_application:"), "{error}");
+}
+
+#[test]
+fn computer_macos_application_launch_configuration_is_nonactivating_and_closed() {
+    assert!(platform::macos_application_launch_configuration_for_test());
+    assert_eq!(
+        platform::macos_application_launch_completion_for_test(true, false),
+        "success"
+    );
+    for (has_application, has_error) in [(false, true), (false, false), (true, true)] {
+        assert_eq!(
+            platform::macos_application_launch_completion_for_test(has_application, has_error),
+            "outcome_unknown"
+        );
+    }
+    assert_eq!(
+        platform::macos_application_launch_lost_completion_for_test(),
+        (true, true)
+    );
 }
 
 #[test]

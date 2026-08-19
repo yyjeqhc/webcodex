@@ -268,6 +268,14 @@ while read-only `computer_list_applications` requires `computer:read` plus the i
 `computer_application_discovery` capability. The model supplies only `client_id` and a fresh
 opaque `application_id` produced by bounded discovery. No executable/path, argv, cwd,
 environment, shell/script, URL/protocol launcher, or generic process launcher is authorized.
+A native Windows Runner keeps and revalidates the exact AppsFolder PIDL. A native macOS
+Runner keeps and revalidates a canonical application URL plus bounded bundle and
+filesystem identity obtained only from Foundation-defined application roots; same-path
+replacement fails stale. macOS submits that exact private URL once through public
+`NSWorkspace` with activation, prompt/error UI, forced-new-instance, hide/hide-others,
+alternate-install substitution, arguments, environment, document/URL target, and custom
+Apple-event payload disabled or empty. These implementation-private identities and launch
+configuration never widen the caller-visible authorization or enter model output/audit.
 A stale or otherwise pre-native failure is `not_started` with `state_changed=false`; after
 native dispatch may have occurred, loss/ambiguity/inconsistent success metadata is
 `outcome_unknown` and must be reconciled with fresh `computer_list_windows` before another

@@ -2149,7 +2149,7 @@ fn computer_application_launch_runner_error(
         ),
         "application_failed" => computer_application_effect_not_started(
             "application_failed",
-            "Windows application identity could not be revalidated before native dispatch",
+            "Native application identity could not be revalidated before native dispatch",
             application_id,
         ),
         "outcome_unknown" => computer_application_effect_outcome_unknown(
@@ -2723,7 +2723,10 @@ fn validate_computer_launch_application(
     let allowed = ["platform", "application_id", "success"];
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("windows")
+        || !matches!(
+            output.get("platform").and_then(Value::as_str),
+            Some("windows" | "macos")
+        )
         || output.get("application_id").and_then(Value::as_str) != Some(expected_application_id)
         || output.get("success").and_then(Value::as_bool) != Some(true)
     {

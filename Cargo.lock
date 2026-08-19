@@ -4892,6 +4892,7 @@ name = "webcodex-runner"
 version = "0.3.9"
 dependencies = [
  "base64",
+ "block2",
  "chrono",
  "flate2",
  "futures-util",

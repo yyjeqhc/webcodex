@@ -186,8 +186,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("truncated", json!({"type": "boolean"})),
         ])),
-        "computer_launch_application" => Some(wrapped_output_schema(vec![
-            ("platform", json!({"type": "string", "const": "windows"})),
+        "computer_launch_application" => Some(strict_computer_output_schema(vec![
+            (
+                "platform",
+                json!({"type": "string", "enum": ["windows", "macos"]}),
+            ),
             (
                 "application_id",
                 json!({"type": "string", "pattern": "^application_[0-9a-f]{32}$", "maxLength": 128}),

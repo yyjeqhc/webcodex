@@ -78,13 +78,13 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     );
     assert_eq!(
         caps.computer_application_discovery,
-        cfg!(windows),
-        "computer application discovery is advertised only by the Windows native implementation"
+        cfg!(any(target_os = "macos", windows)),
+        "computer application discovery is advertised only by native macOS/Windows implementations"
     );
     assert_eq!(
         caps.computer_application_launch,
-        cfg!(windows),
-        "computer application launch is independently advertised only by the Windows native implementation"
+        cfg!(any(target_os = "macos", windows)),
+        "computer application launch is independently advertised only by native macOS/Windows implementations"
     );
     assert_eq!(
         caps.computer_clipboard_read,

@@ -312,7 +312,7 @@ pub(crate) const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         name: "computer_application_launch",
         summary: "Computer application launch: discover fresh bounded opaque application IDs, launch exactly one ID, then re-list windows and activate an exact surface only if needed.",
         manifest_purpose:
-            "Discover a Windows application, submit its exact native launch request, then re-observe windows before any follow-up UI effect.",
+            "Discover a macOS or Windows application, submit its exact native launch request, then re-observe windows before any follow-up UI effect.",
         tools: &[
             "computer_list_applications",
             "computer_launch_application",

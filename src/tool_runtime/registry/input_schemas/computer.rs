@@ -30,7 +30,7 @@ pub(crate) fn computer_list_applications_input_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose installed applications are discovered."},
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact macOS or Windows Runner client_id whose installed applications are discovered."},
             "limit": {"type": "integer", "minimum": 1, "maximum": 64, "description": "Optional bounded application count; defaults to 64."}
         },
         "required": ["client_id"]
@@ -42,7 +42,7 @@ pub(crate) fn computer_launch_application_input_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id that produced the application_id."},
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact macOS or Windows Runner client_id that produced the application_id."},
             "application_id": {"type": "string", "pattern": "^application_[0-9a-f]{32}$", "maxLength": 128, "description": "Fresh opaque process-local application_id returned by computer_list_applications."}
         },
         "required": ["client_id", "application_id"]

@@ -243,7 +243,7 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             // Desktop observation is a runtime/platform capability and is never
             // claimed by generated static config.
             computer_observe: false,
-            // Application discovery/launch are Windows runtime capabilities;
+            // Application discovery/launch are native runtime capabilities;
             // generated config never implies either from other Computer support.
             computer_application_discovery: false,
             computer_application_launch: false,

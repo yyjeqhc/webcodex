@@ -52,12 +52,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_list_applications",
-            "List a bounded fresh set of installed applications on an exact Windows Runner. application_id values are opaque, process-local, ephemeral, and replaced by each fresh list; executable paths and native launch identities are never exposed.",
+            "List a bounded fresh set of installed applications on an exact macOS or Windows Runner. application_id values are opaque, process-local, ephemeral, and replaced by each fresh list; application paths, bundle/Shell identities, and native launch targets are never exposed.",
             computer_list_applications_input_schema(),
         ),
         tool_spec(
             "computer_launch_application",
-            "Launch one fresh application_id through Windows native launch. Accepts no path, argv, cwd, environment, shell, URL, fallback, focus, or activation. Success means only that the OS accepted the request, not that a process/window is ready. Reconcile unknown outcomes with fresh computer_list_windows.",
+            "Launch one fresh application_id through the exact macOS or Windows native application target. Accepts no path, argv, cwd, environment, shell, URL, fallback, focus, or activation. Success means only that the OS completed the bounded launch request, not that a process/window is ready. Reconcile unknown outcomes with fresh computer_list_windows.",
             computer_launch_application_input_schema(),
         ),
         tool_spec(

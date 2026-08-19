@@ -40,11 +40,12 @@ image = { version = "0.25.9", default-features = false, features = ["jpeg"] }
 xcap = { version = "0.9.8", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard"] }
+block2 = "0.6.2"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard", "NSRunningApplication", "NSWorkspace", "block2"] }
 objc2-application-services = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSBundle", "NSDictionary", "NSError", "NSFileManager", "NSObject", "NSPathUtilities", "NSString", "NSURL"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [

@@ -17,22 +17,22 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "computer_read_clipboard",
-            "Read bounded plain Unicode text from the exact macOS or Windows global clipboard. Returns UTF-8 text up to 16 KiB without truncation. This separate privacy authority never enumerates formats, accesses windows/focus, pastes, retries, uses shell fallback, or reads clipboard history.",
+            "Read bounded Unicode text from exact macOS or Windows clipboard using NSPasteboardTypeString or CF_UNICODETEXT. Returns UTF-8 up to 16 KiB without truncation. This privacy authority never enumerates formats, accesses windows/focus, pastes, retries, uses shell fallback, or reads history.",
             computer_read_clipboard_input_schema(),
         ),
         tool_spec(
             "computer_write_clipboard",
-            "Replace the exact macOS or Windows global clipboard with bounded plain Unicode text, clearing prior formats first. It never pastes, focuses, activates, restores old data, retries, or reads back implicitly. Reconcile unknown outcomes only with separate clipboard-read authority.",
+            "Replace exact macOS or Windows clipboard with bounded Unicode text using NSPasteboardTypeString or CF_UNICODETEXT, clearing prior formats. Never pastes, focuses, activates, restores, retries, or reads back implicitly. Unknown outcomes require separate clipboard-read reconciliation.",
             computer_write_clipboard_input_schema(),
         ),
         tool_spec(
             "computer_pointer_move",
-            "Move the macOS or Windows pointer to an exact display-local source coordinate using the latest unspent display snapshot generation. The generation is single-use at effect admission. No implicit observation, focus, drag, fallback, or retry; reconcile unknown outcomes with a fresh display snapshot.",
+            "Move the macOS or Windows pointer to an exact display-local source coordinate using the latest unspent snapshot generation. The generation is single-use at effect admission. No implicit observation, focus, drag, fallback, or retry; reconcile unknown outcomes with fresh computer_snapshot_display.",
             computer_pointer_input_schema(),
         ),
         tool_spec(
             "computer_pointer_click",
-            "Send a macOS or Windows left click at an exact display-local source coordinate using the latest unspent snapshot generation. Held mouse/modifier state fails closed. No other buttons, double click, drag, implicit snapshot, fallback, or retry; reconcile unknown outcomes with a fresh display snapshot.",
+            "Send a macOS or Windows left click at exact display-local source coordinates using the unspent snapshot generation. Held mouse/modifier state fails closed. No other buttons, double click, drag, implicit snapshot, fallback, or retry; reconcile unknown outcomes with fresh computer_snapshot_display.",
             computer_pointer_input_schema(),
         ),
         tool_spec(

@@ -52,8 +52,7 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                     {"required": ["job_id"]},
                     {"required": ["job_status"]},
                     {"required": ["effective_timeout_secs"]},
-                    {"required": ["sync_wait_secs"]},
-                    {"required": ["async_handoff_available"]}
+                    {"required": ["sync_wait_secs"]}
                 ]
             },
             "then": {
@@ -69,6 +68,41 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                     "command_started",
                     "command_completed"
                 ]
+            }
+        },
+        {
+            "if": {"required": ["async_handoff_available"]},
+            "then": {
+                "if": {
+                    "properties": {
+                        "async_handoff_available": {"const": false},
+                        "execution_state": {"const": "completed"},
+                        "command_started": {"const": true},
+                        "command_completed": {"const": true},
+                        "command_ok": {"const": true}
+                    },
+                    "required": [
+                        "async_handoff_available",
+                        "execution_state",
+                        "command_started",
+                        "command_completed",
+                        "command_ok"
+                    ]
+                },
+                "else": {
+                    "required": [
+                        "promoted_to_job",
+                        "terminal",
+                        "job_id",
+                        "job_status",
+                        "effective_timeout_secs",
+                        "sync_wait_secs",
+                        "async_handoff_available",
+                        "execution_state",
+                        "command_started",
+                        "command_completed"
+                    ]
+                }
             }
         },
         {
@@ -222,28 +256,28 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "promoted_to_job",
             schema_type(
                 "boolean",
-                "True only when the same original execution continues as a durable Job.",
+                "True only when the same original execution continues as a durable Job. Omitted from run_process/run_script model-facing output after ordinary synchronous terminal success.",
             ),
         ),
         (
             "terminal",
             schema_type(
                 "boolean",
-                "Whether a trustworthy terminal projection is available from this tool call.",
+                "Whether a trustworthy terminal projection is available from this tool call. Omitted when ordinary synchronous run_process/run_script success already implies terminal=true.",
             ),
         ),
         (
             "job_id",
             nullable_schema(
                 "string",
-                "Durable continuation Job id, or null when no Job was exposed.",
+                "Durable continuation Job id. Non-promoted terminal run_process/run_script success omits this field rather than returning null.",
             ),
         ),
         (
             "job_status",
             nullable_schema(
                 "string",
-                "Authoritative durable Job status, or null when no Job was exposed.",
+                "Authoritative durable Job status. Non-promoted terminal run_process/run_script success omits this field rather than returning null.",
             ),
         ),
         (
@@ -257,21 +291,21 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "effective_timeout_secs",
             schema_type(
                 "integer",
-                "Total execution budget in seconds, beginning with the one original execution.",
+                "Total execution budget in seconds, beginning with the one original execution. Omitted from ordinary synchronous terminal run_process/run_script success.",
             ),
         ),
         (
             "sync_wait_secs",
             schema_type(
                 "integer",
-                "Internal synchronous grace in seconds; this is not a second timeout budget.",
+                "Internal synchronous grace in seconds; this is not a second timeout budget. Omitted from ordinary synchronous terminal run_process/run_script success.",
             ),
         ),
         (
             "async_handoff_available",
             schema_type(
                 "boolean",
-                "Whether this Runner can continue typed structured execution as the same durable Job.",
+                "Whether this Runner can continue typed structured execution as the same durable Job. True is omitted after ordinary synchronous terminal run_process/run_script success; false remains explicit as a noteworthy capability limitation.",
             ),
         ),
     ]
@@ -507,27 +541,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 (
                     "stdout_tail",
-                    schema_type("string", "Bounded stdout tail."),
+                    schema_type("string", "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success."),
                 ),
                 (
                     "stderr_tail",
-                    schema_type("string", "Bounded stderr tail."),
+                    schema_type("string", "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success."),
                 ),
                 (
                     "stdout_lines",
-                    schema_type("integer", "Captured stdout line count."),
+                    schema_type("integer", "Captured stdout line count; omitted when zero on ordinary synchronous terminal success."),
                 ),
                 (
                     "stderr_lines",
-                    schema_type("integer", "Captured stderr line count."),
+                    schema_type("integer", "Captured stderr line count; omitted when zero on ordinary synchronous terminal success."),
                 ),
                 (
                     "stdout_truncated",
-                    schema_type("boolean", "Whether stdout_tail was truncated."),
+                    schema_type("boolean", "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success."),
                 ),
                 (
                     "stderr_truncated",
-                    schema_type("boolean", "Whether stderr_tail was truncated."),
+                    schema_type("boolean", "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success."),
                 ),
                 (
                     "command_started",
@@ -551,14 +585,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "failure_kind",
                     nullable_schema(
                         "string",
-                        "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, capability_unavailable, unsupported_resource, unsupported_executable_type, spawn_failed, permission_denied, invalid_arguments, agent_offline, session_guard_denied, session_closed, or runtime_error.",
+                        "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, capability_unavailable, unsupported_resource, unsupported_executable_type, spawn_failed, permission_denied, invalid_arguments, agent_offline, session_guard_denied, session_closed, or runtime_error. Omitted instead of null on ordinary synchronous terminal success.",
                     ),
                 ),
                 (
                     "tool_failure",
                     schema_type(
                         "boolean",
-                        "True for WebCodex tool/runtime failures; false for child exit status failures.",
+                        "True for WebCodex tool/runtime failures; false for child exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
                 ("purpose", schema_type("string", "Declared execution purpose.")),
@@ -603,27 +637,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 (
                     "stdout_tail",
-                    schema_type("string", "Bounded stdout tail."),
+                    schema_type("string", "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success."),
                 ),
                 (
                     "stderr_tail",
-                    schema_type("string", "Bounded stderr tail."),
+                    schema_type("string", "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success."),
                 ),
                 (
                     "stdout_lines",
-                    schema_type("integer", "Captured stdout line count."),
+                    schema_type("integer", "Captured stdout line count; omitted when zero on ordinary synchronous terminal success."),
                 ),
                 (
                     "stderr_lines",
-                    schema_type("integer", "Captured stderr line count."),
+                    schema_type("integer", "Captured stderr line count; omitted when zero on ordinary synchronous terminal success."),
                 ),
                 (
                     "stdout_truncated",
-                    schema_type("boolean", "Whether stdout_tail was truncated."),
+                    schema_type("boolean", "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success."),
                 ),
                 (
                     "stderr_truncated",
-                    schema_type("boolean", "Whether stderr_tail was truncated."),
+                    schema_type("boolean", "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success."),
                 ),
                 (
                     "command_started",
@@ -650,14 +684,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "failure_kind",
                     nullable_schema(
                         "string",
-                        "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, capability_unavailable, unsupported_resource, interpreter_unavailable, script_setup_failed, permission_denied, invalid_arguments, agent_offline, session_guard_denied, session_closed, or runtime_error.",
+                        "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, capability_unavailable, unsupported_resource, interpreter_unavailable, script_setup_failed, permission_denied, invalid_arguments, agent_offline, session_guard_denied, session_closed, or runtime_error. Omitted instead of null on ordinary synchronous terminal success.",
                     ),
                 ),
                 (
                     "tool_failure",
                     schema_type(
                         "boolean",
-                        "True for WebCodex tool/runtime failures; false for interpreter exit status failures.",
+                        "True for WebCodex tool/runtime failures; false for interpreter exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
                 ("purpose", schema_type("string", "Declared execution purpose.")),

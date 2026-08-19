@@ -57,6 +57,75 @@ pub(super) fn decorate_structured_execution_prestart_denial(
     result.output = Value::Object(output);
 }
 
+/// Remove facts that are fully implied by a successful synchronous terminal
+/// structured execution, but only after the complete ToolResult has already
+/// been recorded into the Session ledger. Failure/uncertain/Job projections
+/// remain explicit because they participate in retry and reconciliation safety.
+fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut ToolResult) {
+    if !matches!(tool_name, "run_process" | "run_script") || !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    let terminal_success = output.get("execution_state").and_then(Value::as_str)
+        == Some("completed")
+        && output.get("command_started").and_then(Value::as_bool) == Some(true)
+        && output.get("command_completed").and_then(Value::as_bool) == Some(true)
+        && output.get("command_ok").and_then(Value::as_bool) == Some(true)
+        && output.get("promoted_to_job").and_then(Value::as_bool) == Some(false)
+        && output.get("terminal").and_then(Value::as_bool) == Some(true)
+        && output.get("job_id").map(Value::is_null).unwrap_or(true)
+        && output.get("job_status").map(Value::is_null).unwrap_or(true)
+        && output
+            .get("observation_token")
+            .map(Value::is_null)
+            .unwrap_or(true);
+    if !terminal_success {
+        return;
+    }
+
+    for key in [
+        "promoted_to_job",
+        "terminal",
+        "job_id",
+        "job_status",
+        "observation_token",
+        "effective_timeout_secs",
+        "sync_wait_secs",
+    ] {
+        output.remove(key);
+    }
+    if output
+        .get("async_handoff_available")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        output.remove("async_handoff_available");
+    }
+    if output.get("failure_kind").is_some_and(Value::is_null) {
+        output.remove("failure_kind");
+    }
+    if output.get("tool_failure").and_then(Value::as_bool) == Some(false) {
+        output.remove("tool_failure");
+    }
+    for key in ["stdout_tail", "stderr_tail"] {
+        if output.get(key).and_then(Value::as_str) == Some("") {
+            output.remove(key);
+        }
+    }
+    for key in ["stdout_lines", "stderr_lines"] {
+        if output.get(key).and_then(Value::as_u64) == Some(0) {
+            output.remove(key);
+        }
+    }
+    for key in ["stdout_truncated", "stderr_truncated"] {
+        if output.get(key).and_then(Value::as_bool) == Some(false) {
+            output.remove(key);
+        }
+    }
+}
+
 /// Snapshot of the activity-relevant request facts, captured before the
 /// `ToolCall` is moved into execution.
 struct WorkspaceActivityContext {
@@ -630,6 +699,7 @@ impl ToolRuntime {
                 );
             }
         }
+        sparsify_terminal_structured_execution_success(tool_name, &mut result);
         result
     }
 

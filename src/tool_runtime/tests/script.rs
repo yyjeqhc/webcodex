@@ -316,9 +316,40 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
     assert_eq!(result.output["execution_state"], "completed");
     assert_eq!(result.output["command_started"], true);
     assert_eq!(result.output["command_completed"], true);
-    assert_eq!(result.output["promoted_to_job"], false);
-    assert_eq!(result.output["terminal"], true);
-    assert!(result.output["job_id"].is_null());
+    assert_eq!(result.output["command_ok"], true);
+    for omitted in [
+        "promoted_to_job",
+        "terminal",
+        "job_id",
+        "job_status",
+        "observation_token",
+        "effective_timeout_secs",
+        "sync_wait_secs",
+        "async_handoff_available",
+        "failure_kind",
+        "tool_failure",
+        "stderr_tail",
+        "stderr_lines",
+        "stdout_truncated",
+        "stderr_truncated",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "boring terminal success field {omitted} should be omitted: {}",
+            result.output
+        );
+    }
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("run_script");
+    let instance = json!({
+        "success": true,
+        "output": result.output.clone(),
+        "error": null,
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| {
+            panic!("sparse terminal success must match run_script schema: {error}")
+        });
+
     assert!(runtime
         .shell_clients
         .hidden_job_ids_for_test()
@@ -637,8 +668,18 @@ async fn b2_script_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
     )
     .await;
     let direct = direct.await.unwrap();
-    assert_eq!(direct.output["promoted_to_job"], false);
+    assert!(direct.output.get("promoted_to_job").is_none());
     assert_eq!(direct.output["async_handoff_available"], false);
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("run_script");
+    let instance = json!({
+        "success": true,
+        "output": direct.output.clone(),
+        "error": null,
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| {
+            panic!("B2 sparse terminal success must match run_script schema: {error}")
+        });
 
     let rejected = runtime
         .dispatch_with_auth(

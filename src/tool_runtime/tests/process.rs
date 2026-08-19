@@ -849,11 +849,37 @@ async fn run_process_fast_terminal_jobs_project_back_without_visible_duplicates(
         assert_eq!(result.output["command_started"], true);
         assert_eq!(result.output["command_completed"], true);
         assert_eq!(result.output["exit_code"], exit_code);
-        assert_eq!(result.output["promoted_to_job"], false);
-        assert_eq!(result.output["terminal"], true);
-        assert!(result.output["job_id"].is_null());
-        assert!(result.output["job_status"].is_null());
-        assert_eq!(result.output["async_handoff_available"], true);
+        if expected_success {
+            assert_eq!(result.output["command_ok"], true);
+            for omitted in [
+                "promoted_to_job",
+                "terminal",
+                "job_id",
+                "job_status",
+                "observation_token",
+                "effective_timeout_secs",
+                "sync_wait_secs",
+                "async_handoff_available",
+                "failure_kind",
+                "tool_failure",
+                "stdout_truncated",
+                "stderr_truncated",
+            ] {
+                assert!(
+                    result.output.get(omitted).is_none(),
+                    "boring terminal success field {omitted} should be omitted: {}",
+                    result.output
+                );
+            }
+        } else {
+            assert_eq!(result.output["promoted_to_job"], false);
+            assert_eq!(result.output["terminal"], true);
+            assert!(result.output["job_id"].is_null());
+            assert!(result.output["job_status"].is_null());
+            assert_eq!(result.output["async_handoff_available"], true);
+            assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
+            assert_eq!(result.output["tool_failure"], false);
+        }
         assert!(
             runtime
                 .shell_clients
@@ -867,6 +893,120 @@ async fn run_process_fast_terminal_jobs_project_back_without_visible_duplicates(
             "a fast terminal execution must not become a public duplicate"
         );
     }
+}
+
+#[tokio::test]
+async fn run_process_terminal_success_is_sparse_after_full_session_effect_recording() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
+    let project = register_process_job_agent(&runtime, "process-sparse-ledger", temp.path()).await;
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(process_call(project, Some(session_id)), Some(&auth))
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, "process-sparse-ledger")
+        .await
+        .expect("hidden process Job should dispatch");
+    update_process_job(
+        &runtime,
+        "process-sparse-ledger",
+        &request,
+        "running",
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    update_process_job(
+        &runtime,
+        "process-sparse-ledger",
+        &request,
+        "completed",
+        Some(ShellCommandExecutionState::Completed),
+        Some(0),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["execution_state"], "completed");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["command_ok"], true);
+    assert_eq!(result.output["exit_code"], 0);
+    for omitted in [
+        "promoted_to_job",
+        "terminal",
+        "job_id",
+        "job_status",
+        "effective_timeout_secs",
+        "sync_wait_secs",
+        "async_handoff_available",
+        "failure_kind",
+        "tool_failure",
+        "stdout_tail",
+        "stderr_tail",
+        "stdout_lines",
+        "stderr_lines",
+        "stdout_truncated",
+        "stderr_truncated",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "model-facing boring success field {omitted} should be omitted: {}",
+            result.output
+        );
+    }
+
+    let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
+    assert!(
+        sparse_bytes <= 800,
+        "boring run_process success regressed above the model-facing context budget: {sparse_bytes} bytes"
+    );
+    eprintln!("run_process_sparse_terminal_success_bytes={sparse_bytes}");
+
+    let summary = runtime.sessions.summary(&session_id, Some(20)).unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "run_process")
+        .expect("recorded run_process completion");
+    assert_eq!(finished.exit_code, Some(0));
+    let effect = finished
+        .effect_evidence
+        .as_ref()
+        .expect("full lifecycle evidence must be recorded before model sparsification");
+    assert_eq!(effect.execution_state.as_deref(), Some("completed"));
+    assert_eq!(effect.command_started, Some(true));
+    assert_eq!(effect.command_completed, Some(true));
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("run_process");
+    let instance = json!({
+        "success": true,
+        "output": result.output,
+        "error": null,
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| {
+            panic!("sparse terminal success must match run_process schema: {error}")
+        });
 }
 
 #[tokio::test]
@@ -932,8 +1072,8 @@ async fn run_process_fast_terminal_projection_does_not_silently_drop_retained_li
         Some(retained_stdout.as_str())
     );
     assert_eq!(result.output["stdout_lines"], 300);
-    assert_eq!(result.output["stdout_truncated"], false);
-    assert_eq!(result.output["promoted_to_job"], false);
+    assert!(result.output.get("stdout_truncated").is_none());
+    assert!(result.output.get("promoted_to_job").is_none());
     assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
 }
 
@@ -1390,8 +1530,35 @@ async fn b2_process_runner_uses_direct_sync_and_rejects_durable_only_timeout() {
     )
     .await;
     let direct = direct.await.unwrap();
-    assert_eq!(direct.output["promoted_to_job"], false);
+    assert!(direct.output.get("promoted_to_job").is_none());
     assert_eq!(direct.output["async_handoff_available"], false);
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("run_process");
+    let instance = json!({
+        "success": true,
+        "output": direct.output.clone(),
+        "error": null,
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| {
+            panic!("B2 sparse terminal success must match run_process schema: {error}")
+        });
+    let mut malformed = direct.output.clone();
+    malformed["execution_state"] = json!("outcome_unknown");
+    malformed["command_completed"] = json!(false);
+    malformed["command_ok"] = json!(false);
+    let malformed_instance = json!({
+        "success": false,
+        "output": malformed,
+        "error": "transport outcome unknown",
+    });
+    assert!(
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &malformed_instance,
+            &schema,
+        )
+        .is_err(),
+        "async_handoff_available=false must not weaken non-terminal continuation requirements"
+    );
 
     let rejected = runtime
         .dispatch_with_auth(

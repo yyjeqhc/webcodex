@@ -287,6 +287,33 @@ fn key_tool_output_schemas_include_expected_fields() {
         .is_err(),
         "an execution-style run_process denial must include the canonical lifecycle tuple"
     );
+    for (tool_name, schema) in [
+        ("run_process", run_process_schema),
+        (
+            "run_script",
+            &spec_named(&specs, "run_script").output_schema,
+        ),
+    ] {
+        assert!(
+            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+                &serde_json::json!({
+                    "success": true,
+                    "output": {
+                        "execution_state": "completed",
+                        "command_started": true,
+                        "command_completed": true,
+                        "command_ok": true,
+                        "exit_code": 0,
+                        "observation_token": "orphan-observation"
+                    },
+                    "error": null
+                }),
+                schema,
+            )
+            .is_err(),
+            "{tool_name} must reject an observation_token without the full continuation tuple"
+        );
+    }
     let process_started_description =
         output_schema_property(&specs, "run_process", "command_started")["description"]
             .as_str()

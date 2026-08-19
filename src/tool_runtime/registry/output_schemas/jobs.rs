@@ -51,6 +51,7 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                     {"required": ["terminal"]},
                     {"required": ["job_id"]},
                     {"required": ["job_status"]},
+                    {"required": ["observation_token"]},
                     {"required": ["effective_timeout_secs"]},
                     {"required": ["sync_wait_secs"]}
                 ]

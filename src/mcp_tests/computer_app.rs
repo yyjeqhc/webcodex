@@ -373,7 +373,7 @@ async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_
         assert_eq!(content.len(), 3);
         assert_eq!(content[0]["type"], "resource_link");
         assert_eq!(content[0]["mimeType"], "image/jpeg");
-        assert_eq!(content[0]["name"], "computer-display-snapshot.jpg");
+        assert_eq!(content[0]["name"], "msi-display-snapshot.jpg");
         assert_eq!(content[0]["size"], Value::from(bytes.len() as u64));
         assert_eq!(content[1]["type"], "text");
         assert_eq!(content[2]["type"], "image");
@@ -447,7 +447,7 @@ async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_
         "computer_snapshot",
         false,
         ToolResult::ok(json!({
-            "client_id": "msi",
+            "client_id": "mini",
             "surface": {
                 "surface_id": "surface_0123456789abcdef0123456789abcdef",
                 "application": "Microsoft Edge",
@@ -467,7 +467,7 @@ async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_
         Some(window_caller),
     );
     assert_eq!(window["content"][0]["type"], "resource_link");
-    assert_eq!(window["content"][0]["name"], "computer-window-snapshot.jpg");
+    assert_eq!(window["content"][0]["name"], "mini-window-snapshot.jpg");
     let window_uri = window["content"][0]["uri"].as_str().unwrap();
     let window_read = handle_mcp_request(
         &runtime,

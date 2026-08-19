@@ -775,17 +775,32 @@ impl McpSnapshotResourceKind {
         }
     }
 
-    fn name(self, mime_type: &str) -> String {
+    fn name(self, client_id: &str, mime_type: &str) -> String {
         let extension = match mime_type {
             "image/png" => "png",
             "image/webp" => "webp",
             _ => "jpg",
         };
-        let stem = match self {
-            Self::Window => "computer-window-snapshot",
-            Self::Display => "computer-display-snapshot",
+        let kind = match self {
+            Self::Window => "window",
+            Self::Display => "display",
         };
-        format!("{stem}.{extension}")
+        let normalized_client_id: String = client_id
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let client_id = if normalized_client_id.is_empty() {
+            "computer"
+        } else {
+            normalized_client_id.as_str()
+        };
+        format!("{client_id}-{kind}-snapshot.{extension}")
     }
 }
 
@@ -1120,7 +1135,12 @@ fn mcp_native_image_tool_result(
     let snapshot_link = snapshot_caller
         .zip(McpSnapshotResourceKind::from_tool_name(tool_name))
         .map(|(caller, kind)| {
-            let name = kind.name(&mime_type);
+            let client_id = result
+                .output
+                .get("client_id")
+                .and_then(Value::as_str)
+                .unwrap_or("computer");
+            let name = kind.name(client_id, &mime_type);
             let record = McpSnapshotResourceRecord {
                 caller,
                 kind,

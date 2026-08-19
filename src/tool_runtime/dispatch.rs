@@ -126,6 +126,205 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     }
 }
 
+enum SearchModelProjection {
+    None,
+    SingleDefault,
+    Batch { default_queries: Vec<bool> },
+}
+
+impl SearchModelProjection {
+    fn capture(call: &ToolCall) -> Self {
+        match call {
+            ToolCall::SearchProjectText {
+                result_mode,
+                timeout_secs,
+                context_before,
+                context_after,
+                ..
+            } if caller_uses_default_search_controls(
+                result_mode,
+                timeout_secs,
+                context_before,
+                context_after,
+            ) =>
+            {
+                Self::SingleDefault
+            }
+            ToolCall::SearchProjectTexts { queries, .. } => Self::Batch {
+                default_queries: queries
+                    .iter()
+                    .map(|query| {
+                        caller_uses_default_search_controls(
+                            &query.result_mode,
+                            &query.timeout_secs,
+                            &query.context_before,
+                            &query.context_after,
+                        )
+                    })
+                    .collect(),
+            },
+            _ => Self::None,
+        }
+    }
+}
+
+fn caller_uses_default_search_controls(
+    result_mode: &Option<super::SearchResultMode>,
+    timeout_secs: &Option<i64>,
+    context_before: &Option<usize>,
+    context_after: &Option<usize>,
+) -> bool {
+    result_mode
+        .as_ref()
+        .is_none_or(|mode| matches!(mode, super::SearchResultMode::Matches))
+        && timeout_secs
+            .as_ref()
+            .copied()
+            .unwrap_or(super::files::DEFAULT_SEARCH_TIMEOUT_SECS as i64)
+            == super::files::DEFAULT_SEARCH_TIMEOUT_SECS as i64
+        && context_before.as_ref().copied().unwrap_or(0) == 0
+        && context_after.as_ref().copied().unwrap_or(0) == 0
+}
+
+/// Project an ordinary complete default text search down to its actual records.
+/// Session/event extraction sees the complete result before this model-facing
+/// pass. Fallbacks, partial results, non-default modes, timeouts, and context
+/// requests stay explicit. Batch defaults may inherit a smaller remaining
+/// timeout from the shared outer deadline without making that derived value
+/// model-relevant.
+fn sparsify_complete_default_search_output(
+    output: &mut serde_json::Map<String, Value>,
+    allow_batch_deadline_reduction: bool,
+) -> bool {
+    let Some(matches_len) = output
+        .get("matches")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+    else {
+        return false;
+    };
+    let exit_code = output.get("exit_code").and_then(Value::as_i64);
+    let effective_timeout = output.get("effective_timeout_secs").and_then(Value::as_u64);
+    let default_timeout = if allow_batch_deadline_reduction {
+        effective_timeout.is_some_and(|timeout| {
+            (1..=super::files::DEFAULT_SEARCH_TIMEOUT_SECS).contains(&timeout)
+        })
+    } else {
+        effective_timeout == Some(super::files::DEFAULT_SEARCH_TIMEOUT_SECS)
+    };
+    let ordinary_complete = output.get("backend").and_then(Value::as_str) == Some("rg")
+        && output.get("result_mode").and_then(Value::as_str) == Some("matches")
+        && default_timeout
+        && output.get("context_before").and_then(Value::as_u64) == Some(0)
+        && output.get("context_after").and_then(Value::as_u64) == Some(0)
+        && output.get("truncated").and_then(Value::as_bool) == Some(false)
+        && output.get("truncation_reason").is_some_and(Value::is_null)
+        && matches!(exit_code, Some(0 | 1))
+        && output.get("count").and_then(Value::as_u64) == Some(matches_len as u64);
+    if !ordinary_complete {
+        return false;
+    }
+
+    for key in [
+        "project",
+        "pattern",
+        "backend",
+        "result_mode",
+        "effective_timeout_secs",
+        "exit_code",
+        "context_before",
+        "context_after",
+        "count",
+        "truncated",
+        "truncation_reason",
+    ] {
+        output.remove(key);
+    }
+    if output.get("path").and_then(Value::as_str) == Some(".") {
+        output.remove("path");
+    }
+    true
+}
+
+fn sparsify_complete_default_search_success(
+    projection: &SearchModelProjection,
+    result: &mut ToolResult,
+) {
+    if !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    match projection {
+        SearchModelProjection::SingleDefault => {
+            sparsify_complete_default_search_output(output, false);
+        }
+        SearchModelProjection::Batch { default_queries } => {
+            let complete_batch =
+                output
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| {
+                        let item_count = items.len() as u64;
+                        item_count > 0
+                            && items.iter().all(|item| {
+                                item.get("success").and_then(Value::as_bool) == Some(true)
+                                    && item.get("error").is_some_and(Value::is_null)
+                            })
+                            && output.get("requested_count").and_then(Value::as_u64)
+                                == Some(item_count)
+                            && output.get("returned_count").and_then(Value::as_u64)
+                                == Some(item_count)
+                            && output.get("succeeded_count").and_then(Value::as_u64)
+                                == Some(item_count)
+                            && output.get("failed_count").and_then(Value::as_u64) == Some(0)
+                            && output.get("output_truncated").and_then(Value::as_bool)
+                                == Some(false)
+                            && output.get("next_index").is_some_and(Value::is_null)
+                    });
+            let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
+                return;
+            };
+            for item in items {
+                let Some(item) = item.as_object_mut() else {
+                    continue;
+                };
+                if item.get("success").and_then(Value::as_bool) != Some(true)
+                    || !item.get("error").is_some_and(Value::is_null)
+                {
+                    continue;
+                }
+                let Some(index) = item.get("index").and_then(Value::as_u64) else {
+                    continue;
+                };
+                if default_queries.get(index as usize).copied() != Some(true) {
+                    continue;
+                }
+                let Some(search_output) = item.get_mut("output").and_then(Value::as_object_mut)
+                else {
+                    continue;
+                };
+                sparsify_complete_default_search_output(search_output, true);
+            }
+            if complete_batch {
+                for key in [
+                    "project",
+                    "requested_count",
+                    "returned_count",
+                    "succeeded_count",
+                    "failed_count",
+                    "output_truncated",
+                    "next_index",
+                ] {
+                    output.remove(key);
+                }
+            }
+        }
+        SearchModelProjection::None => {}
+    }
+}
+
 /// Snapshot of the activity-relevant request facts, captured before the
 /// `ToolCall` is moved into execution.
 struct WorkspaceActivityContext {
@@ -627,6 +826,7 @@ impl ToolRuntime {
         }
         let activity_context =
             Self::capture_workspace_activity_context(&call, activity_project.as_deref());
+        let search_projection = SearchModelProjection::capture(&call);
         let tool_name = call.tool_name();
         let mut result = self
             .dispatch_authorized_inner(
@@ -700,6 +900,7 @@ impl ToolRuntime {
             }
         }
         sparsify_terminal_structured_execution_success(tool_name, &mut result);
+        sparsify_complete_default_search_success(&search_projection, &mut result);
         result
     }
 

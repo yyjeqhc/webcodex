@@ -71,7 +71,7 @@ const SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS: &[&str] = &[
 pub(crate) const MAX_SEARCH_CONTEXT_LINES: usize = 20;
 pub(crate) const MAX_SEARCH_GLOBS: usize = 32;
 pub(crate) const MAX_SEARCH_GLOB_BYTES: usize = 256;
-const DEFAULT_SEARCH_TIMEOUT_SECS: u64 = 30;
+pub(crate) const DEFAULT_SEARCH_TIMEOUT_SECS: u64 = 30;
 const MIN_SEARCH_TIMEOUT_SECS: i64 = 1;
 const MAX_SEARCH_TIMEOUT_SECS: i64 = 120;
 

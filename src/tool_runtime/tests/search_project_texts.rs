@@ -230,6 +230,297 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
 }
 
 #[tokio::test]
+async fn search_project_text_default_success_is_sparse_after_session_recording() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-sparse-single";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectText {
+                        project,
+                        pattern: "needle".to_string(),
+                        session_id: Some(session_id),
+                        path: None,
+                        limit: Some(20),
+                        context_before: None,
+                        context_after: None,
+                        include_globs: None,
+                        exclude_globs: None,
+                        result_mode: None,
+                        timeout_secs: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("single sparse search request");
+    complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["matches"][0]["path"], "src/a.rs");
+    assert!(result.output["session_event_id"].as_str().is_some());
+    for omitted in [
+        "project",
+        "pattern",
+        "path",
+        "backend",
+        "result_mode",
+        "effective_timeout_secs",
+        "exit_code",
+        "context_before",
+        "context_after",
+        "count",
+        "truncated",
+        "truncation_reason",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "boring search field {omitted} should be omitted: {}",
+            result.output
+        );
+    }
+
+    let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
+    assert!(
+        sparse_bytes <= 512,
+        "default sparse single search regressed above the model-facing context budget: {sparse_bytes} bytes"
+    );
+    eprintln!("search_project_text_sparse_default_bytes={sparse_bytes}");
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_text");
+    let instance = json!({
+        "success": true,
+        "output": result.output.clone(),
+        "error": null,
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| panic!("sparse search success must match schema: {error}"));
+
+    let summary = runtime.sessions.summary(&session_id, Some(20)).unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "search_project_text"
+        })
+        .expect("recorded search completion");
+    assert!(
+        finished
+            .observed_paths
+            .iter()
+            .any(|path| path == "src/a.rs"),
+        "Session observation extraction must run before model sparsification"
+    );
+}
+
+#[tokio::test]
+async fn search_project_text_nondefault_success_keeps_effective_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-noteworthy-single";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectText {
+                        project,
+                        pattern: "needle".to_string(),
+                        session_id: None,
+                        path: Some("src".to_string()),
+                        limit: Some(20),
+                        context_before: Some(1),
+                        context_after: None,
+                        include_globs: None,
+                        exclude_globs: None,
+                        result_mode: None,
+                        timeout_secs: Some(5),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("nondefault search request");
+    complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["path"], "src");
+    assert_eq!(result.output["backend"], "rg");
+    assert_eq!(result.output["result_mode"], "matches");
+    assert_eq!(result.output["effective_timeout_secs"], 5);
+    assert_eq!(result.output["context_before"], 1);
+    assert_eq!(result.output["context_after"], 0);
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["truncated"], false);
+    assert!(result.output["truncation_reason"].is_null());
+}
+
+#[tokio::test]
+async fn search_project_text_grep_fallback_keeps_backend_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-grep-visible";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectText {
+                        project,
+                        pattern: "needle".to_string(),
+                        session_id: None,
+                        path: None,
+                        limit: Some(20),
+                        context_before: None,
+                        context_after: None,
+                        include_globs: None,
+                        exclude_globs: None,
+                        result_mode: None,
+                        timeout_secs: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("grep fallback search request");
+    let stdout = concat!(
+        "{\"webcodex_search\":{\"backend\":\"grep\",\"feature_unavailable\":false}}\n",
+        "src/a.rs:1:needle\n"
+    );
+    complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, stdout, "").await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["backend"], "grep");
+    assert_eq!(result.output["result_mode"], "matches");
+    assert_eq!(result.output["effective_timeout_secs"], 30);
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["truncated"], false);
+    assert!(result.output["truncation_reason"].is_null());
+}
+
+#[tokio::test]
+async fn search_project_texts_default_matches_items_are_sparse_and_schema_valid() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-sparse-batch";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectTexts {
+                        project,
+                        queries: vec![query("first", None), query("second", None)],
+                        session_id: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let requests = [
+        next_patch_agent_request(&runtime, client_id).await.unwrap(),
+        next_patch_agent_request(&runtime, client_id).await.unwrap(),
+    ];
+    for request in &requests {
+        let pattern = request_pattern(request);
+        let path = format!("src/{pattern}.rs");
+        complete_search_success(&runtime, client_id, request, &path).await;
+    }
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    for omitted in [
+        "project",
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "output_truncated",
+        "next_index",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "complete all-success batch field {omitted} should be omitted: {}",
+            result.output
+        );
+    }
+    let items = result.output["items"].as_array().unwrap();
+    for item in items {
+        assert_eq!(item["success"], true);
+        assert!(item["error"].is_null());
+        assert!(item["output"]["matches"].as_array().is_some());
+        for omitted in [
+            "path",
+            "backend",
+            "result_mode",
+            "effective_timeout_secs",
+            "exit_code",
+            "context_before",
+            "context_after",
+            "count",
+            "truncated",
+            "truncation_reason",
+        ] {
+            assert!(
+                item["output"].get(omitted).is_none(),
+                "boring batch search field {omitted} should be omitted: {item}"
+            );
+        }
+    }
+
+    let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
+    assert!(
+        sparse_bytes <= 800,
+        "default two-query sparse batch regressed above the model-facing context budget: {sparse_bytes} bytes"
+    );
+    eprintln!("search_project_texts_sparse_default_bytes={sparse_bytes}");
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_texts");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| panic!("sparse batch search success must match schema: {error}"));
+}
+
+#[tokio::test]
 async fn search_project_texts_retries_one_dropped_agent_request_and_restores_order() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();

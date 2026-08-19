@@ -108,17 +108,17 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "search_project_texts" => Some(search_project_texts_output_schema()),
         "search_project_text" => {
             Some(wrapped_output_schema(vec![
-            ("project", schema_type("string", "Resolved project id.")),
-            ("pattern", schema_type("string", "Search pattern.")),
+            ("project", schema_type("string", "Resolved project id; omitted as request echo in ordinary complete default rg/matches success.")),
+            ("pattern", schema_type("string", "Search pattern; omitted as request echo in ordinary complete default rg/matches success.")),
             (
                 "path",
-                schema_type("string", "Project-relative search root."),
+                schema_type("string", "Project-relative search root; omitted when it is the default project root in ordinary complete default rg/matches success."),
             ),
             (
                 "backend",
                 nullable_schema(
                     "string",
-                    "Search backend used: rg, grep, or native. Null/omitted when unknown (for example outer wait timeout before backend selection).",
+                    "Search backend used: rg, grep, or native. Omitted for ordinary complete default rg/matches success, or null/omitted when unknown (for example outer wait timeout before backend selection).",
                 ),
             ),
             (
@@ -126,12 +126,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({
                     "type": "string",
                     "enum": ["matches", "files_with_matches", "count"],
-                    "description": "Effective result mode."
+                    "description": "Effective result mode; omitted when it is the default matches mode in ordinary complete rg success."
                 }),
             ),
             (
                 "effective_timeout_secs",
-                schema_type("integer", "Effective clamped timeout in seconds."),
+                schema_type("integer", "Effective clamped timeout in seconds; omitted when it is the default budget in ordinary complete rg/matches success."),
             ),
             (
                 "matches",
@@ -140,7 +140,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Bounded search matches; present in matches mode.",
                 ),
             ),
-            ("count", schema_type("integer", "Returned match count.")),
+            ("count", schema_type("integer", "Returned match count; omitted in sparse default matches success because it equals matches.length.")),
             (
                 "files",
                 array_schema(
@@ -175,7 +175,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "truncated",
-                schema_type("boolean", "Whether more mode-specific records were available."),
+                schema_type("boolean", "Whether more mode-specific records were available; false is omitted in sparse default matches success."),
             ),
             (
                 "truncation_reason",
@@ -245,36 +245,50 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
 }
 
 fn search_project_texts_output_schema() -> Value {
-    let search_success = json!({
+    let search_success_properties = json!({
+        "path": schema_type("string", "Effective project-relative search root; omitted for the default project root in sparse complete matches success."),
+        "backend": nullable_schema("string", "Search backend: rg, grep, native, or null when unknown; omitted for ordinary complete default rg/matches success."),
+        "result_mode": {"type": "string", "enum": ["matches", "files_with_matches", "count"]},
+        "effective_timeout_secs": {"type": "integer", "minimum": 1, "maximum": 120},
+        "exit_code": nullable_schema("integer", "Search command exit code, when available."),
+        "context_before": {"type": "integer", "minimum": 0, "maximum": 20},
+        "context_after": {"type": "integer", "minimum": 0, "maximum": 20},
+        "matches": {"type": "array", "items": search_match_schema()},
+        "count": {"type": "integer", "minimum": 0},
+        "files": {"type": "array", "items": search_file_result_schema()},
+        "returned_file_count": {"type": "integer", "minimum": 0},
+        "returned_match_count": {"type": "integer", "minimum": 0},
+        "count_complete": {"type": "boolean"},
+        "total_matches": nullable_schema("integer", "Complete total in count mode; null when incomplete."),
+        "truncated": {"type": "boolean"},
+        "truncation_reason": {
+            "anyOf": [
+                {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport"]},
+                {"type": "null"}
+            ]
+        }
+    });
+    let search_success_full = json!({
         "type": "object",
         "additionalProperties": false,
-        "properties": {
-            "path": schema_type("string", "Effective project-relative search root."),
-            "backend": nullable_schema("string", "Search backend: rg, grep, native, or null when unknown."),
-            "result_mode": {"type": "string", "enum": ["matches", "files_with_matches", "count"]},
-            "effective_timeout_secs": {"type": "integer", "minimum": 1, "maximum": 120},
-            "exit_code": nullable_schema("integer", "Search command exit code, when available."),
-            "context_before": {"type": "integer", "minimum": 0, "maximum": 20},
-            "context_after": {"type": "integer", "minimum": 0, "maximum": 20},
-            "matches": {"type": "array", "items": search_match_schema()},
-            "count": {"type": "integer", "minimum": 0},
-            "files": {"type": "array", "items": search_file_result_schema()},
-            "returned_file_count": {"type": "integer", "minimum": 0},
-            "returned_match_count": {"type": "integer", "minimum": 0},
-            "count_complete": {"type": "boolean"},
-            "total_matches": nullable_schema("integer", "Complete total in count mode; null when incomplete."),
-            "truncated": {"type": "boolean"},
-            "truncation_reason": {
-                "anyOf": [
-                    {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport"]},
-                    {"type": "null"}
-                ]
-            }
-        },
+        "properties": search_success_properties.clone(),
         "required": [
             "path", "backend", "result_mode", "effective_timeout_secs", "exit_code",
             "context_before", "context_after", "truncated", "truncation_reason"
         ]
+    });
+    let search_success_sparse_matches = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "path": search_success_properties["path"].clone(),
+            "matches": search_success_properties["matches"].clone()
+        },
+        "required": ["matches"],
+        "description": "Sparse model-facing form for ordinary complete rg matches-mode success under the default timeout and zero context. Omitted metadata means the documented boring defaults."
+    });
+    let search_success = json!({
+        "anyOf": [search_success_full, search_success_sparse_matches]
     });
     let search_failure = json!({
         "type": "object",
@@ -309,7 +323,7 @@ fn search_project_texts_output_schema() -> Value {
             "else": {"properties": {"output": search_failure, "error": {"type": "string"}}}
         }]
     });
-    let batch_output = json!({
+    let batch_output_full = json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -318,7 +332,7 @@ fn search_project_texts_output_schema() -> Value {
             "returned_count": {"type": "integer", "minimum": 0, "maximum": 8},
             "succeeded_count": {"type": "integer", "minimum": 0, "maximum": 8},
             "failed_count": {"type": "integer", "minimum": 0, "maximum": 8},
-            "items": {"type": "array", "maxItems": 8, "items": item_schema},
+            "items": {"type": "array", "maxItems": 8, "items": item_schema.clone()},
             "output_truncated": {"type": "boolean"},
             "next_index": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 7}, {"type": "null"}]},
             "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
@@ -331,6 +345,35 @@ fn search_project_texts_output_schema() -> Value {
             "project", "requested_count", "returned_count", "succeeded_count",
             "failed_count", "items", "output_truncated", "next_index"
         ]
+    });
+    let sparse_success_item = json!({
+        "allOf": [
+            item_schema,
+            {
+                "properties": {
+                    "success": {"const": true},
+                    "error": {"type": "null"}
+                },
+                "required": ["success", "error"]
+            }
+        ]
+    });
+    let batch_output_sparse = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "items": {"type": "array", "minItems": 1, "maxItems": 8, "items": sparse_success_item},
+            "session_recorded": schema_type("boolean", "True when this batch call was recorded."),
+            "session_id": schema_type("string", "Session id used for outer batch telemetry."),
+            "session_event_id": schema_type("string", "Outer batch Session event id."),
+            "session_hint": session_hint_schema(),
+            "permission": permission_decision_schema()
+        },
+        "required": ["items"],
+        "description": "Sparse model-facing batch form used only when every returned query succeeded and the outer batch was complete. Omitted counts and continuation fields therefore mean all items succeeded and no outer truncation occurred."
+    });
+    let batch_output = json!({
+        "anyOf": [batch_output_full, batch_output_sparse]
     });
     json!({
         "type": "object",

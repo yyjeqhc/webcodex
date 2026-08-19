@@ -41,8 +41,8 @@ use objc2_core_foundation::{
 };
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{
-    CGBitmapContextCreate, CGColorSpace, CGContext, CGDirectDisplayID, CGDisplayIsBuiltin,
-    CGDisplayIsMain, CGDisplayModelNumber, CGDisplayPixelsHigh, CGDisplayPixelsWide,
+    CGBitmapContextCreate, CGColorSpace, CGContext, CGDirectDisplayID, CGDisplayCopyDisplayMode,
+    CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMode, CGDisplayModelNumber,
     CGDisplaySerialNumber, CGDisplayUnitNumber, CGDisplayVendorNumber, CGError, CGEvent,
     CGEventFlags, CGGetActiveDisplayList, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
     CGKeyCode, CGPreflightPostEventAccess,
@@ -1340,17 +1340,45 @@ fn macos_bound_display_identity(
 }
 
 #[cfg(target_os = "macos")]
+fn checked_macos_source_pixel_geometry(
+    pixel_width: usize,
+    pixel_height: usize,
+) -> Result<(u32, u32), String> {
+    if pixel_width == 0 || pixel_height == 0 {
+        return Err(
+            "display_failed: macOS current display mode pixel geometry is invalid".to_string(),
+        );
+    }
+    let width = u32::try_from(pixel_width).map_err(|_| {
+        "display_failed: macOS current display mode pixel width exceeds u32".to_string()
+    })?;
+    let height = u32::try_from(pixel_height).map_err(|_| {
+        "display_failed: macOS current display mode pixel height exceeds u32".to_string()
+    })?;
+    ensure_raw_capture_bound(width, height).map_err(|error| {
+        format!("display_failed: macOS current display mode pixel geometry exceeds raw capture bound: {error}")
+    })?;
+    Ok((width, height))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_display_source_pixel_geometry(
+    display_id: CGDirectDisplayID,
+) -> Result<(u32, u32), String> {
+    let mode = CGDisplayCopyDisplayMode(display_id)
+        .ok_or_else(|| "display_failed: macOS current display mode is unavailable".to_string())?;
+    checked_macos_source_pixel_geometry(
+        CGDisplayMode::pixel_width(Some(&mode)),
+        CGDisplayMode::pixel_height(Some(&mode)),
+    )
+}
+
+#[cfg(target_os = "macos")]
 fn macos_display_descriptor(display_id: CGDirectDisplayID) -> Result<MacDisplayDescriptor, String> {
     if display_id == 0 {
         return Err("display_failed: macOS returned a null display id".to_string());
     }
-    let width = u32::try_from(CGDisplayPixelsWide(display_id))
-        .map_err(|_| "display_failed: macOS display pixel width exceeds u32".to_string())?;
-    let height = u32::try_from(CGDisplayPixelsHigh(display_id))
-        .map_err(|_| "display_failed: macOS display pixel height exceeds u32".to_string())?;
-    if width == 0 || height == 0 {
-        return Err("display_failed: macOS display pixel geometry is invalid".to_string());
-    }
+    let (width, height) = macos_display_source_pixel_geometry(display_id)?;
     let stable_identity = macos_stable_display_identity(display_id)?;
     let native_identity = macos_bound_display_identity(
         &stable_identity,
@@ -1610,20 +1638,51 @@ mod macos_display_tests {
     }
 
     #[test]
+    fn macos_hidpi_display_source_geometry_uses_mode_backing_pixels() {
+        let logical_display_geometry = (1920u32, 1080u32);
+        let source_geometry = checked_macos_source_pixel_geometry(3840, 2160).unwrap();
+        assert_eq!(source_geometry, (3840, 2160));
+        assert_ne!(source_geometry, logical_display_geometry);
+
+        let discovered = descriptor(9, 3, source_geometry.0, source_geometry.1);
+        let record = record(&discovered);
+        let captured = capture_revalidated_macos_display(
+            &record,
+            |_| Ok(9),
+            |_| Ok((3840usize, 2160usize)),
+            |geometry| *geometry,
+        )
+        .expect("HiDPI capture must use current-mode source pixels");
+        assert_eq!(captured, (3840, 2160));
+    }
+
+    #[test]
+    fn macos_source_pixel_geometry_is_positive_u32_and_raw_capture_bounded() {
+        for geometry in [(0, 2160), (3840, 0)] {
+            let error = checked_macos_source_pixel_geometry(geometry.0, geometry.1).unwrap_err();
+            assert!(error.starts_with("display_failed:"), "{error}");
+        }
+        let error = checked_macos_source_pixel_geometry(usize::MAX, 1).unwrap_err();
+        assert!(error.contains("exceeds u32"), "{error}");
+        let error = checked_macos_source_pixel_geometry(8192, 4097).unwrap_err();
+        assert!(error.contains("raw capture bound"), "{error}");
+    }
+
+    #[test]
     fn macos_display_identity_revalidation_fails_closed_on_replacement_hotplug_and_geometry() {
-        let discovered = descriptor(1, 7, 1920, 1080);
+        let discovered = descriptor(1, 7, 3840, 2160);
         let record = record(&discovered);
         assert_eq!(
             find_exact_macos_display_in(&record, std::slice::from_ref(&discovered)).unwrap(),
             1
         );
 
-        let replacement = descriptor(1, 8, 1920, 1080);
+        let replacement = descriptor(1, 8, 3840, 2160);
         let error = find_exact_macos_display_in(&record, &[replacement])
             .expect_err("same native id with a different stable identity must be stale");
         assert!(error.starts_with("stale_display:"), "{error}");
 
-        let replugged = descriptor(2, 7, 1920, 1080);
+        let replugged = descriptor(2, 7, 3840, 2160);
         let error = find_exact_macos_display_in(&record, &[replugged])
             .expect_err("a replugged display with a new native id must be stale");
         assert!(error.starts_with("stale_display:"), "{error}");
@@ -1634,7 +1693,7 @@ mod macos_display_tests {
             .expect_err("source pixel geometry changes must be stale");
         assert!(error.starts_with("stale_display:"), "{error}");
 
-        let ambiguous = [descriptor(1, 7, 1920, 1080), descriptor(2, 7, 1920, 1080)];
+        let ambiguous = [descriptor(1, 7, 3840, 2160), descriptor(2, 7, 3840, 2160)];
         let error = find_exact_macos_display_in(&record, &ambiguous)
             .expect_err("ambiguous stable native identity must fail closed");
         assert!(
@@ -1658,7 +1717,7 @@ mod macos_display_tests {
 
     #[test]
     fn macos_display_capture_revalidates_before_and_after_and_discards_races() {
-        let discovered = descriptor(9, 3, 2560, 1440);
+        let discovered = descriptor(9, 3, 3840, 2160);
         let record = record(&discovered);
         let validations = Cell::new(0);
         let dropped = Rc::new(Cell::new(false));
@@ -1670,8 +1729,8 @@ mod macos_display_tests {
             },
             |_| {
                 Ok(SimulatedCapture {
-                    width: 2560,
-                    height: 1440,
+                    width: 3840,
+                    height: 2160,
                     dropped: Rc::clone(&dropped),
                 })
             },
@@ -1698,8 +1757,8 @@ mod macos_display_tests {
             },
             |_| {
                 Ok(SimulatedCapture {
-                    width: 2560,
-                    height: 1440,
+                    width: 3840,
+                    height: 2160,
                     dropped: Rc::clone(&dropped),
                 })
             },
@@ -1712,22 +1771,24 @@ mod macos_display_tests {
     }
 
     #[test]
-    fn macos_display_capture_rejects_geometry_after_post_revalidation() {
-        let discovered = descriptor(4, 2, 1280, 720);
+    fn macos_display_capture_rejects_wrong_backing_geometry_after_post_revalidation() {
+        let discovered = descriptor(4, 2, 3840, 2160);
         let record = record(&discovered);
-        let validations = Cell::new(0);
-        let error = capture_revalidated_macos_display(
-            &record,
-            |_| {
-                validations.set(validations.get() + 1);
-                Ok(4)
-            },
-            |_| Ok((1280usize, 719usize)),
-            |geometry| *geometry,
-        )
-        .expect_err("captured pixel geometry must exactly match discovery");
-        assert!(error.starts_with("capture_failed:"), "{error}");
-        assert_eq!(validations.get(), 2);
+        for captured_geometry in [(1920usize, 1080usize), (3840usize, 2159usize)] {
+            let validations = Cell::new(0);
+            let error = capture_revalidated_macos_display(
+                &record,
+                |_| {
+                    validations.set(validations.get() + 1);
+                    Ok(4)
+                },
+                |_| Ok(captured_geometry),
+                |geometry| *geometry,
+            )
+            .expect_err("captured backing pixel geometry must exactly match source pixels");
+            assert!(error.starts_with("capture_failed:"), "{error}");
+            assert_eq!(validations.get(), 2);
+        }
     }
 }
 

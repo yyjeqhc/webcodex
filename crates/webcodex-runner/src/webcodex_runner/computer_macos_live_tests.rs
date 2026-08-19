@@ -159,6 +159,12 @@ fn computer_macos_display_discovery_is_bounded_exact_and_noninvasive() {
     assert!(displays
         .iter()
         .all(|display| display.width > 0 && display.height > 0));
+    if let Some(primary) = displays.iter().find(|display| display.primary) {
+        println!(
+            "macOS primary display source pixel geometry: {}x{}",
+            primary.width, primary.height
+        );
+    }
     assert!(displays
         .iter()
         .enumerate()

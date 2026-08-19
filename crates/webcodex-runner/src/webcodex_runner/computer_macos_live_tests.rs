@@ -287,6 +287,34 @@ fn computer_macos_application_replacement_at_same_path_is_stale() {
 }
 
 #[test]
+fn computer_macos_application_replacement_after_launch_preparation_never_dispatches() {
+    let temp = tempfile::tempdir().unwrap();
+    let applications_root = temp.path().join("Applications");
+    fs::create_dir_all(&applications_root).unwrap();
+    let application_path = applications_root.join("Replaceable.app");
+    create_test_application(&application_path, "Replaceable", "dev.webcodex.replaceable");
+    let discovered = platform::macos_applications_in_roots_for_test(
+        std::slice::from_ref(&applications_root),
+        MAX_APPLICATION_SCAN,
+    );
+    let original_identity = discovered[0].native_identity.clone();
+
+    let (result, dispatch_attempts) = platform::macos_application_launch_preparation_race_for_test(
+        &original_identity,
+        std::slice::from_ref(&applications_root),
+        || {
+            fs::rename(&application_path, applications_root.join("Retired.app")).unwrap();
+            create_test_application(&application_path, "Replaceable", "dev.webcodex.replaceable");
+        },
+    );
+
+    let error = result.expect_err("replacement after preparation must fail before dispatch");
+    assert!(error.starts_with("stale_application:"), "{error}");
+    assert!(!error.starts_with("outcome_unknown:"), "{error}");
+    assert_eq!(dispatch_attempts, 0, "stale target must never dispatch");
+}
+
+#[test]
 fn computer_macos_application_launch_configuration_is_nonactivating_and_closed() {
     assert!(platform::macos_application_launch_configuration_for_test());
     assert_eq!(

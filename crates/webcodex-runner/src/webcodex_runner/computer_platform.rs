@@ -3365,10 +3365,9 @@ pub(super) fn list_applications(limit: usize) -> Result<Vec<PlatformApplication>
 }
 
 #[cfg(target_os = "macos")]
-fn revalidate_macos_application_identity_with_roots(
+fn decode_macos_application_identity(
     native_identity: &[u8],
-    roots: &[PathBuf],
-) -> Result<String, String> {
+) -> Result<MacApplicationIdentity, String> {
     if native_identity.is_empty() || native_identity.len() > MAX_MACOS_APPLICATION_IDENTITY_BYTES {
         return Err("stale_application: macOS application identity is invalid".to_string());
     }
@@ -3380,6 +3379,15 @@ fn revalidate_macos_application_identity_with_roots(
     {
         return Err("stale_application: macOS application identity is invalid".to_string());
     }
+    Ok(identity)
+}
+
+#[cfg(target_os = "macos")]
+fn revalidate_macos_application_identity_with_roots(
+    native_identity: &[u8],
+    roots: &[PathBuf],
+) -> Result<String, String> {
+    let identity = decode_macos_application_identity(native_identity)?;
     let roots = normalize_macos_application_roots(roots.iter().cloned());
     let path = PathBuf::from(&identity.canonical_path);
     let fresh = mac_application_candidate_at_path(&path, &roots)
@@ -3421,6 +3429,39 @@ fn classify_macos_application_launch_completion(
 }
 
 #[cfg(target_os = "macos")]
+fn macos_application_launch_completion_channel() -> (
+    Receiver<MacApplicationLaunchCompletion>,
+    RcBlock<dyn Fn(*mut NSRunningApplication, *mut NSError)>,
+) {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let completion: RcBlock<dyn Fn(*mut NSRunningApplication, *mut NSError)> = RcBlock::new(
+        move |running_application: *mut NSRunningApplication, error: *mut NSError| {
+            let completion = classify_macos_application_launch_completion(
+                !running_application.is_null(),
+                !error.is_null(),
+            );
+            let _ = sender.try_send(completion);
+        },
+    );
+    (receiver, completion)
+}
+
+#[cfg(target_os = "macos")]
+fn dispatch_revalidated_macos_application<T>(
+    native_identity: &[u8],
+    roots: &[PathBuf],
+    prepared_path: &str,
+    dispatch: impl FnOnce() -> T,
+) -> Result<T, String> {
+    let application_path =
+        revalidate_macos_application_identity_with_roots(native_identity, roots)?;
+    if application_path != prepared_path {
+        return Err("stale_application: macOS application launch path changed".to_string());
+    }
+    Ok(dispatch())
+}
+
+#[cfg(target_os = "macos")]
 fn wait_for_macos_application_launch(
     completion: Receiver<MacApplicationLaunchCompletion>,
     wait: Duration,
@@ -3451,36 +3492,35 @@ pub(super) fn launch_application(
     application_id: &str,
     application: &ApplicationRecord,
 ) -> Result<Value, String> {
-    // Exact native URL/bundle/filesystem identity revalidation and all launch
-    // configuration/callback allocation finish before the NSWorkspace effect.
-    let application_path = revalidate_macos_application_identity_with_roots(
-        &application.native_identity,
-        &macos_application_roots(),
-    )?;
-    let native_application_path = NSString::from_str(&application_path);
-    let application_url = NSURL::fileURLWithPath_isDirectory(&native_application_path, true);
+    // Prepare every launch object that does not depend on the current target identity
+    // before the final filesystem/bundle proof. This keeps same-path replacement
+    // failures definite pre-effect instead of widening the gap before NSWorkspace dispatch.
     let configuration = NSWorkspaceOpenConfiguration::configuration();
     configure_macos_application_launch(&configuration);
     let workspace = NSWorkspace::sharedWorkspace();
-    let (sender, receiver) = mpsc::sync_channel(1);
-    let completion: RcBlock<dyn Fn(*mut NSRunningApplication, *mut NSError)> = RcBlock::new(
-        move |running_application: *mut NSRunningApplication, error: *mut NSError| {
-            let completion = classify_macos_application_launch_completion(
-                !running_application.is_null(),
-                !error.is_null(),
-            );
-            let _ = sender.try_send(completion);
-        },
-    );
+    let (receiver, completion) = macos_application_launch_completion_channel();
 
-    // This asynchronous call is the native effect boundary. It is submitted
-    // exactly once; every timeout, callback loss, or non-success completion is
-    // unknown and never causes a second launch request.
-    workspace.openApplicationAtURL_configuration_completionHandler(
-        &application_url,
-        &configuration,
-        Some(&completion),
-    );
+    // The stored path may be used to prepare the immutable NSURL, but it does not
+    // authorize launch. Full bundle/filesystem identity is revalidated again after
+    // this target-dependent object preparation and immediately before native dispatch.
+    let prepared_identity = decode_macos_application_identity(&application.native_identity)?;
+    let native_application_path = NSString::from_str(&prepared_identity.canonical_path);
+    let application_url = NSURL::fileURLWithPath_isDirectory(&native_application_path, true);
+    dispatch_revalidated_macos_application(
+        &application.native_identity,
+        &macos_application_roots(),
+        &prepared_identity.canonical_path,
+        || {
+            // This asynchronous call is the native effect boundary. It is submitted
+            // exactly once; every timeout, callback loss, or non-success completion is
+            // unknown and never causes a second launch request.
+            workspace.openApplicationAtURL_configuration_completionHandler(
+                &application_url,
+                &configuration,
+                Some(&completion),
+            );
+        },
+    )?;
     wait_for_macos_application_launch(receiver, MACOS_APPLICATION_LAUNCH_WAIT)?;
     Ok(json!({
         "platform": "macos",
@@ -3511,6 +3551,44 @@ pub(super) fn macos_application_identity_revalidates_in_roots_for_test(
     roots: &[PathBuf],
 ) -> Result<(), String> {
     revalidate_macos_application_identity_with_roots(native_identity, roots).map(drop)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+pub(super) fn macos_application_launch_preparation_race_for_test(
+    native_identity: &[u8],
+    roots: &[PathBuf],
+    between_preparation_and_dispatch: impl FnOnce(),
+) -> (Result<(), String>, usize) {
+    let configuration = NSWorkspaceOpenConfiguration::configuration();
+    configure_macos_application_launch(&configuration);
+    let workspace = NSWorkspace::sharedWorkspace();
+    let (receiver, completion) = macos_application_launch_completion_channel();
+    let prepared_identity = match decode_macos_application_identity(native_identity) {
+        Ok(identity) => identity,
+        Err(error) => return (Err(error), 0),
+    };
+    let native_application_path = NSString::from_str(&prepared_identity.canonical_path);
+    let application_url = NSURL::fileURLWithPath_isDirectory(&native_application_path, true);
+
+    between_preparation_and_dispatch();
+
+    let mut dispatch_attempts = 0usize;
+    let result = dispatch_revalidated_macos_application(
+        native_identity,
+        roots,
+        &prepared_identity.canonical_path,
+        || {
+            dispatch_attempts += 1;
+            let _prepared_objects = (
+                &configuration,
+                &workspace,
+                &receiver,
+                &completion,
+                &application_url,
+            );
+        },
+    );
+    (result, dispatch_attempts)
 }
 
 #[cfg(all(test, target_os = "macos"))]

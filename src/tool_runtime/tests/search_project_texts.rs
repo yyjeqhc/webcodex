@@ -521,6 +521,92 @@ async fn search_project_texts_default_matches_items_are_sparse_and_schema_valid(
 }
 
 #[tokio::test]
+async fn search_project_texts_dispatch_mixed_batch_only_sparsifies_success_item() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-sparse-mixed-batch";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let expected_project = project.clone();
+    let auth = auth_context(None, true);
+    let mut invalid = query("invalid", None);
+    invalid.path = Some("../outside".to_string());
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectTexts {
+                        project,
+                        queries: vec![query("steady", None), invalid],
+                        session_id: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("mixed batch successful query request");
+    assert_eq!(request_pattern(&request), "steady");
+    complete_search_success(&runtime, client_id, &request, "src/steady.rs").await;
+    assert_no_agent_request(&runtime, client_id).await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["project"], expected_project);
+    assert_eq!(result.output["requested_count"], 2);
+    assert_eq!(result.output["returned_count"], 2);
+    assert_eq!(result.output["succeeded_count"], 1);
+    assert_eq!(result.output["failed_count"], 1);
+    assert_eq!(result.output["output_truncated"], false);
+    assert!(result.output["next_index"].is_null());
+
+    let items = result.output["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["index"], 0);
+    assert_eq!(items[0]["success"], true);
+    assert!(items[0]["error"].is_null());
+    assert_eq!(items[0]["output"]["matches"][0]["path"], "src/steady.rs");
+    for omitted in [
+        "path",
+        "backend",
+        "result_mode",
+        "effective_timeout_secs",
+        "exit_code",
+        "context_before",
+        "context_after",
+        "count",
+        "truncated",
+        "truncation_reason",
+    ] {
+        assert!(
+            items[0]["output"].get(omitted).is_none(),
+            "successful default item field {omitted} should be sparse in a mixed batch: {}",
+            items[0]
+        );
+    }
+
+    assert_eq!(items[1]["index"], 1);
+    assert_eq!(items[1]["success"], false);
+    assert_eq!(
+        items[1]["output"]["error_kind"],
+        "search_project_text_failed"
+    );
+    assert_eq!(items[1]["output"]["reason_code"], "invalid_path");
+    assert_eq!(items[1]["output"]["state_changed"], false);
+    assert!(items[1]["error"].as_str().is_some());
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_texts");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| panic!("mixed sparse/full batch must match schema: {error}"));
+}
+
+#[tokio::test]
 async fn search_project_texts_retries_one_dropped_agent_request_and_restores_order() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();

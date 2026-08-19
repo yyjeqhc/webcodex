@@ -1436,12 +1436,12 @@ pub enum ToolCall {
         modifiers: Option<Vec<String>>,
     },
 
-    /// Read bounded Windows CF_UNICODETEXT from the global clipboard.
+    /// Read bounded native plain Unicode text from the global clipboard.
     ComputerReadClipboard {
         client_id: String,
     },
 
-    /// Replace the Windows global clipboard with bounded CF_UNICODETEXT.
+    /// Replace the global clipboard with bounded native plain Unicode text.
     ComputerWriteClipboard {
         client_id: String,
         text: String,

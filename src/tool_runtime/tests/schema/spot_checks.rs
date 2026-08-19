@@ -313,6 +313,9 @@ fn tool_specs_clipboard_text_is_strict_bounded_and_private() {
         present: ["platform", "available", "text", "text_bytes"],
         absent: ["format", "hwnd", "native_owner", "hglobal", "sequence", "sha256"]
     );
+    assert_eq!(read_output["platform"]["enum"], json!(["windows", "macos"]));
+    assert!(read.description.contains("NSPasteboardTypeString"));
+    assert!(read.description.contains("CF_UNICODETEXT"));
 
     let write = spec_named(&specs, "computer_write_clipboard");
     assert_eq!(write.input_schema["additionalProperties"], false);
@@ -342,6 +345,12 @@ fn tool_specs_clipboard_text_is_strict_bounded_and_private() {
         present: ["platform", "text_bytes", "success", "execution_state", "state_changed", "error_kind"],
         absent: ["text", "sha256", "hglobal", "hwnd", "native_owner", "sequence"]
     );
+    assert_eq!(
+        write_output["platform"]["enum"],
+        json!(["windows", "macos"])
+    );
+    assert!(write.description.contains("NSPasteboardTypeString"));
+    assert!(write.description.contains("CF_UNICODETEXT"));
 }
 
 #[test]

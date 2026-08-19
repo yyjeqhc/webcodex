@@ -2619,7 +2619,10 @@ fn validate_computer_read_clipboard(output: Value) -> ToolResult {
             "clipboard read result is not an object",
         );
     };
-    if output.get("platform").and_then(Value::as_str) != Some("windows") {
+    if !matches!(
+        output.get("platform").and_then(Value::as_str),
+        Some("windows" | "macos")
+    ) {
         return computer_error(
             "invalid_runner_response",
             "clipboard read platform is inconsistent",
@@ -2688,7 +2691,10 @@ fn validate_computer_write_clipboard(output: Value, context: &ClipboardWriteCont
     let allowed = ["platform", "text_bytes", "success"];
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("windows")
+        || !matches!(
+            output.get("platform").and_then(Value::as_str),
+            Some("windows" | "macos")
+        )
         || output.get("success").and_then(Value::as_bool) != Some(true)
         || output.get("text_bytes").and_then(Value::as_u64)
             != context.text_bytes.map(|value| value as u64)

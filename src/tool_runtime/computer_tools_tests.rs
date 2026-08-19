@@ -1263,12 +1263,23 @@ fn computer_clipboard_public_validator_is_strict_and_read_is_not_an_effect() {
     }));
     assert!(available.success);
 
+    let macos_available = validate_computer_read_clipboard(json!({
+        "platform":"macos","available":true,"text":"","text_bytes":0
+    }));
+    assert!(macos_available.success);
+
     let leaked = validate_computer_read_clipboard(json!({
         "platform":"windows","available":true,"text":"safe","text_bytes":4,
         "native_owner":"PRIVATE_OWNER"
     }));
     assert!(!leaked.success);
     assert_eq!(leaked.output["error_kind"], "invalid_runner_response");
+    for platform in ["linux", "darwin", "MACOS"] {
+        let unsupported = validate_computer_read_clipboard(json!({
+            "platform":platform,"available":false,"text_bytes":0
+        }));
+        assert!(!unsupported.success, "platform {platform}");
+    }
 
     let context = ClipboardWriteContext {
         text_bytes: Some(5),
@@ -1278,6 +1289,16 @@ fn computer_clipboard_public_validator_is_strict_and_read_is_not_an_effect() {
         &context,
     );
     assert!(written.success);
+    let macos_written = validate_computer_write_clipboard(
+        json!({"platform":"macos","text_bytes":5,"success":true}),
+        &context,
+    );
+    assert!(macos_written.success);
+    let unsupported_write = validate_computer_write_clipboard(
+        json!({"platform":"linux","text_bytes":5,"success":true}),
+        &context,
+    );
+    assert!(!unsupported_write.success);
     let leaked_write = validate_computer_write_clipboard(
         json!({
             "platform":"windows","text_bytes":5,"success":true,

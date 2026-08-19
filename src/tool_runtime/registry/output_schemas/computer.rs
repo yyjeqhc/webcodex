@@ -511,7 +511,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         "computer_read_clipboard" => {
             let mut schema = strict_computer_output_schema(vec![
-                ("platform", json!({"type": "string", "const": "windows"})),
+                (
+                    "platform",
+                    json!({"type": "string", "enum": ["windows", "macos"]}),
+                ),
                 ("available", json!({"type": "boolean"})),
                 ("text", json!({"type": "string", "maxLength": 16384})),
                 (
@@ -532,7 +535,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             Some(schema)
         }
         "computer_write_clipboard" => Some(strict_computer_output_schema(vec![
-            ("platform", json!({"type": "string", "const": "windows"})),
+            (
+                "platform",
+                json!({"type": "string", "enum": ["windows", "macos"]}),
+            ),
             (
                 "text_bytes",
                 json!({"type": "integer", "minimum": 1, "maximum": 16384}),

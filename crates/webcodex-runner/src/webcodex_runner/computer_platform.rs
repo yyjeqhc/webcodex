@@ -1,24 +1,33 @@
 #[cfg(any(target_os = "macos", windows))]
 use super::validate_key_input;
 use super::{
-    bounded_text, clipboard_read_result_from_utf16, ensure_raw_capture_bound,
-    finish_clipboard_read, prepare_clipboard_write_text, run_clipboard_write_effect_steps,
-    validate_input_text, AccessibilityTreeResult, ApplicationRecord, ClipboardWriteEffectState,
-    ComputerAction, DisplayRecord, ElementRecord, PlatformApplication, PlatformDisplay,
-    PlatformWindow, PointerAction, PointerPlan, PreparedClipboardText, SurfaceRecord,
+    bounded_text, ensure_raw_capture_bound, prepare_clipboard_write_text, validate_input_text,
+    AccessibilityTreeResult, ApplicationRecord, ClipboardWriteEffectState, ComputerAction,
+    DisplayRecord, ElementRecord, PlatformApplication, PlatformDisplay, PlatformWindow,
+    PointerAction, PointerPlan, SurfaceRecord,
 };
 #[cfg(target_os = "macos")]
 use super::{
-    ensure_correlated_fingerprint, is_secure_text_fingerprint, select_exact_ax_window_index,
+    clipboard_read_result, ensure_correlated_fingerprint, is_secure_text_fingerprint,
+    run_macos_clipboard_write_effect_steps, select_exact_ax_window_index,
     validate_element_state_target, validate_key_modifiers, validate_text_input_preflight,
     validate_text_input_target, AxObservationDeadline,
+};
+#[cfg(windows)]
+use super::{
+    clipboard_read_result_from_utf16, finish_clipboard_read, run_clipboard_write_effect_steps,
+    PreparedClipboardText,
 };
 #[cfg(any(target_os = "macos", windows))]
 use super::{is_supported_text_input_fingerprint, ElementFingerprint};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use xcap::{Monitor, Window};
+#[cfg(windows)]
+use xcap::Monitor;
+use xcap::Window;
 
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 #[cfg(target_os = "macos")]
 use objc2_application_services::{AXError, AXIsProcessTrusted, AXUIElement, AXValue, AXValueType};
 #[cfg(target_os = "macos")]
@@ -27,6 +36,8 @@ use objc2_core_foundation::{
 };
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{CGEvent, CGEventFlags, CGKeyCode, CGPreflightPostEventAccess};
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSString;
 #[cfg(any(target_os = "macos", windows))]
 use std::collections::VecDeque;
 #[cfg(any(target_os = "macos", windows))]
@@ -1185,12 +1196,49 @@ pub(super) fn dispatch_pointer(plan: PointerPlan, action: PointerAction) -> Resu
 }
 #[cfg(target_os = "macos")]
 pub(super) fn read_clipboard() -> Result<Value, String> {
-    Err("unsupported_platform: clipboard read is unavailable on macOS".to_string())
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let string_type = unsafe { NSPasteboardTypeString };
+    let Some(native_text) = pasteboard.stringForType(string_type) else {
+        return clipboard_read_result("macos", None);
+    };
+    if native_text.len() > super::MAX_CLIPBOARD_TEXT_BYTES {
+        return Err(
+            "clipboard_too_large: clipboard UTF-8 text exceeds the 16 KiB bound".to_string(),
+        );
+    }
+    let text = native_text.to_string();
+    clipboard_read_result("macos", Some(&text))
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn write_clipboard(_text: &str) -> Result<Value, String> {
-    Err("unsupported_platform: clipboard write is unavailable on macOS".to_string())
+pub(super) fn write_clipboard(text: &str) -> Result<Value, String> {
+    // Complete caller validation and native string/object construction before
+    // clearContents crosses the pasteboard mutation boundary.
+    let prepared = prepare_clipboard_write_text(text)?;
+    let native_text = NSString::from_str(text);
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let string_type = unsafe { NSPasteboardTypeString };
+
+    let effect = run_macos_clipboard_write_effect_steps(
+        || pasteboard.clearContents(),
+        || pasteboard.setString_forType(&native_text, string_type),
+        || pasteboard.changeCount(),
+    );
+    match effect {
+        ClipboardWriteEffectState::Success => Ok(json!({
+            "platform": "macos",
+            "text_bytes": prepared.text_bytes,
+            "success": true,
+        })),
+        ClipboardWriteEffectState::OutcomeUnknown => Err(
+            "outcome_unknown: macOS pasteboard changed after clearContents but the complete NSPasteboardTypeString replacement could not be proven"
+                .to_string(),
+        ),
+        #[cfg(test)]
+        ClipboardWriteEffectState::NotStarted => {
+            unreachable!("macOS clearContents has no definite native failure result")
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]

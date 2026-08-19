@@ -88,13 +88,13 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     );
     assert_eq!(
         caps.computer_clipboard_read,
-        cfg!(windows),
-        "clipboard read is independently advertised only by the Windows native implementation"
+        cfg!(any(target_os = "macos", windows)),
+        "clipboard read is independently advertised only by native macOS/Windows implementations"
     );
     assert_eq!(
         caps.computer_clipboard_write,
-        cfg!(windows),
-        "clipboard write is independently advertised only by the Windows native implementation"
+        cfg!(any(target_os = "macos", windows)),
+        "clipboard write is independently advertised only by native macOS/Windows implementations"
     );
     assert_eq!(
         caps.computer_display_observe,

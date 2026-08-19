@@ -17,12 +17,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "computer_read_clipboard",
-            "Read bounded CF_UNICODETEXT from the exact Windows Runner global clipboard. Returns UTF-8 text up to 16 KiB without truncation. This is an independent global privacy authority; it never enumerates formats, accesses windows/focus, pastes, retries, invokes shell fallback, or reads clipboard history.",
+            "Read bounded plain Unicode text from the exact macOS or Windows Runner global clipboard using NSPasteboardTypeString or CF_UNICODETEXT. Returns UTF-8 text up to 16 KiB without truncation. This is an independent global privacy authority; it never enumerates formats, accesses windows/focus, pastes, retries, invokes shell fallback, or reads clipboard history.",
             computer_read_clipboard_input_schema(),
         ),
         tool_spec(
             "computer_write_clipboard",
-            "Replace the exact Windows Runner global clipboard with bounded CF_UNICODETEXT, clearing formats via EmptyClipboard. It never pastes, focuses, activates, restores old data, retries, or reads back implicitly. Unknown outcomes require explicit reconciliation under separate clipboard-read authority.",
+            "Replace the exact macOS or Windows Runner global clipboard with bounded plain Unicode text using NSPasteboardTypeString or CF_UNICODETEXT, clearing all previous formats first. It never pastes, focuses, activates, restores old data, retries, or reads back implicitly. Unknown outcomes require explicit reconciliation under separate clipboard-read authority.",
             computer_write_clipboard_input_schema(),
         ),
         tool_spec(

@@ -163,7 +163,7 @@ pub(crate) fn computer_read_clipboard_input_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Windows Runner whose global Unicode-text clipboard is observed."}
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact macOS or Windows Runner whose global plain Unicode-text clipboard is observed."}
         },
         "required": ["client_id"]
     })
@@ -174,7 +174,7 @@ pub(crate) fn computer_write_clipboard_input_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Windows Runner whose global clipboard is replaced."},
+            "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact macOS or Windows Runner whose global clipboard is replaced with plain Unicode text."},
             "text": {"type": "string", "minLength": 1, "maxLength": 16384, "description": "Unicode text replacement. Runtime enforces non-empty, NUL-free UTF-8 of at most 16 KiB."}
         },
         "required": ["client_id", "text"]

@@ -251,7 +251,7 @@ pub fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, St
             computer_display_observe: false,
             // Coordinate pointer control is independently advertised only by a running native implementation.
             computer_pointer_control: false,
-            // Clipboard read/write are independent Windows-only runtime capabilities.
+            // Clipboard read/write are independent native runtime capabilities.
             computer_clipboard_read: false,
             computer_clipboard_write: false,
             // Region/downscale snapshot support is advertised only by the running binary.

@@ -311,16 +311,13 @@ fn prepare_clipboard_write_text(text: &str) -> Result<PreparedClipboardText, Str
     })
 }
 
+#[cfg(any(test, windows))]
 fn clipboard_read_result_from_utf16(
     storage: Option<&[u16]>,
     native_storage_bytes: usize,
 ) -> Result<Value, String> {
     let Some(storage) = storage else {
-        return Ok(json!({
-            "platform": "windows",
-            "available": false,
-            "text_bytes": 0,
-        }));
+        return clipboard_read_result("windows", None);
     };
     if native_storage_bytes == 0 {
         return Err("clipboard_malformed: clipboard Unicode storage is empty".to_string());
@@ -348,14 +345,29 @@ fn clipboard_read_result_from_utf16(
     })?;
     let text = String::from_utf16(&storage[..end])
         .map_err(|_| "clipboard_malformed: clipboard Unicode text is invalid UTF-16".to_string())?;
+    clipboard_read_result("windows", Some(&text))
+}
+
+#[cfg(any(test, target_os = "macos", windows))]
+fn clipboard_read_result(platform: &str, text: Option<&str>) -> Result<Value, String> {
+    let Some(text) = text else {
+        return Ok(json!({
+            "platform": platform,
+            "available": false,
+            "text_bytes": 0,
+        }));
+    };
     let text_bytes = text.len();
     if text_bytes > MAX_CLIPBOARD_TEXT_BYTES {
         return Err(
             "clipboard_too_large: clipboard UTF-8 text exceeds the 16 KiB bound".to_string(),
         );
     }
+    if text.contains('\0') {
+        return Err("clipboard_malformed: clipboard text contains NUL".to_string());
+    }
     Ok(json!({
-        "platform": "windows",
+        "platform": platform,
         "available": true,
         "text": text,
         "text_bytes": text_bytes,
@@ -364,11 +376,13 @@ fn clipboard_read_result_from_utf16(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClipboardWriteEffectState {
+    #[cfg(any(test, windows))]
     NotStarted,
     OutcomeUnknown,
     Success,
 }
 
+#[cfg(any(test, windows))]
 fn run_clipboard_write_effect_steps(
     empty_clipboard: impl FnOnce() -> bool,
     set_clipboard_text: impl FnOnce() -> bool,
@@ -387,6 +401,23 @@ fn run_clipboard_write_effect_steps(
     }
 }
 
+#[cfg(any(test, target_os = "macos"))]
+fn run_macos_clipboard_write_effect_steps(
+    clear_contents: impl FnOnce() -> isize,
+    set_clipboard_text: impl FnOnce() -> bool,
+    current_change_count: impl FnOnce() -> isize,
+) -> ClipboardWriteEffectState {
+    let ownership_change_count = clear_contents();
+    let set_succeeded = set_clipboard_text();
+    let ownership_retained = current_change_count() == ownership_change_count;
+    if set_succeeded && ownership_retained {
+        ClipboardWriteEffectState::Success
+    } else {
+        ClipboardWriteEffectState::OutcomeUnknown
+    }
+}
+
+#[cfg(any(test, windows))]
 fn finish_clipboard_read<T>(
     read_result: Result<T, String>,
     close_clipboard: impl FnOnce() -> bool,
@@ -2803,6 +2834,23 @@ mod clipboard_contract_tests {
         .unwrap_err()
         .starts_with("clipboard_too_large:"));
 
+        assert_eq!(
+            clipboard_read_result("macos", None).unwrap(),
+            json!({"platform":"macos","available":false,"text_bytes":0})
+        );
+        assert_eq!(
+            clipboard_read_result("macos", Some("")).unwrap(),
+            json!({"platform":"macos","available":true,"text":"","text_bytes":0})
+        );
+        assert!(
+            clipboard_read_result("macos", Some(&"a".repeat(MAX_CLIPBOARD_TEXT_BYTES + 1)))
+                .unwrap_err()
+                .starts_with("clipboard_too_large:")
+        );
+        assert!(clipboard_read_result("macos", Some("bad\0text"))
+            .unwrap_err()
+            .starts_with("clipboard_malformed:"));
+
         let two_byte = String::from_utf16(&[0x00E9]).unwrap();
         let oversized_text = two_byte.repeat((MAX_CLIPBOARD_TEXT_BYTES / 2) + 1);
         let oversized_units = utf16_storage(&oversized_text);
@@ -2894,6 +2942,54 @@ mod clipboard_contract_tests {
             (
                 ClipboardWriteEffectState::Success,
                 vec!["empty", "set", "close"]
+            )
+        );
+    }
+
+    #[test]
+    fn macos_clipboard_write_proves_set_and_retained_ownership_after_clear() {
+        fn run(
+            clear_count: isize,
+            set: bool,
+            final_count: isize,
+        ) -> (ClipboardWriteEffectState, Vec<&'static str>) {
+            let calls = RefCell::new(Vec::new());
+            let state = run_macos_clipboard_write_effect_steps(
+                || {
+                    calls.borrow_mut().push("clear");
+                    clear_count
+                },
+                || {
+                    calls.borrow_mut().push("set");
+                    set
+                },
+                || {
+                    calls.borrow_mut().push("change_count");
+                    final_count
+                },
+            );
+            (state, calls.into_inner())
+        }
+
+        assert_eq!(
+            run(7, true, 7),
+            (
+                ClipboardWriteEffectState::Success,
+                vec!["clear", "set", "change_count"]
+            )
+        );
+        assert_eq!(
+            run(7, false, 7),
+            (
+                ClipboardWriteEffectState::OutcomeUnknown,
+                vec!["clear", "set", "change_count"]
+            )
+        );
+        assert_eq!(
+            run(7, true, 8),
+            (
+                ClipboardWriteEffectState::OutcomeUnknown,
+                vec!["clear", "set", "change_count"]
             )
         );
     }

@@ -92,16 +92,12 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
         .iter()
         .find(|tool| tool["name"] == "computer_snapshot")
         .unwrap();
-    assert_eq!(
-        snapshot["_meta"],
-        json!({
-            "ui": {
-                "resourceUri": MCP_COMPUTER_UI_RESOURCE_URI,
-                "visibility": ["model", "app"]
-            },
-            "openai/outputTemplate": MCP_COMPUTER_UI_RESOURCE_URI
-        })
-    );
+    assert!(snapshot.get("_meta").is_none());
+    let display_snapshot = tools
+        .iter()
+        .find(|tool| tool["name"] == "computer_snapshot_display")
+        .unwrap();
+    assert!(display_snapshot.get("_meta").is_none());
     let list_windows = tools
         .iter()
         .find(|tool| tool["name"] == "computer_list_windows")
@@ -116,16 +112,14 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
         .iter()
         .find(|tool| tool["name"] == "computer_snapshot")
         .unwrap();
-    assert_eq!(
-        compact_snapshot["_meta"],
-        json!({
-            "ui": {
-                "resourceUri": MCP_COMPUTER_UI_RESOURCE_URI,
-                "visibility": ["model", "app"]
-            },
-            "openai/outputTemplate": MCP_COMPUTER_UI_RESOURCE_URI
-        })
-    );
+    assert!(compact_snapshot.get("_meta").is_none());
+    let compact_display_snapshot = compact["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "computer_snapshot_display")
+        .unwrap();
+    assert!(compact_display_snapshot.get("_meta").is_none());
 
     let resources = handle_mcp_request(
         &runtime,
@@ -286,16 +280,7 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
         .iter()
         .find(|tool| tool["name"] == "computer_snapshot")
         .unwrap();
-    assert_eq!(
-        snapshot["_meta"],
-        json!({
-            "ui": {
-                "resourceUri": MCP_COMPUTER_UI_RESOURCE_URI,
-                "visibility": ["model", "app"]
-            },
-            "openai/outputTemplate": MCP_COMPUTER_UI_RESOURCE_URI
-        })
-    );
+    assert!(snapshot.get("_meta").is_none());
 
     let no_ui_resources = handle_mcp_request(
         &runtime,
@@ -340,6 +325,161 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
         resource_without_repeated_ui_capability["result"]["contents"][0]["mimeType"],
         MCP_UI_RESOURCE_MIME_TYPE
     );
+}
+
+#[tokio::test]
+async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_checked() {
+    fn snapshot_auth(api_key_id: &str, include_display_scope: bool) -> crate::auth::AuthContext {
+        let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::ApiToken);
+        auth.api_key_id = Some(api_key_id.to_string());
+        auth.token_kind = Some("user".to_string());
+        auth.scopes = vec![crate::auth::SCOPE_COMPUTER_READ.to_string()];
+        if include_display_scope {
+            auth.scopes
+                .push(crate::auth::SCOPE_COMPUTER_DISPLAY_READ.to_string());
+        }
+        auth
+    }
+
+    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    let auth = snapshot_auth("snapshot-link-owner", true);
+    let caller = mcp_artifact_export_caller_binding(Some(&auth)).unwrap();
+    let bytes = vec![0xff, 0xd8, 0xff, 0xd9];
+    let encoded = general_purpose::STANDARD.encode(&bytes);
+    let mut uris = Vec::new();
+
+    for generation in 1..=4u64 {
+        let framed = mcp_runtime_tool_result_with_snapshot_resource(
+            "computer_snapshot_display",
+            false,
+            ToolResult::ok(json!({
+                "client_id": "msi",
+                "display_id": "display_0123456789abcdef0123456789abcdef",
+                "snapshot_generation": generation,
+                "source_width": 1,
+                "source_height": 1,
+                "width": 1,
+                "height": 1,
+                "mime_type": "image/jpeg",
+                "file_bytes": bytes.len(),
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "captured_at_unix_ms": 1,
+                "content_base64": encoded,
+            })),
+            Some(caller.clone()),
+        );
+        assert_eq!(framed["isError"], false);
+        let content = framed["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["type"], "resource_link");
+        assert_eq!(content[0]["mimeType"], "image/jpeg");
+        assert_eq!(content[0]["name"], "computer-display-snapshot.jpg");
+        assert_eq!(content[0]["size"], Value::from(bytes.len() as u64));
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[2]["type"], "image");
+        let uri = content[0]["uri"].as_str().unwrap().to_string();
+        assert!(uri.starts_with(MCP_SNAPSHOT_RESOURCE_URI_PREFIX));
+        assert!(!serde_json::to_string(&framed["structuredContent"])
+            .unwrap()
+            .contains(MCP_SNAPSHOT_RESOURCE_URI_PREFIX));
+        uris.push(uri);
+    }
+
+    let unique: std::collections::HashSet<_> = uris.iter().collect();
+    assert_eq!(unique.len(), 4);
+    let uri = uris.last().unwrap();
+
+    let read = handle_mcp_request(
+        &runtime,
+        rpc(
+            "resources/read",
+            Some(json!(2110)),
+            mcp_2026_params(json!({ "uri": uri })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(read) = read else {
+        panic!("snapshot resource must be readable by its caller");
+    };
+    let contents = &read["result"]["contents"][0];
+    assert_eq!(contents["uri"], *uri);
+    assert_eq!(contents["mimeType"], "image/jpeg");
+    assert_eq!(
+        general_purpose::STANDARD
+            .decode(contents["blob"].as_str().unwrap())
+            .unwrap(),
+        bytes
+    );
+
+    let narrowed = snapshot_auth("snapshot-link-owner", false);
+    let denied = handle_mcp_request(
+        &runtime,
+        rpc(
+            "resources/read",
+            Some(json!(2111)),
+            mcp_2026_params(json!({ "uri": uri })),
+        ),
+        Some(&narrowed),
+    )
+    .await;
+    assert!(matches!(denied, McpOutcome::Forbidden { .. }));
+
+    let other = snapshot_auth("snapshot-link-other", true);
+    let hidden = handle_mcp_request(
+        &runtime,
+        rpc(
+            "resources/read",
+            Some(json!(2112)),
+            mcp_2026_params(json!({ "uri": uri })),
+        ),
+        Some(&other),
+    )
+    .await;
+    let McpOutcome::BadRequest(hidden) = hidden else {
+        panic!("snapshot resource must be hidden from other callers");
+    };
+    assert_eq!(hidden["error"]["code"], -32602);
+
+    let window_auth = snapshot_auth("snapshot-window-owner", false);
+    let window_caller = mcp_artifact_export_caller_binding(Some(&window_auth)).unwrap();
+    let window = mcp_runtime_tool_result_with_snapshot_resource(
+        "computer_snapshot",
+        false,
+        ToolResult::ok(json!({
+            "client_id": "msi",
+            "surface": {
+                "surface_id": "surface_0123456789abcdef0123456789abcdef",
+                "application": "Microsoft Edge",
+                "title": "Snapshot test"
+            },
+            "snapshot_generation": 1,
+            "source_width": 1,
+            "source_height": 1,
+            "width": 1,
+            "height": 1,
+            "mime_type": "image/jpeg",
+            "file_bytes": bytes.len(),
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "captured_at_unix_ms": 1,
+            "content_base64": encoded,
+        })),
+        Some(window_caller),
+    );
+    assert_eq!(window["content"][0]["type"], "resource_link");
+    assert_eq!(window["content"][0]["name"], "computer-window-snapshot.jpg");
+    let window_uri = window["content"][0]["uri"].as_str().unwrap();
+    let window_read = handle_mcp_request(
+        &runtime,
+        rpc(
+            "resources/read",
+            Some(json!(2113)),
+            mcp_2026_params(json!({ "uri": window_uri })),
+        ),
+        Some(&window_auth),
+    )
+    .await;
+    assert!(matches!(window_read, McpOutcome::Ok(_)));
 }
 
 #[test]

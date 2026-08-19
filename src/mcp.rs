@@ -37,6 +37,11 @@ const MCP_METHOD_HEADER: &str = "mcp-method";
 const MCP_NAME_HEADER: &str = "mcp-name";
 const MCP_ARTIFACT_EXPORT_URI_PREFIX: &str = "webcodex-artifact://export/";
 const MCP_ARTIFACT_EXPORT_ID_PREFIX: &str = "wc_export_";
+const MCP_SNAPSHOT_RESOURCE_URI_PREFIX: &str = "webcodex-snapshot://view/";
+const MCP_SNAPSHOT_RESOURCE_ID_PREFIX: &str = "wc_snapshot_";
+const MCP_SNAPSHOT_RESOURCE_TTL: Duration = Duration::from_secs(5 * 60);
+const MAX_MCP_SNAPSHOT_RESOURCES: usize = 32;
+const MAX_MCP_SNAPSHOT_RESOURCES_PER_CALLER: usize = 8;
 const MCP_ARTIFACT_EXPORT_TTL: Duration = Duration::from_secs(5 * 60);
 const MCP_ARTIFACT_EXPORT_ADMISSION_TIMEOUT: Duration = Duration::from_secs(5);
 const MCP_ARTIFACT_EXPORT_READ_TIMEOUT: Duration = Duration::from_secs(120);
@@ -457,7 +462,7 @@ fn adapt_computer_snapshot_output_schema_for_mcp(spec: &mut ToolSpec) {
     );
 }
 
-fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
+fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, _app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
     if matches!(
         tool_name.as_str(),
@@ -495,20 +500,6 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
             object.insert(
                 "_meta".to_string(),
                 json!({"openai/fileParams": ["openaiFileIdRefs"]}),
-            );
-        }
-    }
-    if app_enabled && tool_name == "computer_snapshot" {
-        if let Some(object) = value.as_object_mut() {
-            object.insert(
-                "_meta".to_string(),
-                json!({
-                    "ui": {
-                        "resourceUri": MCP_COMPUTER_UI_RESOURCE_URI,
-                        "visibility": ["model", "app"]
-                    },
-                    "openai/outputTemplate": MCP_COMPUTER_UI_RESOURCE_URI
-                }),
             );
         }
     }
@@ -769,6 +760,129 @@ fn mcp_artifact_export_id_from_uri(uri: &str) -> Option<&str> {
     .then_some(id)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpSnapshotResourceKind {
+    Window,
+    Display,
+}
+
+impl McpSnapshotResourceKind {
+    fn from_tool_name(tool_name: &str) -> Option<Self> {
+        match tool_name {
+            "computer_snapshot" => Some(Self::Window),
+            "computer_snapshot_display" => Some(Self::Display),
+            _ => None,
+        }
+    }
+
+    fn name(self, mime_type: &str) -> String {
+        let extension = match mime_type {
+            "image/png" => "png",
+            "image/webp" => "webp",
+            _ => "jpg",
+        };
+        let stem = match self {
+            Self::Window => "computer-window-snapshot",
+            Self::Display => "computer-display-snapshot",
+        };
+        format!("{stem}.{extension}")
+    }
+}
+
+#[derive(Debug, Clone)]
+struct McpSnapshotResourceRecord {
+    caller: McpArtifactExportCallerBinding,
+    kind: McpSnapshotResourceKind,
+    bytes: Arc<[u8]>,
+    mime_type: String,
+    expires_at: Instant,
+}
+
+#[derive(Default)]
+struct McpSnapshotResourceRegistry {
+    entries: HashMap<String, McpSnapshotResourceRecord>,
+    order: VecDeque<String>,
+}
+
+impl McpSnapshotResourceRegistry {
+    fn cleanup(&mut self, now: Instant) {
+        self.entries.retain(|_, record| record.expires_at > now);
+        self.order.retain(|id| self.entries.contains_key(id));
+    }
+
+    fn insert(&mut self, record: McpSnapshotResourceRecord) -> String {
+        self.cleanup(Instant::now());
+        while self
+            .entries
+            .values()
+            .filter(|existing| existing.caller == record.caller)
+            .count()
+            >= MAX_MCP_SNAPSHOT_RESOURCES_PER_CALLER
+        {
+            let Some(position) = self.order.iter().position(|id| {
+                self.entries
+                    .get(id)
+                    .is_some_and(|existing| existing.caller == record.caller)
+            }) else {
+                break;
+            };
+            if let Some(id) = self.order.remove(position) {
+                self.entries.remove(&id);
+            }
+        }
+        while self.entries.len() >= MAX_MCP_SNAPSHOT_RESOURCES {
+            if let Some(id) = self.order.pop_front() {
+                self.entries.remove(&id);
+            } else {
+                break;
+            }
+        }
+        let id = loop {
+            let candidate = format!(
+                "{MCP_SNAPSHOT_RESOURCE_ID_PREFIX}{}",
+                uuid::Uuid::new_v4().simple()
+            );
+            if !self.entries.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        self.order.push_back(id.clone());
+        self.entries.insert(id.clone(), record);
+        format!("{MCP_SNAPSHOT_RESOURCE_URI_PREFIX}{id}")
+    }
+
+    fn get_for_caller(
+        &mut self,
+        uri: &str,
+        caller: &McpArtifactExportCallerBinding,
+    ) -> Option<McpSnapshotResourceRecord> {
+        self.cleanup(Instant::now());
+        let id = mcp_snapshot_resource_id_from_uri(uri)?;
+        self.entries
+            .get(id)
+            .filter(|record| &record.caller == caller)
+            .cloned()
+    }
+}
+
+static MCP_SNAPSHOT_RESOURCE_REGISTRY: OnceLock<Mutex<McpSnapshotResourceRegistry>> =
+    OnceLock::new();
+
+fn mcp_snapshot_resource_registry() -> &'static Mutex<McpSnapshotResourceRegistry> {
+    MCP_SNAPSHOT_RESOURCE_REGISTRY
+        .get_or_init(|| Mutex::new(McpSnapshotResourceRegistry::default()))
+}
+
+fn mcp_snapshot_resource_id_from_uri(uri: &str) -> Option<&str> {
+    let id = uri.strip_prefix(MCP_SNAPSHOT_RESOURCE_URI_PREFIX)?;
+    let hex = id.strip_prefix(MCP_SNAPSHOT_RESOURCE_ID_PREFIX)?;
+    (hex.len() == 32
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+    .then_some(id)
+}
+
 fn mcp_issue_artifact_export(
     caller: McpArtifactExportCallerBinding,
     result: &ToolResult,
@@ -854,12 +968,21 @@ fn mcp_expire_artifact_export_for_test(uri: &str) {
 pub(crate) fn mcp_runtime_tool_result(
     tool_name: &str,
     as_image_requested: bool,
+    result: ToolResult,
+) -> Value {
+    mcp_runtime_tool_result_with_snapshot_resource(tool_name, as_image_requested, result, None)
+}
+
+fn mcp_runtime_tool_result_with_snapshot_resource(
+    tool_name: &str,
+    as_image_requested: bool,
     mut result: ToolResult,
+    snapshot_caller: Option<McpArtifactExportCallerBinding>,
 ) -> Value {
     let native_image_requested = (tool_name == "read_project_artifact" && as_image_requested)
         || matches!(tool_name, "computer_snapshot" | "computer_snapshot_display");
     if native_image_requested && result.success {
-        match mcp_native_image_tool_result(tool_name, &mut result) {
+        match mcp_native_image_tool_result(tool_name, &mut result, snapshot_caller) {
             Ok(value) => return value,
             Err(error) => {
                 result = ToolResult::err(format!(
@@ -891,7 +1014,11 @@ pub(crate) fn mcp_runtime_tool_result(
     })
 }
 
-fn mcp_native_image_tool_result(tool_name: &str, result: &mut ToolResult) -> Result<Value, String> {
+fn mcp_native_image_tool_result(
+    tool_name: &str,
+    result: &mut ToolResult,
+    snapshot_caller: Option<McpArtifactExportCallerBinding>,
+) -> Result<Value, String> {
     let data = result
         .output
         .get("content_base64")
@@ -990,18 +1117,45 @@ fn mcp_native_image_tool_result(tool_name: &str, result: &mut ToolResult) -> Res
     output.insert("content_delivery".to_string(), json!("mcp_image"));
     let structured_output = result.output.clone();
 
+    let snapshot_link = snapshot_caller
+        .zip(McpSnapshotResourceKind::from_tool_name(tool_name))
+        .map(|(caller, kind)| {
+            let name = kind.name(&mime_type);
+            let record = McpSnapshotResourceRecord {
+                caller,
+                kind,
+                bytes: Arc::from(decoded.into_boxed_slice()),
+                mime_type: mime_type.clone(),
+                expires_at: Instant::now() + MCP_SNAPSHOT_RESOURCE_TTL,
+            };
+            let uri = mcp_snapshot_resource_registry()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(record);
+            tracing::info!(
+                target: "webcodex::mcp",
+                tool_name,
+                file_bytes,
+                "mcp_snapshot_resource_link_issued"
+            );
+            json!({
+                "type": "resource_link",
+                "uri": uri,
+                "name": name,
+                "mimeType": mime_type,
+                "size": file_bytes,
+                "description": "Short-lived authenticated WebCodex computer screenshot. No project artifact was created."
+            })
+        });
+    let mut content = Vec::with_capacity(if snapshot_link.is_some() { 3 } else { 2 });
+    if let Some(link) = snapshot_link {
+        content.push(link);
+    }
+    content.push(json!({ "type": "text", "text": metadata_text }));
+    content.push(json!({ "type": "image", "data": data, "mimeType": mime_type }));
+
     Ok(json!({
-        "content": [
-            {
-                "type": "text",
-                "text": metadata_text
-            },
-            {
-                "type": "image",
-                "data": data,
-                "mimeType": mime_type
-            }
-        ],
+        "content": content,
         "structuredContent": {
             "success": true,
             "output": structured_output,
@@ -2325,6 +2479,13 @@ async fn handle_mcp_request_with_lifecycle(
             .get("uri")
             .and_then(Value::as_str)
             .is_some_and(|uri| uri.starts_with(MCP_ARTIFACT_EXPORT_URI_PREFIX));
+    let snapshot_resource_read = stateless_2026
+        && request.method == "resources/read"
+        && request
+            .params
+            .get("uri")
+            .and_then(Value::as_str)
+            .is_some_and(|uri| uri.starts_with(MCP_SNAPSHOT_RESOURCE_URI_PREFIX));
     let mcp_app_enabled = stateless_2026
         && model_surface_supports_computer_app(runtime.model_surface())
         && request_supports_mcp_apps(&request.params);
@@ -2333,7 +2494,9 @@ async fn handle_mcp_request_with_lifecycle(
         && (matches!(
             request.method.as_str(),
             "server/discover" | "tools/list" | "resources/list"
-        ) || (request.method == "resources/read" && !artifact_export_resource_read)
+        ) || (request.method == "resources/read"
+            && !artifact_export_resource_read
+            && !snapshot_resource_read)
             || (!stateless_2026
                 && matches!(
                     request.method.as_str(),
@@ -2483,6 +2646,54 @@ async fn handle_mcp_request_with_lifecycle(
                     plan,
                 };
             }
+            if uri.starts_with(MCP_SNAPSHOT_RESOURCE_URI_PREFIX) {
+                let caller = match mcp_artifact_export_caller_binding(auth) {
+                    Ok(caller) => caller,
+                    Err(_) => {
+                        return McpOutcome::BadRequest(rpc_error(
+                            id,
+                            -32602,
+                            format!("Resource not found: {uri}"),
+                        ))
+                    }
+                };
+                let record = mcp_snapshot_resource_registry()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get_for_caller(uri, &caller);
+                let Some(record) = record else {
+                    return McpOutcome::BadRequest(rpc_error(
+                        id,
+                        -32602,
+                        format!("Resource not found: {uri}"),
+                    ));
+                };
+                for scope in match record.kind {
+                    McpSnapshotResourceKind::Window => &[crate::auth::SCOPE_COMPUTER_READ][..],
+                    McpSnapshotResourceKind::Display => &[
+                        crate::auth::SCOPE_COMPUTER_READ,
+                        crate::auth::SCOPE_COMPUTER_DISPLAY_READ,
+                    ][..],
+                } {
+                    if let Some(outcome) = require_mcp_scope(auth, scope) {
+                        return outcome;
+                    }
+                }
+                tracing::info!(
+                    target: "webcodex::mcp",
+                    resource_kind = ?record.kind,
+                    file_bytes = record.bytes.len(),
+                    "mcp_snapshot_resource_read"
+                );
+                let result = json!({
+                    "contents": [{
+                        "uri": uri,
+                        "mimeType": record.mime_type,
+                        "blob": general_purpose::STANDARD.encode(record.bytes.as_ref())
+                    }]
+                });
+                return McpOutcome::Ok(rpc_result(id, mcp_stateless_result(result, true)));
+            }
             // Tool descriptors on the full-operator surface advertise the App
             // resource independently of whether a later resource fetch repeats
             // the UI client-capability metadata. Keep resources/list negotiated,
@@ -2565,6 +2776,16 @@ async fn handle_mcp_request_with_lifecycle(
                         ))
                     }
                 }
+            } else {
+                None
+            };
+            let snapshot_resource_caller = if stateless_2026
+                && runtime.model_surface() == ModelSurface::FullOperatorRuntime
+                && matches!(
+                    params.name.as_str(),
+                    "computer_snapshot" | "computer_snapshot_display"
+                ) {
+                mcp_artifact_export_caller_binding(auth).ok()
             } else {
                 None
             };
@@ -2698,7 +2919,12 @@ async fn handle_mcp_request_with_lifecycle(
                     artifact_export_caller.expect("validated artifact export caller binding"),
                 )
             } else {
-                mcp_runtime_tool_result(&params.name, as_image_requested, result)
+                mcp_runtime_tool_result_with_snapshot_resource(
+                    &params.name,
+                    as_image_requested,
+                    result,
+                    snapshot_resource_caller,
+                )
             };
             rpc_result(
                 id,

@@ -41,8 +41,8 @@ use objc2_core_foundation::{
 };
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{
-    CGBitmapContextCreate, CGColorSpace, CGContext, CGDirectDisplayID, CGDisplayBounds,
-    CGDisplayCopyDisplayMode, CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMode,
+    CGBitmapContextCreate, CGBitmapContextCreateImage, CGColorSpace, CGContext, CGDirectDisplayID,
+    CGDisplayBounds, CGDisplayCopyDisplayMode, CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMode,
     CGDisplayModelNumber, CGDisplayRotation, CGDisplaySerialNumber, CGDisplayUnitNumber,
     CGDisplayVendorNumber, CGError, CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID,
     CGEventTapLocation, CGEventType, CGGetActiveDisplayList, CGImage, CGImageAlphaInfo,
@@ -1976,8 +1976,6 @@ fn macos_cg_image_to_rgba(
         )
     }
     .ok_or_else(|| "capture_failed: macOS RGBA bitmap context creation failed".to_string())?;
-    CGContext::translate_ctm(Some(&context), 0.0, f64::from(height));
-    CGContext::scale_ctm(Some(&context), 1.0, -1.0);
     CGContext::draw_image(
         Some(&context),
         CGRect {
@@ -2058,6 +2056,40 @@ mod macos_display_tests {
             height: descriptor.display.height,
             primary: descriptor.display.primary,
         }
+    }
+
+    #[test]
+    fn macos_display_rgba_conversion_preserves_vertical_order_and_channels() {
+        let width = 2u32;
+        let height = 2u32;
+        let mut source_pixels = vec![
+            10u8, 20, 30, 255, 40, 50, 60, 255, // top row
+            200, 150, 100, 255, 70, 80, 90, 255, // bottom row
+        ];
+        let color_space = CGColorSpace::new_device_rgb().expect("synthetic RGB color space");
+        let bitmap_info =
+            CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0;
+        let context = unsafe {
+            CGBitmapContextCreate(
+                source_pixels.as_mut_ptr().cast(),
+                width as usize,
+                height as usize,
+                8,
+                width as usize * 4,
+                Some(&color_space),
+                bitmap_info,
+            )
+        }
+        .expect("synthetic RGBA bitmap context");
+        let source = CGBitmapContextCreateImage(Some(&context)).expect("synthetic CGImage");
+        drop(context);
+
+        let converted =
+            macos_cg_image_to_rgba(&source, width, height).expect("production RGBA conversion");
+        assert_eq!(converted.get_pixel(0, 0).0, [10, 20, 30, 255]);
+        assert_eq!(converted.get_pixel(1, 0).0, [40, 50, 60, 255]);
+        assert_eq!(converted.get_pixel(0, 1).0, [200, 150, 100, 255]);
+        assert_eq!(converted.get_pixel(1, 1).0, [70, 80, 90, 255]);
     }
 
     #[test]

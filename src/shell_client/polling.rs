@@ -420,7 +420,10 @@ fn truncate_persistent_shell_stream(value: &mut String) -> bool {
 }
 
 fn is_large_native_image_request(request: &ShellAgentShellRequest) -> bool {
-    if request.kind == "computer_snapshot" {
+    if matches!(
+        request.kind.as_str(),
+        "computer_snapshot" | "computer_snapshot_display"
+    ) {
         return true;
     }
     request.kind == "file_read_project_artifact"

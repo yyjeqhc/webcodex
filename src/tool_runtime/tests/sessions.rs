@@ -193,7 +193,7 @@ async fn read_file_without_session_id_omits_session_telemetry() {
 
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["text"], "hello");
-    assert_eq!(result.output["format"], "plain");
+    assert!(result.output.get("format").is_none());
     assert!(result.output.get("session_recorded").is_none());
     assert!(result.output.get("session_hint").is_none());
 }

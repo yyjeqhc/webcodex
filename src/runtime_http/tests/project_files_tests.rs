@@ -154,7 +154,7 @@ async fn dedicated_read_project_file_without_session_id_succeeds() {
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["success"], true);
     assert_eq!(body["output"]["text"], "hello");
-    assert_eq!(body["output"]["format"], "plain");
+    assert!(body["output"].get("format").is_none());
     assert!(body["output"].get("session_recorded").is_none());
 }
 

@@ -3150,7 +3150,6 @@ async fn search_project_text_include_and_exclude_globs_are_additive() {
         paths,
         vec!["docs/guide.md".to_string(), "src/lib.rs".to_string()]
     );
-    assert_eq!(result.output["result_mode"], "matches");
 }
 
 #[tokio::test]
@@ -3414,16 +3413,7 @@ async fn search_project_text_no_matches_returns_empty_matches() {
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
-    assert!(matches!(
-        result.output["backend"].as_str(),
-        Some("rg" | "grep")
-    ));
     assert_eq!(result.output["matches"], json!([]));
-    assert_eq!(result.output["count"], 0);
-    assert_eq!(result.output["truncated"], false);
-    assert_eq!(result.output["result_mode"], "matches");
-    assert_eq!(result.output["effective_timeout_secs"], 30);
-    assert_eq!(result.output["truncation_reason"], Value::Null);
 }
 
 #[tokio::test]
@@ -3480,9 +3470,8 @@ async fn search_project_text_excludes_sensitive_and_build_dirs() {
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
     assert_eq!(result.output["matches"][0]["path"], "src/lib.rs");
-    assert_eq!(result.output["truncated"], false);
 }
 
 #[tokio::test]

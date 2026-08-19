@@ -39,10 +39,12 @@ use objc2_application_services::{AXError, AXIsProcessTrusted, AXUIElement, AXVal
 use objc2_core_foundation::{
     CFArray, CFBoolean, CFIndex, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, CFUUID,
 };
+#[cfg(all(test, target_os = "macos"))]
+use objc2_core_graphics::CGBitmapContextCreateImage;
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{
-    CGBitmapContextCreate, CGBitmapContextCreateImage, CGColorSpace, CGContext, CGDirectDisplayID,
-    CGDisplayBounds, CGDisplayCopyDisplayMode, CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMode,
+    CGBitmapContextCreate, CGColorSpace, CGContext, CGDirectDisplayID, CGDisplayBounds,
+    CGDisplayCopyDisplayMode, CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMode,
     CGDisplayModelNumber, CGDisplayRotation, CGDisplaySerialNumber, CGDisplayUnitNumber,
     CGDisplayVendorNumber, CGError, CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID,
     CGEventTapLocation, CGEventType, CGGetActiveDisplayList, CGImage, CGImageAlphaInfo,
@@ -69,7 +71,7 @@ use std::ptr::NonNull;
 use std::sync::mpsc::{self, Receiver};
 #[cfg(any(target_os = "macos", windows))]
 use std::time::Duration;
-#[cfg(windows)]
+#[cfg(any(target_os = "macos", windows))]
 use std::time::Instant;
 #[cfg(any(target_os = "macos", windows))]
 use uuid::Uuid;
@@ -177,6 +179,10 @@ const MAX_NATIVE_DISPLAY_IDENTITY_BYTES: usize = 2048;
 const MAX_MACOS_DISPLAY_SCAN: usize = 64;
 #[cfg(target_os = "macos")]
 const MAX_MACOS_DISPLAY_IDENTITY_BYTES: usize = 256;
+#[cfg(target_os = "macos")]
+const MACOS_POINTER_READBACK_SETTLE_TIMEOUT: Duration = Duration::from_millis(50);
+#[cfg(target_os = "macos")]
+const MACOS_POINTER_READBACK_POLL_INTERVAL: Duration = Duration::from_millis(1);
 #[cfg(windows)]
 const MAX_WINDOWS_DISPLAY_DEVICE_CHILDREN: u32 = 16;
 #[cfg(windows)]
@@ -1827,6 +1833,58 @@ fn macos_current_pointer_location() -> Result<(f64, f64), String> {
 }
 
 #[cfg(target_os = "macos")]
+fn settle_macos_pointer_exact_observation_with(
+    target_x: f64,
+    target_y: f64,
+    timeout: Duration,
+    poll_interval: Duration,
+    mut cursor_readback: impl FnMut() -> Result<(f64, f64), String>,
+    mut now: impl FnMut() -> Instant,
+    mut sleep: impl FnMut(Duration),
+) -> Result<(), String> {
+    if timeout.is_zero() || poll_interval.is_zero() {
+        return Err(
+            "pointer_input_failed: macOS cursor readback settle bounds are invalid".to_string(),
+        );
+    }
+    let deadline = now() + timeout;
+    let mut first_observation = true;
+    loop {
+        if !first_observation && now() >= deadline {
+            return Err(
+                "pointer_input_failed: macOS exact cursor target was not observed before bounded readback settle deadline"
+                    .to_string(),
+            );
+        }
+        first_observation = false;
+        if cursor_readback().is_ok_and(|cursor| cursor == (target_x, target_y)) {
+            return Ok(());
+        }
+        let observed_at = now();
+        if observed_at >= deadline {
+            return Err(
+                "pointer_input_failed: macOS exact cursor target was not observed before bounded readback settle deadline"
+                    .to_string(),
+            );
+        }
+        sleep(poll_interval.min(deadline.saturating_duration_since(observed_at)));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn settle_macos_pointer_exact_observation(target_x: f64, target_y: f64) -> Result<(), String> {
+    settle_macos_pointer_exact_observation_with(
+        target_x,
+        target_y,
+        MACOS_POINTER_READBACK_SETTLE_TIMEOUT,
+        MACOS_POINTER_READBACK_POLL_INTERVAL,
+        macos_current_pointer_location,
+        Instant::now,
+        std::thread::sleep,
+    )
+}
+
+#[cfg(target_os = "macos")]
 fn macos_pointer_outcome_unknown(message: &str) -> String {
     format!("outcome_unknown: {message}")
 }
@@ -1838,7 +1896,7 @@ fn dispatch_macos_pointer_with(
     target_y: f64,
     mut final_preflight: impl FnMut() -> Result<(), String>,
     mut post_move: impl FnMut() -> Result<(), String>,
-    mut cursor_readback: impl FnMut() -> Result<(f64, f64), String>,
+    mut exact_cursor_observation: impl FnMut(f64, f64) -> Result<(), String>,
     mut second_click_state: impl FnMut() -> Result<(), String>,
     mut post_down: impl FnMut() -> Result<(), String>,
     mut post_up: impl FnMut() -> Result<(), String>,
@@ -1857,14 +1915,11 @@ fn dispatch_macos_pointer_with(
     post_move().map_err(|_| {
         macos_pointer_outcome_unknown("macOS MouseMoved post outcome could not be proven")
     })?;
-    let cursor = cursor_readback().map_err(|_| {
-        macos_pointer_outcome_unknown("macOS cursor readback after MouseMoved is unavailable")
+    exact_cursor_observation(target_x, target_y).map_err(|_| {
+        macos_pointer_outcome_unknown(
+            "macOS bounded cursor observation did not prove the exact target after MouseMoved",
+        )
     })?;
-    if cursor != (target_x, target_y) {
-        return Err(macos_pointer_outcome_unknown(
-            "macOS cursor readback did not prove the exact target after MouseMoved",
-        ));
-    }
     if action == PointerAction::Move {
         return Ok(true);
     }
@@ -1881,14 +1936,11 @@ fn dispatch_macos_pointer_with(
         macos_pointer_outcome_unknown("macOS LeftMouseUp post outcome could not be proven")
     })?;
 
-    let cursor = cursor_readback().map_err(|_| {
-        macos_pointer_outcome_unknown("macOS final cursor readback after click is unavailable")
+    exact_cursor_observation(target_x, target_y).map_err(|_| {
+        macos_pointer_outcome_unknown(
+            "macOS bounded final cursor observation did not prove the exact click target",
+        )
     })?;
-    if cursor != (target_x, target_y) {
-        return Err(macos_pointer_outcome_unknown(
-            "macOS final cursor readback did not prove the exact click target",
-        ));
-    }
     if left_button_down().map_err(|_| {
         macos_pointer_outcome_unknown("macOS final left-button readback is unavailable")
     })? {
@@ -2493,7 +2545,56 @@ mod macos_pointer_tests {
     }
 
     #[test]
-    fn macos_pointer_dispatch_move_classifies_final_fence_and_readback() {
+    fn macos_pointer_exact_readback_settle_is_bounded_and_strict() {
+        use std::cell::Cell;
+
+        fn run_settle(
+            cursor_sequence: &[(f64, f64)],
+            timeout_ms: u64,
+        ) -> (Result<(), String>, usize) {
+            let reads = Cell::new(0usize);
+            let elapsed = Cell::new(Duration::ZERO);
+            let epoch = Instant::now();
+            let last_cursor = *cursor_sequence.last().expect("non-empty cursor sequence");
+            let result = settle_macos_pointer_exact_observation_with(
+                10.5,
+                20.5,
+                Duration::from_millis(timeout_ms),
+                Duration::from_millis(1),
+                || {
+                    let read = reads.get();
+                    reads.set(read + 1);
+                    Ok(cursor_sequence.get(read).copied().unwrap_or(last_cursor))
+                },
+                || epoch + elapsed.get(),
+                |duration| elapsed.set(elapsed.get() + duration),
+            );
+            (result, reads.get())
+        }
+
+        let (result, reads) = run_settle(&[(10.0, 20.5), (10.5, 20.5)], 5);
+        result.expect("first mismatch followed by exact readback must settle");
+        assert_eq!(reads, 2);
+
+        let (result, reads) =
+            run_settle(&[(10.0, 20.5), (10.0, 20.5), (10.0, 20.5), (10.5, 20.5)], 5);
+        result.expect("multiple mismatches followed by exact readback must settle");
+        assert_eq!(reads, 4);
+
+        let (result, reads) = run_settle(&[(10.0, 20.5)], 3);
+        let error = result.expect_err("bounded settle must expire on only mismatches");
+        assert!(error.starts_with("pointer_input_failed:"), "{error}");
+        assert_eq!(reads, 3);
+
+        let (result, reads) = run_settle(&[(10.500_000_000_1, 20.5)], 3);
+        let error =
+            result.expect_err("nearby fractional coordinates must not satisfy exact equality");
+        assert!(error.starts_with("pointer_input_failed:"), "{error}");
+        assert_eq!(reads, 3);
+    }
+
+    #[test]
+    fn macos_pointer_dispatch_move_preserves_effect_boundary_and_uses_settle() {
         use std::cell::RefCell;
 
         let trace = RefCell::new(Vec::new());
@@ -2509,9 +2610,9 @@ mod macos_pointer_tests {
                 trace.borrow_mut().push("move");
                 Ok(())
             },
-            || {
-                trace.borrow_mut().push("cursor");
-                Ok((10.5, 20.5))
+            |_, _| {
+                trace.borrow_mut().push("cursor_proof");
+                Ok(())
             },
             || unreachable!(),
             || unreachable!(),
@@ -2522,35 +2623,82 @@ mod macos_pointer_tests {
         assert!(error.starts_with("not_started:"), "{error}");
         assert_eq!(*trace.borrow(), vec!["preflight"]);
 
-        for cursor in [Ok((10.5, 20.5)), Ok((10.0, 20.5)), Err("unavailable")] {
-            let trace = RefCell::new(Vec::new());
-            let result = dispatch_macos_pointer_with(
-                PointerAction::Move,
-                10.5,
-                20.5,
-                || {
-                    trace.borrow_mut().push("preflight");
-                    Ok(())
-                },
-                || {
-                    trace.borrow_mut().push("move");
-                    Ok(())
-                },
-                || {
-                    trace.borrow_mut().push("cursor");
-                    cursor.map_err(str::to_string)
-                },
-                || unreachable!(),
-                || unreachable!(),
-                || unreachable!(),
-                || unreachable!(),
-            );
-            assert_eq!(*trace.borrow(), vec!["preflight", "move", "cursor"]);
-            match cursor {
-                Ok((10.5, 20.5)) => assert_eq!(result.unwrap(), true),
-                _ => assert!(result.unwrap_err().starts_with("outcome_unknown:")),
-            }
-        }
+        let trace = RefCell::new(Vec::new());
+        let success = dispatch_macos_pointer_with(
+            PointerAction::Move,
+            10.5,
+            20.5,
+            || {
+                trace.borrow_mut().push("preflight");
+                Ok(())
+            },
+            || {
+                trace.borrow_mut().push("move");
+                Ok(())
+            },
+            |x, y| {
+                trace.borrow_mut().push("cursor_proof");
+                assert_eq!((x, y), (10.5, 20.5));
+                Ok(())
+            },
+            || unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+        )
+        .expect("move should succeed after exact observation proof");
+        assert!(success);
+        assert_eq!(*trace.borrow(), vec!["preflight", "move", "cursor_proof"]);
+
+        let trace = RefCell::new(Vec::new());
+        let error = dispatch_macos_pointer_with(
+            PointerAction::Move,
+            10.5,
+            20.5,
+            || {
+                trace.borrow_mut().push("preflight");
+                Ok(())
+            },
+            || {
+                trace.borrow_mut().push("move");
+                Err("post interrupted".to_string())
+            },
+            |_, _| unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+        )
+        .expect_err("uncertain MouseMoved post stays outcome_unknown");
+        assert!(error.starts_with("outcome_unknown:"), "{error}");
+        assert_eq!(*trace.borrow(), vec!["preflight", "move"]);
+
+        let trace = RefCell::new(Vec::new());
+        let error = dispatch_macos_pointer_with(
+            PointerAction::Move,
+            10.5,
+            20.5,
+            || {
+                trace.borrow_mut().push("preflight");
+                Ok(())
+            },
+            || {
+                trace.borrow_mut().push("move");
+                Ok(())
+            },
+            |x, y| {
+                trace.borrow_mut().push("cursor_proof");
+                assert_eq!((x, y), (10.5, 20.5));
+                Err("bounded exact observation exhausted".to_string())
+            },
+            || unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+        )
+        .expect_err("settle exhaustion after MouseMoved must stay outcome_unknown");
+        assert!(error.starts_with("outcome_unknown:"), "{error}");
+        assert_eq!(*trace.borrow(), vec!["preflight", "move", "cursor_proof"]);
     }
 
     #[test]
@@ -2558,14 +2706,15 @@ mod macos_pointer_tests {
         use std::cell::{Cell, RefCell};
 
         fn run_click(
+            proof_sequence: &[Result<(), &'static str>],
             second_state_ok: bool,
             down_ok: bool,
             up_ok: bool,
-            final_cursor: (f64, f64),
             final_left_down: bool,
         ) -> (Result<bool, String>, Vec<&'static str>) {
             let trace = RefCell::new(Vec::new());
-            let cursor_reads = Cell::new(0usize);
+            let proof_reads = Cell::new(0usize);
+            let last_proof = *proof_sequence.last().expect("non-empty proof sequence");
             let result = dispatch_macos_pointer_with(
                 PointerAction::Click,
                 10.5,
@@ -2578,15 +2727,16 @@ mod macos_pointer_tests {
                     trace.borrow_mut().push("move");
                     Ok(())
                 },
-                || {
-                    trace.borrow_mut().push("cursor");
-                    let read = cursor_reads.get();
-                    cursor_reads.set(read + 1);
-                    Ok(if read == 0 {
-                        (10.5, 20.5)
-                    } else {
-                        final_cursor
-                    })
+                |x, y| {
+                    trace.borrow_mut().push("cursor_proof");
+                    assert_eq!((x, y), (10.5, 20.5));
+                    let read = proof_reads.get();
+                    proof_reads.set(read + 1);
+                    proof_sequence
+                        .get(read)
+                        .copied()
+                        .unwrap_or(last_proof)
+                        .map_err(str::to_string)
                 },
                 || {
                     trace.borrow_mut().push("second_state");
@@ -2611,8 +2761,7 @@ mod macos_pointer_tests {
                     Ok(final_left_down)
                 },
             );
-            let trace = trace.into_inner();
-            (result, trace)
+            (result, trace.into_inner())
         }
 
         let trace = RefCell::new(Vec::new());
@@ -2628,7 +2777,7 @@ mod macos_pointer_tests {
                 trace.borrow_mut().push("move");
                 Ok(())
             },
-            || Ok((10.5, 20.5)),
+            |_, _| Ok(()),
             || Ok(()),
             || Ok(()),
             || Ok(()),
@@ -2638,102 +2787,91 @@ mod macos_pointer_tests {
         assert!(error.starts_with("not_started:"), "{error}");
         assert_eq!(*trace.borrow(), vec!["preflight"]);
 
-        let trace = RefCell::new(Vec::new());
-        let error = dispatch_macos_pointer_with(
-            PointerAction::Click,
-            10.5,
-            20.5,
-            || {
-                trace.borrow_mut().push("preflight");
-                Ok(())
-            },
-            || {
-                trace.borrow_mut().push("move");
-                Ok(())
-            },
-            || {
-                trace.borrow_mut().push("cursor");
-                Ok((10.0, 20.5))
-            },
-            || {
-                trace.borrow_mut().push("second_state");
-                Ok(())
-            },
-            || {
-                trace.borrow_mut().push("down");
-                Ok(())
-            },
-            || {
-                trace.borrow_mut().push("up");
-                Ok(())
-            },
-            || Ok(false),
-        )
-        .expect_err("cursor mismatch after move is uncertain");
-        assert!(error.starts_with("outcome_unknown:"), "{error}");
-        assert_eq!(*trace.borrow(), vec!["preflight", "move", "cursor"]);
-
-        let (error, trace) = run_click(false, true, true, (10.5, 20.5), false);
+        let (error, trace) = run_click(&[Err("move proof exhausted")], true, true, true, false);
         assert!(error.unwrap_err().starts_with("outcome_unknown:"));
-        assert_eq!(trace, vec!["preflight", "move", "cursor", "second_state"]);
+        assert_eq!(trace, vec!["preflight", "move", "cursor_proof"]);
+        assert!(!trace.contains(&"second_state"));
+        assert!(!trace.contains(&"down"));
+        assert!(!trace.contains(&"up"));
 
-        let (error, trace) = run_click(true, false, true, (10.5, 20.5), false);
-        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
-        assert_eq!(
-            trace,
-            vec!["preflight", "move", "cursor", "second_state", "down"]
-        );
-
-        let (error, trace) = run_click(true, true, false, (10.5, 20.5), false);
-        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
-        assert_eq!(
-            trace,
-            vec!["preflight", "move", "cursor", "second_state", "down", "up"]
-        );
-
-        let (error, trace) = run_click(true, true, true, (10.0, 20.5), false);
-        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        let (success, trace) = run_click(&[Ok(()), Ok(())], true, true, true, false);
+        assert!(success.unwrap());
         assert_eq!(
             trace,
             vec![
                 "preflight",
                 "move",
-                "cursor",
+                "cursor_proof",
                 "second_state",
                 "down",
                 "up",
-                "cursor"
-            ]
-        );
-
-        let (error, trace) = run_click(true, true, true, (10.5, 20.5), true);
-        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
-        assert_eq!(
-            trace,
-            vec![
-                "preflight",
-                "move",
-                "cursor",
-                "second_state",
-                "down",
-                "up",
-                "cursor",
+                "cursor_proof",
                 "left_button"
             ]
         );
 
-        let (success, trace) = run_click(true, true, true, (10.5, 20.5), false);
-        assert_eq!(success.unwrap(), true);
+        let (error, trace) = run_click(&[Ok(())], false, true, true, false);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(
+            trace,
+            vec!["preflight", "move", "cursor_proof", "second_state"]
+        );
+
+        let (error, trace) = run_click(&[Ok(())], true, false, true, false);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(
+            trace,
+            vec!["preflight", "move", "cursor_proof", "second_state", "down"]
+        );
+
+        let (error, trace) = run_click(&[Ok(())], true, true, false, false);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
         assert_eq!(
             trace,
             vec![
                 "preflight",
                 "move",
-                "cursor",
+                "cursor_proof",
+                "second_state",
+                "down",
+                "up"
+            ]
+        );
+
+        let (error, trace) = run_click(
+            &[Ok(()), Err("final proof exhausted")],
+            true,
+            true,
+            true,
+            false,
+        );
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(
+            trace,
+            vec![
+                "preflight",
+                "move",
+                "cursor_proof",
                 "second_state",
                 "down",
                 "up",
-                "cursor",
+                "cursor_proof"
+            ]
+        );
+        assert!(!trace.contains(&"left_button"));
+
+        let (error, trace) = run_click(&[Ok(()), Ok(())], true, true, true, true);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(
+            trace,
+            vec![
+                "preflight",
+                "move",
+                "cursor_proof",
+                "second_state",
+                "down",
+                "up",
+                "cursor_proof",
                 "left_button"
             ]
         );
@@ -2885,7 +3023,7 @@ pub(super) fn dispatch_pointer(plan: PointerPlan, action: PointerAction) -> Resu
             CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&plan.move_event));
             Ok(())
         },
-        macos_current_pointer_location,
+        settle_macos_pointer_exact_observation,
         || validate_macos_pointer_input_state(PointerAction::Click, macos_pointer_input_state()),
         || {
             CGEvent::post(CGEventTapLocation::HIDEventTap, down_event);

@@ -1146,6 +1146,7 @@ impl ToolRuntime {
         instruction: String,
         session_id: Option<String>,
         include_project_instructions: bool,
+        include_workflow_guidance: bool,
         auth: Option<&AuthContext>,
         transport: SessionTransport,
         window: Option<&crate::client_window::ClientWindow>,
@@ -1241,7 +1242,11 @@ impl ToolRuntime {
         } else {
             project
         };
-        project_work_on_project_output(projected_project, result.output)
+        project_work_on_project_output_with_workflow(
+            projected_project,
+            result.output,
+            include_workflow_guidance,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2069,7 +2074,16 @@ fn is_default_work_on_project_repository(repository: &Value) -> bool {
 /// Convert a successful `start_coding_task` result into the compact
 /// `work_on_project` contract. The delegated call may already have changed
 /// Session state, so protocol drift fails closed with `state_changed=true`.
+#[cfg(test)]
 pub(crate) fn project_work_on_project_output(project: String, output: Value) -> ToolResult {
+    project_work_on_project_output_with_workflow(project, output, true)
+}
+
+pub(crate) fn project_work_on_project_output_with_workflow(
+    project: String,
+    output: Value,
+    include_workflow_guidance: bool,
+) -> ToolResult {
     let permission = output.get("permission").cloned();
     let Some(brief) = startup_brief_from_output(&output) else {
         return work_on_project_projection_failed(
@@ -2208,10 +2222,12 @@ pub(crate) fn project_work_on_project_output(project: String, output: Value) -> 
         "resolved_project": projection.project.resolved_id,
         "continuation": projection.session.continuation,
         "workspace": workspace,
-        "workflow": projection.workflow,
         "instructions": instructions,
         "semantic_navigation": semantic_navigation,
     }));
+    if include_workflow_guidance {
+        result.output["workflow"] = projection.workflow;
+    }
     if !project_resolution_is_default {
         result.output["project_resolution"] = json!(projection.project_resolution);
     }

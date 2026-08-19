@@ -20,6 +20,11 @@ selectors.
   instructions, `work_on_project(include_project_instructions=false)` omits their
   bodies from that bootstrap response. WebCodex still observes the instruction
   files and records current instruction metadata for the resulting Workflow Session.
+- When the caller's current model context already retains the built-in WebCodex
+  coding-workflow guidance, `work_on_project(include_workflow_guidance=false)`
+  omits that static `workflow` section from the response. This is projection-only:
+  it does not change Workflow Session state, authority, role selection, or execution
+  semantics.
 - `work_on_project` success output is sparse by default. Omitted default sections
   mean no Session execution defaults, ordinary existing-project resolution, the
   intentionally skipped repository overview, pass/non-blocking readiness, no

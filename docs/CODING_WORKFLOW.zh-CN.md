@@ -18,6 +18,10 @@ project-local instructions；它们不是 role selector。
   `work_on_project(include_project_instructions=false)` 省略本轮 bootstrap response 中的
   instruction 正文。WebCodex 仍会观察这些文件，并为本次 bootstrap 对应的 Workflow
   Session 记录当前的 instruction metadata。
+- 如果 caller 当前模型上下文已经保留 WebCodex 内置 coding-workflow guidance，可使用
+  `work_on_project(include_workflow_guidance=false)` 省略 response 中静态的 `workflow`
+  section。这只控制 model-facing projection，不改变 Workflow Session state、authority、
+  role selection 或 execution semantics。
 - `work_on_project` 的成功输出默认采用 sparse projection。省略的默认 section 表示：没有
   Session execution defaults、普通已有 project 的解析没有特殊事件、repository overview
   按设计未请求、readiness 为 pass/non-blocking、没有值得报告的 Job，或 blockers/warnings

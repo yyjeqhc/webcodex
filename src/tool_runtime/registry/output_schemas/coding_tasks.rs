@@ -1166,7 +1166,14 @@ fn work_on_project_output_schema() -> Value {
                 schema
             },
         ),
-        ("workflow", startup_workflow_schema()),
+        (
+            "workflow",
+            {
+                let mut schema = startup_workflow_schema();
+                schema["description"] = json!("Static built-in WebCodex coding-workflow guidance. Omitted when work_on_project is called with include_workflow_guidance=false.");
+                schema
+            },
+        ),
         ("instructions", compact_instructions),
         ("semantic_navigation", compact_semantic_navigation),
         ("jobs", compact_jobs),

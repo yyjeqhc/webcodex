@@ -20,7 +20,7 @@ use crate::tool_runtime::{
 use serde_json::{json, Value};
 
 fn work_on_project_call(project: &str, instruction: &str, session_id: Option<&str>) -> ToolCall {
-    work_on_project_call_with_instruction_projection(project, instruction, session_id, true)
+    work_on_project_call_with_projections(project, instruction, session_id, true, true)
 }
 
 fn work_on_project_call_with_instruction_projection(
@@ -29,12 +29,29 @@ fn work_on_project_call_with_instruction_projection(
     session_id: Option<&str>,
     include_project_instructions: bool,
 ) -> ToolCall {
+    work_on_project_call_with_projections(
+        project,
+        instruction,
+        session_id,
+        include_project_instructions,
+        true,
+    )
+}
+
+fn work_on_project_call_with_projections(
+    project: &str,
+    instruction: &str,
+    session_id: Option<&str>,
+    include_project_instructions: bool,
+    include_workflow_guidance: bool,
+) -> ToolCall {
     ToolCall::WorkOnProject {
         project: project.to_string(),
         client_id: None,
         path: None,
         instruction: instruction.to_string(),
         include_project_instructions,
+        include_workflow_guidance,
         session_id: session_id.map(str::to_string),
     }
 }
@@ -51,6 +68,7 @@ fn path_work_on_project_call(
         path: Some(path.to_string()),
         instruction: instruction.to_string(),
         include_project_instructions: true,
+        include_workflow_guidance: true,
         session_id: session_id.map(str::to_string),
     }
 }
@@ -355,6 +373,7 @@ fn work_on_project_schema_and_registration() {
         "path",
         "instruction",
         "include_project_instructions",
+        "include_workflow_guidance",
         "session_id",
     ] {
         assert!(
@@ -376,6 +395,8 @@ fn work_on_project_schema_and_registration() {
     assert_eq!(props["session_id"]["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
     assert_eq!(props["include_project_instructions"]["type"], "boolean");
     assert_eq!(props["include_project_instructions"]["default"], true);
+    assert_eq!(props["include_workflow_guidance"]["type"], "boolean");
+    assert_eq!(props["include_workflow_guidance"]["default"], true);
     for keyword in [
         "oneOf",
         "anyOf",
@@ -404,7 +425,8 @@ fn work_on_project_schema_and_registration() {
     assert!(schema_accepts(json!({
         "project": SAMPLE_PROJECT,
         "instruction": "do it",
-        "include_project_instructions": false
+        "include_project_instructions": false,
+        "include_workflow_guidance": false
     })));
     assert!(schema_accepts(json!({
         "client_id": "special",
@@ -428,6 +450,7 @@ fn work_on_project_schema_and_registration() {
         "path",
         "instruction",
         "include_project_instructions",
+        "include_workflow_guidance",
         "session_id",
     ] {
         assert!(
@@ -514,10 +537,12 @@ fn work_on_project_schema_and_registration() {
     match &call {
         ToolCall::WorkOnProject {
             include_project_instructions,
+            include_workflow_guidance,
             session_id,
             ..
         } => {
             assert!(*include_project_instructions);
+            assert!(*include_workflow_guidance);
             assert_eq!(session_id.as_deref(), Some("wc_sess_target"));
         }
         _ => panic!("expected WorkOnProject"),
@@ -529,16 +554,21 @@ fn work_on_project_schema_and_registration() {
         "work_on_project",
         json!({
             "project": SAMPLE_PROJECT,
-            "instruction": "do the thing without repeating rules",
-            "include_project_instructions": false
+            "instruction": "do the thing without repeating static context",
+            "include_project_instructions": false,
+            "include_workflow_guidance": false
         }),
     )
     .unwrap();
     match suppressed {
         ToolCall::WorkOnProject {
             include_project_instructions,
+            include_workflow_guidance,
             ..
-        } => assert!(!include_project_instructions),
+        } => {
+            assert!(!include_project_instructions);
+            assert!(!include_workflow_guidance);
+        }
         _ => panic!("expected WorkOnProject"),
     }
 
@@ -547,10 +577,12 @@ fn work_on_project_schema_and_registration() {
         &json!({
             "project": SAMPLE_PROJECT,
             "instruction": "do not persist this full instruction body",
-            "include_project_instructions": false
+            "include_project_instructions": false,
+            "include_workflow_guidance": false
         }),
     );
     assert_eq!(audit["include_project_instructions"], false);
+    assert_eq!(audit["include_workflow_guidance"], false);
     assert_eq!(audit["instruction_present"], true);
     assert!(audit["instruction_summary"].is_string());
     assert!(audit.get("instruction").is_none());
@@ -663,20 +695,23 @@ fn work_on_project_projection_fails_closed_for_wrong_field_type() {
 
 #[test]
 fn work_on_project_projection_fails_closed_for_noncanonical_workflow() {
-    let mut output = valid_work_on_project_projection_input();
-    output["workflow"]["version"] = json!(2);
+    for include_workflow_guidance in [true, false] {
+        let mut output = valid_work_on_project_projection_input();
+        output["workflow"]["version"] = json!(2);
 
-    let result = crate::tool_runtime::coding_task::project_work_on_project_output(
-        SAMPLE_PROJECT.to_string(),
-        output,
-    );
-    assert!(!result.success);
-    assert_eq!(
-        result.output["error_kind"],
-        "work_on_project_projection_failed"
-    );
-    assert_eq!(result.output["field"], "workflow");
-    assert_eq!(result.output["state_changed"], true);
+        let result = crate::tool_runtime::coding_task::project_work_on_project_output_with_workflow(
+            SAMPLE_PROJECT.to_string(),
+            output,
+            include_workflow_guidance,
+        );
+        assert!(!result.success);
+        assert_eq!(
+            result.output["error_kind"],
+            "work_on_project_projection_failed"
+        );
+        assert_eq!(result.output["field"], "workflow");
+        assert_eq!(result.output["state_changed"], true);
+    }
 }
 
 #[test]
@@ -1945,6 +1980,51 @@ async fn work_on_project_can_omit_instruction_bodies_for_a_fresh_session() {
 }
 
 #[tokio::test]
+async fn work_on_project_can_omit_static_workflow_guidance() {
+    let root = tempfile::tempdir().unwrap();
+    seed_coding_repository(root.path(), "keep repository guidance visible");
+    let runtime = ToolRuntime::new_for_tests();
+    let project =
+        register_agent_project_at_path(&runtime, "wop-workflow-projection", "demo", root.path())
+            .await;
+    let auth = auth_context(None, true);
+
+    let result = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-workflow-projection",
+        work_on_project_call_with_projections(
+            &project,
+            "caller already knows the static workflow",
+            None,
+            true,
+            false,
+        ),
+        Some(&auth),
+        "wop-workflow-projection-window",
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert!(result.output.get("workflow").is_none());
+    assert_eq!(result.output["instructions"]["content_included"], true);
+    assert!(result.output["instructions"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("keep repository guidance visible"))));
+
+    let session_id = result.output["session_id"].as_str().unwrap();
+    let summary = runtime.sessions.summary(session_id, Some(20)).unwrap();
+    assert_eq!(summary.project.as_deref(), Some(project.as_str()));
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
+    let instance = json!({ "success": true, "output": result.output });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| panic!("workflow-omitted output must match schema: {error}"));
+}
+
+#[tokio::test]
 async fn work_on_project_exact_resume_reuses_rules_and_detects_changes() {
     let root = tempfile::tempdir().unwrap();
     seed_coding_repository(root.path(), "first rule body");
@@ -2066,6 +2146,23 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         .get("content_included")
         .is_none());
 
+    let (workflow_omitted, workflow_omitted_requests) = dispatch_recording_startup_requests(
+        &runtime,
+        "wop-size",
+        work_on_project_call_with_projections(
+            &project,
+            "fresh startup without repeated workflow",
+            None,
+            true,
+            false,
+        ),
+        Some(&auth),
+        "wop-size-workflow-omitted",
+    )
+    .await;
+    assert!(workflow_omitted.success, "{:?}", workflow_omitted.error);
+    assert!(workflow_omitted.output.get("workflow").is_none());
+
     let (standard, standard_requests) = dispatch_recording_startup_requests(
         &runtime,
         "wop-size",
@@ -2081,7 +2178,7 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     assert!(standard.success, "{:?}", standard.error);
     assert_eq!(standard.output["repository"]["status"], "available");
 
-    for output in [&fresh.output, &reused.output] {
+    for output in [&fresh.output, &reused.output, &workflow_omitted.output] {
         for omitted in [
             "repository",
             "execution_context",
@@ -2110,12 +2207,17 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         .iter()
         .filter(|kind| kind.as_str() == "file_project_overview")
         .count();
+    let workflow_omitted_overviews = workflow_omitted_requests
+        .iter()
+        .filter(|kind| kind.as_str() == "file_project_overview")
+        .count();
     let standard_overviews = standard_requests
         .iter()
         .filter(|kind| kind.as_str() == "file_project_overview")
         .count();
     assert_eq!(fresh_overviews, 0);
     assert_eq!(reused_overviews, 0);
+    assert_eq!(workflow_omitted_overviews, 0);
     assert_eq!(standard_overviews, 1);
     assert_eq!(
         standard_requests.len(),
@@ -2127,9 +2229,15 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         fresh_requests.len(),
         "unchanged continuation should retain the same lightweight probes"
     );
+    assert_eq!(
+        workflow_omitted_requests.len(),
+        fresh_requests.len(),
+        "omitting static workflow guidance must not reduce repository/runtime probes"
+    );
 
     let fresh_bytes = serde_json::to_vec(&fresh.output).unwrap().len();
     let reused_bytes = serde_json::to_vec(&reused.output).unwrap().len();
+    let workflow_omitted_bytes = serde_json::to_vec(&workflow_omitted.output).unwrap().len();
     let standard_bytes = serde_json::to_vec(&standard.output).unwrap().len();
     let hard_max = crate::tool_runtime::startup_brief::STANDARD_STARTUP_HARD_MAX_BYTES;
     assert!(fresh_bytes < hard_max);
@@ -2137,6 +2245,14 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     assert!(standard_bytes <= hard_max);
     assert!(fresh_bytes < standard_bytes);
     assert!(reused_bytes < standard_bytes);
+    assert!(workflow_omitted_bytes < fresh_bytes);
+    // With the same repository observations and instruction body retained, the
+    // static workflow-only omission is 757 bytes in this fixture. Keep enough
+    // headroom for small projection growth while preserving the context win.
+    assert!(
+        workflow_omitted_bytes <= 1000,
+        "workflow-omitted projection regressed above the context budget: {workflow_omitted_bytes} bytes"
+    );
     // Before sparse-by-default projection this fixture was 3154 bytes fresh
     // and 3259 bytes on unchanged continuation. Leave modest headroom while
     // locking in a material reduction in model-facing context.
@@ -2149,9 +2265,10 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
         "unchanged work_on_project projection regressed above the sparse context budget: {reused_bytes} bytes"
     );
     eprintln!(
-        "work_on_project_fixture_bytes fresh={fresh_bytes} unchanged_continuation={reused_bytes} standard={standard_bytes}; runner_requests fresh={} unchanged_continuation={} standard={}",
+        "work_on_project_fixture_bytes fresh={fresh_bytes} unchanged_continuation={reused_bytes} workflow_omitted={workflow_omitted_bytes} standard={standard_bytes}; runner_requests fresh={} unchanged_continuation={} workflow_omitted={} standard={}",
         fresh_requests.len(),
         reused_requests.len(),
+        workflow_omitted_requests.len(),
         standard_requests.len()
     );
 }

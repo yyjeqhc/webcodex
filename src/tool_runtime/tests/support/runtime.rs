@@ -86,7 +86,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "text" => json!("// hi\n"),
         "content" => json!("fn main() {}\n"),
         "instruction" => json!("implement the requested change"),
-        "include_project_instructions" => json!(false),
+        "include_project_instructions" | "include_workflow_guidance" => json!(false),
         "content_base64" => json!("AA=="),
         "openaiFileIdRefs" => json!([{
             "download_url": "https://files.oaiusercontent.com/test",

@@ -310,6 +310,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                     "client_id",
                     "session_id",
                     "include_project_instructions",
+                    "include_workflow_guidance",
                 ],
             );
             out.insert(
@@ -2326,6 +2327,7 @@ impl ToolCall {
                 path,
                 instruction,
                 include_project_instructions,
+                include_workflow_guidance,
                 session_id,
             } => serde_json::json!({
                 "project": project,
@@ -2334,6 +2336,7 @@ impl ToolCall {
                 "instruction_present": true,
                 "instruction_summary": crate::shell_client::command_preview(instruction),
                 "include_project_instructions": include_project_instructions,
+                "include_workflow_guidance": include_workflow_guidance,
                 "session_id": session_id,
             }),
             Self::UpdateSessionContext {

@@ -72,11 +72,13 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
         "path",
         "instruction",
         "include_project_instructions",
+        "include_workflow_guidance",
         "session_id",
     ] {
         assert!(work_props.contains_key(field), "MCP schema missing {field}");
     }
     assert_eq!(work_props["include_project_instructions"]["default"], true);
+    assert_eq!(work_props["include_workflow_guidance"]["default"], true);
     assert_eq!(work_schema["required"], json!(["instruction"]));
     assert_eq!(work_schema["additionalProperties"], false);
     for keyword in [

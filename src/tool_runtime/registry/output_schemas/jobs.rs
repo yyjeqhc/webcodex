@@ -601,7 +601,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "process_summary",
                     schema_type(
                         "string",
-                        "Bounded human-readable executable/argv summary; never execution input.",
+                        "Bounded human-readable executable/argv summary; never execution input. Omitted on ordinary synchronous terminal success when the canonical run_process source is implied by tool identity.",
                     ),
                 ),
                 (
@@ -611,7 +611,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ("executor", schema_type("string", "Executor type: local or agent.")),
                 (
                     "execution_source",
-                    schema_type("string", "Always run_process."),
+                    schema_type("string", "Canonical source is run_process. Omitted on ordinary synchronous terminal success only when the actual source is exactly canonical; any future schema-supported alternate source must remain explicit."),
                 ),
                 (
                     "execution_state",
@@ -700,7 +700,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "script_summary",
                     schema_type(
                         "string",
-                        "Bounded body-free language/byte/argument summary; never execution input.",
+                        "Bounded body-free language/byte/argument summary; never execution input. Omitted on ordinary synchronous terminal success when the canonical run_script source is implied by tool identity.",
                     ),
                 ),
                 (
@@ -714,7 +714,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ("executor", schema_type("string", "Executor type: local or agent.")),
                 (
                     "execution_source",
-                    schema_type("string", "Always run_script."),
+                    schema_type("string", "Canonical source is run_script. Omitted on ordinary synchronous terminal success only when the actual source is exactly canonical; any future schema-supported alternate source must remain explicit."),
                 ),
                 (
                     "execution_state",

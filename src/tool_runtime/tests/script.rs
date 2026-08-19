@@ -244,16 +244,15 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["execution_source"], "run_script");
+    assert!(result.output.get("execution_source").is_none());
+    assert!(result.output.get("script_summary").is_none());
     assert_eq!(result.output["execution_state"], "completed");
     assert_eq!(result.output["command_started"], true);
     assert_eq!(result.output["command_completed"], true);
     assert_eq!(result.output["language"], "bash");
     assert_eq!(result.output["purpose"], "operation");
-    assert_eq!(
-        result.output["script_summary"],
-        format!("bash script ({} bytes, 4 args)", large_script.len())
-    );
+    assert!(result.output["cwd"].as_str().is_some());
+    assert!(result.output["executor"].as_str().is_some());
 }
 
 #[tokio::test]
@@ -332,6 +331,8 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
         "stderr_lines",
         "stdout_truncated",
         "stderr_truncated",
+        "script_summary",
+        "execution_source",
     ] {
         assert!(
             result.output.get(omitted).is_none(),
@@ -339,6 +340,14 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
             result.output
         );
     }
+    assert!(result.output["cwd"].as_str().is_some());
+    assert!(result.output["executor"].as_str().is_some());
+    let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
+    assert!(
+        sparse_bytes <= 620,
+        "boring run_script success regressed above the model-facing context budget: {sparse_bytes} bytes"
+    );
+    eprintln!("run_script_sparse_terminal_success_bytes={sparse_bytes}");
     let schema = crate::tool_runtime::registry::output_schema_for_tool("run_script");
     let instance = json!({
         "success": true,

@@ -124,6 +124,22 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
             output.remove(key);
         }
     }
+
+    let summary_key = match tool_name {
+        "run_process" => "process_summary",
+        "run_script" => "script_summary",
+        _ => unreachable!("structured execution sparsifier is tool-gated"),
+    };
+    let canonical_source =
+        output.get("execution_source").and_then(Value::as_str) == Some(tool_name);
+    let canonical_summary = output
+        .get(summary_key)
+        .and_then(Value::as_str)
+        .is_some_and(|summary| !summary.is_empty());
+    if canonical_source && canonical_summary {
+        output.remove(summary_key);
+        output.remove("execution_source");
+    }
 }
 
 enum SearchModelProjection {
@@ -1213,6 +1229,62 @@ impl ToolRuntime {
             | ToolCall::FindReferences { .. }
             | ToolCall::CallHierarchy { .. }) => self.dispatch_lsp_tool(call).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod structured_execution_sparse_projection_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn terminal_process_result(execution_source: &str) -> ToolResult {
+        ToolResult::ok(json!({
+            "duration_ms": 1,
+            "exit_code": 0,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_lines": 0,
+            "stderr_lines": 0,
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "command_started": true,
+            "command_completed": true,
+            "command_ok": true,
+            "failure_kind": null,
+            "tool_failure": false,
+            "purpose": "diagnostic",
+            "process_summary": "tool --arg",
+            "cwd": ".",
+            "executor": "agent",
+            "execution_source": execution_source,
+            "execution_state": "completed",
+            "promoted_to_job": false,
+            "terminal": true,
+            "job_id": null,
+            "job_status": null,
+            "observation_token": null,
+            "effective_timeout_secs": 60,
+            "sync_wait_secs": 10,
+            "async_handoff_available": true
+        }))
+    }
+
+    #[test]
+    fn terminal_execution_only_omits_summary_and_source_for_exact_canonical_source() {
+        let mut canonical = terminal_process_result("run_process");
+        sparsify_terminal_structured_execution_success("run_process", &mut canonical);
+        assert!(canonical.output.get("process_summary").is_none());
+        assert!(canonical.output.get("execution_source").is_none());
+        assert_eq!(canonical.output["cwd"], ".");
+        assert_eq!(canonical.output["executor"], "agent");
+
+        let mut alternate = terminal_process_result("alternate_process_source");
+        sparsify_terminal_structured_execution_success("run_process", &mut alternate);
+        assert_eq!(alternate.output["process_summary"], "tool --arg");
+        assert_eq!(
+            alternate.output["execution_source"],
+            "alternate_process_source"
+        );
     }
 }
 

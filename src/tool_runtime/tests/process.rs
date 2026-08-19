@@ -344,7 +344,13 @@ async fn run_process_enqueues_only_typed_argv_and_reports_completed_exit_codes()
         assert_eq!(result.output["command_started"], true);
         assert_eq!(result.output["command_completed"], true);
         assert_eq!(result.output["exit_code"], exit_code);
-        assert_eq!(result.output["execution_source"], "run_process");
+        if expected_success {
+            assert!(result.output.get("execution_source").is_none());
+            assert!(result.output.get("process_summary").is_none());
+        } else {
+            assert_eq!(result.output["execution_source"], "run_process");
+            assert!(result.output["process_summary"].as_str().is_some());
+        }
         assert_eq!(result.output["purpose"], "diagnostic");
     }
 }
@@ -966,6 +972,8 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
         "stderr_lines",
         "stdout_truncated",
         "stderr_truncated",
+        "process_summary",
+        "execution_source",
     ] {
         assert!(
             result.output.get(omitted).is_none(),
@@ -974,9 +982,11 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
         );
     }
 
+    assert!(result.output["cwd"].as_str().is_some());
+    assert!(result.output["executor"].as_str().is_some());
     let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
     assert!(
-        sparse_bytes <= 800,
+        sparse_bytes <= 620,
         "boring run_process success regressed above the model-facing context budget: {sparse_bytes} bytes"
     );
     eprintln!("run_process_sparse_terminal_success_bytes={sparse_bytes}");

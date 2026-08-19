@@ -66,9 +66,17 @@ async fn mcp_tools_list_exposes_coding_task_and_runtime_status_ux_flags() {
         !work_props.contains_key("role"),
         "work_on_project must not grow a role wire field"
     );
-    for field in ["project", "client_id", "path", "instruction", "session_id"] {
+    for field in [
+        "project",
+        "client_id",
+        "path",
+        "instruction",
+        "include_project_instructions",
+        "session_id",
+    ] {
         assert!(work_props.contains_key(field), "MCP schema missing {field}");
     }
+    assert_eq!(work_props["include_project_instructions"]["default"], true);
     assert_eq!(work_schema["required"], json!(["instruction"]));
     assert_eq!(work_schema["additionalProperties"], false);
     for keyword in [

@@ -20,11 +20,21 @@ use crate::tool_runtime::{
 use serde_json::{json, Value};
 
 fn work_on_project_call(project: &str, instruction: &str, session_id: Option<&str>) -> ToolCall {
+    work_on_project_call_with_instruction_projection(project, instruction, session_id, true)
+}
+
+fn work_on_project_call_with_instruction_projection(
+    project: &str,
+    instruction: &str,
+    session_id: Option<&str>,
+    include_project_instructions: bool,
+) -> ToolCall {
     ToolCall::WorkOnProject {
         project: project.to_string(),
         client_id: None,
         path: None,
         instruction: instruction.to_string(),
+        include_project_instructions,
         session_id: session_id.map(str::to_string),
     }
 }
@@ -40,6 +50,7 @@ fn path_work_on_project_call(
         client_id: Some(client_id.to_string()),
         path: Some(path.to_string()),
         instruction: instruction.to_string(),
+        include_project_instructions: true,
         session_id: session_id.map(str::to_string),
     }
 }
@@ -338,7 +349,14 @@ fn work_on_project_schema_and_registration() {
     assert_eq!(required_fields(spec), vec!["instruction"]);
     assert_eq!(spec.input_schema["additionalProperties"], false);
     let props = spec.input_schema["properties"].as_object().unwrap();
-    for field in ["project", "client_id", "path", "instruction", "session_id"] {
+    for field in [
+        "project",
+        "client_id",
+        "path",
+        "instruction",
+        "include_project_instructions",
+        "session_id",
+    ] {
         assert!(
             props.contains_key(field),
             "missing explicit {field} property"
@@ -356,6 +374,8 @@ fn work_on_project_schema_and_registration() {
     );
     assert_eq!(props["session_id"]["type"], "string");
     assert_eq!(props["session_id"]["pattern"], "^wc_sess_[A-Za-z0-9_]+$");
+    assert_eq!(props["include_project_instructions"]["type"], "boolean");
+    assert_eq!(props["include_project_instructions"]["default"], true);
     for keyword in [
         "oneOf",
         "anyOf",
@@ -382,6 +402,11 @@ fn work_on_project_schema_and_registration() {
         json!({"project": SAMPLE_PROJECT, "instruction": "do it"})
     ));
     assert!(schema_accepts(json!({
+        "project": SAMPLE_PROJECT,
+        "instruction": "do it",
+        "include_project_instructions": false
+    })));
+    assert!(schema_accepts(json!({
         "client_id": "special",
         "path": "/root/git/example",
         "instruction": "do it"
@@ -397,7 +422,14 @@ fn work_on_project_schema_and_registration() {
         "instruction": "runtime must reject ambiguity"
     })));
     let accepted = crate::tool_runtime::registry::accepted_flattened_args_for_spec(spec);
-    for field in ["project", "client_id", "path", "instruction", "session_id"] {
+    for field in [
+        "project",
+        "client_id",
+        "path",
+        "instruction",
+        "include_project_instructions",
+        "session_id",
+    ] {
         assert!(
             accepted.contains(&field.to_string()),
             "flattened Action projection missing {field}"
@@ -480,13 +512,48 @@ fn work_on_project_schema_and_registration() {
     )
     .unwrap();
     match &call {
-        ToolCall::WorkOnProject { session_id, .. } => {
-            assert_eq!(session_id.as_deref(), Some("wc_sess_target"))
+        ToolCall::WorkOnProject {
+            include_project_instructions,
+            session_id,
+            ..
+        } => {
+            assert!(*include_project_instructions);
+            assert_eq!(session_id.as_deref(), Some("wc_sess_target"));
         }
         _ => panic!("expected WorkOnProject"),
     }
     assert_eq!(call.project(), Some(SAMPLE_PROJECT));
     assert_eq!(call.session_id(), Some("wc_sess_target"));
+
+    let suppressed = ToolCall::from_tool_name(
+        "work_on_project",
+        json!({
+            "project": SAMPLE_PROJECT,
+            "instruction": "do the thing without repeating rules",
+            "include_project_instructions": false
+        }),
+    )
+    .unwrap();
+    match suppressed {
+        ToolCall::WorkOnProject {
+            include_project_instructions,
+            ..
+        } => assert!(!include_project_instructions),
+        _ => panic!("expected WorkOnProject"),
+    }
+
+    let audit = super::super::tool_audit::session_log_arguments_for_tool_request(
+        "work_on_project",
+        &json!({
+            "project": SAMPLE_PROJECT,
+            "instruction": "do not persist this full instruction body",
+            "include_project_instructions": false
+        }),
+    );
+    assert_eq!(audit["include_project_instructions"], false);
+    assert_eq!(audit["instruction_present"], true);
+    assert!(audit["instruction_summary"].is_string());
+    assert!(audit.get("instruction").is_none());
 }
 
 #[test]
@@ -1676,6 +1743,86 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
             .to_string()
             .contains(&root.path().to_string_lossy().to_string()),
         "compact output leaked the absolute repository path"
+    );
+}
+
+#[tokio::test]
+async fn work_on_project_can_omit_instruction_bodies_for_a_fresh_session() {
+    let root = tempfile::tempdir().unwrap();
+    seed_coding_repository(root.path(), "caller already knows this rule");
+    let runtime = ToolRuntime::new_for_tests();
+    let project =
+        register_agent_project_at_path(&runtime, "wop-instruction-projection", "demo", root.path())
+            .await;
+    let auth = auth_context(None, true);
+
+    let first = dispatch_start_coding_task_in_window(
+        &runtime,
+        "wop-instruction-projection",
+        work_on_project_call(&project, "first task", None),
+        Some(&auth),
+        "wop-instruction-projection-window",
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    assert_eq!(first.output["instructions"]["content_included"], true);
+    let first_session_id = first.output["session_id"].as_str().unwrap().to_string();
+
+    let (second, request_kinds) = dispatch_recording_startup_requests(
+        &runtime,
+        "wop-instruction-projection",
+        work_on_project_call_with_instruction_projection(
+            &project,
+            "second independent task",
+            None,
+            false,
+        ),
+        Some(&auth),
+        "wop-instruction-projection-window",
+    )
+    .await;
+    assert!(second.success, "{:?}", second.error);
+    let second_session_id = second.output["session_id"].as_str().unwrap().to_string();
+    assert_ne!(second_session_id, first_session_id);
+    assert_eq!(second.output["continuation"], "created");
+
+    let instructions = &second.output["instructions"];
+    assert_eq!(instructions["status"], "loaded");
+    assert_eq!(instructions["content_included"], false);
+    let agents_source = instructions["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["path"] == "AGENTS.md")
+        .expect("AGENTS.md metadata");
+    assert_eq!(agents_source["content"], Value::Null);
+    assert!(agents_source["fingerprint"]
+        .as_str()
+        .is_some_and(|value| value.len() == 64));
+    assert!(agents_source["headings"]
+        .as_array()
+        .is_some_and(|headings| !headings.is_empty()));
+    assert!(
+        request_kinds.iter().any(|kind| kind == "file_read"),
+        "instruction files must still be observed when their bodies are omitted: {request_kinds:?}"
+    );
+
+    let summary = runtime
+        .sessions
+        .summary(&second_session_id, Some(20))
+        .unwrap();
+    let snapshot = summary
+        .project_instructions
+        .expect("fresh Workflow Session instruction summary");
+    assert!(snapshot.loaded);
+    let stored_agents = snapshot
+        .files
+        .iter()
+        .find(|file| file.path == "AGENTS.md")
+        .expect("stored AGENTS.md summary");
+    assert_eq!(
+        Some(stored_agents.fingerprint.as_str()),
+        agents_source["fingerprint"].as_str()
     );
 }
 

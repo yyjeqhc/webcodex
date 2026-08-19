@@ -52,6 +52,7 @@ impl ToolRuntime {
                 client_id,
                 path,
                 instruction,
+                include_project_instructions,
                 session_id,
             } => {
                 self.work_on_project(
@@ -60,6 +61,7 @@ impl ToolRuntime {
                     path,
                     instruction,
                     session_id,
+                    include_project_instructions,
                     auth,
                     transport,
                     window,

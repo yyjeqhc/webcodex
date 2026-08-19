@@ -86,6 +86,7 @@ enum CodingProjectSource {
 struct CodingStartupOptions {
     detail: StartupDetail,
     include_repository_overview: bool,
+    include_project_instructions: bool,
 }
 
 impl CodingStartupOptions {
@@ -93,13 +94,15 @@ impl CodingStartupOptions {
         Self {
             detail,
             include_repository_overview: true,
+            include_project_instructions: true,
         }
     }
 
-    fn work_on_project() -> Self {
+    fn work_on_project(include_project_instructions: bool) -> Self {
         Self {
             detail: StartupDetail::Standard,
             include_repository_overview: false,
+            include_project_instructions,
         }
     }
 }
@@ -1106,6 +1109,7 @@ impl ToolRuntime {
             instructions: &project_instructions,
             previous_instructions,
             force_instruction_load,
+            include_project_instructions: startup.include_project_instructions,
             git: &git,
             semantic_navigation: &semantic_navigation,
             repository: &repository_overview,
@@ -1141,6 +1145,7 @@ impl ToolRuntime {
         path: Option<String>,
         instruction: String,
         session_id: Option<String>,
+        include_project_instructions: bool,
         auth: Option<&AuthContext>,
         transport: SessionTransport,
         window: Option<&crate::client_window::ClientWindow>,
@@ -1211,7 +1216,7 @@ impl ToolRuntime {
                 SessionMode::Normal,
                 false,
                 false,
-                CodingStartupOptions::work_on_project(),
+                CodingStartupOptions::work_on_project(include_project_instructions),
                 session_id.clone(),
                 false,
                 new_session,

@@ -14,6 +14,10 @@ project-local instructions；它们不是 role selector。
 
 - 普通 coding bootstrap 优先用 `work_on_project`；它的 task `instruction` 正是描述模型
   应该做什么的自然位置。
+- 如果 caller 当前的模型上下文已经保留适用的 repository instructions，可使用
+  `work_on_project(include_project_instructions=false)` 省略本轮 bootstrap response 中的
+  instruction 正文。WebCodex 仍会观察这些文件，并为本次 bootstrap 对应的 Workflow
+  Session 记录当前的 instruction metadata。
 - 需要精确 `resume_session_id`、显式 `new_session=true` 隔离等高级 continuity 控制时，
   使用 `start_coding_task`。
 - behavioral role 由 **task instruction** 显式选择。实现任务明确写使用

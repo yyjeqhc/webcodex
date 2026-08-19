@@ -71,9 +71,17 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
         .expect("local_coding work_on_project");
     let schema = &work["inputSchema"];
     let props = schema["properties"].as_object().unwrap();
-    for field in ["project", "client_id", "path", "instruction", "session_id"] {
+    for field in [
+        "project",
+        "client_id",
+        "path",
+        "instruction",
+        "include_project_instructions",
+        "session_id",
+    ] {
         assert!(props.contains_key(field), "local_coding missing {field}");
     }
+    assert_eq!(props["include_project_instructions"]["default"], true);
     assert_eq!(schema["required"], json!(["instruction"]));
     assert_eq!(schema["additionalProperties"], false);
     assert!(schema.get("oneOf").is_none());

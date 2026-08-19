@@ -302,7 +302,16 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
             out.insert("execution_context".to_string(), context);
         }
         "work_on_project" => {
-            copy_keys(obj, &mut out, &["project", "client_id", "session_id"]);
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "project",
+                    "client_id",
+                    "session_id",
+                    "include_project_instructions",
+                ],
+            );
             out.insert(
                 "path_source_requested".to_string(),
                 Value::Bool(obj.contains_key("path")),
@@ -2316,6 +2325,7 @@ impl ToolCall {
                 client_id,
                 path,
                 instruction,
+                include_project_instructions,
                 session_id,
             } => serde_json::json!({
                 "project": project,
@@ -2323,6 +2333,7 @@ impl ToolCall {
                 "path_source_requested": path.is_some(),
                 "instruction_present": true,
                 "instruction_summary": crate::shell_client::command_preview(instruction),
+                "include_project_instructions": include_project_instructions,
                 "session_id": session_id,
             }),
             Self::UpdateSessionContext {

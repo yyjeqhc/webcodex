@@ -325,6 +325,149 @@ fn sparsify_complete_default_search_success(
     }
 }
 
+/// Remove range bookkeeping only when the returned text is provably the complete
+/// file. `sha256` and `total_lines` remain explicit freshness/content-shape
+/// evidence. Partial reads and every real continuation keep the canonical full
+/// range tuple. In a batch, the outer item path remains the navigation identity,
+/// so an identical inner path is redundant.
+fn sparsify_complete_file_read_output(
+    output: &mut serde_json::Map<String, Value>,
+    duplicate_outer_path: Option<&str>,
+) -> bool {
+    let format = output.get("format").and_then(Value::as_str);
+    let valid_format = matches!(format, Some("plain" | "numbered"));
+    let plain_format = format == Some("plain");
+    let Some(inner_path) = output.get("path").and_then(Value::as_str) else {
+        return false;
+    };
+    if duplicate_outer_path.is_some_and(|path| path != inner_path) {
+        return false;
+    }
+    let Some(total_lines) = output.get("total_lines").and_then(Value::as_u64) else {
+        return false;
+    };
+    let Some(returned_lines) = output.get("returned_lines").and_then(Value::as_u64) else {
+        return false;
+    };
+    let default_limit =
+        webcodex_workspace::file_read_range::EffectiveRange::new(None, None).limit as u64;
+    let end_line_matches = if total_lines == 0 {
+        output.get("end_line").is_some_and(Value::is_null)
+    } else {
+        output.get("end_line").and_then(Value::as_u64) == Some(total_lines)
+    };
+    let complete_file = output.get("text").and_then(Value::as_str).is_some()
+        && valid_format
+        && output
+            .get("sha256")
+            .and_then(Value::as_str)
+            .is_some_and(|sha| {
+                sha.len() == 64
+                    && sha
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        && output.get("start_line").and_then(Value::as_u64) == Some(1)
+        && output.get("limit").and_then(Value::as_u64) == Some(default_limit)
+        && returned_lines == total_lines
+        && returned_lines <= default_limit
+        && end_line_matches
+        && output.get("has_more").and_then(Value::as_bool) == Some(false)
+        && output.get("next_start_line").is_some_and(Value::is_null);
+    if !complete_file {
+        return false;
+    }
+
+    for key in [
+        "start_line",
+        "limit",
+        "returned_lines",
+        "end_line",
+        "has_more",
+        "next_start_line",
+    ] {
+        output.remove(key);
+    }
+    if plain_format {
+        output.remove("format");
+    }
+    if duplicate_outer_path.is_some() {
+        output.remove("path");
+    }
+    true
+}
+
+fn sparsify_complete_read_success(tool_name: &str, result: &mut ToolResult) {
+    if !result.success || !matches!(tool_name, "read_file" | "read_files") {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    if tool_name == "read_file" {
+        sparsify_complete_file_read_output(output, None);
+        return;
+    }
+
+    let complete_batch = output
+        .get("items")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            let item_count = items.len() as u64;
+            item_count > 0
+                && items.iter().all(|item| {
+                    item.get("success").and_then(Value::as_bool) == Some(true)
+                        && item.get("error").is_some_and(Value::is_null)
+                })
+                && output.get("requested_count").and_then(Value::as_u64) == Some(item_count)
+                && output.get("returned_count").and_then(Value::as_u64) == Some(item_count)
+                && output.get("succeeded_count").and_then(Value::as_u64) == Some(item_count)
+                && output.get("failed_count").and_then(Value::as_u64) == Some(0)
+                && output.get("output_truncated").and_then(Value::as_bool) == Some(false)
+                && output.get("next_index").is_some_and(Value::is_null)
+        });
+    let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let mut every_item_complete = complete_batch;
+    for item in items {
+        let Some(item) = item.as_object_mut() else {
+            every_item_complete = false;
+            continue;
+        };
+        if item.get("success").and_then(Value::as_bool) != Some(true)
+            || !item.get("error").is_some_and(Value::is_null)
+        {
+            every_item_complete = false;
+            continue;
+        }
+        let Some(outer_path) = item.get("path").and_then(Value::as_str).map(str::to_string) else {
+            every_item_complete = false;
+            continue;
+        };
+        let Some(read_output) = item.get_mut("output").and_then(Value::as_object_mut) else {
+            every_item_complete = false;
+            continue;
+        };
+        if !sparsify_complete_file_read_output(read_output, Some(&outer_path)) {
+            every_item_complete = false;
+        }
+    }
+    if every_item_complete {
+        for key in [
+            "project",
+            "requested_count",
+            "returned_count",
+            "succeeded_count",
+            "failed_count",
+            "output_truncated",
+            "next_index",
+        ] {
+            output.remove(key);
+        }
+    }
+}
+
 /// Snapshot of the activity-relevant request facts, captured before the
 /// `ToolCall` is moved into execution.
 struct WorkspaceActivityContext {
@@ -901,6 +1044,7 @@ impl ToolRuntime {
         }
         sparsify_terminal_structured_execution_success(tool_name, &mut result);
         sparsify_complete_default_search_success(&search_projection, &mut result);
+        sparsify_complete_read_success(tool_name, &mut result);
         result
     }
 
@@ -1068,6 +1212,64 @@ impl ToolRuntime {
             | ToolCall::GotoDefinition { .. }
             | ToolCall::FindReferences { .. }
             | ToolCall::CallHierarchy { .. }) => self.dispatch_lsp_tool(call).await,
+        }
+    }
+}
+
+#[cfg(test)]
+mod sparse_read_projection_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn complete_batch_item(outer_path: Option<&str>, inner_path: &str) -> Value {
+        let default_limit =
+            webcodex_workspace::file_read_range::EffectiveRange::new(None, None).limit;
+        let mut item = json!({
+            "index": 0,
+            "success": true,
+            "output": {
+                "text": "one",
+                "format": "plain",
+                "path": inner_path,
+                "sha256": "a".repeat(64),
+                "start_line": 1,
+                "limit": default_limit,
+                "total_lines": 1,
+                "returned_lines": 1,
+                "end_line": 1,
+                "has_more": false,
+                "next_start_line": null
+            },
+            "error": null
+        });
+        if let Some(path) = outer_path {
+            item["path"] = json!(path);
+        }
+        item
+    }
+
+    #[test]
+    fn sparse_read_batch_requires_exact_outer_path_identity() {
+        for item in [
+            complete_batch_item(None, "a.rs"),
+            complete_batch_item(Some("other.rs"), "a.rs"),
+        ] {
+            let mut result = ToolResult::ok(json!({
+                "project": "demo",
+                "requested_count": 1,
+                "returned_count": 1,
+                "succeeded_count": 1,
+                "failed_count": 0,
+                "items": [item],
+                "output_truncated": false,
+                "next_index": null
+            }));
+
+            sparsify_complete_read_success("read_files", &mut result);
+
+            assert_eq!(result.output["requested_count"], 1);
+            assert_eq!(result.output["items"][0]["output"]["path"], "a.rs");
+            assert_eq!(result.output["items"][0]["output"]["start_line"], 1);
         }
     }
 }

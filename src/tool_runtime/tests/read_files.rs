@@ -194,6 +194,359 @@ async fn read_files_returns_ordered_normalized_successes_after_out_of_order_comp
 }
 
 #[tokio::test]
+async fn read_file_dispatch_complete_success_is_sparse_after_session_recording() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "read-sparse-single";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("sparse read".to_string()));
+    let session_id = session.session_id.clone();
+    let auth = auth_context(None, true);
+    let content = "one\ntwo";
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project,
+                        path: "src/lib.rs".to_string(),
+                        session_id: Some(session_id),
+                        start_line: None,
+                        limit: None,
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_read_request(&runtime, client_id).await;
+    assert_eq!(request.path.as_deref(), Some("src/lib.rs"));
+    complete_read(&runtime, client_id, &request, content).await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["text"], "one\ntwo");
+    assert_eq!(result.output["path"], "src/lib.rs");
+    assert_eq!(
+        result.output["sha256"],
+        format!("{:x}", Sha256::digest(content.as_bytes()))
+    );
+    assert_eq!(result.output["total_lines"], 2);
+    for omitted in [
+        "format",
+        "start_line",
+        "limit",
+        "returned_lines",
+        "end_line",
+        "has_more",
+        "next_start_line",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "complete full-file read field {omitted} should be omitted: {}",
+            result.output
+        );
+    }
+    let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
+    assert!(
+        sparse_bytes <= 400,
+        "complete sparse read_file regressed above model-facing budget: {sparse_bytes} bytes"
+    );
+    eprintln!("read_file_sparse_complete_bytes={sparse_bytes}");
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_file");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| panic!("sparse read_file success must match schema: {error}"));
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "read_file")
+        .expect("recorded read_file completion");
+    assert!(
+        finished
+            .observed_paths
+            .iter()
+            .any(|path| path == "src/lib.rs"),
+        "Session observation extraction must see the full read result before sparsification"
+    );
+}
+
+#[tokio::test]
+async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "read-partial-visible";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+    let content = "one\ntwo\nthree";
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project,
+                        path: "src/lib.rs".to_string(),
+                        session_id: None,
+                        start_line: Some(2),
+                        limit: Some(1),
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_read_request(&runtime, client_id).await;
+    complete_read(&runtime, client_id, &request, content).await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["text"], "two");
+    assert_eq!(result.output["format"], "plain");
+    assert_eq!(result.output["path"], "src/lib.rs");
+    assert_eq!(result.output["start_line"], 2);
+    assert_eq!(result.output["limit"], 1);
+    assert_eq!(result.output["total_lines"], 3);
+    assert_eq!(result.output["returned_lines"], 1);
+    assert_eq!(result.output["end_line"], 2);
+    assert_eq!(result.output["has_more"], true);
+    assert_eq!(result.output["next_start_line"], 3);
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_file");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| panic!("partial read_file success must match schema: {error}"));
+}
+
+#[tokio::test]
+async fn read_file_dispatch_complete_explicit_range_keeps_full_range_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "read-explicit-range-visible";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+    let content = "one\ntwo";
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project,
+                        path: "src/lib.rs".to_string(),
+                        session_id: None,
+                        start_line: Some(1),
+                        limit: Some(2),
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_read_request(&runtime, client_id).await;
+    complete_read(&runtime, client_id, &request, content).await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["text"], "one\ntwo");
+    assert_eq!(result.output["format"], "plain");
+    assert_eq!(result.output["path"], "src/lib.rs");
+    assert_eq!(result.output["start_line"], 1);
+    assert_eq!(result.output["limit"], 2);
+    assert_eq!(result.output["total_lines"], 2);
+    assert_eq!(result.output["returned_lines"], 2);
+    assert_eq!(result.output["end_line"], 2);
+    assert_eq!(result.output["has_more"], false);
+    assert!(result.output["next_start_line"].is_null());
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_file");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| {
+            panic!("explicit-range read_file success must match schema: {error}")
+        });
+}
+
+#[tokio::test]
+async fn read_files_dispatch_complete_batch_is_sparse_and_schema_valid() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "read-sparse-batch";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFiles {
+                        project,
+                        items: vec![
+                            item("src/lib.rs", None, None),
+                            item("src/main.rs", None, None),
+                        ],
+                        session_id: None,
+                        with_line_numbers: Some(true),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let requests = [
+        next_read_request(&runtime, client_id).await,
+        next_read_request(&runtime, client_id).await,
+    ];
+    for request in &requests {
+        let content = match request.path.as_deref() {
+            Some("src/lib.rs") => "lib",
+            Some("src/main.rs") => "main",
+            other => panic!("unexpected batch read path: {other:?}"),
+        };
+        complete_read(&runtime, client_id, request, content).await;
+    }
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    for omitted in [
+        "project",
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "output_truncated",
+        "next_index",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "complete read_files batch field {omitted} should be omitted: {}",
+            result.output
+        );
+    }
+    let items = result.output["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    for item in items {
+        assert_eq!(item["success"], true);
+        assert!(item["error"].is_null());
+        assert_eq!(item["output"]["format"], "numbered");
+        assert!(item["output"].get("path").is_none());
+        assert!(item["output"]["sha256"].as_str().is_some());
+        assert_eq!(item["output"]["total_lines"], 1);
+        for omitted in [
+            "start_line",
+            "limit",
+            "returned_lines",
+            "end_line",
+            "has_more",
+            "next_start_line",
+        ] {
+            assert!(
+                item["output"].get(omitted).is_none(),
+                "complete batch item field {omitted} should be omitted: {item}"
+            );
+        }
+    }
+    let sparse_bytes = serde_json::to_vec(&result.output).unwrap().len();
+    assert!(
+        sparse_bytes <= 600,
+        "complete two-file sparse batch regressed above model-facing budget: {sparse_bytes} bytes"
+    );
+    eprintln!("read_files_sparse_complete_bytes={sparse_bytes}");
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_files");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| panic!("sparse read_files batch must match schema: {error}"));
+}
+
+#[tokio::test]
+async fn read_files_dispatch_mixed_batch_keeps_outer_and_failure_semantics() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "read-sparse-mixed";
+    let project = register_agent_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let expected_project = project.clone();
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFiles {
+                        project,
+                        items: vec![item("good.txt", None, None), item(".env", None, None)],
+                        session_id: None,
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_read_request(&runtime, client_id).await;
+    assert_eq!(request.path.as_deref(), Some("good.txt"));
+    complete_read(&runtime, client_id, &request, "ok").await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["project"], expected_project);
+    assert_eq!(result.output["requested_count"], 2);
+    assert_eq!(result.output["returned_count"], 2);
+    assert_eq!(result.output["succeeded_count"], 1);
+    assert_eq!(result.output["failed_count"], 1);
+    assert_eq!(result.output["output_truncated"], false);
+    assert!(result.output["next_index"].is_null());
+
+    let items = result.output["items"].as_array().unwrap();
+    assert_eq!(items[0]["success"], true);
+    assert_eq!(items[0]["path"], "good.txt");
+    assert_eq!(items[0]["output"]["text"], "ok");
+    assert!(items[0]["output"].get("path").is_none());
+    assert!(items[0]["output"].get("format").is_none());
+    assert!(items[0]["output"].get("has_more").is_none());
+    assert_eq!(items[1]["success"], false);
+    assert_eq!(items[1]["path"], ".env");
+    assert_eq!(items[1]["output"]["error_kind"], "read_file_failed");
+    assert_eq!(items[1]["output"]["reason_code"], "sensitive_path");
+    assert_eq!(items[1]["output"]["state_changed"], false);
+    assert!(items[1]["error"].as_str().is_some());
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_files");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| panic!("mixed sparse/full read batch must match schema: {error}"));
+}
+
+#[tokio::test]
 async fn read_files_isolates_mixed_failures_without_leaking_absolute_paths() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();

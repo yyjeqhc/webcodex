@@ -392,6 +392,10 @@ fn tool_specs_coordinate_pointer_is_snapshot_fenced_and_private() {
             present: ["platform", "display_id", "snapshot_generation", "x", "y", "success", "execution_state", "state_changed", "error_kind", "reconcile_with"],
             absent: ["native_identity", "device_path", "global_x", "global_y", "virtual_left", "virtual_top", "dpi", "scale_factor", "content_base64"]
         );
+        assert_eq!(output["platform"]["enum"], json!(["windows", "macos"]));
+        assert!(spec.description.contains("macOS"));
+        assert!(spec.description.contains("Windows"));
+        assert!(spec.description.contains("computer_snapshot_display"));
     }
 }
 

@@ -191,13 +191,15 @@ fn computer_macos_pointer_mapping_preflight_is_native_and_non_effecting() {
     let (origin_x, origin_y, bounds_width, bounds_height) = probe.bounds;
     let (target_x, target_y) = probe.mapped_edge;
     println!(
-        "macOS pointer preflight source={}x{} bounds=({origin_x},{origin_y} {bounds_width}x{bounds_height}) rotation={} mapped_edge=({target_x},{target_y}) buttons_down=0x{:08x} modifier_flags=0x{:x} event_post_permission={}",
+        "macOS pointer preflight source={}x{} bounds=({origin_x},{origin_y} {bounds_width}x{bounds_height}) rotation={} mapped_edge=({target_x},{target_y}) buttons_down=0x{:08x} modifier_flags=0x{:x} prohibited_modifiers_active={} event_post_permission={} constructed_events={}",
         probe.source_width,
         probe.source_height,
         probe.rotation_degrees,
         probe.buttons_down,
         probe.modifier_flags,
+        probe.prohibited_modifiers_active,
         probe.event_post_permission,
+        probe.constructed_event_count,
     );
     assert_eq!(
         (probe.source_width, probe.source_height),
@@ -211,6 +213,8 @@ fn computer_macos_pointer_mapping_preflight_is_native_and_non_effecting() {
     assert!(target_y >= origin_y && target_y < origin_y + bounds_height);
     assert_eq!(probe.buttons_down, 0);
     assert!(probe.event_post_permission);
+    assert!(!probe.prohibited_modifiers_active);
+    assert_eq!(probe.constructed_event_count, 3);
 }
 
 #[test]

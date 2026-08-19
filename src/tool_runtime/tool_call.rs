@@ -1447,7 +1447,7 @@ pub enum ToolCall {
         text: String,
     },
 
-    /// Move the Windows pointer using one latest unspent full-display snapshot generation.
+    /// Move the native macOS or Windows pointer using one latest unspent full-display snapshot generation.
     ComputerPointerMove {
         client_id: String,
         display_id: String,
@@ -1456,7 +1456,7 @@ pub enum ToolCall {
         y: u32,
     },
 
-    /// Submit one exact single-left-click at a snapshot-fenced display-local coordinate.
+    /// Submit one native macOS or Windows single-left-click at a snapshot-fenced display-local coordinate.
     ComputerPointerClick {
         client_id: String,
         display_id: String,

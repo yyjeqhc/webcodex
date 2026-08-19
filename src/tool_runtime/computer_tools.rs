@@ -3149,7 +3149,10 @@ fn validate_computer_pointer(mut output: Value, context: &PointerRequestContext)
     ];
     if object.len() != allowed.len()
         || object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || output.get("platform").and_then(Value::as_str) != Some("windows")
+        || !matches!(
+            output.get("platform").and_then(Value::as_str),
+            Some("windows" | "macos")
+        )
         || output.get("display_id").and_then(Value::as_str) != Some(context.display_id.as_str())
         || output.get("snapshot_generation").and_then(Value::as_u64)
             != Some(u64::from(context.snapshot_generation))

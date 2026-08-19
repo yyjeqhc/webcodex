@@ -882,7 +882,12 @@ mod computer_privacy_tests {
             "device_path": "PRIVATE_DEVICE_PATH",
             "global_x": -1599,
             "virtual_left": -1920,
-            "dpi_scale": 1.25
+            "dpi_scale": 1.25,
+            "bounds": [0.0, 0.0, 1920.0, 1080.0],
+            "rotation": 0.0,
+            "event_source": "CombinedSessionState",
+            "cursor_native_x": 160.5,
+            "held_buttons": 0
         });
         let summary = session_log_result_for_tool("computer_pointer_click", &output);
         let serialized = serde_json::to_string(&summary).unwrap();
@@ -897,6 +902,11 @@ mod computer_privacy_tests {
             "global_x",
             "virtual_left",
             "dpi_scale",
+            "bounds",
+            "rotation",
+            "event_source",
+            "cursor_native_x",
+            "held_buttons",
         ] {
             assert!(!serialized.contains(secret), "{secret}");
         }

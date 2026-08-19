@@ -300,8 +300,21 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
     assert!(!not_started.success);
     assert_eq!(not_started.output["execution_state"], "not_started");
     assert_eq!(not_started.output["state_changed"], false);
+    let pre_spend_not_started = computer_pointer_runner_error(
+        "pointer_input_failed: native pointer preflight rejected before generation spend",
+        Some(true),
+        &context,
+    );
+    assert!(!pre_spend_not_started.success);
+    assert_eq!(
+        pre_spend_not_started.output["execution_state"],
+        "not_started"
+    );
+    assert_eq!(pre_spend_not_started.output["state_changed"], false);
+    assert!(pre_spend_not_started.output.get("reconcile_with").is_none());
+
     let spent_not_started = computer_pointer_runner_error(
-        "not_started: Windows pointer SendInput inserted no events",
+        "not_started: native pointer final preflight failed after generation spend before post",
         Some(true),
         &context,
     );
@@ -317,6 +330,18 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
         .as_deref()
         .unwrap_or_default()
         .contains("snapshot_generation is spent"));
+    let runner_unknown = computer_pointer_runner_error(
+        "outcome_unknown: native pointer post occurred but exact cursor proof failed",
+        Some(true),
+        &context,
+    );
+    assert!(!runner_unknown.success);
+    assert_eq!(runner_unknown.output["execution_state"], "outcome_unknown");
+    assert_eq!(
+        runner_unknown.output["reconcile_with"],
+        "computer_snapshot_display"
+    );
+
     let unknown =
         computer_pointer_effect_delivery_failure("maybe dispatched", Some(true), &context);
     assert!(!unknown.success);
@@ -331,9 +356,41 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
         .unwrap_or_default()
         .contains("do not blindly retry"));
 
-    let valid = validate_computer_pointer(
+    for platform in ["windows", "macos"] {
+        let valid = validate_computer_pointer(
+            json!({
+                "platform": platform,
+                "display_id": DISPLAY_ID,
+                "snapshot_generation": 7,
+                "x": 123,
+                "y": 456,
+                "success": true
+            }),
+            &context,
+        );
+        assert!(valid.success, "{platform}");
+        assert_eq!(valid.output["execution_state"], "completed");
+        assert_eq!(valid.output["state_changed"], true);
+    }
+
+    for platform in ["linux", "darwin", "", "MACOS"] {
+        let invalid = validate_computer_pointer(
+            json!({
+                "platform": platform,
+                "display_id": DISPLAY_ID,
+                "snapshot_generation": 7,
+                "x": 123,
+                "y": 456,
+                "success": true
+            }),
+            &context,
+        );
+        assert!(!invalid.success, "{platform}");
+        assert_eq!(invalid.output["error_kind"], "invalid_runner_response");
+    }
+
+    let missing_platform = validate_computer_pointer(
         json!({
-            "platform": "windows",
             "display_id": DISPLAY_ID,
             "snapshot_generation": 7,
             "x": 123,
@@ -342,9 +399,58 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
         }),
         &context,
     );
-    assert!(valid.success);
-    assert_eq!(valid.output["execution_state"], "completed");
-    assert_eq!(valid.output["state_changed"], true);
+    assert!(!missing_platform.success);
+    assert_eq!(
+        missing_platform.output["error_kind"],
+        "invalid_runner_response"
+    );
+
+    for invalid_output in [
+        json!({
+            "platform": "macos",
+            "display_id": "display_ffffffffffffffffffffffffffffffff",
+            "snapshot_generation": 7,
+            "x": 123,
+            "y": 456,
+            "success": true
+        }),
+        json!({
+            "platform": "macos",
+            "display_id": DISPLAY_ID,
+            "snapshot_generation": 8,
+            "x": 123,
+            "y": 456,
+            "success": true
+        }),
+        json!({
+            "platform": "macos",
+            "display_id": DISPLAY_ID,
+            "snapshot_generation": 7,
+            "x": 124,
+            "y": 456,
+            "success": true
+        }),
+        json!({
+            "platform": "macos",
+            "display_id": DISPLAY_ID,
+            "snapshot_generation": 7,
+            "x": 123,
+            "y": 457,
+            "success": true
+        }),
+        json!({
+            "platform": "macos",
+            "display_id": DISPLAY_ID,
+            "snapshot_generation": 7,
+            "x": 123,
+            "y": 456,
+            "success": false
+        }),
+    ] {
+        let invalid = validate_computer_pointer(invalid_output, &context);
+        assert!(!invalid.success);
+        assert_eq!(invalid.output["error_kind"], "invalid_runner_response");
+    }
 
     let leaked = validate_computer_pointer(
         json!({

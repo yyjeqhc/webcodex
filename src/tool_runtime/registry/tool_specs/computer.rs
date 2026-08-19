@@ -27,12 +27,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_pointer_move",
-            "Move the Windows pointer to an exact display-local coordinate using the latest unspent display snapshot generation. The generation is single-use and spent at effect admission. No implicit observation, focus, drag, fallback, or retry. Reconcile unknown outcomes with a fresh snapshot.",
+            "Move the native macOS or Windows pointer to an exact display-local source coordinate using the latest unspent display snapshot generation. The generation is single-use and spent at effect admission. No implicit observation, focus, drag, fallback, or retry. Reconcile unknown outcomes with a fresh computer_snapshot_display.",
             computer_pointer_input_schema(),
         ),
         tool_spec(
             "computer_pointer_click",
-            "Send one Windows-native left click at an exact display-local coordinate using the latest unspent display snapshot generation. Held mouse/modifier state fails closed. No other buttons, double click, drag, implicit snapshot, fallback, or retry. Reconcile unknown outcomes with a fresh snapshot.",
+            "Send one native macOS or Windows left click at an exact display-local source coordinate using the latest unspent display snapshot generation. Held mouse/modifier state fails closed. No other buttons, double click, drag, implicit snapshot, fallback, or retry. Reconcile unknown outcomes with a fresh computer_snapshot_display.",
             computer_pointer_input_schema(),
         ),
         tool_spec(

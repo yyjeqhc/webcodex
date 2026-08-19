@@ -676,12 +676,49 @@ enum PointerAction {
     Click,
 }
 
+#[cfg(windows)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PointerPlan {
     global_x: i32,
     global_y: i32,
     normalized_x: i32,
     normalized_y: i32,
+}
+
+#[cfg(target_os = "macos")]
+struct PointerPlan {
+    display: DisplayRecord,
+    native_display_id: u32,
+    bounds_origin_x: f64,
+    bounds_origin_y: f64,
+    bounds_width: f64,
+    bounds_height: f64,
+    rotation_degrees: f64,
+    target_x: f64,
+    target_y: f64,
+    _source: objc2_core_foundation::CFRetained<objc2_core_graphics::CGEventSource>,
+    move_event: objc2_core_foundation::CFRetained<objc2_core_graphics::CGEvent>,
+    click_down_event: Option<objc2_core_foundation::CFRetained<objc2_core_graphics::CGEvent>>,
+    click_up_event: Option<objc2_core_foundation::CFRetained<objc2_core_graphics::CGEvent>>,
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PointerPlan;
+
+fn pointer_output_platform() -> &'static str {
+    #[cfg(windows)]
+    {
+        return "windows";
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return "macos";
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        "unsupported"
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1082,7 +1119,7 @@ impl ComputerObserver {
         drop(snapshot_registry);
         drop(display_registry);
         Ok(json!({
-            "platform": "windows",
+            "platform": pointer_output_platform(),
             "display_id": display_id,
             "snapshot_generation": snapshot_generation,
             "x": x,
@@ -2667,6 +2704,16 @@ mod pointer_wire_contract_tests {
     }
 
     #[test]
+    fn pointer_output_platform_matches_native_backend() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(pointer_output_platform(), "macos");
+        #[cfg(windows)]
+        assert_eq!(pointer_output_platform(), "windows");
+        #[cfg(not(any(target_os = "macos", windows)))]
+        assert_eq!(pointer_output_platform(), "unsupported");
+    }
+
+    #[test]
     fn pointer_generation_is_latest_exact_and_single_use() {
         let display = DisplayRecord {
             native_identity: vec![9],
@@ -2702,6 +2749,27 @@ mod pointer_wire_contract_tests {
         assert!(dispatched);
         assert!(snapshots
             .validate_pointer(display_id, second, &display)
+            .unwrap_err()
+            .contains("already consumed"));
+
+        let mut spent_not_started = DisplaySnapshotRegistry::default();
+        let spent_generation = spent_not_started.bind(display_id, &display).unwrap();
+        let error = dispatch_after_spending_pointer_generation(
+            &mut spent_not_started,
+            display_id,
+            spent_generation,
+            &display,
+            |_| {
+                Err(
+                    "not_started: final native preflight failed after generation spend before post"
+                        .to_string(),
+                )
+            },
+        )
+        .expect_err("spent final-preflight failure must remain a definite no-post result");
+        assert!(error.starts_with("not_started:"), "{error}");
+        assert!(spent_not_started
+            .validate_pointer(display_id, spent_generation, &display)
             .unwrap_err()
             .contains("already consumed"));
 

@@ -556,7 +556,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         "computer_pointer_move" | "computer_pointer_click" => {
             Some(strict_computer_output_schema(vec![
-                ("platform", json!({"type": "string", "const": "windows"})),
+                (
+                    "platform",
+                    json!({"type": "string", "enum": ["windows", "macos"]}),
+                ),
                 (
                     "display_id",
                     json!({"type": "string", "pattern": "^display_[0-9a-f]{32}$", "maxLength": 128}),

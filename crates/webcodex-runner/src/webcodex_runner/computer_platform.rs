@@ -45,8 +45,8 @@ use objc2_core_graphics::{
     CGDisplayCopyDisplayMode, CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMode,
     CGDisplayModelNumber, CGDisplayRotation, CGDisplaySerialNumber, CGDisplayUnitNumber,
     CGDisplayVendorNumber, CGError, CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID,
-    CGGetActiveDisplayList, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo, CGKeyCode,
-    CGMouseButton, CGPreflightPostEventAccess,
+    CGEventTapLocation, CGEventType, CGGetActiveDisplayList, CGImage, CGImageAlphaInfo,
+    CGImageByteOrderInfo, CGKeyCode, CGMouseButton, CGPreflightPostEventAccess,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{
@@ -1496,6 +1496,14 @@ struct MacPointerPlan {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacPointerPreflight {
+    target: MacPointerPlan,
+    display_id: CGDirectDisplayID,
+    geometry: MacPointerNativeGeometry,
+}
+
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MacPointerInputState {
     buttons_down: u32,
@@ -1645,10 +1653,11 @@ fn prepare_macos_pointer_plan_with(
     mut native_geometry: impl FnMut(CGDirectDisplayID) -> MacPointerNativeGeometry,
     mut input_state: impl FnMut() -> MacPointerInputState,
     mut permission_preflight: impl FnMut() -> Result<(), String>,
-) -> Result<MacPointerPlan, String> {
+) -> Result<MacPointerPreflight, String> {
     let before_display_id = revalidate(display)?;
     let before_geometry = native_geometry(before_display_id);
-    let plan = map_macos_pointer_coordinate(display.width, display.height, before_geometry, x, y)?;
+    let target =
+        map_macos_pointer_coordinate(display.width, display.height, before_geometry, x, y)?;
 
     let after_display_id = revalidate(display)?;
     let after_geometry = native_geometry(after_display_id);
@@ -1661,17 +1670,20 @@ fn prepare_macos_pointer_plan_with(
     validate_macos_pointer_native_geometry(after_geometry)?;
     permission_preflight()?;
     validate_macos_pointer_input_state(action, input_state())?;
-    Ok(plan)
+    Ok(MacPointerPreflight {
+        target,
+        display_id: after_display_id,
+        geometry: after_geometry,
+    })
 }
 
 #[cfg(target_os = "macos")]
-#[allow(dead_code)]
 fn prepare_macos_pointer_plan(
     display: &DisplayRecord,
     x: u32,
     y: u32,
     action: PointerAction,
-) -> Result<MacPointerPlan, String> {
+) -> Result<MacPointerPreflight, String> {
     prepare_macos_pointer_plan_with(
         display,
         x,
@@ -1682,6 +1694,209 @@ fn prepare_macos_pointer_plan(
         macos_pointer_input_state,
         validate_macos_pointer_permission,
     )
+}
+
+#[cfg(target_os = "macos")]
+type MacPreparedPointerEvents = (
+    CFRetained<CGEventSource>,
+    CFRetained<CGEvent>,
+    Option<CFRetained<CGEvent>>,
+    Option<CFRetained<CGEvent>>,
+);
+
+#[cfg(target_os = "macos")]
+fn prepare_macos_pointer_events(
+    action: PointerAction,
+    target: MacPointerPlan,
+) -> Result<MacPreparedPointerEvents, String> {
+    let source =
+        CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok_or_else(|| {
+            "pointer_input_failed: macOS CombinedSessionState event source could not be created"
+                .to_string()
+        })?;
+    let point = CGPoint {
+        x: target.target_x,
+        y: target.target_y,
+    };
+    let move_event = CGEvent::new_mouse_event(
+        Some(&source),
+        CGEventType::MouseMoved,
+        point,
+        CGMouseButton::Left,
+    )
+    .ok_or_else(|| {
+        "pointer_input_failed: macOS MouseMoved event could not be created".to_string()
+    })?;
+    let move_location = CGEvent::location(Some(&move_event));
+    if move_location.x != target.target_x || move_location.y != target.target_y {
+        return Err(
+            "pointer_input_failed: macOS MouseMoved event did not preserve the exact target"
+                .to_string(),
+        );
+    }
+
+    if action == PointerAction::Move {
+        return Ok((source, move_event, None, None));
+    }
+
+    let down_event = CGEvent::new_mouse_event(
+        Some(&source),
+        CGEventType::LeftMouseDown,
+        point,
+        CGMouseButton::Left,
+    )
+    .ok_or_else(|| {
+        "pointer_input_failed: macOS LeftMouseDown event could not be created".to_string()
+    })?;
+    let up_event = CGEvent::new_mouse_event(
+        Some(&source),
+        CGEventType::LeftMouseUp,
+        point,
+        CGMouseButton::Left,
+    )
+    .ok_or_else(|| {
+        "pointer_input_failed: macOS LeftMouseUp event could not be created".to_string()
+    })?;
+    for event in [&down_event, &up_event] {
+        let location = CGEvent::location(Some(event));
+        if location.x != target.target_x || location.y != target.target_y {
+            return Err(
+                "pointer_input_failed: macOS click event did not preserve the exact target"
+                    .to_string(),
+            );
+        }
+    }
+    Ok((source, move_event, Some(down_event), Some(up_event)))
+}
+
+#[cfg(target_os = "macos")]
+fn pointer_plan_native_geometry(plan: &PointerPlan) -> MacPointerNativeGeometry {
+    MacPointerNativeGeometry {
+        origin_x: plan.bounds_origin_x,
+        origin_y: plan.bounds_origin_y,
+        width: plan.bounds_width,
+        height: plan.bounds_height,
+        rotation_degrees: plan.rotation_degrees,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pointer_final_preflight(plan: &PointerPlan, action: PointerAction) -> Result<(), String> {
+    let result = (|| {
+        let display_id = find_exact_macos_display(&plan.display)?;
+        if display_id != plan.native_display_id {
+            return Err("stale_display: macOS display id changed before native post".to_string());
+        }
+        let geometry = macos_pointer_native_geometry(display_id);
+        if geometry != pointer_plan_native_geometry(plan) {
+            return Err(
+                "stale_display: macOS display placement or rotation changed before native post"
+                    .to_string(),
+            );
+        }
+        validate_macos_pointer_native_geometry(geometry)?;
+        if geometry.rotation_degrees != 0.0 {
+            return Err(
+                "pointer_input_failed: macOS pointer mapping supports only an exact 0-degree display rotation"
+                    .to_string(),
+            );
+        }
+        validate_macos_pointer_permission()?;
+        validate_macos_pointer_input_state(action, macos_pointer_input_state())?;
+        Ok(())
+    })();
+    result.map_err(|error: String| {
+        format!(
+            "not_started: macOS pointer final preflight failed after generation spend but before native event post: {error}"
+        )
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_current_pointer_location() -> Result<(f64, f64), String> {
+    let event = CGEvent::new(None).ok_or_else(|| {
+        "pointer_input_failed: macOS current cursor event could not be created".to_string()
+    })?;
+    let location = CGEvent::location(Some(&event));
+    if !location.x.is_finite() || !location.y.is_finite() {
+        return Err(
+            "pointer_input_failed: macOS current cursor location is non-finite".to_string(),
+        );
+    }
+    Ok((location.x, location.y))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pointer_outcome_unknown(message: &str) -> String {
+    format!("outcome_unknown: {message}")
+}
+
+#[cfg(target_os = "macos")]
+fn dispatch_macos_pointer_with(
+    action: PointerAction,
+    target_x: f64,
+    target_y: f64,
+    mut final_preflight: impl FnMut() -> Result<(), String>,
+    mut post_move: impl FnMut() -> Result<(), String>,
+    mut cursor_readback: impl FnMut() -> Result<(f64, f64), String>,
+    mut second_click_state: impl FnMut() -> Result<(), String>,
+    mut post_down: impl FnMut() -> Result<(), String>,
+    mut post_up: impl FnMut() -> Result<(), String>,
+    mut left_button_down: impl FnMut() -> Result<bool, String>,
+) -> Result<bool, String> {
+    final_preflight().map_err(|error| {
+        if error.starts_with("not_started:") {
+            error
+        } else {
+            format!(
+                "not_started: macOS pointer final preflight failed after generation spend but before native event post: {error}"
+            )
+        }
+    })?;
+
+    post_move().map_err(|_| {
+        macos_pointer_outcome_unknown("macOS MouseMoved post outcome could not be proven")
+    })?;
+    let cursor = cursor_readback().map_err(|_| {
+        macos_pointer_outcome_unknown("macOS cursor readback after MouseMoved is unavailable")
+    })?;
+    if cursor != (target_x, target_y) {
+        return Err(macos_pointer_outcome_unknown(
+            "macOS cursor readback did not prove the exact target after MouseMoved",
+        ));
+    }
+    if action == PointerAction::Move {
+        return Ok(true);
+    }
+
+    second_click_state().map_err(|_| {
+        macos_pointer_outcome_unknown(
+            "shared desktop input state changed after the exact pointer move; click button events were not attempted",
+        )
+    })?;
+    post_down().map_err(|_| {
+        macos_pointer_outcome_unknown("macOS LeftMouseDown post outcome could not be proven")
+    })?;
+    post_up().map_err(|_| {
+        macos_pointer_outcome_unknown("macOS LeftMouseUp post outcome could not be proven")
+    })?;
+
+    let cursor = cursor_readback().map_err(|_| {
+        macos_pointer_outcome_unknown("macOS final cursor readback after click is unavailable")
+    })?;
+    if cursor != (target_x, target_y) {
+        return Err(macos_pointer_outcome_unknown(
+            "macOS final cursor readback did not prove the exact click target",
+        ));
+    }
+    if left_button_down().map_err(|_| {
+        macos_pointer_outcome_unknown("macOS final left-button readback is unavailable")
+    })? {
+        return Err(macos_pointer_outcome_unknown(
+            "macOS left mouse button remained down after click sequence",
+        ));
+    }
+    Ok(true)
 }
 
 #[cfg(target_os = "macos")]
@@ -2194,7 +2409,7 @@ mod macos_pointer_tests {
     }
 
     #[test]
-    fn macos_pointer_permission_denial_is_definite_pre_effect_and_production_stays_unsupported() {
+    fn macos_pointer_permission_denial_is_definite_pre_effect() {
         let display = display(3840, 2160);
         let error = prepare_macos_pointer_plan_with(
             &display,
@@ -2206,12 +2421,290 @@ mod macos_pointer_tests {
             clean_input_state,
             || Err("permission_denied: macOS event-posting permission is not granted".to_string()),
         )
-        .expect_err("permission failure must stay before any future effect boundary");
+        .expect_err("permission failure must stay before the generation spend boundary");
         assert!(error.starts_with("permission_denied:"), "{error}");
+    }
 
-        let error = prepare_pointer(&display, 0, 0, PointerAction::Move)
-            .expect_err("M4a must not wire a production macOS pointer prepare path");
-        assert!(error.starts_with("unsupported_platform:"), "{error}");
+    #[test]
+    fn macos_pointer_event_construction_is_exact_and_non_effecting() {
+        let target = MacPointerPlan {
+            target_x: 1919.5,
+            target_y: 1079.5,
+        };
+        let (source, move_event, down, up) =
+            prepare_macos_pointer_events(PointerAction::Move, target).unwrap();
+        assert_eq!(
+            CGEventSource::source_state_id(Some(&source)),
+            CGEventSourceStateID::CombinedSessionState
+        );
+        assert_eq!(CGEvent::r#type(Some(&move_event)), CGEventType::MouseMoved);
+        assert!(down.is_none());
+        assert!(up.is_none());
+        let location = CGEvent::location(Some(&move_event));
+        assert_eq!((location.x, location.y), (target.target_x, target.target_y));
+
+        let (source, move_event, down, up) =
+            prepare_macos_pointer_events(PointerAction::Click, target).unwrap();
+        assert_eq!(
+            CGEventSource::source_state_id(Some(&source)),
+            CGEventSourceStateID::CombinedSessionState
+        );
+        let down = down.expect("click prepares exactly one left-down event");
+        let up = up.expect("click prepares exactly one left-up event");
+        assert_eq!(CGEvent::r#type(Some(&move_event)), CGEventType::MouseMoved);
+        assert_eq!(CGEvent::r#type(Some(&down)), CGEventType::LeftMouseDown);
+        assert_eq!(CGEvent::r#type(Some(&up)), CGEventType::LeftMouseUp);
+        for event in [&move_event, &down, &up] {
+            let location = CGEvent::location(Some(event));
+            assert_eq!((location.x, location.y), (target.target_x, target.target_y));
+        }
+    }
+
+    #[test]
+    fn macos_pointer_dispatch_move_classifies_final_fence_and_readback() {
+        use std::cell::RefCell;
+
+        let trace = RefCell::new(Vec::new());
+        let error = dispatch_macos_pointer_with(
+            PointerAction::Move,
+            10.5,
+            20.5,
+            || {
+                trace.borrow_mut().push("preflight");
+                Err("simulated stale final fence".to_string())
+            },
+            || {
+                trace.borrow_mut().push("move");
+                Ok(())
+            },
+            || {
+                trace.borrow_mut().push("cursor");
+                Ok((10.5, 20.5))
+            },
+            || unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+            || unreachable!(),
+        )
+        .expect_err("final preflight must fail before any post");
+        assert!(error.starts_with("not_started:"), "{error}");
+        assert_eq!(*trace.borrow(), vec!["preflight"]);
+
+        for cursor in [Ok((10.5, 20.5)), Ok((10.0, 20.5)), Err("unavailable")] {
+            let trace = RefCell::new(Vec::new());
+            let result = dispatch_macos_pointer_with(
+                PointerAction::Move,
+                10.5,
+                20.5,
+                || {
+                    trace.borrow_mut().push("preflight");
+                    Ok(())
+                },
+                || {
+                    trace.borrow_mut().push("move");
+                    Ok(())
+                },
+                || {
+                    trace.borrow_mut().push("cursor");
+                    cursor.map_err(str::to_string)
+                },
+                || unreachable!(),
+                || unreachable!(),
+                || unreachable!(),
+                || unreachable!(),
+            );
+            assert_eq!(*trace.borrow(), vec!["preflight", "move", "cursor"]);
+            match cursor {
+                Ok((10.5, 20.5)) => assert_eq!(result.unwrap(), true),
+                _ => assert!(result.unwrap_err().starts_with("outcome_unknown:")),
+            }
+        }
+    }
+
+    #[test]
+    fn macos_pointer_dispatch_click_preserves_two_phase_safety_and_unknown_boundaries() {
+        use std::cell::{Cell, RefCell};
+
+        fn run_click(
+            second_state_ok: bool,
+            down_ok: bool,
+            up_ok: bool,
+            final_cursor: (f64, f64),
+            final_left_down: bool,
+        ) -> (Result<bool, String>, Vec<&'static str>) {
+            let trace = RefCell::new(Vec::new());
+            let cursor_reads = Cell::new(0usize);
+            let result = dispatch_macos_pointer_with(
+                PointerAction::Click,
+                10.5,
+                20.5,
+                || {
+                    trace.borrow_mut().push("preflight");
+                    Ok(())
+                },
+                || {
+                    trace.borrow_mut().push("move");
+                    Ok(())
+                },
+                || {
+                    trace.borrow_mut().push("cursor");
+                    let read = cursor_reads.get();
+                    cursor_reads.set(read + 1);
+                    Ok(if read == 0 {
+                        (10.5, 20.5)
+                    } else {
+                        final_cursor
+                    })
+                },
+                || {
+                    trace.borrow_mut().push("second_state");
+                    second_state_ok
+                        .then_some(())
+                        .ok_or_else(|| "dirty".to_string())
+                },
+                || {
+                    trace.borrow_mut().push("down");
+                    down_ok
+                        .then_some(())
+                        .ok_or_else(|| "down interrupted".to_string())
+                },
+                || {
+                    trace.borrow_mut().push("up");
+                    up_ok
+                        .then_some(())
+                        .ok_or_else(|| "up interrupted".to_string())
+                },
+                || {
+                    trace.borrow_mut().push("left_button");
+                    Ok(final_left_down)
+                },
+            );
+            let trace = trace.into_inner();
+            (result, trace)
+        }
+
+        let trace = RefCell::new(Vec::new());
+        let error = dispatch_macos_pointer_with(
+            PointerAction::Click,
+            10.5,
+            20.5,
+            || {
+                trace.borrow_mut().push("preflight");
+                Err("simulated final fence".to_string())
+            },
+            || {
+                trace.borrow_mut().push("move");
+                Ok(())
+            },
+            || Ok((10.5, 20.5)),
+            || Ok(()),
+            || Ok(()),
+            || Ok(()),
+            || Ok(false),
+        )
+        .expect_err("click final preflight must fail before MouseMoved");
+        assert!(error.starts_with("not_started:"), "{error}");
+        assert_eq!(*trace.borrow(), vec!["preflight"]);
+
+        let trace = RefCell::new(Vec::new());
+        let error = dispatch_macos_pointer_with(
+            PointerAction::Click,
+            10.5,
+            20.5,
+            || {
+                trace.borrow_mut().push("preflight");
+                Ok(())
+            },
+            || {
+                trace.borrow_mut().push("move");
+                Ok(())
+            },
+            || {
+                trace.borrow_mut().push("cursor");
+                Ok((10.0, 20.5))
+            },
+            || {
+                trace.borrow_mut().push("second_state");
+                Ok(())
+            },
+            || {
+                trace.borrow_mut().push("down");
+                Ok(())
+            },
+            || {
+                trace.borrow_mut().push("up");
+                Ok(())
+            },
+            || Ok(false),
+        )
+        .expect_err("cursor mismatch after move is uncertain");
+        assert!(error.starts_with("outcome_unknown:"), "{error}");
+        assert_eq!(*trace.borrow(), vec!["preflight", "move", "cursor"]);
+
+        let (error, trace) = run_click(false, true, true, (10.5, 20.5), false);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(trace, vec!["preflight", "move", "cursor", "second_state"]);
+
+        let (error, trace) = run_click(true, false, true, (10.5, 20.5), false);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(
+            trace,
+            vec!["preflight", "move", "cursor", "second_state", "down"]
+        );
+
+        let (error, trace) = run_click(true, true, false, (10.5, 20.5), false);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(
+            trace,
+            vec!["preflight", "move", "cursor", "second_state", "down", "up"]
+        );
+
+        let (error, trace) = run_click(true, true, true, (10.0, 20.5), false);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(
+            trace,
+            vec![
+                "preflight",
+                "move",
+                "cursor",
+                "second_state",
+                "down",
+                "up",
+                "cursor"
+            ]
+        );
+
+        let (error, trace) = run_click(true, true, true, (10.5, 20.5), true);
+        assert!(error.unwrap_err().starts_with("outcome_unknown:"));
+        assert_eq!(
+            trace,
+            vec![
+                "preflight",
+                "move",
+                "cursor",
+                "second_state",
+                "down",
+                "up",
+                "cursor",
+                "left_button"
+            ]
+        );
+
+        let (success, trace) = run_click(true, true, true, (10.5, 20.5), false);
+        assert_eq!(success.unwrap(), true);
+        assert_eq!(
+            trace,
+            vec![
+                "preflight",
+                "move",
+                "cursor",
+                "second_state",
+                "down",
+                "up",
+                "cursor",
+                "left_button"
+            ]
+        );
     }
 }
 
@@ -2225,6 +2718,8 @@ pub(super) struct MacPointerReadOnlyProbe {
     pub(super) buttons_down: u32,
     pub(super) modifier_flags: u64,
     pub(super) event_post_permission: bool,
+    pub(super) prohibited_modifiers_active: bool,
+    pub(super) constructed_event_count: usize,
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -2267,6 +2762,32 @@ pub(super) fn macos_pointer_read_only_probe_for_test(
     let input = observed_input.get().ok_or_else(|| {
         "pointer_input_failed: macOS pointer input state was not observed".to_string()
     })?;
+    let prohibited_modifiers_active = input.modifier_flags.intersects(
+        CGEventFlags::MaskShift
+            | CGEventFlags::MaskControl
+            | CGEventFlags::MaskAlternate
+            | CGEventFlags::MaskCommand,
+    );
+    let (_source, move_event, down_event, up_event) =
+        prepare_macos_pointer_events(PointerAction::Click, plan.target)?;
+    let constructed_event_count =
+        1 + usize::from(down_event.is_some()) + usize::from(up_event.is_some());
+    for event in [
+        Some(move_event.as_ref()),
+        down_event.as_deref(),
+        up_event.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let location = CGEvent::location(Some(event));
+        if (location.x, location.y) != (plan.target.target_x, plan.target.target_y) {
+            return Err(
+                "pointer_input_failed: macOS prepared event target did not survive readback"
+                    .to_string(),
+            );
+        }
+    }
     Ok(MacPointerReadOnlyProbe {
         source_width: display.width,
         source_height: display.height,
@@ -2277,26 +2798,78 @@ pub(super) fn macos_pointer_read_only_probe_for_test(
             native.height,
         ),
         rotation_degrees: native.rotation_degrees,
-        mapped_edge: (plan.target_x, plan.target_y),
+        mapped_edge: (plan.target.target_x, plan.target.target_y),
         buttons_down: input.buttons_down,
         modifier_flags: input.modifier_flags.bits(),
         event_post_permission: observed_permission.get(),
+        prohibited_modifiers_active,
+        constructed_event_count,
     })
 }
 
 #[cfg(target_os = "macos")]
 pub(super) fn prepare_pointer(
-    _display: &DisplayRecord,
-    _x: u32,
-    _y: u32,
-    _action: PointerAction,
+    display: &DisplayRecord,
+    x: u32,
+    y: u32,
+    action: PointerAction,
 ) -> Result<PointerPlan, String> {
-    Err("unsupported_platform: coordinate pointer control is unavailable on macOS".to_string())
+    let preflight = prepare_macos_pointer_plan(display, x, y, action)?;
+    let (source, move_event, click_down_event, click_up_event) =
+        prepare_macos_pointer_events(action, preflight.target)?;
+    Ok(PointerPlan {
+        display: display.clone(),
+        native_display_id: preflight.display_id,
+        bounds_origin_x: preflight.geometry.origin_x,
+        bounds_origin_y: preflight.geometry.origin_y,
+        bounds_width: preflight.geometry.width,
+        bounds_height: preflight.geometry.height,
+        rotation_degrees: preflight.geometry.rotation_degrees,
+        target_x: preflight.target.target_x,
+        target_y: preflight.target.target_y,
+        _source: source,
+        move_event,
+        click_down_event,
+        click_up_event,
+    })
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn dispatch_pointer(_plan: PointerPlan, _action: PointerAction) -> Result<bool, String> {
-    Err("unsupported_platform: coordinate pointer control is unavailable on macOS".to_string())
+pub(super) fn dispatch_pointer(plan: PointerPlan, action: PointerAction) -> Result<bool, String> {
+    let down_event = plan.click_down_event.as_deref();
+    let up_event = plan.click_up_event.as_deref();
+    if action == PointerAction::Click && (down_event.is_none() || up_event.is_none()) {
+        return Err(
+            "not_started: macOS click plan is incomplete after generation spend but before native event post"
+                .to_string(),
+        );
+    }
+    dispatch_macos_pointer_with(
+        action,
+        plan.target_x,
+        plan.target_y,
+        || macos_pointer_final_preflight(&plan, action),
+        || {
+            CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&plan.move_event));
+            Ok(())
+        },
+        macos_current_pointer_location,
+        || validate_macos_pointer_input_state(PointerAction::Click, macos_pointer_input_state()),
+        || {
+            CGEvent::post(CGEventTapLocation::HIDEventTap, down_event);
+            Ok(())
+        },
+        || {
+            CGEvent::post(CGEventTapLocation::HIDEventTap, up_event);
+            Ok(())
+        },
+        || {
+            Ok(CGEventSource::button_state(
+                CGEventSourceStateID::CombinedSessionState,
+                CGMouseButton::Left,
+            ))
+        },
+    )
 }
 #[cfg(target_os = "macos")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -95,6 +95,15 @@ fn detached_process_capability_matches_supported_native_backends() {
     );
 }
 
+#[test]
+fn pointer_capability_matches_supported_native_backends() {
+    let capabilities = agent_register_capabilities(&test_config(PathBuf::new()));
+    assert_eq!(
+        capabilities.computer_pointer_control,
+        cfg!(any(target_os = "macos", windows))
+    );
+}
+
 fn runtime_config(cfg: &AgentConfig) -> Arc<ReloadableAgentConfig> {
     Arc::new(ReloadableAgentConfig::new(cfg.clone(), PathBuf::new()))
 }

@@ -1922,8 +1922,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // Exact full-display discovery/snapshot is independently implemented by
     // the native macOS and Windows backends; unsupported platforms fail closed.
     capabilities.computer_display_observe = cfg!(any(target_os = "macos", windows));
-    // Snapshot-fenced exact coordinate pointer input is independently implemented on Windows.
-    capabilities.computer_pointer_control = cfg!(windows);
+    // Snapshot-fenced exact coordinate pointer input is independently implemented by
+    // the native macOS and Windows backends; unsupported platforms fail closed.
+    capabilities.computer_pointer_control = cfg!(any(target_os = "macos", windows));
     // Bounded Unicode-text clipboard observation/replacement are separate
     // native capabilities on macOS and Windows.
     capabilities.computer_clipboard_read = cfg!(any(target_os = "macos", windows));

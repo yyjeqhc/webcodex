@@ -47,7 +47,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_list_displays",
-            "List bounded fresh full displays under separate display privacy authority. display_id values are opaque, process-local, ephemeral, and replaced on each list. Returns only display-relative dimensions and primary status; native identity, global origin, scale, and topology stay private.",
+            "List bounded fresh full displays on an exact macOS or Windows Runner under separate display privacy authority. display_id values are opaque, process-local, ephemeral, and replaced on each list. Returns only display-relative dimensions and primary status; native identity, global origin, scale, and topology stay private.",
             computer_list_displays_input_schema(),
         ),
         tool_spec(
@@ -112,7 +112,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "computer_snapshot_display",
-            "Capture one fresh discovered full display after private native-identity revalidation; stale or ambiguous displays fail closed. max_width/max_height only downscale. No global coordinates, regions, activation, input, shell, or fallback. Returns a positive snapshot_generation for freshness fencing.",
+            "Capture one fresh discovered full display on an exact macOS or Windows Runner after private native-identity revalidation; stale or ambiguous displays fail closed. max_width/max_height only downscale. No global coordinates, regions, activation, input, shell, or fallback. Returns a positive snapshot_generation for freshness fencing.",
             computer_snapshot_display_input_schema(),
         ),
         tool_spec(

@@ -37,10 +37,16 @@ use objc2_app_kit::{
 use objc2_application_services::{AXError, AXIsProcessTrusted, AXUIElement, AXValue, AXValueType};
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::{
-    CFArray, CFBoolean, CFIndex, CFRetained, CFString, CFType, CGPoint, CGSize,
+    CFArray, CFBoolean, CFIndex, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, CFUUID,
 };
 #[cfg(target_os = "macos")]
-use objc2_core_graphics::{CGEvent, CGEventFlags, CGKeyCode, CGPreflightPostEventAccess};
+use objc2_core_graphics::{
+    CGBitmapContextCreate, CGColorSpace, CGContext, CGDirectDisplayID, CGDisplayIsBuiltin,
+    CGDisplayIsMain, CGDisplayModelNumber, CGDisplayPixelsHigh, CGDisplayPixelsWide,
+    CGDisplaySerialNumber, CGDisplayUnitNumber, CGDisplayVendorNumber, CGError, CGEvent,
+    CGEventFlags, CGGetActiveDisplayList, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
+    CGKeyCode, CGPreflightPostEventAccess,
+};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{
     NSArray, NSBundle, NSDictionary, NSError, NSFileManager, NSSearchPathDirectory,
@@ -166,10 +172,20 @@ const MAX_MACOS_APPLICATION_SCAN_DEPTH: usize = 2;
 const MACOS_APPLICATION_LAUNCH_WAIT: Duration = Duration::from_secs(5);
 #[cfg(windows)]
 const MAX_NATIVE_DISPLAY_IDENTITY_BYTES: usize = 2048;
+#[cfg(target_os = "macos")]
+const MAX_MACOS_DISPLAY_SCAN: usize = 64;
+#[cfg(target_os = "macos")]
+const MAX_MACOS_DISPLAY_IDENTITY_BYTES: usize = 256;
 #[cfg(windows)]
 const MAX_WINDOWS_DISPLAY_DEVICE_CHILDREN: u32 = 16;
 #[cfg(windows)]
 const MAX_WINDOWS_DISPLAY_SCAN: usize = 64;
+
+#[cfg(target_os = "macos")]
+#[link(name = "ColorSync", kind = "framework")]
+unsafe extern "C" {
+    fn CGDisplayCreateUUIDFromDisplayID(display_id: u32) -> *const CFUUID;
+}
 
 #[cfg(windows)]
 struct OwnedPidl(*mut ITEMIDLIST);
@@ -1274,13 +1290,445 @@ pub(super) fn write_clipboard(text: &str) -> Result<Value, String> {
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn list_displays(_limit: usize) -> Result<Vec<PlatformDisplay>, String> {
-    Err("unsupported_platform: exact full-display observation is unavailable on macOS".to_string())
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MacDisplayDescriptor {
+    display_id: CGDirectDisplayID,
+    stable_identity: Vec<u8>,
+    display: PlatformDisplay,
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn capture_display(_display: &DisplayRecord) -> Result<image::RgbaImage, String> {
-    Err("unsupported_platform: exact full-display observation is unavailable on macOS".to_string())
+fn macos_display_uuid(display_id: CGDirectDisplayID) -> Result<[u8; 16], String> {
+    let pointer = unsafe { CGDisplayCreateUUIDFromDisplayID(display_id) };
+    let pointer = NonNull::new(pointer.cast_mut())
+        .ok_or_else(|| "display_failed: macOS stable display UUID is unavailable".to_string())?;
+    let uuid = unsafe { CFRetained::from_raw(pointer) };
+    Ok(uuid.uuid_bytes().into())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_stable_display_identity(display_id: CGDirectDisplayID) -> Result<Vec<u8>, String> {
+    let mut identity = b"macos-display-stable-v1\0".to_vec();
+    identity.extend_from_slice(&CGDisplayVendorNumber(display_id).to_be_bytes());
+    identity.extend_from_slice(&CGDisplayModelNumber(display_id).to_be_bytes());
+    identity.extend_from_slice(&CGDisplaySerialNumber(display_id).to_be_bytes());
+    identity.extend_from_slice(&CGDisplayUnitNumber(display_id).to_be_bytes());
+    identity.push(u8::from(CGDisplayIsBuiltin(display_id)));
+    if identity.len() > MAX_MACOS_DISPLAY_IDENTITY_BYTES {
+        return Err("display_failed: macOS stable display identity exceeds bound".to_string());
+    }
+    Ok(identity)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bound_display_identity(
+    stable_identity: &[u8],
+    display_uuid: [u8; 16],
+    display_id: CGDirectDisplayID,
+) -> Result<Vec<u8>, String> {
+    let mut identity = b"macos-display-binding-v1\0".to_vec();
+    let stable_len = u16::try_from(stable_identity.len())
+        .map_err(|_| "display_failed: macOS stable display identity exceeds bound".to_string())?;
+    identity.extend_from_slice(&stable_len.to_be_bytes());
+    identity.extend_from_slice(stable_identity);
+    identity.extend_from_slice(&display_uuid);
+    identity.extend_from_slice(&display_id.to_be_bytes());
+    if identity.len() > MAX_MACOS_DISPLAY_IDENTITY_BYTES {
+        return Err("display_failed: macOS bound display identity exceeds bound".to_string());
+    }
+    Ok(identity)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_display_descriptor(display_id: CGDirectDisplayID) -> Result<MacDisplayDescriptor, String> {
+    if display_id == 0 {
+        return Err("display_failed: macOS returned a null display id".to_string());
+    }
+    let width = u32::try_from(CGDisplayPixelsWide(display_id))
+        .map_err(|_| "display_failed: macOS display pixel width exceeds u32".to_string())?;
+    let height = u32::try_from(CGDisplayPixelsHigh(display_id))
+        .map_err(|_| "display_failed: macOS display pixel height exceeds u32".to_string())?;
+    if width == 0 || height == 0 {
+        return Err("display_failed: macOS display pixel geometry is invalid".to_string());
+    }
+    let stable_identity = macos_stable_display_identity(display_id)?;
+    let native_identity = macos_bound_display_identity(
+        &stable_identity,
+        macos_display_uuid(display_id)?,
+        display_id,
+    )?;
+    Ok(MacDisplayDescriptor {
+        display_id,
+        stable_identity,
+        display: PlatformDisplay {
+            native_identity,
+            width,
+            height,
+            primary: CGDisplayIsMain(display_id),
+        },
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_display_descriptors() -> Result<Vec<MacDisplayDescriptor>, String> {
+    let native_limit = MAX_MACOS_DISPLAY_SCAN
+        .checked_add(1)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| "display_failed: macOS display scan bound is invalid".to_string())?;
+    let mut display_ids = vec![0; native_limit as usize];
+    let mut display_count = 0u32;
+    let error = unsafe {
+        CGGetActiveDisplayList(native_limit, display_ids.as_mut_ptr(), &mut display_count)
+    };
+    if error != CGError::Success {
+        return Err(format!(
+            "display_failed: macOS active display enumeration failed with CGError({})",
+            error.0
+        ));
+    }
+    let display_count = usize::try_from(display_count)
+        .map_err(|_| "display_failed: macOS display count exceeds usize".to_string())?;
+    if display_count > MAX_MACOS_DISPLAY_SCAN || display_count > display_ids.len() {
+        return Err("display_failed: macOS display count exceeds native scan bound".to_string());
+    }
+    display_ids.truncate(display_count);
+    display_ids
+        .into_iter()
+        .map(macos_display_descriptor)
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_unique_macos_display_identities(
+    displays: &[MacDisplayDescriptor],
+    error_kind: &str,
+) -> Result<(), String> {
+    for (index, display) in displays.iter().enumerate() {
+        if displays[..index]
+            .iter()
+            .any(|prior| prior.stable_identity == display.stable_identity)
+        {
+            return Err(format!(
+                "{error_kind}: macOS stable display identity is ambiguous"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn find_exact_macos_display_in(
+    display: &DisplayRecord,
+    candidates: &[MacDisplayDescriptor],
+) -> Result<CGDirectDisplayID, String> {
+    ensure_unique_macos_display_identities(candidates, "stale_display")?;
+    let mut exact = None;
+    for candidate in candidates {
+        if candidate.display.native_identity != display.native_identity {
+            continue;
+        }
+        if candidate.display.width != display.width || candidate.display.height != display.height {
+            return Err(
+                "stale_display: macOS display source pixel geometry changed after discovery"
+                    .to_string(),
+            );
+        }
+        if exact.replace(candidate.display_id).is_some() {
+            return Err("stale_display: macOS display identity is no longer unique".to_string());
+        }
+    }
+    exact.ok_or_else(|| {
+        "stale_display: macOS display identity changed, was replaced, or disappeared".to_string()
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn find_exact_macos_display(display: &DisplayRecord) -> Result<CGDirectDisplayID, String> {
+    let candidates = macos_display_descriptors()?;
+    find_exact_macos_display_in(display, &candidates)
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn list_displays(limit: usize) -> Result<Vec<PlatformDisplay>, String> {
+    if limit == 0 || limit > super::MAX_DISPLAYS + 1 {
+        return Err("invalid_request: display discovery native limit is invalid".to_string());
+    }
+    let displays = macos_display_descriptors()?;
+    ensure_unique_macos_display_identities(&displays, "display_failed")?;
+    Ok(displays
+        .into_iter()
+        .take(limit)
+        .map(|descriptor| descriptor.display)
+        .collect())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_revalidated_macos_display<T>(
+    display: &DisplayRecord,
+    mut revalidate: impl FnMut(&DisplayRecord) -> Result<CGDirectDisplayID, String>,
+    capture: impl FnOnce(CGDirectDisplayID) -> Result<T, String>,
+    geometry: impl FnOnce(&T) -> (usize, usize),
+) -> Result<T, String> {
+    let before = revalidate(display)?;
+    let captured = capture(before)?;
+    let (captured_width, captured_height) = geometry(&captured);
+    let after = revalidate(display)?;
+    if after != before {
+        return Err(
+            "stale_display: macOS display identity changed while capture was in progress"
+                .to_string(),
+        );
+    }
+    if captured_width != display.width as usize || captured_height != display.height as usize {
+        return Err(
+            "capture_failed: macOS display capture pixel geometry does not match the exact display"
+                .to_string(),
+        );
+    }
+    Ok(captured)
+}
+
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn create_macos_display_image(
+    display_id: CGDirectDisplayID,
+) -> Result<CFRetained<CGImage>, String> {
+    objc2_core_graphics::CGDisplayCreateImage(display_id)
+        .ok_or_else(|| "capture_failed: macOS exact display capture failed".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_cg_image_to_rgba(
+    image: &CGImage,
+    width: u32,
+    height: u32,
+) -> Result<image::RgbaImage, String> {
+    let byte_len = usize::try_from(ensure_raw_capture_bound(width, height)?).map_err(|_| {
+        "image_too_large: raw macOS RGBA capture does not fit address space".to_string()
+    })?;
+    let bytes_per_row = usize::try_from(u64::from(width) * 4).map_err(|_| {
+        "image_too_large: raw macOS RGBA row does not fit address space".to_string()
+    })?;
+    let mut pixels = vec![0u8; byte_len];
+    let color_space = CGColorSpace::new_device_rgb()
+        .ok_or_else(|| "capture_failed: macOS RGB color space is unavailable".to_string())?;
+    let bitmap_info = CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0;
+    let context = unsafe {
+        CGBitmapContextCreate(
+            pixels.as_mut_ptr().cast(),
+            width as usize,
+            height as usize,
+            8,
+            bytes_per_row,
+            Some(&color_space),
+            bitmap_info,
+        )
+    }
+    .ok_or_else(|| "capture_failed: macOS RGBA bitmap context creation failed".to_string())?;
+    CGContext::translate_ctm(Some(&context), 0.0, f64::from(height));
+    CGContext::scale_ctm(Some(&context), 1.0, -1.0);
+    CGContext::draw_image(
+        Some(&context),
+        CGRect {
+            origin: CGPoint { x: 0.0, y: 0.0 },
+            size: CGSize {
+                width: f64::from(width),
+                height: f64::from(height),
+            },
+        },
+        Some(image),
+    );
+    CGContext::flush(Some(&context));
+    drop(context);
+    image::RgbaImage::from_raw(width, height, pixels)
+        .ok_or_else(|| "capture_failed: macOS RGBA image dimensions are inconsistent".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn capture_display(display: &DisplayRecord) -> Result<image::RgbaImage, String> {
+    ensure_capture_permission()?;
+    ensure_raw_capture_bound(display.width, display.height)?;
+    let image = capture_revalidated_macos_display(
+        display,
+        find_exact_macos_display,
+        create_macos_display_image,
+        |image| (CGImage::width(Some(image)), CGImage::height(Some(image))),
+    )?;
+    macos_cg_image_to_rgba(&image, display.width, display.height)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+pub(super) fn macos_display_identity_revalidates_for_test(
+    display: &PlatformDisplay,
+) -> Result<(), String> {
+    let record = DisplayRecord {
+        native_identity: display.native_identity.clone(),
+        width: display.width,
+        height: display.height,
+        primary: display.primary,
+    };
+    find_exact_macos_display(&record).map(|_| ())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_display_tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    fn descriptor(
+        display_id: CGDirectDisplayID,
+        stable_marker: u8,
+        width: u32,
+        height: u32,
+    ) -> MacDisplayDescriptor {
+        let stable_identity = vec![stable_marker];
+        MacDisplayDescriptor {
+            display_id,
+            stable_identity: stable_identity.clone(),
+            display: PlatformDisplay {
+                native_identity: macos_bound_display_identity(
+                    &stable_identity,
+                    [stable_marker; 16],
+                    display_id,
+                )
+                .unwrap(),
+                width,
+                height,
+                primary: display_id == 1,
+            },
+        }
+    }
+
+    fn record(descriptor: &MacDisplayDescriptor) -> DisplayRecord {
+        DisplayRecord {
+            native_identity: descriptor.display.native_identity.clone(),
+            width: descriptor.display.width,
+            height: descriptor.display.height,
+            primary: descriptor.display.primary,
+        }
+    }
+
+    #[test]
+    fn macos_display_identity_revalidation_fails_closed_on_replacement_hotplug_and_geometry() {
+        let discovered = descriptor(1, 7, 1920, 1080);
+        let record = record(&discovered);
+        assert_eq!(
+            find_exact_macos_display_in(&record, std::slice::from_ref(&discovered)).unwrap(),
+            1
+        );
+
+        let replacement = descriptor(1, 8, 1920, 1080);
+        let error = find_exact_macos_display_in(&record, &[replacement])
+            .expect_err("same native id with a different stable identity must be stale");
+        assert!(error.starts_with("stale_display:"), "{error}");
+
+        let replugged = descriptor(2, 7, 1920, 1080);
+        let error = find_exact_macos_display_in(&record, &[replugged])
+            .expect_err("a replugged display with a new native id must be stale");
+        assert!(error.starts_with("stale_display:"), "{error}");
+
+        let mut changed_geometry = discovered.clone();
+        changed_geometry.display.width += 1;
+        let error = find_exact_macos_display_in(&record, &[changed_geometry])
+            .expect_err("source pixel geometry changes must be stale");
+        assert!(error.starts_with("stale_display:"), "{error}");
+
+        let ambiguous = [descriptor(1, 7, 1920, 1080), descriptor(2, 7, 1920, 1080)];
+        let error = find_exact_macos_display_in(&record, &ambiguous)
+            .expect_err("ambiguous stable native identity must fail closed");
+        assert!(
+            error.contains("stable display identity is ambiguous"),
+            "{error}"
+        );
+    }
+
+    #[derive(Debug)]
+    struct SimulatedCapture {
+        width: usize,
+        height: usize,
+        dropped: Rc<Cell<bool>>,
+    }
+
+    impl Drop for SimulatedCapture {
+        fn drop(&mut self) {
+            self.dropped.set(true);
+        }
+    }
+
+    #[test]
+    fn macos_display_capture_revalidates_before_and_after_and_discards_races() {
+        let discovered = descriptor(9, 3, 2560, 1440);
+        let record = record(&discovered);
+        let validations = Cell::new(0);
+        let dropped = Rc::new(Cell::new(false));
+        let captured = capture_revalidated_macos_display(
+            &record,
+            |_| {
+                validations.set(validations.get() + 1);
+                Ok(9)
+            },
+            |_| {
+                Ok(SimulatedCapture {
+                    width: 2560,
+                    height: 1440,
+                    dropped: Rc::clone(&dropped),
+                })
+            },
+            |capture| (capture.width, capture.height),
+        )
+        .unwrap();
+        assert_eq!(validations.get(), 2);
+        assert!(!dropped.get());
+        drop(captured);
+        assert!(dropped.get());
+
+        let validations = Cell::new(0);
+        let dropped = Rc::new(Cell::new(false));
+        let error = capture_revalidated_macos_display(
+            &record,
+            |_| {
+                let call = validations.get();
+                validations.set(call + 1);
+                if call == 0 {
+                    Ok(9)
+                } else {
+                    Err("stale_display: simulated hotplug during capture".to_string())
+                }
+            },
+            |_| {
+                Ok(SimulatedCapture {
+                    width: 2560,
+                    height: 1440,
+                    dropped: Rc::clone(&dropped),
+                })
+            },
+            |capture| (capture.width, capture.height),
+        )
+        .expect_err("post-capture identity change must discard captured bytes");
+        assert!(error.starts_with("stale_display:"), "{error}");
+        assert_eq!(validations.get(), 2);
+        assert!(dropped.get());
+    }
+
+    #[test]
+    fn macos_display_capture_rejects_geometry_after_post_revalidation() {
+        let discovered = descriptor(4, 2, 1280, 720);
+        let record = record(&discovered);
+        let validations = Cell::new(0);
+        let error = capture_revalidated_macos_display(
+            &record,
+            |_| {
+                validations.set(validations.get() + 1);
+                Ok(4)
+            },
+            |_| Ok((1280usize, 719usize)),
+            |geometry| *geometry,
+        )
+        .expect_err("captured pixel geometry must exactly match discovery");
+        assert!(error.starts_with("capture_failed:"), "{error}");
+        assert_eq!(validations.get(), 2);
+    }
 }
 
 #[cfg(target_os = "macos")]

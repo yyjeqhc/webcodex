@@ -98,8 +98,8 @@ fn computer_register_request_announces_platform_capability_and_protocol_version(
     );
     assert_eq!(
         caps.computer_display_observe,
-        cfg!(windows),
-        "full-display observation is independently advertised only by the exact Windows display backend"
+        cfg!(any(target_os = "macos", windows)),
+        "full-display observation is independently advertised only by exact native macOS/Windows display backends"
     );
     assert_eq!(
         caps.computer_snapshot_region,

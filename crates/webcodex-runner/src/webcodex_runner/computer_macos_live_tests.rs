@@ -149,6 +149,29 @@ fn computer_macos_application_discovery_is_bounded_and_exact_without_launching()
 }
 
 #[test]
+fn computer_macos_display_discovery_is_bounded_exact_and_noninvasive() {
+    let displays = platform::list_displays(MAX_DISPLAYS + 1)
+        .expect("bounded native macOS display discovery without capture");
+    assert!(displays.len() <= MAX_DISPLAYS + 1);
+    assert!(displays
+        .iter()
+        .all(|display| !display.native_identity.is_empty()));
+    assert!(displays
+        .iter()
+        .all(|display| display.width > 0 && display.height > 0));
+    assert!(displays
+        .iter()
+        .enumerate()
+        .all(|(index, display)| displays[..index]
+            .iter()
+            .all(|prior| prior.native_identity != display.native_identity)));
+    for display in &displays {
+        platform::macos_display_identity_revalidates_for_test(display)
+            .expect("fresh exact macOS display identity and pixel geometry revalidate");
+    }
+}
+
+#[test]
 fn computer_macos_application_scan_is_bounded_symlink_safe_and_treats_apps_as_leaves() {
     let temp = tempfile::tempdir().unwrap();
     let applications_root = temp.path().join("Applications");

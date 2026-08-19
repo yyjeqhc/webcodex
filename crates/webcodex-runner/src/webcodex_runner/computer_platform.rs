@@ -41,11 +41,12 @@ use objc2_core_foundation::{
 };
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{
-    CGBitmapContextCreate, CGColorSpace, CGContext, CGDirectDisplayID, CGDisplayCopyDisplayMode,
-    CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMode, CGDisplayModelNumber,
-    CGDisplaySerialNumber, CGDisplayUnitNumber, CGDisplayVendorNumber, CGError, CGEvent,
-    CGEventFlags, CGGetActiveDisplayList, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
-    CGKeyCode, CGPreflightPostEventAccess,
+    CGBitmapContextCreate, CGColorSpace, CGContext, CGDirectDisplayID, CGDisplayBounds,
+    CGDisplayCopyDisplayMode, CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMode,
+    CGDisplayModelNumber, CGDisplayRotation, CGDisplaySerialNumber, CGDisplayUnitNumber,
+    CGDisplayVendorNumber, CGError, CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID,
+    CGGetActiveDisplayList, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo, CGKeyCode,
+    CGMouseButton, CGPreflightPostEventAccess,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{
@@ -1477,6 +1478,213 @@ fn find_exact_macos_display(display: &DisplayRecord) -> Result<CGDirectDisplayID
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacPointerNativeGeometry {
+    origin_x: f64,
+    origin_y: f64,
+    width: f64,
+    height: f64,
+    rotation_degrees: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacPointerPlan {
+    target_x: f64,
+    target_y: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MacPointerInputState {
+    buttons_down: u32,
+    modifier_flags: CGEventFlags,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pointer_native_geometry(display_id: CGDirectDisplayID) -> MacPointerNativeGeometry {
+    let bounds = CGDisplayBounds(display_id);
+    MacPointerNativeGeometry {
+        origin_x: bounds.origin.x,
+        origin_y: bounds.origin.y,
+        width: bounds.size.width,
+        height: bounds.size.height,
+        rotation_degrees: CGDisplayRotation(display_id),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn validate_macos_pointer_native_geometry(
+    geometry: MacPointerNativeGeometry,
+) -> Result<(), String> {
+    if !geometry.origin_x.is_finite()
+        || !geometry.origin_y.is_finite()
+        || !geometry.width.is_finite()
+        || !geometry.height.is_finite()
+        || !geometry.rotation_degrees.is_finite()
+    {
+        return Err(
+            "pointer_input_failed: macOS display bounds or rotation is non-finite".to_string(),
+        );
+    }
+    if geometry.width <= 0.0 || geometry.height <= 0.0 {
+        return Err("pointer_input_failed: macOS display bounds are empty or invalid".to_string());
+    }
+    let right = geometry.origin_x + geometry.width;
+    let bottom = geometry.origin_y + geometry.height;
+    if !right.is_finite()
+        || !bottom.is_finite()
+        || right <= geometry.origin_x
+        || bottom <= geometry.origin_y
+    {
+        return Err(
+            "pointer_input_failed: macOS display bounds cannot form an exact half-open rectangle"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn map_macos_pointer_coordinate(
+    source_width: u32,
+    source_height: u32,
+    geometry: MacPointerNativeGeometry,
+    x: u32,
+    y: u32,
+) -> Result<MacPointerPlan, String> {
+    if source_width == 0 || source_height == 0 || x >= source_width || y >= source_height {
+        return Err(
+            "invalid_request: pointer coordinate is outside snapshot source geometry".to_string(),
+        );
+    }
+    validate_macos_pointer_native_geometry(geometry)?;
+    if geometry.rotation_degrees != 0.0 {
+        return Err(
+            "pointer_input_failed: macOS pointer mapping supports only an exact 0-degree display rotation"
+                .to_string(),
+        );
+    }
+
+    let target_x = geometry.origin_x + (f64::from(x) / f64::from(source_width)) * geometry.width;
+    let target_y = geometry.origin_y + (f64::from(y) / f64::from(source_height)) * geometry.height;
+    let right = geometry.origin_x + geometry.width;
+    let bottom = geometry.origin_y + geometry.height;
+    if !target_x.is_finite()
+        || !target_y.is_finite()
+        || target_x < geometry.origin_x
+        || target_x >= right
+        || target_y < geometry.origin_y
+        || target_y >= bottom
+    {
+        return Err(
+            "pointer_input_failed: macOS pointer target is outside exact display bounds"
+                .to_string(),
+        );
+    }
+    Ok(MacPointerPlan { target_x, target_y })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pointer_input_state() -> MacPointerInputState {
+    let state_id = CGEventSourceStateID::CombinedSessionState;
+    let mut buttons_down = 0u32;
+    for button in 0..32u32 {
+        if CGEventSource::button_state(state_id, CGMouseButton(button)) {
+            buttons_down |= 1u32 << button;
+        }
+    }
+    MacPointerInputState {
+        buttons_down,
+        modifier_flags: CGEventSource::flags_state(state_id),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn validate_macos_pointer_input_state(
+    action: PointerAction,
+    state: MacPointerInputState,
+) -> Result<(), String> {
+    if state.buttons_down != 0 {
+        return Err(
+            "pointer_input_failed: shared desktop mouse button is already down".to_string(),
+        );
+    }
+    if action == PointerAction::Click
+        && state.modifier_flags.intersects(
+            CGEventFlags::MaskShift
+                | CGEventFlags::MaskControl
+                | CGEventFlags::MaskAlternate
+                | CGEventFlags::MaskCommand,
+        )
+    {
+        return Err(
+            "pointer_input_failed: shared desktop modifier key is already active".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn validate_macos_pointer_permission() -> Result<(), String> {
+    if CGPreflightPostEventAccess() {
+        Ok(())
+    } else {
+        Err("permission_denied: macOS event-posting permission is not granted".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_macos_pointer_plan_with(
+    display: &DisplayRecord,
+    x: u32,
+    y: u32,
+    action: PointerAction,
+    mut revalidate: impl FnMut(&DisplayRecord) -> Result<CGDirectDisplayID, String>,
+    mut native_geometry: impl FnMut(CGDirectDisplayID) -> MacPointerNativeGeometry,
+    mut input_state: impl FnMut() -> MacPointerInputState,
+    mut permission_preflight: impl FnMut() -> Result<(), String>,
+) -> Result<MacPointerPlan, String> {
+    let before_display_id = revalidate(display)?;
+    let before_geometry = native_geometry(before_display_id);
+    let plan = map_macos_pointer_coordinate(display.width, display.height, before_geometry, x, y)?;
+
+    let after_display_id = revalidate(display)?;
+    let after_geometry = native_geometry(after_display_id);
+    if after_display_id != before_display_id || after_geometry != before_geometry {
+        return Err(
+            "stale_display: macOS display placement or rotation changed during pointer preflight"
+                .to_string(),
+        );
+    }
+    validate_macos_pointer_native_geometry(after_geometry)?;
+    permission_preflight()?;
+    validate_macos_pointer_input_state(action, input_state())?;
+    Ok(plan)
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+fn prepare_macos_pointer_plan(
+    display: &DisplayRecord,
+    x: u32,
+    y: u32,
+    action: PointerAction,
+) -> Result<MacPointerPlan, String> {
+    prepare_macos_pointer_plan_with(
+        display,
+        x,
+        y,
+        action,
+        find_exact_macos_display,
+        macos_pointer_native_geometry,
+        macos_pointer_input_state,
+        validate_macos_pointer_permission,
+    )
+}
+
+#[cfg(target_os = "macos")]
 pub(super) fn list_displays(limit: usize) -> Result<Vec<PlatformDisplay>, String> {
     if limit == 0 || limit > super::MAX_DISPLAYS + 1 {
         return Err("invalid_request: display discovery native limit is invalid".to_string());
@@ -1790,6 +1998,290 @@ mod macos_display_tests {
             assert_eq!(validations.get(), 2);
         }
     }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_pointer_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn geometry(origin_x: f64, origin_y: f64, width: f64, height: f64) -> MacPointerNativeGeometry {
+        MacPointerNativeGeometry {
+            origin_x,
+            origin_y,
+            width,
+            height,
+            rotation_degrees: 0.0,
+        }
+    }
+
+    fn display(width: u32, height: u32) -> DisplayRecord {
+        DisplayRecord {
+            native_identity: vec![1],
+            width,
+            height,
+            primary: true,
+        }
+    }
+
+    fn clean_input_state() -> MacPointerInputState {
+        MacPointerInputState {
+            buttons_down: 0,
+            modifier_flags: CGEventFlags::empty(),
+        }
+    }
+
+    #[test]
+    fn macos_pointer_mapping_handles_1x_hidpi_origins_and_exact_edges() {
+        let one_x = geometry(0.0, 0.0, 1920.0, 1080.0);
+        assert_eq!(
+            map_macos_pointer_coordinate(1920, 1080, one_x, 0, 0).unwrap(),
+            MacPointerPlan {
+                target_x: 0.0,
+                target_y: 0.0,
+            }
+        );
+        assert_eq!(
+            map_macos_pointer_coordinate(1920, 1080, one_x, 1919, 1079).unwrap(),
+            MacPointerPlan {
+                target_x: 1919.0,
+                target_y: 1079.0,
+            }
+        );
+
+        let hidpi = geometry(0.0, 0.0, 1920.0, 1080.0);
+        assert_eq!(
+            map_macos_pointer_coordinate(3840, 2160, hidpi, 3839, 2159).unwrap(),
+            MacPointerPlan {
+                target_x: 1919.5,
+                target_y: 1079.5,
+            }
+        );
+
+        let negative = geometry(-1920.0, -120.0, 1920.0, 1080.0);
+        assert_eq!(
+            map_macos_pointer_coordinate(1920, 1080, negative, 1919, 1079).unwrap(),
+            MacPointerPlan {
+                target_x: -1.0,
+                target_y: 959.0,
+            }
+        );
+
+        let positive = geometry(1920.0, 120.0, 2560.0, 1440.0);
+        assert_eq!(
+            map_macos_pointer_coordinate(5120, 2880, positive, 5119, 2879).unwrap(),
+            MacPointerPlan {
+                target_x: 4479.5,
+                target_y: 1559.5,
+            }
+        );
+    }
+
+    #[test]
+    fn macos_pointer_mapping_rejects_source_edges_invalid_bounds_and_rotation() {
+        let valid = geometry(0.0, 0.0, 1920.0, 1080.0);
+        for (x, y) in [(1920, 0), (0, 1080)] {
+            let error = map_macos_pointer_coordinate(1920, 1080, valid, x, y).unwrap_err();
+            assert!(error.starts_with("invalid_request:"), "{error}");
+        }
+
+        for invalid in [
+            geometry(0.0, 0.0, 0.0, 1080.0),
+            geometry(0.0, 0.0, -1.0, 1080.0),
+            geometry(f64::NAN, 0.0, 1920.0, 1080.0),
+            geometry(0.0, 0.0, f64::INFINITY, 1080.0),
+        ] {
+            let error = map_macos_pointer_coordinate(1920, 1080, invalid, 0, 0).unwrap_err();
+            assert!(error.starts_with("pointer_input_failed:"), "{error}");
+        }
+
+        let mut rotated = valid;
+        rotated.rotation_degrees = 90.0;
+        let error = map_macos_pointer_coordinate(1920, 1080, rotated, 0, 0).unwrap_err();
+        assert!(error.contains("0-degree"), "{error}");
+
+        let mut invalid_rotation = valid;
+        invalid_rotation.rotation_degrees = f64::NAN;
+        let error = map_macos_pointer_coordinate(1920, 1080, invalid_rotation, 0, 0).unwrap_err();
+        assert!(error.contains("non-finite"), "{error}");
+    }
+
+    #[test]
+    fn macos_pointer_preflight_revalidates_bounds_rotation_and_existing_display_fence() {
+        let display = display(3840, 2160);
+        for changed in [
+            geometry(0.0, 0.0, 1919.0, 1080.0),
+            MacPointerNativeGeometry {
+                rotation_degrees: 90.0,
+                ..geometry(0.0, 0.0, 1920.0, 1080.0)
+            },
+        ] {
+            let observations = Cell::new(0usize);
+            let error = prepare_macos_pointer_plan_with(
+                &display,
+                100,
+                100,
+                PointerAction::Move,
+                |_| Ok(7),
+                |_| {
+                    let call = observations.get();
+                    observations.set(call + 1);
+                    if call == 0 {
+                        geometry(0.0, 0.0, 1920.0, 1080.0)
+                    } else {
+                        changed
+                    }
+                },
+                clean_input_state,
+                || Ok(()),
+            )
+            .expect_err("placement or rotation changes must stale the display");
+            assert!(error.starts_with("stale_display:"), "{error}");
+            assert_eq!(observations.get(), 2);
+        }
+
+        let validations = Cell::new(0usize);
+        let error = prepare_macos_pointer_plan_with(
+            &display,
+            100,
+            100,
+            PointerAction::Move,
+            |_| {
+                let call = validations.get();
+                validations.set(call + 1);
+                if call == 0 {
+                    Ok(7)
+                } else {
+                    Err("stale_display: simulated M3 identity/source geometry change".to_string())
+                }
+            },
+            |_| geometry(0.0, 0.0, 1920.0, 1080.0),
+            clean_input_state,
+            || Ok(()),
+        )
+        .expect_err("existing exact display fence must remain authoritative");
+        assert!(error.starts_with("stale_display:"), "{error}");
+        assert_eq!(validations.get(), 2);
+    }
+
+    #[test]
+    fn macos_pointer_shared_input_preflight_distinguishes_move_and_click() {
+        let button_down = MacPointerInputState {
+            buttons_down: 1 << 17,
+            modifier_flags: CGEventFlags::empty(),
+        };
+        for action in [PointerAction::Move, PointerAction::Click] {
+            let error = validate_macos_pointer_input_state(action, button_down).unwrap_err();
+            assert!(error.contains("mouse button"), "{error}");
+        }
+
+        for modifier in [
+            CGEventFlags::MaskShift,
+            CGEventFlags::MaskControl,
+            CGEventFlags::MaskAlternate,
+            CGEventFlags::MaskCommand,
+        ] {
+            let state = MacPointerInputState {
+                buttons_down: 0,
+                modifier_flags: modifier,
+            };
+            validate_macos_pointer_input_state(PointerAction::Move, state)
+                .expect("ordinary modifiers do not widen move policy into click policy");
+            let error =
+                validate_macos_pointer_input_state(PointerAction::Click, state).unwrap_err();
+            assert!(error.contains("modifier"), "{error}");
+        }
+    }
+
+    #[test]
+    fn macos_pointer_permission_denial_is_definite_pre_effect_and_production_stays_unsupported() {
+        let display = display(3840, 2160);
+        let error = prepare_macos_pointer_plan_with(
+            &display,
+            0,
+            0,
+            PointerAction::Move,
+            |_| Ok(7),
+            |_| geometry(0.0, 0.0, 1920.0, 1080.0),
+            clean_input_state,
+            || Err("permission_denied: macOS event-posting permission is not granted".to_string()),
+        )
+        .expect_err("permission failure must stay before any future effect boundary");
+        assert!(error.starts_with("permission_denied:"), "{error}");
+
+        let error = prepare_pointer(&display, 0, 0, PointerAction::Move)
+            .expect_err("M4a must not wire a production macOS pointer prepare path");
+        assert!(error.starts_with("unsupported_platform:"), "{error}");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+pub(super) struct MacPointerReadOnlyProbe {
+    pub(super) source_width: u32,
+    pub(super) source_height: u32,
+    pub(super) bounds: (f64, f64, f64, f64),
+    pub(super) rotation_degrees: f64,
+    pub(super) mapped_edge: (f64, f64),
+    pub(super) buttons_down: u32,
+    pub(super) modifier_flags: u64,
+    pub(super) event_post_permission: bool,
+}
+
+#[cfg(all(test, target_os = "macos"))]
+pub(super) fn macos_pointer_read_only_probe_for_test(
+    display: &PlatformDisplay,
+) -> Result<MacPointerReadOnlyProbe, String> {
+    let record = DisplayRecord {
+        native_identity: display.native_identity.clone(),
+        width: display.width,
+        height: display.height,
+        primary: display.primary,
+    };
+    let observed_input = std::cell::Cell::new(None);
+    let observed_permission = std::cell::Cell::new(false);
+    let plan = prepare_macos_pointer_plan_with(
+        &record,
+        display.width.saturating_sub(1),
+        display.height.saturating_sub(1),
+        PointerAction::Move,
+        find_exact_macos_display,
+        macos_pointer_native_geometry,
+        || {
+            let state = macos_pointer_input_state();
+            observed_input.set(Some(state));
+            state
+        },
+        || {
+            let granted = CGPreflightPostEventAccess();
+            observed_permission.set(granted);
+            if granted {
+                Ok(())
+            } else {
+                Err("permission_denied: macOS event-posting permission is not granted".to_string())
+            }
+        },
+    )?;
+    let display_id = find_exact_macos_display(&record)?;
+    let native = macos_pointer_native_geometry(display_id);
+    validate_macos_pointer_native_geometry(native)?;
+    let input = observed_input.get().ok_or_else(|| {
+        "pointer_input_failed: macOS pointer input state was not observed".to_string()
+    })?;
+    Ok(MacPointerReadOnlyProbe {
+        source_width: display.width,
+        source_height: display.height,
+        bounds: (
+            native.origin_x,
+            native.origin_y,
+            native.width,
+            native.height,
+        ),
+        rotation_degrees: native.rotation_degrees,
+        mapped_edge: (plan.target_x, plan.target_y),
+        buttons_down: input.buttons_down,
+        modifier_flags: input.modifier_flags.bits(),
+        event_post_permission: observed_permission.get(),
+    })
 }
 
 #[cfg(target_os = "macos")]

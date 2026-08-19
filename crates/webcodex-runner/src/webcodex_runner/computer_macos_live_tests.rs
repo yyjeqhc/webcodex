@@ -178,6 +178,42 @@ fn computer_macos_display_discovery_is_bounded_exact_and_noninvasive() {
 }
 
 #[test]
+#[ignore = "requires live macOS event-post permission, an unrotated display, and idle mouse state"]
+fn computer_macos_pointer_mapping_preflight_is_native_and_non_effecting() {
+    let displays = platform::list_displays(MAX_DISPLAYS + 1)
+        .expect("bounded native macOS display discovery without capture");
+    let primary = displays
+        .iter()
+        .find(|display| display.primary)
+        .expect("macOS host exposes one primary display");
+    let probe = platform::macos_pointer_read_only_probe_for_test(primary)
+        .expect("read-only macOS pointer mapping/preflight probe");
+    let (origin_x, origin_y, bounds_width, bounds_height) = probe.bounds;
+    let (target_x, target_y) = probe.mapped_edge;
+    println!(
+        "macOS pointer preflight source={}x{} bounds=({origin_x},{origin_y} {bounds_width}x{bounds_height}) rotation={} mapped_edge=({target_x},{target_y}) buttons_down=0x{:08x} modifier_flags=0x{:x} event_post_permission={}",
+        probe.source_width,
+        probe.source_height,
+        probe.rotation_degrees,
+        probe.buttons_down,
+        probe.modifier_flags,
+        probe.event_post_permission,
+    );
+    assert_eq!(
+        (probe.source_width, probe.source_height),
+        (primary.width, primary.height)
+    );
+    assert!(origin_x.is_finite() && origin_y.is_finite());
+    assert!(bounds_width.is_finite() && bounds_width > 0.0);
+    assert!(bounds_height.is_finite() && bounds_height > 0.0);
+    assert_eq!(probe.rotation_degrees, 0.0);
+    assert!(target_x >= origin_x && target_x < origin_x + bounds_width);
+    assert!(target_y >= origin_y && target_y < origin_y + bounds_height);
+    assert_eq!(probe.buttons_down, 0);
+    assert!(probe.event_post_permission);
+}
+
+#[test]
 fn computer_macos_application_scan_is_bounded_symlink_safe_and_treats_apps_as_leaves() {
     let temp = tempfile::tempdir().unwrap();
     let applications_root = temp.path().join("Applications");

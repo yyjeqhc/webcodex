@@ -64,6 +64,7 @@ Testing guidance: [`docs/TESTING.md`](docs/TESTING.md).
 - Do not silently overwrite concurrent changes. Prefer guarded or conflict-detecting edits.
 - Do not weaken meaningful authentication, authorization, validation, schemas, sandboxing, or tests merely to obtain a green result.
 - Do not force-push, move published tags, overwrite releases, destructively reset other work, or rewrite published history without an explicit request naming the operation and target.
+- A failed **pre-publication** version tag is not yet a published release identity only when no GitHub Release exists, the npm version is absent, and no successful authoritative release-build exists. Such a tag may be reclaimed only in an explicitly requested release-recovery task through the repository release operator's guarded reclaim path; active/successful build or any publication makes the tag immutable.
 - Push, publish, tag, release, deploy, restart services, or alter external systems only when the task explicitly includes it and identifies the destination.
 - An explicit development/dogfood deployment of a reviewed commit to named targets is not a release rollout. It may install and restart that exact development build without a version bump, Git tag, GitHub Release, npm publication, or release-artifact preparation.
 - For a development/dogfood deployment, change only the named targets, record the requested source commit and the existing build identity (`git_commit`, `git_dirty`, `built_at`), never hide dirty build state, preserve a rollback path, and run focused post-deployment smoke.

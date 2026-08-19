@@ -164,6 +164,7 @@ if python3 -m unittest scripts.tests.test_verify_public_release scripts.tests.te
     && python3 -m py_compile scripts/verify_public_release.py scripts/collect_release_bundle.py scripts/release_readiness.py scripts/release_publication.py scripts/release_operator.py scripts/check_markdown_links.py \
     && python3 scripts/release_operator.py --help >/dev/null \
     && python3 scripts/release_operator.py preflight --help >/dev/null \
+    && python3 scripts/release_operator.py reclaim-tag --help >/dev/null \
     && python3 scripts/release_operator.py readiness-start --help >/dev/null \
     && python3 scripts/release_operator.py readiness-status --help >/dev/null \
     && python3 scripts/release_operator.py build-start --help >/dev/null \

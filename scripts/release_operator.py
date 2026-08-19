@@ -34,6 +34,21 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--repo", default=collector.DEFAULT_REPO)
     preflight.add_argument("--timeout", type=float, default=30.0)
 
+    reclaim_tag = subparsers.add_parser(
+        "reclaim-tag",
+        help="delete an explicitly confirmed failed pre-publication version tag after bounded safety checks",
+    )
+    reclaim_tag.add_argument("--version", required=True)
+    reclaim_tag.add_argument("--root", type=Path, default=Path.cwd())
+    reclaim_tag.add_argument("--repo", default=collector.DEFAULT_REPO)
+    reclaim_tag.add_argument("--confirm", required=True, help="must exactly equal v<VERSION>")
+    reclaim_tag.add_argument("--timeout", type=float, default=30.0)
+    reclaim_tag.add_argument(
+        "--allow-public-release-check",
+        action="store_true",
+        help="allow unauthenticated public Release lookup only after separately confirming no draft release exists",
+    )
+
     collect = subparsers.add_parser(
         "collect",
         help="download and verify one assembled release-build bundle by locked workflow run id",
@@ -113,6 +128,22 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (collector.CollectionError, publication.PublicationError) as exc:
             print(f"release operator preflight failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return 0
+
+    if args.command == "reclaim-tag":
+        try:
+            summary = publication.reclaim_prepublication_tag(
+                repo=args.repo,
+                version=args.version,
+                root=args.root,
+                confirm=args.confirm,
+                timeout=args.timeout,
+                allow_public_release_check=args.allow_public_release_check,
+            )
+        except (collector.CollectionError, publication.PublicationError) as exc:
+            print(f"release operator reclaim-tag failed: {exc}", file=sys.stderr)
             return 1
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0

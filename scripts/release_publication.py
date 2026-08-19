@@ -37,6 +37,8 @@ MAX_RUN_LIST = 100
 MAX_PUBLIC_JSON_BYTES = 2 * 1024 * 1024
 MAX_RELEASE_BUILD_BYTES = 256 * 1024
 MAX_STAGE_BINARY_BYTES = collector.MAX_MEMBER_BYTES
+MAX_RECLAIM_BUILD_RUNS_PER_PAGE = 100
+MAX_RECLAIM_BUILD_PAGES = 10
 
 
 class PublicationError(RuntimeError):
@@ -165,6 +167,229 @@ def _github_main_sha(client: collector.GitHubClient) -> str:
         return collector.normalize_source_sha(str(commit.get("sha", "")))
     except collector.CollectionError as exc:
         raise PublicationError("GitHub main branch SHA is invalid") from exc
+
+
+def _require_origin_repo(root: Path, repo: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise PublicationError(f"invalid GitHub repository: {repo!r}")
+    origin = _git(root, "remote", "get-url", "origin")
+    accepted = {
+        f"https://github.com/{repo}",
+        f"https://github.com/{repo}.git",
+        f"git@github.com:{repo}",
+        f"git@github.com:{repo}.git",
+        f"ssh://git@github.com/{repo}",
+        f"ssh://git@github.com/{repo}.git",
+    }
+    if origin not in accepted:
+        raise PublicationError(f"origin repository mismatch: expected={repo} actual={origin}")
+    return origin
+
+
+def _remote_main_source(root: Path) -> str:
+    output = _run_capture(["git", "ls-remote", "origin", "refs/heads/main"], cwd=root, timeout=30.0)
+    lines = output.splitlines()
+    if len(lines) != 1:
+        raise PublicationError("could not resolve exactly one remote main ref")
+    fields = lines[0].split("\t", 1)
+    if len(fields) != 2 or fields[1] != "refs/heads/main":
+        raise PublicationError("git ls-remote returned malformed main ref output")
+    try:
+        return collector.normalize_source_sha(fields[0])
+    except collector.CollectionError as exc:
+        raise PublicationError("remote main SHA is invalid") from exc
+
+
+def _remote_annotated_tag_identity(root: Path, tag: str) -> tuple[str, str] | None:
+    output = _run_capture(
+        ["git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"],
+        cwd=root,
+        timeout=30.0,
+    )
+    if not output:
+        return None
+    refs: dict[str, str] = {}
+    for line in output.splitlines():
+        fields = line.split("\t", 1)
+        if len(fields) != 2:
+            raise PublicationError("git ls-remote returned malformed tag output")
+        sha, ref = fields
+        try:
+            refs[ref] = collector.normalize_source_sha(sha)
+        except collector.CollectionError as exc:
+            raise PublicationError("git ls-remote returned an invalid tag object SHA") from exc
+    tag_ref = f"refs/tags/{tag}"
+    peeled_ref = f"{tag_ref}^{{}}"
+    tag_object = refs.get(tag_ref)
+    source = refs.get(peeled_ref)
+    if tag_object is None or source is None or set(refs) != {tag_ref, peeled_ref}:
+        raise PublicationError(f"remote tag is missing or not an annotated commit tag: {tag}")
+    return tag_object, source
+
+
+def _reclaim_release_check(
+    *, repo: str, tag: str, timeout: float, allow_public_release_check: bool
+) -> tuple[dict | None, str]:
+    encoded_tag = urllib.parse.quote(tag, safe="")
+    try:
+        token = collector.resolve_github_token()
+    except collector.CollectionError:
+        if not allow_public_release_check:
+            raise PublicationError(
+                "authenticated GitHub release check is unavailable; authenticate GitHub or explicitly use "
+                "--allow-public-release-check only after separately confirming no draft release exists"
+            )
+        payload = _fetch_public_json_optional(
+            f"https://api.github.com/repos/{repo}/releases/tags/{encoded_tag}", timeout
+        )
+        return payload, "public_only"
+    client = collector.GitHubClient(repo, token, timeout)
+    return _github_optional_json(client, f"/releases/tags/{encoded_tag}"), "authenticated"
+
+
+def _reclaim_build_history(*, repo: str, tag: str, timeout: float) -> list[dict]:
+    matches: list[dict] = []
+    prefix = f"Release build {tag} "
+    for page in range(1, MAX_RECLAIM_BUILD_PAGES + 1):
+        query = urllib.parse.urlencode(
+            {
+                "event": "workflow_dispatch",
+                "branch": "main",
+                "per_page": MAX_RECLAIM_BUILD_RUNS_PER_PAGE,
+                "page": page,
+            }
+        )
+        payload = _fetch_public_json_optional(
+            f"https://api.github.com/repos/{repo}/actions/workflows/{BUILD_WORKFLOW_FILE}/runs?{query}",
+            timeout,
+        )
+        if payload is None:
+            raise PublicationError("GitHub release-build history is unavailable")
+        runs = payload.get("workflow_runs")
+        total = payload.get("total_count")
+        if not isinstance(runs, list) or not isinstance(total, int) or total < 0:
+            raise PublicationError("GitHub release-build history is malformed")
+        for run in runs:
+            if not isinstance(run, dict) or not str(run.get("display_title", "")).startswith(prefix):
+                continue
+            run_id = run.get("id")
+            status = run.get("status")
+            conclusion = run.get("conclusion")
+            source = run.get("head_sha")
+            if not isinstance(run_id, int) or run_id <= 0 or not isinstance(status, str):
+                raise PublicationError("matching release-build history is malformed")
+            if conclusion is not None and not isinstance(conclusion, str):
+                raise PublicationError("matching release-build conclusion is malformed")
+            try:
+                normalized_source = collector.normalize_source_sha(str(source))
+            except collector.CollectionError as exc:
+                raise PublicationError("matching release-build source SHA is invalid") from exc
+            matches.append(
+                {
+                    "run_id": run_id,
+                    "status": status,
+                    "conclusion": conclusion,
+                    "source_sha": normalized_source,
+                }
+            )
+        if page * MAX_RECLAIM_BUILD_RUNS_PER_PAGE >= total:
+            return matches
+    raise PublicationError("GitHub release-build history exceeds the bounded reclaim scan")
+
+
+def reclaim_prepublication_tag(
+    *,
+    repo: str,
+    version: str,
+    root: Path,
+    confirm: str,
+    timeout: float,
+    allow_public_release_check: bool,
+) -> dict:
+    release_version = normalize_version(version)
+    tag = f"v{release_version}"
+    if confirm != tag:
+        raise PublicationError(f"reclaim confirmation must exactly equal {tag}")
+    source_root = root.absolute()
+    if not source_root.is_dir():
+        raise PublicationError(f"release source root is missing: {source_root}")
+    if _git(source_root, "status", "--porcelain", "--untracked-files=all"):
+        raise PublicationError("release recovery worktree is not clean")
+    _require_origin_repo(source_root, repo)
+    try:
+        head = collector.normalize_source_sha(_git(source_root, "rev-parse", "HEAD"))
+    except collector.CollectionError as exc:
+        raise PublicationError("release recovery HEAD is invalid") from exc
+    remote_main = _remote_main_source(source_root)
+    if head != remote_main:
+        raise PublicationError(f"release recovery source is not exact remote main: head={head} main={remote_main}")
+    cargo_version, npm_version = _package_versions(source_root)
+    if cargo_version != release_version or npm_version != release_version:
+        raise PublicationError(
+            f"release recovery version mismatch: requested={release_version} cargo={cargo_version} npm={npm_version}"
+        )
+
+    remote_identity = _remote_annotated_tag_identity(source_root, tag)
+    if remote_identity is None:
+        raise PublicationError(f"remote tag does not exist: {tag}")
+    tag_object_sha, old_source_sha = remote_identity
+    local_tag = _git(source_root, "tag", "--list", tag)
+    if local_tag:
+        try:
+            local_source = collector.normalize_source_sha(_git(source_root, "rev-list", "-n", "1", tag))
+        except collector.CollectionError as exc:
+            raise PublicationError("local reclaim tag source is invalid") from exc
+        if local_source != old_source_sha:
+            raise PublicationError(
+                f"local/remote tag source mismatch: local={local_source} remote={old_source_sha}"
+            )
+
+    release, release_check = _reclaim_release_check(
+        repo=repo,
+        tag=tag,
+        timeout=timeout,
+        allow_public_release_check=allow_public_release_check,
+    )
+    if release is not None:
+        raise PublicationError(f"GitHub Release exists; refusing to reclaim {tag}")
+
+    encoded_package = urllib.parse.quote(PACKAGE, safe="")
+    npm_metadata = _fetch_public_json_optional(
+        f"{NPM_REGISTRY}{encoded_package}/{urllib.parse.quote(release_version, safe='')}", timeout
+    )
+    if npm_metadata is not None:
+        raise PublicationError(f"npm package version exists; refusing to reclaim {PACKAGE}@{release_version}")
+
+    history = _reclaim_build_history(repo=repo, tag=tag, timeout=timeout)
+    active = [run for run in history if run["status"] != "completed"]
+    successful = [run for run in history if run["status"] == "completed" and run["conclusion"] == "success"]
+    if active:
+        raise PublicationError(f"release-build run is still active for {tag}; refusing reclaim")
+    if successful:
+        raise PublicationError(f"successful authoritative release-build exists for {tag}; refusing reclaim")
+
+    try:
+        _run_checked(["git", "push", "origin", "--delete", tag], cwd=source_root, timeout=120.0)
+    except PublicationError as exc:
+        if _remote_annotated_tag_identity(source_root, tag) is not None:
+            raise PublicationError(f"remote tag deletion failed for {tag}") from exc
+    if _remote_annotated_tag_identity(source_root, tag) is not None:
+        raise PublicationError(f"remote tag deletion could not be verified for {tag}")
+    if local_tag:
+        _run_checked(["git", "tag", "-d", tag], cwd=source_root, timeout=30.0)
+
+    return {
+        "version": release_version,
+        "tag": tag,
+        "old_tag_object_sha": tag_object_sha,
+        "old_source_sha": old_source_sha,
+        "github_release_absent": True,
+        "github_release_check": release_check,
+        "npm_version_absent": True,
+        "matching_release_builds": history,
+        "remote_tag_deleted": True,
+        "local_tag_deleted": bool(local_tag),
+    }
 
 
 def preflight_release(

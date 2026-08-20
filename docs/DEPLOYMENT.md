@@ -257,6 +257,26 @@ WEBCODEX_OAUTH2_ISSUER=https://your-domain.example
 WEBCODEX_PUBLIC_URL=https://your-domain.example
 ```
 
+For repository machines, the recommended managed OAuth path is `login` followed by `connect`. First create a short-lived pairing code on the Server, redeem it on the machine that owns the repository, then connect using the exact OAuth callback required by the MCP client:
+
+```bash
+# Server/admin side
+webcodex pairing create \
+  --server-url https://your-domain.example \
+  --env-file /etc/webcodex/webcodex.env \
+  --username alice --ttl-secs 600
+
+# Repository machine
+cd /path/to/your/repository
+webcodex login https://your-domain.example --code <wc_pair_...>
+webcodex connect https://your-domain.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback --project .
+```
+
+`connect` creates a managed-user-owned OAuth client on the remote Server and a separate Agent token for the local Runner, then starts the Runner and waits for the project to become visible. Use the printed MCP URL, Client ID, Client Secret, authorization endpoint, and token endpoint in the MCP client. The secret remains pending until WebCodex successfully writes and flushes that output; reconnects do not redisclose it after confirmed display. If the remote OAuth client is missing or revoked, reconnect rotates it and prints the replacement secret. The hosted OAuth allow-list is a closed WebCodex runtime/project/job/Computer set supported by the Server; it excludes `account:manage`, Agent/admin scopes, and future permissions until explicitly reviewed.
+
+If the MCP host uses a different callback later, use another profile (or explicitly remove the old profile) rather than silently changing the persisted OAuth client identity. When several users are logged into the same Server locally, pass `--user <username>` to select the intended managed identity.
+
 Create an OAuth client (the `client_secret` is returned only once; only its
 hash is stored):
 

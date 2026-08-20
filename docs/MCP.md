@@ -20,8 +20,10 @@ http://127.0.0.1:<configured-port>/mcp
 Hosted clients need HTTPS. There are three paths:
 
 - **Hosted:** `webcodex connect <server>` uses an existing hosted Server; only
-  the Runner runs locally. The MCP URL is `https://your-server.example/mcp`
-  and the bearer credential is the generated shared key. The exposed tool set
+  the Runner runs locally. Shared-key authentication remains the default.
+  `webcodex connect <server> --auth oauth --oauth-redirect-uri <URL>` instead
+  reuses a managed login, creates a managed OAuth client on that Server, and
+  gives the Runner a separate Agent token. In both cases the exposed tool set
   comes from that Server's configured MCP model surface; `connect` does not
   turn the remote Server into a project-bound Connector.
 - **Local Share:** `webcodex share` starts the local Server + Agent and, by
@@ -55,6 +57,8 @@ extra permission). Server-side OAuth setup is in
 [Deployment](DEPLOYMENT.md#oauth2).
 
 For project-first sharing, the authorization page asks for the temporary Project share credential and issues an `oauth2_project` identity carrying only `runtime:read`, `project:read`, `project:write`, and `job:run`. It does not create a managed user and OAuth tokens cannot be used on Agent transport. Quick Tunnel issuer URLs change between runs; use `--tunnel none --public-url https://...` behind your own stable HTTPS proxy/tunnel when the OAuth issuer must remain stable.
+
+For an existing managed/self-hosted Server, `connect --auth oauth` deliberately does not use the project-share subject or its four-scope ceiling. On first creation it registers every permission scope currently advertised by that Server's OAuth authorization metadata except `agent:*` and `admin`; `offline_access` remains protocol-only. This includes current job and Computer permissions such as detached execution, launch, display, pointer, and clipboard scopes when the Server advertises them. The resulting access token is still constrained by ordinary per-tool scope checks and the target Runner's capabilities. A persisted connect OAuth client keeps its original allow-list on later reconnects rather than automatically gaining newly introduced scopes.
 
 ### Grok custom connector (OAuth)
 

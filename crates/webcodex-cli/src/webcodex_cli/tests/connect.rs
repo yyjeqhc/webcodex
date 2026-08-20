@@ -44,6 +44,56 @@ fn connect_defaults_project_and_allows_automatic_key() {
     assert_eq!(options.project, PathBuf::from("."));
     assert!(options.key.is_none());
     assert!(options.key_file.is_none());
+    assert_eq!(options.auth, ConnectAuth::SharedKey);
+    assert!(options.oauth_redirect_uri.is_none());
+}
+
+#[test]
+fn connect_parses_managed_oauth_and_rejects_mixed_auth_inputs() {
+    let options = parsed(&[
+        "connect",
+        "https://example.test",
+        "--auth",
+        "oauth",
+        "--oauth-redirect-uri",
+        "https://client.example/callback",
+        "--user",
+        "alice",
+    ]);
+    assert_eq!(options.auth, ConnectAuth::OAuth);
+    assert_eq!(
+        options.oauth_redirect_uri.as_deref(),
+        Some("https://client.example/callback")
+    );
+    assert_eq!(options.username.as_deref(), Some("alice"));
+    assert!(options.key.is_none());
+
+    for (args, needle) in [
+        (
+            vec!["connect", "https://example.test", "--auth", "oauth"],
+            "requires --oauth-redirect-uri",
+        ),
+        (
+            vec![
+                "connect",
+                "https://example.test",
+                "--auth",
+                "oauth",
+                "--oauth-redirect-uri",
+                "https://client.example/callback",
+                "--key",
+                "shared",
+            ],
+            "cannot be combined",
+        ),
+    ] {
+        match cli_action(args) {
+            CliAction::Exit {
+                code: 2, stderr, ..
+            } => assert!(stderr.contains(needle), "{stderr}"),
+            other => panic!("expected parse error, got {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -79,6 +129,8 @@ fn connect_help_is_a_top_level_quick_start() {
     let help = cli_exit(["connect", "--help"]).unwrap();
     assert!(help.contains("Usage: webcodex connect <SERVER_URL>"));
     assert!(help.contains("--key-file"));
+    assert!(help.contains("--auth bearer|oauth"));
+    assert!(help.contains("--oauth-redirect-uri"));
     assert!(help.contains("--project PATH"));
     let top = cli_exit(["--help"]).unwrap();
     assert!(top.contains("connect"));
@@ -135,6 +187,9 @@ async fn connect_rejects_invalid_url_and_missing_project_before_network_or_write
         server_http: ServerHttpOptions::default(),
         key: Some("shared-key".to_string()),
         key_file: None,
+        auth: ConnectAuth::SharedKey,
+        oauth_redirect_uri: None,
+        username: None,
         project: tmp.path().join("missing"),
         profile: None,
         client_id: None,

@@ -51,9 +51,9 @@ use webcodex_cli::{
     run_token_create_local, server_init_usage, server_install_service_usage, server_status_usage,
     server_usage, status_usage, system_user_home, system_user_is_root, usage,
     validate_client_profile, validate_service_file_scope, write_connect_result, write_secret_file,
-    write_text_file, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand,
-    OpsCommonOptions, OpsSmokePreflightOptions, ServerStatusOptions, ServiceControl, StatusOptions,
-    AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
+    write_text_file, ConnectAuth, ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions,
+    OpsCommand, OpsCommonOptions, OpsSmokePreflightOptions, ServerStatusOptions, ServiceControl,
+    StatusOptions, AGENT_SERVICE_UNIT, DEFAULT_LOG_LINES, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
 const SETUP_AGENT_SCOPES: &[&str] = &[
@@ -379,6 +379,9 @@ fn parse_connect(args: &[String]) -> CliAction {
     let mut server_http = ServerHttpOptions::default();
     let mut key = None;
     let mut key_file = None;
+    let mut auth = ConnectAuth::SharedKey;
+    let mut oauth_redirect_uri = None;
+    let mut username = None;
     let mut project = PathBuf::from(".");
     let mut profile = None;
     let mut client_id = None;
@@ -396,6 +399,30 @@ fn parse_connect(args: &[String]) -> CliAction {
                 None => return cli_parse_error("--proxy requires a value".to_string()),
             },
             "--no-system-proxy" => server_http.no_system_proxy = true,
+            "--auth" => match take(&mut index) {
+                Some(value) => {
+                    auth = match value.as_str() {
+                        "bearer" | "shared-key" => ConnectAuth::SharedKey,
+                        "oauth" => ConnectAuth::OAuth,
+                        _ => {
+                            return cli_parse_error(
+                                "--auth must be 'bearer' or 'oauth'".to_string(),
+                            )
+                        }
+                    }
+                }
+                None => return cli_parse_error("--auth requires a value".to_string()),
+            },
+            "--oauth-redirect-uri" => match take(&mut index) {
+                Some(value) => oauth_redirect_uri = Some(value),
+                None => {
+                    return cli_parse_error("--oauth-redirect-uri requires a value".to_string())
+                }
+            },
+            "--user" | "--username" => match take(&mut index) {
+                Some(value) => username = Some(value),
+                None => return cli_parse_error(format!("{arg} requires a value")),
+            },
             "--key" => match take(&mut index) {
                 Some(value) => key = Some(value),
                 None => return cli_parse_error("--key requires a value".to_string()),
@@ -438,6 +465,30 @@ fn parse_connect(args: &[String]) -> CliAction {
     if key.is_some() && key_file.is_some() {
         return cli_parse_error("--key and --key-file are mutually exclusive".to_string());
     }
+    match auth {
+        ConnectAuth::OAuth => {
+            if key.is_some() || key_file.is_some() {
+                return cli_parse_error(
+                    "--auth oauth cannot be combined with --key or --key-file".to_string(),
+                );
+            }
+            if oauth_redirect_uri
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return cli_parse_error(
+                    "--auth oauth requires --oauth-redirect-uri <URL>".to_string(),
+                );
+            }
+        }
+        ConnectAuth::SharedKey => {
+            if oauth_redirect_uri.is_some() || username.is_some() {
+                return cli_parse_error(
+                    "--oauth-redirect-uri/--user require --auth oauth".to_string(),
+                );
+            }
+        }
+    }
     let Some(server_url) = server_url else {
         return cli_parse_error(
             "connect needs a Server URL, e.g. `webcodex connect https://example.com --project .`"
@@ -454,6 +505,9 @@ fn parse_connect(args: &[String]) -> CliAction {
         server_http,
         key,
         key_file,
+        auth,
+        oauth_redirect_uri,
+        username,
         project,
         profile,
         client_id,

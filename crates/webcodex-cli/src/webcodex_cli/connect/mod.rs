@@ -1,4 +1,5 @@
 mod disconnect;
+mod oauth;
 mod output;
 mod probe;
 mod process;
@@ -9,7 +10,7 @@ pub(crate) use process::{
     local_runner_profile_marker, local_runner_state_summary, run_hosted_log_writer,
     run_local_runner_logs, run_local_runner_service, LocalRunnerServiceAction,
 };
-pub(crate) use profile::ConnectOptions;
+pub(crate) use profile::{ConnectAuth, ConnectOptions};
 
 use super::connections::{canonical_server_url, ensure_real_directory_tree};
 use super::login::validate_client_id;
@@ -65,6 +66,13 @@ pub(crate) fn write_connect_result(
 }
 
 pub(crate) async fn run_connect(opts: ConnectOptions) -> Result<ConnectResult, String> {
+    if opts.auth == ConnectAuth::OAuth {
+        return oauth::run_oauth_connect(opts).await;
+    }
+    run_shared_key_connect(opts).await
+}
+
+async fn run_shared_key_connect(opts: ConnectOptions) -> Result<ConnectResult, String> {
     let canonical_server = canonical_server_url(&opts.server_url)?;
     let canonical_project = opts.project.canonicalize().map_err(|error| {
         format!(

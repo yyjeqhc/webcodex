@@ -101,9 +101,21 @@ The command prints the temporary Project share credential plus a project-bound O
 
 ### Connect to an existing Server
 
-For a stable, long-lived setup against an existing Server, use
-`webcodex connect` (hosted shared-key) or `webcodex login` (managed). See
-[Deployment](DEPLOYMENT.md).
+For a stable, long-lived setup against an existing Server, shared-key connect remains available:
+
+```bash
+webcodex connect https://webcodex.example --project .
+```
+
+For the same managed/self-hosted OAuth experience as that Server, log in once and then connect with the MCP client's exact callback:
+
+```bash
+webcodex login https://webcodex.example --code wc_pair_...
+webcodex connect https://webcodex.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback --project .
+```
+
+OAuth connect uses the remote Server's configured MCP model surface and current delegable OAuth permission registry. It stores the OAuth client secret in the protected hosted profile and uses a separate Agent token for the Runner. See [Deployment](DEPLOYMENT.md).
 
 To remove only this repository from a hosted `connect` profile later, run from the repository:
 

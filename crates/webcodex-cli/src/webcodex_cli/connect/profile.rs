@@ -14,12 +14,21 @@ use super::super::profiles::{client_output_dir_for_profile, validate_client_prof
 pub(super) const KEY_DISCLOSED_FILE: &str = ".hosted-key-disclosed";
 const CONNECT_LOCK_FILE: &str = "connect.lock";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConnectAuth {
+    SharedKey,
+    OAuth,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConnectOptions {
     pub(crate) server_url: String,
     pub(crate) server_http: ServerHttpOptions,
     pub(crate) key: Option<String>,
     pub(crate) key_file: Option<PathBuf>,
+    pub(crate) auth: ConnectAuth,
+    pub(crate) oauth_redirect_uri: Option<String>,
+    pub(crate) username: Option<String>,
     pub(crate) project: PathBuf,
     pub(crate) profile: Option<String>,
     pub(crate) client_id: Option<String>,
@@ -171,6 +180,26 @@ pub(super) fn derived_profile(server_url: &str, key: &str) -> String {
     let key_hash = sha256_hex(key.as_bytes());
     let identity = sha256_hex(format!("{server_url}\0{key_hash}").as_bytes());
     format!("{}-{}", server_host_label(server_url), &identity[..12])
+}
+
+pub(super) fn derived_oauth_profile(
+    server_url: &str,
+    username: &str,
+    redirect_uri: &str,
+) -> String {
+    let identity = sha256_hex(
+        format!(
+            "{server_url}\0oauth\0{}\0{}",
+            username.trim().to_ascii_lowercase(),
+            redirect_uri.trim()
+        )
+        .as_bytes(),
+    );
+    format!(
+        "{}-oauth-{}",
+        server_host_label(server_url),
+        &identity[..12]
+    )
 }
 
 pub(super) fn generated_client_id(server_url: &str) -> String {
@@ -684,6 +713,48 @@ mod tests {
     }
 
     #[test]
+    fn oauth_profile_is_stable_and_separates_user_callback_and_origin() {
+        let first = derived_oauth_profile(
+            "https://example.test",
+            "Alice",
+            "https://client.example/callback",
+        );
+        assert_eq!(
+            first,
+            derived_oauth_profile(
+                "https://example.test",
+                "alice",
+                "https://client.example/callback"
+            )
+        );
+        assert_ne!(
+            first,
+            derived_oauth_profile(
+                "https://example.test",
+                "bob",
+                "https://client.example/callback"
+            )
+        );
+        assert_ne!(
+            first,
+            derived_oauth_profile(
+                "https://example.test",
+                "alice",
+                "https://client.example/other"
+            )
+        );
+        assert_ne!(
+            first,
+            derived_oauth_profile(
+                "http://example.test",
+                "alice",
+                "https://client.example/callback"
+            )
+        );
+        validate_client_profile(&first).unwrap();
+    }
+
+    #[test]
     fn omitted_key_is_generated_once_then_recovered_from_the_matching_profile() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("project");
@@ -695,6 +766,9 @@ mod tests {
             server_http: ServerHttpOptions::default(),
             key: None,
             key_file: None,
+            auth: ConnectAuth::SharedKey,
+            oauth_redirect_uri: None,
+            username: None,
             project: project.clone(),
             profile: None,
             client_id: None,

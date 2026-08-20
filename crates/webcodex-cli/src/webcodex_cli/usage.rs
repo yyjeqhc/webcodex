@@ -39,12 +39,16 @@ Options:\n\
 
 pub(crate) fn connect_usage() -> &'static str {
     "Usage: webcodex connect <SERVER_URL> [OPTIONS]\n\n\
-Connect a local project to a hosted WebCodex Server with one shared key.\n\
+Connect a local project to a hosted WebCodex Server. Shared-key auth is the default;\n\
+`--auth oauth` reuses an existing managed login and registers a remote OAuth client.\n\
 The command writes a reusable local profile, starts one background Runner,\n\
 and waits until the Runner and project are visible through the Server.\n\n\
 Options:\n\
   --proxy http://HOST:PORT   Override standard proxy environment for CLI Server requests\n\
   --no-system-proxy          Ignore proxy environment and connect directly\n\
+  --auth bearer|oauth        MCP authentication mode [default: bearer]\n\
+  --oauth-redirect-uri URL   Exact OAuth callback URL; required with --auth oauth\n\
+  --user USER                Select a logged-in managed user when more than one exists\n\
   --key KEY                  Shared key (use --key-file to avoid shell history)\n\
   --key-file PATH            Read the shared key from a file\n\
   --project PATH             Local project directory [default: .]\n\
@@ -52,10 +56,11 @@ Options:\n\
   --client-id ID             Override the persistent Runner client id\n\
   --project-id ID            Override the derived project id\n\
   -h, --help                 Print help and exit\n\n\
-When neither --key nor --key-file is supplied, a strong key is generated and\n\
-printed once. Hosted shared keys must not start with wc_; managed credentials\n\
-use `webcodex login` instead. Proxy flags apply only to this command's Server\n\
-HTTP probes; Runner proxy configuration remains independent.\n"
+In bearer mode, omitting --key/--key-file generates a strong hosted shared key.\n\
+OAuth mode requires a prior `webcodex login` for the same Server. It creates a\n\
+managed-user OAuth client with the Server's currently advertised delegable permission\n\
+scopes and a separate Agent token for Runner transport; it never sends OAuth tokens\n\
+to the Runner. Proxy flags apply only to this command's Server HTTP requests.\n"
 }
 
 pub(crate) fn disconnect_usage() -> &'static str {

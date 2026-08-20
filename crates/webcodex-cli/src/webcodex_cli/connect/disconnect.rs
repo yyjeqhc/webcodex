@@ -148,15 +148,27 @@ pub(crate) async fn run_disconnect(opts: DisconnectOptions) -> Result<Disconnect
     }
 
     let outcome = if runner.running {
-        let remote_outcome =
-            match unregister_live_project(&config, &opts.server_http, &runtime_project_id).await {
-                Ok(outcome) => outcome,
-                Err(LiveUnregisterError::NoUnregister(error)) => return Err(error),
-                Err(LiveUnregisterError::OutcomeUnknown(reason)) => {
-                    let observation = observe_exact_registration(&candidate, &canonical_project);
-                    return Err(render_uncertain_unregister_error(reason, observation));
-                }
-            };
+        let observer_token = super::oauth::observer_token_for_disconnect(
+            &candidate.profile_dir,
+            &config_base,
+            &config,
+        )?
+        .unwrap_or_else(|| config.token.clone());
+        let remote_outcome = match unregister_live_project(
+            &config,
+            &opts.server_http,
+            &runtime_project_id,
+            &observer_token,
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(LiveUnregisterError::NoUnregister(error)) => return Err(error),
+            Err(LiveUnregisterError::OutcomeUnknown(reason)) => {
+                let observation = observe_exact_registration(&candidate, &canonical_project);
+                return Err(render_uncertain_unregister_error(reason, observation));
+            }
+        };
         // The Runner's authoritative unregister normally removes this exact
         // registration before the terminal response reaches the CLI. Re-observe
         // under the still-held ProfileLock: accept an already-absent file, remove
@@ -311,13 +323,14 @@ async fn unregister_live_project(
     config: &ExistingAgentConfig,
     server_http: &ServerHttpOptions,
     runtime_project_id: &str,
+    observer_token: &str,
 ) -> Result<String, LiveUnregisterError> {
     let server =
         canonical_server_url(&config.server_url).map_err(LiveUnregisterError::NoUnregister)?;
     let list = post_json_authed(ApiCall {
         server_url: &server.url,
         server_http,
-        token: &config.token,
+        token: observer_token,
         path: "/api/projects/list",
         body: json!({}),
     })
@@ -355,7 +368,7 @@ async fn unregister_live_project(
     let response = post_live_unregister(
         &server.url,
         server_http,
-        &config.token,
+        observer_token,
         runtime_project_id,
         expected_revision,
     )
@@ -657,6 +670,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn offline_oauth_unregister_does_not_require_managed_login() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        let state = tmp.path().join("state");
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::create_dir_all(config.join("clients")).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        let (profile_dir, _) = write_profile(&config, &state, "oauth", &project, "repo");
+        std::fs::write(
+            profile_dir.join("agent.toml"),
+            "server_url = \"https://example.test\"\ntoken = \"wc_agent_runner-only\"\nclient_id = \"client\"\n",
+        )
+        .unwrap();
+        // Deliberately name a managed login that does not exist. Offline
+        // disconnect must not consult it because no remote unregister occurs.
+        std::fs::write(
+            profile_dir.join("oauth-connect.toml"),
+            "version = 1\nserver_url = \"https://example.test\"\nusername = \"missing-user\"\noauth_client_id = \"wc_client_existing\"\noauth_client_secret = \"wc_csec_existing\"\noauth_redirect_uri = \"https://client.example/callback\"\nallowed_scopes = [\"runtime:read\"]\nagent_token_id = \"token-id\"\n",
+        )
+        .unwrap();
+
+        let result = run_disconnect(DisconnectOptions {
+            project: project.clone(),
+            profile: Some("oauth".to_string()),
+            config_base: Some(config),
+            state_base: Some(state),
+            server_http: ServerHttpOptions::default(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.outcome, "local_unregistered");
+        assert_eq!(result.runner_action, "not_running");
+        assert!(project.join(".git").is_dir());
+    }
+
+    #[tokio::test]
     async fn live_unregister_uses_structured_endpoint_and_revision() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -704,6 +754,7 @@ mod tests {
                 no_system_proxy: true,
             },
             "agent:client:repo",
+            &config.token,
         )
         .await
         .unwrap();
@@ -940,6 +991,7 @@ mod tests {
                 no_system_proxy: true,
             },
             "agent:client:repo",
+            &config.token,
         )
         .await
         .unwrap_err();

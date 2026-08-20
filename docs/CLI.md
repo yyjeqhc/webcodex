@@ -33,12 +33,14 @@ These commands work on the current Git project.
 | `webcodex run` | Start the project-bound loopback Server and local Runner | Foreground; Ctrl-C stops both. |
 | `webcodex status` | Concise project coding readiness | Short summary; `doctor` is the full check. |
 | `webcodex share` | Share the local project over HTTPS | Defaults to a temporary Bearer credential; `--auth oauth --oauth-redirect-uri <URL>` enables project-bound OAuth. |
-| `webcodex connect <server>` | Connect the current project to an existing Server | Creates a profile, starts a detached Runner, prints the MCP URL and key. |
+| `webcodex connect <server>` | Connect the current project to an existing Server | Defaults to hosted shared-key; `--auth oauth --oauth-redirect-uri <URL>` reuses a managed login and creates a remote OAuth client. |
 | `webcodex disconnect [--project PATH] [--profile NAME]` | Remove one hosted project registration | Exact inverse of `connect` for that repository; never removes the repository or `.git`. |
 
 `webcodex share --auth oauth --oauth-redirect-uri <exact-callback>` uses OAuth 2.0 Authorization Code with PKCE S256. The OAuth client ID/secret are persisted in protected project state for that project + callback, while authorization codes, access tokens, refresh tokens, and the temporary Project Credential are fenced to the current `share` process. Restarting `share` therefore invalidates old OAuth grants without changing the Connector's stable project identity. OAuth access tokens are never accepted on Runner/Agent transport.
 
 Quick Tunnel origins remain temporary. For an operator-managed stable HTTPS origin, use `--tunnel none --public-url https://share.example` and route that origin to the loopback WebCodex Server yourself; `--public-url` advertises the external origin/issuer and does not create a proxy or tunnel.
+
+`webcodex connect <server> --auth oauth --oauth-redirect-uri <exact-callback>` is the server-bound OAuth path. It requires an existing `webcodex login` for that Server (use `--user` when several users are logged in), discovers the Server's current OAuth permission registry, creates a managed-user-owned OAuth client with all currently advertised delegable WebCodex permission scopes, and creates a separate Agent token for the local Runner. The remote Server's configured MCP model surface remains authoritative. `agent:*`, `admin`, and protocol-only `offline_access` are never inserted into the client's permission allow-list; `offline_access` may still be requested by the MCP client for refresh-token support. Reusing an existing profile never silently widens its stored OAuth scope ceiling.
 
 `disconnect` matches the canonical repository path, not a basename or project id. If the same
 repository is registered in more than one hosted profile, specify `--profile`. With a live

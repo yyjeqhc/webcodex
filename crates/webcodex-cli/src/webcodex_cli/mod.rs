@@ -53,7 +53,7 @@ pub(crate) use agent_service::{run_agent_install_service, run_agent_service, run
 pub(crate) use connect::{
     local_runner_profile_marker, local_runner_state_summary, run_connect, run_disconnect,
     run_hosted_log_writer, run_local_runner_logs, run_local_runner_service, write_connect_result,
-    ConnectOptions, DisconnectOptions, LocalRunnerServiceAction,
+    ConnectAuth, ConnectOptions, DisconnectOptions, LocalRunnerServiceAction,
 };
 pub(crate) use env::is_effective_root;
 #[cfg(test)]

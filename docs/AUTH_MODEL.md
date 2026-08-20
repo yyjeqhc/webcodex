@@ -189,6 +189,8 @@ outstanding authorization codes, so the client must complete OAuth authorization
 again before using the new scope set.
 `computer:display_read`, `computer:pointer_control`, `computer:clipboard_read`, and `computer:clipboard_write` follow that rule: all are outside the frozen legacy default and are available only through explicit client scope opt-in.
 
+`webcodex connect <server> --auth oauth` is an explicit full-server opt-in rather than the omitted-scope legacy default. On first creation the CLI reads the authorization-server `scopes_supported` metadata and sends every currently advertised WebCodex permission scope to `/api/oauth/clients/create`, excluding `agent:*`, `admin`, and protocol-only `offline_access`. The resulting client therefore tracks the Server's current managed/self-host OAuth capability at creation time. Its persisted allow-list is then stable: reconnecting the same profile does not automatically add permission scopes introduced by a later Server version. The Runner uses a separately issued `wc_agent_*` credential; OAuth access tokens remain forbidden on Agent transport.
+
 The MCP Protected Resource Metadata intentionally omits `scopes_supported`
 because pre-registered clients can have different delegation ceilings. An MCP
 client can therefore omit the authorization request's `scope`; WebCodex then

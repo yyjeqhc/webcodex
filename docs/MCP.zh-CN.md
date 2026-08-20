@@ -20,9 +20,11 @@ http://127.0.0.1:<configured-port>/mcp
 Hosted 客户端需要 HTTPS。有三种路径：
 
 - **Hosted：** `webcodex connect <server>` 使用已有 hosted Server；本地只运行
-  Runner。MCP URL 为 `https://your-server.example/mcp`，bearer 凭据为生成的共享
-  key。暴露的工具集合由该 Server 配置的 MCP model surface 决定；`connect` 不会
-  把远端 Server 变成 project-bound Connector。
+  Runner。默认仍使用 shared-key。`webcodex connect <server> --auth oauth
+  --oauth-redirect-uri <URL>` 则复用 managed login，在该 Server 创建 managed OAuth
+  client，并给 Runner 单独使用 Agent token。两种模式暴露的工具集合都由远端
+  Server 配置的 MCP model surface 决定；`connect` 不会把远端 Server 变成
+  project-bound Connector。
 - **本地分享：** `webcodex share` 启动本地 Server + Agent；默认启动 Cloudflare
   Quick Tunnel 并使用独立的临时 Bearer credential。`webcodex share --auth oauth
   --oauth-redirect-uri <URL>` 则暴露 project-bound OAuth 2.0 Authorization Code +
@@ -50,6 +52,8 @@ URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-to
 额外权限）。服务端 OAuth 设置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
 
 对于 project-first share，授权页要求输入本次临时 Project share credential，并签发只带 `runtime:read`、`project:read`、`project:write`、`job:run` 的 `oauth2_project` 身份；它不会创建 managed user，OAuth token 也不能用于 Agent transport。Quick Tunnel 的 issuer URL 每次运行都会变化；如果 OAuth issuer 必须稳定，请使用 `--tunnel none --public-url https://...` 并在外部配置稳定 HTTPS proxy/tunnel。
+
+对于已有 managed/self-hosted Server，`connect --auth oauth` 不使用 project-share subject，也没有四 scope ceiling。首次创建时，它会把该 Server OAuth authorization metadata 当前广告的全部 permission scopes（排除 `agent:*`、`admin`；`offline_access` 仍是纯协议 scope）显式注册给 OAuth client。因此 Server 当前支持的 detached job、Computer launch/display/pointer/clipboard 等权限都可以正常授权。最终 access token 仍受每个 tool 的 scope policy 和目标 Runner capability 约束。后续复用同一 connect OAuth profile 时，会保持原有 allow-list，不会因为 Server 新增 scope 自动扩权。
 
 ### Grok Custom Connector（OAuth）
 

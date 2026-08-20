@@ -93,8 +93,21 @@ webcodex share --auth oauth --oauth-redirect-uri https://client.example/callback
 
 ### 接入已有 Server
 
-如需接入已有 Server 的稳定长期环境，用 `webcodex connect`（hosted shared-key）
-或 `webcodex login`（managed）。见[部署指南](DEPLOYMENT.zh-CN.md)。
+如需接入已有 Server 的稳定长期环境，仍可使用 shared-key：
+
+```bash
+webcodex connect https://webcodex.example --project .
+```
+
+如果希望得到与该 managed/self-hosted Server 一致的 OAuth 体验，先登录一次，再使用 MCP 客户端的精确 callback：
+
+```bash
+webcodex login https://webcodex.example --code wc_pair_...
+webcodex connect https://webcodex.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback --project .
+```
+
+OAuth connect 使用远端 Server 当前配置的 MCP model surface 和可委托 OAuth permission registry；OAuth client secret 保存在受保护的 hosted profile 中，Runner 则使用独立 Agent token。见[部署指南](DEPLOYMENT.zh-CN.md)。
 
 以后如果只想从 hosted `connect` profile 中注销当前仓库，可在仓库中运行：
 

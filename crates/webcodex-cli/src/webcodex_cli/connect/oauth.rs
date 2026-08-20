@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::Path;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 use webcodex_admin::build_server_http_client;
 
 use super::super::connections::{connections_for_server, ensure_real_directory_tree, Connection};
@@ -24,6 +25,7 @@ use super::{ConnectResult, DEFAULT_CONNECT_WAIT_MS};
 
 const OAUTH_PROFILE_FILE: &str = "oauth-connect.toml";
 const OAUTH_PROFILE_VERSION: u32 = 1;
+const OAUTH_SECRET_DISCLOSED_FILE_PREFIX: &str = ".oauth-client-secret-disclosed-";
 
 // Hosted connect is intentionally narrower than the global OAuth registry.
 // Keep this set closed: new Server scopes must never enter a persisted hosted
@@ -471,6 +473,40 @@ fn render_oauth_output(
     )
 }
 
+fn oauth_secret_disclosure_marker(profile_dir: &Path, client_id: &str) -> PathBuf {
+    let digest = Sha256::digest(client_id.as_bytes());
+    profile_dir.join(format!("{OAUTH_SECRET_DISCLOSED_FILE_PREFIX}{digest:x}"))
+}
+
+fn build_oauth_connect_result(
+    server_url: &str,
+    profile: &str,
+    client_id: &str,
+    runtime_project_id: &str,
+    config_path: &Path,
+    log_path: &Path,
+    profile_dir: &Path,
+    oauth: &OAuthConnectProfile,
+    metadata: &OAuthServerMetadata,
+) -> ConnectResult {
+    let disclosure_marker = oauth_secret_disclosure_marker(profile_dir, &oauth.oauth_client_id);
+    let disclose_client_secret = !disclosure_marker.is_file();
+    ConnectResult {
+        output: render_oauth_output(
+            server_url,
+            profile,
+            client_id,
+            runtime_project_id,
+            config_path,
+            log_path,
+            oauth,
+            metadata,
+            disclose_client_secret,
+        ),
+        disclosure_marker: disclose_client_secret.then_some(disclosure_marker),
+    }
+}
+
 pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectResult, String> {
     let canonical_server = super::super::connections::canonical_server_url(&opts.server_url)?;
     let canonical_project = opts.project.canonicalize().map_err(|error| {
@@ -834,20 +870,17 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
         return Err(format!("{error}. Runner logs: {}", log_path.display()));
     }
 
-    Ok(ConnectResult {
-        output: render_oauth_output(
-            &canonical_server.url,
-            &profile,
-            &client_id,
-            &runtime_project_id,
-            &config_path,
-            &log_path,
-            &oauth_profile,
-            &metadata,
-            created_oauth,
-        ),
-        disclosure_marker: None,
-    })
+    Ok(build_oauth_connect_result(
+        &canonical_server.url,
+        &profile,
+        &client_id,
+        &runtime_project_id,
+        &config_path,
+        &log_path,
+        &profile_dir,
+        &oauth_profile,
+        &metadata,
+    ))
 }
 
 pub(super) fn observer_token_for_disconnect(
@@ -961,6 +994,185 @@ mod tests {
             }
         });
         (format!("http://{address}"), handle)
+    }
+
+    fn test_oauth_profile(client_id: &str, client_secret: &str) -> OAuthConnectProfile {
+        OAuthConnectProfile {
+            version: OAUTH_PROFILE_VERSION,
+            server_url: "https://example.test".to_string(),
+            username: "alice".to_string(),
+            oauth_client_id: client_id.to_string(),
+            oauth_client_secret: client_secret.to_string(),
+            oauth_redirect_uri: "https://client.example/callback".to_string(),
+            allowed_scopes: vec!["runtime:read".to_string()],
+            agent_token_id: "agent-token-id".to_string(),
+        }
+    }
+
+    fn test_oauth_metadata() -> OAuthServerMetadata {
+        OAuthServerMetadata {
+            issuer: "https://example.test".to_string(),
+            authorization_endpoint: "https://example.test/oauth/authorize".to_string(),
+            token_endpoint: "https://example.test/oauth/token".to_string(),
+            scopes_supported: vec!["runtime:read".to_string()],
+        }
+    }
+
+    fn test_oauth_result(profile_dir: &Path, oauth: &OAuthConnectProfile) -> ConnectResult {
+        build_oauth_connect_result(
+            "https://example.test",
+            "profile",
+            "runner",
+            "agent:runner:project",
+            &profile_dir.join("agent.toml"),
+            &profile_dir.join("runner.log"),
+            profile_dir,
+            oauth,
+            &test_oauth_metadata(),
+        )
+    }
+
+    struct FailingOutput {
+        bytes: Vec<u8>,
+        fail_write: bool,
+        fail_flush: bool,
+    }
+
+    impl FailingOutput {
+        fn write_failure() -> Self {
+            Self {
+                bytes: Vec::new(),
+                fail_write: true,
+                fail_flush: false,
+            }
+        }
+
+        fn flush_failure() -> Self {
+            Self {
+                bytes: Vec::new(),
+                fail_write: false,
+                fail_flush: true,
+            }
+        }
+    }
+
+    impl Write for FailingOutput {
+        fn write(&mut self, content: &[u8]) -> std::io::Result<usize> {
+            if self.fail_write {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "injected OAuth output write failure",
+                ));
+            }
+            self.bytes.extend_from_slice(content);
+            Ok(content.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.fail_flush {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "injected OAuth output flush failure",
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_oauth_secret_remains_pending_after_later_connect_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile_dir = tmp.path();
+        let oauth = test_oauth_profile("wc_client_created", "wc_csec_created");
+
+        // The credential profile is committed before Runner startup/wait. A
+        // later connect failure produces no stdout and therefore no disclosure
+        // marker; the next attempt must still reveal the persisted secret.
+        std::fs::write(
+            profile_dir.join(OAUTH_PROFILE_FILE),
+            render_oauth_profile(&oauth).unwrap(),
+        )
+        .unwrap();
+        let retry = test_oauth_result(profile_dir, &oauth);
+        assert!(retry.output.contains("Client secret: wc_csec_created"));
+        let marker = oauth_secret_disclosure_marker(profile_dir, &oauth.oauth_client_id);
+        assert_eq!(retry.disclosure_marker.as_deref(), Some(marker.as_path()));
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn oauth_stdout_failure_leaves_secret_pending_for_retry() {
+        for mut stdout in [
+            FailingOutput::write_failure(),
+            FailingOutput::flush_failure(),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let profile_dir = tmp.path();
+            let oauth = test_oauth_profile("wc_client_pending", "wc_csec_pending");
+            let marker = oauth_secret_disclosure_marker(profile_dir, &oauth.oauth_client_id);
+            let result = test_oauth_result(profile_dir, &oauth);
+            assert!(result.output.contains("Client secret: wc_csec_pending"));
+
+            let error = super::super::write_connect_result(result, &mut stdout, &mut Vec::new())
+                .unwrap_err();
+            assert!(error.contains("connect output"));
+            assert!(!marker.exists());
+
+            let retry = test_oauth_result(profile_dir, &oauth);
+            assert!(retry.output.contains("Client secret: wc_csec_pending"));
+            assert!(retry.disclosure_marker.is_some());
+        }
+    }
+
+    #[test]
+    fn successful_oauth_secret_disclosure_hides_secret_on_reconnect() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile_dir = tmp.path();
+        let oauth = test_oauth_profile("wc_client_disclosed", "wc_csec_disclosed");
+        let marker = oauth_secret_disclosure_marker(profile_dir, &oauth.oauth_client_id);
+        let result = test_oauth_result(profile_dir, &oauth);
+        assert!(result.output.contains("Client secret: wc_csec_disclosed"));
+
+        super::super::write_connect_result(result, &mut Vec::new(), &mut Vec::new()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            "disclosed = true\n"
+        );
+        assert!(!std::fs::read_to_string(&marker)
+            .unwrap()
+            .contains("wc_csec_disclosed"));
+
+        let reconnect = test_oauth_result(profile_dir, &oauth);
+        assert!(!reconnect.output.contains("wc_csec_disclosed"));
+        assert!(!reconnect.output.contains("Client secret:"));
+        assert!(reconnect.disclosure_marker.is_none());
+    }
+
+    #[test]
+    fn oauth_client_rotation_invalidates_previous_disclosure_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile_dir = tmp.path();
+        let old = test_oauth_profile("wc_client_old", "wc_csec_old");
+        let old_marker = oauth_secret_disclosure_marker(profile_dir, &old.oauth_client_id);
+        super::super::write_connect_result(
+            test_oauth_result(profile_dir, &old),
+            &mut Vec::new(),
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert!(old_marker.is_file());
+
+        let rotated = test_oauth_profile("wc_client_rotated", "wc_csec_rotated");
+        let new_marker = oauth_secret_disclosure_marker(profile_dir, &rotated.oauth_client_id);
+        assert_ne!(old_marker, new_marker);
+        assert!(!new_marker.exists());
+        let result = test_oauth_result(profile_dir, &rotated);
+        assert!(result.output.contains("Client secret: wc_csec_rotated"));
+        assert_eq!(
+            result.disclosure_marker.as_deref(),
+            Some(new_marker.as_path())
+        );
     }
 
     #[tokio::test]

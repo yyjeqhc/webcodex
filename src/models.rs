@@ -205,7 +205,11 @@ pub struct OAuthClientRecord {
     /// SHA-256 hash of the client secret. The plaintext is never stored.
     pub client_secret_hash: String,
     pub name: String,
-    pub owner_user_id: String,
+    /// Managed-user owner for ordinary OAuth clients. Exactly one of this and
+    /// `owner_project_grant_id` is present.
+    pub owner_user_id: Option<String>,
+    /// Project-grant owner for project-first share OAuth clients.
+    pub owner_project_grant_id: Option<String>,
     /// Newline-separated list of allowed redirect URIs.
     pub redirect_uris: String,
     /// Space-separated scope list (same format as PAT scopes).
@@ -351,6 +355,14 @@ impl OAuthAuthorizationCodeRecord {
 }
 
 impl OAuthClientRecord {
+    pub fn is_managed_user_owned(&self) -> bool {
+        self.owner_user_id.is_some() && self.owner_project_grant_id.is_none()
+    }
+
+    pub fn is_project_grant_owned(&self) -> bool {
+        self.owner_user_id.is_none() && self.owner_project_grant_id.is_some()
+    }
+
     pub fn is_revoked(&self) -> bool {
         self.revoked_at.is_some()
     }

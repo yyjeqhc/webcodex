@@ -24,11 +24,13 @@ Hosted clients need HTTPS. There are three paths:
   and the bearer credential is the generated shared key. The exposed tool set
   comes from that Server's configured MCP model surface; `connect` does not
   turn the remote Server into a project-bound Connector.
-- **Local Share:** `webcodex share` starts the local Server + Agent and a
-  Cloudflare Quick Tunnel, then prints a temporary HTTPS `/mcp` URL and a
-  separate temporary Bearer credential. Ctrl-C revokes that access by stopping
-  the runtime/tunnel and removing the temporary share state. Use `--tunnel
-  none` only for local testing.
+- **Local Share:** `webcodex share` starts the local Server + Agent and, by
+  default, a Cloudflare Quick Tunnel with a separate temporary Bearer
+  credential. `webcodex share --auth oauth --oauth-redirect-uri <URL>` instead
+  exposes project-bound OAuth 2.0 Authorization Code + PKCE. The OAuth client
+  remains bound to the same project grant, while every code/access/refresh
+  grant is fenced to the current share process. Use `--tunnel none` for local
+  testing or with an operator-managed `--public-url`.
 - **Self-hosted:** use a stable HTTPS domain/tunnel, durable service
   management, and OAuth or scoped credentials for long-lived operation.
 
@@ -45,12 +47,14 @@ availability can vary by workspace and rollout.
 
 ### OAuth2
 
-When OAuth is enabled on a managed or self-hosted Server, MCP clients can use
+When OAuth is enabled on a managed/self-hosted Server, or by `webcodex share --auth oauth`, MCP clients can use
 the authorization-code flow instead of a static token. Register the exact
 ChatGPT callback URL as an OAuth client redirect URI; keep `offline_access`
 enabled when offered (it is a protocol-level refresh-token scope and grants no
 extra permission). Server-side OAuth setup is in
 [Deployment](DEPLOYMENT.md#oauth2).
+
+For project-first sharing, the authorization page asks for the temporary Project share credential and issues an `oauth2_project` identity carrying only `runtime:read`, `project:read`, `project:write`, and `job:run`. It does not create a managed user and OAuth tokens cannot be used on Agent transport. Quick Tunnel issuer URLs change between runs; use `--tunnel none --public-url https://...` behind your own stable HTTPS proxy/tunnel when the OAuth issuer must remain stable.
 
 ### Grok custom connector (OAuth)
 

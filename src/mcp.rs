@@ -3173,6 +3173,7 @@ fn mcp_token_kind_classification(auth: Option<&AuthContext>) -> &'static str {
         None => "none",
         Some("oauth2") => "oauth2",
         Some("oauth2_shared_key") => "oauth2_shared_key",
+        Some("oauth2_project") => "oauth2_project",
         Some("user") => "user",
         Some("agent") => "agent",
         Some(_) => "other",

@@ -89,8 +89,15 @@ Quick Tunnel and a separate temporary Connector credential. It prints a
 temporary `https://*.trycloudflare.com/mcp` URL and Bearer token; both stop
 being usable when the command exits.
 
-`webcodex share --tunnel none` starts the same runtime without a public tunnel
-for local debugging. Quick Tunnels are not a production deployment mechanism.
+For an MCP client that requires OAuth, register its exact callback and run:
+
+```bash
+webcodex share --auth oauth --oauth-redirect-uri https://client.example/callback
+```
+
+The command prints the temporary Project share credential plus a project-bound OAuth client ID/secret. Enter the Project share credential only on the WebCodex authorization page. OAuth grants are fenced to that `share` process, so a restart invalidates old access and refresh tokens. The client ID/secret remain in protected project state for reuse with the same callback.
+
+`webcodex share --tunnel none` starts the same runtime without a public tunnel for local debugging. For a stable operator-managed OAuth origin, combine it with `--public-url https://share.example` and route that HTTPS origin to the local WebCodex port yourself. Quick Tunnels are not a stable-origin or production deployment mechanism.
 
 ### Connect to an existing Server
 

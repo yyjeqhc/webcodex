@@ -410,6 +410,12 @@ pub struct OAuth2Config {
     /// Exact server-generated OAuth client IDs whose active registrations may
     /// use the ChatGPT MCP host-file import path. Empty by default.
     pub trusted_mcp_file_client_ids: Vec<String>,
+    /// Exact project grant active for a project-first OAuth share session.
+    /// Unset on managed/self-hosted OAuth servers.
+    pub project_share_grant_id: Option<String>,
+    /// Ephemeral share-session fence. A new `webcodex share --auth oauth`
+    /// process uses a new value, invalidating every older project-share grant.
+    pub project_share_session_id: Option<String>,
 }
 
 impl Default for OAuth2Config {
@@ -423,6 +429,8 @@ impl Default for OAuth2Config {
             require_pkce: true,
             shared_key_bridge_enabled: false,
             trusted_mcp_file_client_ids: Vec::new(),
+            project_share_grant_id: None,
+            project_share_session_id: None,
         }
     }
 }
@@ -486,6 +494,14 @@ impl OAuth2Config {
                     client_ids
                 })
                 .unwrap_or_default();
+        let project_share_grant_id = std::env::var("WEBCODEX_OAUTH2_PROJECT_SHARE_GRANT_ID")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let project_share_session_id = std::env::var("WEBCODEX_OAUTH2_PROJECT_SHARE_SESSION_ID")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         Self {
             issuer,
             enabled,
@@ -495,6 +511,8 @@ impl OAuth2Config {
             require_pkce,
             shared_key_bridge_enabled,
             trusted_mcp_file_client_ids,
+            project_share_grant_id,
+            project_share_session_id,
         }
     }
 }

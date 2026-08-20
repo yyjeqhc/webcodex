@@ -446,7 +446,8 @@ only for local/trusted-network demos."
                 .get(oauth_http::oauth_authorize)
                 .push(Router::with_path("login").post(oauth_http::oauth_authorize_login))
                 .push(Router::with_path("consent").post(oauth_http::oauth_authorize_consent))
-                .push(Router::with_path("bridge").post(oauth_http::oauth_authorize_bridge)),
+                .push(Router::with_path("bridge").post(oauth_http::oauth_authorize_bridge))
+                .push(Router::with_path("project").post(oauth_http::oauth_authorize_project)),
         )
         .push(
             Router::with_path(".well-known/oauth-protected-resource")

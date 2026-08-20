@@ -28,9 +28,13 @@ Server API 完成。
 | `webcodex doctor` | 当前项目的只读就绪检查 | 输出稳定的 `next action`；用 `--json` 获取结构化结果。 |
 | `webcodex run` | 启动 project-bound loopback Server 与本地 Runner | 前台运行；Ctrl-C 同时停止两者。 |
 | `webcodex status` | 简洁的项目 coding 就绪状态 | `doctor` 提供完整检查。 |
-| `webcodex share` | 临时把本地项目通过 HTTPS 分享出去 | 启动 Cloudflare Quick Tunnel，输出临时 URL 与 credential。 |
+| `webcodex share` | 通过 HTTPS 分享本地项目 | 默认使用临时 Bearer credential；`--auth oauth --oauth-redirect-uri <URL>` 可启用 project-bound OAuth。 |
 | `webcodex connect <server>` | 把当前项目接入已有的 Server | 创建 profile、启动 detached Runner、输出 MCP URL 与 key。 |
 | `webcodex disconnect [--project PATH] [--profile NAME]` | 移除一个 hosted 项目注册 | 是该仓库 `connect` 的精确逆操作；绝不删除仓库或 `.git`。 |
+
+`webcodex share --auth oauth --oauth-redirect-uri <精确回调地址>` 使用 OAuth 2.0 Authorization Code + PKCE S256。OAuth client ID/secret 会按“项目 + 回调地址”保存在受保护的 project state 中；authorization code、access token、refresh token 与临时 Project Credential 则都被 fenced 到当前 `share` 进程。重启 `share` 会让旧 OAuth grant 失效，但不会改变 Connector 的稳定 project identity。OAuth access token 永远不能用于 Runner/Agent transport。
+
+Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS origin，可使用 `--tunnel none --public-url https://share.example`，并由 operator 自己把该 origin 反向代理/隧道到 loopback WebCodex Server；`--public-url` 只声明外部 origin/issuer，不会创建代理或 tunnel。
 
 `disconnect` 按 canonical 仓库路径匹配，不根据 basename 或 project id 猜测。如果同一仓库
 注册在多个 hosted profile 中，必须显式指定 `--profile`。managed Runner 在线时，它先执行

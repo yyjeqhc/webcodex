@@ -81,8 +81,15 @@ webcodex share
 一把独立的临时 Connector credential。它输出临时 `https://*.trycloudflare.com/mcp`
 URL 与 Bearer token；命令退出后两者都失效。
 
-`webcodex share --tunnel none` 在不开放公网 tunnel 的情况下启动同一 runtime，
-用于本地调试。Quick Tunnel 不适合作为生产部署。
+如果 MCP 客户端要求 OAuth，先确定它的精确 callback，然后运行：
+
+```bash
+webcodex share --auth oauth --oauth-redirect-uri https://client.example/callback
+```
+
+命令会输出临时 Project share credential，以及 project-bound OAuth client ID/secret。Project share credential 只应输入 WebCodex 自己的授权页。OAuth grant 被 fenced 到本次 `share` 进程，因此重启后旧 access/refresh token 失效；同一项目与 callback 的 client ID/secret 会保存在受保护的 project state 中以便复用。
+
+`webcodex share --tunnel none` 在不开放公网 tunnel 的情况下启动同一 runtime，用于本地调试。如需稳定、由 operator 管理的 OAuth origin，可再加 `--public-url https://share.example`，并自行把该 HTTPS origin 反向代理/隧道到本地 WebCodex 端口。Quick Tunnel 不提供稳定 origin，也不适合作为生产部署。
 
 ### 接入已有 Server
 

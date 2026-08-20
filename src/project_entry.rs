@@ -208,12 +208,14 @@ pub(crate) fn usage() -> &'static str {
        webcodex run [--root PATH] [--profile NAME] [--state-dir PATH]\n\
                               [--console-assets-dir ABSOLUTE_PATH]\n\
        webcodex share [--root PATH] [--profile NAME] [--state-dir PATH]\n\
-                     [--tunnel cloudflare|none]\n\n\
+                     [--tunnel cloudflare|none] [--auth bearer|oauth]\n\
+                     [--oauth-redirect-uri URL] [--public-url URL]\n\n\
 Run setup in a local Git project. It writes private WebCodex state outside the\n\
 checkout and never starts services, modifies Git content, or opens a network\n\
 port. `run` is the explicit foreground runtime step. Its optional\n\
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
-`share` starts the same local runtime with a temporary Connector credential.\n"
+`share` starts the same local runtime with a temporary Connector credential;\n\
+`--auth oauth` adds project-bound OAuth while preserving that project grant.\n"
 }
 
 pub(crate) fn readiness_with_probe(
@@ -602,9 +604,16 @@ pub(crate) fn render_error(error: &ProductError, json: bool) -> String {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct ProjectShareOAuthRuntimeOptions {
+    pub(super) project_grant_id: String,
+    pub(super) session_id: String,
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct LocalRuntimeOptions {
     pub(super) public_url: Option<String>,
     pub(super) connector_credential_file: Option<PathBuf>,
+    pub(super) project_share_oauth: Option<ProjectShareOAuthRuntimeOptions>,
     pub(super) port_conflict_action: &'static str,
 }
 
@@ -613,6 +622,7 @@ impl Default for LocalRuntimeOptions {
         Self {
             public_url: None,
             connector_credential_file: None,
+            project_share_oauth: None,
             port_conflict_action: "Stop the conflicting process, then run webcodex run.",
         }
     }
@@ -689,6 +699,7 @@ pub(super) async fn start_local_runtime(
     let console_assets_dir = resolve_console_assets_directory(options)?;
     let (config, paths) = configured_project(options)?;
     ensure_local_runtime_port_available(config.port, runtime_options.port_conflict_action)?;
+    let project_share_oauth = runtime_options.project_share_oauth.clone();
     let agent_binary = locate_agent_binary().ok_or_else(|| {
         ProductError::new(
             "required_capability_unavailable",
@@ -726,7 +737,12 @@ pub(super) async fn start_local_runtime(
         .env("WEBCODEX_SHARED_KEY_ENABLED", "false")
         .env("WEBCODEX_ALLOW_ANONYMOUS", "false")
         .env("WEBCODEX_PUBLIC_URL", &public_url)
-        .env("WEBCODEX_OAUTH2_ENABLED", "false")
+        .env("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE", "false")
+        .env("WEBCODEX_OAUTH2_REQUIRE_PKCE", "true")
+        .env("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS", "3600")
+        .env("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "2592000")
+        .env("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "300")
+        .env("WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS", "")
         .env("WEBCODEX_QUIC_ENABLED", "false")
         .env("WEBCODEX_CONNECTOR_SURFACE", "task-v1")
         .env(
@@ -750,6 +766,22 @@ pub(super) async fn start_local_runtime(
         .stdout(Stdio::from(server_log))
         .stderr(Stdio::from(server_error))
         .kill_on_drop(true);
+    if let Some(oauth) = project_share_oauth {
+        server_command
+            .env("WEBCODEX_OAUTH2_ENABLED", "true")
+            .env("WEBCODEX_OAUTH2_ISSUER", &public_url)
+            .env(
+                "WEBCODEX_OAUTH2_PROJECT_SHARE_GRANT_ID",
+                oauth.project_grant_id,
+            )
+            .env("WEBCODEX_OAUTH2_PROJECT_SHARE_SESSION_ID", oauth.session_id);
+    } else {
+        server_command
+            .env("WEBCODEX_OAUTH2_ENABLED", "false")
+            .env_remove("WEBCODEX_OAUTH2_ISSUER")
+            .env_remove("WEBCODEX_OAUTH2_PROJECT_SHARE_GRANT_ID")
+            .env_remove("WEBCODEX_OAUTH2_PROJECT_SHARE_SESSION_ID");
+    }
     configure_console_assets_environment(&mut server_command, console_assets_dir.as_deref());
     let mut server = server_command.spawn().map_err(|_| {
         ProductError::new(

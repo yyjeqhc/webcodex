@@ -65,6 +65,61 @@ async fn oauth_client_create_returns_client_secret_once() {
 }
 
 #[tokio::test]
+async fn managed_oauth_client_api_hides_and_cannot_mutate_project_share_clients() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let token = seed_user_token(&db, &user);
+    let (project_client, _secret) = seed_project_share_client(
+        &db,
+        TEST_PROJECT_GRANT_ID,
+        "https://client.example/callback",
+    );
+    let service = Service::new(build_router(config, db.clone()));
+
+    let mut list = authorized_post_json(
+        "http://localhost/api/oauth/clients/list",
+        "{}".to_string(),
+        &token,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(list.status_code, Some(StatusCode::OK));
+    let body: serde_json::Value = list.take_json().await.unwrap();
+    assert!(body["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|client| client["client_id"] != project_client.client_id));
+
+    let update = authorized_post_json(
+        "http://localhost/api/oauth/clients/update_scopes",
+        serde_json::json!({
+            "client_id": project_client.client_id,
+            "allowed_scopes": ["runtime:read"]
+        })
+        .to_string(),
+        &token,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(update.status_code, Some(StatusCode::NOT_FOUND));
+
+    let revoke = authorized_post_json(
+        "http://localhost/api/oauth/clients/revoke",
+        serde_json::json!({"client_id": project_client.client_id}).to_string(),
+        &token,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(revoke.status_code, Some(StatusCode::NOT_FOUND));
+    assert!(db
+        .get_oauth_client_by_client_id(&project_client.client_id)
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
 async fn oauth_client_create_hashes_secret_only() {
     let config = test_config(oauth2_enabled());
     let (_tmp, db) = test_db();

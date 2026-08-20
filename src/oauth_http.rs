@@ -28,12 +28,14 @@ mod clients;
 mod html;
 mod managed_authorize;
 mod metadata;
+mod project_share;
 mod responses;
 mod revoke;
 mod scope_registry;
 mod shared_key_bridge;
 mod token;
 
+pub(crate) use clients::validate_redirect_uri;
 pub(crate) use clients::{
     oauth_clients_create, oauth_clients_list, oauth_clients_revoke, oauth_clients_update_scopes,
 };
@@ -50,6 +52,11 @@ pub(crate) use managed_authorize::{
     oauth_authorize, oauth_authorize_consent, oauth_authorize_login, AuthorizeSessionStore,
 };
 pub(crate) use metadata::{oauth_authorization_server_metadata, oauth_metadata};
+pub(crate) use project_share::oauth_authorize_project;
+#[cfg(test)]
+pub(crate) use project_share::{
+    normalize_project_share_oauth_scopes, PROJECT_SHARE_OAUTH_INVALID_SCOPE_MESSAGE,
+};
 use responses::{apply_oauth_no_store_headers, oauth_error};
 pub(crate) use revoke::oauth_revoke;
 pub(crate) use scope_registry::{

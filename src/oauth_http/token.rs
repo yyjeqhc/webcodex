@@ -353,6 +353,41 @@ async fn handle_authorization_code_grant(
 
     // --- Pre-exchange validation (using metadata, code is NOT yet consumed) ---
 
+    if crate::auth::validate_project_share_grant_subject(
+        config,
+        &code_record.subject_kind,
+        &code_record.subject_id,
+    )
+    .is_err()
+    {
+        let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
+        oauth_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            "authorization grant is no longer active",
+        );
+        return;
+    }
+    if code_record.subject_kind == crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND {
+        let owner_matches = crate::auth::parse_project_share_subject_id(&code_record.subject_id)
+            .ok()
+            .is_some_and(|(grant_id, _)| {
+                client.is_project_grant_owned()
+                    && client.owner_project_grant_id.as_deref() == Some(grant_id)
+            });
+        if !owner_matches {
+            let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "authorization grant does not belong to this client",
+            );
+            return;
+        }
+    }
+
     if code_record.client_id != client.client_id {
         let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
         oauth_error(
@@ -616,6 +651,40 @@ async fn handle_refresh_token_grant(
             return;
         }
     };
+
+    if crate::auth::validate_project_share_grant_subject(
+        config,
+        &old_rt_metadata.subject_kind,
+        &old_rt_metadata.subject_id,
+    )
+    .is_err()
+    {
+        oauth_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            "refresh token is no longer active",
+        );
+        return;
+    }
+    if old_rt_metadata.subject_kind == crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND {
+        let owner_matches =
+            crate::auth::parse_project_share_subject_id(&old_rt_metadata.subject_id)
+                .ok()
+                .is_some_and(|(grant_id, _)| {
+                    client.is_project_grant_owned()
+                        && client.owner_project_grant_id.as_deref() == Some(grant_id)
+                });
+        if !owner_matches {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "refresh token does not belong to this client",
+            );
+            return;
+        }
+    }
 
     let token_resource = match resolve_token_resource(
         config,

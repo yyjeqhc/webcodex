@@ -171,9 +171,12 @@ pub(crate) fn enforce_token_surface(
     ctx: &AuthContext,
     path: &str,
 ) -> Result<(), (StatusCode, &'static str)> {
-    // Lightweight principals, project credentials, and shared-key OAuth
-    // subjects must never reach account-control management surfaces.
-    if (ctx.is_lightweight() || ctx.is_project_credential() || ctx.is_oauth_shared_key_subject())
+    // Lightweight principals, project credentials, and project/lightweight
+    // OAuth subjects must never reach account-control management surfaces.
+    if (ctx.is_lightweight()
+        || ctx.is_project_credential()
+        || ctx.is_oauth_shared_key_subject()
+        || ctx.is_oauth_project_subject())
         && is_account_control_path(path)
     {
         return Err((
@@ -228,7 +231,7 @@ pub(crate) fn enforce_project_connector_surface(
     if !enabled || ctx.is_bootstrap() || ctx.is_agent_token() {
         return Ok(());
     }
-    if ctx.is_project_credential()
+    if (ctx.is_project_credential() || ctx.is_oauth_project_subject())
         && (path == "/mcp" || is_project_connector_path(path) || is_project_console_path(path))
     {
         return Ok(());

@@ -63,7 +63,7 @@ mod detached_scope_tests {
 /// - Scheme must be `http` or `https`.
 /// - `http` is only allowed for loopback hosts (`localhost`, `127.0.0.1`,
 ///   `[::1]`). All other hosts must use `https`.
-fn validate_redirect_uri(uri: &str) -> Result<(), String> {
+pub(crate) fn validate_redirect_uri(uri: &str) -> Result<(), String> {
     let trimmed = uri.trim();
     if trimmed.is_empty() {
         return Err("redirect_uri cannot be empty".to_string());
@@ -238,7 +238,8 @@ pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, r
         client_id: crate::auth::generate_oauth_client_id(),
         client_secret_hash: secret_hash,
         name: name.clone(),
-        owner_user_id,
+        owner_user_id: Some(owner_user_id),
+        owner_project_grant_id: None,
         redirect_uris: redirect_uris_str,
         allowed_scopes: allowed_scopes_str,
         created_at: now,
@@ -300,6 +301,7 @@ pub(crate) async fn oauth_clients_list(depot: &mut Depot, res: &mut Response) {
 
     let clients_json: Vec<serde_json::Value> = clients
         .into_iter()
+        .filter(|client| client.is_managed_user_owned())
         .map(|c| {
             serde_json::json!({
                 "client_id": c.client_id,
@@ -399,6 +401,11 @@ pub(crate) async fn oauth_clients_update_scopes(
             return;
         }
     };
+    if !current.is_managed_user_owned() {
+        res.status_code(StatusCode::NOT_FOUND);
+        res.render(Json(serde_json::json!({"error": "OAuth client not found"})));
+        return;
+    }
 
     let now = chrono::Utc::now().timestamp();
     let (changed, access_tokens, refresh_tokens, authorization_codes) = match db
@@ -485,6 +492,23 @@ pub(crate) async fn oauth_clients_revoke(req: &mut Request, depot: &mut Depot, r
         res.status_code(StatusCode::BAD_REQUEST);
         res.render(Json(serde_json::json!({"error": "client_id is required"})));
         return;
+    }
+
+    match db.get_oauth_client_by_client_id(&client_id) {
+        Ok(Some(client)) if !client.is_managed_user_owned() => {
+            res.status_code(StatusCode::NOT_FOUND);
+            res.render(Json(serde_json::json!({"error": "OAuth client not found"})));
+            return;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(Json(serde_json::json!({
+                "error": "failed to read client",
+                "detail": e.to_string()
+            })));
+            return;
+        }
     }
 
     let now = chrono::Utc::now().timestamp();

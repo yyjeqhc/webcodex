@@ -111,6 +111,12 @@ impl AuthContext {
         self.is_oauth_token() && self.token_kind.as_deref() == Some("oauth2_shared_key")
     }
 
+    pub fn is_oauth_project_subject(&self) -> bool {
+        self.is_oauth_token()
+            && self.token_kind.as_deref() == Some(super::PROJECT_SHARE_OAUTH_TOKEN_KIND)
+            && self.project_grant_id.is_some()
+    }
+
     pub fn is_shared_key(&self) -> bool {
         matches!(self.kind, AuthKind::SharedKey)
     }

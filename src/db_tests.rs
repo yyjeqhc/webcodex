@@ -303,7 +303,8 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
         client_id: "wc_client_test".to_string(),
         client_secret_hash: "secret-hash".to_string(),
         name: "test".to_string(),
-        owner_user_id: "u-1".to_string(),
+        owner_user_id: Some("u-1".to_string()),
+        owner_project_grant_id: None,
         redirect_uris: "https://example.com/cb".to_string(),
         allowed_scopes: "runtime:read".to_string(),
         created_at: now,
@@ -967,6 +968,97 @@ fn assert_oauth_subject_columns(conn: &Connection, table: &str) {
 }
 
 #[test]
+fn open_migrates_legacy_oauth_client_user_owner_to_dual_owner_schema() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("legacy-oauth-owner.db");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "
+            PRAGMA foreign_keys = ON;
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                display_name TEXT,
+                role TEXT NOT NULL DEFAULT 'user',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER,
+                disabled INTEGER NOT NULL DEFAULT 0,
+                disabled_at INTEGER
+            );
+            CREATE TABLE oauth_clients (
+                id TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL UNIQUE,
+                client_secret_hash TEXT NOT NULL,
+                name TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                redirect_uris TEXT NOT NULL DEFAULT '',
+                allowed_scopes TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id)
+            );
+            INSERT INTO users
+                (id, username, display_name, role, created_at, updated_at, disabled, disabled_at)
+            VALUES ('u-legacy', 'legacy', NULL, 'user', 1, 1, 0, NULL);
+            INSERT INTO oauth_clients
+                (id, client_id, client_secret_hash, name, owner_user_id,
+                 redirect_uris, allowed_scopes, created_at, revoked_at)
+            VALUES
+                ('oc-legacy', 'wc_client_legacy', 'hash', 'Legacy', 'u-legacy',
+                 'https://example.com/callback', 'runtime:read', 1, NULL);
+            ",
+        )
+        .unwrap();
+    }
+
+    let db = Database::open(&path).unwrap();
+    let client = db
+        .get_oauth_client_by_client_id("wc_client_legacy")
+        .unwrap()
+        .unwrap();
+    assert_eq!(client.owner_user_id.as_deref(), Some("u-legacy"));
+    assert_eq!(client.owner_project_grant_id, None);
+    assert!(client.is_managed_user_owned());
+
+    let conn = db.conn_for_tests();
+    let columns = conn
+        .prepare("PRAGMA table_info(oauth_clients)")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(columns
+        .iter()
+        .any(|(name, _)| name == "owner_project_grant_id"));
+    assert_eq!(
+        columns
+            .iter()
+            .find(|(name, _)| name == "owner_user_id")
+            .map(|(_, not_null)| *not_null),
+        Some(0),
+        "owner_user_id must become nullable so project-owned clients are representable"
+    );
+    let project_owner_index: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_oauth_clients_project_owner'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(project_owner_index, 1);
+    let foreign_key_violations: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(foreign_key_violations, 0);
+}
+
+#[test]
 fn fresh_database_creates_oauth_tables() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
@@ -1006,7 +1098,8 @@ fn can_insert_and_get_oauth_client() {
         .unwrap()
         .unwrap();
     assert_eq!(fetched.name, "Test App");
-    assert_eq!(fetched.owner_user_id, user.id);
+    assert_eq!(fetched.owner_user_id.as_deref(), Some(user.id.as_str()));
+    assert_eq!(fetched.owner_project_grant_id, None);
     assert!(!fetched.is_revoked());
     assert_eq!(
         fetched.redirect_uris_vec(),

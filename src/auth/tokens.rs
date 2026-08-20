@@ -227,15 +227,15 @@ impl TokenVerifier for OAuth2Verifier {
         }
 
         // Verify the owning client is not revoked.
-        match db.get_oauth_client_by_client_id(&at_record.client_id) {
-            Ok(Some(_)) => {} // client is active
+        let client = match db.get_oauth_client_by_client_id(&at_record.client_id) {
+            Ok(Some(client)) => client,
             Ok(None) => {
                 return Err("OAuth2 client is revoked".to_string());
             }
             Err(_) => {
                 return Err("internal error".to_string());
             }
-        }
+        };
 
         let ctx = match at_record.subject_kind.as_str() {
             "managed_user" => {
@@ -295,6 +295,41 @@ impl TokenVerifier for OAuth2Verifier {
                     token_kind: Some("oauth2_shared_key".to_string()),
                     allowed_client_id: Some(at_record.client_id.clone()),
                     shared_key_hash: Some(shared_key_hash.to_string()),
+                    ..AuthContext::new(AuthKind::OAuth2Token)
+                }
+            }
+            crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND => {
+                if at_record.user_id.is_some() || at_record.shared_key_hash.is_some() {
+                    return Err(
+                        "project-share OAuth2 token carries invalid identity fields".to_string()
+                    );
+                }
+                crate::auth::validate_project_share_grant_subject(
+                    config,
+                    &at_record.subject_kind,
+                    &at_record.subject_id,
+                )?;
+                if !crate::auth::project_share_scopes_are_bounded(&at_record.scopes) {
+                    return Err(
+                        "project-share OAuth2 token exceeds Connector scope ceiling".to_string()
+                    );
+                }
+                let (grant_id, _) =
+                    crate::auth::parse_project_share_subject_id(&at_record.subject_id)?;
+                if !client.is_project_grant_owned()
+                    || client.owner_project_grant_id.as_deref() != Some(grant_id)
+                {
+                    return Err(
+                        "project-share OAuth2 client does not match project grant".to_string()
+                    );
+                }
+                AuthContext {
+                    api_key_id: Some(at_record.id.clone()),
+                    role: Some("project".to_string()),
+                    scopes: at_record.scopes_vec(),
+                    token_kind: Some(crate::auth::PROJECT_SHARE_OAUTH_TOKEN_KIND.to_string()),
+                    allowed_client_id: Some(at_record.client_id.clone()),
+                    project_grant_id: Some(grant_id.to_string()),
                     ..AuthContext::new(AuthKind::OAuth2Token)
                 }
             }

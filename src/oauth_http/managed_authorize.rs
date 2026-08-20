@@ -943,6 +943,30 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         }
     }
 
+    match crate::auth::configured_project_share_subject(&config) {
+        Ok(Some(_)) => {
+            let Some(validated) = super::project_share::validate_project_share_authorize_request(
+                res, &config, &db, &query,
+            ) else {
+                return;
+            };
+            super::project_share::render_project_share_authorize_form(
+                res, &validated, &query, None,
+            );
+            return;
+        }
+        Ok(None) => {}
+        Err(_) => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                "project share OAuth configuration is incomplete",
+            );
+            return;
+        }
+    }
+
     // Path 1: Bearer token (first-party direct issuance). A PAT (ApiToken)
     // with a concrete user_id goes straight to code issuance. Bootstrap is
     // rejected because it has no user_id to bind the authorization code to.

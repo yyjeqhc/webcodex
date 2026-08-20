@@ -23,10 +23,12 @@ Hosted 客户端需要 HTTPS。有三种路径：
   Runner。MCP URL 为 `https://your-server.example/mcp`，bearer 凭据为生成的共享
   key。暴露的工具集合由该 Server 配置的 MCP model surface 决定；`connect` 不会
   把远端 Server 变成 project-bound Connector。
-- **本地分享：** `webcodex share` 启动本地 Server + Agent 与 Cloudflare Quick
-  Tunnel，并输出临时 HTTPS `/mcp` URL 与独立的临时 Bearer credential。Ctrl-C
-  通过停止 runtime/tunnel 并删除临时分享状态来撤销访问。`--tunnel none` 只用于
-  本地测试。
+- **本地分享：** `webcodex share` 启动本地 Server + Agent；默认启动 Cloudflare
+  Quick Tunnel 并使用独立的临时 Bearer credential。`webcodex share --auth oauth
+  --oauth-redirect-uri <URL>` 则暴露 project-bound OAuth 2.0 Authorization Code +
+  PKCE。OAuth client 仍绑定同一个 project grant，而 code/access/refresh grant
+  都 fenced 到当前 share 进程。`--tunnel none` 可用于本地测试，或配合 operator
+  管理的 `--public-url` 使用。
 - **自托管：** 使用稳定 HTTPS 域名/tunnel、持久服务管理与 OAuth 或受限凭据进行
   长期运行。
 
@@ -42,10 +44,12 @@ Tools / 扫描工具**。ChatGPT 的 UI 文案与可用范围可能随 workspace
 
 ### OAuth2
 
-当 managed 或自托管 Server 启用 OAuth 时，MCP 客户端可以使用 authorization-code
+当 managed/自托管 Server 启用 OAuth，或使用 `webcodex share --auth oauth` 时，MCP 客户端可以使用 authorization-code
 流程而非静态 token。把精确的 ChatGPT callback URL 注册为 OAuth client redirect
 URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-token scope，不授予
 额外权限）。服务端 OAuth 设置见[部署指南](DEPLOYMENT.zh-CN.md#oauth2)。
+
+对于 project-first share，授权页要求输入本次临时 Project share credential，并签发只带 `runtime:read`、`project:read`、`project:write`、`job:run` 的 `oauth2_project` 身份；它不会创建 managed user，OAuth token 也不能用于 Agent transport。Quick Tunnel 的 issuer URL 每次运行都会变化；如果 OAuth issuer 必须稳定，请使用 `--tunnel none --public-url https://...` 并在外部配置稳定 HTTPS proxy/tunnel。
 
 ### Grok Custom Connector（OAuth）
 

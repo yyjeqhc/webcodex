@@ -1,4 +1,5 @@
 use super::*;
+use crate::auth::middleware::enforce_project_connector_surface;
 
 fn bootstrap_ctx() -> AuthContext {
     bootstrap_context()
@@ -1151,6 +1152,114 @@ async fn oauth2_verifier_rejects_token_for_disabled_user() {
     let verifier = OAuth2Verifier;
     let result = verifier.verify(&config, Some(&db), &plaintext).await;
     assert!(result.is_err(), "token for disabled user should return Err");
+}
+
+#[tokio::test]
+async fn oauth2_verifier_accepts_current_project_share_and_preserves_project_identity() {
+    let mut config = (*gate_test_config_oauth2(Some("secret"))).clone();
+    config.oauth2.project_share_grant_id = Some("wc_pgrant_111111111111111111111111".to_string());
+    config.oauth2.project_share_session_id = Some(
+        "wc_share_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+    );
+    let config = Arc::new(config);
+    let (_tmp, db) = gate_test_db();
+    let secret = generate_oauth_client_secret();
+    let client = crate::models::OAuthClientRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        client_id: generate_oauth_client_id(),
+        client_secret_hash: hash_token(&secret),
+        name: "project-share".to_string(),
+        owner_user_id: None,
+        owner_project_grant_id: Some("wc_pgrant_111111111111111111111111".to_string()),
+        redirect_uris: "https://client.example/callback".to_string(),
+        allowed_scopes: "runtime:read project:read project:write job:run".to_string(),
+        created_at: chrono::Utc::now().timestamp(),
+        revoked_at: None,
+    };
+    db.insert_oauth_client(&client).unwrap();
+    let plaintext = generate_oauth_access_token();
+    let now = chrono::Utc::now().timestamp();
+    db.insert_oauth_access_token(&crate::models::OAuthAccessTokenRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        token_hash: hash_token(&plaintext),
+        client_id: client.client_id.clone(),
+        subject_kind: PROJECT_SHARE_OAUTH_SUBJECT_KIND.to_string(),
+        subject_id: "wc_pgrant_111111111111111111111111|wc_share_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        user_id: None,
+        scopes: "runtime:read project:read project:write job:run".to_string(),
+        resource: Some("https://share.example/mcp".to_string()),
+        shared_key_hash: None,
+        created_at: now,
+        expires_at: now + 3600,
+        revoked_at: None,
+        last_used_at: None,
+    })
+    .unwrap();
+
+    let ctx = OAuth2Verifier
+        .verify(&config, Some(&db), &plaintext)
+        .await
+        .unwrap()
+        .expect("current project-share token should verify");
+    assert!(ctx.is_oauth_project_subject());
+    assert_eq!(
+        ctx.project_grant_id.as_deref(),
+        Some("wc_pgrant_111111111111111111111111")
+    );
+    assert_eq!(
+        ctx.token_kind.as_deref(),
+        Some(PROJECT_SHARE_OAUTH_TOKEN_KIND)
+    );
+    assert!(enforce_project_connector_surface(true, &ctx, "/mcp").is_ok());
+    for path in AGENT_TRANSPORT_PATHS {
+        assert!(enforce_token_surface(&ctx, path).is_err());
+    }
+}
+
+#[tokio::test]
+async fn oauth2_verifier_rejects_stale_project_share_session() {
+    let mut config = (*gate_test_config_oauth2(Some("secret"))).clone();
+    config.oauth2.project_share_grant_id = Some("wc_pgrant_111111111111111111111111".to_string());
+    config.oauth2.project_share_session_id = Some(
+        "wc_share_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+    );
+    let config = Arc::new(config);
+    let (_tmp, db) = gate_test_db();
+    let client = crate::models::OAuthClientRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        client_id: generate_oauth_client_id(),
+        client_secret_hash: hash_token(&generate_oauth_client_secret()),
+        name: "project-share".to_string(),
+        owner_user_id: None,
+        owner_project_grant_id: Some("wc_pgrant_111111111111111111111111".to_string()),
+        redirect_uris: "https://client.example/callback".to_string(),
+        allowed_scopes: "runtime:read project:read project:write job:run".to_string(),
+        created_at: chrono::Utc::now().timestamp(),
+        revoked_at: None,
+    };
+    db.insert_oauth_client(&client).unwrap();
+    let plaintext = generate_oauth_access_token();
+    let now = chrono::Utc::now().timestamp();
+    db.insert_oauth_access_token(&crate::models::OAuthAccessTokenRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        token_hash: hash_token(&plaintext),
+        client_id: client.client_id,
+        subject_kind: PROJECT_SHARE_OAUTH_SUBJECT_KIND.to_string(),
+        subject_id: "wc_pgrant_111111111111111111111111|wc_share_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        user_id: None,
+        scopes: "runtime:read".to_string(),
+        resource: Some("https://share.example/mcp".to_string()),
+        shared_key_hash: None,
+        created_at: now,
+        expires_at: now + 3600,
+        revoked_at: None,
+        last_used_at: None,
+    })
+    .unwrap();
+    assert!(OAuth2Verifier
+        .verify(&config, Some(&db), &plaintext)
+        .await
+        .is_err());
 }
 
 // -----------------------------------------------------------------------

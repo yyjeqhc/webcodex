@@ -1,10 +1,13 @@
 use super::setup_service::{
-    create_private_dir, generate_project_credential, read_project_credential, write_new_private,
+    create_private_dir, generate_project_credential, read_private_value, read_project_credential,
+    write_new_private, ProjectConfig, ProjectPaths,
 };
 use super::{
     configured_project, ensure_local_runtime_port_available, executable_name, parse_options, setup,
     start_local_runtime, LocalRuntimeOptions, ProductError, ProjectCommandOptions,
+    ProjectShareOAuthRuntimeOptions,
 };
+use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -26,14 +29,26 @@ pub(crate) enum TunnelProvider {
     None,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShareAuth {
+    Bearer,
+    OAuth,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ShareCommandOptions {
     pub(crate) project: ProjectCommandOptions,
     pub(crate) tunnel: TunnelProvider,
+    pub(crate) auth: ShareAuth,
+    pub(crate) oauth_redirect_uri: Option<String>,
+    pub(crate) public_url: Option<String>,
 }
 
 pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions, String> {
     let mut tunnel = TunnelProvider::CloudflareQuick;
+    let mut auth = ShareAuth::Bearer;
+    let mut oauth_redirect_uri = None;
+    let mut public_url = None;
     let mut project_args = Vec::new();
     let mut index = 0;
     while index < args.len() {
@@ -53,12 +68,96 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
                     }
                 };
             }
+            "--auth" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--auth requires a value".to_string())?;
+                auth = match value.as_str() {
+                    "bearer" => ShareAuth::Bearer,
+                    "oauth" => ShareAuth::OAuth,
+                    _ => {
+                        return Err(format!(
+                            "unknown share auth '{value}'; expected bearer or oauth"
+                        ))
+                    }
+                };
+            }
+            "--oauth-redirect-uri" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--oauth-redirect-uri requires a value".to_string())?;
+                if oauth_redirect_uri
+                    .replace(value.trim().to_string())
+                    .is_some()
+                {
+                    return Err("--oauth-redirect-uri may be specified only once".to_string());
+                }
+            }
+            "--public-url" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--public-url requires a value".to_string())?;
+                if public_url
+                    .replace(validate_share_public_url(value)?)
+                    .is_some()
+                {
+                    return Err("--public-url may be specified only once".to_string());
+                }
+            }
             flag => project_args.push(flag.to_string()),
         }
         index += 1;
     }
+    if tunnel == TunnelProvider::CloudflareQuick && public_url.is_some() {
+        return Err("--public-url requires --tunnel none; Cloudflare Quick Tunnel supplies its own temporary URL".to_string());
+    }
+    match auth {
+        ShareAuth::OAuth if oauth_redirect_uri.as_deref().is_none_or(str::is_empty) => {
+            return Err("--auth oauth requires --oauth-redirect-uri <URL>".to_string());
+        }
+        ShareAuth::Bearer if oauth_redirect_uri.is_some() => {
+            return Err("--oauth-redirect-uri requires --auth oauth".to_string());
+        }
+        _ => {}
+    }
+    if let Some(redirect_uri) = oauth_redirect_uri.as_deref() {
+        crate::oauth_http::validate_redirect_uri(redirect_uri)?;
+    }
     let project = parse_options(&project_args, "share")?;
-    Ok(ShareCommandOptions { project, tunnel })
+    Ok(ShareCommandOptions {
+        project,
+        tunnel,
+        auth,
+        oauth_redirect_uri,
+        public_url,
+    })
+}
+
+fn validate_share_public_url(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    let parsed =
+        url::Url::parse(value).map_err(|_| "--public-url must be an absolute URL".to_string())?;
+    if parsed.username() != ""
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("--public-url must not contain credentials, query, or fragment".to_string());
+    }
+    if !matches!(parsed.path(), "" | "/") {
+        return Err("--public-url must be an origin without a path".to_string());
+    }
+    let host = parsed.host_str().unwrap_or("");
+    match parsed.scheme() {
+        "https" if !host.is_empty() => {}
+        "http" if matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]") => {}
+        "http" => return Err("--public-url must use https unless it is loopback".to_string()),
+        _ => return Err("--public-url must use http or https and include a host".to_string()),
+    }
+    Ok(value.trim_end_matches('/').to_string())
 }
 
 struct ShareSession {
@@ -95,6 +194,171 @@ impl Drop for ShareSession {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.directory);
     }
+}
+
+#[derive(Debug, Clone)]
+struct ShareOAuthClient {
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
+}
+
+fn valid_generated_oauth_value(value: &str, prefix: &str) -> bool {
+    value.strip_prefix(prefix).is_some_and(|suffix| {
+        suffix.len() == 64
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
+fn project_share_oauth_scopes() -> String {
+    crate::auth::PROJECT_SHARE_OAUTH_SCOPES.join(" ")
+}
+
+fn share_oauth_state_error(message: impl Into<String>) -> ProductError {
+    ProductError::new(
+        "project_registration_invalid",
+        message,
+        Some("Resolve the protected share OAuth state, then retry webcodex share --auth oauth."),
+    )
+}
+
+fn revoke_previous_share_oauth_grants(
+    db: &crate::Database,
+    client_id: &str,
+) -> Result<(), ProductError> {
+    let now = chrono::Utc::now().timestamp();
+    db.revoke_oauth_access_tokens_for_client(client_id, now)
+        .and_then(|_| db.revoke_oauth_refresh_tokens_for_client(client_id, now))
+        .and_then(|_| db.revoke_oauth_authorization_codes_for_client(client_id, now))
+        .map_err(|_| {
+            share_oauth_state_error("WebCodex could not retire previous share OAuth grants")
+        })?;
+    Ok(())
+}
+
+fn prepare_share_oauth_client(
+    config: &ProjectConfig,
+    paths: &ProjectPaths,
+    redirect_uri: &str,
+) -> Result<ShareOAuthClient, ProductError> {
+    crate::oauth_http::validate_redirect_uri(redirect_uri).map_err(|message| {
+        share_oauth_state_error(format!("invalid OAuth redirect URI: {message}"))
+    })?;
+    let redirect_uri = redirect_uri.trim().to_string();
+    let grant_id = config.project_grant_id(paths);
+    let digest = format!("{:x}", Sha256::digest(redirect_uri.as_bytes()));
+    let directory = paths.state.join("share-oauth").join(&digest[..32]);
+    let client_id_file = directory.join("client-id");
+    let client_secret_file = directory.join("client-secret");
+    let redirect_uri_file = directory.join("redirect-uri");
+    let present = [
+        client_id_file.is_file(),
+        client_secret_file.is_file(),
+        redirect_uri_file.is_file(),
+    ];
+    if present.iter().any(|present| *present) && !present.iter().all(|present| *present) {
+        return Err(share_oauth_state_error(
+            "the persisted share OAuth client state is incomplete",
+        ));
+    }
+
+    let db = crate::Database::open(&paths.data.join("webcodex.db"))
+        .map_err(|_| share_oauth_state_error("WebCodex could not open project OAuth state"))?;
+    let scopes = project_share_oauth_scopes();
+
+    if present.iter().all(|present| *present) {
+        let client_id = read_private_value(&client_id_file)?;
+        let client_secret = read_private_value(&client_secret_file)?;
+        let persisted_redirect = read_private_value(&redirect_uri_file)?;
+        if persisted_redirect != redirect_uri
+            || !valid_generated_oauth_value(&client_id, "wc_client_")
+            || !valid_generated_oauth_value(&client_secret, "wc_csec_")
+        {
+            return Err(share_oauth_state_error(
+                "the persisted share OAuth client state is invalid",
+            ));
+        }
+        let existing = db
+            .list_oauth_clients()
+            .map_err(|_| share_oauth_state_error("WebCodex could not read project OAuth clients"))?
+            .into_iter()
+            .find(|client| client.client_id == client_id);
+        if let Some(client) = existing {
+            if client.is_revoked()
+                || client.owner_project_grant_id.as_deref() != Some(grant_id.as_str())
+                || !client.is_project_grant_owned()
+                || client.redirect_uris_vec() != vec![redirect_uri.clone()]
+                || client.allowed_scopes != scopes
+                || !db
+                    .verify_oauth_client_secret(&client_id, &client_secret)
+                    .unwrap_or(false)
+            {
+                return Err(share_oauth_state_error(
+                    "the persisted share OAuth client no longer matches this project",
+                ));
+            }
+        } else {
+            db.insert_oauth_client(&crate::models::OAuthClientRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                client_id: client_id.clone(),
+                client_secret_hash: crate::auth::hash_token(&client_secret),
+                name: format!("{} project share", config.project_name),
+                owner_user_id: None,
+                owner_project_grant_id: Some(grant_id.clone()),
+                redirect_uris: redirect_uri.clone(),
+                allowed_scopes: scopes.clone(),
+                created_at: chrono::Utc::now().timestamp(),
+                revoked_at: None,
+            })
+            .map_err(|_| {
+                share_oauth_state_error("WebCodex could not restore the share OAuth client")
+            })?;
+        }
+        revoke_previous_share_oauth_grants(&db, &client_id)?;
+        return Ok(ShareOAuthClient {
+            client_id,
+            client_secret,
+            redirect_uri,
+        });
+    }
+
+    let client_id = crate::auth::generate_oauth_client_id();
+    let client_secret = crate::auth::generate_oauth_client_secret();
+    db.insert_oauth_client(&crate::models::OAuthClientRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        client_id: client_id.clone(),
+        client_secret_hash: crate::auth::hash_token(&client_secret),
+        name: format!("{} project share", config.project_name),
+        owner_user_id: None,
+        owner_project_grant_id: Some(grant_id),
+        redirect_uris: redirect_uri.clone(),
+        allowed_scopes: scopes,
+        created_at: chrono::Utc::now().timestamp(),
+        revoked_at: None,
+    })
+    .map_err(|_| share_oauth_state_error("WebCodex could not create the share OAuth client"))?;
+
+    let persist = (|| {
+        create_private_dir(&directory)?;
+        write_new_private(&client_id_file, format!("{client_id}\n").as_bytes())?;
+        write_new_private(&client_secret_file, format!("{client_secret}\n").as_bytes())?;
+        write_new_private(&redirect_uri_file, format!("{redirect_uri}\n").as_bytes())?;
+        Ok::<(), ProductError>(())
+    })();
+    if let Err(error) = persist {
+        let now = chrono::Utc::now().timestamp();
+        let _ = db.revoke_oauth_client_by_client_id(&client_id, now);
+        let _ = std::fs::remove_dir_all(&directory);
+        return Err(error);
+    }
+
+    Ok(ShareOAuthClient {
+        client_id,
+        client_secret,
+        redirect_uri,
+    })
 }
 
 #[derive(Debug)]
@@ -158,6 +422,24 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         ));
     }
 
+    let oauth_client = match options.auth {
+        ShareAuth::Bearer => None,
+        ShareAuth::OAuth => Some(prepare_share_oauth_client(
+            &config,
+            &paths,
+            options
+                .oauth_redirect_uri
+                .as_deref()
+                .ok_or_else(|| share_oauth_state_error("OAuth redirect URI is missing"))?,
+        )?),
+    };
+    let project_share_oauth = oauth_client
+        .as_ref()
+        .map(|_| ProjectShareOAuthRuntimeOptions {
+            project_grant_id: config.project_grant_id(&paths),
+            session_id: crate::auth::generate_project_share_session_id(),
+        });
+
     let local_url = config.server_url();
     let (public_url, mut tunnel) = match options.tunnel {
         TunnelProvider::CloudflareQuick => {
@@ -167,7 +449,13 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
                     .await?;
             (url, Some(tunnel))
         }
-        TunnelProvider::None => (local_url.clone(), None),
+        TunnelProvider::None => (
+            options
+                .public_url
+                .clone()
+                .unwrap_or_else(|| local_url.clone()),
+            None,
+        ),
     };
 
     let mut runtime = start_local_runtime(
@@ -175,20 +463,31 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         LocalRuntimeOptions {
             public_url: Some(public_url.clone()),
             connector_credential_file: Some(session.credential_file.clone()),
+            project_share_oauth,
             port_conflict_action: "Stop the conflicting process, then retry webcodex share.",
         },
     )
     .await?;
 
-    println!(
-        "{}",
-        render_share_ready(
+    let externally_managed = options.tunnel == TunnelProvider::None && options.public_url.is_some();
+    let ready = match oauth_client.as_ref() {
+        Some(oauth) => render_share_oauth_ready(
             &runtime.project_name,
             options.tunnel,
+            externally_managed,
             &runtime.public_url,
             &session.credential,
-        )
-    );
+            oauth,
+        ),
+        None => render_share_ready(
+            &runtime.project_name,
+            options.tunnel,
+            externally_managed,
+            &runtime.public_url,
+            &session.credential,
+        ),
+    };
+    println!("{ready}");
 
     let outcome = if let Some(tunnel) = tunnel.as_mut() {
         tokio::select! {
@@ -210,31 +509,68 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     outcome
 }
 
+fn share_access_labels(
+    tunnel: TunnelProvider,
+    externally_managed: bool,
+) -> (&'static str, &'static str, &'static str) {
+    match (tunnel, externally_managed) {
+        (TunnelProvider::CloudflareQuick, _) => (
+            "Cloudflare Quick Tunnel",
+            "temporary",
+            "Ready for ChatGPT or another remote MCP client.",
+        ),
+        (TunnelProvider::None, true) => (
+            "none (externally managed)",
+            "operator managed",
+            "Ready behind the configured external HTTPS proxy or tunnel.",
+        ),
+        (TunnelProvider::None, false) => (
+            "none (local only)",
+            "local only",
+            "Ready for a local MCP client. No public tunnel is running.",
+        ),
+    }
+}
+
 fn render_share_ready(
     project_name: &str,
     tunnel: TunnelProvider,
+    externally_managed: bool,
     public_url: &str,
     credential: &str,
 ) -> String {
-    let tunnel_name = match tunnel {
-        TunnelProvider::CloudflareQuick => "Cloudflare Quick Tunnel",
-        TunnelProvider::None => "none (local only)",
-    };
-    let public_access = match tunnel {
-        TunnelProvider::CloudflareQuick => "temporary",
-        TunnelProvider::None => "local only",
-    };
-    let ready_message = match tunnel {
-        TunnelProvider::CloudflareQuick => "Ready for ChatGPT or another remote MCP client.",
-        TunnelProvider::None => "Ready for a local MCP client. No public tunnel is running.",
-    };
-    let lifetime_message = match tunnel {
-        TunnelProvider::CloudflareQuick => "This credential and tunneled URL are temporary.",
-        TunnelProvider::None => "This credential is temporary.",
+    let (tunnel_name, public_access, ready_message) =
+        share_access_labels(tunnel, externally_managed);
+    let lifetime_message = if tunnel == TunnelProvider::CloudflareQuick {
+        "This credential and tunneled URL are temporary."
+    } else {
+        "This credential is temporary."
     };
     format!(
         "Project: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\n\nMCP URL:\n  {}/mcp\n\nAuthentication:\n  Bearer token\n\nToken:\n  {credential}\n\n{ready_message}\n\n{lifetime_message}\nPress Ctrl-C to stop sharing.",
         public_url.trim_end_matches('/')
+    )
+}
+
+fn render_share_oauth_ready(
+    project_name: &str,
+    tunnel: TunnelProvider,
+    externally_managed: bool,
+    public_url: &str,
+    credential: &str,
+    oauth: &ShareOAuthClient,
+) -> String {
+    let (tunnel_name, public_access, ready_message) =
+        share_access_labels(tunnel, externally_managed);
+    let lifetime_message = if tunnel == TunnelProvider::CloudflareQuick {
+        "The OAuth issuer URL and project share credential are temporary. The client ID/secret are persisted for this project and redirect URI."
+    } else {
+        "The project share credential and OAuth grants are temporary. The client ID/secret are persisted for this project and redirect URI."
+    };
+    let base = public_url.trim_end_matches('/');
+    format!(
+        "Project: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\n\nMCP URL:\n  {base}/mcp\n\nAuthentication:\n  OAuth 2.0 Authorization Code + PKCE S256\n\nAuthorization server:\n  {base}\n\nClient ID:\n  {}\n\nClient secret:\n  {}\n\nRedirect URI:\n  {}\n\nProject share credential:\n  {credential}\n\nUse the project share credential only on the WebCodex authorization page. OAuth access/refresh grants are fenced to this share process and cannot survive a restart.\n\n{ready_message}\n\n{lifetime_message}\nPress Ctrl-C to stop sharing.",
+        oauth.client_id, oauth.client_secret, oauth.redirect_uri
     )
 }
 
@@ -455,12 +791,46 @@ mod tests {
     fn share_cli_defaults_to_cloudflare_and_accepts_none() {
         let default = parse_share_options(&[]).unwrap();
         assert_eq!(default.tunnel, TunnelProvider::CloudflareQuick);
+        assert_eq!(default.auth, ShareAuth::Bearer);
+        assert!(default.oauth_redirect_uri.is_none());
+        assert!(default.public_url.is_none());
         let explicit =
             parse_share_options(&["--tunnel".to_string(), "cloudflare".to_string()]).unwrap();
         assert_eq!(explicit.tunnel, TunnelProvider::CloudflareQuick);
         let local = parse_share_options(&["--tunnel".to_string(), "none".to_string()]).unwrap();
         assert_eq!(local.tunnel, TunnelProvider::None);
         assert!(parse_share_options(&["--tunnel".to_string(), "unknown".to_string()]).is_err());
+        let oauth = parse_share_options(&[
+            "--auth".to_string(),
+            "oauth".to_string(),
+            "--oauth-redirect-uri".to_string(),
+            "https://client.example/callback".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(oauth.auth, ShareAuth::OAuth);
+        assert_eq!(
+            oauth.oauth_redirect_uri.as_deref(),
+            Some("https://client.example/callback")
+        );
+        assert!(parse_share_options(&["--auth".to_string(), "oauth".to_string()]).is_err());
+        assert!(parse_share_options(&[
+            "--oauth-redirect-uri".to_string(),
+            "https://client.example/callback".to_string(),
+        ])
+        .is_err());
+        let stable = parse_share_options(&[
+            "--tunnel".to_string(),
+            "none".to_string(),
+            "--public-url".to_string(),
+            "https://share.example".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(stable.public_url.as_deref(), Some("https://share.example"));
+        assert!(parse_share_options(&[
+            "--public-url".to_string(),
+            "https://share.example".to_string(),
+        ])
+        .is_err());
     }
 
     #[test]
@@ -470,6 +840,7 @@ mod tests {
         let output = render_share_ready(
             "demo",
             TunnelProvider::CloudflareQuick,
+            false,
             "https://demo.trycloudflare.com",
             temporary,
         );
@@ -483,6 +854,7 @@ mod tests {
         let output = render_share_ready(
             "demo",
             TunnelProvider::None,
+            false,
             "http://127.0.0.1:23456",
             "webcodex_temporary-print-once",
         );
@@ -490,6 +862,30 @@ mod tests {
         assert!(output.contains("No public tunnel is running"));
         assert!(!output.contains("Ready for ChatGPT"));
         assert!(!output.contains("tunneled URL"));
+    }
+
+    #[test]
+    fn oauth_share_output_keeps_project_credential_separate_from_client_secret() {
+        let oauth = ShareOAuthClient {
+            client_id: "wc_client_test".to_string(),
+            client_secret: "wc_csec_test".to_string(),
+            redirect_uri: "https://client.example/callback".to_string(),
+        };
+        let output = render_share_oauth_ready(
+            "demo",
+            TunnelProvider::None,
+            true,
+            "https://share.example",
+            "webcodex_temporary-print-once",
+            &oauth,
+        );
+        assert!(output.contains("OAuth 2.0 Authorization Code + PKCE S256"));
+        assert!(output.contains("https://share.example/mcp"));
+        assert!(output.contains("wc_client_test"));
+        assert!(output.contains("wc_csec_test"));
+        assert!(output.contains("webcodex_temporary-print-once"));
+        assert!(output.contains("fenced to this share process"));
+        assert!(output.contains("externally managed"));
     }
 
     #[test]

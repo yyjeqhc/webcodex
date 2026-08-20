@@ -21,6 +21,7 @@ mod authorize;
 mod clients;
 mod managed_authorize;
 mod metadata;
+mod project_share;
 mod revoke;
 mod scopes;
 mod shared_key_bridge;

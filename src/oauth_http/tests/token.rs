@@ -5,6 +5,170 @@ use super::*;
 // -----------------------------------------------------------------------
 
 #[tokio::test]
+async fn project_share_authorization_code_exchanges_to_project_bound_tokens() {
+    let config = test_config(oauth2_enabled_project_share(TEST_PROJECT_SHARE_SESSION_ID));
+    let (_tmp, db) = test_db();
+    let (client, secret) = seed_project_share_client(
+        &db,
+        TEST_PROJECT_GRANT_ID,
+        "https://client.example/callback",
+    );
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let challenge = pkce_s256_challenge(code_verifier);
+    let (_, code) = seed_project_share_auth_code(
+        &db,
+        &client,
+        TEST_PROJECT_GRANT_ID,
+        TEST_PROJECT_SHARE_SESSION_ID,
+        "https://client.example/callback",
+        "runtime:read project:read project:write job:run",
+        Some(&challenge),
+    );
+
+    let service = Service::new(build_router(config, db.clone()));
+    let body = form_body(&[
+        ("grant_type", "authorization_code"),
+        ("code", &code),
+        ("redirect_uri", "https://client.example/callback"),
+        ("client_id", &client.client_id),
+        ("client_secret", &secret),
+        ("code_verifier", code_verifier),
+    ]);
+    let mut resp = post_form("http://localhost/oauth/token", body)
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let json: serde_json::Value = resp.take_json().await.unwrap();
+    let access_token = json["access_token"].as_str().unwrap();
+    let refresh_token = json["refresh_token"].as_str().unwrap();
+    let expected_subject = format!(
+        "{}|{}",
+        TEST_PROJECT_GRANT_ID, TEST_PROJECT_SHARE_SESSION_ID
+    );
+    assert_eq!(
+        access_token_subject_by_plaintext(&db, access_token),
+        (
+            crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND.to_string(),
+            expected_subject.clone(),
+            None,
+            None,
+        )
+    );
+    assert_eq!(
+        refresh_token_subject_by_plaintext(&db, refresh_token),
+        (
+            crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND.to_string(),
+            expected_subject,
+            None,
+            None,
+        )
+    );
+}
+
+#[tokio::test]
+async fn stale_project_share_authorization_code_cannot_cross_share_session() {
+    let config = test_config(oauth2_enabled_project_share(
+        TEST_PROJECT_SHARE_SESSION_ID_2,
+    ));
+    let (_tmp, db) = test_db();
+    let (client, secret) = seed_project_share_client(
+        &db,
+        TEST_PROJECT_GRANT_ID,
+        "https://client.example/callback",
+    );
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let challenge = pkce_s256_challenge(code_verifier);
+    let (code_record, code) = seed_project_share_auth_code(
+        &db,
+        &client,
+        TEST_PROJECT_GRANT_ID,
+        TEST_PROJECT_SHARE_SESSION_ID,
+        "https://client.example/callback",
+        "runtime:read",
+        Some(&challenge),
+    );
+    let before = oauth_token_counts(&db);
+    let service = Service::new(build_router(config, db.clone()));
+    let body = form_body(&[
+        ("grant_type", "authorization_code"),
+        ("code", &code),
+        ("redirect_uri", "https://client.example/callback"),
+        ("client_id", &client.client_id),
+        ("client_secret", &secret),
+        ("code_verifier", code_verifier),
+    ]);
+    let mut resp = post_form("http://localhost/oauth/token", body)
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    let json: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(json["error"], "invalid_grant");
+    assert_eq!(oauth_token_counts(&db), before);
+    let used_at: Option<i64> = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT used_at FROM oauth_authorization_codes WHERE id = ?1",
+            [&code_record.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        used_at.is_some(),
+        "stale authorization code must be consumed"
+    );
+}
+
+#[tokio::test]
+async fn stale_project_share_refresh_token_cannot_cross_share_session() {
+    let config = test_config(oauth2_enabled_project_share(
+        TEST_PROJECT_SHARE_SESSION_ID_2,
+    ));
+    let (_tmp, db) = test_db();
+    let (client, secret) = seed_project_share_client(
+        &db,
+        TEST_PROJECT_GRANT_ID,
+        "https://client.example/callback",
+    );
+    let plaintext = crate::auth::generate_oauth_refresh_token();
+    let now = chrono::Utc::now().timestamp();
+    db.insert_oauth_refresh_token(&crate::models::OAuthRefreshTokenRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        token_hash: hash_token(&plaintext),
+        client_id: client.client_id.clone(),
+        subject_kind: crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND.to_string(),
+        subject_id: format!(
+            "{}|{}",
+            TEST_PROJECT_GRANT_ID, TEST_PROJECT_SHARE_SESSION_ID
+        ),
+        user_id: None,
+        scopes: "runtime:read project:read project:write job:run".to_string(),
+        resource: Some("https://share.example/mcp".to_string()),
+        shared_key_hash: None,
+        created_at: now,
+        expires_at: now + 3600,
+        revoked_at: None,
+        last_used_at: None,
+        rotated_from_id: None,
+    })
+    .unwrap();
+    let before = oauth_token_counts(&db);
+    let service = Service::new(build_router(config, db.clone()));
+    let body = form_body(&[
+        ("grant_type", "refresh_token"),
+        ("refresh_token", &plaintext),
+        ("client_id", &client.client_id),
+        ("client_secret", &secret),
+    ]);
+    let mut resp = post_form("http://localhost/oauth/token", body)
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    let json: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(json["error"], "invalid_grant");
+    assert_eq!(oauth_token_counts(&db), before);
+}
+
+#[tokio::test]
 async fn valid_authorization_code_grant_returns_tokens() {
     let config = test_config(oauth2_enabled_no_pkce());
     let (_tmp, db) = test_db();

@@ -5,6 +5,21 @@ use crate::models::{
 };
 use rusqlite::params;
 
+fn validate_oauth_client_owner(record: &OAuthClientRecord) -> anyhow::Result<()> {
+    match (
+        record.owner_user_id.as_deref(),
+        record.owner_project_grant_id.as_deref(),
+    ) {
+        (Some(user_id), None) if !user_id.trim().is_empty() => Ok(()),
+        (None, Some(grant_id)) => {
+            crate::auth::validate_project_grant_id(grant_id).map_err(anyhow::Error::msg)
+        }
+        _ => {
+            anyhow::bail!("OAuth client must have exactly one managed-user or project-grant owner")
+        }
+    }
+}
+
 fn validate_oauth_subject(
     subject_kind: &str,
     subject_id: &str,
@@ -32,6 +47,15 @@ fn validate_oauth_subject(
             if subject_id != shared_key_hash {
                 anyhow::bail!("shared_key OAuth subject_id must match shared_key_hash");
             }
+        }
+        crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND => {
+            if user_id.is_some() {
+                anyhow::bail!("project_share OAuth subject must not include user_id");
+            }
+            if shared_key_hash.is_some() {
+                anyhow::bail!("project_share OAuth subject must not include shared_key_hash");
+            }
+            crate::auth::parse_project_share_subject_id(subject_id).map_err(anyhow::Error::msg)?;
         }
         _ => anyhow::bail!("unknown OAuth subject_kind: {}", subject_kind),
     }
@@ -86,18 +110,20 @@ impl Database {
     // --- OAuth clients ---
 
     pub fn insert_oauth_client(&self, record: &OAuthClientRecord) -> anyhow::Result<()> {
+        validate_oauth_client_owner(record)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO oauth_clients (
-                id, client_id, client_secret_hash, name, owner_user_id,
+                id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
                 redirect_uris, allowed_scopes, created_at, revoked_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 record.id,
                 record.client_id,
                 record.client_secret_hash,
                 record.name,
                 record.owner_user_id,
+                record.owner_project_grant_id,
                 record.redirect_uris,
                 record.allowed_scopes,
                 record.created_at,
@@ -113,7 +139,7 @@ impl Database {
     ) -> anyhow::Result<Option<OAuthClientRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, client_id, client_secret_hash, name, owner_user_id,
+            "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
                     redirect_uris, allowed_scopes, created_at, revoked_at
              FROM oauth_clients WHERE client_id = ?1 AND revoked_at IS NULL",
         )?;
@@ -142,7 +168,7 @@ impl Database {
     pub fn get_oauth_client_by_id(&self, id: &str) -> anyhow::Result<Option<OAuthClientRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, client_id, client_secret_hash, name, owner_user_id,
+            "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
                     redirect_uris, allowed_scopes, created_at, revoked_at
              FROM oauth_clients WHERE id = ?1",
         )?;
@@ -187,7 +213,7 @@ impl Database {
     pub fn list_oauth_clients(&self) -> anyhow::Result<Vec<OAuthClientRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, client_id, client_secret_hash, name, owner_user_id,
+            "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
                     redirect_uris, allowed_scopes, created_at, revoked_at
              FROM oauth_clients ORDER BY created_at DESC",
         )?;
@@ -964,10 +990,11 @@ fn row_to_oauth_client(row: &rusqlite::Row) -> rusqlite::Result<OAuthClientRecor
         client_secret_hash: row.get(2)?,
         name: row.get(3)?,
         owner_user_id: row.get(4)?,
-        redirect_uris: row.get(5)?,
-        allowed_scopes: row.get(6)?,
-        created_at: row.get(7)?,
-        revoked_at: row.get(8)?,
+        owner_project_grant_id: row.get(5)?,
+        redirect_uris: row.get(6)?,
+        allowed_scopes: row.get(7)?,
+        created_at: row.get(8)?,
+        revoked_at: row.get(9)?,
     })
 }
 

@@ -29,6 +29,21 @@ pub(super) fn oauth2_enabled_bridge() -> OAuth2Config {
     }
 }
 
+pub(super) const TEST_PROJECT_GRANT_ID: &str = "wc_pgrant_111111111111111111111111";
+pub(super) const TEST_PROJECT_SHARE_SESSION_ID: &str =
+    "wc_share_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub(super) const TEST_PROJECT_SHARE_SESSION_ID_2: &str =
+    "wc_share_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+pub(super) fn oauth2_enabled_project_share(session_id: &str) -> OAuth2Config {
+    OAuth2Config {
+        issuer: Some("https://share.example".to_string()),
+        project_share_grant_id: Some(TEST_PROJECT_GRANT_ID.to_string()),
+        project_share_session_id: Some(session_id.to_string()),
+        ..oauth2_enabled()
+    }
+}
+
 pub(super) fn oauth2_enabled_no_pkce() -> OAuth2Config {
     OAuth2Config {
         enabled: true,
@@ -121,7 +136,8 @@ pub(super) fn seed_client(
         client_id: crate::auth::generate_oauth_client_id(),
         client_secret_hash: secret_hash,
         name: name.to_string(),
-        owner_user_id: user.id.clone(),
+        owner_user_id: Some(user.id.clone()),
+        owner_project_grant_id: None,
         redirect_uris: "https://example.com/callback".to_string(),
         allowed_scopes: "runtime:read project:read".to_string(),
         created_at: now,
@@ -145,7 +161,8 @@ pub(super) fn seed_client_with_redirects_and_scopes(
         client_id: crate::auth::generate_oauth_client_id(),
         client_secret_hash: secret_hash,
         name: "authorize-client".to_string(),
-        owner_user_id: user.id.clone(),
+        owner_user_id: Some(user.id.clone()),
+        owner_project_grant_id: None,
         redirect_uris: redirect_uris.to_string(),
         allowed_scopes: allowed_scopes.to_string(),
         created_at: now,
@@ -153,6 +170,29 @@ pub(super) fn seed_client_with_redirects_and_scopes(
     };
     db.insert_oauth_client(&record).unwrap();
     record
+}
+
+pub(super) fn seed_project_share_client(
+    db: &crate::Database,
+    grant_id: &str,
+    redirect_uri: &str,
+) -> (OAuthClientRecord, String) {
+    let now = chrono::Utc::now().timestamp();
+    let plaintext_secret = crate::auth::generate_oauth_client_secret();
+    let record = OAuthClientRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        client_id: crate::auth::generate_oauth_client_id(),
+        client_secret_hash: hash_token(&plaintext_secret),
+        name: "project-share-client".to_string(),
+        owner_user_id: None,
+        owner_project_grant_id: Some(grant_id.to_string()),
+        redirect_uris: redirect_uri.to_string(),
+        allowed_scopes: crate::auth::PROJECT_SHARE_OAUTH_SCOPES.join(" "),
+        created_at: now,
+        revoked_at: None,
+    };
+    db.insert_oauth_client(&record).unwrap();
+    (record, plaintext_secret)
 }
 
 pub(super) fn seed_user_token(db: &crate::Database, user: &UserRecord) -> String {
@@ -404,6 +444,40 @@ pub(super) fn pkce_s256_challenge(code_verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(digest)
 }
 
+pub(super) fn seed_project_share_auth_code(
+    db: &crate::Database,
+    client: &OAuthClientRecord,
+    grant_id: &str,
+    session_id: &str,
+    redirect_uri: &str,
+    scopes: &str,
+    code_challenge: Option<&str>,
+) -> (OAuthAuthorizationCodeRecord, String) {
+    let now = chrono::Utc::now().timestamp();
+    let plaintext_code = generate_oauth_authorization_code();
+    let record = OAuthAuthorizationCodeRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        code_hash: hash_token(&plaintext_code),
+        client_id: client.client_id.clone(),
+        subject_kind: crate::auth::PROJECT_SHARE_OAUTH_SUBJECT_KIND.to_string(),
+        subject_id: format!("{grant_id}|{session_id}"),
+        user_id: None,
+        redirect_uri: redirect_uri.to_string(),
+        scopes: scopes.to_string(),
+        resource: Some("https://share.example/mcp".to_string()),
+        code_challenge: code_challenge.map(str::to_string),
+        code_challenge_method: code_challenge.map(|_| "S256".to_string()),
+        shared_key_hash: None,
+        created_at: now,
+        expires_at: now + 300,
+        used_at: None,
+        revoked_at: None,
+    };
+    db.insert_oauth_authorization_code(&record, &record.code_hash)
+        .unwrap();
+    (record, plaintext_code)
+}
+
 pub(super) fn seed_auth_code(
     db: &crate::Database,
     client: &OAuthClientRecord,
@@ -641,7 +715,8 @@ pub(super) fn build_router_with_session(
                 .get(oauth_authorize)
                 .push(Router::with_path("login").post(oauth_authorize_login))
                 .push(Router::with_path("consent").post(oauth_authorize_consent))
-                .push(Router::with_path("bridge").post(oauth_authorize_bridge)),
+                .push(Router::with_path("bridge").post(oauth_authorize_bridge))
+                .push(Router::with_path("project").post(oauth_authorize_project)),
         )
         .push(
             Router::with_path("api/oauth/clients")

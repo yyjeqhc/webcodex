@@ -36,7 +36,7 @@ Server API 完成。
 
 Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS origin，可使用 `--tunnel none --public-url https://share.example`，并由 operator 自己把该 origin 反向代理/隧道到 loopback WebCodex Server；`--public-url` 只声明外部 origin/issuer，不会创建代理或 tunnel。
 
-`webcodex connect <server> --auth oauth --oauth-redirect-uri <精确回调地址>` 是 server-bound OAuth 路径。它要求该 Server 已存在 `webcodex login` 登录（同一 Server 有多个用户时用 `--user` 选择），从远端 discovery 读取当前 OAuth permission registry，为该 managed user 创建包含当前全部可委托 WebCodex permission scopes 的 OAuth client，并为本地 Runner 单独创建 Agent token。MCP 暴露哪些工具仍完全由远端 Server 当前配置的 model surface 决定。`agent:*`、`admin` 与协议级 `offline_access` 不进入 OAuth client permission allow-list；MCP 客户端仍可请求 `offline_access` 获取 refresh token。已有 profile 重连时不会因为 Server 新增 scope 而静默扩权。
+`webcodex connect <server> --auth oauth --oauth-redirect-uri <精确回调地址>` 是 server-bound OAuth 路径。它要求该 Server 已存在 `webcodex login` 登录（同一 Server 有多个用户时用 `--user` 选择），为该 managed user 创建 OAuth client，并为本地 Runner 单独创建 Agent token。OAuth client 只获得 WebCodex 明确维护的 hosted-connect runtime/project/job/Computer 闭合集合中、远端 Server 当前支持的 scopes；`account:manage`、`agent:*`、`admin`、协议级 `offline_access` 以及未来新增 scope 都不会自动授予。MCP 暴露哪些工具仍完全由远端 Server 当前配置的 model surface 决定，MCP 客户端仍可请求 `offline_access` 获取 refresh token。复用 active client 时不会再次打印 secret 或扩权；client 缺失/被撤销时会安全轮换，并只打印一次新的 secret。
 
 `disconnect` 按 canonical 仓库路径匹配，不根据 basename 或 project id 猜测。如果同一仓库
 注册在多个 hosted profile 中，必须显式指定 `--profile`。managed Runner 在线时，它先执行

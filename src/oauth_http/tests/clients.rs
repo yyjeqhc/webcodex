@@ -120,6 +120,116 @@ async fn managed_oauth_client_api_hides_and_cannot_mutate_project_share_clients(
 }
 
 #[tokio::test]
+async fn oauth_client_management_is_owner_scoped_for_pats_and_global_for_bootstrap() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let alice = seed_user(&db, "alice");
+    let bob = seed_user(&db, "bob");
+    let alice_pat = seed_user_token(&db, &alice);
+    let alice_client = seed_client_with_redirects_and_scopes(
+        &db,
+        &alice,
+        "https://alice.example/callback",
+        "runtime:read project:read",
+    );
+    let bob_client = seed_client_with_redirects_and_scopes(
+        &db,
+        &bob,
+        "https://bob.example/callback",
+        "runtime:read project:read",
+    );
+    let service = Service::new(build_router(config, db.clone()));
+
+    let mut list = authorized_post_json(
+        "http://localhost/api/oauth/clients/list",
+        "{}".to_string(),
+        &alice_pat,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(list.status_code, Some(StatusCode::OK));
+    let body: serde_json::Value = list.take_json().await.unwrap();
+    let ids = body["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|client| client["client_id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(ids.contains(&alice_client.client_id.as_str()));
+    assert!(!ids.contains(&bob_client.client_id.as_str()));
+
+    let update = authorized_post_json(
+        "http://localhost/api/oauth/clients/update_scopes",
+        serde_json::json!({
+            "client_id": bob_client.client_id,
+            "allowed_scopes": ["runtime:read"]
+        })
+        .to_string(),
+        &alice_pat,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(update.status_code, Some(StatusCode::NOT_FOUND));
+
+    let revoke = authorized_post_json(
+        "http://localhost/api/oauth/clients/revoke",
+        serde_json::json!({"client_id": bob_client.client_id}).to_string(),
+        &alice_pat,
+    )
+    .send(&service)
+    .await;
+    assert_eq!(revoke.status_code, Some(StatusCode::NOT_FOUND));
+    assert_eq!(
+        db.get_oauth_client_by_client_id(&bob_client.client_id)
+            .unwrap()
+            .unwrap()
+            .allowed_scopes,
+        "runtime:read project:read"
+    );
+
+    let mut bootstrap_list = authorized_post_json(
+        "http://localhost/api/oauth/clients/list",
+        "{}".to_string(),
+        "bootstrap-token",
+    )
+    .send(&service)
+    .await;
+    assert_eq!(bootstrap_list.status_code, Some(StatusCode::OK));
+    let body: serde_json::Value = bootstrap_list.take_json().await.unwrap();
+    assert!(body["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|client| client["client_id"] == bob_client.client_id));
+
+    let update = authorized_post_json(
+        "http://localhost/api/oauth/clients/update_scopes",
+        serde_json::json!({
+            "client_id": bob_client.client_id,
+            "allowed_scopes": ["runtime:read"]
+        })
+        .to_string(),
+        "bootstrap-token",
+    )
+    .send(&service)
+    .await;
+    assert_eq!(update.status_code, Some(StatusCode::OK));
+
+    let revoke = authorized_post_json(
+        "http://localhost/api/oauth/clients/revoke",
+        serde_json::json!({"client_id": bob_client.client_id}).to_string(),
+        "bootstrap-token",
+    )
+    .send(&service)
+    .await;
+    assert_eq!(revoke.status_code, Some(StatusCode::OK));
+    assert!(db
+        .get_oauth_client_by_client_id(&bob_client.client_id)
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn oauth_client_create_hashes_secret_only() {
     let config = test_config(oauth2_enabled());
     let (_tmp, db) = test_db();
@@ -178,6 +288,21 @@ async fn oauth_client_create_validates_redirect_uris() {
     .send(&service)
     .await;
     assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+
+    // userinfo and fragments are never valid registered callback identities.
+    for uri in [
+        "https://alice@example.com/callback",
+        "https://example.com/callback#fragment",
+    ] {
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Bad", &[uri], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST), "{uri}");
+    }
 
     // http loopback accepted
     let resp = authorized_post_json(

@@ -115,7 +115,7 @@ webcodex connect https://webcodex.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-OAuth connect uses the remote Server's configured MCP model surface and current delegable OAuth permission registry. It stores the OAuth client secret in the protected hosted profile and uses a separate Agent token for the Runner. See [Deployment](DEPLOYMENT.md).
+OAuth connect keeps the remote Server's configured MCP model surface authoritative, but registers only WebCodex's closed hosted-connect runtime/project/job/Computer scope set supported by that Server (not `account:manage` or future scopes). It stores the OAuth client secret in the protected hosted profile, prints it only when created/rotated, and uses a separate Agent token for the Runner. See [Deployment](DEPLOYMENT.md).
 
 To remove only this repository from a hosted `connect` profile later, run from the repository:
 

@@ -58,9 +58,9 @@ Options:\n\
   -h, --help                 Print help and exit\n\n\
 In bearer mode, omitting --key/--key-file generates a strong hosted shared key.\n\
 OAuth mode requires a prior `webcodex login` for the same Server. It creates a\n\
-managed-user OAuth client with the Server's currently advertised delegable permission\n\
-scopes and a separate Agent token for Runner transport; it never sends OAuth tokens\n\
-to the Runner. Proxy flags apply only to this command's Server HTTP requests.\n"
+managed-user OAuth client with WebCodex's closed hosted-connect runtime/project/job/Computer\n\
+scope set supported by that Server, plus a separate Agent token for Runner transport.\n\
+It never grants account management or sends OAuth tokens to the Runner.\n"
 }
 
 pub(crate) fn disconnect_usage() -> &'static str {

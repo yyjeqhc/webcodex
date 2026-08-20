@@ -107,7 +107,7 @@ webcodex connect https://webcodex.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-OAuth connect 使用远端 Server 当前配置的 MCP model surface 和可委托 OAuth permission registry；OAuth client secret 保存在受保护的 hosted profile 中，Runner 则使用独立 Agent token。见[部署指南](DEPLOYMENT.zh-CN.md)。
+OAuth connect 仍以远端 Server 当前配置的 MCP model surface 为权威，但只注册该 Server 支持的 WebCodex hosted-connect runtime/project/job/Computer 闭合集合（不包含 `account:manage` 或未来新增 scope）。OAuth client secret 保存在受保护的 hosted profile 中，并且只在创建/轮换时输出；Runner 使用独立 Agent token。见[部署指南](DEPLOYMENT.zh-CN.md)。
 
 以后如果只想从 hosted `connect` profile 中注销当前仓库，可在仓库中运行：
 

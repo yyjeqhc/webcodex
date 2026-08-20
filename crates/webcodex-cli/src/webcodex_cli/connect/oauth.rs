@@ -25,6 +25,24 @@ use super::{ConnectResult, DEFAULT_CONNECT_WAIT_MS};
 const OAUTH_PROFILE_FILE: &str = "oauth-connect.toml";
 const OAUTH_PROFILE_VERSION: u32 = 1;
 
+// Hosted connect is intentionally narrower than the global OAuth registry.
+// Keep this set closed: new Server scopes must never enter a persisted hosted
+// client until this list is explicitly reviewed and changed.
+const HOSTED_CONNECT_OAUTH_SCOPES: &[&str] = &[
+    "runtime:read",
+    "project:read",
+    "project:write",
+    "job:run",
+    "job:detach",
+    "computer:read",
+    "computer:control",
+    "computer:launch",
+    "computer:display_read",
+    "computer:pointer_control",
+    "computer:clipboard_read",
+    "computer:clipboard_write",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct OAuthConnectProfile {
     version: u32,
@@ -58,6 +76,12 @@ fn validate_redirect_uri(uri: &str) -> Result<String, String> {
     }
     let parsed = url::Url::parse(trimmed)
         .map_err(|_| "OAuth redirect URI is not a valid URL".to_string())?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("OAuth redirect URI must not contain userinfo".to_string());
+    }
+    if parsed.fragment().is_some() {
+        return Err("OAuth redirect URI must not contain a fragment".to_string());
+    }
     let scheme = parsed.scheme().to_ascii_lowercase();
     if !matches!(scheme.as_str(), "http" | "https") {
         return Err("OAuth redirect URI must use http or https".to_string());
@@ -164,15 +188,17 @@ async fn fetch_oauth_metadata(
             .map(str::to_string)
             .ok_or_else(|| format!("Server OAuth metadata is missing {name}"))
     };
-    let scopes_supported = value
+    let advertised_scopes = value
         .get("scopes_supported")
         .and_then(Value::as_array)
         .ok_or_else(|| "Server OAuth metadata is missing scopes_supported".to_string())?
         .iter()
         .filter_map(Value::as_str)
-        .filter(|scope| {
-            *scope != "offline_access" && *scope != "admin" && !scope.starts_with("agent:")
-        })
+        .collect::<std::collections::HashSet<_>>();
+    let scopes_supported = HOSTED_CONNECT_OAUTH_SCOPES
+        .iter()
+        .copied()
+        .filter(|scope| advertised_scopes.contains(scope))
         .map(str::to_string)
         .collect::<Vec<_>>();
     if scopes_supported.is_empty() {
@@ -379,18 +405,27 @@ async fn ensure_oauth_client(
     if let Some(remote) = clients.iter().find(|client| {
         client.get("client_id").and_then(Value::as_str) == Some(&profile.oauth_client_id)
     }) {
-        let redirects = exact_string_array(remote.get("redirect_uris"))
-            .ok_or_else(|| "Server returned malformed OAuth redirect_uris".to_string())?;
-        let scopes = exact_string_array(remote.get("allowed_scopes"))
-            .ok_or_else(|| "Server returned malformed OAuth allowed_scopes".to_string())?;
-        if redirects != vec![profile.oauth_redirect_uri.clone()] || scopes != profile.allowed_scopes
-        {
-            return Err(
-                "persisted OAuth client differs from the remote Server record; refusing to widen or rewrite it implicitly"
-                    .to_string(),
-            );
+        let revoked_at = remote
+            .get("revoked_at")
+            .ok_or_else(|| "Server returned malformed OAuth revoked_at state".to_string())?;
+        if revoked_at.is_null() {
+            let redirects = exact_string_array(remote.get("redirect_uris"))
+                .ok_or_else(|| "Server returned malformed OAuth redirect_uris".to_string())?;
+            let scopes = exact_string_array(remote.get("allowed_scopes"))
+                .ok_or_else(|| "Server returned malformed OAuth allowed_scopes".to_string())?;
+            if redirects != vec![profile.oauth_redirect_uri.clone()]
+                || scopes != profile.allowed_scopes
+            {
+                return Err(
+                    "persisted OAuth client differs from the remote Server record; refusing to widen or rewrite it implicitly"
+                        .to_string(),
+                );
+            }
+            return Ok(false);
         }
-        return Ok(false);
+        // A revoked client cannot authenticate again. Fall through to create a
+        // replacement; the caller atomically publishes the updated protected
+        // local profile only after creation succeeds.
     }
 
     let (client_id, client_secret) = create_oauth_client(
@@ -416,16 +451,21 @@ fn render_oauth_output(
     log_path: &Path,
     oauth: &OAuthConnectProfile,
     metadata: &OAuthServerMetadata,
+    disclose_client_secret: bool,
 ) -> String {
+    let secret_line = if disclose_client_secret {
+        format!("Client secret: {}\n", oauth.oauth_client_secret)
+    } else {
+        String::new()
+    };
     format!(
-        "Connected to WebCodex\n\nServer:       {server_url}\nMCP URL:      {server_url}/mcp\nProfile:      {profile}\nClient:       {client_id}\nProject:      {runtime_project_id}\nRunner:       running\nConfig:       {}\nLogs:         {}\n\nAuthentication: OAuth 2.0 Authorization Code + PKCE S256\nIssuer:        {}\nAuthorization: {}\nToken endpoint: {}\nClient ID:     {}\nClient secret: {}\nRedirect URI:  {}\nScopes:        {} offline_access\n\nThe OAuth client is managed-user-owned on the remote Server. The Runner uses a separate Agent token and OAuth credentials are never sent to Agent transport.\n",
+        "Connected to WebCodex\n\nServer:       {server_url}\nMCP URL:      {server_url}/mcp\nProfile:      {profile}\nClient:       {client_id}\nProject:      {runtime_project_id}\nRunner:       running\nConfig:       {}\nLogs:         {}\n\nAuthentication: OAuth 2.0 Authorization Code + PKCE S256\nIssuer:        {}\nAuthorization: {}\nToken endpoint: {}\nClient ID:     {}\n{secret_line}Redirect URI:  {}\nScopes:        {} offline_access\n\nThe OAuth client is managed-user-owned on the remote Server. The Runner uses a separate Agent token and OAuth credentials are never sent to Agent transport.\n",
         config_path.display(),
         log_path.display(),
         metadata.issuer,
         metadata.authorization_endpoint,
         metadata.token_endpoint,
         oauth.oauth_client_id,
-        oauth.oauth_client_secret,
         oauth.oauth_redirect_uri,
         oauth.allowed_scopes.join(" "),
     )
@@ -564,7 +604,7 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
             .any(|scope| !metadata.scopes_supported.contains(scope))
         {
             return Err(
-                "the remote Server no longer advertises every scope granted to this persisted OAuth client"
+                "the persisted OAuth client contains a scope outside the hosted-connect allow-list or no longer supported by the remote Server"
                     .to_string(),
             );
         }
@@ -804,6 +844,7 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
             &log_path,
             &oauth_profile,
             &metadata,
+            created_oauth,
         ),
         disclosure_marker: None,
     })
@@ -900,9 +941,30 @@ mod tests {
         (format!("http://{address}"), handle)
     }
 
+    fn json_responses(bodies: Vec<Value>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            for body in bodies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 32 * 1024];
+                let read = stream.read(&mut request).unwrap();
+                assert!(read > 0);
+                let payload = body.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    payload.len(),
+                    payload
+                )
+                .unwrap();
+            }
+        });
+        (format!("http://{address}"), handle)
+    }
+
     #[tokio::test]
-    async fn oauth_discovery_keeps_full_operator_permissions_but_not_transport_or_protocol_scopes()
-    {
+    async fn oauth_discovery_uses_closed_hosted_connect_scope_set() {
         let (server, handle) = one_json_response(json!({
             "issuer": "https://webcodex.example",
             "authorization_endpoint": "https://webcodex.example/oauth/authorize",
@@ -913,6 +975,7 @@ mod tests {
                 "computer:launch",
                 "computer:pointer_control",
                 "account:manage",
+                "computer:future_sensitive",
                 "agent:poll",
                 "admin",
                 "offline_access"
@@ -927,11 +990,28 @@ mod tests {
                 "runtime:read",
                 "job:detach",
                 "computer:launch",
-                "computer:pointer_control",
-                "account:manage"
+                "computer:pointer_control"
             ]
         );
+        assert!(!metadata
+            .scopes_supported
+            .iter()
+            .any(|scope| scope == "account:manage"));
+        assert!(!metadata
+            .scopes_supported
+            .iter()
+            .any(|scope| scope == "computer:future_sensitive"));
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn oauth_redirect_uri_rejects_userinfo_and_fragments() {
+        for uri in [
+            "https://alice@example.test/callback",
+            "https://example.test/callback#fragment",
+        ] {
+            assert!(validate_redirect_uri(uri).is_err(), "{uri}");
+        }
     }
 
     #[test]
@@ -1012,6 +1092,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn revoked_persisted_oauth_client_rotates_to_new_credentials() {
+        let (server, handle) = json_responses(vec![
+            json!({
+                "success": true,
+                "clients": [{
+                    "client_id": "wc_client_revoked",
+                    "name": "Revoked",
+                    "redirect_uris": ["https://client.example/callback"],
+                    "allowed_scopes": ["runtime:read"],
+                    "created_at": 1,
+                    "revoked_at": 2
+                }]
+            }),
+            json!({
+                "success": true,
+                "client": {"client_id": "wc_client_rotated"},
+                "client_secret": "wc_csec_rotated"
+            }),
+        ]);
+        let opts = options(server.clone());
+        let mut profile = OAuthConnectProfile {
+            version: OAUTH_PROFILE_VERSION,
+            server_url: server.clone(),
+            username: "alice".to_string(),
+            oauth_client_id: "wc_client_revoked".to_string(),
+            oauth_client_secret: "wc_csec_old".to_string(),
+            oauth_redirect_uri: "https://client.example/callback".to_string(),
+            allowed_scopes: vec!["runtime:read".to_string()],
+            agent_token_id: "agent-token-id".to_string(),
+        };
+        let created = ensure_oauth_client(&server, &opts, "wc_pat_alice", "profile", &mut profile)
+            .await
+            .unwrap();
+        assert!(created);
+        assert_eq!(profile.oauth_client_id, "wc_client_rotated");
+        assert_eq!(profile.oauth_client_secret, "wc_csec_rotated");
+        assert_eq!(profile.allowed_scopes, vec!["runtime:read"]);
+        handle.join().unwrap();
+    }
+
+    #[tokio::test]
     async fn persisted_oauth_client_is_reused_without_implicit_scope_widening() {
         let (server, handle) = one_json_response(json!({
             "success": true,
@@ -1041,5 +1162,51 @@ mod tests {
         assert!(!created);
         assert_eq!(profile.allowed_scopes, vec!["runtime:read"]);
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn oauth_output_discloses_client_secret_only_for_new_or_rotated_client() {
+        let oauth = OAuthConnectProfile {
+            version: OAUTH_PROFILE_VERSION,
+            server_url: "https://example.test".to_string(),
+            username: "alice".to_string(),
+            oauth_client_id: "wc_client_existing".to_string(),
+            oauth_client_secret: "wc_csec_existing".to_string(),
+            oauth_redirect_uri: "https://client.example/callback".to_string(),
+            allowed_scopes: vec!["runtime:read".to_string()],
+            agent_token_id: "agent-token-id".to_string(),
+        };
+        let metadata = OAuthServerMetadata {
+            issuer: "https://example.test".to_string(),
+            authorization_endpoint: "https://example.test/oauth/authorize".to_string(),
+            token_endpoint: "https://example.test/oauth/token".to_string(),
+            scopes_supported: vec!["runtime:read".to_string()],
+        };
+        let reused = render_oauth_output(
+            "https://example.test",
+            "profile",
+            "runner",
+            "agent:runner:project",
+            Path::new("agent.toml"),
+            Path::new("runner.log"),
+            &oauth,
+            &metadata,
+            false,
+        );
+        assert!(!reused.contains("wc_csec_existing"));
+        assert!(!reused.contains("Client secret:"));
+
+        let created = render_oauth_output(
+            "https://example.test",
+            "profile",
+            "runner",
+            "agent:runner:project",
+            Path::new("agent.toml"),
+            Path::new("runner.log"),
+            &oauth,
+            &metadata,
+            true,
+        );
+        assert!(created.contains("Client secret: wc_csec_existing"));
     }
 }

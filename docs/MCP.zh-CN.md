@@ -53,7 +53,7 @@ URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-to
 
 对于 project-first share，授权页要求输入本次临时 Project share credential，并签发只带 `runtime:read`、`project:read`、`project:write`、`job:run` 的 `oauth2_project` 身份；它不会创建 managed user，OAuth token 也不能用于 Agent transport。Quick Tunnel 的 issuer URL 每次运行都会变化；如果 OAuth issuer 必须稳定，请使用 `--tunnel none --public-url https://...` 并在外部配置稳定 HTTPS proxy/tunnel。
 
-对于已有 managed/self-hosted Server，`connect --auth oauth` 不使用 project-share subject，也没有四 scope ceiling。首次创建时，它会把该 Server OAuth authorization metadata 当前广告的全部 permission scopes（排除 `agent:*`、`admin`；`offline_access` 仍是纯协议 scope）显式注册给 OAuth client。因此 Server 当前支持的 detached job、Computer launch/display/pointer/clipboard 等权限都可以正常授权。最终 access token 仍受每个 tool 的 scope policy 和目标 Runner capability 约束。后续复用同一 connect OAuth profile 时，会保持原有 allow-list，不会因为 Server 新增 scope 自动扩权。
+对于已有 managed/self-hosted Server，`connect --auth oauth` 不使用 project-share subject，也没有四 scope ceiling。它只把 WebCodex 明确维护的 hosted-connect runtime/project/job/Computer 权限闭合集合中、Server 当前广告的 scopes 注册给 OAuth client，包括当前的 detached job 与 Computer launch/display/pointer/clipboard 权限。`account:manage`、`agent:*`、`admin`、协议级 `offline_access` 以及未来新增 permission scope 都不会自动进入 allow-list。最终 access token 仍受每个 tool 的 scope policy 和目标 Runner capability 约束。重连会复用匹配的 active client 且不再次输出 secret；持久 client 缺失或已撤销时会创建新的 client/secret。
 
 ### Grok Custom Connector（OAuth）
 

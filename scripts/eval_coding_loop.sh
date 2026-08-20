@@ -1171,20 +1171,26 @@ import sys
 
 data = json.loads(sys.argv[1])
 out = data.get("output") or {}
+matches = out.get("matches")
 ok = (
     data.get("success") is True
-    and isinstance(out.get("backend"), str)
-    and out.get("backend")
-    and isinstance(out.get("matches"), list)
-    and isinstance(out.get("truncated"), bool)
-    and out.get("count", 0) >= 1
+    and isinstance(matches, list)
+    and any(
+        isinstance(match, dict)
+        and isinstance(match.get("path"), str)
+        and bool(match.get("path"))
+        and isinstance(match.get("line"), int)
+        and match.get("line") >= 1
+        and isinstance(match.get("preview"), str)
+        for match in matches
+    )
 )
 sys.exit(0 if ok else 1)
 PY
     then
-        case_ok "search_project_text returns backend/matches/truncated"
+        case_ok "search_project_text returns structured match records"
     else
-        case_fail "search_project_text structured fields missing"
+        case_fail "search_project_text structured match records missing"
     fi
 
     params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'

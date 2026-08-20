@@ -735,17 +735,14 @@ fi
 body="$(api_post /mcp "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"search_project_texts\",\"arguments\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"queries\":[{\"pattern\":\"Smoke Project\",\"path\":\"README.md\",\"result_mode\":\"matches\",\"limit\":10},{\"pattern\":\"println!\",\"path\":\"src.rs\",\"result_mode\":\"files_with_matches\",\"limit\":10}]}}}")"
 sc="$(json_get "$body" result.structuredContent)"
 if [ "$(json_get "$sc" success)" = "True" ] \
-    && [ "$(json_get "$sc" output.requested_count)" = "2" ] \
-    && [ "$(json_get "$sc" output.returned_count)" = "2" ] \
     && [ "$(json_get "$sc" output.items.0.index)" = "0" ] \
     && [ "$(json_get "$sc" output.items.0.success)" = "True" ] \
-    && [ "$(json_get "$sc" output.items.0.output.result_mode)" = "matches" ] \
     && [ "$(json_get "$sc" output.items.0.output.matches.0.path)" = "README.md" ] \
     && [ "$(json_get "$sc" output.items.1.index)" = "1" ] \
     && [ "$(json_get "$sc" output.items.1.success)" = "True" ] \
     && [ "$(json_get "$sc" output.items.1.output.result_mode)" = "files_with_matches" ] \
     && [ "$(json_get "$sc" output.items.1.output.files.0.path)" = "src.rs" ]; then
-    pass "MCP tools/call(search_project_texts) returns two ordered successful result modes"
+    pass "MCP tools/call(search_project_texts) returns ordered sparse/default and explicit-mode results"
 else
     fail "MCP tools/call(search_project_texts) contract mismatch (body: ${body:0:500})"
 fi
@@ -776,18 +773,19 @@ else
     fail "list_project_files did not include README.md (got: ${lpf_entries:0:200})"
 fi
 
-# search_project_text via REST — must find a bounded match in README.md.
-body="$(api_post /api/projects/search_text "{\"project\":\"$RUNTIME_PROJECT_ID\",\"pattern\":\"smoke\",\"limit\":10}")"
+# search_project_text via REST — must find a bounded match in README.md. Ordinary
+# complete default matches success is sparse, so validate the returned record rather
+# than redundant count/result metadata that is intentionally omitted.
+body="$(api_post /api/projects/search_text "{\"project\":\"$RUNTIME_PROJECT_ID\",\"pattern\":\"Smoke Project\",\"path\":\"README.md\",\"limit\":10}")"
 if [ "$(json_get "$body" success)" = "True" ]; then
     pass "search_project_text returns success"
 else
     fail "search_project_text did not return success (body: ${body:0:300})"
 fi
-spt_count="$(json_get "$body" output.count)"
-if [ "${spt_count:-0}" -ge 1 ] 2>/dev/null; then
-    pass "search_project_text found $spt_count match(es)"
+if [ "$(json_get "$body" output.matches.0.path)" = "README.md" ]; then
+    pass "search_project_text found README.md match"
 else
-    fail "search_project_text found no matches (got: ${body:0:200})"
+    fail "search_project_text did not return README.md match (got: ${body:0:200})"
 fi
 
 # git_diff_summary via REST — read-only; must return porcelain + changed_files.
@@ -1930,11 +1928,11 @@ else
     fail "loop: readProjectFile did not return a valid README.md sha256 (got: $loop_readme_sha)"
 fi
 
-# Step 3: searchProjectText — locate the target substring.
-body="$(api_post /api/projects/search_text "{\"project\":\"$RUNTIME_PROJECT_ID\",\"pattern\":\"$LOOP_MARKER_OLD\",\"limit\":10}")"
-spt_loop_count="$(json_get "$body" output.count)"
-if [ "${spt_loop_count:-0}" -ge 1 ] 2>/dev/null; then
-    pass "loop: searchProjectText located target marker ($spt_loop_count match)"
+# Step 3: searchProjectText — locate the target substring. Default complete search
+# success is sparse, so the match record itself is the stable assertion surface.
+body="$(api_post /api/projects/search_text "{\"project\":\"$RUNTIME_PROJECT_ID\",\"pattern\":\"$LOOP_MARKER_OLD\",\"path\":\"README.md\",\"limit\":10}")"
+if [ "$(json_get "$body" output.matches.0.path)" = "README.md" ]; then
+    pass "loop: searchProjectText located target marker in README.md"
 else
     fail "loop: searchProjectText did not locate target marker (got: ${body:0:200})"
 fi

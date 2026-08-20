@@ -752,6 +752,11 @@ fn provider_request_timeout_racing_shutdown_is_idempotent() {
     let connection = Arc::clone(&client.connection);
     let pid = connection.child.lock().unwrap().id();
     let request_connection = Arc::clone(&connection);
+    // Hold stdin until the request has registered its pending sender. The
+    // request timeout starts only after the write completes, so this gives the
+    // test a deterministic pre-timeout synchronization point without changing
+    // the timeout-vs-shutdown race under test.
+    let stdin_guard = lock_unpoison(&connection.stdin);
     let request = std::thread::spawn(move || {
         request_connection.request(
             "tools/call",
@@ -763,6 +768,7 @@ fn provider_request_timeout_racing_shutdown_is_idempotent() {
     assert!(wait_until(Duration::from_secs(1), || {
         lock_unpoison(&connection.pending).len() == 1
     }));
+    drop(stdin_guard);
     std::thread::sleep(Duration::from_millis(80));
 
     let outcome = fixture

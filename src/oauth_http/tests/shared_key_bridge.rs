@@ -30,17 +30,38 @@ fn normalize_bridge_oauth_scopes_rejects_account_scope_with_bridge_message() {
 }
 
 #[test]
-fn normalize_bridge_oauth_scopes_rejects_computer_read_scope() {
-    let err = normalize_bridge_oauth_scopes(
-        Some("computer:read"),
-        "runtime:read project:read computer:read",
-    )
-    .unwrap_err();
-
+fn bridge_computer_scopes_match_direct_shared_key_model_authority() {
     assert_eq!(
-        err,
-        OAuthAuthorizeError::InvalidScope(OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE)
+        bridge_oauth_scopes(),
+        crate::auth::DIRECT_SHARED_KEY_MODEL_SCOPES
     );
+    assert_eq!(
+        normalize_bridge_oauth_scopes(
+            Some("computer:read computer:control"),
+            "runtime:read computer:read computer:control",
+        )
+        .unwrap(),
+        "computer:read computer:control"
+    );
+    for scope in [
+        "computer:launch",
+        "computer:display_read",
+        "computer:pointer_control",
+        "computer:clipboard_read",
+        "computer:clipboard_write",
+        "computer:future_sensitive",
+    ] {
+        let err = normalize_bridge_oauth_scopes(Some(scope), scope).unwrap_err();
+        assert!(
+            matches!(err, OAuthAuthorizeError::InvalidScope(_)),
+            "{scope}: {err:?}"
+        );
+    }
+    assert!(!bridge_oauth_scopes().contains(&"account:manage"));
+    assert!(!bridge_oauth_scopes().contains(&"admin"));
+    assert!(!bridge_oauth_scopes()
+        .iter()
+        .any(|scope| scope.starts_with("agent:")));
 }
 
 #[test]
@@ -78,6 +99,185 @@ fn normalize_bridge_oauth_scopes_accepts_offline_access_as_protocol_scope() {
     .unwrap();
 
     assert_eq!(normalized, "runtime:read offline_access");
+}
+
+async fn register_shared_key_runner(registry: &crate::ShellClientRegistry, shared_key: &str) {
+    let auth = crate::auth::shared_key_context(shared_key);
+    registry
+        .register_with_auth(
+            crate::shell_protocol::ShellClientRegisterRequest {
+                client_id: "bridge-runner".to_string(),
+                agent_instance_id: "bridge-instance".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+                host_context: None,
+                projects: None,
+                agent_protocol_version: None,
+                policy: None,
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+            },
+            Some(&auth),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn shared_key_client_provision_is_group_bound_and_preserves_narrow_scope_on_rotation() {
+    let env = crate::auth::AuthEnvGuard::new();
+    env.enable_direct_shared_key();
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let shared_key = "ordinary-connect-shared-key";
+    register_shared_key_runner(&registry, shared_key).await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+
+    let mut resp = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
+        .add_header("authorization", format!("Bearer {shared_key}"), true)
+        .json(&serde_json::json!({
+            "redirect_uri": "https://chatgpt.example/callback"
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let created: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(created["reused"], false);
+    let client_id = created["client"]["client_id"].as_str().unwrap().to_string();
+    assert!(created["client_secret"]
+        .as_str()
+        .unwrap()
+        .starts_with("wc_csec_"));
+    let expected_scopes = bridge_oauth_scopes()
+        .iter()
+        .map(|scope| serde_json::Value::String((*scope).to_string()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        created["client"]["allowed_scopes"],
+        serde_json::Value::Array(expected_scopes)
+    );
+    let stored = db
+        .get_oauth_client_by_client_id(&client_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.owner_shared_key_hash.as_deref(),
+        Some(shared_key_hash_of(shared_key).as_str())
+    );
+    assert!(!stored.allowed_scopes_vec().iter().any(|scope| {
+        scope == "account:manage" || scope == "admin" || scope.starts_with("agent:")
+    }));
+
+    // Simulate an older/narrower persisted connect client. Reuse must not widen it.
+    db.update_oauth_client_allowed_scopes_and_revoke_grants(
+        &client_id,
+        &stored.allowed_scopes,
+        "runtime:read project:read",
+        chrono::Utc::now().timestamp(),
+    )
+    .unwrap()
+    .unwrap();
+    let mut resp = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
+        .add_header("authorization", format!("Bearer {shared_key}"), true)
+        .json(&serde_json::json!({
+            "redirect_uri": "https://chatgpt.example/callback",
+            "client_id": client_id,
+            "previous_allowed_scopes": ["runtime:read", "project:read"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let reused: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(reused["reused"], true);
+    assert!(reused.get("client_secret").is_none());
+    assert_eq!(
+        reused["client"]["allowed_scopes"],
+        serde_json::json!(["runtime:read", "project:read"])
+    );
+
+    // Revocation rotates, but only to the caller-provided previous narrow ceiling.
+    let old = db
+        .get_oauth_client_by_client_id(&client_id)
+        .unwrap()
+        .unwrap();
+    db.revoke_oauth_client(&old.id, chrono::Utc::now().timestamp())
+        .unwrap();
+    let mut resp = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
+        .add_header("authorization", format!("Bearer {shared_key}"), true)
+        .json(&serde_json::json!({
+            "redirect_uri": "https://chatgpt.example/callback",
+            "client_id": client_id,
+            "previous_allowed_scopes": ["runtime:read", "project:read"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let rotated: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(rotated["reused"], false);
+    assert_ne!(rotated["client"]["client_id"], client_id);
+    assert_eq!(
+        rotated["client"]["allowed_scopes"],
+        serde_json::json!(["runtime:read", "project:read"])
+    );
+}
+
+#[tokio::test]
+async fn shared_key_owned_bridge_client_rejects_wrong_key_and_revoked_client() {
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let correct_key = "correct-connect-shared-key";
+    let (client, _secret) = seed_shared_key_bridge_client(
+        &db,
+        correct_key,
+        "https://chatgpt.example/callback",
+        "runtime:read project:read",
+    );
+    let service = Service::new(build_router(config, db.clone()));
+    let wrong_body = bridge_form_body(
+        &client,
+        "https://chatgpt.example/callback",
+        "runtime:read",
+        "wrong-connect-shared-key",
+    );
+    let before = auth_code_count(&db);
+    let resp = post_form("http://localhost/oauth/authorize/bridge", wrong_body)
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    assert_eq!(auth_code_count(&db), before);
+
+    let correct_body = bridge_form_body(
+        &client,
+        "https://chatgpt.example/callback",
+        "runtime:read",
+        correct_key,
+    );
+    let mut resp = post_form("http://localhost/oauth/authorize/bridge", correct_body)
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    assert_no_location(&resp);
+    assert_eq!(auth_code_count(&db), before);
+    let text = resp.take_string().await.unwrap_or_default();
+    assert!(text.contains("shared-key Runner group is no longer connected"));
+
+    db.revoke_oauth_client(&client.id, chrono::Utc::now().timestamp())
+        .unwrap();
+    let url =
+        valid_bridge_authorize_url(&client, "https://chatgpt.example/callback", "runtime:read");
+    let resp = TestClient::get(&url).send(&service).await;
+    assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    assert_eq!(auth_code_count(&db), before);
 }
 
 // -----------------------------------------------------------------------
@@ -473,13 +673,24 @@ async fn bridge_authorize_valid_shared_key_creates_shared_key_code() {
 async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
     let config = test_config(oauth2_enabled_bridge());
     let (_tmp, db) = test_db();
-    let user = seed_user(&db, "alice");
-    let (client, secret) = seed_client(&db, &user, "Bridge App");
     let verifier = "bridge-code-verifier";
     let challenge = pkce_s256_challenge(verifier);
     let shared_key = "bridge-shared-secret";
+    let (client, secret) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://example.com/callback",
+        "runtime:read",
+    );
     let expected_hash = bridge_shared_key_hash(shared_key).unwrap();
-    let service = Service::new(build_router(config.clone(), db.clone()));
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner(&registry, shared_key).await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config.clone(),
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
     let body = form_body(&[
         ("bridge", "shared_key"),
         ("response_type", "code"),
@@ -536,6 +747,38 @@ async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
         )
     );
 
+    let refresh_body = form_body(&[
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("client_id", &client.client_id),
+        ("client_secret", &secret),
+    ]);
+    let mut refreshed = post_form("http://localhost/oauth/token", refresh_body)
+        .send(&service)
+        .await;
+    assert_eq!(refreshed.status_code, Some(StatusCode::OK));
+    let refreshed_json: serde_json::Value = refreshed.take_json().await.unwrap();
+    let refreshed_access = refreshed_json["access_token"].as_str().unwrap();
+    let refreshed_refresh = refreshed_json["refresh_token"].as_str().unwrap();
+    assert_eq!(
+        access_token_subject_by_plaintext(&db, refreshed_access),
+        (
+            "shared_key".to_string(),
+            expected_hash.clone(),
+            None,
+            Some(expected_hash.clone())
+        )
+    );
+    assert_eq!(
+        refresh_token_subject_by_plaintext(&db, refreshed_refresh),
+        (
+            "shared_key".to_string(),
+            expected_hash.clone(),
+            None,
+            Some(expected_hash.clone())
+        )
+    );
+
     let ctx = OAuth2Verifier
         .verify(config.as_ref(), Some(&db), access_token)
         .await
@@ -563,13 +806,24 @@ async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
 async fn bridge_issued_access_token_is_rejected_on_agent_path_without_updating_last_used() {
     let config = test_config(oauth2_enabled_bridge());
     let (_tmp, db) = test_db();
-    let user = seed_user(&db, "alice");
-    let (client, secret) = seed_client(&db, &user, "Bridge App");
     let verifier = "bridge-code-verifier";
     let challenge = pkce_s256_challenge(verifier);
     let shared_key = "bridge-shared-secret";
+    let (client, secret) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://example.com/callback",
+        "runtime:read",
+    );
     let expected_hash = bridge_shared_key_hash(shared_key).unwrap();
-    let service = Service::new(build_router(config, db.clone()));
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner(&registry, shared_key).await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
 
     let authorize_body = form_body(&[
         ("bridge", "shared_key"),

@@ -254,6 +254,7 @@ pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, r
         name: name.clone(),
         owner_user_id: Some(owner_user_id),
         owner_project_grant_id: None,
+        owner_shared_key_hash: None,
         redirect_uris: redirect_uris_str,
         allowed_scopes: allowed_scopes_str,
         created_at: now,

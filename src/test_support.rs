@@ -92,6 +92,7 @@ fn seed_oauth_client_record(
         name: name.to_string(),
         owner_user_id: Some(user.id.clone()),
         owner_project_grant_id: None,
+        owner_shared_key_hash: None,
         redirect_uris: "https://example.com/callback".to_string(),
         allowed_scopes: allowed_scopes.to_string(),
         created_at: now,

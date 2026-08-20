@@ -107,15 +107,14 @@ For a stable, long-lived setup against an existing Server, shared-key connect re
 webcodex connect https://webcodex.example --project .
 ```
 
-For the same managed/self-hosted OAuth experience as that Server, log in once and then connect with the MCP client's exact callback:
+For ChatGPT OAuth, use the same hosted shared-key identity; no login, pairing, PAT, or account identity is required:
 
 ```bash
-webcodex login https://webcodex.example --code wc_pair_...
 webcodex connect https://webcodex.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-OAuth connect keeps the remote Server's configured MCP model surface authoritative, but registers only WebCodex's closed hosted-connect runtime/project/job/Computer scope set supported by that Server (not `account:manage` or future scopes). It stores the OAuth client secret in the protected hosted profile, prints it only when created/rotated, and uses a separate Agent token for the Runner. See [Deployment](DEPLOYMENT.md).
+The Runner keeps the shared key while ChatGPT receives only OAuth credentials/tokens. Browser authorization asks for that key only on WebCodex's authorize page. OAuth preserves the same shared-key group and is capped to the direct shared-key model-facing scopes (`runtime/project/job`, `computer:read`, `computer:control`), never account/admin/Agent or broader Computer/future scopes. Advanced managed-user OAuth remains available as `--auth managed-oauth` after `webcodex login`. See [Deployment](DEPLOYMENT.md).
 
 To remove only this repository from a hosted `connect` profile later, run from the repository:
 

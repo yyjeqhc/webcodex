@@ -335,6 +335,10 @@ only for local/trusted-network demos."
                 .post(oauth_http::oauth_clients_update_scopes),
         )
         .push(Router::with_path("oauth/clients/revoke").post(oauth_http::oauth_clients_revoke))
+        .push(
+            Router::with_path("oauth/shared-key-client/provision")
+                .post(oauth_http::oauth_shared_key_client_provision),
+        )
         // Phase 2 multi-user auth: user + personal API token management.
         // REST-only admin/self-management surface; intentionally NOT
         // exposed in /openapi.json (GPT Actions) because token creation is

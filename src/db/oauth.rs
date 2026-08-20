@@ -5,18 +5,32 @@ use crate::models::{
 };
 use rusqlite::params;
 
+fn validate_shared_key_owner_hash(value: &str) -> anyhow::Result<()> {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        Ok(())
+    } else {
+        anyhow::bail!("OAuth shared-key owner hash must be 64 lowercase hex characters")
+    }
+}
+
 fn validate_oauth_client_owner(record: &OAuthClientRecord) -> anyhow::Result<()> {
     match (
         record.owner_user_id.as_deref(),
         record.owner_project_grant_id.as_deref(),
+        record.owner_shared_key_hash.as_deref(),
     ) {
-        (Some(user_id), None) if !user_id.trim().is_empty() => Ok(()),
-        (None, Some(grant_id)) => {
+        (Some(user_id), None, None) if !user_id.trim().is_empty() => Ok(()),
+        (None, Some(grant_id), None) => {
             crate::auth::validate_project_grant_id(grant_id).map_err(anyhow::Error::msg)
         }
-        _ => {
-            anyhow::bail!("OAuth client must have exactly one managed-user or project-grant owner")
-        }
+        (None, None, Some(shared_key_hash)) => validate_shared_key_owner_hash(shared_key_hash),
+        _ => anyhow::bail!(
+            "OAuth client must have exactly one managed-user, project-grant, or shared-key owner"
+        ),
     }
 }
 
@@ -115,8 +129,8 @@ impl Database {
         conn.execute(
             "INSERT INTO oauth_clients (
                 id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
-                redirect_uris, allowed_scopes, created_at, revoked_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 record.id,
                 record.client_id,
@@ -124,6 +138,7 @@ impl Database {
                 record.name,
                 record.owner_user_id,
                 record.owner_project_grant_id,
+                record.owner_shared_key_hash,
                 record.redirect_uris,
                 record.allowed_scopes,
                 record.created_at,
@@ -140,7 +155,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
-                    redirect_uris, allowed_scopes, created_at, revoked_at
+                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at
              FROM oauth_clients WHERE client_id = ?1 AND revoked_at IS NULL",
         )?;
         let mut rows = stmt.query_map(params![client_id], row_to_oauth_client)?;
@@ -169,7 +184,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
-                    redirect_uris, allowed_scopes, created_at, revoked_at
+                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at
              FROM oauth_clients WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], row_to_oauth_client)?;
@@ -214,7 +229,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, client_id, client_secret_hash, name, owner_user_id, owner_project_grant_id,
-                    redirect_uris, allowed_scopes, created_at, revoked_at
+                    owner_shared_key_hash, redirect_uris, allowed_scopes, created_at, revoked_at
              FROM oauth_clients ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], row_to_oauth_client)?;
@@ -991,10 +1006,11 @@ fn row_to_oauth_client(row: &rusqlite::Row) -> rusqlite::Result<OAuthClientRecor
         name: row.get(3)?,
         owner_user_id: row.get(4)?,
         owner_project_grant_id: row.get(5)?,
-        redirect_uris: row.get(6)?,
-        allowed_scopes: row.get(7)?,
-        created_at: row.get(8)?,
-        revoked_at: row.get(9)?,
+        owner_shared_key_hash: row.get(6)?,
+        redirect_uris: row.get(7)?,
+        allowed_scopes: row.get(8)?,
+        created_at: row.get(9)?,
+        revoked_at: row.get(10)?,
     })
 }
 

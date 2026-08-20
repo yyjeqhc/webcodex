@@ -44,23 +44,34 @@ pub(crate) fn shared_key_hash_of(token: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Model-facing authority of a direct hosted shared key. The OAuth shared-key
+/// bridge uses this exact closed set, so browser OAuth never inherits Agent
+/// transport scopes or unrelated future OAuth permissions.
+pub(crate) const DIRECT_SHARED_KEY_MODEL_SCOPES: &[&str] = &[
+    SCOPE_RUNTIME_READ,
+    SCOPE_PROJECT_READ,
+    SCOPE_PROJECT_WRITE,
+    SCOPE_JOB_RUN,
+    SCOPE_COMPUTER_READ,
+    SCOPE_COMPUTER_CONTROL,
+];
+
 /// Scopes granted to interactive shared-key callers. These include the Agent
 /// transport needed by a local Runner, but remain intentionally below account
 /// management and admin. The transport surface still admits only direct
 /// `AuthKind::SharedKey`, never open-anonymous or OAuth bridge identities.
 fn shared_key_scopes() -> Vec<String> {
-    vec![
-        SCOPE_RUNTIME_READ.to_string(),
-        SCOPE_PROJECT_READ.to_string(),
-        SCOPE_PROJECT_WRITE.to_string(),
-        SCOPE_JOB_RUN.to_string(),
-        SCOPE_COMPUTER_READ.to_string(),
-        SCOPE_COMPUTER_CONTROL.to_string(),
-        SCOPE_AGENT_REGISTER.to_string(),
-        SCOPE_AGENT_POLL.to_string(),
-        SCOPE_AGENT_RESULT.to_string(),
-        SCOPE_AGENT_JOB_UPDATE.to_string(),
-    ]
+    DIRECT_SHARED_KEY_MODEL_SCOPES
+        .iter()
+        .copied()
+        .chain([
+            SCOPE_AGENT_REGISTER,
+            SCOPE_AGENT_POLL,
+            SCOPE_AGENT_RESULT,
+            SCOPE_AGENT_JOB_UPDATE,
+        ])
+        .map(str::to_string)
+        .collect()
 }
 
 /// Open-anonymous callers retain interactive runtime/project access but may

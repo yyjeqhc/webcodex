@@ -99,15 +99,14 @@ webcodex share --auth oauth --oauth-redirect-uri https://client.example/callback
 webcodex connect https://webcodex.example --project .
 ```
 
-如果希望得到与该 managed/self-hosted Server 一致的 OAuth 体验，先登录一次，再使用 MCP 客户端的精确 callback：
+ChatGPT OAuth 直接复用同一个 hosted shared-key identity，不需要 login、pairing、PAT 或 account identity：
 
 ```bash
-webcodex login https://webcodex.example --code wc_pair_...
 webcodex connect https://webcodex.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-OAuth connect 仍以远端 Server 当前配置的 MCP model surface 为权威，但只注册该 Server 支持的 WebCodex hosted-connect runtime/project/job/Computer 闭合集合（不包含 `account:manage` 或未来新增 scope）。OAuth client secret 保存在受保护的 hosted profile 中，并且只在创建/轮换时输出；Runner 使用独立 Agent token。见[部署指南](DEPLOYMENT.zh-CN.md)。
+Runner 继续使用 shared key，ChatGPT 只获得 OAuth credential/token；浏览器授权只在 WebCodex authorize 页面输入该 key。OAuth 保留同一个 shared-key group，并精确限制在 direct shared-key 的 model-facing scopes（runtime/project/job、`computer:read`、`computer:control`），不会获得 account/admin/Agent 或更宽的 Computer/未来权限。高级 managed-user OAuth 仍可在 `webcodex login` 后使用 `--auth managed-oauth`。见[部署指南](DEPLOYMENT.zh-CN.md)。
 
 以后如果只想从 hosted `connect` profile 中注销当前仓库，可在仓库中运行：
 

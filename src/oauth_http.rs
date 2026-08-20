@@ -63,11 +63,12 @@ pub(crate) use scope_registry::{
     normalize_oauth_scopes, oauth_discovery_scopes_supported, oauth_scopes_supported,
     OAUTH_OFFLINE_ACCESS_SCOPE,
 };
-pub(crate) use shared_key_bridge::oauth_authorize_bridge;
 #[cfg(test)]
 pub(crate) use shared_key_bridge::{
-    bridge_shared_key_hash, normalize_bridge_oauth_scopes, OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE,
+    bridge_oauth_scopes, bridge_shared_key_hash, normalize_bridge_oauth_scopes,
+    OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE,
 };
+pub(crate) use shared_key_bridge::{oauth_authorize_bridge, oauth_shared_key_client_provision};
 pub(crate) use token::oauth_token;
 #[cfg(test)]
 pub(crate) use token::verify_pkce_s256;

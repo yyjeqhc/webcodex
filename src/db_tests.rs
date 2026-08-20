@@ -305,6 +305,7 @@ fn purge_stale_auth_rows_removes_dead_material_keeps_live() {
         name: "test".to_string(),
         owner_user_id: Some("u-1".to_string()),
         owner_project_grant_id: None,
+        owner_shared_key_hash: None,
         redirect_uris: "https://example.com/cb".to_string(),
         allowed_scopes: "runtime:read".to_string(),
         created_at: now,
@@ -968,7 +969,7 @@ fn assert_oauth_subject_columns(conn: &Connection, table: &str) {
 }
 
 #[test]
-fn open_migrates_legacy_oauth_client_user_owner_to_dual_owner_schema() {
+fn open_migrates_legacy_oauth_client_user_owner_to_multi_owner_schema() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("legacy-oauth-owner.db");
     {
@@ -1019,6 +1020,7 @@ fn open_migrates_legacy_oauth_client_user_owner_to_dual_owner_schema() {
         .unwrap();
     assert_eq!(client.owner_user_id.as_deref(), Some("u-legacy"));
     assert_eq!(client.owner_project_grant_id, None);
+    assert_eq!(client.owner_shared_key_hash, None);
     assert!(client.is_managed_user_owned());
 
     let conn = db.conn_for_tests();
@@ -1034,6 +1036,9 @@ fn open_migrates_legacy_oauth_client_user_owner_to_dual_owner_schema() {
     assert!(columns
         .iter()
         .any(|(name, _)| name == "owner_project_grant_id"));
+    assert!(columns
+        .iter()
+        .any(|(name, _)| name == "owner_shared_key_hash"));
     assert_eq!(
         columns
             .iter()
@@ -1050,6 +1055,14 @@ fn open_migrates_legacy_oauth_client_user_owner_to_dual_owner_schema() {
         )
         .unwrap();
     assert_eq!(project_owner_index, 1);
+    let shared_key_owner_index: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_oauth_clients_shared_key_owner'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(shared_key_owner_index, 1);
     let foreign_key_violations: i64 = conn
         .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
             row.get(0)

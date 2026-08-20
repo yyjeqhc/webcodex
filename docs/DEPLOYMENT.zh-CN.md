@@ -224,33 +224,26 @@ max_output_bytes = 262144
 
 ## OAuth2
 
-OAuth2 默认关闭。为使用 authorization-code 流程的 GPT Actions / MCP 客户端启用：
+Server 没有公网 origin 时 OAuth2 仍默认关闭。使用 `webcodex server init --public-url https://your-domain.example` 时，初始化会写入 public URL、以该 URL 作为 issuer 启用 OAuth，并为普通 hosted connect 启用 shared-key OAuth bridge。手工维护 env 时等价配置为：
 
 ```text
+WEBCODEX_PUBLIC_URL=https://your-domain.example
 WEBCODEX_OAUTH2_ENABLED=true
 WEBCODEX_OAUTH2_ISSUER=https://your-domain.example
-WEBCODEX_PUBLIC_URL=https://your-domain.example
+WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true
 ```
 
-对于持有仓库的机器，推荐的 managed OAuth 路径是先 `login`，再 `connect`。先在 Server 侧创建短期 pairing code，在仓库机器上兑换登录，然后使用 MCP 客户端要求的精确 OAuth callback 接入：
+普通仓库机器不需要 managed login，直接使用 MCP 客户端要求的精确 callback：
 
 ```bash
-# Server/admin 侧
-webcodex pairing create \
-  --server-url https://your-domain.example \
-  --env-file /etc/webcodex/webcodex.env \
-  --username alice --ttl-secs 600
-
-# 仓库机器
 cd /path/to/your/repository
-webcodex login https://your-domain.example --code <wc_pair_...>
 webcodex connect https://your-domain.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-`connect` 会在远端 Server 上创建 managed-user-owned OAuth client，同时为本地 Runner 创建独立 Agent token，然后启动 Runner 并等待项目在 Server 上可见。把命令输出的 MCP URL、Client ID、Client Secret、authorization endpoint 与 token endpoint 填入 MCP client。Client Secret 在 WebCodex 成功写入并 flush 输出前一直处于“待披露”状态；确认展示后，正常重连不会再次输出。若远端 OAuth client 缺失或已被撤销，重连会自动轮换并输出新的 secret。hosted OAuth allow-list 是 WebCodex 明确维护、且远端 Server 当前支持的 runtime/project/job/Computer 闭合集合；它不包含 `account:manage`、Agent/admin scope，也不会自动继承未来新增权限。
+Runner 继续使用 hosted shared key。`connect` 会创建绑定该 shared-key hash 的独立 OAuth client，并输出 MCP URL、client ID/secret、bridge authorization endpoint 与 token endpoint。浏览器授权时 shared key 只输入到 WebCodex 自己的 authorize 页面，ChatGPT 不会获得它。bridge allow-list 与 direct shared-key 的 model-facing ceiling 精确一致（runtime/project/job 加 `computer:read`、`computer:control`），不包含 account/admin/Agent authority、Computer launch/display/pointer/clipboard 或未来 scope。正常重连不会扩大持久化 ceiling 或再次输出已复用 secret；client 缺失/撤销时只在原 ceiling 内轮换。
 
-如果 MCP host 后续改用了不同 callback，应使用另一个 profile（或显式移除旧 profile），不要静默改写已持久化的 OAuth client identity。同一 Server 在本机存在多个登录用户时，用 `--user <username>` 选择目标 managed identity。
+只有明确需要 managed-user OAuth identity 时，才使用高级 `webcodex login` 流程，再执行 `webcodex connect ... --auth managed-oauth --oauth-redirect-uri ...`；`--user` 仅用于该模式。
 
 创建 OAuth client（`client_secret` 只返回一次；服务端只存其 hash）：
 

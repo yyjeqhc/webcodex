@@ -190,13 +190,15 @@ impl Database {
                 name TEXT NOT NULL,
                 owner_user_id TEXT,
                 owner_project_grant_id TEXT,
+                owner_shared_key_hash TEXT,
                 redirect_uris TEXT NOT NULL DEFAULT '',
                 allowed_scopes TEXT NOT NULL DEFAULT '',
                 created_at INTEGER NOT NULL,
                 revoked_at INTEGER,
                 CHECK (
-                    (owner_user_id IS NOT NULL AND owner_project_grant_id IS NULL)
-                    OR (owner_user_id IS NULL AND owner_project_grant_id IS NOT NULL)
+                    (owner_user_id IS NOT NULL AND owner_project_grant_id IS NULL AND owner_shared_key_hash IS NULL)
+                    OR (owner_user_id IS NULL AND owner_project_grant_id IS NOT NULL AND owner_shared_key_hash IS NULL)
+                    OR (owner_user_id IS NULL AND owner_project_grant_id IS NULL AND owner_shared_key_hash IS NOT NULL)
                 ),
                 FOREIGN KEY(owner_user_id) REFERENCES users(id)
             );
@@ -628,25 +630,36 @@ impl Database {
         Ok(())
     }
 
-    /// Allow an OAuth client to be owned either by a managed user or by one
-    /// project grant. Older databases used a NOT NULL user owner, so changing
-    /// that constraint requires a bounded SQLite table rebuild. Existing rows
-    /// remain managed-user-owned exactly as before.
+    /// Allow an OAuth client to be owned by exactly one managed user, project
+    /// grant, or shared-key group. Older schemas lack one or both alternative
+    /// owner columns, so changing the CHECK constraint requires a bounded SQLite
+    /// table rebuild. Existing rows preserve their current owner exactly.
     fn ensure_oauth_client_owner_columns(conn: &Connection) -> anyhow::Result<()> {
         let columns = table_columns(conn, "oauth_clients")?;
+        let has_project_owner = columns
+            .iter()
+            .any(|column| column == "owner_project_grant_id");
+        let has_shared_key_owner = columns
+            .iter()
+            .any(|column| column == "owner_shared_key_hash");
         let table_sql: String = conn.query_row(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'oauth_clients'",
             [],
             |row| row.get(0),
         )?;
-        if columns
-            .iter()
-            .any(|column| column == "owner_project_grant_id")
+        if has_project_owner
+            && has_shared_key_owner
             && !table_sql.contains("owner_user_id TEXT NOT NULL")
+            && table_sql.contains("owner_shared_key_hash IS NOT NULL")
         {
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_oauth_clients_project_owner
                  ON oauth_clients(owner_project_grant_id)",
+                [],
+            )?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_oauth_clients_shared_key_owner
+                 ON oauth_clients(owner_shared_key_hash)",
                 [],
             )?;
             return Ok(());
@@ -666,32 +679,48 @@ impl Database {
                     name TEXT NOT NULL,
                     owner_user_id TEXT,
                     owner_project_grant_id TEXT,
+                    owner_shared_key_hash TEXT,
                     redirect_uris TEXT NOT NULL DEFAULT '',
                     allowed_scopes TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL,
                     revoked_at INTEGER,
                     CHECK (
-                        (owner_user_id IS NOT NULL AND owner_project_grant_id IS NULL)
-                        OR (owner_user_id IS NULL AND owner_project_grant_id IS NOT NULL)
+                        (owner_user_id IS NOT NULL AND owner_project_grant_id IS NULL AND owner_shared_key_hash IS NULL)
+                        OR (owner_user_id IS NULL AND owner_project_grant_id IS NOT NULL AND owner_shared_key_hash IS NULL)
+                        OR (owner_user_id IS NULL AND owner_project_grant_id IS NULL AND owner_shared_key_hash IS NOT NULL)
                     ),
                     FOREIGN KEY(owner_user_id) REFERENCES users(id)
                 );
-                INSERT INTO oauth_clients_owner_migration
-                    (id, client_id, client_secret_hash, name, owner_user_id,
-                     owner_project_grant_id, redirect_uris, allowed_scopes,
-                     created_at, revoked_at)
-                SELECT id, client_id, client_secret_hash, name, owner_user_id,
-                       NULL, redirect_uris, allowed_scopes, created_at, revoked_at
-                FROM oauth_clients;
-                DROP TABLE oauth_clients;
-                ALTER TABLE oauth_clients_owner_migration RENAME TO oauth_clients;
-                CREATE INDEX idx_oauth_clients_client_id ON oauth_clients(client_id);
-                CREATE INDEX idx_oauth_clients_owner ON oauth_clients(owner_user_id);
-                CREATE INDEX idx_oauth_clients_project_owner
-                    ON oauth_clients(owner_project_grant_id);
                 ",
             )
-            .context("rebuild oauth_clients for project-grant ownership")?;
+            .context("create OAuth client owner migration table")?;
+            let project_owner_expr = if has_project_owner {
+                "owner_project_grant_id"
+            } else {
+                "NULL"
+            };
+            let shared_key_owner_expr = if has_shared_key_owner {
+                "owner_shared_key_hash"
+            } else {
+                "NULL"
+            };
+            conn.execute_batch(&format!(
+                "INSERT INTO oauth_clients_owner_migration
+                    (id, client_id, client_secret_hash, name, owner_user_id,
+                     owner_project_grant_id, owner_shared_key_hash, redirect_uris,
+                     allowed_scopes, created_at, revoked_at)
+                 SELECT id, client_id, client_secret_hash, name, owner_user_id,
+                        {project_owner_expr}, {shared_key_owner_expr}, redirect_uris,
+                        allowed_scopes, created_at, revoked_at
+                 FROM oauth_clients;
+                 DROP TABLE oauth_clients;
+                 ALTER TABLE oauth_clients_owner_migration RENAME TO oauth_clients;
+                 CREATE INDEX idx_oauth_clients_client_id ON oauth_clients(client_id);
+                 CREATE INDEX idx_oauth_clients_owner ON oauth_clients(owner_user_id);
+                 CREATE INDEX idx_oauth_clients_project_owner ON oauth_clients(owner_project_grant_id);
+                 CREATE INDEX idx_oauth_clients_shared_key_owner ON oauth_clients(owner_shared_key_hash);"
+            ))
+            .context("rebuild oauth_clients for shared-key ownership")?;
 
             let foreign_key_error = {
                 let mut statement = conn

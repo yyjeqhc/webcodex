@@ -253,6 +253,10 @@ fn server_init_writes_env_file_and_0600_permissions() {
     assert!(content.contains(&format!("WEBCODEX_DATA={}\n", data_dir.display())));
     assert!(content.contains("WEBCODEX_TOKEN=wc_boot_"));
     assert!(content.contains("WEBCODEX_PUBLIC_URL=https://example.test\n"));
+    assert!(content.contains("WEBCODEX_OAUTH2_ENABLED=true\n"));
+    assert!(content.contains("WEBCODEX_OAUTH2_ISSUER=https://example.test\n"));
+    assert!(content.contains("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true\n"));
+    assert!(content.contains("WEBCODEX_SHARED_KEY_ENABLED=true\n"));
     let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
     assert!(!output.contains(&token));
     assert!(output.contains("token prefix:"));
@@ -284,6 +288,8 @@ fn server_init_refuses_overwrite_unless_requested() {
     assert!(content.contains("WEBCODEX_ADDR="));
     assert!(content.contains("WEBCODEX_TOKEN=old"));
     assert!(content.contains("WEBCODEX_SHARED_KEY_ENABLED=true"));
+    assert!(!content.contains("WEBCODEX_OAUTH2_ENABLED=true"));
+    assert!(!content.contains("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true"));
 }
 
 #[test]

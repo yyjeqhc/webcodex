@@ -40,15 +40,17 @@ Options:\n\
 pub(crate) fn connect_usage() -> &'static str {
     "Usage: webcodex connect <SERVER_URL> [OPTIONS]\n\n\
 Connect a local project to a hosted WebCodex Server. Shared-key auth is the default;\n\
-`--auth oauth` reuses an existing managed login and registers a remote OAuth client.\n\
+`--auth oauth` bridges that same shared-key identity through browser OAuth for ChatGPT.\n\
+`--auth managed-oauth` retains the advanced managed-user OAuth flow.\n\
 The command writes a reusable local profile, starts one background Runner,\n\
 and waits until the Runner and project are visible through the Server.\n\n\
 Options:\n\
   --proxy http://HOST:PORT   Override standard proxy environment for CLI Server requests\n\
   --no-system-proxy          Ignore proxy environment and connect directly\n\
-  --auth bearer|oauth        MCP authentication mode [default: bearer]\n\
-  --oauth-redirect-uri URL   Exact OAuth callback URL; required with --auth oauth\n\
-  --user USER                Select a logged-in managed user when more than one exists\n\
+  --auth bearer|oauth|managed-oauth\n\
+                             MCP authentication mode [default: bearer]\n\
+  --oauth-redirect-uri URL   Exact OAuth callback URL; required with OAuth modes\n\
+  --user USER                Select a logged-in managed user; managed-oauth only\n\
   --key KEY                  Shared key (use --key-file to avoid shell history)\n\
   --key-file PATH            Read the shared key from a file\n\
   --project PATH             Local project directory [default: .]\n\
@@ -57,10 +59,12 @@ Options:\n\
   --project-id ID            Override the derived project id\n\
   -h, --help                 Print help and exit\n\n\
 In bearer mode, omitting --key/--key-file generates a strong hosted shared key.\n\
-OAuth mode requires a prior `webcodex login` for the same Server. It creates a\n\
-managed-user OAuth client with WebCodex's closed hosted-connect runtime/project/job/Computer\n\
-scope set supported by that Server, plus a separate Agent token for Runner transport.\n\
-It never grants account management or sends OAuth tokens to the Runner.\n"
+OAuth mode uses that same key for Runner transport and provisions a bridge client only\n\
+after the matching Runner group is connected. Enter the shared key only on WebCodex's\n\
+browser authorize page; ChatGPT receives OAuth client credentials/tokens, never the key.\n\
+The bridge has exactly the direct shared-key model-facing runtime/project/job/Computer\n\
+ceiling and never grants account/admin/Agent transport authority. managed-oauth requires\n\
+a prior `webcodex login` and remains a separate advanced managed identity flow.\n"
 }
 
 pub(crate) fn disconnect_usage() -> &'static str {

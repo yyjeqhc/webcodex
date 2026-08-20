@@ -218,6 +218,7 @@ fn mcp_file_import_trust_requires_exact_configured_active_client_id() {
         name: name.to_string(),
         owner_user_id: Some(user.id.clone()),
         owner_project_grant_id: None,
+        owner_shared_key_hash: None,
         redirect_uris: redirect_uris.to_string(),
         allowed_scopes: "project:write".to_string(),
         created_at: chrono::Utc::now().timestamp(),

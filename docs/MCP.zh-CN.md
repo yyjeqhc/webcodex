@@ -21,10 +21,10 @@ Hosted 客户端需要 HTTPS。有三种路径：
 
 - **Hosted：** `webcodex connect <server>` 使用已有 hosted Server；本地只运行
   Runner。默认仍使用 shared-key。`webcodex connect <server> --auth oauth
-  --oauth-redirect-uri <URL>` 则复用 managed login，在该 Server 创建 managed OAuth
-  client，并给 Runner 单独使用 Agent token。两种模式暴露的工具集合都由远端
-  Server 配置的 MCP model surface 决定；`connect` 不会把远端 Server 变成
-  project-bound Connector。
+  --oauth-redirect-uri <URL>` 会把同一个 shared-key group 桥接成 ChatGPT OAuth，
+  不需要 login、pairing、PAT 或 account identity。Runner 继续使用 direct shared key，
+  ChatGPT 只获得 OAuth client credential/token；暴露的工具集合仍由远端 Server 的
+  MCP model surface 决定。
 - **本地分享：** `webcodex share` 启动本地 Server + Agent；默认启动 Cloudflare
   Quick Tunnel 并使用独立的临时 Bearer credential。`webcodex share --auth oauth
   --oauth-redirect-uri <URL>` 则暴露 project-bound OAuth 2.0 Authorization Code +
@@ -34,10 +34,7 @@ Hosted 客户端需要 HTTPS。有三种路径：
 - **自托管：** 使用稳定 HTTPS 域名/tunnel、持久服务管理与 OAuth 或受限凭据进行
   长期运行。
 
-对于 managed 或自托管 Server，用 user API token（`wc_pat_*`）作为 bearer
-凭据；启用 OAuth 时用 OAuth。不要把 bootstrap/admin token、account credential、
-Runner token 或持久 project-first Connector credential 当作公开分享 secret。
-`share` 会为该会话创建并打印自己的临时 credential。
+普通 hosted `connect` 直接使用其生成/提供的 shared key，或把同一个身份桥接成 OAuth。managed-user 部署也可使用受限 user API token（`wc_pat_*`）或显式 `--auth managed-oauth` 流程。不要把 bootstrap/admin token、account credential、Runner token 或持久 project-first Connector credential 当作公开分享 secret。`share` 会为该会话创建并打印自己的临时 credential。
 
 在 ChatGPT Developer Mode 中，用输出的 `/mcp` URL 创建自定义 app。如果认证菜单
 提供 **访问令牌/API 密钥**，选择它并粘贴 bearer credential，然后执行 **Scan
@@ -53,7 +50,7 @@ URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-to
 
 对于 project-first share，授权页要求输入本次临时 Project share credential，并签发只带 `runtime:read`、`project:read`、`project:write`、`job:run` 的 `oauth2_project` 身份；它不会创建 managed user，OAuth token 也不能用于 Agent transport。Quick Tunnel 的 issuer URL 每次运行都会变化；如果 OAuth issuer 必须稳定，请使用 `--tunnel none --public-url https://...` 并在外部配置稳定 HTTPS proxy/tunnel。
 
-对于已有 managed/self-hosted Server，`connect --auth oauth` 不使用 project-share subject，也没有四 scope ceiling。它只把 WebCodex 明确维护的 hosted-connect runtime/project/job/Computer 权限闭合集合中、Server 当前广告的 scopes 注册给 OAuth client，包括当前的 detached job 与 Computer launch/display/pointer/clipboard 权限。`account:manage`、`agent:*`、`admin`、协议级 `offline_access` 以及未来新增 permission scope 都不会自动进入 allow-list。最终 access token 仍受每个 tool 的 scope policy 和目标 Runner capability 约束。重连会复用匹配的 active client 且不再次输出 secret；持久 client 缺失或已撤销时会创建新的 client/secret。
+对于已有 hosted Server，普通 `connect --auth oauth` 使用 shared-key OAuth bridge。OAuth client 以及 code/access/refresh grant 都绑定到 direct shared-key Runner/projects/jobs 所使用的同一个 `shared_key_hash`。权限 ceiling 与 direct shared-key 的 model-facing 集合精确一致：`runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`；不包含 `account:manage`、`admin`、任何 `agent:*`、Computer launch/display/pointer/clipboard 权限或未来新增 scope。shared-key-owned authorize 还要求对应 group 仍在线。`offline_access` 仍只是 refresh token 的协议 scope。需要 managed-user identity 时显式使用 `connect --auth managed-oauth`。
 
 ### Grok Custom Connector（OAuth）
 

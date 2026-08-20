@@ -503,7 +503,10 @@ fn build_oauth_connect_result(
             metadata,
             disclose_client_secret,
         ),
-        disclosure_marker: disclose_client_secret.then_some(disclosure_marker),
+        disclosure_markers: disclose_client_secret
+            .then_some(disclosure_marker)
+            .into_iter()
+            .collect(),
     }
 }
 
@@ -521,11 +524,10 @@ pub(super) async fn run_oauth_connect(opts: ConnectOptions) -> Result<ConnectRes
             canonical_project.display()
         ));
     }
-    let redirect_uri = validate_redirect_uri(
-        opts.oauth_redirect_uri
-            .as_deref()
-            .ok_or_else(|| "--auth oauth requires --oauth-redirect-uri <URL>".to_string())?,
-    )?;
+    let redirect_uri =
+        validate_redirect_uri(opts.oauth_redirect_uri.as_deref().ok_or_else(|| {
+            "--auth managed-oauth requires --oauth-redirect-uri <URL>".to_string()
+        })?)?;
     let raw_config_base = opts
         .config_base
         .clone()
@@ -940,7 +942,7 @@ mod tests {
             },
             key: None,
             key_file: None,
-            auth: super::super::ConnectAuth::OAuth,
+            auth: super::super::ConnectAuth::ManagedOAuth,
             oauth_redirect_uri: Some("https://client.example/callback".to_string()),
             username: None,
             project: PathBuf::from("."),
@@ -1097,7 +1099,7 @@ mod tests {
         let retry = test_oauth_result(profile_dir, &oauth);
         assert!(retry.output.contains("Client secret: wc_csec_created"));
         let marker = oauth_secret_disclosure_marker(profile_dir, &oauth.oauth_client_id);
-        assert_eq!(retry.disclosure_marker.as_deref(), Some(marker.as_path()));
+        assert_eq!(retry.disclosure_markers, vec![marker.clone()]);
         assert!(!marker.exists());
     }
 
@@ -1121,7 +1123,7 @@ mod tests {
 
             let retry = test_oauth_result(profile_dir, &oauth);
             assert!(retry.output.contains("Client secret: wc_csec_pending"));
-            assert!(retry.disclosure_marker.is_some());
+            assert_eq!(retry.disclosure_markers.len(), 1);
         }
     }
 
@@ -1146,7 +1148,7 @@ mod tests {
         let reconnect = test_oauth_result(profile_dir, &oauth);
         assert!(!reconnect.output.contains("wc_csec_disclosed"));
         assert!(!reconnect.output.contains("Client secret:"));
-        assert!(reconnect.disclosure_marker.is_none());
+        assert!(reconnect.disclosure_markers.is_empty());
     }
 
     #[test]
@@ -1169,10 +1171,7 @@ mod tests {
         assert!(!new_marker.exists());
         let result = test_oauth_result(profile_dir, &rotated);
         assert!(result.output.contains("Client secret: wc_csec_rotated"));
-        assert_eq!(
-            result.disclosure_marker.as_deref(),
-            Some(new_marker.as_path())
-        );
+        assert_eq!(result.disclosure_markers, vec![new_marker]);
     }
 
     #[tokio::test]

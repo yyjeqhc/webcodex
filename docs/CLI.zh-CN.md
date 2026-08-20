@@ -29,14 +29,16 @@ Server API 完成。
 | `webcodex run` | 启动 project-bound loopback Server 与本地 Runner | 前台运行；Ctrl-C 同时停止两者。 |
 | `webcodex status` | 简洁的项目 coding 就绪状态 | `doctor` 提供完整检查。 |
 | `webcodex share` | 通过 HTTPS 分享本地项目 | 默认使用临时 Bearer credential；`--auth oauth --oauth-redirect-uri <URL>` 可启用 project-bound OAuth。 |
-| `webcodex connect <server>` | 把当前项目接入已有的 Server | 默认使用 hosted shared-key；`--auth oauth --oauth-redirect-uri <URL>` 可复用 managed login 并在远端创建 OAuth client。 |
+| `webcodex connect <server>` | 把当前项目接入已有的 Server | 默认使用 hosted shared-key；`--auth oauth --oauth-redirect-uri <URL>` 可把同一个 shared-key 身份桥接成 ChatGPT OAuth，不需要 managed login。 |
 | `webcodex disconnect [--project PATH] [--profile NAME]` | 移除一个 hosted 项目注册 | 是该仓库 `connect` 的精确逆操作；绝不删除仓库或 `.git`。 |
 
 `webcodex share --auth oauth --oauth-redirect-uri <精确回调地址>` 使用 OAuth 2.0 Authorization Code + PKCE S256。OAuth client ID/secret 会按“项目 + 回调地址”保存在受保护的 project state 中；authorization code、access token、refresh token 与临时 Project Credential 则都被 fenced 到当前 `share` 进程。重启 `share` 会让旧 OAuth grant 失效，但不会改变 Connector 的稳定 project identity。OAuth access token 永远不能用于 Runner/Agent transport。
 
 Cloudflare Quick Tunnel 的公网 origin 仍然是临时的。如需稳定 HTTPS origin，可使用 `--tunnel none --public-url https://share.example`，并由 operator 自己把该 origin 反向代理/隧道到 loopback WebCodex Server；`--public-url` 只声明外部 origin/issuer，不会创建代理或 tunnel。
 
-`webcodex connect <server> --auth oauth --oauth-redirect-uri <精确回调地址>` 是 server-bound OAuth 路径。它要求该 Server 已存在 `webcodex login` 登录（同一 Server 有多个用户时用 `--user` 选择），为该 managed user 创建 OAuth client，并为本地 Runner 单独创建 Agent token。OAuth client 只获得 WebCodex 明确维护的 hosted-connect runtime/project/job/Computer 闭合集合中、远端 Server 当前支持的 scopes；`account:manage`、`agent:*`、`admin`、协议级 `offline_access` 以及未来新增 scope 都不会自动授予。MCP 暴露哪些工具仍完全由远端 Server 当前配置的 model surface 决定，MCP 客户端仍可请求 `offline_access` 获取 refresh token。复用 active client 时不会再次打印 secret 或扩权；client 缺失/被撤销时会安全轮换，并只打印一次新的 secret。
+`webcodex connect <server> --auth oauth --oauth-redirect-uri <精确回调地址>` 是普通 hosted connect 面向 ChatGPT 的 OAuth 路径。它继续使用 Runner 的同一个 `wck_*` shared-key 身份，在 Server 上创建绑定该 shared-key hash 的 OAuth client；shared key 只在 WebCodex 自己的浏览器 authorize 页面验证，不会交给 ChatGPT。bridge ceiling 与 direct shared-key 的 model-facing authority 精确一致：仅 `runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`；不包含 `account:manage`、`admin`、任何 `agent:*`、Computer launch/display/pointer/clipboard scope 或未来新增权限。refresh token 保留同一 shared-key subject binding，OAuth access token 仍不能用于 Agent transport。正常重连不会扩权或再次输出 secret；client 缺失/撤销时只在原先持久化的 ceiling 内轮换。
+
+高级 managed identity 流程仍保留为 `--auth managed-oauth --oauth-redirect-uri <精确回调地址>`，它才要求先 `webcodex login`；`--user` 也只用于该模式。
 
 `disconnect` 按 canonical 仓库路径匹配，不根据 basename 或 project id 猜测。如果同一仓库
 注册在多个 hosted profile 中，必须显式指定 `--profile`。managed Runner 在线时，它先执行

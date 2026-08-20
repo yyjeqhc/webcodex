@@ -37,10 +37,11 @@ pub(crate) fn render_server_env(opts: &ServerInitOptions, token: &str) -> String
     content.push_str(&format!("WEBCODEX_DATA={}\n", opts.data_dir.display()));
     content.push_str(&format!("WEBCODEX_TOKEN={}\n", token));
     if let Some(public_url) = &opts.public_url {
-        content.push_str(&format!(
-            "WEBCODEX_PUBLIC_URL={}\n",
-            public_url.trim().trim_end_matches('/')
-        ));
+        let public_url = public_url.trim().trim_end_matches('/');
+        content.push_str(&format!("WEBCODEX_PUBLIC_URL={public_url}\n"));
+        content.push_str("WEBCODEX_OAUTH2_ENABLED=true\n");
+        content.push_str(&format!("WEBCODEX_OAUTH2_ISSUER={public_url}\n"));
+        content.push_str("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true\n");
     }
     content.push_str("WEBCODEX_SHARED_KEY_ENABLED=true\n");
     if opts.open {

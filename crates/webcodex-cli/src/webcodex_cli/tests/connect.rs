@@ -49,24 +49,38 @@ fn connect_defaults_project_and_allows_automatic_key() {
 }
 
 #[test]
-fn connect_parses_managed_oauth_and_rejects_mixed_auth_inputs() {
-    let options = parsed(&[
+fn connect_parses_shared_key_and_managed_oauth_modes() {
+    let ordinary = parsed(&[
         "connect",
         "https://example.test",
         "--auth",
         "oauth",
         "--oauth-redirect-uri",
         "https://client.example/callback",
+        "--key",
+        "shared-key",
+    ]);
+    assert_eq!(ordinary.auth, ConnectAuth::SharedKeyOAuth);
+    assert_eq!(
+        ordinary.oauth_redirect_uri.as_deref(),
+        Some("https://client.example/callback")
+    );
+    assert_eq!(ordinary.key.as_deref(), Some("shared-key"));
+    assert!(ordinary.username.is_none());
+
+    let managed = parsed(&[
+        "connect",
+        "https://example.test",
+        "--auth",
+        "managed-oauth",
+        "--oauth-redirect-uri",
+        "https://client.example/callback",
         "--user",
         "alice",
     ]);
-    assert_eq!(options.auth, ConnectAuth::OAuth);
-    assert_eq!(
-        options.oauth_redirect_uri.as_deref(),
-        Some("https://client.example/callback")
-    );
-    assert_eq!(options.username.as_deref(), Some("alice"));
-    assert!(options.key.is_none());
+    assert_eq!(managed.auth, ConnectAuth::ManagedOAuth);
+    assert_eq!(managed.username.as_deref(), Some("alice"));
+    assert!(managed.key.is_none());
 
     for (args, needle) in [
         (
@@ -79,6 +93,19 @@ fn connect_parses_managed_oauth_and_rejects_mixed_auth_inputs() {
                 "https://example.test",
                 "--auth",
                 "oauth",
+                "--oauth-redirect-uri",
+                "https://client.example/callback",
+                "--user",
+                "alice",
+            ],
+            "--user requires --auth managed-oauth",
+        ),
+        (
+            vec![
+                "connect",
+                "https://example.test",
+                "--auth",
+                "managed-oauth",
                 "--oauth-redirect-uri",
                 "https://client.example/callback",
                 "--key",

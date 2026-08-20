@@ -205,11 +205,14 @@ pub struct OAuthClientRecord {
     /// SHA-256 hash of the client secret. The plaintext is never stored.
     pub client_secret_hash: String,
     pub name: String,
-    /// Managed-user owner for ordinary OAuth clients. Exactly one of this and
-    /// `owner_project_grant_id` is present.
+    /// Managed-user owner for ordinary managed OAuth clients. Exactly one
+    /// OAuth client owner field is present.
     pub owner_user_id: Option<String>,
     /// Project-grant owner for project-first share OAuth clients.
     pub owner_project_grant_id: Option<String>,
+    /// SHA-256 group owner for hosted direct-shared-key OAuth bridge clients.
+    /// The plaintext shared key is never stored in the OAuth client row.
+    pub owner_shared_key_hash: Option<String>,
     /// Newline-separated list of allowed redirect URIs.
     pub redirect_uris: String,
     /// Space-separated scope list (same format as PAT scopes).
@@ -356,11 +359,21 @@ impl OAuthAuthorizationCodeRecord {
 
 impl OAuthClientRecord {
     pub fn is_managed_user_owned(&self) -> bool {
-        self.owner_user_id.is_some() && self.owner_project_grant_id.is_none()
+        self.owner_user_id.is_some()
+            && self.owner_project_grant_id.is_none()
+            && self.owner_shared_key_hash.is_none()
     }
 
     pub fn is_project_grant_owned(&self) -> bool {
-        self.owner_user_id.is_none() && self.owner_project_grant_id.is_some()
+        self.owner_user_id.is_none()
+            && self.owner_project_grant_id.is_some()
+            && self.owner_shared_key_hash.is_none()
+    }
+
+    pub fn is_shared_key_owned(&self) -> bool {
+        self.owner_user_id.is_none()
+            && self.owner_project_grant_id.is_none()
+            && self.owner_shared_key_hash.is_some()
     }
 
     pub fn is_revoked(&self) -> bool {

@@ -138,6 +138,7 @@ pub(super) fn seed_client(
         name: name.to_string(),
         owner_user_id: Some(user.id.clone()),
         owner_project_grant_id: None,
+        owner_shared_key_hash: None,
         redirect_uris: "https://example.com/callback".to_string(),
         allowed_scopes: "runtime:read project:read".to_string(),
         created_at: now,
@@ -163,6 +164,7 @@ pub(super) fn seed_client_with_redirects_and_scopes(
         name: "authorize-client".to_string(),
         owner_user_id: Some(user.id.clone()),
         owner_project_grant_id: None,
+        owner_shared_key_hash: None,
         redirect_uris: redirect_uris.to_string(),
         allowed_scopes: allowed_scopes.to_string(),
         created_at: now,
@@ -170,6 +172,30 @@ pub(super) fn seed_client_with_redirects_and_scopes(
     };
     db.insert_oauth_client(&record).unwrap();
     record
+}
+
+pub(super) fn seed_shared_key_bridge_client(
+    db: &crate::Database,
+    shared_key: &str,
+    redirect_uri: &str,
+    allowed_scopes: &str,
+) -> (OAuthClientRecord, String) {
+    let plaintext_secret = crate::auth::generate_oauth_client_secret();
+    let record = OAuthClientRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        client_id: crate::auth::generate_oauth_client_id(),
+        client_secret_hash: hash_token(&plaintext_secret),
+        name: "Shared-key Bridge App".to_string(),
+        owner_user_id: None,
+        owner_project_grant_id: None,
+        owner_shared_key_hash: Some(shared_key_hash_of(shared_key)),
+        redirect_uris: redirect_uri.to_string(),
+        allowed_scopes: allowed_scopes.to_string(),
+        created_at: chrono::Utc::now().timestamp(),
+        revoked_at: None,
+    };
+    db.insert_oauth_client(&record).unwrap();
+    (record, plaintext_secret)
 }
 
 pub(super) fn seed_project_share_client(
@@ -186,6 +212,7 @@ pub(super) fn seed_project_share_client(
         name: "project-share-client".to_string(),
         owner_user_id: None,
         owner_project_grant_id: Some(grant_id.to_string()),
+        owner_shared_key_hash: None,
         redirect_uris: redirect_uri.to_string(),
         allowed_scopes: crate::auth::PROJECT_SHARE_OAUTH_SCOPES.join(" "),
         created_at: now,
@@ -696,18 +723,25 @@ pub(super) async fn test_agent_register_handler(res: &mut Response) {
 
 pub(super) fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
     let session_store = Arc::new(AuthorizeSessionStore::new());
-    build_router_with_session(config, db, session_store)
+    build_router_with_session_and_registry(
+        config,
+        db,
+        session_store,
+        Arc::new(crate::ShellClientRegistry::default()),
+    )
 }
 
-pub(super) fn build_router_with_session(
+pub(super) fn build_router_with_session_and_registry(
     config: Arc<crate::Config>,
     db: Arc<crate::Database>,
     session_store: Arc<AuthorizeSessionStore>,
+    registry: Arc<crate::ShellClientRegistry>,
 ) -> Router {
     Router::new()
         .hoop(salvo::prelude::affix_state::inject(config))
         .hoop(salvo::prelude::affix_state::inject(db))
         .hoop(salvo::prelude::affix_state::inject(session_store))
+        .hoop(salvo::prelude::affix_state::inject(registry))
         .push(Router::with_path("oauth/token").post(oauth_token))
         .push(Router::with_path("oauth/revoke").post(oauth_revoke))
         .push(
@@ -725,6 +759,11 @@ pub(super) fn build_router_with_session(
                 .push(Router::with_path("list").post(oauth_clients_list))
                 .push(Router::with_path("update_scopes").post(oauth_clients_update_scopes))
                 .push(Router::with_path("revoke").post(oauth_clients_revoke)),
+        )
+        .push(
+            Router::with_path("api/oauth/shared-key-client/provision")
+                .hoop(crate::AuthMiddleware)
+                .post(oauth_shared_key_client_provision),
         )
         .push(
             Router::with_path("api/shell/agent/register")

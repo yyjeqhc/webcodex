@@ -403,10 +403,11 @@ fn parse_connect(args: &[String]) -> CliAction {
                 Some(value) => {
                     auth = match value.as_str() {
                         "bearer" | "shared-key" => ConnectAuth::SharedKey,
-                        "oauth" => ConnectAuth::OAuth,
+                        "oauth" => ConnectAuth::SharedKeyOAuth,
+                        "managed-oauth" => ConnectAuth::ManagedOAuth,
                         _ => {
                             return cli_parse_error(
-                                "--auth must be 'bearer' or 'oauth'".to_string(),
+                                "--auth must be 'bearer', 'oauth', or 'managed-oauth'".to_string(),
                             )
                         }
                     }
@@ -466,12 +467,7 @@ fn parse_connect(args: &[String]) -> CliAction {
         return cli_parse_error("--key and --key-file are mutually exclusive".to_string());
     }
     match auth {
-        ConnectAuth::OAuth => {
-            if key.is_some() || key_file.is_some() {
-                return cli_parse_error(
-                    "--auth oauth cannot be combined with --key or --key-file".to_string(),
-                );
-            }
+        ConnectAuth::SharedKeyOAuth => {
             if oauth_redirect_uri
                 .as_deref()
                 .is_none_or(|value| value.trim().is_empty())
@@ -480,11 +476,30 @@ fn parse_connect(args: &[String]) -> CliAction {
                     "--auth oauth requires --oauth-redirect-uri <URL>".to_string(),
                 );
             }
+            if username.is_some() {
+                return cli_parse_error("--user requires --auth managed-oauth".to_string());
+            }
+        }
+        ConnectAuth::ManagedOAuth => {
+            if key.is_some() || key_file.is_some() {
+                return cli_parse_error(
+                    "--auth managed-oauth cannot be combined with --key or --key-file".to_string(),
+                );
+            }
+            if oauth_redirect_uri
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return cli_parse_error(
+                    "--auth managed-oauth requires --oauth-redirect-uri <URL>".to_string(),
+                );
+            }
         }
         ConnectAuth::SharedKey => {
             if oauth_redirect_uri.is_some() || username.is_some() {
                 return cli_parse_error(
-                    "--oauth-redirect-uri/--user require --auth oauth".to_string(),
+                    "--oauth-redirect-uri requires --auth oauth or managed-oauth; --user requires --auth managed-oauth"
+                        .to_string(),
                 );
             }
         }

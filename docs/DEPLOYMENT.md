@@ -248,34 +248,26 @@ manual config generation uses `webcodex agent init`.
 
 ## OAuth2
 
-OAuth2 is disabled by default. Enable it for GPT Actions / MCP clients that
-use the authorization-code flow:
+OAuth2 remains disabled by default when a Server has no public origin. `webcodex server init --public-url https://your-domain.example` writes the public URL, enables OAuth with that exact issuer, and enables the shared-key OAuth bridge for ordinary hosted connect. For a hand-managed env file, the equivalent settings are:
 
 ```text
+WEBCODEX_PUBLIC_URL=https://your-domain.example
 WEBCODEX_OAUTH2_ENABLED=true
 WEBCODEX_OAUTH2_ISSUER=https://your-domain.example
-WEBCODEX_PUBLIC_URL=https://your-domain.example
+WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true
 ```
 
-For repository machines, the recommended managed OAuth path is `login` followed by `connect`. First create a short-lived pairing code on the Server, redeem it on the machine that owns the repository, then connect using the exact OAuth callback required by the MCP client:
+For ordinary repository machines, no managed login is required. Connect with the MCP client's exact callback:
 
 ```bash
-# Server/admin side
-webcodex pairing create \
-  --server-url https://your-domain.example \
-  --env-file /etc/webcodex/webcodex.env \
-  --username alice --ttl-secs 600
-
-# Repository machine
 cd /path/to/your/repository
-webcodex login https://your-domain.example --code <wc_pair_...>
 webcodex connect https://your-domain.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-`connect` creates a managed-user-owned OAuth client on the remote Server and a separate Agent token for the local Runner, then starts the Runner and waits for the project to become visible. Use the printed MCP URL, Client ID, Client Secret, authorization endpoint, and token endpoint in the MCP client. The secret remains pending until WebCodex successfully writes and flushes that output; reconnects do not redisclose it after confirmed display. If the remote OAuth client is missing or revoked, reconnect rotates it and prints the replacement secret. The hosted OAuth allow-list is a closed WebCodex runtime/project/job/Computer set supported by the Server; it excludes `account:manage`, Agent/admin scopes, and future permissions until explicitly reviewed.
+The Runner continues to authenticate with the hosted shared key. `connect` provisions a separate OAuth client bound to that shared-key hash and prints the MCP URL, client ID/secret, bridge authorization endpoint, and token endpoint. During browser authorization, the user enters the shared key only on the WebCodex authorize page; ChatGPT never receives it. The bridge allow-list is the exact direct-shared-key model-facing ceiling (`runtime/project/job` plus `computer:read` and `computer:control`) and excludes account/admin/Agent authority, Computer launch/display/pointer/clipboard, and future scopes. Reconnect does not widen the persisted ceiling or redisclose a reused secret; missing/revoked clients rotate under the previous ceiling.
 
-If the MCP host uses a different callback later, use another profile (or explicitly remove the old profile) rather than silently changing the persisted OAuth client identity. When several users are logged into the same Server locally, pass `--user <username>` to select the intended managed identity.
+If a managed-user OAuth identity is specifically required, use the advanced `webcodex login` flow followed by `webcodex connect ... --auth managed-oauth --oauth-redirect-uri ...`; `--user` applies only there.
 
 Create an OAuth client (the `client_secret` is returned only once; only its
 hash is stored):

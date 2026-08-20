@@ -101,7 +101,7 @@ pub(crate) use pat::{
 };
 pub(crate) use shared_key::{
     allow_anonymous_enabled, is_managed_token_prefix, open_anonymous_context, shared_key_context,
-    shared_key_enabled, shared_key_hash_of,
+    shared_key_enabled, shared_key_hash_of, DIRECT_SHARED_KEY_MODEL_SCOPES,
 };
 
 pub(crate) use tokens::{authenticate, is_oauth2_access_token};

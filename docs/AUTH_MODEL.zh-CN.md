@@ -152,6 +152,8 @@ operator 可以通过 `POST /api/oauth/clients/update_scopes` 显式替换 activ
 access token、refresh token 与尚存 authorization code，因此 client 必须重新完成
 OAuth 授权，才能使用新的 scope 集合。
 
+`webcodex connect <server> --auth oauth` 是普通 hosted shared-key OAuth bridge。OAuth client 归属于 direct shared key 的 SHA-256 group hash，authorization code、access token、refresh token 都保留同一个 `shared_key_hash` subject binding。bridge 的 delegation ceiling 不是全局 OAuth registry，而是 direct shared-key 的精确 model-facing 集合：`runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`。`account:manage`、`admin`、任何 `agent:*` transport scope、Computer launch/display/pointer/clipboard 权限及未来新增 scope 都被排除；`offline_access` 只作为协议级 refresh-token scope。shared-key-owned 浏览器授权还要求对应 Runner group 仍在线。正常重连不会扩权或再次披露已复用 secret；client 缺失/撤销后的替换保持此前持久化的 ceiling。Runner 继续使用 direct shared key，OAuth access token 永远不能用于 Agent transport。`--auth managed-oauth` 保留独立的 managed-user 流程。
+
 MCP Protected Resource Metadata 会明确省略 `scopes_supported`，因为不同的预注册 client
 可能具有不同的委派权限上限。MCP client 因此可以在授权请求中省略 `scope`；WebCodex
 随后会默认采用该 client 已注册的 `allowed_scopes`。OAuth Authorization Server Metadata

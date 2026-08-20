@@ -197,6 +197,12 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         | ("POST", "/api/oauth/clients/list")
         | ("POST", "/api/oauth/clients/update_scopes")
         | ("POST", "/api/oauth/clients/revoke") => OAuthRouteScopePolicy::FirstPartyOnly,
+        // Narrow hosted-connect bridge provisioning. The route-level scope is
+        // only the ordinary runtime entry gate; the handler additionally
+        // requires AuthKind::SharedKey and the matching connected Runner group.
+        ("POST", "/api/oauth/shared-key-client/provision") => {
+            OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ)
+        }
 
         ("GET", "/mcp") => OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ),
         ("POST", "/mcp") => OAuthRouteScopePolicy::BodyAware(OAuthBodyAwarePolicy::McpToolCall),
@@ -802,6 +808,7 @@ mod tests {
             ("POST", "/api/oauth/clients/list"),
             ("POST", "/api/oauth/clients/update_scopes"),
             ("POST", "/api/oauth/clients/revoke"),
+            ("POST", "/api/oauth/shared-key-client/provision"),
         ] {
             assert_ne!(
                 oauth_route_scope_policy_for_path_method(method, path),

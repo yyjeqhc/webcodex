@@ -17,7 +17,8 @@ const CONNECT_LOCK_FILE: &str = "connect.lock";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectAuth {
     SharedKey,
-    OAuth,
+    SharedKeyOAuth,
+    ManagedOAuth,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

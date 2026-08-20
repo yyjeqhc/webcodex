@@ -166,8 +166,14 @@ jobs:
           node-version: 22
       - name: Check formatting
         run: cargo fmt --all -- --check
-      - name: Run tests
-        run: cargo test --locked -p webcodex-agent-config -p webcodex-process -p webcodex-persistent-shell -p webcodex-cli -p webcodex-runner
+      - name: Run Windows library and CLI tests
+        run: cargo test --locked -p webcodex-agent-config -p webcodex-process -p webcodex-persistent-shell -p webcodex-cli
+      - name: Run Windows Runner tests
+        # The Runner suite starts many real PowerShell/process-tree fixtures. On
+        # hosted Windows, parallel test functions can starve process startup long
+        # enough to trip intentionally tight command timeouts. Serialize only
+        # the test functions; concurrency exercised inside each test is unchanged.
+        run: cargo test --locked -p webcodex-runner -- --test-threads=1
       - name: Test npm installer and release manifest natively
         run: npm --prefix npm/webcodex test
       - name: Windows artifact to npm install smoke

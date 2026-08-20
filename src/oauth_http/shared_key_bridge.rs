@@ -386,37 +386,47 @@ pub(crate) async fn oauth_shared_key_client_provision(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
     {
-        if let Ok(Some(client)) = db.get_oauth_client_by_client_id(client_id) {
-            if !client.is_shared_key_owned()
-                || client.owner_shared_key_hash.as_deref() != Some(shared_key_hash)
-            {
-                res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(serde_json::json!({"error": "OAuth client belongs to a different shared-key group"})));
-                return;
-            }
-            if client.redirect_uris_vec() != vec![redirect_uri.clone()] {
-                res.status_code(StatusCode::CONFLICT);
-                res.render(Json(
-                    serde_json::json!({"error": "OAuth client redirect URI does not match"}),
-                ));
-                return;
-            }
-            if !bridge_client_scopes_are_current(&client) {
-                res.status_code(StatusCode::CONFLICT);
-                res.render(Json(serde_json::json!({"error": "persisted OAuth client exceeds the current shared-key bridge scope ceiling"})));
-                return;
-            }
-            apply_oauth_no_store_headers(res);
-            res.render(Json(serde_json::json!({
-                "success": true,
-                "reused": true,
-                "client": {
-                    "client_id": client.client_id,
-                    "redirect_uri": redirect_uri,
-                    "allowed_scopes": client.allowed_scopes_vec(),
+        match db.get_oauth_client_by_client_id(client_id) {
+            Ok(Some(client)) => {
+                if !client.is_shared_key_owned()
+                    || client.owner_shared_key_hash.as_deref() != Some(shared_key_hash)
+                {
+                    res.status_code(StatusCode::FORBIDDEN);
+                    res.render(Json(serde_json::json!({"error": "OAuth client belongs to a different shared-key group"})));
+                    return;
                 }
-            })));
-            return;
+                if client.redirect_uris_vec() != vec![redirect_uri.clone()] {
+                    res.status_code(StatusCode::CONFLICT);
+                    res.render(Json(
+                        serde_json::json!({"error": "OAuth client redirect URI does not match"}),
+                    ));
+                    return;
+                }
+                if !bridge_client_scopes_are_current(&client) {
+                    res.status_code(StatusCode::CONFLICT);
+                    res.render(Json(serde_json::json!({"error": "persisted OAuth client exceeds the current shared-key bridge scope ceiling"})));
+                    return;
+                }
+                apply_oauth_no_store_headers(res);
+                res.render(Json(serde_json::json!({
+                    "success": true,
+                    "reused": true,
+                    "client": {
+                        "client_id": client.client_id,
+                        "redirect_uri": redirect_uri,
+                        "allowed_scopes": client.allowed_scopes_vec(),
+                    }
+                })));
+                return;
+            }
+            Ok(None) => {}
+            Err(_) => {
+                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                res.render(Json(serde_json::json!({
+                    "error": "failed to read existing OAuth client"
+                })));
+                return;
+            }
         }
     }
 

@@ -232,6 +232,40 @@ async fn shared_key_client_provision_is_group_bound_and_preserves_narrow_scope_o
 }
 
 #[tokio::test]
+async fn shared_key_client_provision_fails_closed_on_client_lookup_error() {
+    let env = crate::auth::AuthEnvGuard::new();
+    env.enable_direct_shared_key();
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    let shared_key = "ordinary-connect-shared-key";
+    register_shared_key_runner(&registry, shared_key).await;
+    db.conn_for_tests()
+        .execute_batch("DROP TABLE oauth_clients;")
+        .unwrap();
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db,
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+
+    let mut resp = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
+        .add_header("authorization", format!("Bearer {shared_key}"), true)
+        .json(&serde_json::json!({
+            "redirect_uri": "https://chatgpt.example/callback",
+            "client_id": "wc_client_existing",
+            "previous_allowed_scopes": ["runtime:read"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::INTERNAL_SERVER_ERROR));
+    let body: serde_json::Value = resp.take_json().await.unwrap();
+    assert_eq!(body["error"], "failed to read existing OAuth client");
+    assert!(body.get("client_secret").is_none());
+}
+
+#[tokio::test]
 async fn shared_key_owned_bridge_client_rejects_wrong_key_and_revoked_client() {
     let config = test_config(oauth2_enabled_bridge());
     let (_tmp, db) = test_db();

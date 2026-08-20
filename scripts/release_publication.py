@@ -368,8 +368,13 @@ def reclaim_prepublication_tag(
     if successful:
         raise PublicationError(f"successful authoritative release-build exists for {tag}; refusing reclaim")
 
+    lease = f"--force-with-lease=refs/tags/{tag}:{tag_object_sha}"
     try:
-        _run_checked(["git", "push", "origin", "--delete", tag], cwd=source_root, timeout=120.0)
+        _run_checked(
+            ["git", "push", lease, "origin", f":refs/tags/{tag}"],
+            cwd=source_root,
+            timeout=120.0,
+        )
     except PublicationError as exc:
         if _remote_annotated_tag_identity(source_root, tag) is not None:
             raise PublicationError(f"remote tag deletion failed for {tag}") from exc

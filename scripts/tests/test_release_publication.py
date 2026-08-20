@@ -279,8 +279,67 @@ class ReclaimTagTests(unittest.TestCase):
             )
         self.assertTrue(summary["remote_tag_deleted"])
         self.assertTrue(summary["local_tag_deleted"])
-        self.assertEqual(calls[0][0], ["git", "push", "origin", "--delete", TAG])
+        self.assertEqual(
+            calls[0][0],
+            [
+                "git",
+                "push",
+                f"--force-with-lease=refs/tags/{TAG}:{'b' * 40}",
+                "origin",
+                f":refs/tags/{TAG}",
+            ],
+        )
         self.assertEqual(calls[1][0], ["git", "tag", "-d", TAG])
+
+    def test_reclaim_rejects_tag_changed_after_validation(self) -> None:
+        root = Path("/tmp/reclaim")
+        replacement_identity = ("c" * 40, "d" * 40)
+        calls: list[tuple[list[str], Path | None]] = []
+
+        def reject_push(argv, *, cwd=None, timeout=600.0):
+            calls.append((list(argv), cwd))
+            raise publication.PublicationError("lease rejected")
+
+        with mock.patch.object(Path, "is_dir", return_value=True), mock.patch.object(
+            publication,
+            "_git",
+            side_effect=["", "https://github.com/yyjeqhc/webcodex.git", SOURCE, ""],
+        ), mock.patch.object(publication, "_remote_main_source", return_value=SOURCE), mock.patch.object(
+            publication, "_package_versions", return_value=(VERSION, VERSION)
+        ), mock.patch.object(
+            publication,
+            "_remote_annotated_tag_identity",
+            side_effect=[("b" * 40, SOURCE), replacement_identity],
+        ), mock.patch.object(publication, "_reclaim_release_check", return_value=(None, "authenticated")), mock.patch.object(
+            publication, "_fetch_public_json_optional", return_value=None
+        ), mock.patch.object(
+            publication,
+            "_reclaim_build_history",
+            return_value=[{"run_id": 1, "status": "completed", "conclusion": "failure", "source_sha": SOURCE}],
+        ), mock.patch.object(publication, "_run_checked", side_effect=reject_push), self.assertRaises(
+            publication.PublicationError
+        ) as raised:
+            publication.reclaim_prepublication_tag(
+                repo=collector.DEFAULT_REPO,
+                version=VERSION,
+                root=root,
+                confirm=TAG,
+                timeout=5,
+                allow_public_release_check=False,
+            )
+
+        self.assertIn("remote tag deletion failed", str(raised.exception))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0][0],
+            [
+                "git",
+                "push",
+                f"--force-with-lease=refs/tags/{TAG}:{'b' * 40}",
+                "origin",
+                f":refs/tags/{TAG}",
+            ],
+        )
 
 
 class BuildStateTests(unittest.TestCase):

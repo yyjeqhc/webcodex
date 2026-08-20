@@ -187,6 +187,14 @@ impl Drop for ManagedChild {
         {
             self.tree_exited.store(true, Ordering::Release);
         }
+        #[cfg(target_os = "macos")]
+        if self.tree_exited.load(Ordering::Acquire) {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) if defer_darwin_direct_child_reap(self.child.id()) => return,
+                Ok(None) => {}
+            }
+        }
         let Some(deadline) = Instant::now().checked_add(DROP_REAP_TIMEOUT) else {
             return;
         };
@@ -198,6 +206,43 @@ impl Drop for ManagedChild {
             }
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn defer_darwin_direct_child_reap(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    std::thread::Builder::new()
+        .name("webcodex-child-reaper".to_string())
+        .spawn(move || {
+            // Once the exact process-group probe has proven the tree has no
+            // executable member, only direct-child zombie hygiene remains.
+            // Darwin may still report that child as temporarily unreapable, so
+            // finish the bounded reap off the caller's already-consumed
+            // shutdown deadline instead of re-arming Drop for another 200ms.
+            let Some(deadline) = Instant::now().checked_add(DROP_REAP_TIMEOUT) else {
+                return;
+            };
+            loop {
+                let mut status = 0;
+                let waited = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+                if waited == pid {
+                    return;
+                }
+                if waited < 0 {
+                    if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return;
+                }
+                if Instant::now() >= deadline {
+                    return;
+                }
+                std::thread::sleep(TREE_POLL);
+            }
+        })
+        .is_ok()
 }
 
 /// Signal a whole process group, reporting whether it still existed.

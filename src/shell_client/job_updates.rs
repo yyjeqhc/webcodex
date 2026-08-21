@@ -649,6 +649,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox,
             job_context: Some(job_context),
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -1028,6 +1029,7 @@ impl ShellClientRegistry {
                 lsp: None,
                 sandbox: None,
                 job_context: None,
+                mcp_gateway: None,
                 persistent_shell: None,
             };
             enqueue_pending_request_locked(
@@ -1575,6 +1577,7 @@ impl ShellClientRegistry {
                     lsp: None,
                     sandbox: None,
                     job_context: None,
+                    mcp_gateway: None,
                     persistent_shell: None,
                 };
                 enqueue_pending_request_locked(

@@ -148,6 +148,7 @@ async fn complete_script_lifecycle(
                 error: error.map(str::to_string),
             },
             command_execution_state: Some(state),
+            mcp_gateway: None,
         })
         .await
         .unwrap();

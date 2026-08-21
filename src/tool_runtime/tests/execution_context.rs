@@ -623,6 +623,7 @@ async fn session_ssh_transport_failure_marks_remote_delivery_uncertain() {
                 error: Some("ssh transport failed after dispatch".to_string()),
             },
             command_execution_state: Some(ShellCommandExecutionState::OutcomeUnknown),
+            mcp_gateway: None,
         })
         .await
         .unwrap();

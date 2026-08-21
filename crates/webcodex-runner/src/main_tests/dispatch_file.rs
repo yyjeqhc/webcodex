@@ -99,6 +99,7 @@ fn dispatch_request_edit_routes_to_file_handler() {
         lsp: None,
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     };
     let pdir = projects_dir(&cfg).unwrap();

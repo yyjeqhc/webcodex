@@ -11,6 +11,10 @@ use super::validation::{
 };
 use super::{now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS};
 use crate::lsp_bridge::{AgentLspPayload, AgentLspRequest, AGENT_LSP_REQUEST_KIND};
+use crate::mcp_gateway::{
+    validate_request as validate_mcp_gateway_request, McpGatewayDispatchState, McpGatewayRequest,
+    McpGatewayResponse,
+};
 use crate::shell_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
     ShellAgentShellRequest, ShellFileOpRequest, ShellJobContext, ShellProcessArgv, ShellRunRequest,
@@ -149,6 +153,9 @@ pub(super) fn enqueue_pending_request_locked(
             expected_client_owner: None,
             expected_project_id: None,
             expected_project_cwd: None,
+            expected_mcp_gateway_agent_instance_id: None,
+            expected_mcp_gateway_provider_id: None,
+            expected_mcp_gateway_provider_instance_id: None,
             dispatched: false,
         },
     );
@@ -226,6 +233,22 @@ pub(super) fn resolve_disconnected_sync_requests_locked(
             // a failed send is expected and safe to ignore.
             let _ = waiter.send(response);
         }
+        if let Some(waiter) = inner.mcp_gateway_waiters.remove(&request_id) {
+            let state = if pending.dispatched {
+                McpGatewayDispatchState::OutcomeUnknown
+            } else {
+                McpGatewayDispatchState::NotStarted
+            };
+            let _ = waiter.send(McpGatewayResponse::error(
+                state,
+                "runner_unavailable",
+                if pending.dispatched {
+                    "Runner transport failed after dispatch; downstream outcome is unknown and the call must not be retried automatically"
+                } else {
+                    "Runner transport failed before dispatch; provider request was not started"
+                },
+            ));
+        }
         inner.persistent_waiters.remove(&request_id);
     }
 }
@@ -271,6 +294,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -340,6 +364,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -428,6 +453,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -509,6 +535,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -592,6 +619,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -673,6 +701,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: sandbox.clone(),
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -755,6 +784,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: sandbox.clone(),
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -846,6 +876,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: sandbox.clone(),
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -952,6 +983,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: sandbox.clone(),
             job_context: ssh_context,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -1016,15 +1048,20 @@ impl ShellClientRegistry {
             .iter()
             .filter(|(_, pending)| {
                 pending.job_id.is_none()
-                    && pending
+                    && (pending
                         .waiter
                         .as_ref()
                         .is_some_and(tokio::sync::oneshot::Sender::is_closed)
+                        || inner
+                            .mcp_gateway_waiters
+                            .get(&pending.request.request_id)
+                            .is_some_and(tokio::sync::oneshot::Sender::is_closed))
             })
             .map(|(request_id, _)| request_id.clone())
             .collect::<Vec<_>>();
         for request_id in &abandoned {
             inner.persistent_waiters.remove(request_id);
+            inner.mcp_gateway_waiters.remove(request_id);
             remove_pending_request_locked(&mut inner, request_id);
         }
         abandoned.len()
@@ -1037,7 +1074,101 @@ impl ShellClientRegistry {
     pub(crate) async fn cancel_request_dispatch_state(&self, request_id: &str) -> Option<bool> {
         let mut inner = self.inner.lock().await;
         inner.persistent_waiters.remove(request_id);
+        inner.mcp_gateway_waiters.remove(request_id);
         remove_pending_request_locked(&mut inner, request_id).map(|pending| pending.dispatched)
+    }
+
+    /// Enqueue one typed MCP gateway operation for an exact live Runner
+    /// instance. Authorization and lease identity are rechecked atomically at
+    /// admission, so discovery is never authoritative and a stale bridge id
+    /// cannot silently route to a replacement Runner.
+    pub(crate) async fn enqueue_mcp_gateway(
+        &self,
+        client_id: &str,
+        expected_agent_instance_id: &str,
+        operation: McpGatewayRequest,
+        auth: Option<&crate::auth::AuthContext>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<McpGatewayResponse>), String> {
+        validate_mcp_gateway_request(&operation)
+            .map_err(|_| "invalid MCP gateway request".to_string())?;
+        let expected_provider_id = operation.provider_id().to_string();
+        let expected_provider_instance_id = operation.provider_instance_id().to_string();
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.to_string(),
+            kind: "mcp_gateway".to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+            command: String::new(),
+            process: None,
+            script: None,
+            stdin: None,
+            timeout_secs: 120,
+            requested_by,
+            created_at: now_ts(),
+            validation: None,
+            lsp: None,
+            sandbox: None,
+            job_context: None,
+            persistent_shell: None,
+            mcp_gateway: Some(operation),
+        };
+        let mut inner = self.inner.lock().await;
+        let client = inner
+            .clients
+            .get(client_id)
+            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
+        assert_shell_client_access(auth, client)
+            .map_err(|_| "exact Runner is unavailable".to_string())?;
+        if client.agent_instance_id != expected_agent_instance_id {
+            return Err("stale Runner identity; request was not started".to_string());
+        }
+        let provider_is_current = client
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.mcp_gateway_providers.as_ref())
+            .is_some_and(|providers| {
+                providers.iter().any(|provider| {
+                    provider.provider_id == expected_provider_id
+                        && provider.provider_instance_id == expected_provider_instance_id
+                })
+            });
+        if !provider_is_current {
+            return Err("stale provider identity; request was not started".to_string());
+        }
+        if now_ts().saturating_sub(client.last_seen) > super::CLIENT_ONLINE_WINDOW_SECS {
+            return Err("exact Runner is offline; request was not started".to_string());
+        }
+        enqueue_pending_request_locked(
+            &mut inner,
+            client_id,
+            request_id.clone(),
+            request,
+            None,
+            None,
+        )?;
+        let pending = inner
+            .pending_by_id
+            .get_mut(&request_id)
+            .expect("MCP gateway request was just enqueued");
+        pending.expected_mcp_gateway_agent_instance_id =
+            Some(expected_agent_instance_id.to_string());
+        pending.expected_mcp_gateway_provider_id = Some(expected_provider_id);
+        pending.expected_mcp_gateway_provider_instance_id = Some(expected_provider_instance_id);
+        inner.mcp_gateway_waiters.insert(request_id.clone(), tx);
+        notify_client_locked(&inner, client_id);
+        Ok((request_id, rx))
     }
 
     /// Enqueue one explicit persistent-shell lifecycle operation. Capability
@@ -1113,6 +1244,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: None,
             job_context: job_context.clone(),
+            mcp_gateway: None,
             persistent_shell: Some(request),
         };
         let mut inner = self.inner.lock().await;
@@ -1205,6 +1337,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -1296,6 +1429,7 @@ impl ShellClientRegistry {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;
@@ -1374,6 +1508,7 @@ impl ShellClientRegistry {
             lsp: Some(payload),
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let mut inner = self.inner.lock().await;

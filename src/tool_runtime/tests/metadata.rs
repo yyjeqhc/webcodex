@@ -729,6 +729,7 @@ async fn list_projects_shows_shell_profile_resolution() {
         max_output_bytes: 262144,
         shell_profiles: Some(summary),
         tool_providers: None,
+        mcp_gateway_providers: None,
     };
     let mut configured = registered_project("rust-proj", "/root/git/rust");
     configured.shell_profile = Some("rust".to_string());
@@ -874,6 +875,7 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
                 max_output_bytes: 262144,
                 shell_profiles: Some(summary),
                 tool_providers: None,
+                mcp_gateway_providers: None,
             }),
         })
         .await
@@ -2166,6 +2168,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
                     },
                     config_reload: AgentConfigReloadStatus::default(),
                 }),
+                mcp_gateway_providers: None,
             }),
         })
         .await
@@ -2644,6 +2647,7 @@ async fn list_agents_includes_sanitized_policy_summary() {
                 max_output_bytes: 4096,
                 shell_profiles: None,
                 tool_providers: None,
+                mcp_gateway_providers: None,
             }),
         })
         .await

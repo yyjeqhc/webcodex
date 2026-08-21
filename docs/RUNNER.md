@@ -113,6 +113,24 @@ The runtime tools `register_project` and `create_project` let a client register
 an existing directory or create a new one on an online Runner, subject to the
 Runner's `allowed_roots` policy.
 
+## Local MCP providers
+
+The Runner can directly host persistent stdio MCP providers for WebCodex's built-in MCP gateway:
+
+```toml
+[mcp]
+request_timeout_secs = 30
+
+[[mcp.providers]]
+id = "everything"
+name = "Everything"
+executable = "/absolute/path/to/mcp-server-everything"
+args = []
+timeout_secs = 30
+```
+
+`executable` must be absolute. The Runner starts providers without a shell and with a cleared host environment rather than inheriting the Runner process environment. A provider starts on first use, completes MCP initialization, and is then reused persistently. Configuration changes require a Runner restart; the logical `id` may stay stable while the internal provider instance changes. Server dispatch binds the exact current instance, so stale requests are not redirected. Registration projects only provider `id`/`name` plus internal instance-fencing metadata to the Server; executable paths, argv, PID, stderr, and Runner credentials are not advertised.
+
 ## Shell profiles
 
 By default, `run_shell` and `run_job` do not keep a persistent shell session.

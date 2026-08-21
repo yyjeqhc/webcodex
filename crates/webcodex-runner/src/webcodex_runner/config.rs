@@ -1,4 +1,5 @@
 use super::external_tools::ExternalToolRouter;
+use super::mcp_gateway::McpGatewayManager;
 use super::shutdown::lock_unpoison;
 use crate::agent_init::{
     effective_allowed_roots, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS,
@@ -71,6 +72,44 @@ pub(crate) struct AgentConfig {
     pub(crate) ssh: SshConfig,
     #[serde(default)]
     pub(crate) tool_providers: ToolProvidersConfig,
+    /// Static Runner-owned stdio MCP providers exposed through WebCodex's
+    /// built-in MCP gateway. The public config section is `[mcp]`.
+    #[serde(default, rename = "mcp")]
+    pub(crate) mcp_gateway: McpGatewayConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct McpGatewayConfig {
+    #[serde(default = "default_mcp_gateway_request_timeout_secs")]
+    pub(crate) request_timeout_secs: u64,
+    #[serde(default)]
+    pub(crate) providers: Vec<McpGatewayProviderConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct McpGatewayProviderConfig {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) executable: String,
+    #[serde(default)]
+    pub(crate) args: Vec<String>,
+    /// Optional per-provider request deadline. When absent, inherit
+    /// `mcp.request_timeout_secs`.
+    #[serde(default)]
+    pub(crate) timeout_secs: Option<u64>,
+}
+
+fn default_mcp_gateway_request_timeout_secs() -> u64 {
+    30
+}
+
+impl Default for McpGatewayConfig {
+    fn default() -> Self {
+        Self {
+            request_timeout_secs: default_mcp_gateway_request_timeout_secs(),
+            providers: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
@@ -334,6 +373,7 @@ impl HotAgentConfig {
 
 pub(crate) struct ReloadableAgentConfig {
     startup: AgentConfig,
+    mcp_gateway: Arc<McpGatewayManager>,
     /// Config file path used by `reload()`. Config reload is a Unix feature
     /// (Windows marks reload as unsupported and never stores the path), but
     /// the reload logic is exercised by cross-platform tests.
@@ -356,6 +396,7 @@ impl ReloadableAgentConfig {
         let current = Arc::new(HotAgentConfig::new(1, &startup, status));
         let external_routers = vec![Arc::downgrade(&current.external_tools)];
         Self {
+            mcp_gateway: Arc::new(McpGatewayManager::new(&startup.mcp_gateway)),
             startup,
             #[cfg(any(unix, test))]
             path,
@@ -375,10 +416,15 @@ impl ReloadableAgentConfig {
 
     pub(crate) fn begin_shutdown(&self) {
         self.stopping.store(true, Ordering::SeqCst);
+        self.mcp_gateway.shutdown();
     }
 
     pub(crate) fn shutdown_flag(&self) -> &AtomicBool {
         &self.stopping
+    }
+
+    pub(crate) fn mcp_gateway(&self) -> &McpGatewayManager {
+        &self.mcp_gateway
     }
 
     /// Startup-owned managed temporary-project root. Like `projects_dir`, a
@@ -491,6 +537,7 @@ pub(crate) fn restart_required_fields(
         hostname,
         host_context,
         max_concurrent_jobs,
+        mcp_gateway,
         owner,
         poll_interval_ms,
         projects_dir,
@@ -958,7 +1005,76 @@ pub(crate) fn load_config(path: &Path) -> Result<AgentConfig, String> {
             return Err("tool_providers.claude_code.timeout_secs must be > 0".to_string());
         }
     }
+    validate_mcp_gateway_config(&cfg.mcp_gateway)?;
     Ok(cfg)
+}
+
+fn validate_mcp_gateway_config(config: &McpGatewayConfig) -> Result<(), String> {
+    use crate::mcp_gateway::{
+        validate_provider_id, validate_provider_name, MCP_GATEWAY_MAX_PROVIDERS,
+    };
+    use std::collections::HashSet;
+
+    if !(1..=120).contains(&config.request_timeout_secs) {
+        return Err("mcp.request_timeout_secs must be between 1 and 120".to_string());
+    }
+    if config.providers.len() > MCP_GATEWAY_MAX_PROVIDERS {
+        return Err(format!(
+            "mcp.providers may contain at most {MCP_GATEWAY_MAX_PROVIDERS} entries"
+        ));
+    }
+    let mut ids = HashSet::new();
+    for provider in &config.providers {
+        validate_provider_id(&provider.id)
+            .map_err(|error| format!("mcp provider id is invalid: {error}"))?;
+        validate_provider_name(&provider.name)
+            .map_err(|error| format!("mcp provider name is invalid: {error}"))?;
+        if provider
+            .timeout_secs
+            .is_some_and(|timeout| !(1..=120).contains(&timeout))
+        {
+            return Err(format!(
+                "mcp provider '{}' timeout_secs must be between 1 and 120",
+                provider.id
+            ));
+        }
+        if !ids.insert(provider.id.as_str()) {
+            return Err("mcp provider ids must be unique".to_string());
+        }
+        if provider.executable.is_empty()
+            || provider.executable.len() > 1_024
+            || provider.executable.contains('\0')
+            || !Path::new(&provider.executable).is_absolute()
+        {
+            return Err(format!(
+                "mcp provider '{}' executable must be an absolute path of at most 1024 bytes",
+                provider.id
+            ));
+        }
+        if provider.args.len() > 64 {
+            return Err(format!(
+                "mcp provider '{}' args may contain at most 64 entries",
+                provider.id
+            ));
+        }
+        let mut total = 0usize;
+        for argument in &provider.args {
+            if argument.len() > 4_096 || argument.contains('\0') {
+                return Err(format!(
+                    "mcp provider '{}' contains an invalid argument",
+                    provider.id
+                ));
+            }
+            total = total.saturating_add(argument.len()).saturating_add(1);
+        }
+        if total > 16 * 1024 {
+            return Err(format!(
+                "mcp provider '{}' args exceed 16384 bytes",
+                provider.id
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn hostname() -> Option<String> {

@@ -92,6 +92,58 @@ async fn oauth2_mcp_tools_list_requires_runtime_read() {
 }
 
 #[tokio::test]
+async fn oauth2_mcp_local_gateway_catalog_and_call_require_explicit_scope() {
+    let (_tmp, service, token) = oauth_mcp_service("runtime:read");
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert!(!body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == crate::mcp_gateway::MCP_TOOL_NAME));
+
+    let (status, body, challenge) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::mcp_gateway::MCP_TOOL_NAME,
+            "arguments": {"action": "list"}
+        }),
+    )
+    .await;
+    assert_mcp_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_MCP_LOCAL),
+    );
+
+    let (_tmp, service, token) = oauth_mcp_service("runtime:read mcp:local");
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert!(body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == crate::mcp_gateway::MCP_TOOL_NAME));
+
+    let (status, body, _) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": crate::mcp_gateway::MCP_TOOL_NAME,
+            "arguments": {"action": "list"}
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert_eq!(body["result"]["isError"], false);
+    assert_eq!(body["result"]["structuredContent"]["servers"], json!([]));
+}
+
+#[tokio::test]
 async fn oauth2_mcp_computer_app_resources_require_runtime_read() {
     let (_tmp, service, token) =
         oauth_mcp_service_with_surface("runtime:read", ModelSurface::FullOperatorRuntime);
@@ -177,7 +229,11 @@ async fn oauth2_mcp_server_discover_requires_runtime_read_and_advertises_both_ve
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     assert_eq!(
         body["result"]["supportedVersions"],
-        json!([MCP_STATELESS_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION])
+        json!([
+            MCP_STATELESS_PROTOCOL_VERSION,
+            MCP_CHATGPT_PROTOCOL_VERSION,
+            MCP_PROTOCOL_VERSION
+        ])
     );
     assert_eq!(body["result"]["resultType"], "complete");
 

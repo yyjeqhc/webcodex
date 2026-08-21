@@ -26,6 +26,7 @@ fn request(kind: &str, payload: &str) -> ShellAgentShellRequest {
         lsp: None,
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     }
 }

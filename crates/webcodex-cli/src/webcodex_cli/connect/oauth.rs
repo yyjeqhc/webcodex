@@ -945,6 +945,7 @@ mod tests {
             auth: super::super::ConnectAuth::ManagedOAuth,
             oauth_redirect_uri: Some("https://client.example/callback".to_string()),
             oauth_computer_permissions: false,
+            oauth_local_mcp: false,
             username: None,
             project: PathBuf::from("."),
             profile: None,

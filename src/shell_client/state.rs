@@ -1,4 +1,5 @@
 use super::auth::ShellClientAuthGroup;
+use crate::mcp_gateway::McpGatewayResponse;
 use crate::shell_protocol::{
     AgentBuildInfo, AgentHostContext, AgentPolicySummary, PersistentShellResult,
     ShellAgentProjectSummary, ShellAgentShellRequest, ShellClientCapabilities,
@@ -140,6 +141,15 @@ pub(super) struct PendingShellRequest {
     pub(super) expected_client_owner: Option<String>,
     pub(super) expected_project_id: Option<String>,
     pub(super) expected_project_cwd: Option<String>,
+    /// Exact Runner process lease captured for an MCP gateway request. This is
+    /// revalidated under the registry lock immediately before dequeue so a
+    /// replacement Runner cannot consume stale bridge work.
+    pub(super) expected_mcp_gateway_agent_instance_id: Option<String>,
+    /// Exact provider lease captured with the Runner lease. Both logical id
+    /// and opaque provider instance must still match registration immediately
+    /// before dequeue.
+    pub(super) expected_mcp_gateway_provider_id: Option<String>,
+    pub(super) expected_mcp_gateway_provider_instance_id: Option<String>,
     pub(super) dispatched: bool,
 }
 
@@ -265,6 +275,10 @@ pub(super) struct ShellClientRegistryInner {
     /// from synchronous `ShellRunResponse` waiters so PersistentShell never
     /// enters the Job/run_shell model.
     pub(super) persistent_waiters: HashMap<String, oneshot::Sender<PersistentShellResult>>,
+    /// Waiters for the closed MCP gateway response contract. They remain
+    /// separate from shell stdout/stderr so bridge calls cannot become a raw
+    /// result tunnel.
+    pub(super) mcp_gateway_waiters: HashMap<String, oneshot::Sender<McpGatewayResponse>>,
     pub(super) queues_by_client: HashMap<String, VecDeque<String>>,
     pub(super) jobs_by_id: HashMap<String, ShellJobRecord>,
     pub(super) request_to_job: HashMap<String, String>,

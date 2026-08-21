@@ -92,12 +92,13 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     changed.poll_interval_ms += 1;
     changed.capabilities = Some(ShellClientCapabilities::default());
     changed.max_concurrent_jobs = Some(4);
+    changed.mcp_gateway.request_timeout_secs += 1;
     changed.transport = Some(TRANSPORT_QUIC.to_string());
     changed.websocket_connect_timeout_secs += 1;
     changed.quic = Some(quic_client_config());
     assert_eq!(
             webcodex_runner::config::restart_required_fields(&startup, &changed).join(" "),
-            "capabilities client_id display_name hostname host_context max_concurrent_jobs owner poll_interval_ms projects_dir temporary_projects_root quic server_url token transport websocket_connect_timeout_secs"
+            "capabilities client_id display_name hostname host_context max_concurrent_jobs mcp_gateway owner poll_interval_ms projects_dir temporary_projects_root quic server_url token transport websocket_connect_timeout_secs"
         );
 }
 

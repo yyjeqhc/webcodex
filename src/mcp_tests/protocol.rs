@@ -30,6 +30,28 @@ async fn mcp_initialize_returns_protocol_and_server_info() {
 }
 
 #[tokio::test]
+async fn mcp_initialize_echoes_chatgpt_2025_11_25_protocol() {
+    let runtime = test_runtime();
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "initialize",
+            Some(Value::from(101)),
+            json!({"protocolVersion": MCP_CHATGPT_PROTOCOL_VERSION}),
+        ),
+        None,
+    )
+    .await;
+    match outcome {
+        McpOutcome::Ok(value) => assert_eq!(
+            value["result"]["protocolVersion"],
+            MCP_CHATGPT_PROTOCOL_VERSION
+        ),
+        other => panic!("expected ChatGPT-compatible initialize, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn mcp_ping_returns_empty_result() {
     let runtime = test_runtime();
     let outcome =
@@ -108,7 +130,11 @@ async fn mcp_server_discover_advertises_modern_and_legacy_protocols() {
         McpOutcome::Ok(value) => {
             assert_eq!(
                 value["result"]["supportedVersions"],
-                json!([MCP_STATELESS_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION])
+                json!([
+                    MCP_STATELESS_PROTOCOL_VERSION,
+                    MCP_CHATGPT_PROTOCOL_VERSION,
+                    MCP_PROTOCOL_VERSION
+                ])
             );
             assert_eq!(
                 value["result"]["capabilities"]["tools"]["listChanged"],

@@ -948,6 +948,30 @@ impl AgentSink {
                 error: result.error,
             },
             command_execution_state: None,
+            mcp_gateway: None,
+        })
+    }
+
+    /// Submit one closed MCP gateway response. The response is typed separately
+    /// from stdout/stderr so provider data cannot become a shell-result tunnel.
+    pub(crate) fn submit_mcp_gateway_result(
+        &self,
+        request_id: String,
+        response: crate::mcp_gateway::McpGatewayResponse,
+    ) -> Result<ResultSubmission, SubmitResultError> {
+        self.submit_result_payload(ShellAgentResultPayload {
+            result: ShellAgentResultRequest {
+                client_id: self.client_id().to_string(),
+                agent_instance_id: self.agent_instance_id().to_string(),
+                request_id,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: None,
+            },
+            command_execution_state: None,
+            mcp_gateway: Some(response),
         })
     }
 
@@ -992,6 +1016,7 @@ impl AgentSink {
                 error: result.error,
             },
             command_execution_state: Some(execution_state),
+            mcp_gateway: None,
         };
         let submitted = self.submit_result_payload(body);
         if matches!(&submitted, Ok(ResultSubmission::Accepted)) {

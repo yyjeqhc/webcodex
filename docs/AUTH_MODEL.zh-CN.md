@@ -158,6 +158,8 @@ shared-key authorize 页面只对 exact shared-key-owned client 做 optional Com
 
 permission ID 与 grant bundle 是 closed mapping：`launch -> computer:launch`，`display -> computer:display_read`，`pointer -> computer:display_read + computer:pointer_control`，`clipboard_read -> computer:clipboard_read`，`clipboard_write -> computer:clipboard_write`。picker 会另外检查完整 runtime request prerequisite：launch 要求 `computer:read + computer:launch`，display 要求 `computer:read + computer:display_read`，pointer 要求 `computer:read + computer:control + computer:display_read + computer:pointer_control`，clipboard read/write 分别要求 baseline read/control 与对应 optional scope。这样 browser consent、token scope、OAuth `tools/list` projection 与 `tools/call` runtime gate 保持一致。OAuth caller 的 `tools/list` 复用同一 runtime scope policy 隐藏 token 实际 scope 不足的高权限工具；直接伪造 `tools/call` 仍会再次执行 scope gate。
 
+`mcp:local` 是内建 local MCP gateway 的独立显式 authority，不属于 direct shared-key、Project Credential、open-anonymous 或冻结的 legacy OAuth 默认权限。hosted shared-key OAuth 只有在 `connect` 显式传 `--oauth-local-mcp` 时才会加入该 scope，已有 client ceiling 永远不会被普通升级静默扩大。该 scope 有意表示“同一 shared-key Runner group 内当前及未来配置的 local MCP provider”这一 class-level authority，从而避免 per-provider/per-instance OAuth。ceiling 真正变化会复用现有原子 grant revoke 路径，因此旧 access/refresh token 与 authorization code 不会继承新权限。
+
 MCP Protected Resource Metadata 会明确省略 `scopes_supported`，因为不同的预注册 client
 可能具有不同的委派权限上限。MCP client 因此可以在授权请求中省略 `scope`；WebCodex
 随后会默认采用该 client 已注册的 `allowed_scopes`。OAuth Authorization Server Metadata

@@ -345,6 +345,9 @@ mod disconnect_reconciliation;
 #[path = "mod_tests/abandoned_sync.rs"]
 mod abandoned_sync;
 
+#[path = "mod_tests/mcp_gateway.rs"]
+mod mcp_gateway;
+
 // ------------------------------------------------------------------------
 // Agent instance identity / lease model (Phase 1)
 // ------------------------------------------------------------------------

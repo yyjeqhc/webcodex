@@ -37,6 +37,12 @@ Hosted 客户端需要 HTTPS。有三种路径：
 
 普通 hosted `connect` 直接使用其生成/提供的 shared key，或把同一个身份桥接成 OAuth。managed-user 部署也可使用受限 user API token（`wc_pat_*`）或显式 `--auth managed-oauth` 流程。不要把 bootstrap/admin token、account credential、Runner token 或持久 project-first Connector credential 当作公开分享 secret。`share` 会为该会话创建并打印自己的临时 credential。
 
+### 内建 local MCP gateway
+
+hosted WebCodex Server 可以继续通过同一个稳定 `/mcp` 暴露 Runner-owned 本地 stdio MCP provider。顶层 catalog 保持固定：有权限的 caller 只看到一个 `mcp_tool` meta-tool，而不是把每个 upstream tool 动态摊平到顶层。`mcp_tool` 支持 `list`、`describe`、`call`。provider id 与 upstream tool name 是逻辑 identity；Runner/process/provider-instance identity 与 schema revision token 都只在内部使用。成功 `describe` 会在 Server 记录有界 schema observation；`call` 只解析一次当前 exact Runner/provider instance，并在同一个 persistent provider session 上重新检查当前 tool schema。schema 已变化时不会发送 effectful call；provider replacement 则作为不同错误返回，也不会静默 retarget 或 replay。
+
+Runner 在 `[mcp]` 中配置 provider；不需要额外 daemon/sidecar、第二个公网 resource URL 或 per-provider ChatGPT App。local MCP 使用显式 `mcp:local` scope；direct shared-key、project、open-anonymous 与 legacy OAuth 默认权限都不会自动获得它。普通 hosted shared-key OAuth 必须使用 `webcodex connect ... --auth oauth --oauth-local-mcp` 显式加入“同一 shared-key Runner group 内当前及未来本地 MCP provider”的 class-level authority。ceiling 真正变化会撤销旧 grant 并要求重新走浏览器授权。因此以后新增/替换 provider 不需要新建 OAuth client/App，但只有此前明确 opt in `mcp:local` 的 credential 才能访问。
+
 在 ChatGPT Developer Mode 中，用输出的 `/mcp` URL 创建自定义 app。如果认证菜单
 提供 **访问令牌/API 密钥**，选择它并粘贴 bearer credential，然后执行 **Scan
 Tools / 扫描工具**。ChatGPT 的 UI 文案与可用范围可能随 workspace 与 rollout

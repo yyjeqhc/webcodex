@@ -2674,6 +2674,7 @@ mod tests {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         }
     }

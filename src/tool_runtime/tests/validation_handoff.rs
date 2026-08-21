@@ -72,6 +72,7 @@ async fn complete_sync_shell_lifecycle(
                 error: error.map(str::to_string),
             },
             command_execution_state: Some(execution_state),
+            mcp_gateway: None,
         })
         .await
         .unwrap();

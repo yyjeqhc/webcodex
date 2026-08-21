@@ -247,6 +247,37 @@ async fn http_mcp_tools_list_success() {
 }
 
 #[tokio::test]
+async fn http_mcp_accepts_chatgpt_2025_11_25_protocol_header() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db, runtime));
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_CHATGPT_PROTOCOL_VERSION,
+            true,
+        )
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 199,
+            "method": "tools/list",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": MCP_CHATGPT_PROTOCOL_VERSION
+                }
+            }
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&response), StatusCode::OK);
+    let body: Value = response.take_json().await.unwrap();
+    assert!(body["result"]["tools"].is_array());
+    assert!(body["result"].get("resultType").is_none());
+}
+
+#[tokio::test]
 async fn http_mcp_2026_validates_headers_and_ignores_legacy_session_id() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();

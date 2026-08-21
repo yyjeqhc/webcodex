@@ -80,6 +80,26 @@ fn bridge_computer_scopes_use_explicit_closed_ceiling_without_changing_direct_au
 }
 
 #[test]
+fn bridge_local_mcp_scope_requires_explicit_client_ceiling_opt_in() {
+    assert!(!bridge_oauth_scopes().contains(&crate::auth::SCOPE_MCP_LOCAL));
+
+    let baseline = bridge_oauth_scopes()
+        .iter()
+        .map(|scope| (*scope).to_string())
+        .collect::<Vec<_>>();
+    let mut opted_in = baseline.clone();
+    opted_in.push(crate::auth::SCOPE_MCP_LOCAL.to_string());
+    assert!(
+        normalize_bridge_oauth_scopes(Some(crate::auth::SCOPE_MCP_LOCAL), &opted_in.join(" "),)
+            .is_ok()
+    );
+    assert!(
+        normalize_bridge_oauth_scopes(Some(crate::auth::SCOPE_MCP_LOCAL), &baseline.join(" "),)
+            .is_err()
+    );
+}
+
+#[test]
 fn normalize_bridge_oauth_scopes_accepts_offline_access_as_protocol_scope() {
     let normalized = normalize_bridge_oauth_scopes(
         Some("runtime:read offline_access"),

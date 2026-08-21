@@ -20,6 +20,8 @@ client_id = "oe"
         auto_transport_plan(&cfg),
         vec![TRANSPORT_WEBSOCKET, TRANSPORT_POLLING]
     );
+    assert_eq!(cfg.mcp_gateway.request_timeout_secs, 30);
+    assert!(cfg.mcp_gateway.providers.is_empty());
 }
 
 #[test]
@@ -759,4 +761,124 @@ fn phase_e2_polling_dispatch_and_job_execution_concurrency_defaults_are_independ
     assert_eq!(POLLING_DISPATCH_MAX_IN_FLIGHT, 2);
     assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 4);
     assert_ne!(POLLING_DISPATCH_MAX_IN_FLIGHT, DEFAULT_MAX_CONCURRENT_JOBS);
+}
+
+#[test]
+fn agent_config_accepts_static_literal_mcp_gateway_provider() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("agent.toml");
+    std::fs::write(
+        &path,
+        r#"
+server_url = "http://127.0.0.1:8000"
+token = "t"
+client_id = "oe"
+
+[mcp]
+request_timeout_secs = 7
+
+[[mcp.providers]]
+id = "local-tools"
+name = "Local tools"
+executable = "/usr/bin/example-mcp"
+args = ["--stdio", "$HOME", "$(id)"]
+timeout_secs = 5
+"#,
+    )
+    .unwrap();
+
+    let config = load_config(&path).unwrap();
+    assert_eq!(config.mcp_gateway.request_timeout_secs, 7);
+    assert_eq!(config.mcp_gateway.providers.len(), 1);
+    assert_eq!(config.mcp_gateway.providers[0].timeout_secs, Some(5));
+    assert_eq!(
+        config.mcp_gateway.providers[0].args,
+        ["--stdio", "$HOME", "$(id)"]
+    );
+}
+
+#[test]
+fn agent_config_mcp_gateway_provider_timeout_defaults_to_gateway_timeout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("agent.toml");
+    std::fs::write(
+        &path,
+        r#"
+server_url = "http://127.0.0.1:8000"
+token = "t"
+client_id = "oe"
+
+[mcp]
+request_timeout_secs = 11
+
+[[mcp.providers]]
+id = "inherits"
+name = "Inherits"
+executable = "/usr/bin/example-mcp"
+"#,
+    )
+    .unwrap();
+
+    let config = load_config(&path).unwrap();
+    assert_eq!(config.mcp_gateway.request_timeout_secs, 11);
+    assert_eq!(config.mcp_gateway.providers[0].timeout_secs, None);
+}
+
+#[test]
+fn agent_config_rejects_unsafe_or_ambiguous_mcp_gateway_identity() {
+    for (providers, expected) in [
+        (
+            r#"
+[[mcp.providers]]
+id = "local"
+name = "Local"
+executable = "relative-mcp"
+"#,
+            "executable must be an absolute path",
+        ),
+        (
+            r#"
+[[mcp.providers]]
+id = "bad-timeout"
+name = "Bad timeout"
+executable = "/usr/bin/example-mcp"
+timeout_secs = 121
+"#,
+            "timeout_secs must be between 1 and 120",
+        ),
+        (
+            r#"
+[[mcp.providers]]
+id = "duplicate"
+name = "First"
+executable = "/usr/bin/first"
+
+[[mcp.providers]]
+id = "duplicate"
+name = "Second"
+executable = "/usr/bin/second"
+"#,
+            "provider ids must be unique",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        std::fs::write(
+            &path,
+            format!(
+                r#"
+server_url = "http://127.0.0.1:8000"
+token = "t"
+client_id = "oe"
+
+[mcp]
+request_timeout_secs = 30
+{providers}
+"#
+            ),
+        )
+        .unwrap();
+        let error = load_config(&path).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
 }

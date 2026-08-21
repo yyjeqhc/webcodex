@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+const MCP_CHATGPT_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_STATELESS_PROTOCOL_VERSION: &str = "2026-07-28";
 const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
 const MCP_METHOD_HEADER: &str = "mcp-method";
@@ -53,8 +54,11 @@ const MAX_MCP_ARTIFACT_EXPORTS_PER_CALLER: usize = 16;
 const MCP_ARTIFACT_EXPORT_BUSY_CODE: i64 = -32029;
 const MCP_HEADER_MISMATCH: i64 = -32020;
 const MCP_UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
-const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
-    &[MCP_STATELESS_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION];
+const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
+    MCP_STATELESS_PROTOCOL_VERSION,
+    MCP_CHATGPT_PROTOCOL_VERSION,
+    MCP_PROTOCOL_VERSION,
+];
 const MCP_UI_EXTENSION: &str = "io.modelcontextprotocol/ui";
 const MCP_COMPUTER_UI_RESOURCE_URI: &str = "ui://webcodex/computer/v11";
 const MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
@@ -116,6 +120,8 @@ struct McpToolCallParams {
     pub name: String,
     #[serde(default)]
     pub arguments: Value,
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +264,14 @@ fn inferred_protocol_era(request: &JsonRpcRequest) -> McpProtocolEra {
         McpProtocolEra::Stateless2026
     } else {
         McpProtocolEra::Legacy
+    }
+}
+
+fn legacy_initialize_protocol_version(params: &Value) -> &'static str {
+    match params.get("protocolVersion").and_then(Value::as_str) {
+        Some(MCP_CHATGPT_PROTOCOL_VERSION) => MCP_CHATGPT_PROTOCOL_VERSION,
+        Some(MCP_PROTOCOL_VERSION) => MCP_PROTOCOL_VERSION,
+        _ => MCP_PROTOCOL_VERSION,
     }
 }
 
@@ -2593,15 +2607,19 @@ async fn handle_mcp_request_with_lifecycle(
     let response = match request.method.as_str() {
         // MCP 2026-07-28 clients discover capabilities before issuing ordinary
         // requests. WebCodex supports the stateless tools path required by
-        // modern clients while retaining its existing 2025-06-18
-        // initialize/session lifecycle for legacy clients.
+        // modern clients while retaining the initialized 2025 tool-only
+        // session lifecycle used by 2025-06-18 and ChatGPT 2025-11-25 clients.
         "server/discover" if stateless_2026 => rpc_result(
             id,
             json!({
                 "resultType": "complete",
                 "ttlMs": 0,
                 "cacheScope": "private",
-                "supportedVersions": [MCP_STATELESS_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION],
+                "supportedVersions": [
+                    MCP_STATELESS_PROTOCOL_VERSION,
+                    MCP_CHATGPT_PROTOCOL_VERSION,
+                    MCP_PROTOCOL_VERSION
+                ],
                 "capabilities": if model_surface_supports_computer_app(runtime.model_surface()) {
                     json!({
                         "tools": { "listChanged": false },
@@ -2626,7 +2644,7 @@ async fn handle_mcp_request_with_lifecycle(
         "initialize" if !stateless_2026 => rpc_result(
             id,
             json!({
-                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "protocolVersion": legacy_initialize_protocol_version(&request.params),
                 "capabilities": {
                     "tools": {
                         "listChanged": false
@@ -2642,7 +2660,7 @@ async fn handle_mcp_request_with_lifecycle(
         "ping" if !stateless_2026 => rpc_result(id, json!({})),
         "tools/list" => {
             let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
-            let result = if stateless_2026 {
+            let mut result = if stateless_2026 {
                 if oauth_scope_projection {
                     mcp_tools_list_payload_with_features_for_auth(
                         runtime.model_surface(),
@@ -2669,6 +2687,11 @@ async fn handle_mcp_request_with_lifecycle(
             } else {
                 mcp_tools_list_payload(runtime.model_surface())
             };
+            if crate::mcp_gateway::authorized(auth) {
+                if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
+                    tools.push(crate::mcp_gateway::tool_spec());
+                }
+            }
             rpc_result(
                 id,
                 if stateless_2026 {
@@ -2796,6 +2819,30 @@ async fn handle_mcp_request_with_lifecycle(
             if let Some(lc) = lifecycle.as_deref_mut() {
                 lc.set_tool_name(Some(params.name.clone()));
                 lc.dispatch_started();
+            }
+            if params.name == crate::mcp_gateway::MCP_TOOL_NAME {
+                if let Some(outcome) = require_mcp_scope(auth, crate::auth::SCOPE_MCP_LOCAL) {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("forbidden");
+                        lc.dispatch_finished(false, Some(false), "forbidden");
+                    }
+                    return outcome;
+                }
+                let result =
+                    crate::mcp_gateway::call(runtime, params.arguments, auth, params.meta.take())
+                        .await;
+                let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
+                }
+                return McpOutcome::Ok(rpc_result(
+                    id,
+                    if stateless_2026 {
+                        mcp_stateless_result(result, false)
+                    } else {
+                        result
+                    },
+                ));
             }
             // The local_coding model surface rejects tools it does not
             // advertise at the MCP boundary, before ToolRuntime dispatch. The

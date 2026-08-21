@@ -8,6 +8,9 @@ use super::validation::{
     validate_project_summary_count,
 };
 use super::{now_ts, ShellClientRegistry};
+use crate::mcp_gateway::{
+    validate_response as validate_mcp_gateway_response, McpGatewayDispatchState, McpGatewayResponse,
+};
 use crate::shell_protocol::{
     ShellAgentPersistentShellResultRequest, ShellAgentPollRequest, ShellAgentResultPayload,
     ShellAgentResultRequest, ShellAgentShellRequest, ShellCommandExecutionState, ShellRunResponse,
@@ -89,6 +92,103 @@ impl ShellClientRegistry {
             let Some(request_id) = request_id else {
                 return Ok(None);
             };
+            let stale_bridge_error =
+                inner.pending_by_id.get(&request_id).and_then(|pending| {
+                    match (
+                        pending.request.mcp_gateway.as_ref(),
+                        pending.expected_mcp_gateway_agent_instance_id.as_deref(),
+                        pending.expected_mcp_gateway_provider_id.as_deref(),
+                        pending.expected_mcp_gateway_provider_instance_id.as_deref(),
+                    ) {
+                        (
+                            Some(operation),
+                            Some(expected_runner),
+                            Some(expected_provider),
+                            Some(expected_provider_instance),
+                        ) => {
+                            if operation.provider_id() != expected_provider
+                                || operation.provider_instance_id() != expected_provider_instance
+                            {
+                                return Some((
+                                "stale_provider",
+                                "stale_mcp_gateway: pending exact-provider fence is inconsistent"
+                                    .to_string(),
+                            ));
+                            }
+                            let Some(client) = inner.clients.get(&body.client_id) else {
+                                return Some((
+                                    "stale_runner",
+                                    "stale_mcp_gateway: target Runner disappeared before dispatch"
+                                        .to_string(),
+                                ));
+                            };
+                            if client.agent_instance_id != expected_runner {
+                                return Some((
+                                    "stale_runner",
+                                    "stale_mcp_gateway: target Runner changed before dispatch"
+                                        .to_string(),
+                                ));
+                            }
+                            let provider_is_current = client
+                                .policy
+                                .as_ref()
+                                .and_then(|policy| policy.mcp_gateway_providers.as_ref())
+                                .is_some_and(|providers| {
+                                    providers.iter().any(|provider| {
+                                        provider.provider_id == expected_provider
+                                            && provider.provider_instance_id
+                                                == expected_provider_instance
+                                    })
+                                });
+                            (!provider_is_current).then_some((
+                                "stale_provider",
+                                "stale_mcp_gateway: target provider changed before dispatch"
+                                    .to_string(),
+                            ))
+                        }
+                        (None, None, None, None) => None,
+                        _ => Some((
+                            "stale_provider",
+                            "stale_mcp_gateway: pending exact bridge fence is incomplete"
+                                .to_string(),
+                        )),
+                    }
+                });
+            if let Some((bridge_code, error)) = stale_bridge_error {
+                let Some(mut pending) = inner.pending_by_id.remove(&request_id) else {
+                    continue;
+                };
+                if let Some(waiter) = pending.waiter.take() {
+                    let response = ShellRunResponse {
+                        success: false,
+                        request_id: request_id.clone(),
+                        client_id: body.client_id.clone(),
+                        cwd: pending.request.cwd.clone(),
+                        command_preview: request_preview(&pending.request),
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: None,
+                        error: Some(error.clone()),
+                        request_dispatched: Some(false),
+                        command_execution_state: Some(ShellCommandExecutionState::NotStarted),
+                    };
+                    let _ = waiter.send(response);
+                }
+                if let Some(waiter) = inner.mcp_gateway_waiters.remove(&request_id) {
+                    let _ = waiter.send(McpGatewayResponse::error(
+                        McpGatewayDispatchState::NotStarted,
+                        bridge_code,
+                        if bridge_code == "stale_runner" {
+                            "Exact Runner changed before bridge dispatch; request was not started"
+                        } else {
+                            "Exact provider changed before bridge dispatch; request was not started"
+                        },
+                    ));
+                }
+                inner.persistent_waiters.remove(&request_id);
+                continue;
+            }
             let stale_project_error = inner.pending_by_id.get(&request_id).and_then(|pending| {
                 match (
                     pending.expected_project_id.as_deref(),
@@ -179,8 +279,13 @@ impl ShellClientRegistry {
         payload: impl Into<ShellAgentResultPayload>,
     ) -> Result<(), String> {
         let payload = payload.into();
-        self.complete_checked(payload.result, payload.command_execution_state, None)
-            .await
+        self.complete_checked(
+            payload.result,
+            payload.command_execution_state,
+            payload.mcp_gateway,
+            None,
+        )
+        .await
     }
 
     /// Connection-scoped result entry point for long-lived transports. A
@@ -198,6 +303,7 @@ impl ShellClientRegistry {
         self.complete_checked(
             payload.result,
             payload.command_execution_state,
+            payload.mcp_gateway,
             Some(connection_id),
         )
         .await
@@ -207,6 +313,7 @@ impl ShellClientRegistry {
         &self,
         body: ShellAgentResultRequest,
         command_execution_state: Option<ShellCommandExecutionState>,
+        mcp_gateway: Option<crate::mcp_gateway::McpGatewayResponse>,
         expected_connection_id: Option<&str>,
     ) -> Result<(), String> {
         validate_id(&body.client_id, "client_id")?;
@@ -239,6 +346,42 @@ impl ShellClientRegistry {
         };
         if pending.request.client_id != body.client_id {
             return Err("request_id does not belong to client_id".to_string());
+        }
+        if pending.request.mcp_gateway.is_some() {
+            let response = match mcp_gateway {
+                Some(response)
+                    if command_execution_state.is_none()
+                        && body.exit_code.is_none()
+                        && body.stdout.is_none()
+                        && body.stderr.is_none()
+                        && body.duration_ms.is_none()
+                        && body.error.is_none()
+                        && validate_mcp_gateway_response(&response).is_ok() =>
+                {
+                    response
+                }
+                _ => McpGatewayResponse::error(
+                    if pending.dispatched {
+                        McpGatewayDispatchState::OutcomeUnknown
+                    } else {
+                        McpGatewayDispatchState::NotStarted
+                    },
+                    "invalid_runner_response",
+                    if pending.dispatched {
+                        "Runner returned an invalid bridge response after dispatch; downstream outcome is unknown and must not be retried automatically"
+                    } else {
+                        "Runner returned an invalid bridge response before provider dispatch"
+                    },
+                ),
+            };
+            let waiter = inner.mcp_gateway_waiters.remove(&body.request_id);
+            if let Some(waiter) = waiter {
+                let _ = waiter.send(response);
+            }
+            return Ok(());
+        }
+        if mcp_gateway.is_some() {
+            return Err("unexpected MCP gateway result for non-bridge request".to_string());
         }
         let request_id = body.request_id.clone();
         let client_id = body.client_id.clone();

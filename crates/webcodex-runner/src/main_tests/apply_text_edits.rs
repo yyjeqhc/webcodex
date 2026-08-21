@@ -48,6 +48,7 @@ fn apply_text_edits_request(
         lsp: None,
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     }
 }

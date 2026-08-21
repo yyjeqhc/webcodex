@@ -101,6 +101,24 @@ allowed_roots = ["/root/git"]
 runtime 工具 `register_project` 与 `create_project` 让客户端在在线 Runner 上
 注册已有目录或创建新目录，受 Runner 的 `allowed_roots` policy 约束。
 
+## 本地 MCP provider
+
+Runner 可以直接托管供 WebCodex 内建 MCP gateway 使用的 persistent stdio MCP provider：
+
+```toml
+[mcp]
+request_timeout_secs = 30
+
+[[mcp.providers]]
+id = "everything"
+name = "Everything"
+executable = "/absolute/path/to/mcp-server-everything"
+args = []
+timeout_secs = 30
+```
+
+`executable` 必须是绝对路径；Runner 不经过 shell 启动 provider，并使用清空的宿主环境而不是继承整个 Runner 环境。provider 首次使用时启动、完成 MCP initialize 后持久复用。配置变化需要 Runner restart；restart 后逻辑 `id` 可以保持不变，但内部 provider instance 会更换。Server dispatch 会绑定 exact current instance，过期请求不会被重定向。registration 只向 Server 投影 provider 的 `id`/`name` 与内部 instance fencing metadata，不投影 executable、argv、PID、stderr 或 Runner credential。
+
 ## Shell profile
 
 默认情况下 `run_shell` 与 `run_job` 不保留持久 shell 会话。它们会为每个

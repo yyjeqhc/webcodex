@@ -11,6 +11,7 @@ use super::ConnectResult;
 const BRIDGE_PROFILE_VERSION: u32 = 1;
 const BRIDGE_PROFILE_PREFIX: &str = "shared-key-oauth-";
 const BRIDGE_SECRET_DISCLOSED_PREFIX: &str = ".shared-key-oauth-secret-disclosed-";
+const LOCAL_MCP_SCOPE: &str = "mcp:local";
 const BRIDGE_BASELINE_SCOPES: &[&str] = &[
     "runtime:read",
     "project:read",
@@ -52,6 +53,8 @@ struct SharedKeyOAuthProfile {
     allowed_scopes: Vec<String>,
     #[serde(default)]
     computer_permissions_enabled: bool,
+    #[serde(default)]
+    local_mcp_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +104,7 @@ fn disclosure_marker(profile_dir: &Path, client_id: &str) -> PathBuf {
     profile_dir.join(format!("{BRIDGE_SECRET_DISCLOSED_PREFIX}{digest:x}"))
 }
 
+#[cfg(test)]
 fn scope_set_matches(scopes: &[String], expected: &[&str]) -> bool {
     scopes.len() == expected.len()
         && expected
@@ -121,6 +125,14 @@ fn scope_list_is_unique(scopes: &[String]) -> bool {
         .collect::<std::collections::HashSet<_>>()
         .len()
         == scopes.len()
+}
+
+fn without_local_mcp(scopes: &[String]) -> Vec<String> {
+    scopes
+        .iter()
+        .filter(|scope| scope.as_str() != LOCAL_MCP_SCOPE)
+        .cloned()
+        .collect()
 }
 
 fn baseline_scope_ceiling_is_valid(scopes: &[String]) -> bool {
@@ -169,10 +181,18 @@ fn computer_enabled_scope_ceiling_from_existing(scopes: &[String]) -> Option<Vec
 }
 
 fn profile_scope_ceiling_is_valid(profile: &SharedKeyOAuthProfile) -> bool {
+    let local_mcp_present = profile
+        .allowed_scopes
+        .iter()
+        .any(|scope| scope == LOCAL_MCP_SCOPE);
+    if local_mcp_present != profile.local_mcp_enabled {
+        return false;
+    }
+    let authority_scopes = without_local_mcp(&profile.allowed_scopes);
     if profile.computer_permissions_enabled {
-        computer_enabled_scope_ceiling_is_valid(&profile.allowed_scopes)
+        computer_enabled_scope_ceiling_is_valid(&authority_scopes)
     } else {
-        baseline_scope_ceiling_is_valid(&profile.allowed_scopes)
+        baseline_scope_ceiling_is_valid(&authority_scopes)
     }
 }
 
@@ -261,6 +281,7 @@ async fn provision_client(
             "client_id": existing.map(|profile| profile.client_id.as_str()),
             "previous_allowed_scopes": existing.map(|profile| profile.allowed_scopes.as_slice()),
             "computer_permissions": opts.oauth_computer_permissions,
+            "local_mcp": opts.oauth_local_mcp,
         }),
     })
     .await?;
@@ -287,43 +308,56 @@ async fn provision_client(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let local_mcp_present = allowed_scopes.iter().any(|scope| scope == LOCAL_MCP_SCOPE);
+    if local_mcp_present != opts.oauth_local_mcp {
+        return Err(
+            "Server changed local MCP OAuth authority without matching the explicit connect opt-in"
+                .to_string(),
+        );
+    }
+    let authority_scopes = without_local_mcp(&allowed_scopes);
     if opts.oauth_computer_permissions {
-        if !computer_enabled_scope_ceiling_is_valid(&allowed_scopes) {
+        if !computer_enabled_scope_ceiling_is_valid(&authority_scopes) {
             return Err(
                 "Server returned an invalid Computer-enabled shared-key OAuth ceiling".to_string(),
             );
         }
         let expected_scopes = if let Some(existing) = existing {
-            computer_enabled_scope_ceiling_from_existing(&existing.allowed_scopes).ok_or_else(|| {
-                "existing shared-key OAuth profile cannot be safely upgraded to Computer permissions"
-                    .to_string()
-            })?
+            computer_enabled_scope_ceiling_from_existing(&without_local_mcp(&existing.allowed_scopes))
+                .ok_or_else(|| {
+                    "existing shared-key OAuth profile cannot be safely upgraded to Computer permissions"
+                        .to_string()
+                })?
         } else {
             BRIDGE_COMPUTER_ENABLED_SCOPES
                 .iter()
                 .map(|scope| (*scope).to_string())
                 .collect()
         };
-        if !string_scope_set_matches(&allowed_scopes, &expected_scopes) {
+        if !string_scope_set_matches(&authority_scopes, &expected_scopes) {
             return Err(
                 "Server changed baseline authority while enabling optional Computer permissions"
                     .to_string(),
             );
         }
     } else {
-        if !baseline_scope_ceiling_is_valid(&allowed_scopes) {
+        if !baseline_scope_ceiling_is_valid(&authority_scopes) {
             return Err(
                 "Server returned a scope outside the ordinary shared-key OAuth baseline ceiling"
                     .to_string(),
             );
         }
-        if let Some(existing) = existing {
-            if allowed_scopes != existing.allowed_scopes {
-                return Err("persisted shared-key OAuth client differs from the Server; refusing to widen or rewrite it implicitly".to_string());
-            }
-        } else if !scope_set_matches(&allowed_scopes, BRIDGE_BASELINE_SCOPES) {
+        let expected_scopes = existing
+            .map(|profile| without_local_mcp(&profile.allowed_scopes))
+            .unwrap_or_else(|| {
+                BRIDGE_BASELINE_SCOPES
+                    .iter()
+                    .map(|scope| (*scope).to_string())
+                    .collect()
+            });
+        if !string_scope_set_matches(&authority_scopes, &expected_scopes) {
             return Err(
-                "Server returned a scope outside the ordinary shared-key OAuth baseline ceiling"
+                "Server changed baseline authority while provisioning local MCP OAuth access"
                     .to_string(),
             );
         }
@@ -346,6 +380,7 @@ async fn provision_client(
         let mut updated = existing.clone();
         updated.allowed_scopes = allowed_scopes;
         updated.computer_permissions_enabled = opts.oauth_computer_permissions;
+        updated.local_mcp_enabled = opts.oauth_local_mcp;
         let changed = updated != *existing;
         return Ok((updated, changed));
     }
@@ -364,6 +399,7 @@ async fn provision_client(
             redirect_uri: redirect_uri.to_string(),
             allowed_scopes,
             computer_permissions_enabled: opts.oauth_computer_permissions,
+            local_mcp_enabled: opts.oauth_local_mcp,
         },
         true,
     ))
@@ -412,6 +448,12 @@ pub(super) async fn finish_shared_key_oauth_connect(
         if existing.computer_permissions_enabled && !opts.oauth_computer_permissions {
             return Err(
                 "this shared-key OAuth profile already has optional Computer permissions enabled; reconnect with --oauth-computer-permissions to reuse it, or use a different profile/redirect URI for a baseline client"
+                    .to_string(),
+            );
+        }
+        if existing.local_mcp_enabled && !opts.oauth_local_mcp {
+            return Err(
+                "this shared-key OAuth profile already has local MCP authority enabled; reconnect with --oauth-local-mcp to reuse it, or use a different profile/redirect URI"
                     .to_string(),
             );
         }
@@ -491,6 +533,7 @@ mod tests {
             auth: super::super::ConnectAuth::SharedKeyOAuth,
             oauth_redirect_uri: Some("https://chatgpt.example/callback".to_string()),
             oauth_computer_permissions: false,
+            oauth_local_mcp: false,
             username: None,
             project: PathBuf::from("."),
             profile: None,
@@ -625,6 +668,7 @@ mod tests {
             redirect_uri: "https://chatgpt.example/callback".to_string(),
             allowed_scopes: vec!["runtime:read".to_string(), "project:read".to_string()],
             computer_permissions_enabled: false,
+            local_mcp_enabled: false,
         };
         let (upgraded, changed) = provision_client(
             &opts,
@@ -755,8 +799,18 @@ mod tests {
             redirect_uri: "https://chatgpt.example/callback".to_string(),
             allowed_scopes: vec!["runtime:read".to_string(), "project:read".to_string()],
             computer_permissions_enabled: false,
+            local_mcp_enabled: false,
         };
         assert!(profile_scope_ceiling_is_valid(&baseline));
+
+        let mut local_mcp = baseline.clone();
+        local_mcp.local_mcp_enabled = true;
+        local_mcp.allowed_scopes.push(LOCAL_MCP_SCOPE.to_string());
+        assert!(profile_scope_ceiling_is_valid(&local_mcp));
+        let mut mismatched_local_mcp = local_mcp.clone();
+        mismatched_local_mcp.local_mcp_enabled = false;
+        assert!(!profile_scope_ceiling_is_valid(&mismatched_local_mcp));
+
         let baseline_output = bridge_scope_output(&baseline);
         assert!(baseline_output.contains("Scopes:"));
         assert!(!baseline_output.contains("Client may request:"));

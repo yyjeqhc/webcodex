@@ -18,7 +18,8 @@ mod webcodex_runner;
 
 use webcodex_agent_config as agent_init;
 use webcodex_core::{
-    apply_edits_shared, artifact_policy, build_info, lsp_bridge, shell_protocol, validation_bridge,
+    apply_edits_shared, artifact_policy, build_info, lsp_bridge, mcp_gateway, shell_protocol,
+    validation_bridge,
 };
 use webcodex_sandbox as command_sandbox;
 use webcodex_workspace::{project_overview, workspace_checkpoint};
@@ -1905,6 +1906,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.
     capabilities.project_path_registration = true;
+    // MCP gateway support is fenced by the validated provider inventory in
+    // registration rather than a separate capability bit. Older binaries omit
+    // that inventory, so a newer Server will never target them.
     // `job_state_reconciliation` is on by default. A hidden, test/ops-only env
     // knob lets an E2E simulate a legacy runner that predates the capability
     // (it then has no job inventory and a disconnect falls straight to `lost`).
@@ -2026,6 +2030,7 @@ fn build_register_request_with_provider_status(
                 &hot,
                 prepared_cache_count,
                 tool_providers,
+                runtime.mcp_gateway().provider_inventory(),
             )),
             process_started_at: Some(process_started_at()),
             build: Some(runner_build_info()),
@@ -2149,6 +2154,7 @@ fn register_policy_summary(
     cfg: &HotAgentConfig,
     prepared_cache_count: usize,
     tool_providers: shell_protocol::ToolProvidersStatus,
+    mcp_gateway_providers: Vec<crate::mcp_gateway::McpGatewayProvider>,
 ) -> AgentPolicySummary {
     AgentPolicySummary {
         allow_raw_shell: cfg.policy.allow_raw_shell,
@@ -2161,6 +2167,7 @@ fn register_policy_summary(
             prepared_cache_count,
         )),
         tool_providers: Some(tool_providers),
+        mcp_gateway_providers: Some(mcp_gateway_providers),
     }
 }
 

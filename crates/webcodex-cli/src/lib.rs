@@ -382,6 +382,7 @@ fn parse_connect(args: &[String]) -> CliAction {
     let mut auth = ConnectAuth::SharedKey;
     let mut oauth_redirect_uri = None;
     let mut oauth_computer_permissions = false;
+    let mut oauth_local_mcp = false;
     let mut username = None;
     let mut project = PathBuf::from(".");
     let mut profile = None;
@@ -422,6 +423,7 @@ fn parse_connect(args: &[String]) -> CliAction {
                 }
             },
             "--oauth-computer-permissions" => oauth_computer_permissions = true,
+            "--oauth-local-mcp" => oauth_local_mcp = true,
             "--user" | "--username" => match take(&mut index) {
                 Some(value) => username = Some(value),
                 None => return cli_parse_error(format!("{arg} requires a value")),
@@ -490,6 +492,9 @@ fn parse_connect(args: &[String]) -> CliAction {
                     "--oauth-computer-permissions requires --auth oauth".to_string(),
                 );
             }
+            if oauth_local_mcp {
+                return cli_parse_error("--oauth-local-mcp requires --auth oauth".to_string());
+            }
             if key.is_some() || key_file.is_some() {
                 return cli_parse_error(
                     "--auth managed-oauth cannot be combined with --key or --key-file".to_string(),
@@ -509,6 +514,9 @@ fn parse_connect(args: &[String]) -> CliAction {
                 return cli_parse_error(
                     "--oauth-computer-permissions requires --auth oauth".to_string(),
                 );
+            }
+            if oauth_local_mcp {
+                return cli_parse_error("--oauth-local-mcp requires --auth oauth".to_string());
             }
             if oauth_redirect_uri.is_some() || username.is_some() {
                 return cli_parse_error(
@@ -537,6 +545,7 @@ fn parse_connect(args: &[String]) -> CliAction {
         auth,
         oauth_redirect_uri,
         oauth_computer_permissions,
+        oauth_local_mcp,
         username,
         project,
         profile,

@@ -14,6 +14,7 @@ use super::{
     now_ts, ShellClientRegistry, CLIENT_ONLINE_WINDOW_SECS, MAX_RETIRED_INSTANCES_PER_CLIENT,
     TRANSPORT_POLLING,
 };
+use crate::mcp_gateway::validate_providers;
 use crate::shell_protocol::{
     ShellClientCapabilities, ShellClientRegisterRequest, ShellClientView,
     JOB_INVENTORY_MAX_ACTIVE_JOBS,
@@ -72,6 +73,13 @@ impl ShellClientRegistry {
         let mut policy = body.policy;
         if let Some(policy) = policy.as_mut() {
             policy.tool_providers = normalize_tool_providers(policy.tool_providers.take());
+        }
+        if let Some(providers) = policy
+            .as_ref()
+            .and_then(|policy| policy.mcp_gateway_providers.as_ref())
+        {
+            validate_providers(providers)
+                .map_err(|error| format!("invalid MCP gateway provider inventory: {error}"))?;
         }
         let now = now_ts();
         let record = ShellClientRecord {
@@ -212,6 +220,21 @@ impl ShellClientRegistry {
             return Err(
                 "same runner instance cannot downgrade internal_posix_script capability"
                     .to_string(),
+            );
+        }
+        if inner.clients.get(&client_id).is_some_and(|existing| {
+            existing.agent_instance_id == agent_instance_id
+                && existing
+                    .policy
+                    .as_ref()
+                    .and_then(|policy| policy.mcp_gateway_providers.as_ref())
+                    != record
+                        .policy
+                        .as_ref()
+                        .and_then(|policy| policy.mcp_gateway_providers.as_ref())
+        }) {
+            return Err(
+                "same runner instance cannot change MCP gateway provider inventory".to_string(),
             );
         }
         // This optimized export request kind is process-lifetime binary support.

@@ -46,6 +46,7 @@ fn test_agent_config(server_url: String) -> AgentConfig {
         shell: ShellConfig::default(),
         ssh: Default::default(),
         tool_providers: Default::default(),
+        mcp_gateway: Default::default(),
     }
 }
 
@@ -574,6 +575,7 @@ fn sync_file_request(request_id: &str) -> ShellAgentShellRequest {
         lsp: None,
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     }
 }
@@ -605,6 +607,7 @@ fn polling_shell_request(request_id: &str, cwd: &Path, command: String) -> Shell
         lsp: None,
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     }
 }
@@ -2928,6 +2931,7 @@ fn start_job_request(cwd: &Path, command: &str) -> ShellAgentShellRequest {
         lsp: None,
         sandbox: None,
         job_context: Some(crate::test_job_context(cwd, Vec::new())),
+        mcp_gateway: None,
         persistent_shell: None,
     }
 }

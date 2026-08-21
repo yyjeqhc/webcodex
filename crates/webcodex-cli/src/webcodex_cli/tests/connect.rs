@@ -68,6 +68,7 @@ fn connect_parses_shared_key_and_managed_oauth_modes() {
     assert_eq!(ordinary.key.as_deref(), Some("shared-key"));
     assert!(ordinary.username.is_none());
     assert!(!ordinary.oauth_computer_permissions);
+    assert!(!ordinary.oauth_local_mcp);
 
     let computer_enabled = parsed(&[
         "connect",
@@ -80,6 +81,18 @@ fn connect_parses_shared_key_and_managed_oauth_modes() {
     ]);
     assert_eq!(computer_enabled.auth, ConnectAuth::SharedKeyOAuth);
     assert!(computer_enabled.oauth_computer_permissions);
+
+    let local_mcp_enabled = parsed(&[
+        "connect",
+        "https://example.test",
+        "--auth",
+        "oauth",
+        "--oauth-redirect-uri",
+        "https://client.example/callback",
+        "--oauth-local-mcp",
+    ]);
+    assert_eq!(local_mcp_enabled.auth, ConnectAuth::SharedKeyOAuth);
+    assert!(local_mcp_enabled.oauth_local_mcp);
 
     let managed = parsed(&[
         "connect",
@@ -132,6 +145,22 @@ fn connect_parses_shared_key_and_managed_oauth_modes() {
                 "--oauth-computer-permissions",
             ],
             "--oauth-computer-permissions requires --auth oauth",
+        ),
+        (
+            vec!["connect", "https://example.test", "--oauth-local-mcp"],
+            "--oauth-local-mcp requires --auth oauth",
+        ),
+        (
+            vec![
+                "connect",
+                "https://example.test",
+                "--auth",
+                "managed-oauth",
+                "--oauth-redirect-uri",
+                "https://client.example/callback",
+                "--oauth-local-mcp",
+            ],
+            "--oauth-local-mcp requires --auth oauth",
         ),
         (
             vec![
@@ -192,6 +221,7 @@ fn connect_help_is_a_top_level_quick_start() {
     assert!(help.contains("--auth bearer|oauth"));
     assert!(help.contains("--oauth-redirect-uri"));
     assert!(help.contains("--oauth-computer-permissions"));
+    assert!(help.contains("--oauth-local-mcp"));
     assert!(help.contains("--project PATH"));
     let top = cli_exit(["--help"]).unwrap();
     assert!(top.contains("connect"));
@@ -251,6 +281,7 @@ async fn connect_rejects_invalid_url_and_missing_project_before_network_or_write
         auth: ConnectAuth::SharedKey,
         oauth_redirect_uri: None,
         oauth_computer_permissions: false,
+        oauth_local_mcp: false,
         username: None,
         project: tmp.path().join("missing"),
         profile: None,

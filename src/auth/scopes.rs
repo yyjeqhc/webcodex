@@ -28,6 +28,10 @@ pub const SCOPE_COMPUTER_DISPLAY_READ: &str = "computer:display_read";
 pub const SCOPE_COMPUTER_POINTER_CONTROL: &str = "computer:pointer_control";
 pub const SCOPE_COMPUTER_CLIPBOARD_READ: &str = "computer:clipboard_read";
 pub const SCOPE_COMPUTER_CLIPBOARD_WRITE: &str = "computer:clipboard_write";
+/// Explicit authority to discover and call Runner-owned local MCP providers
+/// through the built-in `/mcp` gateway. It is intentionally absent from legacy
+/// and lightweight default scope ceilings.
+pub const SCOPE_MCP_LOCAL: &str = "mcp:local";
 pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
 pub const SCOPE_ADMIN: &str = "admin";
 
@@ -62,6 +66,7 @@ pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_COMPUTER_CONTROL,
     SCOPE_COMPUTER_LAUNCH,
     SCOPE_COMPUTER_DISPLAY_READ,
+    SCOPE_MCP_LOCAL,
     SCOPE_ACCOUNT_MANAGE,
     SCOPE_AGENT_REGISTER,
     SCOPE_AGENT_POLL,

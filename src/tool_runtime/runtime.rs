@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ToolRuntime {
     pub shell_clients: Arc<ShellClientRegistry>,
+    pub(crate) mcp_gateway: Arc<crate::mcp_gateway::McpGatewayRuntime>,
     pub runtime_info: Arc<RuntimeInfo>,
     model_surface: crate::model_surface::ModelSurface,
     pub(crate) checkpoint_store: checkpoint::CheckpointStore,
@@ -53,6 +54,7 @@ impl ToolRuntime {
     pub fn new(shell_clients: Arc<ShellClientRegistry>, runtime_info: Arc<RuntimeInfo>) -> Self {
         Self {
             shell_clients,
+            mcp_gateway: Arc::new(crate::mcp_gateway::McpGatewayRuntime::default()),
             runtime_info,
             model_surface: crate::model_surface::ModelSurface::LocalCoding,
             checkpoint_store: checkpoint::CheckpointStore::default(),

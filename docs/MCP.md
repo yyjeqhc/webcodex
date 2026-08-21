@@ -39,6 +39,12 @@ Hosted clients need HTTPS. There are three paths:
 
 For ordinary hosted `connect`, use its generated/provided shared key directly or bridge that same identity through OAuth. Managed-user deployments may instead use a scoped user API token (`wc_pat_*`) or the explicit `--auth managed-oauth` flow. Do not use the bootstrap/admin token, account credentials, Runner tokens, or the persistent project-first Connector credential as a public sharing secret. `share` creates and prints its own temporary credential for that session.
 
+### Built-in local MCP gateway
+
+A hosted WebCodex Server can also expose Runner-owned local stdio MCP providers through the same stable `/mcp` endpoint. The top-level catalog remains fixed: authorized callers see one `mcp_tool` meta-tool rather than one top-level tool per upstream provider. `mcp_tool` supports `list`, `describe`, and `call`. Provider ids and upstream tool names are logical identities; Runner/process/provider-instance identities and schema revision tokens stay internal. A successful `describe` records a bounded server-side schema observation. `call` resolves the current exact Runner/provider instance once, rechecks the current tool schema on that same persistent provider session, and refuses the effectful call when the schema changed. Provider replacement is reported separately and is never silently retargeted or replayed.
+
+Configure providers on the Runner in `[mcp]`; no additional daemon, sidecar, public resource URL, or per-provider ChatGPT App is required. Local MCP access is guarded by the explicit `mcp:local` scope. Direct shared-key, project, open-anonymous, and legacy OAuth defaults do not acquire that scope. For ordinary hosted shared-key OAuth, `webcodex connect ... --auth oauth --oauth-local-mcp` explicitly adds the class-level authority for current and future local MCP providers in that same shared-key Runner group. A real ceiling change revokes existing grants and requires browser authorization again. Adding or replacing a provider later therefore does not require a new OAuth client/App, but only credentials that previously opted into `mcp:local` may use it.
+
 In ChatGPT Developer Mode, create a custom app with the printed `/mcp` URL.
 If the authentication menu offers **Access token/API key**, choose it, paste
 the bearer credential, and run **Scan Tools**. ChatGPT UI labels and

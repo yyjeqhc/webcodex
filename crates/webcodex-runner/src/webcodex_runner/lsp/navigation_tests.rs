@@ -87,6 +87,7 @@ fn shell_lsp_request(payload: AgentLspPayload) -> ShellAgentShellRequest {
         lsp: Some(payload),
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     }
 }
@@ -692,6 +693,7 @@ fn status_does_not_start_server_and_unavailable_succeeds() {
         }),
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     };
     let result = handle_lsp_request(&policy, &projects_dir, &supervisor, &req);
@@ -1592,6 +1594,7 @@ fn missing_lsp_payload_returns_structured_error() {
         lsp: None,
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     };
     let result = handle_lsp_request(
@@ -1639,6 +1642,7 @@ fn lsp_request_ignores_command_field() {
         }),
         sandbox: None,
         job_context: None,
+        mcp_gateway: None,
         persistent_shell: None,
     };
     let result = handle_lsp_request(

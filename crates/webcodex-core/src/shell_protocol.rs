@@ -742,6 +742,12 @@ pub struct AgentPolicySummary {
     /// Read-only provider state captured when the agent registers/reconnects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_providers: Option<ToolProvidersStatus>,
+    /// Bounded, non-secret inventory of exact Runner-owned MCP provider
+    /// instances captured at registration. This is liveness/capability
+    /// metadata only; executable paths, argv, environment, PIDs, and stderr
+    /// are never projected to the Server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,
 }
 
 impl Default for AgentPolicySummary {
@@ -754,6 +760,7 @@ impl Default for AgentPolicySummary {
             max_output_bytes: default_policy_max_output_bytes(),
             shell_profiles: None,
             tool_providers: None,
+            mcp_gateway_providers: None,
         }
     }
 }
@@ -1405,6 +1412,10 @@ pub struct ShellAgentShellRequest {
     /// `job_id`/Job state and absent on all legacy request kinds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_shell: Option<PersistentShellRequest>,
+    /// Closed, typed Runner-owned MCP gateway operation. This is deliberately
+    /// separate from shell/file fields and never carries arbitrary JSON-RPC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_gateway: Option<crate::mcp_gateway::McpGatewayRequest>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1457,6 +1468,10 @@ pub struct ShellAgentResultPayload {
     pub result: ShellAgentResultRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_execution_state: Option<ShellCommandExecutionState>,
+    /// Typed MCP gateway result. Present only for a request whose
+    /// `mcp_gateway` field was present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_gateway: Option<crate::mcp_gateway::McpGatewayResponse>,
 }
 
 impl From<ShellAgentResultRequest> for ShellAgentResultPayload {
@@ -1464,6 +1479,7 @@ impl From<ShellAgentResultRequest> for ShellAgentResultPayload {
         Self {
             result,
             command_execution_state: None,
+            mcp_gateway: None,
         }
     }
 }
@@ -2665,6 +2681,7 @@ mod envelope_tests {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         }
     }
@@ -2725,6 +2742,7 @@ mod envelope_tests {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         }
     }
@@ -3282,6 +3300,7 @@ mod envelope_tests {
             lsp: None,
             sandbox: None,
             job_context: None,
+            mcp_gateway: None,
             persistent_shell: None,
         };
         let env = AgentEnvelope::Request { request };
@@ -3769,6 +3788,7 @@ mod envelope_tests {
                     error: None,
                 },
                 command_execution_state: Some(ShellCommandExecutionState::Completed),
+                mcp_gateway: None,
             },
         };
         let json = result_env.to_json().unwrap();

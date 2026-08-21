@@ -1,3 +1,4 @@
+use super::super::tool_audit::is_structured_validation_target_identity;
 use super::super::validation_parser::{
     parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, parse_go_test_diagnostics,
     PARSER_KIND, PARSER_VERSION,
@@ -148,8 +149,20 @@ fn go_test_schema_and_audit_projection_are_bounded_and_explicit() {
     });
     let raw_audit =
         super::super::tool_audit::session_log_arguments_for_tool_request("go_test", &raw);
+    let target_id = raw_audit["validation_target_id"]
+        .as_str()
+        .expect("go_test audit projection should include validation_target_id");
+    assert!(
+        is_structured_validation_target_identity(target_id),
+        "unexpected go_test validation target identity: {target_id}"
+    );
+    let mut audit_without_target = raw_audit.clone();
+    audit_without_target
+        .as_object_mut()
+        .unwrap()
+        .remove("validation_target_id");
     assert_eq!(
-        raw_audit,
+        audit_without_target,
         serde_json::json!({
             "project": "agent:test:demo",
             "cwd": "internal/control",

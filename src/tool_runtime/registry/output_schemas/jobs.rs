@@ -9,7 +9,7 @@ fn process_execution_state_schema() -> Value {
     json!({
         "type": "string",
         "enum": ["not_started", "outcome_unknown", "completed", "timed_out", "queued", "running"],
-        "description": "Canonical result lifecycle, plus queued/running only when the same execution has been exposed as a durable Job. Only not_started is structurally safe to retry without first inspecting target state."
+        "description": "Canonical lifecycle: not_started means no command dispatch; outcome_unknown means effects may have occurred and must be reconciled before retry; completed and timed_out are terminal. queued/running appear only when the same execution has been exposed as a durable Job. Only not_started is structurally safe to retry without first inspecting target state."
     })
 }
 
@@ -257,7 +257,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "promoted_to_job",
             schema_type(
                 "boolean",
-                "True only when the same original execution continues as a durable Job. Omitted from run_process/run_script model-facing output after ordinary synchronous terminal success; run_shell may expose it only for explicit long-call handoff.",
+                "True only when the same original execution continues as a durable Job. Omitted after ordinary synchronous terminal success; exposed only when the initiating tool selects explicit durable handoff.",
             ),
         ),
         (
@@ -306,7 +306,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "async_handoff_available",
             schema_type(
                 "boolean",
-                "Whether this Runner can continue the same original execution as a durable Job. True is omitted after ordinary synchronous terminal run_process/run_script success; run_shell exposes it only on its explicit long-call durable path.",
+                "Whether this Runner can continue the same original execution as a durable Job. Omitted after ordinary synchronous terminal success; exposed only when this tool's durable handoff path is relevant.",
             ),
         ),
     ]

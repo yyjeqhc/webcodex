@@ -543,7 +543,7 @@ async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidenc
     assert!(validation["latest"]["identity"]
         .as_str()
         .unwrap_or_default()
-        .starts_with("command:"));
+        .starts_with("target:"));
     assert_eq!(validation["latest"]["tests_run_count"], 2);
     assert_eq!(
         validation["latest"]["diagnostics"]["test_summary"]["ignored"],

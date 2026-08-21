@@ -1071,15 +1071,42 @@ fn enqueue_structured_process_job(
     timeout_secs: u64,
     sandbox: Option<&str>,
 ) {
+    enqueue_structured_process_job_with_policy(
+        manager,
+        sink,
+        cwd,
+        job_id,
+        executable,
+        args,
+        stdin,
+        timeout_secs,
+        sandbox,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            ..AgentPolicy::default()
+        },
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enqueue_structured_process_job_with_policy(
+    manager: &JobManager,
+    sink: AgentSink,
+    cwd: &Path,
+    job_id: &str,
+    executable: &Path,
+    args: Vec<String>,
+    stdin: Option<String>,
+    timeout_secs: u64,
+    sandbox: Option<&str>,
+    policy: AgentPolicy,
+) {
     let context = structured_process_context(cwd, args.len(), stdin.is_some());
     manager.enqueue(
         sink,
         PendingJobStart {
             generation: 1,
-            policy: AgentPolicy {
-                allow_cwd_anywhere: true,
-                ..AgentPolicy::default()
-            },
+            policy,
             shell: ShellConfig::default(),
             ssh: SshConfig::default(),
             projects_dir: cwd.join("projects.d"),
@@ -2261,6 +2288,260 @@ fn structured_process_job_terminal_lifecycle_distinguishes_prestart_nonzero_and_
 }
 
 #[test]
+fn structured_process_job_drains_large_output_without_log_observation_and_runs_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let marker = temp.path().join("chatty-starts.log");
+    let nonce = format!("chatty-{}", uuid::Uuid::new_v4());
+    // Deliberately retain the sink receiver without consuming it. Durable Job
+    // execution must not depend on Server/model log observation to drain the
+    // child OS pipes.
+    let (sink, _unread_rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let output_limit = 16 * 1024;
+    enqueue_structured_process_job_with_policy(
+        &manager,
+        sink,
+        temp.path(),
+        "structured-chatty",
+        &helper.path,
+        vec![
+            "mark-chatty".to_string(),
+            marker.to_string_lossy().into_owned(),
+            nonce.clone(),
+            "512".to_string(),
+        ],
+        None,
+        10,
+        None,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            max_output_bytes: output_limit,
+            ..AgentPolicy::default()
+        },
+    );
+
+    wait_for_job_workers(&manager);
+    let snapshot = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "structured-chatty")
+        .expect("same durable Job remains observable at terminal");
+    assert_eq!(snapshot.status, "completed", "{snapshot:?}");
+    assert_eq!(snapshot.request_id, "request-structured-chatty");
+    assert_eq!(
+        snapshot.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(snapshot.exit_code, Some(0));
+    for (name, stream, tail_byte) in [
+        ("stdout", &snapshot.stdout, b'x'),
+        ("stderr", &snapshot.stderr, b'y'),
+    ] {
+        assert!(
+            stream.tail.len() <= output_limit,
+            "{name} exceeded policy bound"
+        );
+        assert!(
+            stream.tail.starts_with("[output truncated]\n"),
+            "{name}: {:?}",
+            stream.tail
+        );
+        assert!(stream.tail.as_bytes().iter().any(|byte| *byte == tail_byte));
+        assert!(std::str::from_utf8(stream.tail.as_bytes()).is_ok());
+    }
+    let starts = std::fs::read_to_string(marker).unwrap();
+    assert_eq!(starts.lines().count(), 1, "structured Job was redispatched");
+    assert!(starts.contains(&nonce));
+}
+
+#[test]
+fn structured_process_job_stop_after_large_output_is_bounded_and_exact_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let marker = temp.path().join("chatty-stop-starts.log");
+    let ready = temp.path().join("chatty-stop-ready");
+    let nonce = format!("chatty-stop-{}", uuid::Uuid::new_v4());
+    let (sink, _unread_rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let output_limit = 16 * 1024;
+    enqueue_structured_process_job_with_policy(
+        &manager,
+        sink,
+        temp.path(),
+        "structured-chatty-stop",
+        &helper.path,
+        vec![
+            "mark-chatty-sleep".to_string(),
+            marker.to_string_lossy().into_owned(),
+            ready.to_string_lossy().into_owned(),
+            nonce.clone(),
+            "512".to_string(),
+            "60000".to_string(),
+        ],
+        None,
+        30,
+        None,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            max_output_bytes: output_limit,
+            ..AgentPolicy::default()
+        },
+    );
+    assert!(
+        wait_until(Duration::from_secs(10), || ready.exists()),
+        "child never finished writing output far beyond pipe capacity"
+    );
+
+    manager.stop("structured-chatty-stop").unwrap();
+    wait_for_job_workers(&manager);
+    let snapshot = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "structured-chatty-stop")
+        .unwrap();
+    assert_eq!(snapshot.status, "stopped", "{snapshot:?}");
+    assert_eq!(snapshot.request_id, "request-structured-chatty-stop");
+    assert_eq!(
+        snapshot.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    for stream in [&snapshot.stdout, &snapshot.stderr] {
+        assert!(stream.tail.len() <= output_limit);
+        assert!(stream.tail.starts_with("[output truncated]\n"));
+        assert!(std::str::from_utf8(stream.tail.as_bytes()).is_ok());
+    }
+    let starts = std::fs::read_to_string(marker).unwrap();
+    assert_eq!(starts.lines().count(), 1, "stop redispatched the Job");
+    assert!(starts.contains(&nonce));
+}
+
+#[test]
+fn structured_process_job_timeout_after_large_output_is_bounded_and_exact_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let marker = temp.path().join("chatty-timeout-starts.log");
+    let ready = temp.path().join("chatty-timeout-ready");
+    let nonce = format!("chatty-timeout-{}", uuid::Uuid::new_v4());
+    let (sink, _unread_rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    let output_limit = 16 * 1024;
+    enqueue_structured_process_job_with_policy(
+        &manager,
+        sink,
+        temp.path(),
+        "structured-chatty-timeout",
+        &helper.path,
+        vec![
+            "mark-chatty-sleep".to_string(),
+            marker.to_string_lossy().into_owned(),
+            ready.to_string_lossy().into_owned(),
+            nonce.clone(),
+            "512".to_string(),
+            "60000".to_string(),
+        ],
+        None,
+        5,
+        None,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            max_output_bytes: output_limit,
+            ..AgentPolicy::default()
+        },
+    );
+    assert!(
+        wait_until(Duration::from_secs(10), || ready.exists()),
+        "child never finished writing output far beyond pipe capacity"
+    );
+
+    wait_for_job_workers(&manager);
+    let snapshot = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "structured-chatty-timeout")
+        .unwrap();
+    assert_eq!(snapshot.status, "timeout", "{snapshot:?}");
+    assert_eq!(snapshot.request_id, "request-structured-chatty-timeout");
+    assert_eq!(
+        snapshot.command_execution_state,
+        Some(ShellCommandExecutionState::TimedOut)
+    );
+    assert!(snapshot.stdout.tail.len() <= output_limit);
+    assert!(snapshot.stderr.tail.len() <= output_limit);
+    assert!(snapshot.stdout.tail.starts_with("[output truncated]\n"));
+    assert!(snapshot
+        .stderr
+        .tail
+        .contains("command timed out after 5 seconds"));
+    assert!(std::str::from_utf8(snapshot.stdout.tail.as_bytes()).is_ok());
+    assert!(std::str::from_utf8(snapshot.stderr.tail.as_bytes()).is_ok());
+    let starts = std::fs::read_to_string(marker).unwrap();
+    assert_eq!(starts.lines().count(), 1, "timeout redispatched the Job");
+    assert!(starts.contains(&nonce));
+}
+
+#[test]
+fn structured_process_job_shutdown_after_large_output_reaps_the_same_execution() {
+    let temp = tempfile::tempdir().unwrap();
+    let helper = structured_process_helper();
+    let marker = temp.path().join("chatty-shutdown-starts.log");
+    let ready = temp.path().join("chatty-shutdown-ready");
+    let nonce = format!("chatty-shutdown-{}", uuid::Uuid::new_v4());
+    let (sink, _unread_rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    enqueue_structured_process_job_with_policy(
+        &manager,
+        sink,
+        temp.path(),
+        "structured-chatty-shutdown",
+        &helper.path,
+        vec![
+            "mark-chatty-sleep".to_string(),
+            marker.to_string_lossy().into_owned(),
+            ready.to_string_lossy().into_owned(),
+            nonce.clone(),
+            "512".to_string(),
+            "60000".to_string(),
+        ],
+        None,
+        30,
+        None,
+        AgentPolicy {
+            allow_cwd_anywhere: true,
+            max_output_bytes: 16 * 1024,
+            ..AgentPolicy::default()
+        },
+    );
+    assert!(wait_until(Duration::from_secs(10), || ready.exists()));
+
+    manager.stop_all();
+    wait_for_job_workers(&manager);
+    let snapshot = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "structured-chatty-shutdown")
+        .unwrap();
+    assert_eq!(snapshot.status, "stopped", "{snapshot:?}");
+    assert_eq!(snapshot.request_id, "request-structured-chatty-shutdown");
+    assert_eq!(
+        snapshot.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert!(snapshot.stdout.tail.len() <= 16 * 1024);
+    assert!(snapshot.stderr.tail.len() <= 16 * 1024);
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap().lines().count(),
+        1,
+        "shutdown redispatched the structured Job"
+    );
+    assert!(std::fs::read_to_string(&marker).unwrap().contains(&nonce));
+}
+
+#[test]
 fn structured_process_job_handoff_observation_does_not_reset_the_original_total_timeout() {
     let temp = tempfile::tempdir().unwrap();
     let helper = structured_process_helper();
@@ -2639,6 +2920,99 @@ fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it
         "the Runner-owned script file was not removed after terminal completion"
     );
     assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn structured_script_job_drains_large_output_without_log_observation_and_runs_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("script-chatty-starts.log");
+    let stdout_payload = "x".repeat(4096);
+    let stderr_payload = "y".repeat(4096);
+    let script = format!(
+        "printf '%s\\n' \"$$\" >> \"$1\"\nout='{stdout_payload}'\nerr='{stderr_payload}'\ni=0\nwhile [ \"$i\" -lt 512 ]; do\n  printf '%s' \"$out\"\n  printf '%s' \"$err\" >&2\n  i=$((i + 1))\ndone\n"
+    );
+    let args = vec![marker.to_string_lossy().into_owned()];
+    let context = structured_script_context(
+        temp.path(),
+        shell_protocol::ShellScriptLanguage::Sh,
+        script.len(),
+        args.len(),
+        false,
+    );
+    // Keep the transport receiver alive but unread. No model-side log read or
+    // per-chunk consumer is allowed to be necessary for child progress.
+    let (sink, _unread_rx) = structured_test_sink("structured-agent", "structured-instance");
+    let manager = JobManager::new(1);
+    manager.enqueue(
+        sink,
+        PendingJobStart {
+            generation: 1,
+            policy: AgentPolicy {
+                allow_cwd_anywhere: true,
+                max_output_bytes: 16 * 1024,
+                ..AgentPolicy::default()
+            },
+            shell: ShellConfig::default(),
+            ssh: SshConfig::default(),
+            projects_dir: temp.path().join("projects.d"),
+            request: serde_json::from_value(json!({
+                "request_id": "request-structured-script-chatty",
+                "client_id": "structured-agent",
+                "kind": "start_script_job",
+                "job_id": "structured-script-chatty",
+                "cwd": temp.path(),
+                "command": "",
+                "script": {
+                    "language": "sh",
+                    "script": script,
+                    "args": args,
+                },
+                "timeout_secs": 10,
+                "requested_by": "test",
+                "created_at": chrono::Utc::now().timestamp(),
+                "job_context": context,
+            }))
+            .unwrap(),
+        },
+    );
+
+    wait_for_job_workers(&manager);
+    let snapshot = manager
+        .inventory()
+        .jobs
+        .into_iter()
+        .find(|snapshot| snapshot.job_id == "structured-script-chatty")
+        .expect("same durable script Job remains observable at terminal");
+    assert_eq!(snapshot.status, "completed", "{snapshot:?}");
+    assert_eq!(snapshot.request_id, "request-structured-script-chatty");
+    assert_eq!(
+        snapshot.command_execution_state,
+        Some(ShellCommandExecutionState::Completed)
+    );
+    assert_eq!(snapshot.exit_code, Some(0));
+    let output_limit = 16 * 1024;
+    for (name, stream, tail_byte) in [
+        ("stdout", &snapshot.stdout, b'x'),
+        ("stderr", &snapshot.stderr, b'y'),
+    ] {
+        assert!(
+            stream.tail.len() <= output_limit,
+            "{name} exceeded policy bound"
+        );
+        assert!(
+            stream.tail.starts_with("[output truncated]\n"),
+            "{name}: {:?}",
+            stream.tail
+        );
+        assert!(stream.tail.as_bytes().iter().any(|byte| *byte == tail_byte));
+        assert!(std::str::from_utf8(stream.tail.as_bytes()).is_ok());
+    }
+    assert_eq!(
+        std::fs::read_to_string(marker).unwrap().lines().count(),
+        1,
+        "structured script Job was redispatched"
+    );
 }
 
 #[cfg(target_os = "linux")]

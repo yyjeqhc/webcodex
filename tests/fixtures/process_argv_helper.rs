@@ -121,6 +121,36 @@ fn active_oem_sample() -> (String, Vec<u8>) {
     panic!("active OEM code page has no representable non-ASCII test sample");
 }
 
+fn write_chatty(chunks: usize) {
+    use std::io::Write;
+
+    let stdout_payload = vec![b'x'; 8 * 1024];
+    let stderr_payload = vec![b'y'; 8 * 1024];
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let mut stdout = stdout.lock();
+    let mut stderr = stderr.lock();
+    for _ in 0..chunks {
+        stdout.write_all(&stdout_payload).unwrap();
+        stdout.write_all(b"\n").unwrap();
+        stderr.write_all(&stderr_payload).unwrap();
+        stderr.write_all(b"\n").unwrap();
+    }
+    stdout.flush().unwrap();
+    stderr.flush().unwrap();
+}
+
+fn append_start_marker(marker: &str, nonce: &str) {
+    use std::io::Write;
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(marker)
+        .unwrap();
+    writeln!(file, "{}:{nonce}", std::process::id()).unwrap();
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
@@ -143,22 +173,43 @@ fn main() {
             std::thread::sleep(Duration::from_millis(millis));
         }
         Some("chatty") => {
-            use std::io::Write;
-
             let chunks = args.next().unwrap().parse::<usize>().unwrap();
-            let payload = vec![b'x'; 8 * 1024];
-            let stdout = std::io::stdout();
-            let stderr = std::io::stderr();
-            let mut stdout = stdout.lock();
-            let mut stderr = stderr.lock();
-            for _ in 0..chunks {
-                stdout.write_all(&payload).unwrap();
-                stdout.write_all(b"\n").unwrap();
-                stderr.write_all(&payload).unwrap();
-                stderr.write_all(b"\n").unwrap();
-            }
-            stdout.flush().unwrap();
-            stderr.flush().unwrap();
+            write_chatty(chunks);
+        }
+        Some("mark-chatty") => {
+            let marker = args.next().unwrap();
+            let nonce = args.next().unwrap();
+            let chunks = args.next().unwrap().parse::<usize>().unwrap();
+            append_start_marker(&marker, &nonce);
+            write_chatty(chunks);
+        }
+        Some("mark-chatty-sleep") => {
+            let marker = args.next().unwrap();
+            let ready = args.next().unwrap();
+            let nonce = args.next().unwrap();
+            let chunks = args.next().unwrap().parse::<usize>().unwrap();
+            let millis = args.next().unwrap().parse::<u64>().unwrap();
+            append_start_marker(&marker, &nonce);
+            write_chatty(chunks);
+            std::fs::write(ready, "drained\n").unwrap();
+            std::thread::sleep(Duration::from_millis(millis));
+        }
+        Some("spawn-pipe-descendant") => {
+            let marker = args.next().unwrap();
+            let millis = args.next().unwrap().parse::<u64>().unwrap();
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("pipe-descendant")
+                .arg(marker)
+                .arg(millis.to_string())
+                .spawn()
+                .unwrap();
+            println!("DESCENDANT_PID={}", child.id());
+        }
+        Some("pipe-descendant") => {
+            let marker = args.next().unwrap();
+            let millis = args.next().unwrap().parse::<u64>().unwrap();
+            std::fs::write(marker, std::process::id().to_string()).unwrap();
+            std::thread::sleep(Duration::from_millis(millis));
         }
         Some("mark") => {
             let marker = args.next().unwrap();

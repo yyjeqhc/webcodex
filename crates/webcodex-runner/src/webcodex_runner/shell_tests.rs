@@ -659,6 +659,160 @@ fn structured_process_preserves_large_literal_argv_without_shell_parsing() {
 }
 
 #[test]
+fn structured_process_continuously_drains_large_stdout_and_stderr() {
+    let cwd = tempfile::tempdir().unwrap();
+    let projects_dir = tempfile::tempdir().unwrap();
+    let mut policy = unrestricted_policy();
+    policy.max_output_bytes = 16 * 1024;
+    let result = run_process_with_profiles_in_sandbox_and_execution_state(
+        1,
+        &policy,
+        &ShellConfig::default(),
+        projects_dir.path(),
+        &PreparedShellProfileCache::default(),
+        Some(cwd.path().to_string_lossy().as_ref()),
+        &process_argv_helper().to_string_lossy(),
+        &["chatty".to_string(), "512".to_string()],
+        None,
+        10,
+        None,
+        None,
+    );
+
+    assert_eq!(
+        result.execution_state,
+        ShellCommandExecutionState::Completed,
+        "{:?}",
+        result.result
+    );
+    assert_eq!(result.result.exit_code, Some(0));
+    for (name, output, tail_byte) in [
+        ("stdout", result.result.stdout.as_deref().unwrap(), b'x'),
+        ("stderr", result.result.stderr.as_deref().unwrap(), b'y'),
+    ] {
+        assert!(
+            output.len() <= policy.max_output_bytes,
+            "{name} was unbounded"
+        );
+        assert!(
+            output.starts_with("[output truncated]\n"),
+            "{name}: {output:?}"
+        );
+        assert_eq!(output.as_bytes().last().copied(), Some(b'\n'));
+        assert!(
+            output.as_bytes().iter().any(|byte| *byte == tail_byte),
+            "{name} lost its retained tail"
+        );
+        assert!(std::str::from_utf8(output.as_bytes()).is_ok());
+    }
+}
+
+#[test]
+fn structured_script_continuously_drains_large_stdout_and_stderr() {
+    let cwd = tempfile::tempdir().unwrap();
+    let projects_dir = tempfile::tempdir().unwrap();
+    let mut policy = unrestricted_policy();
+    policy.max_output_bytes = 16 * 1024;
+    let stdout_payload = "x".repeat(4096);
+    let stderr_payload = "y".repeat(4096);
+    #[cfg(windows)]
+    let (language, script) = (
+        ShellScriptLanguage::Powershell,
+        format!(
+            "$out = '{stdout_payload}'\n$err = '{stderr_payload}'\nfor ($i = 0; $i -lt 512; $i++) {{ [Console]::Out.Write($out); [Console]::Error.Write($err) }}\n"
+        ),
+    );
+    #[cfg(not(windows))]
+    let (language, script) = (
+        ShellScriptLanguage::Sh,
+        format!(
+            "out='{stdout_payload}'\nerr='{stderr_payload}'\ni=0\nwhile [ \"$i\" -lt 512 ]; do\n  printf '%s' \"$out\"\n  printf '%s' \"$err\" >&2\n  i=$((i + 1))\ndone\n"
+        ),
+    );
+    let result = run_script_with_profiles_in_sandbox_and_execution_state(
+        1,
+        &policy,
+        &ShellConfig::default(),
+        projects_dir.path(),
+        &PreparedShellProfileCache::default(),
+        Some(cwd.path().to_string_lossy().as_ref()),
+        &ShellScriptPayload {
+            language,
+            script,
+            args: Vec::new(),
+        },
+        None,
+        30,
+        None,
+        None,
+    );
+
+    assert_eq!(
+        result.execution_state,
+        ShellCommandExecutionState::Completed,
+        "{:?}",
+        result.result
+    );
+    assert_eq!(result.result.exit_code, Some(0));
+    for (name, output, tail_byte) in [
+        ("stdout", result.result.stdout.as_deref().unwrap(), b'x'),
+        ("stderr", result.result.stderr.as_deref().unwrap(), b'y'),
+    ] {
+        assert!(
+            output.len() <= policy.max_output_bytes,
+            "{name} was unbounded"
+        );
+        assert!(
+            output.starts_with("[output truncated]\n"),
+            "{name}: {output:?}"
+        );
+        assert!(
+            output.as_bytes().iter().any(|byte| *byte == tail_byte),
+            "{name} lost its retained tail"
+        );
+        assert!(std::str::from_utf8(output.as_bytes()).is_ok());
+    }
+}
+
+#[test]
+fn structured_process_parent_exit_closes_descendant_held_pipes_via_tree_cleanup() {
+    let cwd = tempfile::tempdir().unwrap();
+    let marker = cwd.path().join("pipe-descendant-started");
+    let result = run_direct_process(
+        cwd.path(),
+        &process_argv_helper(),
+        &[
+            "spawn-pipe-descendant".to_string(),
+            marker.to_string_lossy().into_owned(),
+            "60000".to_string(),
+        ],
+        None,
+        10,
+    );
+
+    assert_eq!(
+        result.execution_state,
+        ShellCommandExecutionState::Completed,
+        "{:?}",
+        result.result
+    );
+    assert_eq!(result.result.exit_code, Some(0));
+    assert!(
+        result
+            .result
+            .stdout
+            .as_deref()
+            .unwrap_or_default()
+            .contains("DESCENDANT_PID="),
+        "the parent did not prove that a pipe-inheriting descendant was spawned"
+    );
+    // The descendant inherits the parent's stdout/stderr handles and sleeps for
+    // 60 seconds. Returning terminal here proves direct-child exit still drives
+    // whole-tree cleanup before the continuously draining readers wait for EOF.
+    assert!(result.result.duration_ms.unwrap_or_default() < 10_000);
+}
+
+#[test]
 fn structured_process_reports_prestart_completion_and_nonzero_truthfully() {
     let cwd = tempfile::tempdir().unwrap();
     let missing = cwd.path().join("definitely-missing-process");

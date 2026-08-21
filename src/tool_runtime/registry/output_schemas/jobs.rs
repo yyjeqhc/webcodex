@@ -257,7 +257,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "promoted_to_job",
             schema_type(
                 "boolean",
-                "True only when the same original execution continues as a durable Job. Omitted from run_process/run_script model-facing output after ordinary synchronous terminal success.",
+                "True only when the same original execution continues as a durable Job. Omitted from run_process/run_script model-facing output after ordinary synchronous terminal success; run_shell may expose it only for explicit long-call handoff.",
             ),
         ),
         (
@@ -271,14 +271,14 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "job_id",
             nullable_schema(
                 "string",
-                "Durable continuation Job id. Non-promoted terminal run_process/run_script success omits this field rather than returning null.",
+                "Durable continuation Job id. Non-promoted terminal execution may return null or omit this field according to the initiating tool's sparse contract.",
             ),
         ),
         (
             "job_status",
             nullable_schema(
                 "string",
-                "Authoritative durable Job status. Non-promoted terminal run_process/run_script success omits this field rather than returning null.",
+                "Authoritative durable Job status. Non-promoted terminal execution may return null or omit this field according to the initiating tool's sparse contract.",
             ),
         ),
         (
@@ -306,7 +306,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "async_handoff_available",
             schema_type(
                 "boolean",
-                "Whether this Runner can continue typed structured execution as the same durable Job. True is omitted after ordinary synchronous terminal run_process/run_script success; false remains explicit as a noteworthy capability limitation.",
+                "Whether this Runner can continue the same original execution as a durable Job. True is omitted after ordinary synchronous terminal run_process/run_script success; run_shell exposes it only on its explicit long-call durable path.",
             ),
         ),
     ]
@@ -731,106 +731,107 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 structured_execution_lifecycle_constraints("run_script");
             Some(schema)
         }
-        "run_shell" => Some(wrapped_output_schema(vec![
-            (
-                "duration_ms",
-                schema_type("integer", "Command duration in milliseconds."),
-            ),
-            (
-                "exit_code",
-                nullable_schema("integer", "Process exit code, when available."),
-            ),
-            (
-                "stdout_tail",
-                schema_type("string", "Bounded stdout tail."),
-            ),
-            (
-                "stderr_tail",
-                schema_type("string", "Bounded stderr tail."),
-            ),
-            (
-                "stdout_lines",
-                schema_type("integer", "Total captured stdout line count."),
-            ),
-            (
-                "stderr_lines",
-                schema_type("integer", "Total captured stderr line count."),
-            ),
-            (
-                "stdout_truncated",
-                schema_type("boolean", "Whether stdout_tail was truncated."),
-            ),
-            (
-                "stderr_truncated",
-                schema_type("boolean", "Whether stderr_tail was truncated."),
-            ),
-            (
-                "command_started",
-                schema_type(
-                    "boolean",
-                    "Whether callers must conservatively treat the command as started; true includes outcome_unknown because side effects may have occurred.",
+        "run_shell" => {
+            let mut properties = vec![
+                (
+                    "duration_ms",
+                    schema_type("integer", "Command duration in milliseconds."),
                 ),
-            ),
-            (
-                "command_completed",
-                schema_type(
-                    "boolean",
-                    "Whether the command reached a terminal result before tool timeout.",
+                (
+                    "exit_code",
+                    nullable_schema("integer", "Process exit code, when available."),
                 ),
-            ),
-            (
-                "command_ok",
-                schema_type("boolean", "Whether the command completed with exit code 0."),
-            ),
-            (
-                "failure_kind",
-                nullable_schema(
-                    "string",
-                    "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, agent_offline, spawn_failed, permission_denied, tool_schema_error, or runtime_error.",
+                (
+                    "stdout_tail",
+                    schema_type("string", "Bounded stdout tail."),
                 ),
-            ),
-            (
-                "tool_failure",
-                schema_type(
-                    "boolean",
-                    "True for WebCodex tool/runtime failures; false for command exit status failures.",
+                (
+                    "stderr_tail",
+                    schema_type("string", "Bounded stderr tail."),
                 ),
-            ),
-            ("purpose", schema_type("string", "Declared execution purpose.")),
-            (
-                "command_summary",
-                schema_type("string", "Bounded first-line command summary."),
-            ),
-            (
-                "cwd",
-                schema_type(
-                    "string",
-                    "Resolved project-relative cwd, or the selected SSH resource's remote cwd.",
+                (
+                    "stdout_lines",
+                    schema_type("integer", "Total captured stdout line count."),
                 ),
-            ),
-            (
-                "shell",
-                schema_type(
-                    "string",
-                    "Actual selected shell, configured executor shell, or remote SSH executor.",
+                (
+                    "stderr_lines",
+                    schema_type("integer", "Total captured stderr line count."),
                 ),
-            ),
-            ("executor", schema_type("string", "Executor type: local or agent.")),
-            (
-                "ssh_resource",
-                nullable_schema(
-                    "string",
-                    "Named Runner-local SSH resource used for this command, when any.",
+                (
+                    "stdout_truncated",
+                    schema_type("boolean", "Whether stdout_tail was truncated."),
                 ),
-            ),
-            (
-                "execution_state",
-                schema_type(
-                    "string",
-                    "Canonical lifecycle state: not_started, outcome_unknown, completed, or timed_out. Only not_started is structurally safe to retry without first inspecting target state.",
+                (
+                    "stderr_truncated",
+                    schema_type("boolean", "Whether stderr_tail was truncated."),
                 ),
-            ),
-        ])),
+                (
+                    "command_started",
+                    schema_type(
+                        "boolean",
+                        "Whether callers must conservatively treat the command as started; true includes outcome_unknown because side effects may have occurred.",
+                    ),
+                ),
+                (
+                    "command_completed",
+                    schema_type(
+                        "boolean",
+                        "Whether the command reached a known terminal result. A durable Job handoff reports false while the same original execution continues.",
+                    ),
+                ),
+                (
+                    "command_ok",
+                    schema_type("boolean", "Whether the command completed with exit code 0."),
+                ),
+                (
+                    "failure_kind",
+                    nullable_schema(
+                        "string",
+                        "Structured failure kind such as command_exit_nonzero, timeout, outcome_unknown, agent_offline, spawn_failed, permission_denied, tool_schema_error, or runtime_error.",
+                    ),
+                ),
+                (
+                    "tool_failure",
+                    schema_type(
+                        "boolean",
+                        "True for WebCodex tool/runtime failures; false for command exit status failures or a healthy durable handoff.",
+                    ),
+                ),
+                ("purpose", schema_type("string", "Declared execution purpose.")),
+                (
+                    "command_summary",
+                    schema_type("string", "Bounded first-line command summary."),
+                ),
+                (
+                    "cwd",
+                    schema_type(
+                        "string",
+                        "Resolved project-relative cwd, or the selected SSH resource's remote cwd.",
+                    ),
+                ),
+                (
+                    "shell",
+                    schema_type(
+                        "string",
+                        "Actual selected shell, configured executor shell, or remote SSH executor.",
+                    ),
+                ),
+                ("executor", schema_type("string", "Executor type: local or agent.")),
+                (
+                    "ssh_resource",
+                    nullable_schema(
+                        "string",
+                        "Named Runner-local SSH resource used for this command, when any.",
+                    ),
+                ),
+                ("execution_state", process_execution_state_schema()),
+            ];
+            properties.extend(structured_continuation_properties());
+            let mut schema = wrapped_output_schema(properties);
+            schema["properties"]["output"]["allOf"] =
+                structured_execution_lifecycle_constraints("run_shell");
+            Some(schema)
+        }
         "open_session_shell"
         | "session_shell_exec"
         | "session_shell_status"

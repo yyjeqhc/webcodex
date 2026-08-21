@@ -828,7 +828,7 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
     assert_eq!(result.output["promoted_to_job"], false);
     assert_eq!(result.output["effective_timeout_secs"], 600);
     assert!(result.output.get("observation_token").is_none());
-    assert_eq!(result.output["sync_wait_secs"], 90);
+    assert_eq!(result.output["sync_wait_secs"], 60);
     assert_cargo_result_matches_schema("cargo_check", &result);
     // No redundant visible job.
     let list = runtime.list_jobs_for_auth(None, None, None).await;
@@ -990,7 +990,7 @@ async fn long_cargo_test_hands_off_to_queryable_job() {
     assert_eq!(result.output["command_started"], true);
     assert_eq!(result.output["command_completed"], false);
     assert_eq!(result.output["effective_timeout_secs"], 1800);
-    assert_eq!(result.output["sync_wait_secs"], 90);
+    assert_eq!(result.output["sync_wait_secs"], 60);
     assert!(result.output.get("passed").is_none());
     assert!(result.output.get("failure_kind").is_none());
     assert_eq!(result.output["job_id"].as_str().unwrap(), job_id.as_str());
@@ -2082,7 +2082,7 @@ async fn terminal_validation_result_fields_are_consistent_between_executors() {
                 .await
         }
     });
-    // Short path (120 <= 90? No: 120 > 90, so it uses the agent Job path).
+    // 120 exceeds the 60-second sync grace, so it uses the same agent Job path.
     // This exercises the agent terminal result path and returns a full
     // terminal projection in-window.
     let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
@@ -2932,7 +2932,7 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
             "command_started": true,
             "command_completed": false,
             "effective_timeout_secs": 1800,
-            "sync_wait_secs": 90,
+            "sync_wait_secs": 60,
             "terminal": false,
             "stdout_tail": "",
             "stderr_tail": "",
@@ -3006,7 +3006,7 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
             "command_completed": true,
             "promoted_to_job": false,
             "effective_timeout_secs": 1800,
-            "sync_wait_secs": 90,
+            "sync_wait_secs": 60,
             "terminal": true,
             "tests_detected": true,
             "tests_run_count": 1,

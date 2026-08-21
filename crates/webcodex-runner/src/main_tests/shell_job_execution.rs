@@ -56,6 +56,39 @@ fn shell_job_filters_sensitive_env_case_insensitive() {
 }
 
 #[test]
+fn raw_shell_job_lifecycle_distinguishes_terminal_truth_without_error_text_matching() {
+    assert_eq!(
+        raw_shell_job_terminal_lifecycle("completed", Some(0)),
+        ShellCommandExecutionState::Completed
+    );
+    assert_eq!(
+        raw_shell_job_terminal_lifecycle("failed", Some(7)),
+        ShellCommandExecutionState::Completed
+    );
+    assert_eq!(
+        raw_shell_job_terminal_lifecycle("stopped", Some(-1)),
+        ShellCommandExecutionState::Completed
+    );
+    assert_eq!(
+        raw_shell_job_terminal_lifecycle("timeout", Some(-1)),
+        ShellCommandExecutionState::TimedOut
+    );
+    assert_eq!(
+        raw_shell_job_terminal_lifecycle("failed", None),
+        ShellCommandExecutionState::OutcomeUnknown
+    );
+}
+
+#[test]
+fn raw_shell_job_prestart_rejection_is_explicitly_not_started() {
+    assert_eq!(
+        job_prestart_lifecycle_for_kind("start_job"),
+        Some(ShellCommandExecutionState::NotStarted)
+    );
+    assert_eq!(job_prestart_lifecycle_for_kind("run_shell"), None);
+}
+
+#[test]
 fn shell_job_success_and_failure_results_are_structured() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));

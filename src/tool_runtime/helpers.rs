@@ -1024,9 +1024,9 @@ pub(crate) const DEFAULT_CARGO_FMT_TIMEOUT_SECS: u64 = 120;
 
 /// Internal synchronous wait window for a structured validation. The tool call
 /// blocks up to this long for the command to finish in-process; after that the
-/// same execution is promoted to a queryable Job. Kept below the 120s MCP
-/// hard ceiling so transport/result serialization keeps ~30s of headroom.
-pub(crate) const SYNC_VALIDATION_WAIT_SECS: u64 = 90;
+/// same execution is promoted to a queryable Job. Kept well below the 120s MCP
+/// hard ceiling so transport/result serialization retains substantial headroom.
+pub(crate) const SYNC_VALIDATION_WAIT_SECS: u64 = 60;
 
 /// Resolve a synchronous command timeout. Out-of-range values are rejected
 /// (not clamped) so callers cannot request longer waits than the sync path

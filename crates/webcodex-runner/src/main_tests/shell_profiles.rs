@@ -166,19 +166,22 @@ fn project_shell_profile_overrides_default_profile() {
     assert_eq!(result.stdout.as_deref(), Some("project"));
 }
 
-fn wait_for_job_stdout(rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>) -> String {
+fn wait_for_job_stdout(
+    rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>,
+) -> (String, Option<ShellCommandExecutionState>) {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut stdout = String::new();
     while Instant::now() < deadline {
         match rx.try_recv() {
             Ok(AgentEnvelope::JobUpdate { payload }) => {
+                let command_execution_state = payload.command_execution_state;
                 if let Some(snapshot) = payload.log_snapshot {
                     stdout = snapshot.stdout.tail;
                 } else if let Some(chunk) = payload.stdout_chunk {
                     stdout.push_str(&chunk);
                 }
                 if payload.finished {
-                    return stdout;
+                    return (stdout, command_execution_state);
                 }
             }
             Ok(_) => {}
@@ -239,7 +242,13 @@ fn prepared_profile_run_shell_and_run_job_see_same_env() {
         shell_job_request(&project_dir, &shell_env_var("WEBCODEX_TEST_PROFILE")),
     )
     .unwrap();
-    assert_eq!(wait_for_job_stdout(&mut rx), "same");
+    let (job_stdout, execution_state) = wait_for_job_stdout(&mut rx);
+    assert_eq!(job_stdout, "same");
+    assert_eq!(
+        execution_state,
+        Some(ShellCommandExecutionState::Completed),
+        "raw shell Job terminal update must carry authoritative lifecycle"
+    );
 }
 
 #[test]

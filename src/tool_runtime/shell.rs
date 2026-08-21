@@ -10,10 +10,17 @@ use super::helpers::{
     validate_raw_shell_command_length, LocalRunFailure, COMMAND_STDIO_TAIL_CHARS,
     DEFAULT_RUN_SHELL_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS, MIN_SYNC_TIMEOUT_SECS,
 };
+use super::process::add_structured_continuation_facts;
+use super::structured_execution::{
+    await_hidden_structured_job, HiddenStructuredJobWait, STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
+};
 use super::tool_result::ToolResult;
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
-use crate::shell_client::command_preview;
-use crate::shell_protocol::{ShellCommandExecutionState, ShellRunRequest, ShellRunResponse};
+use crate::auth::AuthContext;
+use crate::shell_client::{command_preview, ShellJobStartMetadata, ShellJobVisibility};
+use crate::shell_protocol::{
+    ShellCommandExecutionState, ShellJobInfo, ShellJobOpRequest, ShellRunRequest, ShellRunResponse,
+};
 
 pub(crate) struct ProjectCommandOutput {
     pub(crate) exit_code: Option<i32>,
@@ -410,6 +417,71 @@ impl ToolRuntime {
         }
     }
 
+    fn run_shell_terminal_job_result(
+        job: &ShellJobInfo,
+        stdout: String,
+        stderr: String,
+        timeout_secs: u64,
+    ) -> ToolResult {
+        let state = job
+            .command_execution_state
+            .unwrap_or(ShellCommandExecutionState::OutcomeUnknown);
+        let mut result = match state {
+            ShellCommandExecutionState::NotStarted => {
+                let reason = job
+                    .error
+                    .as_deref()
+                    .unwrap_or("Runner rejected the shell Job before command start");
+                Self::run_shell_tool_failure_result(
+                    command_rejected_message(
+                        reason,
+                        "inspect the rejection reason and retry only after confirming no command started.",
+                    ),
+                    Self::classify_run_shell_enqueue_failure(reason),
+                    state,
+                )
+            }
+            ShellCommandExecutionState::OutcomeUnknown => Self::run_shell_outcome_unknown_result(
+                job.error
+                    .as_deref()
+                    .unwrap_or("the Runner lost a trustworthy terminal shell Job result"),
+            ),
+            ShellCommandExecutionState::TimedOut => Self::run_shell_command_failure_result(
+                job.exit_code,
+                stdout,
+                stderr,
+                job.duration_ms,
+                timeout_secs,
+                state,
+            ),
+            ShellCommandExecutionState::Completed
+                if job.status == "completed" && job.exit_code == Some(0) && job.error.is_none() =>
+            {
+                ToolResult::ok(Self::run_shell_success_output(
+                    0,
+                    stdout,
+                    stderr,
+                    job.duration_ms,
+                ))
+            }
+            ShellCommandExecutionState::Completed => Self::run_shell_command_failure_result(
+                job.exit_code,
+                stdout,
+                stderr,
+                job.duration_ms,
+                timeout_secs,
+                state,
+            ),
+        };
+        if job.stdout_log_truncated {
+            result.output["stdout_truncated"] = json!(true);
+        }
+        if job.stderr_log_truncated {
+            result.output["stderr_truncated"] = json!(true);
+        }
+        result
+    }
+
     pub(crate) async fn run_shell(
         &self,
         project: String,
@@ -440,6 +512,7 @@ impl ToolRuntime {
             None,
             None,
             None,
+            None,
         )
         .await
     }
@@ -455,7 +528,8 @@ impl ToolRuntime {
         shell: Option<ExecutionShell>,
         sandbox: Option<&str>,
         ssh_resource: Option<&str>,
-        ssh_session_id: Option<&str>,
+        session_id: Option<&str>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(error) = validate_raw_shell_command_length(&command) {
             return Self::run_shell_tool_failure_result(
@@ -551,7 +625,7 @@ impl ToolRuntime {
                     .unwrap_or_else(|_| ".".to_string());
                 (Some(effective_cwd), resolved_cwd)
             };
-            if ssh_resource.is_some() && ssh_session_id.is_none() {
+            if ssh_resource.is_some() && session_id.is_none() {
                 return Self::run_shell_tool_failure_result(
                     command_rejected_message(
                         "ssh_session_required: an SSH resource requires a Workflow Session id",
@@ -583,6 +657,153 @@ impl ToolRuntime {
                 },
                 None => command.clone(),
             };
+            let async_handoff_available =
+                if timeout > DEFAULT_RUN_SHELL_TIMEOUT_SECS && ssh_resource.is_none() {
+                    self.shell_clients
+                        .get_client_capabilities(&client_id)
+                        .await
+                        .is_ok_and(|capabilities| {
+                            capabilities.shell
+                                && (capabilities.async_jobs || capabilities.async_shell_jobs)
+                        })
+                } else {
+                    false
+                };
+            if async_handoff_available {
+                let job = self
+                    .shell_clients
+                    .start_job_with_metadata_for_auth(
+                        ShellJobOpRequest {
+                            op: "start".to_string(),
+                            client_id: Some(client_id.clone()),
+                            cwd: effective_cwd.clone(),
+                            command: Some(dispatched_command.clone()),
+                            timeout_secs: Some(timeout),
+                            job_id: None,
+                            since_stdout_line: None,
+                            since_stderr_line: None,
+                            tail_lines: None,
+                            limit: None,
+                            codex: None,
+                        },
+                        "tool_runtime".to_string(),
+                        ShellJobStartMetadata {
+                            project_id: Some(project.clone()),
+                            session_id: session_id.map(str::to_string),
+                            project_cwd: Some(resolved_cwd.clone()),
+                            purpose: Some(declared_purpose.as_str().to_string()),
+                            shell: Some(actual_shell.to_string()),
+                            visibility: ShellJobVisibility::HiddenUntilHandoff,
+                            sandbox: sandbox.map(str::to_string),
+                            ..Default::default()
+                        },
+                        auth,
+                    )
+                    .await;
+                let job = match job {
+                    Ok(job) => job,
+                    Err(error) => {
+                        let mut result = Self::run_shell_tool_failure_result(
+                            command_rejected_message(
+                                &error,
+                                "confirm the Runner is connected and retry only after confirming no shell Job started.",
+                            ),
+                            Self::classify_run_shell_enqueue_failure(&error),
+                            ShellCommandExecutionState::NotStarted,
+                        );
+                        add_structured_continuation_facts(
+                            &mut result,
+                            timeout,
+                            STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
+                            true,
+                        );
+                        decorate_execution_output(
+                            &mut result.output,
+                            declared_purpose,
+                            &command_summary,
+                            &resolved_cwd,
+                            actual_shell,
+                            "agent",
+                        );
+                        return result;
+                    }
+                };
+                let wait = self
+                    .structured_execution_sync_wait
+                    .min(Duration::from_secs(STRUCTURED_EXECUTION_SYNC_WAIT_SECS));
+                let handoff = await_hidden_structured_job(
+                    self.shell_clients.clone(),
+                    job.job_id.clone(),
+                    wait,
+                    auth.cloned(),
+                )
+                .await;
+                let mut result = match handoff {
+                    Ok(HiddenStructuredJobWait::Terminal {
+                        job,
+                        stdout,
+                        stderr,
+                    }) => {
+                        let result = Self::run_shell_terminal_job_result(
+                            &job,
+                            stdout,
+                            stderr,
+                            timeout,
+                        );
+                        self.shell_clients.remove_job_record(&job.job_id).await;
+                        result
+                    }
+                    Ok(HiddenStructuredJobWait::Continued {
+                        job,
+                        execution_state,
+                        command_started,
+                    }) => ToolResult::ok(json!({
+                        "execution_state": execution_state,
+                        "command_started": command_started,
+                        "command_completed": false,
+                        "command_ok": false,
+                        "exit_code": null,
+                        "failure_kind": null,
+                        "tool_failure": false,
+                        "promoted_to_job": true,
+                        "terminal": false,
+                        "job_id": job.job_id,
+                        "job_status": job.status,
+                        "observation_token": job.observation_token,
+                        "effective_timeout_secs": timeout,
+                        "sync_wait_secs": STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
+                        "async_handoff_available": true,
+                        "stdout_tail": "",
+                        "stderr_tail": "",
+                        "stdout_lines": 0,
+                        "stderr_lines": 0,
+                        "stdout_truncated": false,
+                        "stderr_truncated": false,
+                    })),
+                    Err(error) => Self::run_shell_outcome_unknown_result(format!(
+                        "the hidden durable shell Job {} could not be safely promoted or observed during handoff: {error}. Do not redispatch this command; inspect Job inventory and target state before deciding whether any retry is safe.",
+                        job.job_id
+                    )),
+                };
+                if result.output["promoted_to_job"] != json!(true) {
+                    add_structured_continuation_facts(
+                        &mut result,
+                        timeout,
+                        STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
+                        true,
+                    );
+                }
+                decorate_execution_output(
+                    &mut result.output,
+                    declared_purpose,
+                    &command_summary,
+                    &resolved_cwd,
+                    actual_shell,
+                    "agent",
+                );
+                return result;
+            }
+
             let wait_timeout = timeout;
             let (request_id, rx) = match self
                 .shell_clients
@@ -599,7 +820,7 @@ impl ToolRuntime {
                     sandbox.map(str::to_string),
                     ssh_resource.map(str::to_string),
                     ssh_resource
-                        .zip(ssh_session_id)
+                        .zip(session_id)
                         .map(|(_, session_id)| session_id.to_string()),
                 )
                 .await

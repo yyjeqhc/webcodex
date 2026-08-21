@@ -548,6 +548,530 @@ async fn run_shell_via_agent_lifecycle_error(
     task.await.unwrap()
 }
 
+async fn update_agent_shell_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    request_id: &str,
+    job_id: &str,
+    status: &str,
+    command_execution_state: Option<ShellCommandExecutionState>,
+    exit_code: Option<i32>,
+    stdout_chunk: Option<&str>,
+    stderr_chunk: Option<&str>,
+    error: Option<&str>,
+    finished: bool,
+) {
+    runtime
+        .shell_clients
+        .update_job(ShellAgentJobUpdateRequest {
+            client_id: client_id.to_string(),
+            agent_instance_id: "inst".to_string(),
+            job_id: job_id.to_string(),
+            request_id: Some(request_id.to_string()),
+            update_seq: None,
+            status: status.to_string(),
+            stdout_chunk: stdout_chunk.map(str::to_string),
+            stderr_chunk: stderr_chunk.map(str::to_string),
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code,
+            duration_ms: finished.then_some(25),
+            error: error.map(str::to_string),
+            command_execution_state,
+            validation_progress: None,
+            finished,
+        })
+        .await
+        .unwrap();
+}
+
+fn assert_run_shell_result_matches_schema(result: &ToolResult) {
+    let schema = super::super::registry::output_schema_for_tool("run_shell");
+    let instance = serde_json::to_value(result).unwrap();
+    super::super::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| {
+            panic!("run_shell result did not match output schema: {error}; {instance}")
+        });
+}
+
+#[tokio::test]
+async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it() {
+    let client_id = "shell-long-handoff";
+    let project_id = "proj-long-handoff";
+    let runtime =
+        test_runtime().with_structured_execution_sync_wait(std::time::Duration::from_millis(20));
+    let auth = open_auth_context();
+    register_job_agent_for_auth(&runtime, client_id, project_id, &auth).await;
+    let project = format!("agent:{client_id}:{project_id}");
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("long run_shell durable handoff".to_string()),
+    );
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunShell {
+                        project,
+                        command: "printf durable-shell; sleep 30".to_string(),
+                        session_id: Some(session_id),
+                        timeout_secs: Some(120),
+                        cwd: Some(".".to_string()),
+                        purpose: Some(ExecutionPurpose::Diagnostic),
+                        shell: Some(ExecutionShell::Bash),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+
+    let start = match next_patch_agent_request(&runtime, client_id).await {
+        Some(start) => start,
+        None => {
+            let early = task.await.unwrap();
+            panic!(
+                "long run_shell ended before durable Job start: success={} error={:?} output={}",
+                early.success, early.error, early.output
+            );
+        }
+    };
+    assert_eq!(start.kind, "start_job");
+    assert_eq!(start.timeout_secs, 120);
+    assert!(start.command.starts_with("exec bash -c "));
+    let job_id = start.job_id.clone().expect("durable Job id");
+    update_agent_shell_job(
+        &runtime,
+        client_id,
+        &start.request_id,
+        &job_id,
+        "running",
+        None,
+        None,
+        Some("durable-shell\n"),
+        None,
+        None,
+        false,
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["execution_state"], "running");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["effective_timeout_secs"], 120);
+    assert_eq!(result.output["sync_wait_secs"], 10);
+    assert_eq!(result.output["job_id"], job_id);
+    assert_eq!(result.output["purpose"], "diagnostic");
+    assert_eq!(result.output["shell"], "bash");
+    assert_eq!(result.output["cwd"], ".");
+    assert!(result.output["observation_token"].is_string());
+    assert_run_shell_result_matches_schema(&result);
+    assert!(
+        next_patch_agent_request(&runtime, client_id)
+            .await
+            .is_none(),
+        "handoff must not redispatch the shell command"
+    );
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .expect("session summary");
+    let finished = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "run_shell")
+        .expect("run_shell finish event");
+    assert_eq!(finished.status.as_deref(), Some("succeeded"));
+    assert!(finished.failure_kind.is_none());
+
+    let status = runtime
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id: job_id.clone(),
+                include_command_preview: false,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(status.success, "{:?}", status.error);
+    assert_eq!(status.output["job_id"], job_id);
+    assert_eq!(status.output["status"], "running");
+
+    let log = runtime
+        .job_log_for_auth(job_id.clone(), None, Some(40), Some(&auth), None, None)
+        .await;
+    assert!(log.success, "{:?}", log.error);
+    assert_eq!(log.output["job_id"], job_id);
+    assert!(log.output["stdout_tail"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("durable-shell"));
+
+    let stopped = runtime
+        .dispatch_with_auth(
+            ToolCall::StopJob {
+                project: project.clone(),
+                job_id: job_id.clone(),
+                session_id: Some(session.session_id.clone()),
+                confirm: true,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(stopped.success, "{:?}", stopped.error);
+    let stop_request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("stop_job request");
+    assert_eq!(stop_request.kind, "stop_job");
+    assert_eq!(stop_request.job_id.as_deref(), Some(job_id.as_str()));
+    update_agent_shell_job(
+        &runtime,
+        client_id,
+        &start.request_id,
+        &job_id,
+        "stopped",
+        Some(ShellCommandExecutionState::Completed),
+        None,
+        None,
+        None,
+        None,
+        true,
+    )
+    .await;
+    let terminal = runtime
+        .job_status_for_auth(job_id.clone(), false, Some(&auth))
+        .await;
+    assert!(terminal.success, "{:?}", terminal.error);
+    assert_eq!(terminal.output["status"], "stopped");
+    assert!(runtime.shell_clients.remove_job_record(&job_id).await);
+}
+
+#[tokio::test]
+async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_job() {
+    let client_id = "shell-long-fast";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_structured_execution_sync_wait(std::time::Duration::from_millis(200));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .run_shell(project, "printf fast".to_string(), Some(120), None)
+                .await
+        }
+    });
+    let start = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("durable start request");
+    assert_eq!(start.kind, "start_job");
+    let job_id = start.job_id.clone().unwrap();
+    update_agent_shell_job(
+        &runtime,
+        client_id,
+        &start.request_id,
+        &job_id,
+        "completed",
+        Some(ShellCommandExecutionState::Completed),
+        Some(0),
+        Some("fast\n"),
+        None,
+        None,
+        true,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["execution_state"], "completed");
+    assert_eq!(result.output["promoted_to_job"], false);
+    assert_eq!(result.output["terminal"], true);
+    assert_eq!(result.output["job_id"], serde_json::Value::Null);
+    assert_eq!(result.output["effective_timeout_secs"], 120);
+    assert_eq!(result.output["sync_wait_secs"], 10);
+    assert_run_shell_result_matches_schema(&result);
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
+#[tokio::test]
+async fn run_shell_default_sixty_stays_synchronous_even_with_async_job_capability() {
+    let client_id = "shell-default-sync";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .run_shell(project, "printf default".to_string(), None, None)
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("ordinary synchronous run_shell request");
+    assert_eq!(request.kind, "run_shell");
+    assert_eq!(request.timeout_secs, 60);
+    complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, "default", "").await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert!(result.output.get("promoted_to_job").is_none());
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
+#[tokio::test]
+async fn long_run_shell_without_async_job_capability_keeps_legacy_sync_dispatch() {
+    let client_id = "shell-long-legacy";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .run_shell(project, "printf legacy".to_string(), Some(120), None)
+                .await
+        }
+    });
+    let request = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("legacy synchronous request");
+    assert_eq!(request.kind, "run_shell");
+    assert_eq!(request.timeout_secs, 120);
+    complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, "legacy", "").await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert!(result.output.get("promoted_to_job").is_none());
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
+#[tokio::test]
+async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
+    let client_id = "shell-long-no-shell";
+    let project_id = "proj-long-no-shell";
+    let runtime = test_runtime();
+    let auth = open_auth_context();
+    runtime
+        .shell_clients
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: Some(4),
+                job_inventory: None,
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                host_context: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: false,
+                    async_shell_jobs: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![registered_project(
+                    project_id,
+                    &format!("/tmp/{project_id}"),
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+            Some(&auth),
+        )
+        .await
+        .unwrap();
+    let project = format!("agent:{client_id}:{project_id}");
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::RunShell {
+                project,
+                command: "printf denied".to_string(),
+                session_id: None,
+                timeout_secs: Some(120),
+                cwd: None,
+                purpose: None,
+                shell: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("does not support shell"), "{error}");
+    assert!(error.contains(client_id), "{error}");
+    assert!(next_patch_agent_request(&runtime, client_id)
+        .await
+        .is_none());
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
+#[tokio::test]
+async fn long_run_shell_job_start_rejection_is_not_started_and_enqueues_nothing() {
+    let client_id = "shell-long-start-reject";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let result = runtime
+        .run_shell_with_contract_in_sandbox(
+            project,
+            "printf never".to_string(),
+            Some(120),
+            None,
+            None,
+            None,
+            Some("invalid-sandbox-mode"),
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "not_started");
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["promoted_to_job"], false);
+    assert_eq!(result.output["async_handoff_available"], true);
+    assert_run_shell_result_matches_schema(&result);
+    assert!(next_patch_agent_request(&runtime, client_id)
+        .await
+        .is_none());
+    assert!(runtime.shell_clients.list_jobs(Some(10)).await.is_empty());
+}
+
+#[tokio::test]
+async fn long_run_shell_job_timeout_is_terminal_and_never_becomes_fake_outcome_unknown() {
+    let client_id = "shell-long-timeout";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_structured_execution_sync_wait(std::time::Duration::from_millis(20));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            shell: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .run_shell(
+                    project,
+                    "printf partial; sleep 30".to_string(),
+                    Some(120),
+                    None,
+                )
+                .await
+        }
+    });
+    let start = next_patch_agent_request(&runtime, client_id)
+        .await
+        .expect("durable Job start");
+    let job_id = start.job_id.clone().unwrap();
+    update_agent_shell_job(
+        &runtime,
+        client_id,
+        &start.request_id,
+        &job_id,
+        "running",
+        None,
+        None,
+        Some("partial\n"),
+        None,
+        None,
+        false,
+    )
+    .await;
+    let handoff = task.await.unwrap();
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["job_id"], job_id);
+    assert_eq!(handoff.output["promoted_to_job"], true);
+
+    update_agent_shell_job(
+        &runtime,
+        client_id,
+        &start.request_id,
+        &job_id,
+        "timeout",
+        Some(ShellCommandExecutionState::TimedOut),
+        Some(-1),
+        None,
+        Some("runner deadline reached\n"),
+        Some("command timed out"),
+        true,
+    )
+    .await;
+    let status = runtime.job_status(job_id.clone()).await;
+    assert!(status.success, "{:?}", status.error);
+    assert_eq!(status.output["status"], "timeout");
+    assert_eq!(status.output["command_execution_state"], "timed_out");
+    assert_ne!(status.output["command_execution_state"], "outcome_unknown");
+    let log = runtime.job_log(job_id.clone(), None, Some(40)).await;
+    assert!(log.success, "{:?}", log.error);
+    assert_eq!(log.output["command_execution_state"], "timed_out");
+    assert!(log.output["stderr_tail"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("runner deadline reached"));
+    assert!(next_patch_agent_request(&runtime, client_id)
+        .await
+        .is_none());
+    assert!(runtime.shell_clients.remove_job_record(&job_id).await);
+}
+
 #[tokio::test]
 async fn run_shell_failure_reports_command_started_and_output_tail() {
     let result = run_shell_via_agent(

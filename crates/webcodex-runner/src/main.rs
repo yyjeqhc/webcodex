@@ -2641,14 +2641,30 @@ fn runner_job_is_active(status: &str) -> bool {
     matches!(status, "agent_queued" | "running" | "stop_requested")
 }
 
+fn job_prestart_lifecycle_for_kind(kind: &str) -> Option<ShellCommandExecutionState> {
+    matches!(
+        kind,
+        "start_job" | "start_process_job" | "start_detached_process_job" | "start_script_job"
+    )
+    .then_some(ShellCommandExecutionState::NotStarted)
+}
+
 fn structured_prestart_lifecycle(
     request: &ShellAgentShellRequest,
 ) -> Option<ShellCommandExecutionState> {
-    matches!(
-        request.kind.as_str(),
-        "start_process_job" | "start_detached_process_job" | "start_script_job"
-    )
-    .then_some(ShellCommandExecutionState::NotStarted)
+    job_prestart_lifecycle_for_kind(request.kind.as_str())
+}
+
+fn raw_shell_job_terminal_lifecycle(
+    status: &str,
+    exit_code: Option<i32>,
+) -> ShellCommandExecutionState {
+    match status {
+        "timeout" | "timed_out" => ShellCommandExecutionState::TimedOut,
+        "completed" | "stopped" | "cancelled" => ShellCommandExecutionState::Completed,
+        "failed" if exit_code.is_some() => ShellCommandExecutionState::Completed,
+        _ => ShellCommandExecutionState::OutcomeUnknown,
+    }
 }
 
 fn job_update_from_snapshot(
@@ -4845,6 +4861,8 @@ impl JobManager {
                 });
                 break (step_status, out, err, progress);
             };
+            let command_execution_state = (!validation)
+                .then(|| raw_shell_job_terminal_lifecycle(&final_status.0, final_status.1));
             manager.update_and_send(
                 &job_id,
                 RunnerJobDelta {
@@ -4854,9 +4872,9 @@ impl JobManager {
                     exit_code: final_status.1,
                     duration_ms: Some(start.elapsed().as_millis() as u64),
                     error: final_status.2,
+                    command_execution_state,
                     validation_progress: final_progress,
                     finished: true,
-                    ..Default::default()
                 },
             );
             manager.start_available_queued();

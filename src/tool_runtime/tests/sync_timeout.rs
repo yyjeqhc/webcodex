@@ -3,8 +3,9 @@
 //! Read-only structured validation tools (`cargo_check`, `cargo_test`,
 //! `cargo_fmt(check=true)`) now define `timeout_secs` as the total runtime
 //! budget of the command (1..=3600). Short validations return immediately; a
-//! long validation continues as a Job and returns `job_id`. `run_shell`
-//! keeps the synchronous 1..=120 contract.
+//! long validation continues as a Job and returns `job_id`. `run_shell` keeps
+//! the public 1..=120 total-timeout contract; explicit values above 60 may use
+//! the same durable Job execution while the default 60-second call stays sync.
 
 use super::support::*;
 use crate::shell_protocol::{
@@ -13,6 +14,7 @@ use crate::shell_protocol::{
 };
 use crate::tool_runtime::helpers::{
     resolve_sync_timeout_secs, DEFAULT_RUN_SHELL_TIMEOUT_SECS, MIN_SYNC_TIMEOUT_SECS,
+    SYNC_VALIDATION_WAIT_SECS,
 };
 use crate::tool_runtime::validation_events::validation_summary_for_session;
 use crate::tool_runtime::{SessionMode, ToolCall, ToolResult};
@@ -79,6 +81,11 @@ fn resolve_sync_timeout_secs_rejects_out_of_range() {
     assert!(resolve_sync_timeout_secs(Some(121), 120).is_err());
     assert!(resolve_sync_timeout_secs(Some(300), 120).is_err());
     assert!(resolve_sync_timeout_secs(Some(600), 60).is_err());
+}
+
+#[test]
+fn structured_validation_sync_grace_is_sixty_seconds() {
+    assert_eq!(SYNC_VALIDATION_WAIT_SECS, 60);
 }
 
 #[tokio::test]

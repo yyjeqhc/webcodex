@@ -185,7 +185,7 @@ pub(crate) fn run_shell_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Synchronous command timeout in seconds (1..=120, default 60). Out-of-range values are rejected before start; choose asynchronous execution for longer work.",
+            "Total command timeout in seconds (1..=120, default 60). Explicit values above 60 may hand off the same original execution as a durable Job when the Runner supports async shell Jobs; default 60-second calls remain synchronous.",
             false,
         ),
         (

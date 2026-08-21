@@ -110,6 +110,7 @@ impl ToolRuntime {
                     sandbox,
                     ssh_resource,
                     session_id.as_deref(),
+                    auth,
                 )
                 .await
             }

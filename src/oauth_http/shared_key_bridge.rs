@@ -29,6 +29,9 @@ pub(crate) const SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES: &[&str] = &[
     SCOPE_COMPUTER_CLIPBOARD_WRITE,
 ];
 
+/// Canonical ceiling for a fresh Computer-enabled shared-key OAuth client.
+/// Existing clients may retain a narrower non-empty baseline subset and add the
+/// same fixed optional Computer scopes.
 pub(crate) const SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES: &[&str] = &[
     SCOPE_RUNTIME_READ,
     SCOPE_PROJECT_READ,
@@ -56,7 +59,7 @@ const BRIDGE_PERMISSION_SPECS: &[BridgePermissionSpec] = &[
         id: "launch",
         label: "Launch applications",
         scopes: &[SCOPE_COMPUTER_LAUNCH],
-        request_scopes: &[SCOPE_COMPUTER_LAUNCH],
+        request_scopes: &[SCOPE_COMPUTER_READ, SCOPE_COMPUTER_LAUNCH],
     },
     BridgePermissionSpec {
         id: "display",
@@ -104,19 +107,62 @@ fn bridge_permission_spec(id: &str) -> Option<&'static BridgePermissionSpec> {
         .find(|permission| permission.id == id)
 }
 
-fn canonical_scope_set_matches(scopes: &[String], expected: &[&str]) -> bool {
-    scopes.len() == expected.len()
-        && expected
+fn bridge_scope_list_is_unique(scopes: &[String]) -> bool {
+    scopes
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        == scopes.len()
+}
+
+fn bridge_baseline_scope_ceiling_is_valid(scopes: &[String]) -> bool {
+    !scopes.is_empty()
+        && bridge_scope_list_is_unique(scopes)
+        && scopes
             .iter()
-            .all(|expected_scope| scopes.iter().any(|scope| scope == expected_scope))
+            .all(|scope| bridge_oauth_scopes().contains(&scope.as_str()))
+}
+
+fn bridge_computer_scope_ceiling_is_valid(scopes: &[String]) -> bool {
+    if scopes.is_empty() || !bridge_scope_list_is_unique(scopes) {
+        return false;
+    }
+
+    let mut has_baseline_scope = false;
+    for scope in scopes {
+        if bridge_oauth_scopes().contains(&scope.as_str()) {
+            has_baseline_scope = true;
+        } else if !SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES.contains(&scope.as_str()) {
+            return false;
+        }
+    }
+
+    has_baseline_scope
+        && SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES
+            .iter()
+            .all(|required| scopes.iter().any(|scope| scope == required))
+}
+
+fn bridge_computer_enabled_scope_ceiling(scopes: &[String]) -> Option<Vec<String>> {
+    if bridge_computer_scope_ceiling_is_valid(scopes) {
+        return Some(scopes.to_vec());
+    }
+    if !bridge_baseline_scope_ceiling_is_valid(scopes) {
+        return None;
+    }
+
+    let mut expanded = scopes.to_vec();
+    expanded.extend(
+        SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_string()),
+    );
+    Some(expanded)
 }
 
 fn bridge_client_is_computer_enabled(client: &crate::models::OAuthClientRecord) -> bool {
     client.is_shared_key_owned()
-        && canonical_scope_set_matches(
-            &client.allowed_scopes_vec(),
-            SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES,
-        )
+        && bridge_computer_scope_ceiling_is_valid(&client.allowed_scopes_vec())
 }
 
 fn bridge_client_has_optional_computer_scope(client: &crate::models::OAuthClientRecord) -> bool {
@@ -538,16 +584,8 @@ struct ProvisionSharedKeyOAuthClientRequest {
 
 fn bridge_client_scopes_are_current(client: &crate::models::OAuthClientRecord) -> bool {
     let scopes = client.allowed_scopes_vec();
-    if scopes.is_empty() {
-        return false;
-    }
-    if scopes
-        .iter()
-        .all(|scope| bridge_oauth_scopes().contains(&scope.as_str()))
-    {
-        return true;
-    }
-    bridge_client_is_computer_enabled(client)
+    bridge_baseline_scope_ceiling_is_valid(&scopes)
+        || bridge_computer_scope_ceiling_is_valid(&scopes)
 }
 
 #[handler]
@@ -665,7 +703,23 @@ pub(crate) async fn oauth_shared_key_client_provision(
                 }
 
                 let desired_scopes = if body.computer_permissions {
-                    SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES.join(" ")
+                    let current_scopes = client.allowed_scopes_vec();
+                    if bridge_computer_scope_ceiling_is_valid(&current_scopes) {
+                        // Preserve an already Computer-enabled ceiling byte-for-byte so a
+                        // semantic no-op cannot revoke grants merely by canonicalizing scope
+                        // ordering or whitespace.
+                        client.allowed_scopes.clone()
+                    } else {
+                        let Some(scopes) = bridge_computer_enabled_scope_ceiling(&current_scopes)
+                        else {
+                            res.status_code(StatusCode::CONFLICT);
+                            res.render(Json(serde_json::json!({
+                                "error": "persisted OAuth scope ceiling is not valid for Computer opt-in"
+                            })));
+                            return;
+                        };
+                        scopes.join(" ")
+                    }
                 } else {
                     client.allowed_scopes.clone()
                 };
@@ -718,46 +772,38 @@ pub(crate) async fn oauth_shared_key_client_provision(
     }
 
     let create_scopes = if let Some(previous) = body.previous_allowed_scopes.as_ref() {
-        let maximum_ceiling = SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES;
-        if previous.is_empty()
-            || previous
-                .iter()
-                .any(|scope| !maximum_ceiling.contains(&scope.as_str()))
-            || previous
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                != previous.len()
-        {
-            res.status_code(StatusCode::CONFLICT);
-            res.render(Json(serde_json::json!({
-                "error": "persisted OAuth scope ceiling is not valid for ordinary shared-key OAuth"
-            })));
-            return;
-        }
         if body.computer_permissions {
-            SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES.to_vec()
-        } else {
-            if previous
-                .iter()
-                .any(|scope| !bridge_oauth_scopes().contains(&scope.as_str()))
-            {
+            let Some(scopes) = bridge_computer_enabled_scope_ceiling(previous) else {
                 res.status_code(StatusCode::CONFLICT);
                 res.render(Json(serde_json::json!({
-                    "error": "persisted OAuth profile is Computer-enabled; reconnect with --oauth-computer-permissions"
+                    "error": "persisted OAuth scope ceiling is not valid for Computer opt-in"
                 })));
                 return;
+            };
+            scopes
+        } else {
+            if !bridge_baseline_scope_ceiling_is_valid(previous) {
+                res.status_code(StatusCode::CONFLICT);
+                let error = if bridge_computer_scope_ceiling_is_valid(previous) {
+                    "persisted OAuth profile is Computer-enabled; reconnect with --oauth-computer-permissions"
+                } else {
+                    "persisted OAuth scope ceiling is not valid for ordinary shared-key OAuth"
+                };
+                res.render(Json(serde_json::json!({"error": error})));
+                return;
             }
-            bridge_oauth_scopes()
-                .iter()
-                .copied()
-                .filter(|scope| previous.iter().any(|item| item == scope))
-                .collect::<Vec<_>>()
+            previous.clone()
         }
     } else if body.computer_permissions {
-        SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES.to_vec()
+        SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_string())
+            .collect()
     } else {
-        bridge_oauth_scopes().to_vec()
+        bridge_oauth_scopes()
+            .iter()
+            .map(|scope| (*scope).to_string())
+            .collect()
     };
 
     let plaintext_secret = crate::auth::generate_oauth_client_secret();

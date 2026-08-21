@@ -19,6 +19,15 @@ const BRIDGE_BASELINE_SCOPES: &[&str] = &[
     "computer:read",
     "computer:control",
 ];
+const BRIDGE_OPTIONAL_COMPUTER_SCOPES: &[&str] = &[
+    "computer:launch",
+    "computer:display_read",
+    "computer:pointer_control",
+    "computer:clipboard_read",
+    "computer:clipboard_write",
+];
+// Canonical ceiling for a fresh Computer-enabled client. Existing profiles may
+// retain a narrower non-empty baseline subset plus all optional Computer scopes.
 const BRIDGE_COMPUTER_ENABLED_SCOPES: &[&str] = &[
     "runtime:read",
     "project:read",
@@ -99,24 +108,71 @@ fn scope_set_matches(scopes: &[String], expected: &[&str]) -> bool {
             .all(|expected_scope| scopes.iter().any(|scope| scope == expected_scope))
 }
 
-fn profile_scope_ceiling_is_valid(profile: &SharedKeyOAuthProfile) -> bool {
-    if profile.allowed_scopes.is_empty()
-        || profile
-            .allowed_scopes
+fn string_scope_set_matches(scopes: &[String], expected: &[String]) -> bool {
+    scopes.len() == expected.len()
+        && expected
             .iter()
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-            != profile.allowed_scopes.len()
-    {
-        return false;
-    }
-    if profile.computer_permissions_enabled {
-        scope_set_matches(&profile.allowed_scopes, BRIDGE_COMPUTER_ENABLED_SCOPES)
-    } else {
-        profile
-            .allowed_scopes
+            .all(|expected_scope| scopes.iter().any(|scope| scope == expected_scope))
+}
+
+fn scope_list_is_unique(scopes: &[String]) -> bool {
+    scopes
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        == scopes.len()
+}
+
+fn baseline_scope_ceiling_is_valid(scopes: &[String]) -> bool {
+    !scopes.is_empty()
+        && scope_list_is_unique(scopes)
+        && scopes
             .iter()
             .all(|scope| BRIDGE_BASELINE_SCOPES.contains(&scope.as_str()))
+}
+
+fn computer_enabled_scope_ceiling_is_valid(scopes: &[String]) -> bool {
+    if scopes.is_empty() || !scope_list_is_unique(scopes) {
+        return false;
+    }
+
+    let mut has_baseline_scope = false;
+    for scope in scopes {
+        if BRIDGE_BASELINE_SCOPES.contains(&scope.as_str()) {
+            has_baseline_scope = true;
+        } else if !BRIDGE_OPTIONAL_COMPUTER_SCOPES.contains(&scope.as_str()) {
+            return false;
+        }
+    }
+
+    has_baseline_scope
+        && BRIDGE_OPTIONAL_COMPUTER_SCOPES
+            .iter()
+            .all(|required| scopes.iter().any(|scope| scope == required))
+}
+
+fn computer_enabled_scope_ceiling_from_existing(scopes: &[String]) -> Option<Vec<String>> {
+    if computer_enabled_scope_ceiling_is_valid(scopes) {
+        return Some(scopes.to_vec());
+    }
+    if !baseline_scope_ceiling_is_valid(scopes) {
+        return None;
+    }
+
+    let mut expanded = scopes.to_vec();
+    expanded.extend(
+        BRIDGE_OPTIONAL_COMPUTER_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_string()),
+    );
+    Some(expanded)
+}
+
+fn profile_scope_ceiling_is_valid(profile: &SharedKeyOAuthProfile) -> bool {
+    if profile.computer_permissions_enabled {
+        computer_enabled_scope_ceiling_is_valid(&profile.allowed_scopes)
+    } else {
+        baseline_scope_ceiling_is_valid(&profile.allowed_scopes)
     }
 }
 
@@ -231,35 +287,46 @@ async fn provision_client(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if allowed_scopes.is_empty()
-        || allowed_scopes
-            .iter()
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-            != allowed_scopes.len()
-    {
-        return Err(
-            "shared-key OAuth provision response contains an invalid scope ceiling".to_string(),
-        );
-    }
-    let expected_scopes = if opts.oauth_computer_permissions {
-        BRIDGE_COMPUTER_ENABLED_SCOPES
-    } else {
-        BRIDGE_BASELINE_SCOPES
-    };
     if opts.oauth_computer_permissions {
-        if !scope_set_matches(&allowed_scopes, expected_scopes) {
-            return Err("Server returned a scope outside the explicit Computer-enabled shared-key OAuth ceiling".to_string());
+        if !computer_enabled_scope_ceiling_is_valid(&allowed_scopes) {
+            return Err(
+                "Server returned an invalid Computer-enabled shared-key OAuth ceiling".to_string(),
+            );
         }
-    } else if let Some(existing) = existing {
-        if allowed_scopes != existing.allowed_scopes {
-            return Err("persisted shared-key OAuth client differs from the Server; refusing to widen or rewrite it implicitly".to_string());
+        let expected_scopes = if let Some(existing) = existing {
+            computer_enabled_scope_ceiling_from_existing(&existing.allowed_scopes).ok_or_else(|| {
+                "existing shared-key OAuth profile cannot be safely upgraded to Computer permissions"
+                    .to_string()
+            })?
+        } else {
+            BRIDGE_COMPUTER_ENABLED_SCOPES
+                .iter()
+                .map(|scope| (*scope).to_string())
+                .collect()
+        };
+        if !string_scope_set_matches(&allowed_scopes, &expected_scopes) {
+            return Err(
+                "Server changed baseline authority while enabling optional Computer permissions"
+                    .to_string(),
+            );
         }
-    } else if !scope_set_matches(&allowed_scopes, expected_scopes) {
-        return Err(
-            "Server returned a scope outside the ordinary shared-key OAuth baseline ceiling"
-                .to_string(),
-        );
+    } else {
+        if !baseline_scope_ceiling_is_valid(&allowed_scopes) {
+            return Err(
+                "Server returned a scope outside the ordinary shared-key OAuth baseline ceiling"
+                    .to_string(),
+            );
+        }
+        if let Some(existing) = existing {
+            if allowed_scopes != existing.allowed_scopes {
+                return Err("persisted shared-key OAuth client differs from the Server; refusing to widen or rewrite it implicitly".to_string());
+            }
+        } else if !scope_set_matches(&allowed_scopes, BRIDGE_BASELINE_SCOPES) {
+            return Err(
+                "Server returned a scope outside the ordinary shared-key OAuth baseline ceiling"
+                    .to_string(),
+            );
+        }
     }
     let reused = value
         .get("reused")
@@ -528,11 +595,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_computer_opt_in_upgrades_only_to_the_closed_ceiling() {
-        let full_scopes = BRIDGE_COMPUTER_ENABLED_SCOPES
-            .iter()
-            .map(|scope| (*scope).to_string())
-            .collect::<Vec<_>>();
+    async fn explicit_computer_opt_in_preserves_existing_narrow_baseline() {
+        let narrow_computer_scopes = vec![
+            "runtime:read".to_string(),
+            "project:read".to_string(),
+            "computer:launch".to_string(),
+            "computer:display_read".to_string(),
+            "computer:pointer_control".to_string(),
+            "computer:clipboard_read".to_string(),
+            "computer:clipboard_write".to_string(),
+        ];
         let (server, handle) = json_responses(vec![json!({
             "success": true,
             "reused": true,
@@ -540,7 +612,7 @@ mod tests {
             "client": {
                 "client_id": "wc_client_bridge_existing",
                 "redirect_uri": "https://chatgpt.example/callback",
-                "allowed_scopes": full_scopes,
+                "allowed_scopes": narrow_computer_scopes,
             }
         })]);
         let mut opts = options(server.clone());
@@ -551,10 +623,7 @@ mod tests {
             client_id: "wc_client_bridge_existing".to_string(),
             client_secret: "wc_csec_existing_secret".to_string(),
             redirect_uri: "https://chatgpt.example/callback".to_string(),
-            allowed_scopes: BRIDGE_BASELINE_SCOPES
-                .iter()
-                .map(|scope| (*scope).to_string())
-                .collect(),
+            allowed_scopes: vec!["runtime:read".to_string(), "project:read".to_string()],
             computer_permissions_enabled: false,
         };
         let (upgraded, changed) = provision_client(
@@ -569,15 +638,53 @@ mod tests {
         assert!(changed);
         assert!(upgraded.computer_permissions_enabled);
         assert_eq!(upgraded.client_secret, existing.client_secret);
-        assert!(scope_set_matches(
-            &upgraded.allowed_scopes,
-            BRIDGE_COMPUTER_ENABLED_SCOPES
-        ));
+        assert_eq!(upgraded.allowed_scopes, narrow_computer_scopes);
+        for restored in [
+            "project:write",
+            "job:run",
+            "computer:read",
+            "computer:control",
+        ] {
+            assert!(!upgraded
+                .allowed_scopes
+                .iter()
+                .any(|scope| scope == restored));
+        }
         handle.join().unwrap();
 
-        let mut future_scopes = BRIDGE_COMPUTER_ENABLED_SCOPES
+        // Missing/revoked client replacement accepts the same narrow protected
+        // baseline and does not recover full baseline authority.
+        let (server, handle) = json_responses(vec![json!({
+            "success": true,
+            "reused": false,
+            "client": {
+                "client_id": "wc_client_bridge_rotated",
+                "redirect_uri": "https://chatgpt.example/callback",
+                "allowed_scopes": narrow_computer_scopes,
+            },
+            "client_secret": "wc_csec_rotated_secret"
+        })]);
+        let mut opts = options(server.clone());
+        opts.oauth_computer_permissions = true;
+        let (rotated, changed) = provision_client(
+            &opts,
+            &server,
+            "ordinary-connect-shared-key",
+            "https://chatgpt.example/callback",
+            Some(&existing),
+        )
+        .await
+        .unwrap();
+        assert!(changed);
+        assert!(rotated.computer_permissions_enabled);
+        assert_eq!(rotated.allowed_scopes, narrow_computer_scopes);
+        assert_eq!(rotated.client_secret, "wc_csec_rotated_secret");
+        handle.join().unwrap();
+
+        let mut future_scopes = narrow_computer_scopes
             .iter()
-            .map(|scope| serde_json::Value::String((*scope).to_string()))
+            .cloned()
+            .map(serde_json::Value::String)
             .collect::<Vec<_>>();
         future_scopes.push(serde_json::Value::String("computer:future".to_string()));
         let (server, handle) = json_responses(vec![json!({
@@ -600,22 +707,53 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(error.contains("explicit Computer-enabled shared-key OAuth ceiling"));
+        assert!(error.contains("invalid Computer-enabled shared-key OAuth ceiling"));
+        handle.join().unwrap();
+
+        // Fresh opt-in continues to accept the canonical full baseline + optional ceiling.
+        let full_scopes = BRIDGE_COMPUTER_ENABLED_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_string())
+            .collect::<Vec<_>>();
+        let (server, handle) = json_responses(vec![json!({
+            "success": true,
+            "reused": false,
+            "client": {
+                "client_id": "wc_client_bridge_fresh_computer",
+                "redirect_uri": "https://chatgpt.example/callback",
+                "allowed_scopes": full_scopes,
+            },
+            "client_secret": "wc_csec_fresh_computer"
+        })]);
+        let mut opts = options(server.clone());
+        opts.oauth_computer_permissions = true;
+        let (fresh, changed) = provision_client(
+            &opts,
+            &server,
+            "ordinary-connect-shared-key",
+            "https://chatgpt.example/callback",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(changed);
+        assert!(fresh.computer_permissions_enabled);
+        assert!(scope_set_matches(
+            &fresh.allowed_scopes,
+            BRIDGE_COMPUTER_ENABLED_SCOPES
+        ));
         handle.join().unwrap();
     }
 
     #[test]
-    fn profile_and_cli_output_distinguish_baseline_from_computer_enabled_ceiling() {
+    fn profile_and_cli_output_accept_narrow_computer_ceiling_and_reject_invalid_scopes() {
         let baseline = SharedKeyOAuthProfile {
             version: BRIDGE_PROFILE_VERSION,
             server_url: "https://server.example".to_string(),
             client_id: "wc_client_baseline".to_string(),
             client_secret: "wc_csec_baseline".to_string(),
             redirect_uri: "https://chatgpt.example/callback".to_string(),
-            allowed_scopes: BRIDGE_BASELINE_SCOPES
-                .iter()
-                .map(|scope| (*scope).to_string())
-                .collect(),
+            allowed_scopes: vec!["runtime:read".to_string(), "project:read".to_string()],
             computer_permissions_enabled: false,
         };
         assert!(profile_scope_ceiling_is_valid(&baseline));
@@ -624,22 +762,62 @@ mod tests {
         assert!(!baseline_output.contains("Client may request:"));
 
         let mut enabled = baseline.clone();
-        enabled.allowed_scopes = BRIDGE_COMPUTER_ENABLED_SCOPES
-            .iter()
-            .map(|scope| (*scope).to_string())
-            .collect();
+        enabled.allowed_scopes.extend(
+            BRIDGE_OPTIONAL_COMPUTER_SCOPES
+                .iter()
+                .map(|scope| (*scope).to_string()),
+        );
         enabled.computer_permissions_enabled = true;
         assert!(profile_scope_ceiling_is_valid(&enabled));
+        assert_eq!(
+            computer_enabled_scope_ceiling_from_existing(&enabled.allowed_scopes),
+            Some(enabled.allowed_scopes.clone())
+        );
         let enabled_output = bridge_scope_output(&enabled);
         assert!(enabled_output.contains("Client may request:"));
         assert!(enabled_output.contains("Browser consent: Additional Computer permissions"));
         assert!(enabled_output.contains("computer:pointer_control"));
+        for absent in [
+            "project:write",
+            "job:run",
+            "computer:read",
+            "computer:control",
+        ] {
+            assert!(!enabled.allowed_scopes.iter().any(|scope| scope == absent));
+        }
 
-        enabled.allowed_scopes.push("account:manage".to_string());
-        assert!(!profile_scope_ceiling_is_valid(&enabled));
-        enabled.allowed_scopes.pop();
-        enabled.allowed_scopes.push("computer:future".to_string());
-        assert!(!profile_scope_ceiling_is_valid(&enabled));
+        let mut invalid = enabled.clone();
+        invalid.allowed_scopes.pop();
+        assert!(!profile_scope_ceiling_is_valid(&invalid));
+
+        let mut invalid = enabled.clone();
+        invalid.allowed_scopes.push("computer:launch".to_string());
+        assert!(!profile_scope_ceiling_is_valid(&invalid));
+
+        for forbidden in [
+            "account:manage",
+            "admin",
+            "job:detach",
+            "agent:register",
+            "agent:future",
+            "computer:future",
+        ] {
+            let mut invalid = enabled.clone();
+            invalid.allowed_scopes.push(forbidden.to_string());
+            assert!(
+                !profile_scope_ceiling_is_valid(&invalid),
+                "forbidden scope accepted: {forbidden}"
+            );
+        }
+
+        let full_enabled = SharedKeyOAuthProfile {
+            allowed_scopes: BRIDGE_COMPUTER_ENABLED_SCOPES
+                .iter()
+                .map(|scope| (*scope).to_string())
+                .collect(),
+            ..enabled
+        };
+        assert!(profile_scope_ceiling_is_valid(&full_enabled));
     }
 
     #[test]

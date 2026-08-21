@@ -114,7 +114,7 @@ webcodex connect https://webcodex.example --auth oauth \
   --oauth-computer-permissions --project .
 ```
 
-Runner 继续使用 direct shared key 及其固定 baseline authority，ChatGPT 只获得 OAuth credential/token。普通 shared-key OAuth 默认也是同一 baseline（runtime/project/job、`computer:read`、`computer:control`）。只有显式使用 `--oauth-computer-permissions`，浏览器才会提供固定的 launch/full-display/pointer/clipboard optional consent；该 flag 只扩大 OAuth client ceiling，所有 optional permission 在 WebCodex authorize 页面仍默认未勾选，`account:manage`、`admin`、`job:detach`、Agent scope 与未来 scope 永远不会出现。普通 reconnect 不会静默扩大已有 baseline client。Runner capability 与 OS/native permission 会在 runtime 调用时重新检查，因此授权页的 available 不代表操作保证成功。高级 managed-user OAuth 仍与此分离，在 `webcodex login` 后使用 `--auth managed-oauth`。见[部署指南](DEPLOYMENT.zh-CN.md)。
+Runner 继续使用 direct shared key 及其固定 baseline authority，ChatGPT 只获得 OAuth credential/token。fresh ordinary shared-key OAuth client 从完整 baseline（runtime/project/job、`computer:read`、`computer:control`）开始，但已有受保护 client 可以继续保留合法的窄 baseline subset。只有显式使用 `--oauth-computer-permissions`，浏览器才会提供固定的 launch/full-display/pointer/clipboard optional consent；该 flag 只在现有 baseline subset 上追加这些 optional scopes，不会恢复此前缺失的 baseline authority。所有 optional permission 在 WebCodex authorize 页面仍默认未勾选；Launch 只有在本次 OAuth request 已同时包含 `computer:read` 与 `computer:launch` 时才可选择，Server 不会补缺失 scope。`account:manage`、`admin`、`job:detach`、Agent scope 与未来 scope 永远不会出现。普通 reconnect 不会静默扩大已有 baseline client。Runner capability 与 OS/native permission 会在 runtime 调用时重新检查，因此授权页的 available 不代表操作保证成功。高级 managed-user OAuth 仍与此分离，在 `webcodex login` 后使用 `--auth managed-oauth`。见[部署指南](DEPLOYMENT.zh-CN.md)。
 
 以后如果只想从 hosted `connect` profile 中注销当前仓库，可在仓库中运行：
 

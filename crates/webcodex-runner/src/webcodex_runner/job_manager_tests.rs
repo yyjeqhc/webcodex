@@ -1195,13 +1195,13 @@ fn detached_process_jobmanager_initiation_handoffs_once_and_stops_via_durable_co
             .execution_source,
         "run_detached_process"
     );
-    assert_eq!(
-        lock_unpoison(&manager.detached_jobs)
-            .get(job_id)
-            .unwrap()
-            .execution_id,
-        running.execution_id
-    );
+    assert!(wait_until(Duration::from_secs(5), || lock_unpoison(
+        &manager.detached_jobs
+    )
+    .get(job_id)
+    .is_some_and(
+        |detached| detached.execution_id == running.execution_id
+    )));
     let starts = std::fs::read_to_string(&marker).unwrap();
     assert_eq!(starts.lines().count(), 1);
     assert!(starts.contains(nonce));

@@ -106,6 +106,12 @@ impl GatewayError {
     }
 }
 
+#[derive(Debug)]
+enum GatewaySuccess {
+    Metadata(Value),
+    UpstreamToolResult(McpGatewayToolResult),
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct McpToolArguments {
@@ -178,18 +184,21 @@ pub(crate) async fn call(
     };
 
     let result = match parsed.action.as_str() {
-        "list" => list(runtime, parsed, auth).await,
-        "describe" => describe(runtime, parsed, auth).await,
-        "call" => call_upstream(runtime, parsed, auth, meta).await,
+        "list" => list(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::Metadata),
+        "describe" => describe(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::Metadata),
+        "call" => call_upstream(runtime, parsed, auth, meta)
+            .await
+            .map(GatewaySuccess::UpstreamToolResult),
         _ => Err(GatewayError::local(
             "invalid_action",
             "action must be one of list, describe, or call",
         )),
     };
-    match result {
-        Ok(value) => gateway_success_result(value),
-        Err(error) => gateway_error_result(error),
-    }
+    render_gateway_result(result)
 }
 
 async fn list(
@@ -308,7 +317,7 @@ async fn call_upstream(
     args: McpToolArguments,
     auth: Option<&AuthContext>,
     meta: Option<Value>,
-) -> Result<Value, GatewayError> {
+) -> Result<McpGatewayToolResult, GatewayError> {
     let server = required_id(args.server.as_deref(), "server")?;
     let tool_name = required_tool(args.tool.as_deref())?;
     let arguments = args.arguments.ok_or_else(|| {
@@ -400,13 +409,7 @@ async fn call_upstream(
         return Err(gateway_error);
     }
     match response.payload {
-        Some(McpGatewayResponsePayload::ToolResult { result }) => serde_json::to_value(result)
-            .map_err(|_| {
-                GatewayError::local(
-                    "invalid_provider_result",
-                    "provider result could not be encoded",
-                )
-            }),
+        Some(McpGatewayResponsePayload::ToolResult { result }) => Ok(result),
         _ => Err(GatewayError::local(
             "invalid_provider_result",
             "provider returned an unexpected response shape",
@@ -582,6 +585,20 @@ fn required_tool(value: Option<&str>) -> Result<&str, GatewayError> {
     Ok(value)
 }
 
+fn render_gateway_result(result: Result<GatewaySuccess, GatewayError>) -> Value {
+    match result {
+        Ok(GatewaySuccess::Metadata(value)) => gateway_success_result(value),
+        Ok(GatewaySuccess::UpstreamToolResult(result)) => serde_json::to_value(result)
+            .unwrap_or_else(|_| {
+                gateway_error_result(GatewayError::local(
+                    "invalid_provider_result",
+                    "provider result could not be encoded",
+                ))
+            }),
+        Err(error) => gateway_error_result(error),
+    }
+}
+
 fn gateway_success_result(value: Value) -> Value {
     let text = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
     json!({
@@ -654,6 +671,26 @@ mod tests {
         let mut bootstrap = crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap);
         bootstrap.is_bootstrap = true;
         assert!(authorized(Some(&bootstrap)));
+    }
+
+    #[test]
+    fn upstream_tool_result_keeps_host_level_error_semantics() {
+        let provider_result = McpGatewayToolResult {
+            content: vec![McpGatewayContent::Text {
+                text: "upstream rejected the request".to_string(),
+            }],
+            structured_content: Some(json!({"code": "UPSTREAM_REJECTED"})),
+            is_error: true,
+        };
+
+        let result = render_gateway_result(Ok(GatewaySuccess::UpstreamToolResult(provider_result)));
+        assert_eq!(result["isError"], true);
+        assert_eq!(
+            result["content"][0]["text"],
+            "upstream rejected the request"
+        );
+        assert_eq!(result["structuredContent"]["code"], "UPSTREAM_REJECTED");
+        assert!(result["structuredContent"].get("isError").is_none());
     }
 
     #[test]

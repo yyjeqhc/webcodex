@@ -1732,7 +1732,9 @@ impl ToolRuntime {
         if passed {
             // Discard the hidden Job record so a fast validation never leaves a
             // redundant visible job in list_jobs.
-            self.shell_clients.remove_job_record(&job_id).await;
+            self.shell_clients
+                .remove_projected_hidden_terminal_job_record(&job_id)
+                .await;
             ToolResult::ok(payload)
         } else {
             let failure_kind = if timed_out {
@@ -1754,7 +1756,9 @@ impl ToolRuntime {
                     format!("structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}")
                 }),
             };
-            self.shell_clients.remove_job_record(&job_id).await;
+            self.shell_clients
+                .remove_projected_hidden_terminal_job_record(&job_id)
+                .await;
             result
         }
     }

@@ -1052,6 +1052,7 @@ impl ShellClientRegistry {
     /// then fail harmlessly as "unknown shell job"). Also drops any still
     /// pending start request so a queued-but-never-run job leaves no request
     /// behind.
+    #[cfg(test)]
     pub(crate) async fn remove_job_record(&self, job_id: &str) -> bool {
         let mut inner = self.inner.lock().await;
         let Some(job) = inner.jobs_by_id.remove(job_id) else {
@@ -1067,14 +1068,16 @@ impl ShellClientRegistry {
         true
     }
 
-    /// Discard a terminal hidden structured Job after its result has been
-    /// projected into the initiating `run_process` or `run_script` response.
+    /// Discard a terminal hidden Job after its result has already been projected
+    /// into the initiating tool response.
     ///
     /// The exact discarded handle is retained only in the current Server
     /// process, bounded by the Runner terminal-inventory limits. A same-runner
     /// registration replay can then suppress that already-projected terminal
-    /// evidence without changing fresh-Server conservative recovery.
-    pub(crate) async fn remove_projected_hidden_structured_job_record(&self, job_id: &str) -> bool {
+    /// evidence without changing fresh-Server conservative recovery. This is
+    /// shared by typed process/script execution, structured validation, and
+    /// long `run_shell`; all of them use `HiddenUntilHandoff` before projection.
+    pub(crate) async fn remove_projected_hidden_terminal_job_record(&self, job_id: &str) -> bool {
         let mut inner = self.inner.lock().await;
         let Some(job) = inner.jobs_by_id.get(job_id) else {
             return false;
@@ -1084,7 +1087,6 @@ impl ShellClientRegistry {
         };
         if job.visibility != ShellJobVisibility::HiddenUntilHandoff
             || !is_final_job_status(&job.status)
-            || job.structured_execution.is_none()
         {
             return false;
         }
@@ -1096,6 +1098,8 @@ impl ShellClientRegistry {
         if client.agent_instance_id != agent_instance_id {
             return false;
         }
+        // The suppression store predates raw-shell/validation hidden handoff,
+        // but its proof is only the exact client/instance/job/request tuple.
         client.remember_projected_structured_terminal(
             job_id.to_string(),
             request_id.clone(),
@@ -1105,13 +1109,18 @@ impl ShellClientRegistry {
         let removed = inner
             .jobs_by_id
             .remove(job_id)
-            .expect("projected structured Job was checked under the registry lock");
+            .expect("projected hidden Job was checked under the registry lock");
         inner.request_to_job.remove(&request_id);
         inner.pending_by_id.remove(&request_id);
         if let Some(queue) = inner.queues_by_client.get_mut(&removed.client_id) {
             queue.retain(|id| id != &request_id);
         }
         true
+    }
+
+    pub(crate) async fn remove_projected_hidden_structured_job_record(&self, job_id: &str) -> bool {
+        self.remove_projected_hidden_terminal_job_record(job_id)
+            .await
     }
 
     pub async fn get_job(&self, job_id: &str) -> Result<ShellJobInfo, String> {

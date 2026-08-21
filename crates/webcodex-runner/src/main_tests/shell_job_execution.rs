@@ -89,6 +89,18 @@ fn raw_shell_job_prestart_rejection_is_explicitly_not_started() {
 }
 
 #[test]
+fn raw_shell_job_post_spawn_interruption_never_reuses_not_started_proof() {
+    assert_eq!(
+        post_spawn_interruption_lifecycle_for_kind("start_job"),
+        Some(ShellCommandExecutionState::OutcomeUnknown)
+    );
+    assert_eq!(
+        post_spawn_interruption_lifecycle_for_kind("start_validation_job"),
+        None
+    );
+}
+
+#[test]
 fn shell_job_success_and_failure_results_are_structured() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/projects.d"));

@@ -906,7 +906,6 @@ pub(super) fn reconcile_inventory_locked(
 
     for snapshot in &inventory.jobs {
         let suppress_unknown_terminal = is_final_job_status(&snapshot.status)
-            && snapshot.context.structured_execution.is_some()
             && inner.clients.get(client_id).is_some_and(|client| {
                 client.suppresses_projected_structured_terminal(
                     client_id,

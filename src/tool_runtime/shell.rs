@@ -750,7 +750,9 @@ impl ToolRuntime {
                             stderr,
                             timeout,
                         );
-                        self.shell_clients.remove_job_record(&job.job_id).await;
+                        self.shell_clients
+                            .remove_projected_hidden_terminal_job_record(&job.job_id)
+                            .await;
                         result
                     }
                     Ok(HiddenStructuredJobWait::Continued {

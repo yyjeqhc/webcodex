@@ -14,6 +14,9 @@ use super::session_context::{
     session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
 };
 use super::sessions::{SessionEvent, SessionSummary};
+use super::tool_audit::{
+    is_structured_validation_target_identity, structured_validation_target_identity,
+};
 use super::validation_parser::{
     ValidationDiagnostics, PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION,
     VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
@@ -798,6 +801,20 @@ fn execution_identity(
         .filter(|value| !value.is_empty())
     {
         return format!("assertion:{assertion}");
+    }
+    if validation_adapter_for_tool(tool_name).is_some() {
+        if let Some(input) = started.and_then(|event| event.input_summary.as_ref()) {
+            if let Some(identity) = input
+                .get("validation_target_id")
+                .and_then(Value::as_str)
+                .filter(|value| is_structured_validation_target_identity(value))
+            {
+                return identity.to_string();
+            }
+            if let Some(identity) = structured_validation_target_identity(tool_name, input) {
+                return identity;
+            }
+        }
     }
     let command = started
         .and_then(|event| event.input_summary.as_ref())

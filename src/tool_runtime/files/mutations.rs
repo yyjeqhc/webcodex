@@ -244,6 +244,10 @@ fn apply_text_edits_agent_stdout_result(stdout: &str) -> ToolResult {
     ToolResult::ok(obj)
 }
 
+fn apply_text_edits_preflight_rejection(message: impl Into<String>) -> ToolResult {
+    ToolResult::err_with_output(message, json!({"state_changed": false}))
+}
+
 /// Pure, allocation-only computation of an `apply_text_edits` plan against
 /// `original` UTF-8 content. Performs every semantic validation (unique
 /// match, no overlap, whole-file sha guard) and returns the new content plus
@@ -891,10 +895,12 @@ impl ToolRuntime {
         dry_run: Option<bool>,
     ) -> ToolResult {
         if changes.is_empty() {
-            return ToolResult::err("changes must contain at least one file change");
+            return apply_text_edits_preflight_rejection(
+                "changes must contain at least one file change",
+            );
         }
         if changes.len() > MAX_APPLY_FILE_CHANGES {
-            return ToolResult::err(format!(
+            return apply_text_edits_preflight_rejection(format!(
                 "too many file changes; maximum is {}",
                 MAX_APPLY_FILE_CHANGES
             ));
@@ -905,7 +911,7 @@ impl ToolRuntime {
                 return super::permissions::edit_path_policy_rejected_result(&change.path, error);
             }
             if !touched_paths.insert(change.path.as_str()) {
-                return ToolResult::err(format!(
+                return apply_text_edits_preflight_rejection(format!(
                     "change {change_index} reuses path '{}'; each source/destination path may appear only once",
                     change.path
                 ));
@@ -915,13 +921,13 @@ impl ToolRuntime {
                     return super::permissions::edit_path_policy_rejected_result(to_path, error);
                 }
                 if !touched_paths.insert(to_path) {
-                    return ToolResult::err(format!(
+                    return apply_text_edits_preflight_rejection(format!(
                         "change {change_index} reuses destination path '{to_path}'; each source/destination path may appear only once"
                     ));
                 }
             }
             if let Err(message) = validate_apply_file_change(change_index, change) {
-                return ToolResult::err(message);
+                return apply_text_edits_preflight_rejection(message);
             }
         }
 
@@ -932,13 +938,13 @@ impl ToolRuntime {
         let serialized = match serde_json::to_string(&payload) {
             Ok(serialized) if serialized.len() <= MAX_APPLY_FILE_CHANGES_BYTES => serialized,
             Ok(_) => {
-                return ToolResult::err(format!(
+                return apply_text_edits_preflight_rejection(format!(
                     "serialized file changes exceed {} bytes",
                     MAX_APPLY_FILE_CHANGES_BYTES
                 ))
             }
             Err(error) => {
-                return ToolResult::err(format!(
+                return apply_text_edits_preflight_rejection(format!(
                     "failed to serialize file changes payload: {error}"
                 ))
             }

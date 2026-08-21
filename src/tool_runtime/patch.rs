@@ -50,6 +50,18 @@ pub(crate) fn reject_unsupported_patch_wrapper(patch: &str) -> Option<String> {
     }
 }
 
+fn patch_preflight_rejection(message: impl Into<String>) -> ToolResult {
+    ToolResult::err_with_output(
+        message,
+        json!({
+            "state_changed": false,
+            "command_started": false,
+            "command_completed": false,
+            "execution_state": "not_started",
+        }),
+    )
+}
+
 pub(crate) fn validate_patch_file_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("patch path cannot be empty".to_string());
@@ -300,34 +312,34 @@ impl ToolRuntime {
     ) -> ToolResult {
         // ---- Input validation (before any project resolution) ----
         if patch.is_empty() {
-            return ToolResult::err("Patch cannot be empty");
+            return patch_preflight_rejection("Patch cannot be empty");
         }
         if patch.contains('\0') {
-            return ToolResult::err("Patch contains NUL byte");
+            return patch_preflight_rejection("Patch contains NUL byte");
         }
         if patch.len() > MAX_VALIDATE_PATCH_BYTES {
-            return ToolResult::err(format!(
+            return patch_preflight_rejection(format!(
                 "Patch too large ({} bytes); maximum is {} bytes",
                 patch.len(),
                 MAX_VALIDATE_PATCH_BYTES
             ));
         }
         if let Some(err) = reject_unsupported_patch_wrapper(&patch) {
-            return ToolResult::err(err);
+            return patch_preflight_rejection(err);
         }
 
         // ---- Project resolution (agent-registered only) ----
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => return patch_preflight_rejection(e),
         };
         if !proj.allow_patch() {
-            return ToolResult::err("Patch is not allowed for this project");
+            return patch_preflight_rejection("Patch is not allowed for this project");
         }
         // ---- Patch path analysis ----
         let affected = parse_changed_files_from_patch(&patch);
         if affected.is_empty() {
-            return ToolResult::err("Patch does not declare any changed files");
+            return patch_preflight_rejection("Patch does not declare any changed files");
         }
         // Hard-reject paths that escape the project boundary. Collect warnings
         // for sensitive filenames. Callers can request a hard policy block so
@@ -335,7 +347,7 @@ impl ToolRuntime {
         let mut warnings: Vec<String> = Vec::new();
         for file in &affected {
             if let Err(e) = validate_preflight_path(file) {
-                return ToolResult::err(e);
+                return patch_preflight_rejection(e);
             }
             warnings.extend(sensitive_path_warnings(file));
         }
@@ -359,14 +371,14 @@ impl ToolRuntime {
         // reads the agent project filesystem directly, and server-configured
         // legacy projects are not a supported runtime surface for this tool.
         if !proj.is_agent() {
-            return ToolResult::err(
+            return patch_preflight_rejection(
                 "validate_patch requires an agent-registered project; \
                  server-configured projects are not supported",
             );
         }
         let client_id = match proj.agent_client_id() {
             Ok(id) => id.to_string(),
-            Err(e) => return ToolResult::err(e),
+            Err(e) => return patch_preflight_rejection(e),
         };
 
         // ---- 1) git apply --check (read-only applicability test) ----

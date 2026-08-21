@@ -3,6 +3,7 @@
 use super::tool_call::ToolCall;
 use super::tool_inputs::{is_checkpoint_kind, is_checkpoint_validation_status};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments: &Value) -> Value {
     let Some(obj) = arguments.as_object() else {
@@ -463,6 +464,65 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 ),
             );
         }
+        "cargo_fmt" => {
+            copy_keys(obj, &mut out, &["cwd", "check", "timeout_secs"]);
+            insert_structured_validation_target(tool_name, obj, &mut out);
+        }
+        "cargo_check" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "cwd",
+                    "all_targets",
+                    "all_features",
+                    "no_default_features",
+                    "package",
+                    "timeout_secs",
+                ],
+            );
+            out.insert(
+                "features_present".to_string(),
+                Value::Bool(
+                    obj.get("features")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.is_empty()),
+                ),
+            );
+            insert_structured_validation_target(tool_name, obj, &mut out);
+        }
+        "cargo_test" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "cwd",
+                    "all_targets",
+                    "all_features",
+                    "no_default_features",
+                    "package",
+                    "no_run",
+                    "timeout_secs",
+                ],
+            );
+            out.insert(
+                "filter_present".to_string(),
+                Value::Bool(
+                    obj.get("filter")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.is_empty()),
+                ),
+            );
+            out.insert(
+                "features_present".to_string(),
+                Value::Bool(
+                    obj.get("features")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.is_empty()),
+                ),
+            );
+            insert_structured_validation_target(tool_name, obj, &mut out);
+        }
         "go_test" => {
             copy_keys(obj, &mut out, &["cwd", "timeout_secs"]);
             let packages = obj.get("packages").and_then(Value::as_array);
@@ -474,6 +534,7 @@ pub(crate) fn session_log_arguments_for_tool_request(tool_name: &str, arguments:
                 "package_count".to_string(),
                 Value::from(packages.map(Vec::len).unwrap_or_default()),
             );
+            insert_structured_validation_target(tool_name, obj, &mut out);
         }
         "workspace_checkpoint_create" => {
             copy_keys(obj, &mut out, &["title", "include_untracked"]);
@@ -686,6 +747,165 @@ fn copy_keys(
             out.insert((*key).to_string(), value);
         }
     }
+}
+
+const STRUCTURED_VALIDATION_TARGET_PREFIX: &str = "target:";
+const STRUCTURED_VALIDATION_TARGET_HEX_LEN: usize = 24;
+
+fn insert_structured_validation_target(
+    tool_name: &str,
+    arguments: &serde_json::Map<String, Value>,
+    out: &mut serde_json::Map<String, Value>,
+) {
+    if let Some(identity) =
+        structured_validation_target_identity(tool_name, &Value::Object(arguments.clone()))
+    {
+        out.insert("validation_target_id".to_string(), Value::String(identity));
+    }
+}
+
+pub(crate) fn structured_validation_target_identity(
+    tool_name: &str,
+    arguments: &Value,
+) -> Option<String> {
+    let obj = arguments.as_object()?;
+    let cwd = normalized_validation_target_cwd(obj.get("cwd"))?;
+    let semantic = match tool_name {
+        "cargo_fmt" => serde_json::json!({
+            "tool": tool_name,
+            "kind": "format",
+            "cwd": cwd,
+            "check": obj.get("check").and_then(Value::as_bool).unwrap_or(false),
+        }),
+        "cargo_check" => {
+            if obj.get("features_present").and_then(Value::as_bool) == Some(true)
+                && obj.get("features").is_none()
+            {
+                return None;
+            }
+            let features = normalized_cargo_target_value(obj.get("features"))?;
+            let package = normalized_cargo_target_value(obj.get("package"))?;
+            serde_json::json!({
+                "tool": tool_name,
+                "kind": "check",
+                "cwd": cwd,
+                "package": package,
+                "features": features,
+                "all_targets": obj.get("all_targets").and_then(Value::as_bool).unwrap_or(true),
+                "all_features": obj.get("all_features").and_then(Value::as_bool).unwrap_or(false),
+                "no_default_features": obj.get("no_default_features").and_then(Value::as_bool).unwrap_or(false),
+            })
+        }
+        "cargo_test" => {
+            if obj.get("filter_present").and_then(Value::as_bool) == Some(true)
+                && obj.get("filter").is_none()
+            {
+                return None;
+            }
+            if obj.get("features_present").and_then(Value::as_bool) == Some(true)
+                && obj.get("features").is_none()
+            {
+                return None;
+            }
+            let filter = normalized_rust_test_target_filter(obj.get("filter"))?;
+            let features = normalized_cargo_target_value(obj.get("features"))?;
+            let package = normalized_cargo_target_value(obj.get("package"))?;
+            serde_json::json!({
+                "tool": tool_name,
+                "kind": "test",
+                "cwd": cwd,
+                "package": package,
+                "filter": filter,
+                "features": features,
+                "all_targets": obj.get("all_targets").and_then(Value::as_bool).unwrap_or(false),
+                "all_features": obj.get("all_features").and_then(Value::as_bool).unwrap_or(false),
+                "no_default_features": obj.get("no_default_features").and_then(Value::as_bool).unwrap_or(false),
+                "no_run": obj.get("no_run").and_then(Value::as_bool).unwrap_or(false),
+            })
+        }
+        "go_test" => {
+            if obj.get("packages_present").and_then(Value::as_bool) == Some(true)
+                && obj.get("packages").is_none()
+            {
+                return None;
+            }
+            let packages = normalized_go_test_target_packages(obj.get("packages"))?;
+            serde_json::json!({
+                "tool": tool_name,
+                "kind": "test",
+                "cwd": cwd,
+                "packages": packages,
+            })
+        }
+        _ => return None,
+    };
+    let encoded = serde_json::to_vec(&semantic).ok()?;
+    let digest = format!("{:x}", Sha256::digest(encoded));
+    Some(format!(
+        "{STRUCTURED_VALIDATION_TARGET_PREFIX}{}",
+        &digest[..STRUCTURED_VALIDATION_TARGET_HEX_LEN]
+    ))
+}
+
+pub(crate) fn is_structured_validation_target_identity(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix(STRUCTURED_VALIDATION_TARGET_PREFIX) else {
+        return false;
+    };
+    hex.len() == STRUCTURED_VALIDATION_TARGET_HEX_LEN
+        && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn normalized_validation_target_cwd(value: Option<&Value>) -> Option<String> {
+    let Some(value) = value else {
+        return Some(".".to_string());
+    };
+    if value.is_null() {
+        return Some(".".to_string());
+    }
+    let raw = value.as_str()?;
+    let trimmed = raw.trim().trim_start_matches("./").trim_end_matches('/');
+    Some(if trimmed.is_empty() || trimmed == "." {
+        ".".to_string()
+    } else {
+        trimmed.to_string()
+    })
+}
+
+fn normalized_cargo_target_value(value: Option<&Value>) -> Option<Option<String>> {
+    let Some(value) = value else {
+        return Some(None);
+    };
+    if value.is_null() {
+        return Some(None);
+    }
+    crate::shell_protocol::normalize_cargo_value(value.as_str()?).ok()
+}
+
+fn normalized_rust_test_target_filter(value: Option<&Value>) -> Option<Option<String>> {
+    let Some(value) = value else {
+        return Some(None);
+    };
+    if value.is_null() {
+        return Some(None);
+    }
+    crate::shell_protocol::normalize_rust_test_filter(value.as_str()?).ok()
+}
+
+fn normalized_go_test_target_packages(value: Option<&Value>) -> Option<Vec<String>> {
+    let packages = match value {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(values)) => Some(
+            values
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+        ),
+        Some(_) => return None,
+    };
+    crate::shell_protocol::normalize_go_test_packages(packages.as_deref()).ok()
 }
 
 #[cfg(test)]
@@ -1768,12 +1988,15 @@ impl ToolCall {
                 check,
                 timeout_secs,
                 ..
-            } => serde_json::json!({
-                "project": project,
-                "cwd": cwd,
-                "check": check,
-                "timeout_secs": timeout_secs,
-            }),
+            } => session_log_arguments_for_tool_request(
+                "cargo_fmt",
+                &serde_json::json!({
+                    "project": project,
+                    "cwd": cwd,
+                    "check": check,
+                    "timeout_secs": timeout_secs,
+                }),
+            ),
             Self::CargoCheck {
                 project,
                 cwd,
@@ -1784,16 +2007,19 @@ impl ToolCall {
                 package,
                 timeout_secs,
                 ..
-            } => serde_json::json!({
-                "project": project,
-                "cwd": cwd,
-                "all_targets": all_targets,
-                "all_features": all_features,
-                "no_default_features": no_default_features,
-                "features_present": features.as_ref().is_some_and(|v| !v.is_empty()),
-                "package": package,
-                "timeout_secs": timeout_secs,
-            }),
+            } => session_log_arguments_for_tool_request(
+                "cargo_check",
+                &serde_json::json!({
+                    "project": project,
+                    "cwd": cwd,
+                    "all_targets": all_targets,
+                    "all_features": all_features,
+                    "no_default_features": no_default_features,
+                    "features": features,
+                    "package": package,
+                    "timeout_secs": timeout_secs,
+                }),
+            ),
             Self::CargoTest {
                 project,
                 cwd,
@@ -1806,31 +2032,36 @@ impl ToolCall {
                 no_run,
                 timeout_secs,
                 ..
-            } => serde_json::json!({
-                "project": project,
-                "cwd": cwd,
-                "filter_present": filter.as_ref().is_some_and(|v| !v.is_empty()),
-                "all_targets": all_targets,
-                "all_features": all_features,
-                "no_default_features": no_default_features,
-                "features_present": features.as_ref().is_some_and(|v| !v.is_empty()),
-                "package": package,
-                "no_run": no_run,
-                "timeout_secs": timeout_secs,
-            }),
+            } => session_log_arguments_for_tool_request(
+                "cargo_test",
+                &serde_json::json!({
+                    "project": project,
+                    "cwd": cwd,
+                    "filter": filter,
+                    "all_targets": all_targets,
+                    "all_features": all_features,
+                    "no_default_features": no_default_features,
+                    "features": features,
+                    "package": package,
+                    "no_run": no_run,
+                    "timeout_secs": timeout_secs,
+                }),
+            ),
             Self::GoTest {
                 project,
                 cwd,
                 packages,
                 timeout_secs,
                 ..
-            } => serde_json::json!({
-                "project": project,
-                "cwd": cwd,
-                "packages_present": packages.is_some(),
-                "package_count": packages.as_ref().map(Vec::len).unwrap_or_default(),
-                "timeout_secs": timeout_secs,
-            }),
+            } => session_log_arguments_for_tool_request(
+                "go_test",
+                &serde_json::json!({
+                    "project": project,
+                    "cwd": cwd,
+                    "packages": packages,
+                    "timeout_secs": timeout_secs,
+                }),
+            ),
             Self::ReadFile {
                 project,
                 path,

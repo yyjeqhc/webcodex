@@ -483,6 +483,7 @@ fn batch_error(
         serde_json::json!({
             "changed": false,
             "error_kind": code,
+            "state_changed": false,
             "change_index": change_index,
             "kind": kind,
             "path": path,
@@ -1005,6 +1006,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
                                     serde_json::json!({
                                         "changed": false,
                                         "error_kind": "edit_conflict",
+                                        "state_changed": false,
                                         "change_index": index,
                                         "edit_index": edit_index,
                                         "kind": edit_kind,

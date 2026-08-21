@@ -1168,8 +1168,8 @@ fn unexpected_failure_is_proven_non_actionable(event: &SessionEvent) -> bool {
         return true;
     }
     if effect.and_then(|effect| effect.state_changed) == Some(false)
-        && !event.shell_like
-        && !event.git_like
+        && ((!event.shell_like && !event.git_like)
+            || event.tool_name == "workspace_checkpoint_create")
     {
         return true;
     }

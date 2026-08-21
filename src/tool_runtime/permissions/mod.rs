@@ -203,6 +203,7 @@ pub(crate) fn edit_path_policy_rejected_result(path: &str, message: String) -> T
             "error": message,
             "failure_kind": "policy_rejected",
             "error_kind": "policy_rejected",
+            "state_changed": false,
         }),
     )
 }

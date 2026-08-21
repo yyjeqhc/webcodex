@@ -298,6 +298,16 @@ fn apply_text_edits_rejects_bare_cr_edit_text_without_file_line_endings() {
 }
 
 #[tokio::test]
+async fn apply_text_edits_empty_batch_proves_preflight_no_effect() {
+    let runtime = test_runtime();
+    let result = runtime
+        .apply_text_edits("agent:unused:unused".to_string(), Vec::new(), None)
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["state_changed"], false);
+}
+
+#[tokio::test]
 async fn apply_text_edits_dry_run_does_not_write() {
     let runtime = runtime_with_agent_project("ate-dry");
     register_agent(

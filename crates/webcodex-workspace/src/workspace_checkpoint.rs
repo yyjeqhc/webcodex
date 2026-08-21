@@ -848,7 +848,7 @@ pub fn sensitive_path(path: &str) -> bool {
         ) {
             return true;
         }
-        if part.starts_with(".env.")
+        if part.starts_with(".env")
             || part.starts_with("agent.toml")
             || part.starts_with("webcodex.env")
         {

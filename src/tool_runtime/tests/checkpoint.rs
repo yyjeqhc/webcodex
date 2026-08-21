@@ -884,6 +884,50 @@ async fn checkpoint_skips_large_or_binary_untracked() {
 }
 
 #[tokio::test]
+async fn checkpoint_allows_security_domain_source_names_but_keeps_envrc_protected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    init_git_repo(root);
+    fs::create_dir_all(root.join("src/oauth_http/tests")).unwrap();
+    commit_file(
+        root,
+        "src/oauth_http/tests/token.rs",
+        "fn token_test() {}\n",
+        "add token test source",
+    );
+    fs::write(
+        root.join("src/oauth_http/tests/token.rs"),
+        "fn token_test() { assert!(true); }\n",
+    )
+    .unwrap();
+    let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+    let project =
+        register_agent_project_at_path(&runtime, "ckpt-security-source-name", "agent-proj", root)
+            .await;
+
+    let allowed = dispatch_checkpoint_with_local_agent(
+        &runtime,
+        "ckpt-security-source-name",
+        checkpoint_create_call(project.clone(), None, None, Some(false)),
+    )
+    .await;
+    assert!(allowed.success, "{:?}", allowed.error);
+
+    commit_file(root, ".envrc", "export API_TOKEN=base\n", "add envrc");
+    fs::write(root.join(".envrc"), "export API_TOKEN=changed\n").unwrap();
+    let blocked = dispatch_checkpoint_with_local_agent(
+        &runtime,
+        "ckpt-security-source-name",
+        checkpoint_create_call(project, None, None, Some(false)),
+    )
+    .await;
+    assert!(!blocked.success);
+    assert_eq!(blocked.output["path"], ".envrc");
+    assert_eq!(blocked.output["state_changed"], false);
+}
+
+#[tokio::test]
 async fn checkpoint_restore_rejects_malicious_untracked_paths() {
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();

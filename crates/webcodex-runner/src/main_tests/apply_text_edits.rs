@@ -134,6 +134,7 @@ fn file_apply_text_edits_hash_conflict_keeps_every_file_unchanged() {
 
     assert_eq!(out["error_kind"], "sha256_conflict");
     assert_eq!(out["change_index"], 1);
+    assert_eq!(out["state_changed"], false);
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
         "alpha\n"

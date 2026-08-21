@@ -1296,6 +1296,26 @@ async fn validate_patch_rejects_invalid_inputs() {
             case.expected_error_any,
             err
         );
+        assert_eq!(
+            result.output["state_changed"], false,
+            "case `{}`",
+            case.label
+        );
+        assert_eq!(
+            result.output["command_started"], false,
+            "case `{}`",
+            case.label
+        );
+        assert_eq!(
+            result.output["command_completed"], false,
+            "case `{}`",
+            case.label
+        );
+        assert_eq!(
+            result.output["execution_state"], "not_started",
+            "case `{}`",
+            case.label
+        );
     }
 }
 

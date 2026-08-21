@@ -165,6 +165,7 @@ fn hard_security_rules_are_not_bypassed_by_authority_mode() {
         &rejected.output,
         rejected.error.as_deref()
     ));
+    assert_eq!(rejected.output["state_changed"], false);
 }
 
 #[test]

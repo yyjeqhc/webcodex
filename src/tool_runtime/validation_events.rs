@@ -455,10 +455,15 @@ fn classify_validation_failures(
     ValidationFailureSet,
     ValidationFailureSet,
 ) {
-    let mut latest_success_by_identity = HashMap::<String, usize>::new();
+    // Identity is meaningful only inside the exact resolved project. Workflow
+    // Sessions can explicitly record cross-project tool calls, so a successful
+    // validation in project B must never resolve a same-shaped failure from
+    // project A merely because cwd/package/filter/features match.
+    let mut latest_success_by_identity = HashMap::<(Option<String>, String), usize>::new();
     for (index, event) in events.iter().enumerate() {
         if event.success && validation_event_decides_historical_failure_status(event) {
-            latest_success_by_identity.insert(event.identity.clone(), index);
+            latest_success_by_identity
+                .insert((event.project.clone(), event.identity.clone()), index);
         }
     }
     let mut resolved = Vec::new();
@@ -468,7 +473,7 @@ fn classify_validation_failures(
             continue;
         }
         let is_resolved = latest_success_by_identity
-            .get(&event.identity)
+            .get(&(event.project.clone(), event.identity.clone()))
             .is_some_and(|success_index| *success_index > index);
         event.unresolved_failure = !is_resolved;
         if is_resolved {

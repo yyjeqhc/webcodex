@@ -1092,19 +1092,27 @@ impl ShellClientRegistry {
         }
         let client_id = job.client_id.clone();
         let agent_instance_id = job.agent_instance_id.clone();
-        let Some(client) = inner.clients.get_mut(&client_id) else {
-            return false;
-        };
-        if client.agent_instance_id != agent_instance_id {
-            return false;
+        // Preserve same-instance reconnect suppression whenever the exact
+        // Runner lease is still current. If that lease disappeared or was
+        // replaced after the terminal snapshot was already projected, do not
+        // strand the hidden terminal record forever: a replacement instance
+        // cannot consume the retired lease, while a later registration after
+        // the Server forgot the lease is conservatively equivalent to fresh
+        // recovery and may reconstruct retained Runner terminal evidence.
+        if let Some(client) = inner
+            .clients
+            .get_mut(&client_id)
+            .filter(|client| client.agent_instance_id == agent_instance_id)
+        {
+            // The suppression store predates raw-shell/validation hidden
+            // handoff, but its proof is only the exact
+            // client/instance/job/request tuple.
+            client.remember_projected_structured_terminal(
+                job_id.to_string(),
+                request_id.clone(),
+                now_ts(),
+            );
         }
-        // The suppression store predates raw-shell/validation hidden handoff,
-        // but its proof is only the exact client/instance/job/request tuple.
-        client.remember_projected_structured_terminal(
-            job_id.to_string(),
-            request_id.clone(),
-            now_ts(),
-        );
 
         let removed = inner
             .jobs_by_id

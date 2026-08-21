@@ -115,7 +115,7 @@ fn cargo_check_success_produces_validation_event() {
     assert!(event.get("input_summary").is_none());
     assert!(event["identity"]
         .as_str()
-        .is_some_and(|identity| identity.starts_with("command:")));
+        .is_some_and(|identity| identity.starts_with("target:")));
     assert_eq!(event["execution_source"], "cargo_check");
     assert_eq!(event["purpose"], "validation");
     assert_eq!(validation["parser"]["available"], false);
@@ -880,6 +880,53 @@ fn structured_validation_target_resolves_equivalent_semantic_arguments() {
         .as_str()
         .unwrap();
     assert!(identity.starts_with("target:"), "{identity}");
+}
+
+#[test]
+fn same_validation_identity_success_in_another_project_does_not_resolve_failure() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:alpha".to_string()), None);
+    let shared_target = json!({
+        "cwd": "crate",
+        "package": "pkg",
+        "filter": "focus",
+        "features": "feat"
+    });
+
+    let mut failed = shared_target.clone();
+    failed["project"] = json!("agent:eval:alpha");
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        failed,
+        false,
+        json!({"exit_code": 101}),
+    );
+
+    let mut succeeded_elsewhere = shared_target;
+    succeeded_elsewhere["project"] = json!("agent:eval:bravo");
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        succeeded_elsewhere,
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\n\ntest result: ok. 1 passed; 0 failed; 0 ignored\n",
+            "stderr_tail": "",
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    assert_eq!(validation["resolved_failures"]["count"], 0);
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(
+        validation["unresolved_failures"]["events"][0]["project"],
+        "agent:eval:alpha"
+    );
 }
 
 #[test]

@@ -508,10 +508,17 @@ pub(super) fn validate_bridge_authorize_request(
             }
         };
     let computer_permissions_enabled = bridge_client_is_computer_enabled(&client);
-    let client_bridge_ceiling = client.allowed_scopes_vec();
+    let local_mcp_enabled =
+        client.is_shared_key_owned() && bridge_client_has_local_mcp_scope(&client);
+    let client_bridge_ceiling = if computer_permissions_enabled {
+        SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES
+    } else {
+        bridge_oauth_scopes()
+    };
     if requestable_scopes.split_whitespace().any(|scope| {
         scope != OAUTH_OFFLINE_ACCESS_SCOPE
-            && !client_bridge_ceiling.iter().any(|allowed| allowed == scope)
+            && !(scope == SCOPE_MCP_LOCAL && local_mcp_enabled)
+            && !client_bridge_ceiling.contains(&scope)
     }) {
         redirect_with_oauth_error(
             res,

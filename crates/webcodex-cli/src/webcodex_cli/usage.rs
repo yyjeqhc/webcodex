@@ -50,6 +50,8 @@ Options:\n\
   --auth bearer|oauth|managed-oauth\n\
                              MCP authentication mode [default: bearer]\n\
   --oauth-redirect-uri URL   Exact OAuth callback URL; required with OAuth modes\n\
+  --oauth-computer-permissions\n\
+                             Allow ordinary OAuth browser consent to offer optional Computer permissions\n\
   --user USER                Select a logged-in managed user; managed-oauth only\n\
   --key KEY                  Shared key (use --key-file to avoid shell history)\n\
   --key-file PATH            Read the shared key from a file\n\
@@ -62,9 +64,10 @@ In bearer mode, omitting --key/--key-file generates a strong hosted shared key.\
 OAuth mode uses that same key for Runner transport and provisions a bridge client only\n\
 after the matching Runner group is connected. Enter the shared key only on WebCodex's\n\
 browser authorize page; ChatGPT receives OAuth client credentials/tokens, never the key.\n\
-The bridge has exactly the direct shared-key model-facing runtime/project/job/Computer\n\
-ceiling and never grants account/admin/Agent transport authority. managed-oauth requires\n\
-a prior `webcodex login` and remains a separate advanced managed identity flow.\n"
+Without --oauth-computer-permissions the bridge keeps the direct shared-key model-facing\n\
+baseline. With that explicit opt-in, the client may request only the fixed launch/display/\n\
+pointer/clipboard Computer scopes; browser checkboxes decide the actual grant. The picker\n\
+never includes account/admin/Agent authority. managed-oauth remains a separate managed-user flow.\n"
 }
 
 pub(crate) fn disconnect_usage() -> &'static str {

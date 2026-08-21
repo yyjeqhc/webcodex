@@ -30,64 +30,53 @@ fn normalize_bridge_oauth_scopes_rejects_account_scope_with_bridge_message() {
 }
 
 #[test]
-fn bridge_computer_scopes_match_direct_shared_key_model_authority() {
+fn bridge_computer_scopes_use_explicit_closed_ceiling_without_changing_direct_authority() {
     assert_eq!(
         bridge_oauth_scopes(),
         crate::auth::DIRECT_SHARED_KEY_MODEL_SCOPES
     );
     assert_eq!(
+        bridge_oauth_computer_enabled_scopes(),
+        &[
+            "runtime:read",
+            "project:read",
+            "project:write",
+            "job:run",
+            "computer:read",
+            "computer:control",
+            "computer:launch",
+            "computer:display_read",
+            "computer:pointer_control",
+            "computer:clipboard_read",
+            "computer:clipboard_write",
+        ]
+    );
+    assert_eq!(
         normalize_bridge_oauth_scopes(
-            Some("computer:read computer:control"),
-            "runtime:read computer:read computer:control",
+            Some("computer:launch computer:display_read computer:pointer_control computer:clipboard_read computer:clipboard_write"),
+            &bridge_oauth_computer_enabled_scopes().join(" "),
         )
         .unwrap(),
-        "computer:read computer:control"
+        "computer:launch computer:display_read computer:pointer_control computer:clipboard_read computer:clipboard_write"
     );
     for scope in [
-        "computer:launch",
-        "computer:display_read",
-        "computer:pointer_control",
-        "computer:clipboard_read",
-        "computer:clipboard_write",
+        "account:manage",
+        "job:detach",
+        "admin",
+        "agent:register",
+        "agent:future",
         "computer:future_sensitive",
     ] {
-        let err = normalize_bridge_oauth_scopes(Some(scope), scope).unwrap_err();
         assert!(
-            matches!(err, OAuthAuthorizeError::InvalidScope(_)),
-            "{scope}: {err:?}"
+            normalize_bridge_oauth_scopes(Some(scope), scope).is_err(),
+            "future or privileged scope escaped bridge ceiling: {scope}"
         );
     }
-    assert!(!bridge_oauth_scopes().contains(&"account:manage"));
-    assert!(!bridge_oauth_scopes().contains(&"admin"));
-    assert!(!bridge_oauth_scopes()
-        .iter()
-        .any(|scope| scope.starts_with("agent:")));
-}
-
-#[test]
-fn normalize_bridge_oauth_scopes_rejects_pointer_control_scope() {
-    let err = normalize_bridge_oauth_scopes(
-        Some("computer:pointer_control"),
-        "runtime:read project:read computer:pointer_control",
-    )
-    .unwrap_err();
-    assert_eq!(
-        err,
-        OAuthAuthorizeError::InvalidScope(OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE)
-    );
-}
-
-#[test]
-fn normalize_bridge_oauth_scopes_rejects_clipboard_scopes() {
-    for scope in ["computer:clipboard_read", "computer:clipboard_write"] {
-        let allowed = format!("runtime:read project:read {scope}");
-        let err = normalize_bridge_oauth_scopes(Some(scope), &allowed).unwrap_err();
-        assert_eq!(
-            err,
-            OAuthAuthorizeError::InvalidScope(OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE),
-            "{scope}"
-        );
-    }
+    assert!(!bridge_oauth_scopes().contains(&"computer:launch"));
+    assert!(!bridge_oauth_scopes().contains(&"computer:display_read"));
+    assert!(!bridge_oauth_scopes().contains(&"computer:pointer_control"));
+    assert!(!bridge_oauth_scopes().contains(&"computer:clipboard_read"));
+    assert!(!bridge_oauth_scopes().contains(&"computer:clipboard_write"));
 }
 
 #[test]
@@ -102,16 +91,33 @@ fn normalize_bridge_oauth_scopes_accepts_offline_access_as_protocol_scope() {
 }
 
 async fn register_shared_key_runner(registry: &crate::ShellClientRegistry, shared_key: &str) {
+    register_shared_key_runner_with_capabilities(
+        registry,
+        shared_key,
+        "bridge-runner",
+        "bridge-instance",
+        crate::shell_protocol::ShellClientCapabilities::default(),
+    )
+    .await;
+}
+
+async fn register_shared_key_runner_with_capabilities(
+    registry: &crate::ShellClientRegistry,
+    shared_key: &str,
+    client_id: &str,
+    instance_id: &str,
+    capabilities: crate::shell_protocol::ShellClientCapabilities,
+) {
     let auth = crate::auth::shared_key_context(shared_key);
     registry
         .register_with_auth(
             crate::shell_protocol::ShellClientRegisterRequest {
-                client_id: "bridge-runner".to_string(),
-                agent_instance_id: "bridge-instance".to_string(),
+                client_id: client_id.to_string(),
+                agent_instance_id: instance_id.to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: None,
+                capabilities: Some(capabilities),
                 host_context: None,
                 projects: None,
                 agent_protocol_version: None,
@@ -125,6 +131,18 @@ async fn register_shared_key_runner(registry: &crate::ShellClientRegistry, share
         )
         .await
         .unwrap();
+}
+
+fn all_optional_computer_capabilities() -> crate::shell_protocol::ShellClientCapabilities {
+    crate::shell_protocol::ShellClientCapabilities {
+        computer_application_discovery: true,
+        computer_application_launch: true,
+        computer_display_observe: true,
+        computer_pointer_control: true,
+        computer_clipboard_read: true,
+        computer_clipboard_write: true,
+        ..Default::default()
+    }
 }
 
 #[tokio::test]
@@ -492,6 +510,428 @@ async fn bridge_authorize_get_renders_form_and_creates_no_code() {
 }
 
 #[tokio::test]
+async fn bridge_authorize_picker_is_only_for_explicit_computer_enabled_owned_clients() {
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let shared_key = "picker-shared-key";
+    let (baseline_client, _) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://baseline.example/callback",
+        &bridge_oauth_scopes().join(" "),
+    );
+    let (enabled_client, _) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://enabled.example/callback",
+        &bridge_oauth_computer_enabled_scopes().join(" "),
+    );
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "picker-runner",
+        "picker-instance",
+        all_optional_computer_capabilities(),
+    )
+    .await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+
+    let baseline_url = valid_bridge_authorize_url(
+        &baseline_client,
+        "https://baseline.example/callback",
+        &bridge_oauth_scopes().join(" "),
+    );
+    let mut baseline = TestClient::get(&baseline_url).send(&service).await;
+    assert_eq!(baseline.status_code, Some(StatusCode::OK));
+    let baseline_html = baseline.take_string().await.unwrap_or_default();
+    assert!(baseline_html.contains("Standard access"));
+    assert!(!baseline_html.contains("Additional Computer permissions"));
+    assert!(!baseline_html.contains("name=\"computer_permission\""));
+
+    let enabled_url = valid_bridge_authorize_url(
+        &enabled_client,
+        "https://enabled.example/callback",
+        &bridge_oauth_computer_enabled_scopes().join(" "),
+    );
+    let mut enabled = TestClient::get(&enabled_url).send(&service).await;
+    assert_eq!(enabled.status_code, Some(StatusCode::OK));
+    assert_eq!(auth_code_count(&db), 0);
+    let enabled_html = enabled.take_string().await.unwrap_or_default();
+    assert!(enabled_html.contains("Additional Computer permissions"));
+    for (id, label) in [
+        ("launch", "Launch applications"),
+        ("display", "Full-display observation"),
+        ("pointer", "Pointer control"),
+        ("clipboard_read", "Read clipboard"),
+        ("clipboard_write", "Write clipboard"),
+    ] {
+        assert!(enabled_html.contains(&format!("value=\"{id}\">")), "{id}");
+        assert!(enabled_html.contains(label), "{id}");
+        assert!(
+            !enabled_html.contains(&format!("value=\"{id}\" checked")),
+            "{id}"
+        );
+    }
+    assert!(!enabled_html.contains("value=\"computer:launch\""));
+}
+
+#[tokio::test]
+async fn bridge_authorize_picker_respects_explicit_requested_scope_and_pointer_dependency() {
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let shared_key = "request-scope-shared-key";
+    let (client, _) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://scope.example/callback",
+        &bridge_oauth_computer_enabled_scopes().join(" "),
+    );
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "scope-runner",
+        "scope-instance",
+        all_optional_computer_capabilities(),
+    )
+    .await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db,
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+    let url = valid_bridge_authorize_url(
+        &client,
+        "https://scope.example/callback",
+        "runtime:read computer:launch computer:pointer_control",
+    );
+    let mut resp = TestClient::get(&url).send(&service).await;
+    assert_eq!(resp.status_code, Some(StatusCode::OK));
+    let html = resp.take_string().await.unwrap_or_default();
+    assert!(html.contains("value=\"launch\">"));
+    assert!(html.contains("value=\"pointer\" disabled>"));
+    assert!(html.contains("value=\"display\" disabled>"));
+    assert!(html.contains("Not requested by this OAuth authorization request"));
+}
+
+#[tokio::test]
+async fn bridge_authorize_omitted_scope_grants_baseline_but_not_optional_permissions() {
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let shared_key = "omitted-scope-shared-key";
+    let (client, _) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://omitted.example/callback",
+        &bridge_oauth_computer_enabled_scopes().join(" "),
+    );
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "omitted-runner",
+        "omitted-instance",
+        all_optional_computer_capabilities(),
+    )
+    .await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+    let body = form_body(&[
+        ("bridge", "shared_key"),
+        ("response_type", "code"),
+        ("client_id", &client.client_id),
+        ("redirect_uri", "https://omitted.example/callback"),
+        ("state", "state-1"),
+        ("code_challenge", "challenge-1"),
+        ("code_challenge_method", "S256"),
+        ("shared_key", shared_key),
+    ]);
+    let resp = post_form("http://localhost/oauth/authorize/bridge", body)
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+    let location = location_header(&resp).unwrap();
+    let parsed = url::Url::parse(&location).unwrap();
+    let code = parsed
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    let record = auth_code_by_plaintext(&db, &code);
+    assert_eq!(record.scopes, bridge_oauth_scopes().join(" "));
+    for optional in [
+        "computer:launch",
+        "computer:display_read",
+        "computer:pointer_control",
+        "computer:clipboard_read",
+        "computer:clipboard_write",
+    ] {
+        assert!(!record
+            .scopes
+            .split_whitespace()
+            .any(|scope| scope == optional));
+    }
+}
+
+#[tokio::test]
+async fn bridge_authorize_permission_ids_are_closed_and_server_side_bundles_are_exact() {
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let shared_key = "permission-bundle-shared-key";
+    let (client, _) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://bundle.example/callback",
+        &bridge_oauth_computer_enabled_scopes().join(" "),
+    );
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "bundle-runner",
+        "bundle-instance",
+        all_optional_computer_capabilities(),
+    )
+    .await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+
+    let before = auth_code_count(&db);
+    for tampered in [
+        "computer:launch",
+        "admin",
+        "account:manage",
+        "future_permission",
+    ] {
+        let body = form_body(&[
+            ("bridge", "shared_key"),
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://bundle.example/callback"),
+            ("scope", &bridge_oauth_computer_enabled_scopes().join(" ")),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+            ("computer_permission", tampered),
+            ("shared_key", shared_key),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/authorize/bridge", body)
+            .send(&service)
+            .await;
+        assert_eq!(
+            resp.status_code,
+            Some(StatusCode::BAD_REQUEST),
+            "{tampered}"
+        );
+        assert_no_location(&resp);
+        let html = resp.take_string().await.unwrap_or_default();
+        assert!(
+            !html.contains(shared_key),
+            "shared key echoed for {tampered}"
+        );
+        assert_eq!(auth_code_count(&db), before, "{tampered}");
+    }
+
+    for (permission, requested, expected) in [
+        (
+            "launch",
+            "runtime:read computer:launch offline_access",
+            "runtime:read computer:launch offline_access",
+        ),
+        (
+            "display",
+            "runtime:read computer:read computer:display_read",
+            "runtime:read computer:read computer:display_read",
+        ),
+        (
+            "pointer",
+            "computer:read computer:control computer:display_read computer:pointer_control",
+            "computer:read computer:control computer:display_read computer:pointer_control",
+        ),
+        (
+            "clipboard_read",
+            "computer:read computer:clipboard_read computer:clipboard_write",
+            "computer:read computer:clipboard_read",
+        ),
+        (
+            "clipboard_write",
+            "computer:control computer:clipboard_read computer:clipboard_write",
+            "computer:control computer:clipboard_write",
+        ),
+    ] {
+        let body = form_body(&[
+            ("bridge", "shared_key"),
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://bundle.example/callback"),
+            ("scope", requested),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+            ("computer_permission", permission),
+            ("shared_key", shared_key),
+        ]);
+        let resp = post_form("http://localhost/oauth/authorize/bridge", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND), "{permission}");
+        let location = location_header(&resp).unwrap();
+        let parsed = url::Url::parse(&location).unwrap();
+        let code = parsed
+            .query_pairs()
+            .find(|(key, _)| key == "code")
+            .unwrap()
+            .1
+            .into_owned();
+        assert_eq!(
+            auth_code_by_plaintext(&db, &code).scopes,
+            expected,
+            "{permission}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn bridge_picker_requires_capabilities_on_one_same_runner_and_rechecks_post() {
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let shared_key = "same-runner-shared-key";
+    let (client, _) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://same-runner.example/callback",
+        &bridge_oauth_computer_enabled_scopes().join(" "),
+    );
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "display-only-runner",
+        "display-only-instance",
+        crate::shell_protocol::ShellClientCapabilities {
+            computer_display_observe: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "pointer-only-runner",
+        "pointer-only-instance",
+        crate::shell_protocol::ShellClientCapabilities {
+            computer_pointer_control: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry.clone(),
+    ));
+    let requested = "runtime:read computer:read computer:control computer:display_read computer:pointer_control";
+    let url =
+        valid_bridge_authorize_url(&client, "https://same-runner.example/callback", requested);
+    let mut get = TestClient::get(&url).send(&service).await;
+    assert_eq!(get.status_code, Some(StatusCode::OK));
+    let html = get.take_string().await.unwrap_or_default();
+    assert!(html.contains("value=\"display\">"));
+    assert!(html.contains("value=\"pointer\" disabled>"));
+
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "display-only-runner",
+        "display-only-instance",
+        all_optional_computer_capabilities(),
+    )
+    .await;
+    let mut get = TestClient::get(&url).send(&service).await;
+    assert_eq!(get.status_code, Some(StatusCode::OK));
+    let html = get.take_string().await.unwrap_or_default();
+    assert!(html.contains("value=\"pointer\">"));
+
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "display-only-runner",
+        "display-only-instance",
+        crate::shell_protocol::ShellClientCapabilities::default(),
+    )
+    .await;
+    let before = auth_code_count(&db);
+    let body = form_body(&[
+        ("bridge", "shared_key"),
+        ("response_type", "code"),
+        ("client_id", &client.client_id),
+        ("redirect_uri", "https://same-runner.example/callback"),
+        ("scope", requested),
+        ("state", "state-1"),
+        ("code_challenge", "challenge-1"),
+        ("code_challenge_method", "S256"),
+        ("computer_permission", "pointer"),
+        ("shared_key", shared_key),
+    ]);
+    let mut post = post_form("http://localhost/oauth/authorize/bridge", body)
+        .send(&service)
+        .await;
+    assert_eq!(post.status_code, Some(StatusCode::BAD_REQUEST));
+    assert_eq!(auth_code_count(&db), before);
+    let html = post.take_string().await.unwrap_or_default();
+    assert!(html.contains("capability changed"));
+    assert!(!html.contains(shared_key));
+}
+
+#[tokio::test]
+async fn legacy_non_shared_key_owned_client_cannot_elevate_through_picker() {
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "legacy-owner");
+    let client = seed_client_with_redirects_and_scopes(
+        &db,
+        &user,
+        "https://legacy.example/callback",
+        &bridge_oauth_computer_enabled_scopes().join(" "),
+    );
+    let service = Service::new(build_router(config, db.clone()));
+    let url = valid_bridge_authorize_url(
+        &client,
+        "https://legacy.example/callback",
+        "runtime:read computer:launch",
+    );
+    let before = auth_code_count(&db);
+    let resp = TestClient::get(&url).send(&service).await;
+    assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+    assert_eq!(auth_code_count(&db), before);
+    let location = location_header(&resp).unwrap();
+    let parsed = url::Url::parse(&location).unwrap();
+    let params: std::collections::HashMap<String, String> =
+        parsed.query_pairs().into_owned().collect();
+    assert_eq!(
+        params.get("error").map(String::as_str),
+        Some("invalid_scope")
+    );
+}
+
+#[tokio::test]
 async fn bridge_authorize_post_rejects_empty_or_managed_key_without_code() {
     let config = test_config(oauth2_enabled_bridge());
     let (_tmp, db) = test_db();
@@ -834,6 +1274,244 @@ async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
     assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
     let body: serde_json::Value = resp.take_json().await.unwrap();
     assert_eq!(body["error"], "insufficient_scope");
+}
+
+#[tokio::test]
+async fn selected_launch_scope_survives_code_access_and_refresh_rotation_without_expansion() {
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let verifier = "computer-launch-code-verifier";
+    let challenge = pkce_s256_challenge(verifier);
+    let shared_key = "computer-launch-shared-key";
+    let (client, secret) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://launch.example/callback",
+        &bridge_oauth_computer_enabled_scopes().join(" "),
+    );
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner_with_capabilities(
+        &registry,
+        shared_key,
+        "launch-runner",
+        "launch-instance",
+        all_optional_computer_capabilities(),
+    )
+    .await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+    let granted = "runtime:read computer:read computer:control computer:launch offline_access";
+    let body = form_body(&[
+        ("bridge", "shared_key"),
+        ("response_type", "code"),
+        ("client_id", &client.client_id),
+        ("redirect_uri", "https://launch.example/callback"),
+        ("scope", granted),
+        ("state", "launch-state"),
+        ("code_challenge", &challenge),
+        ("code_challenge_method", "S256"),
+        ("computer_permission", "launch"),
+        ("shared_key", shared_key),
+    ]);
+    let resp = post_form("http://localhost/oauth/authorize/bridge", body)
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+    let location = location_header(&resp).unwrap();
+    let parsed = url::Url::parse(&location).unwrap();
+    let code = parsed
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    assert_eq!(auth_code_by_plaintext(&db, &code).scopes, granted);
+
+    let exchange_body = form_body(&[
+        ("grant_type", "authorization_code"),
+        ("code", &code),
+        ("redirect_uri", "https://launch.example/callback"),
+        ("client_id", &client.client_id),
+        ("client_secret", &secret),
+        ("code_verifier", verifier),
+    ]);
+    let mut exchange = post_form("http://localhost/oauth/token", exchange_body)
+        .send(&service)
+        .await;
+    assert_eq!(exchange.status_code, Some(StatusCode::OK));
+    let exchanged: serde_json::Value = exchange.take_json().await.unwrap();
+    assert_eq!(exchanged["scope"], granted);
+    let access = exchanged["access_token"].as_str().unwrap();
+    let refresh = exchanged["refresh_token"].as_str().unwrap();
+    let access_scopes: String = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT scopes FROM oauth_access_tokens WHERE token_hash = ?1",
+            [&hash_token(access)],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let refresh_scopes: String = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT scopes FROM oauth_refresh_tokens WHERE token_hash = ?1",
+            [&hash_token(refresh)],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(access_scopes, granted);
+    assert_eq!(refresh_scopes, granted);
+
+    let refresh_body = form_body(&[
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh),
+        ("client_id", &client.client_id),
+        ("client_secret", &secret),
+    ]);
+    let mut refreshed = post_form("http://localhost/oauth/token", refresh_body)
+        .send(&service)
+        .await;
+    assert_eq!(refreshed.status_code, Some(StatusCode::OK));
+    let refreshed_json: serde_json::Value = refreshed.take_json().await.unwrap();
+    assert_eq!(refreshed_json["scope"], granted);
+    let rotated_access = refreshed_json["access_token"].as_str().unwrap();
+    let rotated_refresh = refreshed_json["refresh_token"].as_str().unwrap();
+    for (table, token) in [
+        ("oauth_access_tokens", rotated_access),
+        ("oauth_refresh_tokens", rotated_refresh),
+    ] {
+        let scopes: String = db
+            .conn_for_tests()
+            .query_row(
+                &format!("SELECT scopes FROM {table} WHERE token_hash = ?1"),
+                [&hash_token(token)],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(scopes, granted, "{table}");
+        assert!(!scopes.contains("computer:display_read"));
+        assert!(!scopes.contains("computer:pointer_control"));
+        assert!(!scopes.contains("computer:clipboard_read"));
+        assert!(!scopes.contains("computer:clipboard_write"));
+    }
+}
+
+#[tokio::test]
+async fn explicit_computer_opt_in_expands_existing_client_and_revokes_existing_grants_only_on_change(
+) {
+    let env = crate::auth::AuthEnvGuard::new();
+    env.enable_direct_shared_key();
+    let config = test_config(oauth2_enabled_bridge());
+    let (_tmp, db) = test_db();
+    let shared_key = "scope-expansion-shared-key";
+    let (client, _) = seed_shared_key_bridge_client(
+        &db,
+        shared_key,
+        "https://expand.example/callback",
+        &bridge_oauth_scopes().join(" "),
+    );
+    let user = seed_user(&db, "grant-holder");
+    let (access_record, _) = seed_access_token(&db, &client, &user, "runtime:read");
+    let (refresh_record, _) = seed_refresh_token(&db, &client, &user, "runtime:read");
+    let registry = Arc::new(crate::ShellClientRegistry::default());
+    register_shared_key_runner(&registry, shared_key).await;
+    let service = Service::new(build_router_with_session_and_registry(
+        config,
+        db.clone(),
+        Arc::new(AuthorizeSessionStore::new()),
+        registry,
+    ));
+    let code_body = bridge_form_body(
+        &client,
+        "https://expand.example/callback",
+        "runtime:read",
+        shared_key,
+    );
+    let code_resp = post_form("http://localhost/oauth/authorize/bridge", code_body)
+        .send(&service)
+        .await;
+    assert_eq!(code_resp.status_code, Some(StatusCode::FOUND));
+    let code_location = location_header(&code_resp).unwrap();
+    let code = url::Url::parse(&code_location)
+        .unwrap()
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    let code_record = auth_code_by_plaintext(&db, &code);
+
+    let baseline_body = serde_json::json!({
+        "redirect_uri": "https://expand.example/callback",
+        "client_id": client.client_id,
+        "previous_allowed_scopes": bridge_oauth_scopes(),
+        "computer_permissions": false
+    });
+    let mut baseline = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
+        .add_header("authorization", format!("Bearer {shared_key}"), true)
+        .json(&baseline_body)
+        .send(&service)
+        .await;
+    assert_eq!(baseline.status_code, Some(StatusCode::OK));
+    let baseline_json: serde_json::Value = baseline.take_json().await.unwrap();
+    assert_eq!(baseline_json["scope_ceiling_changed"], false);
+    for (table, id) in [
+        ("oauth_access_tokens", access_record.id.as_str()),
+        ("oauth_refresh_tokens", refresh_record.id.as_str()),
+        ("oauth_authorization_codes", code_record.id.as_str()),
+    ] {
+        let revoked_at: Option<i64> = db
+            .conn_for_tests()
+            .query_row(
+                &format!("SELECT revoked_at FROM {table} WHERE id = ?1"),
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(revoked_at.is_none(), "no-op reconnect revoked {table}");
+    }
+
+    let mut elevated = TestClient::post("http://localhost/api/oauth/shared-key-client/provision")
+        .add_header("authorization", format!("Bearer {shared_key}"), true)
+        .json(&serde_json::json!({
+            "redirect_uri": "https://expand.example/callback",
+            "client_id": client.client_id,
+            "previous_allowed_scopes": bridge_oauth_scopes(),
+            "computer_permissions": true
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(elevated.status_code, Some(StatusCode::OK));
+    let elevated_json: serde_json::Value = elevated.take_json().await.unwrap();
+    assert_eq!(elevated_json["scope_ceiling_changed"], true);
+    assert_eq!(
+        elevated_json["client"]["allowed_scopes"],
+        serde_json::Value::Array(
+            bridge_oauth_computer_enabled_scopes()
+                .iter()
+                .map(|scope| serde_json::Value::String((*scope).to_string()))
+                .collect()
+        )
+    );
+    for (table, id) in [
+        ("oauth_access_tokens", access_record.id.as_str()),
+        ("oauth_refresh_tokens", refresh_record.id.as_str()),
+        ("oauth_authorization_codes", code_record.id.as_str()),
+    ] {
+        let revoked_at: Option<i64> = db
+            .conn_for_tests()
+            .query_row(
+                &format!("SELECT revoked_at FROM {table} WHERE id = ?1"),
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(revoked_at.is_some(), "elevation failed to revoke {table}");
+    }
 }
 
 #[tokio::test]

@@ -928,7 +928,12 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
             else {
                 return;
             };
-            render_bridge_authorize_form(res, &validated, &query, None);
+            let registry = depot
+                .obtain::<std::sync::Arc<crate::ShellClientRegistry>>()
+                .ok()
+                .cloned();
+            render_bridge_authorize_form(res, &validated, &query, None, registry.as_deref(), &[])
+                .await;
             return;
         }
         Ok(false) => {}

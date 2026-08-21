@@ -24,8 +24,9 @@ Hosted clients need HTTPS. There are three paths:
   `webcodex connect <server> --auth oauth --oauth-redirect-uri <URL>` bridges
   that same shared-key group into OAuth for ChatGPT without login, pairing, PAT,
   or account identity. The Runner keeps using the direct shared key; ChatGPT
-  receives only OAuth client credentials/tokens. The exposed tool set still
-  comes from that Server's configured MCP model surface.
+  receives only OAuth client credentials/tokens. The exposed tool set starts
+  from that Server's configured MCP model surface; for OAuth callers, `tools/list`
+  is additionally projected by the access token's actual scopes.
 - **Local Share:** `webcodex share` starts the local Server + Agent and, by
   default, a Cloudflare Quick Tunnel with a separate temporary Bearer
   credential. `webcodex share --auth oauth --oauth-redirect-uri <URL>` instead
@@ -54,7 +55,7 @@ extra permission). Server-side OAuth setup is in
 
 For project-first sharing, the authorization page asks for the temporary Project share credential and issues an `oauth2_project` identity carrying only `runtime:read`, `project:read`, `project:write`, and `job:run`. It does not create a managed user and OAuth tokens cannot be used on Agent transport. Quick Tunnel issuer URLs change between runs; use `--tunnel none --public-url https://...` behind your own stable HTTPS proxy/tunnel when the OAuth issuer must remain stable.
 
-For an existing hosted Server, ordinary `connect --auth oauth` uses the shared-key OAuth bridge. The OAuth client and every code/access/refresh grant remain bound to the same `shared_key_hash` that groups the direct shared-key Runner/projects/jobs. Its permission ceiling is exactly the direct shared-key model-facing set: `runtime:read`, `project:read`, `project:write`, `job:run`, `computer:read`, and `computer:control`. It excludes `account:manage`, `admin`, every `agent:*` transport scope, Computer launch/display/pointer/clipboard permissions, and future scopes. A shared-key-owned authorize request also requires that group to remain connected. `offline_access` remains protocol-only for refresh tokens. The legacy managed-user flow, when needed, is explicit as `connect --auth managed-oauth`.
+For an existing hosted Server, ordinary `connect --auth oauth` uses the shared-key OAuth bridge. The OAuth client and every code/access/refresh grant remain bound to the same `shared_key_hash` that groups the direct shared-key Runner/projects/jobs. Direct shared-key bearer authority stays fixed at `runtime:read`, `project:read`, `project:write`, `job:run`, `computer:read`, and `computer:control`, and ordinary OAuth uses that same baseline unless `connect` is explicitly given `--oauth-computer-permissions`. That flag may expand only the OAuth client ceiling with `computer:launch`, `computer:display_read`, `computer:pointer_control`, `computer:clipboard_read`, and `computer:clipboard_write`; the browser consent page still leaves every optional permission unchecked and grants only selected permissions that the OAuth request actually requested. Pointer consent also requires the request to contain the runtime prerequisites `computer:read` and `computer:control`; display/clipboard consent similarly requires the corresponding baseline read/control scope, so consent, token projection, and runtime scope gates remain statically aligned. A real ceiling change revokes prior grants. `account:manage`, `admin`, `job:detach`, every `agent:*` transport scope, and future scopes remain outside this bridge. `offline_access` is protocol-only. Consent-page Runner capability is evaluated per same connected Runner and is rechecked on POST; it is backend availability, not a promise of OS/native permission or call success. At runtime, OAuth `tools/list` hides tools whose required scopes are absent, while direct `tools/call` authorization and live Runner/native checks remain authoritative. The managed-user flow remains separate as `connect --auth managed-oauth`.
 
 ### Grok custom connector (OAuth)
 

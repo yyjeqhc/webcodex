@@ -114,7 +114,15 @@ webcodex connect https://webcodex.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-The Runner keeps the shared key while ChatGPT receives only OAuth credentials/tokens. Browser authorization asks for that key only on WebCodex's authorize page. OAuth preserves the same shared-key group and is capped to the direct shared-key model-facing scopes (`runtime/project/job`, `computer:read`, `computer:control`), never account/admin/Agent or broader Computer/future scopes. Advanced managed-user OAuth remains available as `--auth managed-oauth` after `webcodex login`. See [Deployment](DEPLOYMENT.md).
+To opt the OAuth client into the optional Computer consent ceiling, use:
+
+```bash
+webcodex connect https://webcodex.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback \
+  --oauth-computer-permissions --project .
+```
+
+The Runner keeps the direct shared key and its fixed baseline authority while ChatGPT receives only OAuth credentials/tokens. Without another flag, ordinary shared-key OAuth uses the same baseline (`runtime/project/job`, `computer:read`, `computer:control`). To let the browser offer the fixed optional launch/full-display/pointer/clipboard permissions, reconnect explicitly with `--oauth-computer-permissions`. That flag widens only the OAuth client ceiling; all optional permissions remain unchecked until selected on WebCodex's authorize page, and `account:manage`, `admin`, `job:detach`, Agent scopes, and future scopes are never offered. Existing baseline clients are not widened by normal reconnect. Runner capability and OS/native permission are rechecked at runtime, so consent-page availability is not a success guarantee. Advanced managed-user OAuth remains separate as `--auth managed-oauth` after `webcodex login`. See [Deployment](DEPLOYMENT.md).
 
 To remove only this repository from a hosted `connect` profile later, run from the repository:
 

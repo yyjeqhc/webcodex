@@ -23,8 +23,9 @@ Hosted 客户端需要 HTTPS。有三种路径：
   Runner。默认仍使用 shared-key。`webcodex connect <server> --auth oauth
   --oauth-redirect-uri <URL>` 会把同一个 shared-key group 桥接成 ChatGPT OAuth，
   不需要 login、pairing、PAT 或 account identity。Runner 继续使用 direct shared key，
-  ChatGPT 只获得 OAuth client credential/token；暴露的工具集合仍由远端 Server 的
-  MCP model surface 决定。
+  ChatGPT 只获得 OAuth client credential/token；工具集合先由远端 Server 的 MCP
+  model surface 决定，OAuth caller 的 `tools/list` 还会按 access token 的实际 scopes
+  进一步投影。
 - **本地分享：** `webcodex share` 启动本地 Server + Agent；默认启动 Cloudflare
   Quick Tunnel 并使用独立的临时 Bearer credential。`webcodex share --auth oauth
   --oauth-redirect-uri <URL>` 则暴露 project-bound OAuth 2.0 Authorization Code +
@@ -50,7 +51,7 @@ URI；宿主提供 `offline_access` 时保持勾选（它是协议级 refresh-to
 
 对于 project-first share，授权页要求输入本次临时 Project share credential，并签发只带 `runtime:read`、`project:read`、`project:write`、`job:run` 的 `oauth2_project` 身份；它不会创建 managed user，OAuth token 也不能用于 Agent transport。Quick Tunnel 的 issuer URL 每次运行都会变化；如果 OAuth issuer 必须稳定，请使用 `--tunnel none --public-url https://...` 并在外部配置稳定 HTTPS proxy/tunnel。
 
-对于已有 hosted Server，普通 `connect --auth oauth` 使用 shared-key OAuth bridge。OAuth client 以及 code/access/refresh grant 都绑定到 direct shared-key Runner/projects/jobs 所使用的同一个 `shared_key_hash`。权限 ceiling 与 direct shared-key 的 model-facing 集合精确一致：`runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`；不包含 `account:manage`、`admin`、任何 `agent:*`、Computer launch/display/pointer/clipboard 权限或未来新增 scope。shared-key-owned authorize 还要求对应 group 仍在线。`offline_access` 仍只是 refresh token 的协议 scope。需要 managed-user identity 时显式使用 `connect --auth managed-oauth`。
+对于已有 hosted Server，普通 `connect --auth oauth` 使用 shared-key OAuth bridge。OAuth client 以及 code/access/refresh grant 都绑定到 direct shared-key Runner/projects/jobs 所使用的同一个 `shared_key_hash`。direct shared-key bearer authority 始终固定为 `runtime:read`、`project:read`、`project:write`、`job:run`、`computer:read`、`computer:control`；普通 OAuth 默认也是这个 baseline。只有 connect 显式传 `--oauth-computer-permissions`，OAuth client ceiling 才可增加 `computer:launch`、`computer:display_read`、`computer:pointer_control`、`computer:clipboard_read`、`computer:clipboard_write`，而浏览器授权页仍默认全部未勾选，并且只能 grant 本次 OAuth request 实际请求且用户选择的 permission。pointer consent 还要求 request 已包含 runtime 所需的 `computer:read`、`computer:control`；display/clipboard 同样要求对应 baseline read/control scope，因此 consent、token projection 与 runtime scope gate 静态一致。ceiling 真正变化会撤销旧 grant。`account:manage`、`admin`、`job:detach`、任何 `agent:*` 与未来 scope 始终在 bridge 之外；`offline_access` 仍只是协议 scope。授权页按同一个在线 Runner 判断 capability，并在 POST 重新计算；这只代表 backend 当前可用，不保证 OS/native permission 或调用一定成功。runtime 中 OAuth `tools/list` 会隐藏 token scope 不足的工具，直接 `tools/call` scope gate 与 Runner/native 实时检查仍是最终 authority。managed-user identity 仍单独使用 `connect --auth managed-oauth`。
 
 ### Grok Custom Connector（OAuth）
 

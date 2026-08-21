@@ -15,7 +15,8 @@ use super::{
     TRANSPORT_POLLING,
 };
 use crate::shell_protocol::{
-    ShellClientRegisterRequest, ShellClientView, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    ShellClientCapabilities, ShellClientRegisterRequest, ShellClientView,
+    JOB_INVENTORY_MAX_ACTIVE_JOBS,
 };
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -872,6 +873,30 @@ impl ShellClientRegistry {
                 Some(ShellClientAuthGroup::SharedKey(group)) if group == shared_key_hash
             ) && now.saturating_sub(client.last_seen) <= CLIENT_ONLINE_WINDOW_SECS
         })
+    }
+
+    /// Return capability snapshots for the currently-online Runners in one exact
+    /// shared-key authorization group. Callers must evaluate each snapshot as a
+    /// whole; combining capabilities across different Runners would overstate
+    /// executable authority.
+    pub(crate) async fn connected_shared_key_group_capabilities(
+        &self,
+        shared_key_hash: &str,
+    ) -> Vec<ShellClientCapabilities> {
+        let now = now_ts();
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_clients_locked(&mut inner, now);
+        inner
+            .clients
+            .values()
+            .filter(|client| {
+                matches!(
+                    client.auth_group.as_ref(),
+                    Some(ShellClientAuthGroup::SharedKey(group)) if group == shared_key_hash
+                ) && now.saturating_sub(client.last_seen) <= CLIENT_ONLINE_WINDOW_SECS
+            })
+            .map(|client| client.capabilities.clone())
+            .collect()
     }
 
     pub async fn get_client_view(&self, client_id: &str) -> Option<ShellClientView> {

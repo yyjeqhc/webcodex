@@ -265,7 +265,15 @@ webcodex connect https://your-domain.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-The Runner continues to authenticate with the hosted shared key. `connect` provisions a separate OAuth client bound to that shared-key hash and prints the MCP URL, client ID/secret, bridge authorization endpoint, and token endpoint. During browser authorization, the user enters the shared key only on the WebCodex authorize page; ChatGPT never receives it. The bridge allow-list is the exact direct-shared-key model-facing ceiling (`runtime/project/job` plus `computer:read` and `computer:control`) and excludes account/admin/Agent authority, Computer launch/display/pointer/clipboard, and future scopes. Reconnect does not widen the persisted ceiling or redisclose a reused secret; missing/revoked clients rotate under the previous ceiling.
+To let this ordinary shared-key OAuth client offer the fixed optional Computer consent set, explicitly opt in:
+
+```bash
+webcodex connect https://your-domain.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback \
+  --oauth-computer-permissions --project .
+```
+
+The Runner continues to authenticate with the hosted shared key, whose model-facing authority remains the fixed baseline (`runtime/project/job` plus `computer:read` and `computer:control`). `connect` provisions a separate OAuth client bound to that shared-key hash. Without the opt-in flag, its ceiling remains the same baseline. `--oauth-computer-permissions` may expand only that OAuth client ceiling with launch, full-display, pointer, clipboard-read, and clipboard-write scopes; the flag itself grants nothing. The WebCodex authorize page leaves those permissions unchecked and maps browser selections to the fixed scope bundles, constrained by the OAuth request. Existing baseline clients are never widened by ordinary reconnect; an explicit ceiling change atomically revokes prior access/refresh/code grants so reauthorization is required. The picker never contains account/admin/Agent, `job:detach`, or future scopes. It reports only safe per-same-Runner capability availability and performs no hidden Computer observation/effect; native/OS permission and current capability are still checked by the runtime call. ChatGPT never receives the shared key, and OAuth access tokens remain invalid on Agent transport.
 
 If a managed-user OAuth identity is specifically required, use the advanced `webcodex login` flow followed by `webcodex connect ... --auth managed-oauth --oauth-redirect-uri ...`; `--user` applies only there.
 

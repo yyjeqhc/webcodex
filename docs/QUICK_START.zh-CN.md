@@ -106,7 +106,15 @@ webcodex connect https://webcodex.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-Runner 继续使用 shared key，ChatGPT 只获得 OAuth credential/token；浏览器授权只在 WebCodex authorize 页面输入该 key。OAuth 保留同一个 shared-key group，并精确限制在 direct shared-key 的 model-facing scopes（runtime/project/job、`computer:read`、`computer:control`），不会获得 account/admin/Agent 或更宽的 Computer/未来权限。高级 managed-user OAuth 仍可在 `webcodex login` 后使用 `--auth managed-oauth`。见[部署指南](DEPLOYMENT.zh-CN.md)。
+如需显式把 OAuth client 升级到可提供 optional Computer consent 的 ceiling：
+
+```bash
+webcodex connect https://webcodex.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback \
+  --oauth-computer-permissions --project .
+```
+
+Runner 继续使用 direct shared key 及其固定 baseline authority，ChatGPT 只获得 OAuth credential/token。普通 shared-key OAuth 默认也是同一 baseline（runtime/project/job、`computer:read`、`computer:control`）。只有显式使用 `--oauth-computer-permissions`，浏览器才会提供固定的 launch/full-display/pointer/clipboard optional consent；该 flag 只扩大 OAuth client ceiling，所有 optional permission 在 WebCodex authorize 页面仍默认未勾选，`account:manage`、`admin`、`job:detach`、Agent scope 与未来 scope 永远不会出现。普通 reconnect 不会静默扩大已有 baseline client。Runner capability 与 OS/native permission 会在 runtime 调用时重新检查，因此授权页的 available 不代表操作保证成功。高级 managed-user OAuth 仍与此分离，在 `webcodex login` 后使用 `--auth managed-oauth`。见[部署指南](DEPLOYMENT.zh-CN.md)。
 
 以后如果只想从 hosted `connect` profile 中注销当前仓库，可在仓库中运行：
 

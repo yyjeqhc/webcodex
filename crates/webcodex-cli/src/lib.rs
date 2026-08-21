@@ -381,6 +381,7 @@ fn parse_connect(args: &[String]) -> CliAction {
     let mut key_file = None;
     let mut auth = ConnectAuth::SharedKey;
     let mut oauth_redirect_uri = None;
+    let mut oauth_computer_permissions = false;
     let mut username = None;
     let mut project = PathBuf::from(".");
     let mut profile = None;
@@ -420,6 +421,7 @@ fn parse_connect(args: &[String]) -> CliAction {
                     return cli_parse_error("--oauth-redirect-uri requires a value".to_string())
                 }
             },
+            "--oauth-computer-permissions" => oauth_computer_permissions = true,
             "--user" | "--username" => match take(&mut index) {
                 Some(value) => username = Some(value),
                 None => return cli_parse_error(format!("{arg} requires a value")),
@@ -479,8 +481,15 @@ fn parse_connect(args: &[String]) -> CliAction {
             if username.is_some() {
                 return cli_parse_error("--user requires --auth managed-oauth".to_string());
             }
+            // This flag only widens the ordinary shared-key OAuth client ceiling;
+            // actual optional grants are still selected in browser consent.
         }
         ConnectAuth::ManagedOAuth => {
+            if oauth_computer_permissions {
+                return cli_parse_error(
+                    "--oauth-computer-permissions requires --auth oauth".to_string(),
+                );
+            }
             if key.is_some() || key_file.is_some() {
                 return cli_parse_error(
                     "--auth managed-oauth cannot be combined with --key or --key-file".to_string(),
@@ -496,6 +505,11 @@ fn parse_connect(args: &[String]) -> CliAction {
             }
         }
         ConnectAuth::SharedKey => {
+            if oauth_computer_permissions {
+                return cli_parse_error(
+                    "--oauth-computer-permissions requires --auth oauth".to_string(),
+                );
+            }
             if oauth_redirect_uri.is_some() || username.is_some() {
                 return cli_parse_error(
                     "--oauth-redirect-uri requires --auth oauth or managed-oauth; --user requires --auth managed-oauth"
@@ -522,6 +536,7 @@ fn parse_connect(args: &[String]) -> CliAction {
         key_file,
         auth,
         oauth_redirect_uri,
+        oauth_computer_permissions,
         username,
         project,
         profile,

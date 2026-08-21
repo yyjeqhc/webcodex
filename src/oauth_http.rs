@@ -40,6 +40,15 @@ pub(crate) use clients::{
     oauth_clients_create, oauth_clients_list, oauth_clients_revoke, oauth_clients_update_scopes,
 };
 use html::authorize_bridge_html;
+
+#[derive(Debug, Clone)]
+struct BridgePermissionView {
+    id: &'static str,
+    label: &'static str,
+    available: bool,
+    selected: bool,
+    availability: &'static str,
+}
 #[cfg(test)]
 use managed_authorize::AUTHORIZE_SESSION_COOKIE;
 use managed_authorize::{
@@ -65,8 +74,8 @@ pub(crate) use scope_registry::{
 };
 #[cfg(test)]
 pub(crate) use shared_key_bridge::{
-    bridge_oauth_scopes, bridge_shared_key_hash, normalize_bridge_oauth_scopes,
-    OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE,
+    bridge_oauth_computer_enabled_scopes, bridge_oauth_scopes, bridge_shared_key_hash,
+    normalize_bridge_oauth_scopes, OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE,
 };
 pub(crate) use shared_key_bridge::{oauth_authorize_bridge, oauth_shared_key_client_provision};
 pub(crate) use token::oauth_token;

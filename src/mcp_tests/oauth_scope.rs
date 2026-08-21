@@ -385,6 +385,114 @@ async fn oauth2_mcp_unknown_tool_fails_closed() {
     assert_mcp_oauth_scope_rejected(status, &body, challenge.as_deref(), None);
 }
 
+fn listed_tool_names(body: &Value) -> std::collections::HashSet<String> {
+    body["result"]["tools"]
+        .as_array()
+        .expect("tools/list result")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[tokio::test]
+async fn oauth2_tools_list_projects_optional_computer_tools_from_actual_token_scopes() {
+    let baseline = "runtime:read project:read project:write job:run computer:read computer:control";
+    let (_tmp, service, token) =
+        oauth_mcp_service_with_surface(baseline, ModelSurface::FullOperatorRuntime);
+    let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    let baseline_tools = listed_tool_names(&body);
+    for hidden in [
+        "computer_launch_application",
+        "computer_list_displays",
+        "computer_snapshot_display",
+        "computer_pointer_move",
+        "computer_pointer_click",
+        "computer_read_clipboard",
+        "computer_write_clipboard",
+    ] {
+        assert!(!baseline_tools.contains(hidden), "baseline leaked {hidden}");
+    }
+
+    for (extra_scopes, present, absent) in [
+        (
+            "computer:launch",
+            vec!["computer_launch_application"],
+            vec![
+                "computer_list_displays",
+                "computer_pointer_move",
+                "computer_read_clipboard",
+            ],
+        ),
+        (
+            "computer:display_read",
+            vec!["computer_list_displays", "computer_snapshot_display"],
+            vec!["computer_pointer_move", "computer_read_clipboard"],
+        ),
+        (
+            "computer:display_read computer:pointer_control",
+            vec![
+                "computer_list_displays",
+                "computer_pointer_move",
+                "computer_pointer_click",
+            ],
+            vec!["computer_read_clipboard", "computer_write_clipboard"],
+        ),
+        (
+            "computer:clipboard_read",
+            vec!["computer_read_clipboard"],
+            vec!["computer_write_clipboard", "computer_pointer_move"],
+        ),
+        (
+            "computer:clipboard_write",
+            vec!["computer_write_clipboard"],
+            vec!["computer_read_clipboard", "computer_pointer_move"],
+        ),
+    ] {
+        let scopes = format!("{baseline} {extra_scopes}");
+        let (_tmp, service, token) =
+            oauth_mcp_service_with_surface(&scopes, ModelSurface::FullOperatorRuntime);
+        let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{scopes}: {body:?}");
+        let names = listed_tool_names(&body);
+        for name in present {
+            assert!(names.contains(name), "{scopes} should list {name}");
+        }
+        for name in absent {
+            assert!(!names.contains(name), "{scopes} should hide {name}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn oauth2_pointer_tool_call_still_requires_display_scope_even_if_invoked_directly() {
+    let scopes = "runtime:read computer:read computer:control computer:pointer_control";
+    let (_tmp, service, token) =
+        oauth_mcp_service_with_surface(scopes, ModelSurface::FullOperatorRuntime);
+    let (status, body, challenge) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        json!({
+            "name": "computer_pointer_move",
+            "arguments": {
+                "client_id": "missing-runner",
+                "display_id": "display_00000000000000000000000000000000",
+                "snapshot_generation": 1,
+                "x": 0,
+                "y": 0
+            }
+        }),
+    )
+    .await;
+    assert_mcp_oauth_scope_rejected(
+        status,
+        &body,
+        challenge.as_deref(),
+        Some(crate::auth::SCOPE_COMPUTER_DISPLAY_READ),
+    );
+}
+
 #[tokio::test]
 async fn api_token_mcp_behavior_unchanged() {
     let config = test_config(Some("secret"));

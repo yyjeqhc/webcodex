@@ -7,7 +7,7 @@ use crate::tool_request_trace::{
     estimate_json_bytes, jsonrpc_id_safe, new_trace_id, ToolRequestLifecycle,
 };
 use crate::tool_runtime::kernel::{
-    HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
+    check_runtime_tool_scope, HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
     ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
 use crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES;
@@ -432,14 +432,34 @@ fn mcp_tools_list_payload_with_features(
     app_enabled: bool,
     artifact_export_enabled: bool,
 ) -> Value {
+    mcp_tools_list_payload_with_features_for_auth(
+        model_surface,
+        compact,
+        app_enabled,
+        artifact_export_enabled,
+        None,
+    )
+}
+
+fn mcp_tools_list_payload_with_features_for_auth(
+    model_surface: ModelSurface,
+    compact: bool,
+    app_enabled: bool,
+    artifact_export_enabled: bool,
+    auth: Option<&AuthContext>,
+) -> Value {
     let specs = match model_surface {
         ModelSurface::CanonicalConnector => crate::connector_runtime::surface::capability_specs(),
         ModelSurface::LocalCoding => crate::model_surface::local_coding_tool_specs(),
         ModelSurface::FullOperatorRuntime => registered_tool_specs(),
     };
+    let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
     let tools: Vec<Value> = specs
         .into_iter()
         .filter(|spec| artifact_export_enabled || spec.name != "export_project_artifact")
+        .filter(|spec| {
+            !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
+        })
         .map(|spec| mcp_tool_spec_json(spec, compact, app_enabled))
         .collect();
     json!({ "tools": tools })
@@ -2621,11 +2641,30 @@ async fn handle_mcp_request_with_lifecycle(
         ),
         "ping" if !stateless_2026 => rpc_result(id, json!({})),
         "tools/list" => {
+            let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
             let result = if stateless_2026 {
-                mcp_tools_list_payload_with_compact_and_app(
+                if oauth_scope_projection {
+                    mcp_tools_list_payload_with_features_for_auth(
+                        runtime.model_surface(),
+                        crate::config::mcp_compact_schemas_enabled(),
+                        model_surface_supports_computer_app(runtime.model_surface()),
+                        true,
+                        auth,
+                    )
+                } else {
+                    mcp_tools_list_payload_with_compact_and_app(
+                        runtime.model_surface(),
+                        crate::config::mcp_compact_schemas_enabled(),
+                        model_surface_supports_computer_app(runtime.model_surface()),
+                    )
+                }
+            } else if oauth_scope_projection {
+                mcp_tools_list_payload_with_features_for_auth(
                     runtime.model_surface(),
                     crate::config::mcp_compact_schemas_enabled(),
-                    model_surface_supports_computer_app(runtime.model_surface()),
+                    false,
+                    false,
+                    auth,
                 )
             } else {
                 mcp_tools_list_payload(runtime.model_surface())

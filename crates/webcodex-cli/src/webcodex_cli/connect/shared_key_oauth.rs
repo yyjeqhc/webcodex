@@ -11,6 +11,27 @@ use super::ConnectResult;
 const BRIDGE_PROFILE_VERSION: u32 = 1;
 const BRIDGE_PROFILE_PREFIX: &str = "shared-key-oauth-";
 const BRIDGE_SECRET_DISCLOSED_PREFIX: &str = ".shared-key-oauth-secret-disclosed-";
+const BRIDGE_BASELINE_SCOPES: &[&str] = &[
+    "runtime:read",
+    "project:read",
+    "project:write",
+    "job:run",
+    "computer:read",
+    "computer:control",
+];
+const BRIDGE_COMPUTER_ENABLED_SCOPES: &[&str] = &[
+    "runtime:read",
+    "project:read",
+    "project:write",
+    "job:run",
+    "computer:read",
+    "computer:control",
+    "computer:launch",
+    "computer:display_read",
+    "computer:pointer_control",
+    "computer:clipboard_read",
+    "computer:clipboard_write",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct SharedKeyOAuthProfile {
@@ -20,6 +41,8 @@ struct SharedKeyOAuthProfile {
     client_secret: String,
     redirect_uri: String,
     allowed_scopes: Vec<String>,
+    #[serde(default)]
+    computer_permissions_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +92,34 @@ fn disclosure_marker(profile_dir: &Path, client_id: &str) -> PathBuf {
     profile_dir.join(format!("{BRIDGE_SECRET_DISCLOSED_PREFIX}{digest:x}"))
 }
 
+fn scope_set_matches(scopes: &[String], expected: &[&str]) -> bool {
+    scopes.len() == expected.len()
+        && expected
+            .iter()
+            .all(|expected_scope| scopes.iter().any(|scope| scope == expected_scope))
+}
+
+fn profile_scope_ceiling_is_valid(profile: &SharedKeyOAuthProfile) -> bool {
+    if profile.allowed_scopes.is_empty()
+        || profile
+            .allowed_scopes
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != profile.allowed_scopes.len()
+    {
+        return false;
+    }
+    if profile.computer_permissions_enabled {
+        scope_set_matches(&profile.allowed_scopes, BRIDGE_COMPUTER_ENABLED_SCOPES)
+    } else {
+        profile
+            .allowed_scopes
+            .iter()
+            .all(|scope| BRIDGE_BASELINE_SCOPES.contains(&scope.as_str()))
+    }
+}
+
 fn read_profile(path: &Path) -> Result<Option<SharedKeyOAuthProfile>, String> {
     if !path.exists() {
         return Ok(None);
@@ -81,7 +132,7 @@ fn read_profile(path: &Path) -> Result<Option<SharedKeyOAuthProfile>, String> {
     if profile.version != BRIDGE_PROFILE_VERSION
         || !profile.client_id.starts_with("wc_client_")
         || !profile.client_secret.starts_with("wc_csec_")
-        || profile.allowed_scopes.is_empty()
+        || !profile_scope_ceiling_is_valid(&profile)
     {
         return Err(
             "existing shared-key OAuth profile is invalid; refusing to guess credential state"
@@ -153,6 +204,7 @@ async fn provision_client(
             "redirect_uri": redirect_uri,
             "client_id": existing.map(|profile| profile.client_id.as_str()),
             "previous_allowed_scopes": existing.map(|profile| profile.allowed_scopes.as_slice()),
+            "computer_permissions": opts.oauth_computer_permissions,
         }),
     })
     .await?;
@@ -179,8 +231,35 @@ async fn provision_client(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if allowed_scopes.is_empty() {
-        return Err("shared-key OAuth provision response contains no scopes".to_string());
+    if allowed_scopes.is_empty()
+        || allowed_scopes
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != allowed_scopes.len()
+    {
+        return Err(
+            "shared-key OAuth provision response contains an invalid scope ceiling".to_string(),
+        );
+    }
+    let expected_scopes = if opts.oauth_computer_permissions {
+        BRIDGE_COMPUTER_ENABLED_SCOPES
+    } else {
+        BRIDGE_BASELINE_SCOPES
+    };
+    if opts.oauth_computer_permissions {
+        if !scope_set_matches(&allowed_scopes, expected_scopes) {
+            return Err("Server returned a scope outside the explicit Computer-enabled shared-key OAuth ceiling".to_string());
+        }
+    } else if let Some(existing) = existing {
+        if allowed_scopes != existing.allowed_scopes {
+            return Err("persisted shared-key OAuth client differs from the Server; refusing to widen or rewrite it implicitly".to_string());
+        }
+    } else if !scope_set_matches(&allowed_scopes, expected_scopes) {
+        return Err(
+            "Server returned a scope outside the ordinary shared-key OAuth baseline ceiling"
+                .to_string(),
+        );
     }
     let reused = value
         .get("reused")
@@ -191,13 +270,17 @@ async fn provision_client(
             "Server reused a shared-key OAuth client without matching local protected state"
                 .to_string()
         })?;
-        if existing.client_id != client_id || existing.allowed_scopes != allowed_scopes {
+        if existing.client_id != client_id {
             return Err(
-                "persisted shared-key OAuth client differs from the Server; refusing to widen or rewrite it implicitly"
+                "persisted shared-key OAuth client differs from the Server; refusing to rewrite its identity implicitly"
                     .to_string(),
             );
         }
-        return Ok((existing.clone(), false));
+        let mut updated = existing.clone();
+        updated.allowed_scopes = allowed_scopes;
+        updated.computer_permissions_enabled = opts.oauth_computer_permissions;
+        let changed = updated != *existing;
+        return Ok((updated, changed));
     }
     let client_secret = value
         .get("client_secret")
@@ -213,9 +296,24 @@ async fn provision_client(
             client_secret,
             redirect_uri: redirect_uri.to_string(),
             allowed_scopes,
+            computer_permissions_enabled: opts.oauth_computer_permissions,
         },
         true,
     ))
+}
+
+fn bridge_scope_output(profile: &SharedKeyOAuthProfile) -> String {
+    if profile.computer_permissions_enabled {
+        format!(
+            "Client may request: {}\nProtocol scope: offline_access\nBrowser consent: Additional Computer permissions are granted only when selected on the WebCodex authorization page.\n",
+            profile.allowed_scopes.join(" ")
+        )
+    } else {
+        format!(
+            "Scopes:        {} offline_access\n",
+            profile.allowed_scopes.join(" ")
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -235,7 +333,6 @@ pub(super) async fn finish_shared_key_oauth_connect(
             .as_deref()
             .ok_or_else(|| "--auth oauth requires --oauth-redirect-uri <URL>".to_string())?,
     )?;
-    let metadata = fetch_metadata(opts, server_url).await?;
     let state_path = profile_path(profile_dir, &redirect_uri);
     let existing = read_profile(&state_path)?;
     if let Some(existing) = existing.as_ref() {
@@ -245,7 +342,14 @@ pub(super) async fn finish_shared_key_oauth_connect(
                     .to_string(),
             );
         }
+        if existing.computer_permissions_enabled && !opts.oauth_computer_permissions {
+            return Err(
+                "this shared-key OAuth profile already has optional Computer permissions enabled; reconnect with --oauth-computer-permissions to reuse it, or use a different profile/redirect URI for a baseline client"
+                    .to_string(),
+            );
+        }
     }
+    let metadata = fetch_metadata(opts, server_url).await?;
     let (oauth, created_or_rotated) = provision_client(
         opts,
         server_url,
@@ -283,8 +387,9 @@ pub(super) async fn finish_shared_key_oauth_connect(
         String::new()
     };
     let authorization_endpoint = bridge_authorization_endpoint(&metadata)?;
+    let scope_lines = bridge_scope_output(&oauth);
     let output = format!(
-        "Connected to WebCodex\n\nServer:       {server_url}\nMCP URL:      {server_url}/mcp\nProfile:      {profile}\nClient:       {runner_client_id}\nProject:      {runtime_project_id}\nRunner:       running\nConfig:       {}\nLogs:         {}\n\nChatGPT OAuth: Authorization Code + PKCE S256\nIssuer:        {}\nAuthorization: {}\nToken endpoint: {}\nOAuth client ID: {}\n{secret_line}Redirect URI:  {}\nScopes:        {} offline_access\n\n{key_line}The Runner continues to use the direct shared key. ChatGPT receives only OAuth credentials/tokens; OAuth access tokens remain invalid on Agent transport.\n",
+        "Connected to WebCodex\n\nServer:       {server_url}\nMCP URL:      {server_url}/mcp\nProfile:      {profile}\nClient:       {runner_client_id}\nProject:      {runtime_project_id}\nRunner:       running\nConfig:       {}\nLogs:         {}\n\nChatGPT OAuth: Authorization Code + PKCE S256\nIssuer:        {}\nAuthorization: {}\nToken endpoint: {}\nOAuth client ID: {}\n{secret_line}Redirect URI:  {}\n{scope_lines}\n{key_line}The Runner continues to use the direct shared key. ChatGPT receives only OAuth credentials/tokens; OAuth access tokens remain invalid on Agent transport.\n",
         config_path.display(),
         log_path.display(),
         metadata.issuer,
@@ -292,7 +397,6 @@ pub(super) async fn finish_shared_key_oauth_connect(
         metadata.token_endpoint,
         oauth.client_id,
         oauth.redirect_uri,
-        oauth.allowed_scopes.join(" "),
     );
     Ok(ConnectResult {
         output,
@@ -319,6 +423,7 @@ mod tests {
             key_file: None,
             auth: super::super::ConnectAuth::SharedKeyOAuth,
             oauth_redirect_uri: Some("https://chatgpt.example/callback".to_string()),
+            oauth_computer_permissions: false,
             username: None,
             project: PathBuf::from("."),
             profile: None,
@@ -420,6 +525,121 @@ mod tests {
         assert!(!did_create);
         assert_eq!(reused, created);
         handle.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn explicit_computer_opt_in_upgrades_only_to_the_closed_ceiling() {
+        let full_scopes = BRIDGE_COMPUTER_ENABLED_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_string())
+            .collect::<Vec<_>>();
+        let (server, handle) = json_responses(vec![json!({
+            "success": true,
+            "reused": true,
+            "scope_ceiling_changed": true,
+            "client": {
+                "client_id": "wc_client_bridge_existing",
+                "redirect_uri": "https://chatgpt.example/callback",
+                "allowed_scopes": full_scopes,
+            }
+        })]);
+        let mut opts = options(server.clone());
+        opts.oauth_computer_permissions = true;
+        let existing = SharedKeyOAuthProfile {
+            version: BRIDGE_PROFILE_VERSION,
+            server_url: server.clone(),
+            client_id: "wc_client_bridge_existing".to_string(),
+            client_secret: "wc_csec_existing_secret".to_string(),
+            redirect_uri: "https://chatgpt.example/callback".to_string(),
+            allowed_scopes: BRIDGE_BASELINE_SCOPES
+                .iter()
+                .map(|scope| (*scope).to_string())
+                .collect(),
+            computer_permissions_enabled: false,
+        };
+        let (upgraded, changed) = provision_client(
+            &opts,
+            &server,
+            "ordinary-connect-shared-key",
+            "https://chatgpt.example/callback",
+            Some(&existing),
+        )
+        .await
+        .unwrap();
+        assert!(changed);
+        assert!(upgraded.computer_permissions_enabled);
+        assert_eq!(upgraded.client_secret, existing.client_secret);
+        assert!(scope_set_matches(
+            &upgraded.allowed_scopes,
+            BRIDGE_COMPUTER_ENABLED_SCOPES
+        ));
+        handle.join().unwrap();
+
+        let mut future_scopes = BRIDGE_COMPUTER_ENABLED_SCOPES
+            .iter()
+            .map(|scope| serde_json::Value::String((*scope).to_string()))
+            .collect::<Vec<_>>();
+        future_scopes.push(serde_json::Value::String("computer:future".to_string()));
+        let (server, handle) = json_responses(vec![json!({
+            "success": true,
+            "reused": true,
+            "client": {
+                "client_id": "wc_client_bridge_existing",
+                "redirect_uri": "https://chatgpt.example/callback",
+                "allowed_scopes": future_scopes,
+            }
+        })]);
+        let mut opts = options(server.clone());
+        opts.oauth_computer_permissions = true;
+        let error = provision_client(
+            &opts,
+            &server,
+            "ordinary-connect-shared-key",
+            "https://chatgpt.example/callback",
+            Some(&existing),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("explicit Computer-enabled shared-key OAuth ceiling"));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn profile_and_cli_output_distinguish_baseline_from_computer_enabled_ceiling() {
+        let baseline = SharedKeyOAuthProfile {
+            version: BRIDGE_PROFILE_VERSION,
+            server_url: "https://server.example".to_string(),
+            client_id: "wc_client_baseline".to_string(),
+            client_secret: "wc_csec_baseline".to_string(),
+            redirect_uri: "https://chatgpt.example/callback".to_string(),
+            allowed_scopes: BRIDGE_BASELINE_SCOPES
+                .iter()
+                .map(|scope| (*scope).to_string())
+                .collect(),
+            computer_permissions_enabled: false,
+        };
+        assert!(profile_scope_ceiling_is_valid(&baseline));
+        let baseline_output = bridge_scope_output(&baseline);
+        assert!(baseline_output.contains("Scopes:"));
+        assert!(!baseline_output.contains("Client may request:"));
+
+        let mut enabled = baseline.clone();
+        enabled.allowed_scopes = BRIDGE_COMPUTER_ENABLED_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_string())
+            .collect();
+        enabled.computer_permissions_enabled = true;
+        assert!(profile_scope_ceiling_is_valid(&enabled));
+        let enabled_output = bridge_scope_output(&enabled);
+        assert!(enabled_output.contains("Client may request:"));
+        assert!(enabled_output.contains("Browser consent: Additional Computer permissions"));
+        assert!(enabled_output.contains("computer:pointer_control"));
+
+        enabled.allowed_scopes.push("account:manage".to_string());
+        assert!(!profile_scope_ceiling_is_valid(&enabled));
+        enabled.allowed_scopes.pop();
+        enabled.allowed_scopes.push("computer:future".to_string());
+        assert!(!profile_scope_ceiling_is_valid(&enabled));
     }
 
     #[test]

@@ -241,7 +241,15 @@ webcodex connect https://your-domain.example --auth oauth \
   --oauth-redirect-uri https://client.example/callback --project .
 ```
 
-Runner 继续使用 hosted shared key。`connect` 会创建绑定该 shared-key hash 的独立 OAuth client，并输出 MCP URL、client ID/secret、bridge authorization endpoint 与 token endpoint。浏览器授权时 shared key 只输入到 WebCodex 自己的 authorize 页面，ChatGPT 不会获得它。bridge allow-list 与 direct shared-key 的 model-facing ceiling 精确一致（runtime/project/job 加 `computer:read`、`computer:control`），不包含 account/admin/Agent authority、Computer launch/display/pointer/clipboard 或未来 scope。正常重连不会扩大持久化 ceiling 或再次输出已复用 secret；client 缺失/撤销时只在原 ceiling 内轮换。
+如需让这个 ordinary shared-key OAuth client 提供固定的 optional Computer consent 集合，必须显式 opt in：
+
+```bash
+webcodex connect https://your-domain.example --auth oauth \
+  --oauth-redirect-uri https://client.example/callback \
+  --oauth-computer-permissions --project .
+```
+
+Runner 继续使用 hosted shared key，其 model-facing authority 始终保持固定 baseline（runtime/project/job 加 `computer:read`、`computer:control`）。`connect` 创建绑定该 shared-key hash 的独立 OAuth client；未传 opt-in flag 时 client ceiling 也是同一 baseline。`--oauth-computer-permissions` 只允许把该 OAuth client ceiling 扩到固定的 launch/full-display/pointer/clipboard-read/clipboard-write scopes，本身不 grant。WebCodex authorize 页面中的这些 permission 默认全部未勾选，browser selection 按固定 bundle 映射且受本次 OAuth request 限制。普通 reconnect 永远不会静默扩大已有 baseline client；显式 ceiling 变化会原子撤销旧 access/refresh/code grant，必须重新授权。picker 永远不包含 account/admin/Agent、`job:detach` 或未来 scope。页面只显示安全的“同一个在线 Runner” capability availability，不执行任何隐藏 Computer observation/effect；OS/native permission 与当前 capability 仍由 runtime 调用实时检查。shared key 只输入 WebCodex authorize 页面，ChatGPT 不会获得它，OAuth access token 仍不能用于 Agent transport。
 
 只有明确需要 managed-user OAuth identity 时，才使用高级 `webcodex login` 流程，再执行 `webcodex connect ... --auth managed-oauth --oauth-redirect-uri ...`；`--user` 仅用于该模式。
 

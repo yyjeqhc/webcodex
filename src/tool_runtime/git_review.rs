@@ -142,9 +142,45 @@ fn review_git_isolated_view_setup(head: &str, failure: &str) -> String {
     )
 }
 
+fn checked_git_pipeline_to_file(
+    producer: &str,
+    consumer: &str,
+    stem: &str,
+    failure: &str,
+) -> String {
+    debug_assert!(stem
+        .as_bytes()
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_'));
+    format!(
+        concat!(
+            "rm -f \"$view/{stem}.status\" \"$view/{stem}.out\"; ",
+            "{{ {producer}; producer_exit=$?; printf '%s\\n' \"$producer_exit\" >\"$view/{stem}.status\"; }} | ",
+            "{consumer} >\"$view/{stem}.out\"; ",
+            "consumer_exit=$?; ",
+            "producer_exit=$(cat \"$view/{stem}.status\" 2>/dev/null || true); ",
+            "if [ \"$consumer_exit\" -ne 0 ] || [ \"$producer_exit\" != 0 ]; then {failure}; fi; "
+        ),
+        producer = producer,
+        consumer = consumer,
+        stem = stem,
+        failure = failure,
+    )
+}
+
 fn git_review_scope_command(base: &str, head: &str) -> String {
     let isolated_view =
         review_git_isolated_view_setup(head, "printf 'status=git_view_unavailable\\n'; exit 0");
+    let head_q = shell_escape_simple(head);
+    let stats_producer = format!(
+        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q}"
+    );
+    let stats_pipeline = checked_git_pipeline_to_file(
+        &stats_producer,
+        "awk 'BEGIN{f=0;a=0;d=0;b=0} {f++; if ($1==\"-\" || $2==\"-\") b++; else {a+=$1; d+=$2}} END{printf \"files_changed=%d\\ninsertions=%d\\ndeletions=%d\\nbinary_files=%d\\n\",f,a,d,b}'",
+        "scope_stats",
+        "printf 'status=diff_failed\\n'; exit 0",
+    );
     format!(
         concat!(
             "{prefix}",
@@ -162,18 +198,16 @@ fn git_review_scope_command(base: &str, head: &str) -> String {
             "if git merge-base --is-ancestor {base_q} {head_q} >/dev/null 2>&1; then base_is_ancestor=true; ",
             "else ancestor_exit=$?; if [ \"$ancestor_exit\" -eq 1 ]; then base_is_ancestor=false; else printf 'status=ancestor_failed\\n'; exit 0; fi; fi; ",
             "commit_count=$(git rev-list --count \"$merge_base..{head}\" 2>/dev/null) || {{ printf 'status=rev_list_failed\\n'; exit 0; }}; ",
-            "if ! git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q} >/dev/null 2>&1; ",
-            "then printf 'status=diff_failed\\n'; exit 0; fi; ",
-            "stats=$(git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q} | ",
-            "awk 'BEGIN{{f=0;a=0;d=0;b=0}} {{f++; if ($1==\"-\" || $2==\"-\") b++; else {{a+=$1; d+=$2}}}} END{{printf \"files_changed=%d\\ninsertions=%d\\ndeletions=%d\\nbinary_files=%d\\n\",f,a,d,b}}') || ",
-            "{{ printf 'status=stats_failed\\n'; exit 0; }}; ",
+            "{stats_pipeline}",
+            "stats=$(cat \"$view/scope_stats.out\" 2>/dev/null) || {{ printf 'status=stats_failed\\n'; exit 0; }}; ",
             "printf 'status=ok\\nrequested_base=%s\\nrequested_head=%s\\nmerge_base=%s\\nbase_is_ancestor=%s\\ncommit_count=%s\\n%s' ",
             "{base_q} {head_q} \"$merge_base\" \"$base_is_ancestor\" \"$commit_count\" \"$stats\""
         ),
         prefix = review_git_discovery_prefix(),
         isolated_view = isolated_view,
+        stats_pipeline = stats_pipeline,
         base_q = shell_escape_simple(base),
-        head_q = shell_escape_simple(head),
+        head_q = head_q,
         head = head,
     )
 }
@@ -250,25 +284,36 @@ fn bounded_review_diff_command(
     };
     let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
     let isolated_view = review_git_isolated_view_setup(head, &failure);
+    let producer = format!(
+        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q}",
+        head_q = shell_escape_simple(head),
+        mode = mode,
+        base_q = shell_escape_simple(merge_base),
+    );
+    let consumer = format!(
+        concat!(
+            "awk -v max_lines={max_lines} -v max_bytes={max_bytes} '",
+            "BEGIN{{n=0;b=0;emit=1}} ",
+            "{{s=length($0)+1; if (emit && n<max_lines && b+s<=max_bytes) ",
+            "{{print; n++; b+=s}} else emit=0}}'"
+        ),
+        max_lines = max_lines,
+        max_bytes = GIT_REVIEW_METADATA_BYTES,
+    );
+    let pipeline = checked_git_pipeline_to_file(&producer, &consumer, "metadata", &failure);
     format!(
         concat!(
             "{prefix}",
             "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf '{error}\\n'; exit 0; fi; ",
             "{isolated_view}",
-            "if ! git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q} >/dev/null 2>&1; ",
-            "then printf '{error}\\n'; exit 0; fi; ",
-            "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q} | ",
-            "awk -v max_lines={max_lines} -v max_bytes={max_bytes} '",
-            "BEGIN{{n=0;b=0}} {{s=length($0)+1; if (n>=max_lines || b+s>max_bytes) exit; print; n++; b+=s}}'"
+            "{pipeline}",
+            "cat \"$view/metadata.out\" 2>/dev/null || {{ {failure}; }}"
         ),
         prefix = review_git_discovery_prefix(),
         isolated_view = isolated_view,
-        mode = mode,
-        base_q = shell_escape_simple(merge_base),
-        head_q = shell_escape_simple(head),
+        pipeline = pipeline,
         error = GIT_REVIEW_ERROR_SENTINEL,
-        max_lines = max_lines,
-        max_bytes = GIT_REVIEW_METADATA_BYTES,
+        failure = failure,
     )
 }
 
@@ -748,23 +793,30 @@ fn git_review_symbol_command(merge_base: &str, head: &str, paths: &[String]) -> 
         .join(" ");
     let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
     let isolated_view = review_git_isolated_view_setup(head, &failure);
+    let producer = format!(
+        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths}",
+        base_q = shell_escape_simple(merge_base),
+        head_q = shell_escape_simple(head),
+        paths = joined,
+    );
+    let consumer = format!(
+        "{{ head -c {max_bytes}; head_exit=$?; cat >/dev/null; drain_exit=$?; [ \"$head_exit\" -eq 0 ] && [ \"$drain_exit\" -eq 0 ]; }}",
+        max_bytes = GIT_REVIEW_MAX_DIFF_BYTES,
+    );
+    let pipeline = checked_git_pipeline_to_file(&producer, &consumer, "symbols", &failure);
     format!(
         concat!(
             "{prefix}",
             "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf '{error}\\n'; exit 0; fi; ",
             "{isolated_view}",
-            "if ! git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths} >/dev/null 2>&1; ",
-            "then printf '{error}\\n'; exit 0; fi; ",
-            "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths} | ",
-            "head -c {max_bytes}"
+            "{pipeline}",
+            "cat \"$view/symbols.out\" 2>/dev/null || {{ {failure}; }}"
         ),
         prefix = review_git_discovery_prefix(),
         isolated_view = isolated_view,
-        base_q = shell_escape_simple(merge_base),
-        head_q = shell_escape_simple(head),
-        paths = joined,
+        pipeline = pipeline,
         error = GIT_REVIEW_ERROR_SENTINEL,
-        max_bytes = GIT_REVIEW_MAX_DIFF_BYTES,
+        failure = failure,
     )
 }
 
@@ -1429,6 +1481,21 @@ mod tests {
         assert!(!test.iter().any(|class| class == "production"));
         let docs = classify_path("docs/AUTH.md");
         assert!(docs.iter().any(|class| class == "docs"));
+    }
+
+    #[test]
+    fn git_review_summary_checked_pipeline_fences_producer_and_consumer_status() {
+        let command = checked_git_pipeline_to_file(
+            "git diff --example",
+            "awk '{print}'",
+            "probe",
+            "printf 'failed\\n'; exit 0",
+        );
+        assert!(command.contains("producer_exit=$?"));
+        assert!(command.contains("consumer_exit=$?"));
+        assert!(command.contains("$view/probe.status"));
+        assert!(command.contains("$view/probe.out"));
+        assert!(command.contains("[ \"$producer_exit\" != 0 ]"));
     }
 
     #[test]

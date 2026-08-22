@@ -3480,6 +3480,7 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
                     | "git_diff"
                     | "git_diff_summary"
                     | "git_diff_hunks"
+                    | "git_review_summary"
                     | "show_changes"
                     | "git_status"
                     | "workspace_hygiene_check"
@@ -3496,6 +3497,48 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn review_evidence_git_review_summary_counts_as_mapping_not_diff_review() {
+    let runtime = test_runtime();
+    let session = runtime.sessions.start_session(
+        Some("agent:eval:demo".to_string()),
+        Some("committed-review-map".into()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "git_review_summary",
+        json!({
+            "project": "agent:eval:demo",
+            "base_commit": "a".repeat(40),
+            "head_commit": "b".repeat(40)
+        }),
+        true,
+        json!({}),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: sid,
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: None,
+            summary_only: false,
+            limit: None,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let review = &result.output["review_evidence"];
+    assert_eq!(review["read_only_inspection_count"], 1);
+    assert_eq!(review["diff_review_count"], 0);
+    assert_eq!(review["total"], 1);
+    assert_eq!(review["tools"], json!(["git_review_summary"]));
+    assert_review_evidence_tools_safe(review);
 }
 
 #[tokio::test]

@@ -3172,6 +3172,7 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
                     | "git_diff"
                     | "git_diff_summary"
                     | "git_diff_hunks"
+                    | "git_review_summary"
                     | "show_changes"
                     | "git_status"
                     | "workspace_hygiene_check"
